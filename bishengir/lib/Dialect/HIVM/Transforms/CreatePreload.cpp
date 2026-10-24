@@ -260,7 +260,11 @@ static Value getPreloadCondition(const PreloadInfo &info, Location loc,
   Value upperCond =
       b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, indVar, ub);
 
-  return b.create<arith::AndIOp>(loc, lowerCond, upperCond);
+  auto andOp = b.create<arith::AndIOp>(loc, lowerCond, upperCond);
+  auto markOp = b.create<annotation::MarkOp>(loc, andOp.getResult());
+  markOp->setAttr(hivm::PreloadNumAttr::name,
+                  b.getI32IntegerAttr(info.preloadNum));
+  return andOp;
 }
 
 static bool isRematerializableAliasOp(Operation *op) {
@@ -642,6 +646,9 @@ static void rewritePreloadLoop(scf::ForOp forOp,
     ++newResIt;
     ++newYieldIt;
   }
+  // Mark for hivm-peel-preload (runs after GraphSyncSolver).
+  newForOp->setAttr(hivm::MaxPreloadNumAttr::name,
+                    rewriter.getI32IntegerAttr(maxPreloadNum));
   rewriter.replaceOp(forOp, newRes);
 }
 

@@ -607,6 +607,26 @@ def HIVM_EventAttr : HIVM_Attr<"Event", "event"> {
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// TRY_WAIT Synchronization Mode
+//===----------------------------------------------------------------------===//
+
+// Only the intra-block synchronization counter query is supported.
+// Other hardware modes are intentionally not exposed until validated.
+def HIVM_TRY_WAIT_INTRA_BLOCK :
+    I32EnumAttrCase<"INTRA_BLOCK", 1, "intra_block">;
+def HIVM_TryWaitSyncModeEnum : HIVM_I32Enum<
+    "TryWaitSyncMode", "Synchronization counter queried by TRY_WAIT",
+    [HIVM_TRY_WAIT_INTRA_BLOCK]>;
+def HIVM_TryWaitSyncModeAttr :
+    HIVM_I32EnumAttr<"try_wait_sync_mode", HIVM_TryWaitSyncModeEnum> {
+  let description = [{
+    `intra_block` queries the intra-block synchronization counter and lowers
+    to hardware mode 1, as documented in the Ascend950 CCE instruction
+    manual. Other query modes are not supported.
+  }];
+}
+
 def HIVM_SYNC_EVENT_SLOT_WAIT : I32EnumAttrCase<"wait", 0>;
 def HIVM_SYNC_EVENT_SLOT_SET : I32EnumAttrCase<"set", 1>;
 def HIVM_SYNC_EVENT_SLOT_INTERNAL : I32EnumAttrCase<"internal", 2>;
@@ -1413,14 +1433,17 @@ def HIVM_TileMixCubeNumAttr
 def HIVM_PreloadNumAttr
     : HIVM_Attr<"PreloadNum", "preload_num"> {
   let description = [{
-    Specifies the preload number of scope op.
+    Specifies the preload stage index of a scope. CreatePreload records the
+    same index on `annotation.mark` of the guard condition for
+    `hivm-peel-preload`.
   }];
 }
 
 def HIVM_MaxPreloadNumAttr
     : HIVM_Attr<"MaxPreloadNum", "max_preload_num"> {
   let description = [{
-    Specifies the max preload number of scope op.
+    Specifies the max preload number of a scope op, or of a rewritten
+    preload `scf.for` for `hivm-peel-preload`.
   }];
 }
 

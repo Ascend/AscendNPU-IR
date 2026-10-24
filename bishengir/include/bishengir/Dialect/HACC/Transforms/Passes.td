@@ -84,6 +84,8 @@ def AppendTargetDeviceSpec : Pass<"hacc-append-device-spec", "ModuleOp"> {
             REGISTER_TARGET(Ascend910_9372),
             REGISTER_TARGET(Ascend910_9381), REGISTER_TARGET(Ascend910_9382),
             REGISTER_TARGET(Ascend910_9391), REGISTER_TARGET(Ascend910_9392),
+            // Ascend950 generic
+            REGISTER_TARGET(Ascend950),
             // Ascend910_95 series
             REGISTER_TARGET(Ascend910_950z), REGISTER_TARGET(Ascend910_9579),
             REGISTER_TARGET(Ascend910_957b), REGISTER_TARGET(Ascend910_957d),
@@ -123,10 +125,12 @@ def AppendTargetDeviceSpec : Pass<"hacc-append-device-spec", "ModuleOp"> {
     >,
     Option<"customAICNumber", "custom-aic-number", "int",
        /*default=*/"-1",
-       "custom aic cores number to use, default : -1 (no override)">,
+       "custom aic cores number to use, must be strictly positive, "
+       "-1 (no override) keeps the target's default">,
     Option<"customAIVNumber", "custom-aiv-number", "int",
        /*default=*/"-1",
-       "custom aiv cores number to use, default : -1 (no override)">,
+       "custom aiv cores number to use, must be strictly positive, "
+       "-1 (no override) keeps the target's default">,
     Option<"HIVMCVersion", "hivmc-version", "std::string",
                         /*default=*/"\"\"", "HIVMC Version">
   ];

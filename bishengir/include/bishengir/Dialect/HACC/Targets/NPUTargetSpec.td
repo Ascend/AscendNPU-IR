@@ -236,6 +236,12 @@ class Ascend950_BaseSpec <string name> : TargetSpec<name> {
   let Arch = Dav_C310;
 }
 
+def Ascend950_Spec : Ascend950_BaseSpec<"Ascend950"> {
+  let AiCoreCount = 0;
+  let CubeCoreCount = 0;
+  let VectorCoreCount = 0;
+}
+
 def Ascend910_950z_Spec : Ascend950_BaseSpec<"Ascend910_950z"> {
   let AiCoreCount = 4;
   let CubeCoreCount = 4;

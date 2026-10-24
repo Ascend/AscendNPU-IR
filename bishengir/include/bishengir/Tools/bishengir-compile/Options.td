@@ -738,6 +738,8 @@ llvm::cl::values(
                 REGISTER_TARGET(Ascend910_9372),
                 REGISTER_TARGET(Ascend910_9381), REGISTER_TARGET(Ascend910_9382),
                 REGISTER_TARGET(Ascend910_9391), REGISTER_TARGET(Ascend910_9392),
+                // Ascend950 generic
+                REGISTER_TARGET(Ascend950),
                 // Ascend910_95 series
                 REGISTER_TARGET(Ascend910_950z), REGISTER_TARGET(Ascend910_9579),
                 REGISTER_TARGET(Ascend910_957b), REGISTER_TARGET(Ascend910_957d),
@@ -782,13 +784,13 @@ llvm::cl::values(
 }
 
 def CustomAICNumber : BiShengIRCompileOpt<
-  "Custom amount of aic cores to use (should be lower or equal than targets' real number, default is no override)",
+  "Custom amount of aic cores to use. Must be strictly positive. The target's real number is used when not specified. Required for targets without default core counts.",
   "int32_t",
   "-1"
 >;
 
 def CustomAIVNumber : BiShengIRCompileOpt<
-  "Custom amount of aiv cores to use (should be lower or equal than targets' real number, default is no override)",
+  "Custom amount of aiv cores to use. Must be strictly positive. The target's real number is used when not specified. Required for targets without default core counts.",
   "int32_t",
   "-1"
 >;

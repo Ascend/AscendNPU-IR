@@ -62,6 +62,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ConvertLayout/Propagate/PropagateConvertLayoutInsertSlice.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutVBrc.cpp
   CreatePreload.cpp
+  PeelPreload.cpp
   CVPipelining.cpp
   EnableHIVMCCompatiblePrint.cpp
   EnableMultiBuffer.cpp
@@ -132,7 +133,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   RemoveHIVMDataLayoutAnnotation.cpp
   RemoveCopyOps.cpp
   SetBufferSize.cpp
-  SinkExclusivePreloadWork.cpp
+  RepositionPreloadWork.cpp
   SinkOpToConsumerInLoop.cpp
   SIMTVFSubTiling.cpp
   SplitSimtModule.cpp

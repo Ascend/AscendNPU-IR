@@ -550,6 +550,15 @@ static void hivmPreBufferizationOptimizationPipeline(
                 hivmPipelineOptions.setWorkspaceMultibuffer));
       }
       pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
+      // Before the second MarkMultiBuffer so buffer-count marking sees the
+      // split scopes. Registered kernels only.
+      if (enableRegisteredPreloadHeuristics(hivmPipelineOptions)) {
+        RepositionPreloadWorkOptions repositionOpts;
+        repositionOpts.enablePreload = true;
+        repositionOpts.workspaceMultiBufferNum =
+            hivmPipelineOptions.setWorkspaceMultibuffer;
+        pm.addPass(createRepositionPreloadWorkPass(repositionOpts));
+      }
       pm.addNestedPass<func::FuncOp>(
           createMarkMultiBufferPass(multiBufferOptions));
     }
@@ -579,17 +588,10 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createMarkTightlyCoupledBufferPass());
   pm.nest<func::FuncOp>().addPass(createHoistTightlyCoupledAllocPass());
 
-  // Post-CVPipelining sink on the unsplit MIX function: exclusive dest/src
-  // clusters (including MTE2 across an unused CUBE) and load→VF→copy
-  // chains that sit across an unused mmad. Flattening same preload_num
-  // scopes stays after split. Registered kernels only, and only with preload.
-  if (enableRegisteredPreloadHeuristics(hivmPipelineOptions)) {
-    SinkExclusivePreloadWorkOptions sinkOpts;
-    sinkOpts.enablePreload = true;
-    sinkOpts.workspaceMultiBufferNum =
-        hivmPipelineOptions.setWorkspaceMultibuffer;
-    pm.addPass(createSinkExclusivePreloadWorkPass(sinkOpts));
-  }
+  // Exclusive dest / copy-chain sinking now runs in
+  // RepositionPreloadWork, immediately after CVPipelining. Flattening same
+  // preload_num scopes stays after split and skips
+  // hivm.independent_preload_prefix.
 
   // Preserve the legacy pass order when CV pipelining is disabled by SSBuffer
   // or explicitly turned off: run code motion after cross-core sync.
@@ -685,8 +687,18 @@ static void hivmPostBufferizationOptimizationPipeline(
     // Move VF entry DMA on argument buffers to the caller before VF cleanup.
     pm.addPass(createOutlineCopyInVFPass());
     pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
-    pm.addPass(scope::createInlineScopePass());
-    pm.addPass(createInlinerPass());
+    // Late pipeline workaround for VFFusion/tree-reduce fusion helpers. This
+    // recovery is separate from InlineScope's regular scope-unwrapping role.
+    // Such helpers may survive earlier inlining because the affine inliner
+    // rejects their top-level affine.apply operations at scf.for call sites.
+    // Lower those operations and retry inlining before InferHIVMMemScope
+    // encounters the remaining helper memref-result boundaries, avoiding
+    // module-wide affine lowering.
+    // TODO: Remove this workaround once helper generation or earlier helper
+    // elimination fixes the underlying issue.
+    InlineScopeOptions inlineOptions;
+    inlineOptions.lowerAffineApplyForInlining = true;
+    pm.addPass(scope::createInlineScopePass(inlineOptions));
   }
   // Bind buffer should be done after outline alloc in vf because the source
   // allocs might be inside the VF.
@@ -829,6 +841,8 @@ static void hivmPostBufferizationOptimizationPipeline(
   }
   // Intra-Core Auto-Sync passes (Inject-Sync, GSS)
   hivmIntraCoreSyncPipeline(pm, hivmPipelineOptions);
+  if (hivmPipelineOptions.enablePreload)
+    pm.addPass(createPeelPreloadPass());
   pm.addPass(mlir::createMemrefExtLoweringPass());
   pm.nest<func::FuncOp>().addPass(createEnableMultiBufferPass());
   pm.nest<func::FuncOp>().addPass(createLowerMultiBufferCounterPass());

@@ -16,6 +16,7 @@ add_bishengir_dialect_library(BiShengIRScopeTransforms
   BiShengIRScopeDialect
   BiShengIRHACCUtils
   BiShengIRHIVMDialect
+  MLIRAffineUtils
   MLIRArithDialect
   MLIRBufferizationDialect
   MLIRDialect

@@ -18,6 +18,8 @@ add_bishengir_conversion_library(BiShengIRMathToHFusion
   BiShengIRTensorDialect
   MLIRArithDialect
   MLIRMathDialect
+  MLIRMemRefDialect
+  MLIRBufferizationDialect
   MLIRFuncDialect
   MLIRLinalgDialect
   BiShengIRHFusionDialect
@@ -25,3 +27,6 @@ add_bishengir_conversion_library(BiShengIRMathToHFusion
   MLIRRewrite
   MLIRPass
 )
+
+target_include_directories(BiShengIRMathToHFusion PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../Template/include)

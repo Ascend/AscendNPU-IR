@@ -49,8 +49,7 @@ std::optional<ExpectedArchitecture> getExpectedArchitecture(StringRef device) {
     return ExpectedArchitecture{NPUArchitectureKind::kDavC220, "dav-c220"};
   if (device.starts_with("Ascend310B"))
     return ExpectedArchitecture{NPUArchitectureKind::kDavM300, "dav-m300"};
-  if (device.starts_with("Ascend910_95") ||
-      device.starts_with("Ascend950PR_") || device.starts_with("Ascend950DT_"))
+  if (device.starts_with("Ascend910_95") || device.starts_with("Ascend950"))
     return ExpectedArchitecture{NPUArchitectureKind::kDavC310, "dav-c310"};
   if (device.starts_with("Ascend960"))
     return ExpectedArchitecture{NPUArchitectureKind::kDav920R1, "dav-920r1"};
@@ -116,6 +115,8 @@ struct ExpectedDeviceSpec {
   bool hasRegBasedEntries;
   int minimalDCacheSize;
   int maximumDCacheSize;
+  int customAIC = -1;
+  int customAIV = -1;
 };
 
 TEST(NPUArchitectureTest, PublicHACCPassPreservesDeviceSpecSerialization) {
@@ -128,6 +129,8 @@ TEST(NPUArchitectureTest, PublicHACCPassPreservesDeviceSpecSerialization) {
        1048576, false, 0, 0},
       {TargetDevice::Ascend310B1, "Ascend310B1", 1, 1, 2097152, 8388608,
        1048576, true, 0, 0},
+      {TargetDevice::Ascend950, "Ascend950", 8, 16, 2031616, 4194304, 2097152,
+       true, 262144, 983040, 8, 16},
       {TargetDevice::Ascend910_9579, "Ascend910_9579", 28, 56, 2031616, 4194304,
        2097152, true, 262144, 983040},
       {TargetDevice::Ascend950PR_9589, "Ascend950PR_9589", 32, 64, 2031616,
@@ -149,7 +152,8 @@ TEST(NPUArchitectureTest, PublicHACCPassPreservesDeviceSpecSerialization) {
     OwningOpRef<ModuleOp> module = ModuleOp::create(builder.getUnknownLoc());
     hacc::utils::setTargetDevice(*module, expected.device);
     PassManager pm(&context);
-    pm.addPass(createAppendDeviceSpecPass());
+    pm.addPass(createAppendDeviceSpecPass(AppendTargetDeviceSpecOptions{
+        TargetDevice::Unknown, expected.customAIC, expected.customAIV, ""}));
     ASSERT_TRUE(succeeded(pm.run(*module)));
 
     auto spec = hacc::utils::getNPUTargetSpec(*module);

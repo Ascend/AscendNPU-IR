@@ -32,6 +32,8 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/WithColor.h"
@@ -1486,7 +1488,8 @@ void MemPlanRegBase::GenerateStorageEntry() {
         continue;
       }
       const std::shared_ptr<BufferLife> &bufLife = buffer2Life.at(genBuffer);
-      std::unique_ptr<StorageEntry> entry = std::make_unique<StorageEntry>();
+      std::unique_ptr<StorageEntry> entry =
+          std::make_unique<StorageEntry>(nextEntryMemoId++);
       entry->bufInfo = &iter->second;
       entry->bufferLifeVec.emplace_back(bufLife);
       entry->inplaceBuffers.emplace_back(iter->first);
@@ -1650,7 +1653,8 @@ PlanStatus MemPlanRegBase::PlanMemOffsetOfWholeWorkSpace() {
     si.specLevel = si.minLevel;
     int childrenNum = static_cast<int>(rootStorageEntry->mergedChildren.size());
     outline.push_back(std::make_shared<MemoryBound>(
-        BufferLifeVec(), 0, std::numeric_limits<uint64_t>::max(), nullptr));
+        BufferLifeVec(), 0, std::numeric_limits<uint64_t>::max(), nullptr,
+        nextBoundMemoId++));
 
     // The initial value is rootStorageEntry.
     StorageEntry *curEntry = rootStorageEntry;
@@ -1688,7 +1692,8 @@ void MemPlanRegBase::ExpandMultiBufferStorageEntry() {
     if (StorageEntryVec[i]->multiBufferNum > 1) {
       // Create multiBufferNum - 1 additional entries
       for (uint32_t j = 1; j < StorageEntryVec[i]->multiBufferNum; j++) {
-        std::unique_ptr<StorageEntry> entry = std::make_unique<StorageEntry>();
+        std::unique_ptr<StorageEntry> entry =
+            std::make_unique<StorageEntry>(nextEntryMemoId++);
         entry->bufInfo = StorageEntryVec[i]->bufInfo;
         entry->bufferLifeVec = StorageEntryVec[i]->bufferLifeVec;
         entry->alignedConstBits = StorageEntryVec[i]->alignedConstBits;
@@ -1760,8 +1765,8 @@ MemPlanRegBase::PlanMemAddressForSingleLevel(StorageEntry *rootStorageEntry,
   si.maxLevel = specLevel;
   si.minLevel = specLevel;
   int childrenNum = static_cast<int>(rootStorageEntry->mergedChildren.size());
-  outline.push_back(
-      std::make_shared<MemoryBound>(BufferLifeVec(), 0, maxBits, nullptr));
+  outline.push_back(std::make_shared<MemoryBound>(BufferLifeVec(), 0, maxBits,
+                                                  nullptr, nextBoundMemoId++));
 
   // The initial value is rootStorageEntry.
   StorageEntry *curEntry = rootStorageEntry;
@@ -1827,8 +1832,8 @@ PlanStatus MemPlanRegBase::PlanMemAddressOfWholeLocalBuffer() {
     // Force sectional UpdateOutline at multi-level entry (shared-pong fix).
     splitOutline = true;
     int childrenNum = static_cast<int>(rootStorageEntry->mergedChildren.size());
-    outline.push_back(
-        std::make_shared<MemoryBound>(BufferLifeVec(), 0, maxBits, nullptr));
+    outline.push_back(std::make_shared<MemoryBound>(
+        BufferLifeVec(), 0, maxBits, nullptr, nextBoundMemoId++));
 
     // The initial value is rootStorageEntry.
     StorageEntry *curEntry = rootStorageEntry;
@@ -2045,6 +2050,11 @@ LogicalResult MemPlanRegBase::MultiSpecPlan(SpecInfo &si, MemBoundList &outline,
                                             PlanRecHis &history,
                                             StorageEntry *entry) {
   LogicalResult planResult = failure();
+  // Keep the stage-0 memo entry-scoped: it covers the spec-level retries of
+  // this entry while staying small and cache-hot. (Verdicts would remain
+  // valid attempt-wide, but an attempt-scoped map measurably costs more in
+  // memory and cache misses than it saves.)
+  stage0ConflictMemo.clear();
   LDBG("[MultiSpecPlan] try entry childIdx="
        << si.childIdx << " needBits=" << entry->alignedConstBits
        << " from level=" << si.specLevel << " down to minLevel=" << si.minLevel
@@ -2113,10 +2123,18 @@ LogicalResult MemPlanRegBase::SpecAlloc(MemBoundList &outline, PlanRecHis &his,
     for (MemBoundListConstIter end = start; end != outline.end(); ++end) {
       std::shared_ptr<MemoryBound> last = *end;
       size += last->extent;
+      // Stage-0 verdicts are stable per (entry, bound): both life vectors
+      // and the buffer metadata they consult are immutable while planning.
+      auto stage0Key = std::make_pair(e->memoId, last->memoId);
+      auto [stage0It, stage0Inserted] =
+          stage0ConflictMemo.try_emplace(stage0Key, false);
+      if (stage0Inserted) {
+        stage0It->second = VerifyConflictStage0(e, last);
+      }
       // if index & addr are as same as last rollback result,
       // continue to find next result
       if (IsSamePlanAsLastRollBack(allocOffset, e->childIdx, si) ||
-          VerifyConflictStage0(e, last)) {
+          stage0It->second) {
         start = end;
         break;
       }
@@ -2327,13 +2345,12 @@ void MemPlanRegBase::SpecAllocRelationOtherBufferEntry(MemBoundList &outline,
 
 bool MemPlanRegBase::IsBufferLifeVecConflict(PlanRecord &r, uint64_t offset,
                                              const StorageEntry *e) const {
-  if ((r.firstMemBound->offset + r.allExtent > offset) &&
-      (r.firstMemBound->offset < offset + e->alignedConstBits)) {
-    DenseMap<ValuePair, BufferLife> intersection =
-        GetOverlapBufferLife(r.entry->bufferLifeVec, e->bufferLifeVec);
-    return !intersection.empty();
+  if ((r.firstMemBound->offset + r.allExtent <= offset) ||
+      (r.firstMemBound->offset >= offset + e->alignedConstBits)) {
+    return false;
   }
-  return false;
+  return !GetOverlapBufferLife(r.entry->bufferLifeVec, e->bufferLifeVec)
+              .empty();
 }
 
 void MemPlanRegBase::PlanRelationOtherBufferEntryAddress(
@@ -2358,7 +2375,7 @@ void MemPlanRegBase::PlanRelationOtherBufferEntryAddress(
   vec.clear();
   vec.reserve(otherBufferOffsets.size());
   for (size_t i = e->multiBufferNum - 1; i < otherBufferOffsets.size(); ++i) {
-    auto entry = std::make_unique<StorageEntry>();
+    auto entry = std::make_unique<StorageEntry>(nextEntryMemoId++);
     entry->bufInfo = e->bufInfo;
     entry->bufferLifeVec = e->bufferLifeVec;
     entry->alignedConstBits = e->alignedConstBits;
@@ -2435,11 +2452,11 @@ bool MemPlanRegBase::VerifyConflictStage2(PlanRecHis &his,
 
 bool MemPlanRegBase::PipeConflict(
     const StorageEntry *e1, const StorageEntry *e2,
-    DenseMap<StorageEntryPair, bool> &conflictMap) {
+    DenseMap<StorageEntryIdPair, bool> &conflictMap) {
   if (e1 == nullptr || e2 == nullptr) {
     return false;
   }
-  auto sePair = std::make_pair(e1, e2);
+  auto sePair = std::make_pair(e1->memoId, e2->memoId);
   auto [iter, isInserted] = conflictMap.try_emplace(sePair, false);
   if (!isInserted) {
     return iter->second;
@@ -2462,12 +2479,18 @@ bool MemPlanRegBase::PipeConflictInSameLoop(const StorageEntry *e1,
   if (e1 == nullptr || e2 == nullptr) {
     return false;
   }
+  auto sePair = std::make_pair(e1->memoId, e2->memoId);
+  auto [iter, isInserted] = sameLoopConflictMap.try_emplace(sePair, false);
+  if (!isInserted) {
+    return iter->second;
+  }
   auto parentLoop1 = GetBufferParentLoop(e1->inplaceBuffers);
   auto parentLoop2 = GetBufferParentLoop(e2->inplaceBuffers);
   if (parentLoop1 != parentLoop2) {
     return false;
   }
   // Cannot be reused under the same region.
+  iter->second = true;
   return true;
 }
 
@@ -2497,14 +2520,14 @@ void MemPlanRegBase::UpdateOutline(MemBoundList &outline, PlanRecHis &his,
     BufferLifeVec life(e->bufferLifeVec.begin(), e->bufferLifeVec.end());
     MergeBufferLife(start, end, life);
     splitBound.emplace_back(std::make_shared<MemoryBound>(
-        life, e->bitsOffset, e->alignedConstBits, e));
+        life, e->bitsOffset, e->alignedConstBits, e, nextBoundMemoId++));
   }
 
   // insert tail memory bound
   if (res > 0) {
-    bound = std::make_shared<MemoryBound>(last->bufferLifeVec,
-                                          last->offset + last->extent - res,
-                                          res, last->lastStorageEntry);
+    bound = std::make_shared<MemoryBound>(
+        last->bufferLifeVec, last->offset + last->extent - res, res,
+        last->lastStorageEntry, nextBoundMemoId++);
     end = outline.insert(end, bound);
   }
   // insert split e memory bound
@@ -2547,8 +2570,8 @@ void MemPlanRegBase::AddMemBoundInSectionalWay(
     } else {
       size = (*iter)->extent;
     }
-    splitBound.emplace_back(
-        std::make_shared<MemoryBound>(life, (*iter)->offset, size, e));
+    splitBound.emplace_back(std::make_shared<MemoryBound>(
+        life, (*iter)->offset, size, e, nextBoundMemoId++));
   }
 }
 
@@ -2568,7 +2591,7 @@ inline void MemPlanRegBase::MergeBufferLife(MemBoundList::const_iterator start,
 }
 
 void MemPlanRegBase::MergeBufferVec(BufferLifeVec &bufferLife) const {
-  if (bufferLife.empty()) {
+  if (bufferLife.size() <= 1) {
     return;
   }
   BufferLifeVec mergedLife;
@@ -2578,19 +2601,31 @@ void MemPlanRegBase::MergeBufferVec(BufferLifeVec &bufferLife) const {
   int start = bufferLife[0]->allocTime;
   int end = bufferLife[0]->freeTime;
   auto buffer = bufferLife[0]->buffer;
-  // merge life
+  size_t runStart = 0;
+  // merge life; segments that merge with nothing are reused as-is (BufferLife
+  // objects are immutable once planning starts) instead of being copied.
   for (size_t i = 1; i < bufferLife.size(); i++) {
     auto &life = bufferLife[i];
     if (life->allocTime <= end + 1) {
       end = end < life->freeTime ? life->freeTime : end;
     } else {
-      mergedLife.emplace_back(std::make_unique<BufferLife>(buffer, start, end));
+      if (i - runStart == 1) {
+        mergedLife.emplace_back(bufferLife[runStart]);
+      } else {
+        mergedLife.emplace_back(
+            std::make_unique<BufferLife>(buffer, start, end));
+      }
       buffer = life->buffer;
       start = life->allocTime;
       end = life->freeTime;
+      runStart = i;
     }
   }
-  mergedLife.emplace_back(std::make_unique<BufferLife>(buffer, start, end));
+  if (bufferLife.size() - runStart == 1) {
+    mergedLife.emplace_back(bufferLife[runStart]);
+  } else {
+    mergedLife.emplace_back(std::make_unique<BufferLife>(buffer, start, end));
+  }
   bufferLife.swap(mergedLife);
 }
 
@@ -2605,9 +2640,7 @@ inline bool
 MemPlanRegBase::VerifyConflictStage0(StorageEntry *e,
                                      const std::shared_ptr<MemoryBound> &last) {
   // level_0: offset = 0, offset means life distance
-  DenseMap<ValuePair, BufferLife> intersection =
-      GetOverlapBufferLife(e->bufferLifeVec, last->bufferLifeVec);
-  return !intersection.empty();
+  return !GetOverlapBufferLife(e->bufferLifeVec, last->bufferLifeVec).empty();
 }
 
 // verify two buffer life vectors is conflict or not
@@ -2625,10 +2658,10 @@ MemPlanRegBase::VerifyConflictStage0(StorageEntry *e,
 //            | |
 // free_time  ---
 // Meantime, the overlap is the intersected buffer_life.
-DenseMap<ValuePair, BufferLife>
+llvm::SmallDenseMap<ValuePair, BufferLife, 32>
 MemPlanRegBase::GetOverlapBufferLife(const BufferLifeVec &b1,
                                      const BufferLifeVec &b2) const {
-  DenseMap<ValuePair, BufferLife> intersection;
+  llvm::SmallDenseMap<ValuePair, BufferLife, 32> intersection;
   size_t i = 0;
   size_t j = 0;
   size_t b1Len = b1.size();
@@ -2668,6 +2701,12 @@ MemPlanRegBase::GetOverlapBufferLife(const BufferLifeVec &b1,
                                BufferLife(nullptr));
       return intersection;
     }
+  }
+  // Merge-normalized (disjoint, allocTime-sorted) life vectors whose time
+  // ranges do not overlap cannot intersect.
+  if (b1.back()->freeTime < b2.front()->allocTime ||
+      b2.back()->freeTime < b1.front()->allocTime) {
+    return intersection;
   }
   while (i < b1Len && j < b2Len) {
     auto lo = std::max(b1[i]->allocTime, b2[j]->allocTime);

@@ -408,6 +408,15 @@ protected:
       RWOperation *rwOp2,
       std::optional<std::pair<int64_t, int64_t>> offsetPair = {});
 
+  // checkAllParentLoopsAreForLoops() memoized per Operation. The predicate
+  // only depends on the op's loop ancestors, and solve() never mutates the
+  // MLIR function (ops are only created later, by the code generator), so an
+  // op keeps its classification for the whole solve. Walking the ancestors
+  // hits MLIR's LoopLikeOpInterface lookup once per level, which dominates
+  // the solve loop when it runs on every conflict pair.
+  llvm::DenseMap<Operation *, bool> allParentLoopsAreForLoopsCache;
+  bool checkAllParentLoopsAreForLoopsCached(Operation *op);
+
   // Construct and return EventIdInfo if the hazard is generic multibuffer
   // reuse; otherwise nullopt.
   std::optional<EventIdInfo> checkMultiBufferEventIdInfo(Occurrence *occ1,

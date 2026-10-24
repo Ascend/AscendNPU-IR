@@ -92,3 +92,26 @@ func.func @propagate_loop_carried_dep(%arg0: memref<16xf32>, %arg1: memref<16xf3
   }
   return
 }
+
+// The independent prefix keeps its own scope so later VF outline does not
+// fuse it back into the cube-dependent scope.
+// CHECK-LABEL: func.func @keep_independent_preload_prefix
+// CHECK:         scope.scope
+// CHECK:         } {{{.*}}hivm.independent_preload_prefix{{.*}}hivm.preload_num = 2
+// CHECK:         scope.scope
+// CHECK:         } {{{.*}}hivm.preload_num = 2
+// CHECK-NOT:       hivm.independent_preload_prefix
+func.func @keep_independent_preload_prefix(%arg0: memref<16xf32>, %lb: index, %ub: index, %step: index)
+    attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+  scf.for %iv = %lb to %ub step %step {
+    scope.scope : () -> () {
+      %v0 = memref.load %arg0[%iv] : memref<16xf32>
+      scope.return
+    } {hivm.independent_preload_prefix, hivm.preload_num = 2 : i32, no_inline}
+    scope.scope : () -> () {
+      %v1 = memref.load %arg0[%iv] : memref<16xf32>
+      scope.return
+    } {hivm.preload_num = 2 : i32, no_inline}
+  }
+  return
+}

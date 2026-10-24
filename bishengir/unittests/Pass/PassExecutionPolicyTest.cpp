@@ -716,6 +716,7 @@ TEST_F(PassExecutionPolicyTest, ProductionRegbaseKernelKindsRegistered) {
   };
   // [MixKernel, PureAicKernel]: not pure AIV.
   for (StringRef pass : {"create-preload",
+                         "hivm-peel-preload",
                          "cv-pipelining",
                          "hivm-bind-sub-block",
                          "hivm-combine-optimized-convert-layout",

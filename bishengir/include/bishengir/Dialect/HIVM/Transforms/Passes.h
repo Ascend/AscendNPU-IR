@@ -207,6 +207,12 @@ std::unique_ptr<Pass> createMergeSamePreloadScopesPass(
 std::unique_ptr<Pass> createSinkExclusivePreloadWorkPass(
     const SinkExclusivePreloadWorkOptions &options = {});
 
+// After CVPipelining and before MarkMultiBuffer: reposition ops between
+// preload scopes and inside a scope. Does not sink mb=1 allocs. Registered
+// kernels only unless bypassed.
+std::unique_ptr<Pass> createRepositionPreloadWorkPass(
+    const RepositionPreloadWorkOptions &options = {});
+
 // Create a pass to split mixed-core scf.if ops into per-core if chains
 // (Ascend950 / RegBase). Intended to run before SplitMixKernel.
 std::unique_ptr<Pass> createSplitMixedIfConditionalsPass();
@@ -460,6 +466,9 @@ std::unique_ptr<Pass> createNormalizeConvOpsPass();
 /// Create a pass to create preload for CV pipelining
 std::unique_ptr<Pass>
 createCreatePreloadPass(const CreatePreloadOptions &options = {});
+
+/// Peel preload prologue/epilogue after GraphSyncSolver.
+std::unique_ptr<Pass> createPeelPreloadPass();
 
 /// Create a pass to remove HIVM data layout annotation.
 std::unique_ptr<Pass> createRemoveHIVMDataLayoutAnnotationPass();

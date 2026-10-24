@@ -1,4 +1,6 @@
 // RUN: bishengir-opt %s -allow-unregistered-dialect -create-preload="enable-preload=true set-workspace-multibuffer=2" | FileCheck %s --check-prefixes=CHECK,ON --implicit-check-not=scope.scope
+// RUN: sed 's/chunk_gated_delta_product_fwd_kernel_h_blockdim64/parallel_path_fwd_kernel/g' %s > %t
+// RUN: bishengir-opt %t -allow-unregistered-dialect -create-preload="enable-preload=true set-workspace-multibuffer=2" | FileCheck %t --check-prefixes=CHECK,ON --implicit-check-not=scope.scope
 // RUN: bishengir-opt %s -allow-unregistered-dialect -create-preload="enable-preload=false set-workspace-multibuffer=2" | FileCheck %s --check-prefix=OFF
 // RUN: bishengir-opt %s -allow-unregistered-dialect -create-preload="enable-preload=true set-workspace-multibuffer=0" | FileCheck %s --check-prefix=OFF
 // RUN: sed 's/chunk_gated_delta_product_fwd_kernel_h_blockdim64/off_registry/g' %s | bishengir-opt -allow-unregistered-dialect -create-preload="enable-preload=true set-workspace-multibuffer=2" | FileCheck %s --check-prefix=OFF
