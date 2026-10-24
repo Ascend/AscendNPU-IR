@@ -27,13 +27,21 @@ check_inputs_of_load_gm_to_ubuf_3d_core(memref_t<__gm__ T, 3> *src,
   auto stride0_ub = dst->strides[0];
   auto stride1_ub = dst->strides[1];
   auto stride2_ub = dst->strides[2];
+  // A fully packed tile drives the DMA in Compact mode, where the UB strides
+  // are byte granular by design. Kept inline because isUbufTileFullyPacked3d
+  // lives in the reg-based section below. Mirrors the gates in
+  // load_gm_to_ubuf_3d_core.
+  bool packed_tile = left_padding_num == 0 && stride2_ub == 1 &&
+                     stride1_ub == src->sizes[2] &&
+                     stride0_ub == src->sizes[1] * src->sizes[2];
   assert(isAddress32ByteAligned(dst_ptr) &&
          "The starting address of dst must be 32byte aligned.");
-  assert(((isSizeAlignedToBlock<T>(stride0_ub) || stride0_ub == 1) &&
-          (isSizeAlignedToBlock<T>(stride1_ub) || stride1_ub == 1) &&
-          (isSizeAlignedToBlock<T>(stride2_ub) || stride2_ub == 1)) &&
-         "The dst strides[0]/strides[1]/strides[2] must be 1 or aligned to"
-         "block.");
+  assert((packed_tile ||
+          ((isSizeAlignedToBlock<T>(stride0_ub) || stride0_ub == 1) &&
+           (isSizeAlignedToBlock<T>(stride1_ub) || stride1_ub == 1) &&
+           (isSizeAlignedToBlock<T>(stride2_ub) || stride2_ub == 1))) &&
+         "The dst strides[0]/strides[1]/strides[2] must be 1, aligned to "
+         "block, or a fully packed tile without left padding.");
 #endif
 }
 
@@ -53,6 +61,25 @@ hasUnalignedUbufStrideFor3dDma(int64_t size1, int64_t size2, int64_t stride0_ub,
     return true;
   }
   return !isStrideAligned<T>(stride1_ub);
+}
+
+/// Return "true" if the UB tile holds the transfer with no gap at any level,
+/// so that every level's stride equals the length actually moved there. The
+/// ALIGN_V2 descriptor then gets dst_stride == burst_len: the hardware's
+/// Compact mode, whose UB stride is byte granular and need not be a multiple
+/// of 32B (see CANN CopyGmToUbufAlignV2, PaddingMode::Compact). Compact mode
+/// forbids padding, so callers must also require left_padding_num == 0.
+///
+/// The lengths are taken from the GM operand because that is what
+/// load_gm_to_ubuf_3d_core_with_contiguous_last_dim uses to derive burst_len
+/// and the UB gap. Judging packedness against the UB sizes instead would not
+/// imply a zero gap whenever the two operands disagree.
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+isUbufTileFullyPacked3d(const memref_t<__gm__ T, 3> *gm,
+                        const memref_t<__ubuf__ T, 3> *ub) {
+  return ub->strides[2] == 1 && ub->strides[1] == gm->sizes[2] &&
+         ub->strides[0] == gm->sizes[1] * gm->sizes[2];
 }
 
 /// Core func of loading GM -> UB, 3D
@@ -143,7 +170,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
 
   if (stride2_gm == 1 && stride2_ub == 1) [[likely]] {
     // last dimension is contiguous
-    if (!has_padding &&
+    if (!has_padding && !isUbufTileFullyPacked3d<T>(src, dst) &&
         hasUnalignedUbufStrideFor3dDma<T>(dst->sizes[1], dst->sizes[2],
                                           dst->strides[0], dst->strides[1],
                                           src->strides[0], src->strides[1])) {
@@ -191,7 +218,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
                                   dst->offset,
                                   {size0, size1 * size2, 1},
                                   {stride0_ub, stride2_ub, 1}};
-    if (!has_padding &&
+    if (!has_padding && !isUbufTileFullyPacked3d<T>(&gm_3d, &ub_3d) &&
         hasUnalignedUbufStrideFor3dDma<T>(ub_3d.sizes[1], ub_3d.sizes[2],
                                           ub_3d.strides[0], ub_3d.strides[1],
                                           gm_3d.strides[0], gm_3d.strides[1])) {
@@ -215,7 +242,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
                                   dst->offset,
                                   {size0 * size1, size2, 1},
                                   {stride1_ub, stride2_ub, 1}};
-    if (!has_padding &&
+    if (!has_padding && !isUbufTileFullyPacked3d<T>(&gm_3d, &ub_3d) &&
         hasUnalignedUbufStrideFor3dDma<T>(ub_3d.sizes[1], ub_3d.sizes[2],
                                           ub_3d.strides[0], ub_3d.strides[1],
                                           gm_3d.strides[0], gm_3d.strides[1])) {

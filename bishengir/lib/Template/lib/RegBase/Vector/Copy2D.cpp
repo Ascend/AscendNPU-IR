@@ -26,11 +26,18 @@ check_inputs_of_load_gm_to_ubuf_2d_core(memref_t<__gm__ T, 2> *src,
   auto dst_ptr = dst->aligned + dst->offset - left_padding_num;
   auto stride0_ub = dst->strides[0];
   auto stride1_ub = dst->strides[1];
+  // Compact mode drives the DMA with a byte-granular row stride by design
+  // (dst_stride == burst_len, no padding), so a packed row is a third legal
+  // form besides unit and block-aligned. Mirrors the gate in
+  // load_gm_to_ubuf_2d_core.
+  bool compact_row = left_padding_num == 0 && stride0_ub == dst->sizes[1];
   assert(isAddress32ByteAligned(dst_ptr) &&
          "The starting address of dst must be 32byte aligned.");
-  assert(((isSizeAlignedToBlock<T>(stride0_ub) || stride0_ub == 1) &&
+  assert(((isSizeAlignedToBlock<T>(stride0_ub) || stride0_ub == 1 ||
+           compact_row) &&
           (isSizeAlignedToBlock<T>(stride1_ub) || stride1_ub == 1)) &&
-         "The dst strides[0]/strides[1] must be 1 or aligned to block.");
+         "The dst strides[0]/strides[1] must be 1, aligned to block, or a "
+         "packed row without left padding.");
 #endif
 }
 
@@ -84,7 +91,9 @@ align_pad_for_load_b64_2d(memref_t<__ubuf__ T, 2> *dst, int64_t pad_value,
 ///         }
 ///         ```
 ///     - `strideUB[0] * dtypeBytes % 32 != 0`
-///       looped scalar transfer
+///       looped scalar transfer, unless the UB rows are packed
+///       (`strideUB[0] == size[1]`) and there is no left padding, in which
+///       case the descriptor is emitted in Compact mode
 template <typename T>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     memref_t<__gm__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst, PadMode pad_mode,
@@ -158,9 +167,19 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     // well-formed subviews of an aligned tile (off+size1 <= stride0_ub and
     // lp <= off); these checks are the explicit, last-resort defense against
     // IR that bypasses the subview verifier.
-    if (!isStrideAligned<T>(stride0_ub) ||
-        CEIL_FACTOR(left_padding_num + src->sizes[1],
-                    INTR_BYTES_PER_BLOCK / sizeof(T)) > stride0_ub) {
+    // Compact mode is the second legal UB-stride encoding of
+    // copy_gm_to_ubuf_align_v2: dst_stride == burst_len byte-exactly, with
+    // left and right padding forced to zero (see CANN CopyGmToUbufAlignV2,
+    // PaddingMode::Compact). load_gm_to_ubuf_intrin_core already emits exactly
+    // that for a packed row without left padding - it zeroes rightPaddingNum
+    // and does not pull dst back - so such a row needs no 32B row stride.
+    // Mirrors is_compact_mode in store_ubuf_to_gm_2d_core.
+    const bool is_compact_mode =
+        left_padding_num == 0 && stride0_ub == src->sizes[1];
+    if (!is_compact_mode &&
+        (!isStrideAligned<T>(stride0_ub) ||
+         CEIL_FACTOR(left_padding_num + src->sizes[1],
+                     INTR_BYTES_PER_BLOCK / sizeof(T)) > stride0_ub)) {
       load_gm_to_ubuf_2d_by_scalar<T>(src, dst);
       return;
     }
@@ -317,11 +336,16 @@ check_inputs_of_store_ubuf_to_gm_2d_core(memref_t<__ubuf__ T, 2> *src,
   auto src_ptr = src->aligned + src->offset;
   auto stride0_ub = src->strides[0];
   auto stride1_ub = src->strides[1];
+  // Same Compact-mode allowance as the load side; store_ubuf_to_gm_2d_core has
+  // accepted a packed row through is_compact_mode since it was introduced.
+  bool compact_row = stride0_ub == src->sizes[1];
   assert(isAddress32ByteAligned(src_ptr) &&
          "The starting address of src must be 32byte aligned.");
-  assert(((isSizeAlignedToBlock<T>(stride0_ub) || stride0_ub == 1) &&
+  assert(((isSizeAlignedToBlock<T>(stride0_ub) || stride0_ub == 1 ||
+           compact_row) &&
           (isSizeAlignedToBlock<T>(stride1_ub) || stride1_ub == 1)) &&
-         "The src strides[0]/strides[1] must be 1 or aligned to block.");
+         "The src strides[0]/strides[1] must be 1, aligned to block, or a "
+         "packed row.");
 #endif
 }
 
