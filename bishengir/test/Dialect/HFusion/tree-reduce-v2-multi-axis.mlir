@@ -2,7 +2,6 @@
 // RUN: bishengir-opt %s --tree-reduce-v2="enable-ra=true enable-ar=true only-marked=true direct-register-ra=true" | FileCheck %s --check-prefixes=CHECK,MARKED
 // RUN: bishengir-opt %s --tree-reduce-v2="enable-ar=true enable-ra=true" --one-shot-bufferize="bufferize-function-boundaries allow-return-allocs-from-loops allow-unknown-ops" -o %t
 // RUN: bishengir-opt %s --tree-reduce-v2="enable-ar=false enable-ra=true" | FileCheck %s --check-prefix=NOAR
-// RUN: bishengir-opt %s --tree-reduce-v2="enable-ar=true enable-ra=true" -debug-only=tree-reduce-v2 2>&1 | FileCheck %s --check-prefix=TRACE
 
 // CHECK-LABEL: func.func @separated_axes(
 // CHECK: tensor.collapse_shape %arg0 {{.*}} tensor<17x3x6xf32> into tensor<51x6xf32>
@@ -497,7 +496,6 @@ func.func @non_perfect_loop_nest(%input: tensor<2x3x4xf32>,
 // CHECK: arith.mulf
 // CHECK: vector.multi_reduction <add>
 // CHECK: return
-// TRACE: Skipping input trace - non-transparent payload op: arith.mulf
 func.func @computed_multiply_source(%lhs: tensor<2048xf32>,
                                     %rhs: tensor<2048xf32>,
                                     %init: tensor<f32>) -> tensor<f32> {
@@ -531,7 +529,6 @@ func.func @computed_multiply_source(%lhs: tensor<2048xf32>,
 // CHECK: arith.addf
 // CHECK: vector.multi_reduction <add>
 // CHECK: return
-// TRACE: Skipping input trace - non-transparent payload op: arith.addf
 func.func @computed_add_source(%input: tensor<2048xf32>,
                                %weight: tensor<2048xf32>,
                                %value: tensor<2048xf32>, %offset: f32,

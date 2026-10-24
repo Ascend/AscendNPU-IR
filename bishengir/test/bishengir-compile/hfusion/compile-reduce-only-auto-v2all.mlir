@@ -1,3 +1,4 @@
+// REQUIRES: asserts
 // UNSUPPORTED: bishengir_published
 // RUN: bishengir-compile -enable-hfusion-compile=true -enable-hivm-compile=true -enable-lir-compile=false -target=Ascend950PR_9579 -debug-only=bishengir-compile-regbase,tree-reduce-v2 %s 2>&1 | FileCheck %s
 
