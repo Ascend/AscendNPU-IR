@@ -1,6 +1,6 @@
 // RUN: bishengir-opt --tree-reduce-v2="enable-ar" %s | FileCheck %s
 
-// Tests for the AscendC-style AR folding (buildAscendStyleAR), which lowers
+// Tests for the AscendC-style AR folding (buildARReductionStage), which lowers
 // reductions with dimR > vlElems as a multi-pass in-place fold mirroring the
 // ReduceAR kernel.  With vlElems = 64 for f32:
 //
@@ -84,4 +84,138 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
   // CHECK: vector.transfer_read {{.*}} : tensor<1x1024xf32>, vector<64xf32>
   // CHECK: vector.shape_cast {{.*}} : vector<64xf32> to vector<1x64xf32>
   // CHECK: vector.multi_reduction <add>, {{.*}} {withoutInitMergeOp} [1] : vector<1x64xf32> to vector<1xf32>
+
+  // The working tensor uses f32, but the final accumulator remains f16.
+  // Derive the accumulator read padding and conversion from its actual type.
+  // CHECK-LABEL: func.func @ar_style_dimR1024_f16_acc(
+  // CHECK: arith.extf {{.*}} : vector<64xf16> to vector<64xf32>
+  // CHECK: vector.transfer_read {{.*}}, {{.*}} : tensor<1xf16>, vector<1xf16>
+  // CHECK: arith.extf {{.*}} : vector<1xf16> to vector<1xf32>
+  // CHECK: vector.multi_reduction <add>, {{.*}} {withoutInitMergeOp} [1] : vector<1x64xf32> to vector<1xf32>
+  // CHECK: arith.truncf {{.*}} : vector<1xf32> to vector<1xf16>
+  func.func @ar_style_dimR1024_f16_acc(
+      %arg0: tensor<1x1024xf16>, %arg1: tensor<1xf16>) -> tensor<1xf16>
+      attributes {hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %zero = arith.constant 0.0 : f16
+    %0 = scf.for %i = %c0 to %c1 step %c1
+        iter_args(%acc = %arg1) -> tensor<1xf16> {
+      %v = vector.transfer_read %arg0[%c0, %c0], %zero
+          : tensor<1x1024xf16>, vector<1x1024xf16>
+      %accv = vector.transfer_read %acc[%c0], %zero
+          : tensor<1xf16>, vector<1xf16>
+      %m = vector.multi_reduction <add>, %v, %accv [1]
+          : vector<1x1024xf16> to vector<1xf16>
+      %w = vector.transfer_write %m, %acc[%c0]
+          : vector<1xf16>, tensor<1xf16>
+      scf.yield %w : tensor<1xf16>
+    }
+    return %0 : tensor<1xf16>
+  }
+
+  // CHECK-LABEL: func.func @ar_style_dimR1024_bf16_acc(
+  // CHECK: arith.extf {{.*}} : vector<64xbf16> to vector<64xf32>
+  // CHECK: vector.transfer_read {{.*}}, {{.*}} : tensor<1xbf16>, vector<1xbf16>
+  // CHECK: arith.extf {{.*}} : vector<1xbf16> to vector<1xf32>
+  // CHECK: arith.truncf {{.*}} : vector<1xf32> to vector<1xbf16>
+  func.func @ar_style_dimR1024_bf16_acc(
+      %arg0: tensor<1x1024xbf16>, %arg1: tensor<1xbf16>) -> tensor<1xbf16>
+      attributes {hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %zero = arith.constant 0.0 : bf16
+    %0 = scf.for %i = %c0 to %c1 step %c1
+        iter_args(%acc = %arg1) -> tensor<1xbf16> {
+      %v = vector.transfer_read %arg0[%c0, %c0], %zero
+          : tensor<1x1024xbf16>, vector<1x1024xbf16>
+      %accv = vector.transfer_read %acc[%c0], %zero
+          : tensor<1xbf16>, vector<1xbf16>
+      %m = vector.multi_reduction <add>, %v, %accv [1]
+          : vector<1x1024xbf16> to vector<1xbf16>
+      %w = vector.transfer_write %m, %acc[%c0]
+          : vector<1xbf16>, tensor<1xbf16>
+      scf.yield %w : tensor<1xbf16>
+    }
+    return %0 : tensor<1xbf16>
+  }
+
+  // A one-vector tail crosses the first compact output group boundary.  The
+  // generated mask clamps inactive iterations to a legal tail address rather
+  // than introducing a vector-valued scf.if.
+  // CHECK-LABEL: func.func @ar_style_dimR16448_f16_small_tail(
+  // CHECK: tensor.empty() : tensor<1x1024xf32>
+  // CHECK: arith.minui
+  // CHECK: arith.subi
+  // CHECK: arith.maxsi
+  // CHECK: arith.minsi
+  // CHECK: vector.create_mask {{.*}} : vector<64xi1>
+  // CHECK-NOT: scf.if
+  // CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<64xf32>
+  func.func @ar_style_dimR16448_f16_small_tail(
+      %arg0: tensor<1x16448xf16>, %arg1: tensor<1xf32>) -> tensor<1xf32>
+      attributes {hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %zero = arith.constant 0.0 : f16
+    %zero_acc = arith.constant 0.0 : f32
+    %0 = scf.for %i = %c0 to %c1 step %c1
+        iter_args(%acc = %arg1) -> tensor<1xf32> {
+      %v = vector.transfer_read %arg0[%c0, %c0], %zero
+          : tensor<1x16448xf16>, vector<1x16448xf16>
+      %promoted = arith.extf %v : vector<1x16448xf16> to vector<1x16448xf32>
+      %accv = vector.transfer_read %acc[%c0], %zero_acc
+          : tensor<1xf32>, vector<1xf32>
+      %m = vector.multi_reduction <add>, %promoted, %accv [1]
+          : vector<1x16448xf32> to vector<1xf32>
+      %w = vector.transfer_write %m, %acc[%c0]
+          : vector<1xf32>, tensor<1xf32>
+      scf.yield %w : tensor<1xf32>
+    }
+    return %0 : tensor<1xf32>
+  }
+
+  // A promoted AR input with a large tail fuses promotion, tail folding and
+  // the first radix-16 stage.  Only the compact 16-vector result is
+  // materialized: [2, 16384] f32 would exceed UB together with the input.
+  // CHECK-LABEL: func.func @ar_style_dimR31740_f16_compact(
+  // CHECK: tensor.empty() : tensor<2x1024xf32>
+  // CHECK-NOT: tensor.empty() : tensor<2x16384xf32>
+  // CHECK: scf.for {{.*}} iter_args({{.*}} = {{.*}}) -> (tensor<2x1024xf32>) {
+  // CHECK: scf.for {{.*}} iter_args({{.*}} = {{.*}}) -> (tensor<2x1024xf32>) {
+  // CHECK: vector.transfer_read {{.*}} : tensor<2x31740xf16>, vector<64xf16>
+  // CHECK: arith.extf {{.*}} : vector<64xf16> to vector<64xf32>
+  // CHECK: vector.create_mask {{.*}} : vector<64xi1>
+  // CHECK: vector.mask {{.*}} { vector.transfer_read {{.*}} : tensor<2x31740xf16>, vector<64xf16> }
+  // CHECK: arith.addf {{.*}} : vector<64xf32>
+  // CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<64xf32>
+  // CHECK-NOT: scf.if
+  // The remaining main stage starts with 16 compact vectors and folds them
+  // into one before the final horizontal reduction.
+  // CHECK: scf.for {{.*}} iter_args({{.*}} = {{.*}}, {{.*}} = %c16{{(_[0-9]+)?}}) -> (tensor<2x1024xf32>, index) {
+  // CHECK-COUNT-16: vector.transfer_read {{.*}} : tensor<2x1024xf32>, vector<64xf32>
+  // CHECK-COUNT-15: arith.addf {{.*}} : vector<64xf32>
+  // CHECK: vector.multi_reduction <add>, {{.*}} {withoutInitMergeOp} [1] : vector<1x64xf32> to vector<1xf32>
+  func.func @ar_style_dimR31740_f16_compact(
+      %arg0: tensor<2x31740xf16>, %arg1: tensor<2xf32>) -> tensor<2xf32>
+      attributes {hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %zero = arith.constant 0.0 : f16
+    %zero_acc = arith.constant 0.0 : f32
+    %0 = scf.for %i = %c0 to %c1 step %c1
+        iter_args(%acc = %arg1) -> tensor<2xf32> {
+      %v = vector.transfer_read %arg0[%c0, %c0], %zero
+          : tensor<2x31740xf16>, vector<2x31740xf16>
+      %promoted = arith.extf %v : vector<2x31740xf16> to vector<2x31740xf32>
+      %accv = vector.transfer_read %acc[%c0], %zero_acc
+          : tensor<2xf32>, vector<2xf32>
+      %m = vector.multi_reduction <add>, %promoted, %accv [1]
+          : vector<2x31740xf32> to vector<2xf32>
+      %w = vector.transfer_write %m, %acc[%c0]
+          : vector<2xf32>, tensor<2xf32>
+      scf.yield %w : tensor<2xf32>
+    }
+    return %0 : tensor<2xf32>
+  }
 }
