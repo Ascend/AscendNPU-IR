@@ -944,13 +944,20 @@ FailureOr<CoreRatio> CoreRatio::getEffective(func::FuncOp func) {
   if (auto attr = getCoreRatioAttr(func))
     return CoreRatio{attr.getCube(), attr.getVector()};
 
-  // No declared ratio, so the default is the target's.
+  // No declared ratio, so the default is the target spec's
+  // CubeCoreCount : VectorCoreCount. No target in the IR means the 910B
+  // compatibility default, matching isAscend910B(ModuleOp).
   auto moduleOp = func->getParentOfType<ModuleOp>();
-  if (moduleOp && (hacc::utils::isAscend910B(moduleOp) ||
-                   hacc::utils::isAscend910_93(moduleOp) ||
-                   hacc::utils::isAscend910_95(moduleOp) ||
-                   hacc::utils::isAscend950(moduleOp)))
-    return CoreRatio{1, 2};
+  if (moduleOp) {
+    auto targetDevice = hacc::utils::getTargetDevice(moduleOp);
+    if (!targetDevice)
+      targetDevice = hacc::TargetDevice::Ascend910B1;
+    if (auto ratio = hacc::utils::getDefaultCoreRatio(*targetDevice)) {
+      CoreRatio effective{ratio->first, ratio->second};
+      if (isValid(effective))
+        return effective;
+    }
+  }
 
   func->emitError() << "no default hivm.core_ratio for this target; set "
                        "hivm.core_ratio on the function explicitly";

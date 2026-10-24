@@ -481,6 +481,15 @@ std::unique_ptr<Pass> createRemoveCopyOpsPass();
 std::unique_ptr<Pass> createFuseTransposeIntoLoadPass();
 
 //===----------------------------------------------------------------------===//
+// V2 pipeline passes (see Passes.td)
+//===----------------------------------------------------------------------===//
+
+std::unique_ptr<Pass>
+createV2SplitKernelPass(const V2SplitKernelOptions &options = {});
+std::unique_ptr<Pass>
+createV2VerifyStagePass(const V2VerifyStageOptions &options = {});
+
+//===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//
 

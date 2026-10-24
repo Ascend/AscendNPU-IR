@@ -561,7 +561,7 @@ def Ascend950DT_95A2_Spec : Ascend950_BaseSpec<"Ascend950DT_95A2"> {
 }
 
 //===----------------------------------------------------------------------===//
-// Ascend960 (dav-920r1, RegBase lineage)
+// Ascend960 (dav-c310, RegBase lineage)
 //===----------------------------------------------------------------------===//
 
 class Ascend960_BaseSpec<string name> : TargetSpec<name> {

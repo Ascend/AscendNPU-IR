@@ -22,9 +22,6 @@ def DavM300FeatureProfile
     : ArchitectureFeatureProfile<Dav_M300, [RegBased, ExplicitSynchronization]>;
 def DavC310FeatureProfile
     : ArchitectureFeatureProfile<Dav_C310, [RegBased, ExplicitSynchronization]>;
-def Dav920R1FeatureProfile
-    : ArchitectureFeatureProfile<Dav_920R1, [RegBased,
-                                             ExplicitSynchronization]>;
 
 // CHECK: enum class ExecutionModel {
 // CHECK: enum class SynchronizationModel {

@@ -624,7 +624,10 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.addPass(scope::createInlineScopePass());
   // TileAndBindSubBlock needs the complete def-use chain across outlined VFs.
   pm.addPass(createInlinerPass());
-  if (!hivmPipelineOptions.skipHIVMBindSubBlockPass) {
+  // A 1:1 AIC:AIV target has no sub-blocks to tile.
+  auto coreRatio = hacc::utils::getDefaultCoreRatio(hivmPipelineOptions.target);
+  bool hasSubBlocks = !coreRatio || coreRatio->first != coreRatio->second;
+  if (!hivmPipelineOptions.skipHIVMBindSubBlockPass && hasSubBlocks) {
     TileAndBindSubBlockOptions tileOptions;
     tileOptions.enableTile = hivmPipelineOptions.enableAutoBindSubBlock;
     tileOptions.batchMatmul = hivmPipelineOptions.enableHIVMBatchMatmul;

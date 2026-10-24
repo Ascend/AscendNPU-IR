@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Tools/bishengir-compile/regbase/PassPipeline.h"
+#include "bishengir/Tools/bishengir-compile/regbase/PassPipelineV2.h"
 
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Conversion/FixCallUnknownLoc/FixCallUnknownLoc.h"
@@ -336,6 +337,10 @@ static void buildDelayedHFusionRegBaseVectorizePipeline(
 
 void buildFinalHIVMPipelines(mlir::OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config) {
+  if (config.getUsePipelineVersion() == 2) {
+    buildV2FinalHIVMPipelines(pm, config);
+    return;
+  }
   if (config.getEnableHIVMCompile()) {
     auto options = std::make_unique<hivm::regbase::HIVMPipelineOptions>();
     setupHIVMPipelineOptions(*options, config);
@@ -479,6 +484,10 @@ static void buildSimdSimtMixPassPipeline(mlir::OpPassManager &pm) {
 
 void buildBiShengHIRPipeline(OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config) {
+  if (config.getUsePipelineVersion() == 2) {
+    buildV2HIRPipeline(pm, config);
+    return;
+  }
   if (!config.getCompileHost()) {
     pm.addPass(
         hacc::createAppendDeviceSpecPass(hacc::AppendTargetDeviceSpecOptions{

@@ -27,6 +27,5 @@ class NPUArchitecture<string name> { string Name = name; }
 def Dav_C220 : NPUArchitecture<"dav-c220">;
 def Dav_M300 : NPUArchitecture<"dav-m300">;
 def Dav_C310 : NPUArchitecture<"dav-c310">;
-def Dav_920R1 : NPUArchitecture<"dav-920r1">;
 
 #endif // BISHENGIR_TARGET_NPU_NPUARCHITECTURE_TD

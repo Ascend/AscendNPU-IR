@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/Arith/Transforms/Passes.h"
 #include "bishengir/Dialect/Bufferization/Transforms/Passes.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
@@ -407,7 +408,10 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.addPass(createMergeSamePreloadScopesPass(mergeOpts));
   }
   pm.addPass(scope::createInlineScopePass());
-  if (!hivmPipelineOptions.skipHIVMBindSubBlockPass) {
+  // A 1:1 AIC:AIV target has no sub-blocks to tile.
+  auto coreRatio = hacc::utils::getDefaultCoreRatio(hivmPipelineOptions.target);
+  bool hasSubBlocks = !coreRatio || coreRatio->first != coreRatio->second;
+  if (!hivmPipelineOptions.skipHIVMBindSubBlockPass && hasSubBlocks) {
     TileAndBindSubBlockOptions tileOptions;
     tileOptions.enableTile = hivmPipelineOptions.enableAutoBindSubBlock;
     pm.addPass(createTileAndBindSubBlockPass(tileOptions));

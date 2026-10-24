@@ -49,10 +49,9 @@ std::optional<ExpectedArchitecture> getExpectedArchitecture(StringRef device) {
     return ExpectedArchitecture{NPUArchitectureKind::kDavC220, "dav-c220"};
   if (device.starts_with("Ascend310B"))
     return ExpectedArchitecture{NPUArchitectureKind::kDavM300, "dav-m300"};
-  if (device.starts_with("Ascend910_95") || device.starts_with("Ascend950"))
+  if (device.starts_with("Ascend910_95") || device.starts_with("Ascend950") ||
+      device.starts_with("Ascend960"))
     return ExpectedArchitecture{NPUArchitectureKind::kDavC310, "dav-c310"};
-  if (device.starts_with("Ascend960"))
-    return ExpectedArchitecture{NPUArchitectureKind::kDav920R1, "dav-920r1"};
   return std::nullopt;
 }
 
@@ -204,18 +203,18 @@ TEST(NPUArchitectureTest, PublicHACCPassPreservesDeviceSpecSerialization) {
   }
 }
 
-TEST(NPUArchitectureTest, Ascend960MapsToDav920R1Architecture) {
-  // Ascend960 (A6, dav-920r1) is a new architecture added alongside the
-  // legacy C220/M300/C310 families and must round-trip through the stringify
-  // / symbolize APIs and the generated architecture mapping.
+TEST(NPUArchitectureTest, Ascend960MapsToDavC310Architecture) {
+  // Ascend960 (A6) belongs to the dav-c310 reg-based lineage and must
+  // round-trip through the stringify / symbolize APIs and the generated
+  // architecture mapping.
   EXPECT_EQ(stringifyTargetDeviceEnum(TargetDevice::Ascend960), "Ascend960");
   EXPECT_EQ(symbolizeTargetDeviceEnum("Ascend960"), TargetDevice::Ascend960);
   EXPECT_EQ(getArchitecture(TargetDevice::Ascend960),
-            NPUArchitectureKind::kDav920R1);
-  EXPECT_EQ(stringifyNPUArchitecture(NPUArchitectureKind::kDav920R1),
-            "dav-920r1");
-  EXPECT_EQ(symbolizeNPUArchitecture("dav-920r1"),
-            NPUArchitectureKind::kDav920R1);
+            NPUArchitectureKind::kDavC310);
+  EXPECT_EQ(stringifyNPUArchitecture(NPUArchitectureKind::kDavC310),
+            "dav-c310");
+  EXPECT_EQ(symbolizeNPUArchitecture("dav-c310"),
+            NPUArchitectureKind::kDavC310);
 
   // The module-level TargetSpec serialization must still emit the spelling.
   MLIRContext context;
@@ -226,7 +225,7 @@ TEST(NPUArchitectureTest, Ascend960MapsToDav920R1Architecture) {
   auto attr =
       dyn_cast<StringAttr>(spec.getSpecEntry(DeviceSpec::ARCH, builder));
   ASSERT_TRUE(attr);
-  EXPECT_EQ(attr.getValue(), "dav-920r1");
+  EXPECT_EQ(attr.getValue(), "dav-c310");
 }
 
 TEST(NPUArchitectureTest, Ascend960IsFFTSSupported) {

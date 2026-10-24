@@ -21,6 +21,7 @@
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HACC/Targets/NPUTargetSpecUtils.h"
 #include "bishengir/Target/NPU/NPUArchitectureFeatures.h"
 
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
@@ -32,6 +33,7 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/FormatVariadic.h"
 
+#include <numeric>
 #include <optional>
 #include <unordered_set>
 
@@ -197,7 +199,8 @@ void setNPUTargetSpec(ModuleOp op, HACCTargetDeviceSpecInterface spec) {
   entries.push_back({StringAttr::get(ctx, kNPUStr), spec});
 #else
   SmallVector<DataLayoutEntryInterface> entries;
-  entries.push_back(DataLayoutEntryAttr::get(ctx, StringAttr::get(ctx, kNPUStr), spec));
+  entries.push_back(
+      DataLayoutEntryAttr::get(ctx, StringAttr::get(ctx, kNPUStr), spec));
 #endif
   op->setAttr(TargetSystemSpecAttr::name,
               TargetSystemSpecAttr::get(ctx, entries));
@@ -218,6 +221,21 @@ std::optional<TargetDevice> getTargetDevice(ModuleOp op) {
   if (auto targetAttr = op->getAttrOfType<TargetAttr>(TargetAttr::name))
     return symbolizeTargetDeviceEnum(targetAttr.getTarget());
   return std::nullopt;
+}
+
+std::optional<std::pair<int32_t, int32_t>>
+getDefaultCoreRatio(TargetDevice targetDevice) {
+  auto maybeSpec = lookupTargetSpec(targetDevice);
+  if (!maybeSpec.has_value())
+    return std::nullopt;
+
+  int32_t cube = maybeSpec.value()->CubeCoreCount;
+  int32_t vector = maybeSpec.value()->VectorCoreCount;
+  if (cube <= 0 || vector <= 0)
+    return std::nullopt;
+
+  int32_t gcd = std::gcd(cube, vector);
+  return std::make_pair(cube / gcd, vector / gcd);
 }
 
 // use unordered_set to speedup because this func is frequently called
@@ -461,21 +479,28 @@ resetDeclFuncLoc(LLVM::LLVMFuncOp /* don't need reference */ llvmFunc) {
   if (auto originalLoc =
           llvm::dyn_cast_if_present<FusedLoc>(llvmFunc.getLoc())) {
 
-    // This check and dyn_cast were added after merging hivmc binary into bishengir-compile binary
-    // Before the merge hivmc would be called from a separate file (e.g. loc("/path/test/tmp/module.hivm.opt.mlir":2:3))
-    // After the merge the location is already FUSED (e.g. loc(fused["y"("/path/softcap_npu.py":104:27), "/path/softcap_npu.py":83:0]))
-    // So it can't be directly casted via llvm::cast, and we need to use dyn_cast to exclude exceptions.
-    // If the merge will become stable, this function can be moved to exclude redundant dyn_cast (the location is already fused)
-    // this can increase compile-time perf a bit.
-    auto originalAttr = llvm::dyn_cast_if_present<LLVM::DISubprogramAttr>(originalLoc.getMetadata());
+    // This check and dyn_cast were added after merging hivmc binary into
+    // bishengir-compile binary Before the merge hivmc would be called from a
+    // separate file (e.g. loc("/path/test/tmp/module.hivm.opt.mlir":2:3)) After
+    // the merge the location is already FUSED (e.g.
+    // loc(fused["y"("/path/softcap_npu.py":104:27),
+    // "/path/softcap_npu.py":83:0])) So it can't be directly casted via
+    // llvm::cast, and we need to use dyn_cast to exclude exceptions. If the
+    // merge will become stable, this function can be moved to exclude redundant
+    // dyn_cast (the location is already fused) this can increase compile-time
+    // perf a bit.
+    auto originalAttr = llvm::dyn_cast_if_present<LLVM::DISubprogramAttr>(
+        originalLoc.getMetadata());
     if (!originalAttr)
       return;
-#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__)
+#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) ||                           \
+    defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__)
     auto newAttr = LLVM::DISubprogramAttr::get(
         llvmFunc->getContext(), DistinctAttr(), LLVM::DICompileUnitAttr(),
         originalAttr.getScope(), originalAttr.getName(),
         originalAttr.getLinkageName(), originalAttr.getFile(), unsigned(),
-        unsigned(), LLVM::DISubprogramFlags::Optimized, originalAttr.getType(), {}, {});
+        unsigned(), LLVM::DISubprogramFlags::Optimized, originalAttr.getType(),
+        {}, {});
 #else
     auto newAttr = LLVM::DISubprogramAttr::get(
         llvmFunc->getContext(), DistinctAttr(), LLVM::DICompileUnitAttr(),

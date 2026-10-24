@@ -25,6 +25,7 @@
 #include "llvm/ADT/SmallSet.h"
 
 #include <type_traits>
+#include <utility>
 
 namespace mlir {
 namespace linalg {
@@ -38,20 +39,15 @@ namespace utils {
 // Utility functions for HACCFunction
 //===----------------------------------------------------------------------===//
 
-template <typename SourceFuncTy, typename TargetFuncTy>
-struct FuncTyMapping;
+template <typename SourceFuncTy, typename TargetFuncTy> struct FuncTyMapping;
 
-template <>
-struct FuncTyMapping<func::FuncOp, hacc::HACCFunction>;
+template <> struct FuncTyMapping<func::FuncOp, hacc::HACCFunction>;
 
-template <>
-struct FuncTyMapping<LLVM::LLVMFuncOp, hacc::HACCFunction>;
+template <> struct FuncTyMapping<LLVM::LLVMFuncOp, hacc::HACCFunction>;
 
-template <>
-struct FuncTyMapping<hacc::HACCFunction, func::FuncOp>;
+template <> struct FuncTyMapping<hacc::HACCFunction, func::FuncOp>;
 
-template <>
-struct FuncTyMapping<hacc::HACCFunction, LLVM::LLVMFuncOp>;
+template <> struct FuncTyMapping<hacc::HACCFunction, LLVM::LLVMFuncOp>;
 
 struct ExternalFuncInfo {
   StringRef funcName;
@@ -140,6 +136,12 @@ bool isAscend910_95(ModuleOp op);
 
 std::optional<TargetDevice> getTargetDevice(ModuleOp op);
 
+/// Default AIC:AIV ratio from the target spec, reduced
+/// (CubeCoreCount : VectorCoreCount). Empty when the spec has no usable
+/// counts.
+std::optional<std::pair<int32_t, int32_t>>
+getDefaultCoreRatio(TargetDevice targetDevice);
+
 void setTargetDevice(ModuleOp op, TargetDevice targetDevice);
 
 bool isAscend910B(TargetDevice targetDevice);
@@ -179,8 +181,8 @@ bool isAscend960(ModuleOp op);
 /// At that point hacc-append-device-spec hasn't added hacc.target yet, that's
 /// why an additional check is required.
 inline bool hasTargetAttr(mlir::ModuleOp moduleOp) {
-  return moduleOp && moduleOp->getAttrOfType<hacc::TargetAttr>(
-                         hacc::TargetAttr::name);
+  return moduleOp &&
+         moduleOp->getAttrOfType<hacc::TargetAttr>(hacc::TargetAttr::name);
 }
 
 bool isRegBasedArch(ModuleOp op);
