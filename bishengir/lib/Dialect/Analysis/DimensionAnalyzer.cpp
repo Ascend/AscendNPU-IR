@@ -18,9 +18,6 @@
 #include "bishengir/Dialect/Analysis/DimensionAnalyzer.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
-
 using namespace mlir;
 using namespace mlir::utils::debugger;
 
@@ -167,16 +164,6 @@ bool DimensionAnalyzerBase::hasValueRef(Value v) const {
 }
 
 void DimensionAnalyzerBase::joinValueGroup(Value a, Value b) {
-  auto isUnboundedFuncMemrefArg = [](Value v) {
-    auto arg = dyn_cast<BlockArgument>(v);
-    if (!arg || !isa<func::FuncOp>(arg.getOwner()->getParentOp()))
-      return false;
-    auto memrefType = dyn_cast<MemRefType>(v.getType());
-    return memrefType && memrefType.getRank() == 1 &&
-           ShapedType::isDynamic(memrefType.getDimSize(0));
-  };
-  if (isUnboundedFuncMemrefArg(a) || isUnboundedFuncMemrefArg(b))
-    return;
   if (!isAllowedType(a.getType()) || !isAllowedType(b.getType()))
     return;
   createDummyRefIfNotExist({a, b});
