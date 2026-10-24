@@ -2688,6 +2688,7 @@ static void preserveEarlyPreloadCopy(Block &body, OpBuilder &builder) {
     auto boundary = builder.create<scope::ScopeOp>(
         copy.getLoc(), TypeRange(ValueRange(outputs.getArrayRef())));
     boundary.setNoInline(true);
+    boundary->setAttr("vf-scope", builder.getUnitAttr());
     Block *inner = builder.createBlock(&boundary.getRegion());
     for (Operation *op : llvm::reverse(ordered))
       op->moveBefore(inner, inner->end());
@@ -2717,14 +2718,12 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
   // Off-registry kernels keep the original GM-store / CBUF-copy order.
   if (allowShapeHeuristics) {
     for (auto &item : worklist)
-      if (item->core == TCoreType::VECTOR && item->scopeOp)
+      if (item->core == TCoreType::VECTOR && item->scopeOp) {
         prioritizePreloadCrossCoreCopy(item->scopeOp.getRegion().front(),
                                        pinAllPreloadNumToZero);
+        preserveEarlyPreloadCopy(item->scopeOp.getRegion().front(), builder);
+      }
   }
-
-  for (auto &item : worklist)
-    if (item->core == TCoreType::VECTOR && item->scopeOp)
-      preserveEarlyPreloadCopy(item->scopeOp.getRegion().front(), builder);
 
   LLVM_DEBUG({
     for (auto item : worklist) {

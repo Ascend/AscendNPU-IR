@@ -1,4 +1,6 @@
 // RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew enable-preload=true bypass-shape-registry=true" -inline-scope -hivm-mark-multi-buffer="enable-auto=false enable-preload=true" | FileCheck %s
+// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew enable-preload=true bypass-shape-registry=true" -inline-scope -hivm-inline-vf-scope | FileCheck %s --check-prefix=INLINE-VF
+// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew enable-preload=true" | FileCheck %s --check-prefix=SAME --implicit-check-not='= scope.scope'
 // RUN: sed 's/, %dp :/, %qk :/' %s | bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true bypass-shape-registry=true" | FileCheck %s --check-prefix=SAME --implicit-check-not='= scope.scope'
 // RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=unroll enable-preload=false bypass-shape-registry=true" | FileCheck %s --check-prefix=UNROLL --implicit-check-not=scope.scope
 
@@ -13,10 +15,19 @@
 // CHECK: hivm.hir.vcast {{.*}} outs(%[[EMPTY]]
 // CHECK: hivm.hir.copy
 // CHECK-NEXT: scope.return %[[EXP]] : tensor<16x16xf32>
-// CHECK-NEXT: } {no_inline}
+// CHECK-NEXT: } {no_inline, "vf-scope"}
 // CHECK: hivm.hir.vmul ins(%[[P]],
 // CHECK: hivm.preload_num = 1 : i32
 // CHECK: hivm.preload_num = 0 : i32
+// INLINE-VF-LABEL: func.func @early_copy
+// INLINE-VF: hivm.preload_num = 2 : i32
+// INLINE-VF: scope.scope : () -> () {
+// INLINE-VF-NOT: scope.scope
+// INLINE-VF: %[[EXP_INLINED:.*]] = hivm.hir.vexp
+// INLINE-VF: hivm.hir.vcast
+// INLINE-VF: hivm.hir.copy
+// INLINE-VF: hivm.hir.vmul ins(%[[EXP_INLINED]],
+// INLINE-VF: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 1 : i32, no_inline}
 // SAME-LABEL: func.func @early_copy
 // SAME: hivm.preload_num = 2 : i32
 // SAME: hivm.preload_num = 1 : i32
