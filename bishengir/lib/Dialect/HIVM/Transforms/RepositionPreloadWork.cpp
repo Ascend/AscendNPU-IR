@@ -45,7 +45,8 @@
 // mmad is the same rule: unused intervening mmad → move the whole chain
 // (including MTE2) into the VECTOR immediately before the consuming mmad.
 //
-// After SplitMixKernel this pass is a no-op.
+// Closed tensor recurrences can follow shared inputs into a later
+// VECTOR. This pass is a no-op after SplitMixKernel.
 //
 //===----------------------------------------------------------------------===//
 
@@ -56,6 +57,7 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -73,6 +75,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
 #include <optional>
@@ -283,23 +286,35 @@ static Value remapThroughReturns(Value v, ArrayRef<Value> newReturns,
   return v;
 }
 
-/// True when every user of `v` is a mark, a scope.return, or already in
-/// `cluster`. Users outside `producer` are ignored: a loop-level alloc can
-/// stay put while its producer-local load / to_tensor move.
+/// Ordinary clusters may leave marks and returns; a recurrence may escape
+/// only through its root's single scope.return.
 static bool usersCoveredByCluster(Value v, scope::ScopeOp producer,
-                                  const DenseSet<Operation *> &cluster) {
-  for (Operation *user : v.getUsers()) {
-    if (isa<annotation::MarkOp, scope::ReturnOp>(user))
-      continue;
-    if (!producer->isProperAncestor(user))
-      continue;
-    if (!cluster.contains(user))
-      return false;
-  }
-  return true;
+                                  const DenseSet<Operation *> &cluster,
+                                  Value recurrenceRoot = {}) {
+  return llvm::all_of(v.getUsers(), [&](Operation *user) {
+    if (cluster.contains(user))
+      return true;
+    if (recurrenceRoot)
+      return v == recurrenceRoot && v.hasOneUse() &&
+             user == producer.getRegion().front().getTerminator();
+    return isa<annotation::MarkOp, scope::ReturnOp>(user) ||
+           !producer->isProperAncestor(user);
+  });
 }
 
-static bool isAllowedReturnedSliceOp(Operation *op) {
+static bool isAllowedReturnedSliceOp(Operation *op,
+                                     bool closedRecurrence = false) {
+  if (closedRecurrence) {
+    auto structured = dyn_cast<hivm::HIVMStructuredOp>(op);
+    return !op->getNumRegions() && isMemoryEffectFree(op) &&
+           (isa<tensor::EmptyOp>(op) ||
+            (structured && structured.isElemwiseNaryOp() &&
+             structured.hasPureTensorSemantics())) &&
+           llvm::all_of(op->getResultTypes(), [](Type type) {
+             auto tensor = dyn_cast<RankedTensorType>(type);
+             return tensor && tensor.hasStaticShape();
+           });
+  }
   if (isa<bufferization::ToTensorOp, hivm::LoadOp, memref::AllocOp,
           memref::SubViewOp, memref::ReinterpretCastOp, memref::CastOp,
           tensor::EmptyOp, tensor::ExpandShapeOp, affine::AffineApplyOp>(op))
@@ -311,9 +326,10 @@ static bool isAllowedReturnedSliceOp(Operation *op) {
 }
 
 static bool opExclusiveInCluster(Operation *op, scope::ScopeOp producer,
-                                 const DenseSet<Operation *> &cluster) {
+                                 const DenseSet<Operation *> &cluster,
+                                 Value recurrenceRoot = {}) {
   for (Value res : op->getResults()) {
-    if (!usersCoveredByCluster(res, producer, cluster))
+    if (!usersCoveredByCluster(res, producer, cluster, recurrenceRoot))
       return false;
   }
   if (auto dps = dyn_cast<DestinationStyleOpInterface>(op)) {
@@ -329,14 +345,16 @@ static bool opExclusiveInCluster(Operation *op, scope::ScopeOp producer,
 
 static bool tryAddToReturnedCluster(Operation *op, scope::ScopeOp producer,
                                     DenseSet<Operation *> &cluster,
-                                    SmallVector<Operation *> &order) {
+                                    SmallVector<Operation *> &order,
+                                    Value recurrenceRoot = {}) {
   if (!op || cluster.contains(op) || !producer->isProperAncestor(op))
     return false;
-  if (!isAllowedReturnedSliceOp(op))
+  if (!isAllowedReturnedSliceOp(op, bool(recurrenceRoot)) ||
+      (recurrenceRoot && op->getParentOp() != producer))
     return false;
   DenseSet<Operation *> tentative(cluster);
   tentative.insert(op);
-  if (!opExclusiveInCluster(op, producer, tentative))
+  if (!opExclusiveInCluster(op, producer, tentative, recurrenceRoot))
     return false;
   cluster.insert(op);
   order.push_back(op);
@@ -404,11 +422,15 @@ addMemrefViewTreeToReturnedCluster(Value memref, scope::ScopeOp producer,
 /// rematerialize index / i1 as scope results).
 static bool collectExclusiveReturnedCluster(
     Value root, scope::ScopeOp producer, SmallVector<Operation *> &clusterOps,
-    SmallVector<Value> &destEmpties, SmallVector<Value> &extras) {
+    SmallVector<Value> &destEmpties, SmallVector<Value> &extras,
+    bool closedRecurrence = false) {
   Operation *rootOp = root.getDefiningOp();
   if (!rootOp || !producer->isProperAncestor(rootOp) ||
-      !isAllowedReturnedSliceOp(rootOp))
+      !isAllowedReturnedSliceOp(rootOp, closedRecurrence) ||
+      (closedRecurrence && (rootOp->getParentOp() != producer ||
+                            !opExclusiveInCluster(rootOp, producer, {}, root))))
     return false;
+  Value recurrenceRoot = closedRecurrence ? root : Value();
 
   DenseSet<Operation *> cluster;
   SmallVector<Operation *> order;
@@ -422,7 +444,7 @@ static bool collectExclusiveReturnedCluster(
     for (Operation *op : current) {
       for (Value operand : op->getOperands()) {
         if (tryAddToReturnedCluster(operand.getDefiningOp(), producer, cluster,
-                                    order))
+                                    order, recurrenceRoot))
           grew = true;
       }
       auto addMemrefUsers = [&](Value memref) {
@@ -443,12 +465,12 @@ static bool collectExclusiveReturnedCluster(
     }
   }
 
-  if (!usersCoveredByCluster(root, producer, cluster))
+  if (!closedRecurrence && !usersCoveredByCluster(root, producer, cluster))
     return false;
 
   for (Operation *op : order) {
     auto dps = dyn_cast<DestinationStyleOpInterface>(op);
-    if (!dps)
+    if (!dps || closedRecurrence)
       continue;
     for (Value init : dps.getDpsInits()) {
       if (!isa<RankedTensorType>(init.getType()))
@@ -469,6 +491,8 @@ static bool collectExclusiveReturnedCluster(
       Operation *def = operand.getDefiningOp();
       if (!def || !producer->isProperAncestor(def) || cluster.contains(def))
         continue;
+      if (closedRecurrence && !isa<RankedTensorType>(operand.getType()))
+        return false;
       if (!llvm::is_contained(extras, operand))
         extras.push_back(operand);
     }
@@ -675,39 +699,151 @@ static bool hasUserBefore(Value scopeRes, scope::ScopeOp dest,
   return false;
 }
 
-/// VECTOR producer only. Cross the nearest later CUBE when it does not
-/// consume `scopeRes`, and land in the first consumer after that CUBE.
-/// A VECTOR consumer takes the cluster; a CUBE consumer takes the VECTOR
-/// immediately in front of it. The nearest CUBE itself consuming the
-/// return uses that same "VECTOR in front" slot, and only when it is
-/// strictly after `producer`.
+/// Trace tensor backing buffers conservatively through views and phi edges.
+static bool mayAliasCopyDestination(Value value, Value destination,
+                                    AliasAnalysis &aliases) {
+  if (!isa<RankedTensorType>(value.getType()))
+    return false;
+  bufferization::BufferizationOptions options;
+  bufferization::AnalysisState buffers(options);
+  llvm::SetVector<Value> work;
+  work.insert(value);
+  for (unsigned i = 0; i < work.size(); ++i)
+    for (Value root :
+         buffers.findValueInReverseUseDefChain(work[i], [](Value value) {
+           return value.getDefiningOp<bufferization::ToTensorOp>() ||
+                  isa<scf::ForOp>(bufferization::getOwnerOfValue(value));
+         })) {
+      if (root.getDefiningOp<tensor::EmptyOp>())
+        continue;
+      if (auto loop =
+              dyn_cast<scf::ForOp>(bufferization::getOwnerOfValue(root))) {
+        auto arg = dyn_cast<BlockArgument>(root);
+        if (!arg)
+          arg = loop.getTiedLoopRegionIterArg(cast<OpResult>(root));
+        work.insert(loop.getTiedLoopInit(arg)->get());
+        work.insert(loop.getTiedLoopYieldedValue(arg)->get());
+        continue;
+      }
+      if (auto toTensor = root.getDefiningOp<bufferization::ToTensorOp>())
+        root = toTensor.getMemref();
+      if (!aliases.alias(root, destination).isNo())
+        return true;
+    }
+  return false;
+}
+
+/// Reject unsafe effects, aliases, and control or synchronization boundaries.
+static bool recurrenceCanCross(Operation *op, ArrayRef<Value> inputs,
+                               AliasAnalysis &aliases) {
+  if (auto scope = dyn_cast<scope::ScopeOp>(op))
+    return llvm::all_of(scope.getRegion().front(), [&](Operation &nested) {
+      return recurrenceCanCross(&nested, inputs, aliases);
+    });
+  if (op->getNumRegions() ||
+      isa<hivm::SetFlagOp, hivm::WaitFlagOp, hivm::PipeBarrierOp,
+          hivm::SyncBlockOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp>(op))
+    return false;
+  auto effects = getEffectsRecursively(op);
+  return effects && llvm::all_of(*effects, [&](const auto &effect) {
+           if (isa<MemoryEffects::Read, MemoryEffects::Allocate>(
+                   effect.getEffect()))
+             return true;
+           return isa<MemoryEffects::Write>(effect.getEffect()) &&
+                  effect.getValue() && llvm::none_of(inputs, [&](Value input) {
+                    return mayAliasCopyDestination(input, effect.getValue(),
+                                                   aliases);
+                  });
+         });
+}
+
+/// Sink to a consumer, or coalesce a closed recurrence with shared-input work.
 static scope::ScopeOp returnedTensorSinkTarget(scope::ScopeOp producer,
-                                               Value scopeRes,
-                                               scf::ForOp forOp) {
+                                               Value result, scf::ForOp loop,
+                                               ArrayRef<Operation *> cluster,
+                                               SmallVectorImpl<Value> &extras,
+                                               bool closedRecurrence) {
   if (scopeBlocksCopySink(producer))
     return nullptr;
-  scope::ScopeOp cube = firstLaterCubeScope(producer);
+  auto cube = firstLaterCubeScope(producer);
   if (!cube)
     return nullptr;
-
-  scope::ScopeOp dest;
-  if (valueUsedInsideScope(scopeRes, cube)) {
-    dest = vectorScopeImmediatelyBefore(cube);
-  } else {
-    scope::ScopeOp consumer = firstConsumingScopeAfter(cube, scopeRes, forOp);
+  if (!closedRecurrence) {
+    auto consumer = valueUsedInsideScope(result, cube)
+                        ? cube
+                        : firstConsumingScopeAfter(cube, result, loop);
     if (!consumer)
       return nullptr;
-    dest = scopeBlocksCopySink(consumer)
-               ? vectorScopeImmediatelyBefore(consumer)
-               : consumer;
+    auto dest = scopeBlocksCopySink(consumer)
+                    ? vectorScopeImmediatelyBefore(consumer)
+                    : consumer;
+    return dest && producer->isBeforeInBlock(dest) &&
+                   !hasUserBefore(result, dest, producer, loop)
+               ? dest
+               : nullptr;
   }
-  if (!dest || dest == producer || !producer->isBeforeInBlock(dest))
+  int64_t stage = getScopePreloadNum(producer).value_or(0);
+  auto yield = cast<scf::YieldOp>(loop.getBody()->getTerminator());
+  if (getScopeCoreType(producer) != hivm::TCoreType::VECTOR || !stage ||
+      !result.hasOneUse() || result.use_begin()->getOwner() != yield)
     return nullptr;
-  if (scopeBlocksCopySink(dest))
+  Value state = loop.getRegionIterArg(result.use_begin()->getOperandNumber());
+  DenseSet<Operation *> inCluster(cluster.begin(), cluster.end());
+  if (state.use_empty() ||
+      !usersCoveredByCluster(state, producer, inCluster, result))
     return nullptr;
-  if (hasUserBefore(scopeRes, dest, producer, forOp))
-    return nullptr;
-  return dest;
+  SmallVector<Value> inputs;
+  for (Operation *op : cluster)
+    for (Value operand : op->getOperands())
+      if (!inCluster.contains(operand.getDefiningOp()))
+        inputs.push_back(operand);
+  llvm::SetVector<Value> captures(inputs.begin(), inputs.end());
+  for (unsigned i = 0; i < captures.size(); ++i) {
+    Value value = captures[i];
+    if (auto arg = dyn_cast<BlockArgument>(value)) {
+      if (arg.getOwner() == loop.getBody() && arg.getArgNumber() &&
+          arg != state)
+        return nullptr;
+    } else if (Operation *def = value.getDefiningOp()) {
+      if (def->getParentOp() != producer && !isa<scope::ScopeOp>(def) &&
+          loop->isAncestor(def))
+        captures.insert_range(def->getOperands());
+    }
+  }
+  llvm::sort(extras, [](Value lhs, Value rhs) {
+    if (lhs.getDefiningOp() != rhs.getDefiningOp())
+      return lhs.getDefiningOp()->isBeforeInBlock(rhs.getDefiningOp());
+    return cast<OpResult>(lhs).getResultNumber() <
+           cast<OpResult>(rhs).getResultNumber();
+  });
+  auto ret =
+      cast<scope::ReturnOp>(producer.getRegion().front().getTerminator());
+  SmallVector<Value> shared;
+  for (auto [i, returned] : llvm::enumerate(ret.getOperands()))
+    if (llvm::is_contained(extras, returned))
+      shared.push_back(producer.getResult(i));
+  AliasAnalysis aliases(loop->getParentOfType<func::FuncOp>());
+  bool afterFirst = false;
+  for (Operation &op : producer.getRegion().front()) {
+    if (inCluster.contains(&op))
+      afterFirst = true;
+    else if (afterFirst && !recurrenceCanCross(&op, inputs, aliases))
+      return nullptr;
+  }
+  for (Operation *op = producer->getNextNode(); op; op = op->getNextNode()) {
+    auto scope = dyn_cast<scope::ScopeOp>(op);
+    if (scope && cube->isBeforeInBlock(scope) &&
+        getScopeCoreType(scope) == hivm::TCoreType::VECTOR) {
+      if (getScopePreloadNum(scope).value_or(stage) < stage &&
+          llvm::any_of(shared, [&](Value value) {
+            return valueUsedInsideScope(value, scope);
+          }))
+        return scope;
+    }
+    if (!recurrenceCanCross(op, inputs, aliases))
+      return nullptr;
+  }
+  return nullptr;
 }
 
 /// Later users of a value that now lives in `consumer` must read a scope
@@ -759,7 +895,9 @@ static scope::ScopeOp exportSunkValueToLaterUsers(scope::ScopeOp consumer,
 /// in the producer; the consumer gets a fresh empty. Scalar extras are
 /// cloned (not returned). Producers are visited last-to-first, and the
 /// walk repeats so an earlier producer can follow a sunk consumer.
-static LogicalResult sinkReturnedTensorsToConsumerImpl(scf::ForOp forOp) {
+static LogicalResult
+sinkReturnedTensorsToConsumerImpl(scf::ForOp forOp,
+                                  bool closedRecurrences = false) {
   for (int iter = 0; iter < 32; ++iter) {
     SmallVector<scope::ScopeOp> scopes;
     for (Operation &op : *forOp.getBody()) {
@@ -794,15 +932,16 @@ static LogicalResult sinkReturnedTensorsToConsumerImpl(scf::ForOp forOp) {
         if (!isa<RankedTensorType, MemRefType>(retVal.getType()))
           continue;
         Value scopeRes = producer.getResult(idx);
-        auto consumer = returnedTensorSinkTarget(producer, scopeRes, forOp);
-        if (!consumer)
-          continue;
-
         SmallVector<Operation *> cluster;
         SmallVector<Value> destEmpties;
         SmallVector<Value> extras;
         if (!collectExclusiveReturnedCluster(retVal, producer, cluster,
-                                             destEmpties, extras))
+                                             destEmpties, extras,
+                                             closedRecurrences))
+          continue;
+        auto consumer = returnedTensorSinkTarget(
+            producer, scopeRes, forOp, cluster, extras, closedRecurrences);
+        if (!consumer)
           continue;
         collectForwardedDepsForScalarExtras(producer, extras);
         // VECTOR ops stay out of CUBE scopes. A CUBE consumer is rewritten
@@ -2422,22 +2561,28 @@ void SinkExclusivePreloadWorkPass::runOnOperation() {
   if (isSplitMixModule(moduleOp))
     return;
   for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
-    if (!hivm::allowLoopShapeHeuristics(this->bypassShapeRegistry,
-                                        funcOp.getName(), this->enablePreload,
-                                        this->workspaceMultiBufferNum))
+    bool sinkAcrossScopes = hivm::allowLoopShapeHeuristics(
+        this->bypassShapeRegistry, funcOp.getName(), this->enablePreload,
+        this->workspaceMultiBufferNum);
+    bool sinkClosedRecurrences =
+        this->enablePreload && this->workspaceMultiBufferNum;
+    if (!sinkAcrossScopes && !sinkClosedRecurrences)
       continue;
     SmallVector<scf::ForOp> forOps;
     funcOp.walk([&](scf::ForOp forOp) { forOps.push_back(forOp); });
     for (scf::ForOp forOp : forOps) {
-      // Every scope at preload_num 0 means the next iteration is not
-      // overlapped. Sinking a returned dest across those scopes can place
-      // it before the value it reads.
-      if (!allScopesPinnedToZero(forOp) &&
-          failed(sinkReturnedTensorsToConsumerImpl(forOp)))
-        return signalPassFailure();
-      if (failed(sinkCopyChainPastUnusedMmad(forOp)))
-        return signalPassFailure();
-      if (failed(sinkPreloadLocalAllocs(forOp)))
+      if (sinkAcrossScopes) {
+        // All-zero scopes must preserve reads of the old state.
+        if (!allScopesPinnedToZero(forOp) &&
+            failed(sinkReturnedTensorsToConsumerImpl(forOp)))
+          return signalPassFailure();
+        if (failed(sinkCopyChainPastUnusedMmad(forOp)))
+          return signalPassFailure();
+        if (failed(sinkPreloadLocalAllocs(forOp)))
+          return signalPassFailure();
+      }
+      if (sinkClosedRecurrences &&
+          failed(sinkReturnedTensorsToConsumerImpl(forOp, true)))
         return signalPassFailure();
     }
   }
@@ -2455,28 +2600,36 @@ void RepositionPreloadWorkPass::runOnOperation() {
   if (isSplitMixModule(moduleOp))
     return;
   for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
-    if (!hivm::allowLoopShapeHeuristics(this->bypassShapeRegistry,
-                                        funcOp.getName(), this->enablePreload,
-                                        this->workspaceMultiBufferNum))
+    bool sinkAcrossScopes = hivm::allowLoopShapeHeuristics(
+        this->bypassShapeRegistry, funcOp.getName(), this->enablePreload,
+        this->workspaceMultiBufferNum);
+    bool sinkClosedRecurrences =
+        this->enablePreload && this->workspaceMultiBufferNum;
+    if (!sinkAcrossScopes && !sinkClosedRecurrences)
       continue;
     SmallVector<scf::ForOp> forOps;
     funcOp.walk([&](scf::ForOp forOp) { forOps.push_back(forOp); });
     for (scf::ForOp forOp : forOps) {
-      clusterSharedLeftMatrixMads(forOp);
-      // Only returned-tensor sinking is unsafe for all-zero scopes: moving
-      // its writer can place writeback before a read of the old state.
-      if (!allScopesPinnedToZero(forOp) &&
-          failed(sinkReturnedTensorsToConsumerImpl(forOp)))
+      if (sinkAcrossScopes) {
+        clusterSharedLeftMatrixMads(forOp);
+        // Only returned-tensor sinking is unsafe for all-zero scopes: moving
+        // its writer can place writeback before a read of the old state.
+        if (!allScopesPinnedToZero(forOp) &&
+            failed(sinkReturnedTensorsToConsumerImpl(forOp)))
+          return signalPassFailure();
+        if (failed(sinkCopyChainPastUnusedMmad(forOp)))
+          return signalPassFailure();
+        // Same-iteration copy scheduling already has its own sink. Avoid
+        // introducing additional independent prefixes on all-zero loops.
+        if (!allScopesPinnedToZero(forOp))
+          hoistIndependentPreloadWork(forOp);
+        sinkCopyIndependentWork(forOp);
+        if (allScopesPinnedToZero(forOp))
+          splitCopyBufferReadTails(forOp);
+      }
+      if (sinkClosedRecurrences &&
+          failed(sinkReturnedTensorsToConsumerImpl(forOp, true)))
         return signalPassFailure();
-      if (failed(sinkCopyChainPastUnusedMmad(forOp)))
-        return signalPassFailure();
-      // Same-iteration copy scheduling already has its own sink. Avoid
-      // introducing additional independent prefixes on all-zero loops.
-      if (!allScopesPinnedToZero(forOp))
-        hoistIndependentPreloadWork(forOp);
-      sinkCopyIndependentWork(forOp);
-      if (allScopesPinnedToZero(forOp))
-        splitCopyBufferReadTails(forOp);
     }
   }
 }
