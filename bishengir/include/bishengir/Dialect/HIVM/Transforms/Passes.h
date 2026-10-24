@@ -425,6 +425,9 @@ std::unique_ptr<Pass> createSplitSimtModulePass();
 // Mark SIMT scopes no_inline so inline-scope keeps them outlined
 std::unique_ptr<Pass> createMarkSimtScopeNoInlinePass();
 
+// Inline vf-scope regions nested within preload scopes
+std::unique_ptr<Pass> createInlineVFScopePass();
+
 // Create scope for gather_load and scatter_store
 std::unique_ptr<Pass> createAutoScopePass();
 

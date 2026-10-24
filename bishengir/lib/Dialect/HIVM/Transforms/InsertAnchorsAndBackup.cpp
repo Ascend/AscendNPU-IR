@@ -402,9 +402,12 @@ func::FuncOp InsertAnchorsAndBackupPass::backupFunc(func::FuncOp src) {
   auto mergeSamePreloadScopesPass = createMergeSamePreloadScopesPass();
   std::string mergeSamePreloadScopesPassName =
       mergeSamePreloadScopesPass->getArgument().str();
+  auto inlineVFScopePass = createInlineVFScopePass();
+  std::string inlineVFScopePassName = inlineVFScopePass->getArgument().str();
   std::string allPassesNames =
       insertAnchorsAndBackupPassName + "," + delayedCrossCoreGSSPassName + "," +
-      splitSimtModulePassName + "," + mergeSamePreloadScopesPassName;
+      splitSimtModulePassName + "," + mergeSamePreloadScopesPassName + "," +
+      inlineVFScopePassName;
 
   auto attr = mlir::annotation::FilterPassesAttr::get(
       ctx, StringAttr::get(ctx, allPassesNames));

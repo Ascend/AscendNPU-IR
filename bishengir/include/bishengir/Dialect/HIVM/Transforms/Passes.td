@@ -1613,6 +1613,17 @@ def MarkSimtScopeNoInline : HIVMPass<"mark-simt-scope-no-inline", "ModuleOp"> {
   let dependentDialects = ["scope::ScopeDialect"];
 }
 
+def InlineVFScope : HIVMPass<"hivm-inline-vf-scope", "ModuleOp"> {
+  let summary = "Inline vf-scope regions nested within preload scopes.";
+  let description = [{
+    Inlines `scope.scope` ops carrying the `vf-scope` attribute that are nested
+    inside a parent preload `scope.scope` with a core-type attribute after
+    vector function outlining.
+  }];
+  let constructor = "mlir::hivm::createInlineVFScopePass()";
+  let dependentDialects = ["scope::ScopeDialect", "hivm::HIVMDialect"];
+}
+
 def AutoScope : HIVMPass<"auto-scope"> {
   let summary = "Create scope for gather_load and scatter_store";
   let constructor = "mlir::hivm::createAutoScopePass()";
