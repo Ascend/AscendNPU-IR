@@ -51,6 +51,16 @@ set_fpc(uint64_t relu_pre_addr, uint64_t quant_pre_addr,
 __aicore__ __attribute__((always_inline)) void
 set_nd_para(uint64_t nd_num, uint64_t src_nd_stride, uint64_t dst_nd_stride) {
 #ifdef ENABLE_CPU_TRACE_INTRINSIC
+#elif BISHENG_TPL_920R1
+  // dav-920r1: set_nd_para is not exposed by the 920r1 ccec toolchain; its
+  // semantics live in the LOOP3_PARA register (set_loop3_para, intrinsics
+  // table #4158) with the same bit layout:
+  //   nd_num | src_nd_stride << 16 | dst_nd_stride << 32.
+  // The esl model hard-checks LOOP3_PARA.loop3_size > 0 for NZ2ND/NZ2DN
+  // fixpipe (fixp_nop_cfg exception otherwise), so the register must be
+  // written before every NZ2ND fixpipe on 920r1.
+  INTRINSIC(set_loop3_para,
+            (uint64_t)(nd_num | (src_nd_stride << 16) | (dst_nd_stride << 32)));
 #elif !BISHENG_TPL_HAS_FIXPIPE_ND_PARA
 #else
   INTRINSIC(set_nd_para,

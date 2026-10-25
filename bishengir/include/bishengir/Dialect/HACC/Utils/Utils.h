@@ -161,6 +161,11 @@ bool isAscend960(llvm::StringRef targetDevice);
 bool isRegBasedArch(TargetDevice targetDevice);
 bool isRegBasedArch(llvm::StringRef targetDevice);
 
+/// Whether the shared C310/920R1 vector lowering pipeline is supported.
+/// This is narrower than register-based execution: M300 is not included.
+bool supportsRegBaseVectorLowering(TargetDevice targetDevice);
+bool supportsRegBaseVectorLowering(ModuleOp op);
+
 bool isFFTSSupportedArch(TargetDevice targetDevice);
 
 bool isAscend910B(ModuleOp op);

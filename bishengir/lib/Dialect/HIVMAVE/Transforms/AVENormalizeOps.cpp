@@ -319,7 +319,8 @@ struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
                                 PatternRewriter &rewriter) const override {
     LDBG("process operation : " << store);
     auto moduleOp = store->getParentOfType<ModuleOp>();
-    bool archIs910_95 = hacc::utils::isAscend950(moduleOp);
+    bool supportsNativeVectorLowering =
+        hacc::utils::supportsRegBaseVectorLowering(moduleOp);
     VectorType vectorTy = store.getVectorType();
     auto vecElemTy = vectorTy.getElementType();
     auto elemWidth = vecElemTy.getIntOrFloatBitWidth();
@@ -346,9 +347,9 @@ struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
         if (elemWidth == 8) {
           store.setPattern(hivmave::StoreDist::PK4_B32);
           LDBG("set store dist from NORM to PK4_B32");
-        if (archIs910_95)
-          changeStoreVectorType(store, rewriter, 4, 32);
-        return success();
+          if (supportsNativeVectorLowering)
+            changeStoreVectorType(store, rewriter, 4, 32);
+          return success();
         }
         break;
       default:
@@ -646,8 +647,8 @@ struct AVEPgePattern : public OpRewritePattern<VFPgeOp> {
 
 static void adaptBitWidthForLoad(IRRewriter &rewriter,
                                  mlir::func::FuncOp &funcOp,
-                                 bool archIs910_95) {
-  funcOp->walk([&rewriter, archIs910_95](VFLoadOp load) {
+                                 bool supportsNativeVectorLowering) {
+  funcOp->walk([&rewriter, supportsNativeVectorLowering](VFLoadOp load) {
     LDBG("process operation : " << load);
     hivmave::LoadDist dist = load.getPattern();
     Location loc = load->getLoc();
@@ -655,7 +656,7 @@ static void adaptBitWidthForLoad(IRRewriter &rewriter,
     rewriter.setInsertionPointAfter(load);
     SmallVector<Operation *> oldUsers(dstVec.getUsers());
     // Add additional op to adpat dist mode for unaligned load
-    if (archIs910_95 && load->hasAttr(UnalignedAttr::name)) {
+    if (supportsNativeVectorLowering && load->hasAttr(UnalignedAttr::name)) {
       Value result =
           addDistForUnalignedLoad(dstVec, dist, loc, rewriter);
       if (result != dstVec) {
@@ -668,7 +669,7 @@ static void adaptBitWidthForLoad(IRRewriter &rewriter,
     // intrin of 310b4 doesn't support UNPK4 or PK4 dist, we have to
     // load/store data in compact manner and interleave data after load
     // and deinterleave data before store.
-    if (!archIs910_95 && dist == hivmave::LoadDist::UNPK4_B8) {
+    if (!supportsNativeVectorLowering && dist == hivmave::LoadDist::UNPK4_B8) {
       LDBG("add intlv for 310b4");
       Value sparseVec1 = sparseByIntlv(dstVec, rewriter, loc);
       Value sparseVec2 = sparseByIntlv(sparseVec1, rewriter, loc);
@@ -682,15 +683,16 @@ static void adaptBitWidthForLoad(IRRewriter &rewriter,
 
 static void adaptBitWidthForStore(IRRewriter &rewriter,
                                   mlir::func::FuncOp &funcOp,
-                                  bool archIs910_95) {
-  funcOp->walk([&rewriter, archIs910_95](VFMaskedStoreOp store) {
+                                  bool supportsNativeVectorLowering) {
+  funcOp->walk([&rewriter,
+                supportsNativeVectorLowering](VFMaskedStoreOp store) {
     LDBG("process operation : " << store);
     hivmave::StoreDist dist = store.getPattern();
     Location loc = store->getLoc();
     auto srcVec = store.getVal();
     rewriter.setInsertionPoint(store);
     // Add additional op to adpat dist mode for unaligned store
-    if (archIs910_95 && store->hasAttr(UnalignedAttr::name)) {
+    if (supportsNativeVectorLowering && store->hasAttr(UnalignedAttr::name)) {
       Value result =
           addDistForUnalignedStore(srcVec, dist, loc, rewriter);
       if (result != srcVec) {
@@ -703,7 +705,7 @@ static void adaptBitWidthForStore(IRRewriter &rewriter,
     // intrin of 310b4 doesn't support UNPK4 or PK4 dist, we have to
     // load/store data in compact manner and interleave data after load
     // and deinterleave data before store.
-    if (!archIs910_95 && dist == hivmave::StoreDist::PK4_B32) {
+    if (!supportsNativeVectorLowering && dist == hivmave::StoreDist::PK4_B32) {
       LDBG("add dintlv for 310b4");
       Value denseVec1 = denseByDIntlv(srcVec, rewriter, loc);
       Value denseVec2 = denseByDIntlv(denseVec1, rewriter, loc);
@@ -724,10 +726,11 @@ struct AVENormalizeOpsPass
     IRRewriter rewriter(&getContext());
     auto funcOp = getOperation();
     auto moduleOp = funcOp->getParentOfType<ModuleOp>();
-    bool archIs910_95 = hacc::utils::isAscend950(moduleOp);
+    bool supportsNativeVectorLowering =
+        hacc::utils::supportsRegBaseVectorLowering(moduleOp);
 
-    adaptBitWidthForLoad(rewriter, funcOp, archIs910_95);
-    adaptBitWidthForStore(rewriter, funcOp, archIs910_95);
+    adaptBitWidthForLoad(rewriter, funcOp, supportsNativeVectorLowering);
+    adaptBitWidthForStore(rewriter, funcOp, supportsNativeVectorLowering);
   }
 
 public:

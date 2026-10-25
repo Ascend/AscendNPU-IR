@@ -117,10 +117,10 @@ static void markTightlyCoupledBufferOnFunc(func::FuncOp func) {
 void MarkTightlyCoupledBufferPass::runOnOperation() {
   func::FuncOp func = getOperation();
 
-  // Mirror the original SplitMixKernel behavior: only RegBase (Ascend950)
-  // targets use CV tightly-coupled buffers.
+  // Mark existing RegBase coupled transfers before splitting the two cores.
+  // Transfer creation and its core-ratio policy are handled separately.
   ModuleOp moduleOp = func->getParentOfType<ModuleOp>();
-  if (!moduleOp || !hacc::utils::isAscend950(moduleOp))
+  if (!moduleOp || !hacc::utils::supportsRegBaseVectorLowering(moduleOp))
     return;
 
   // Unregistered kernels keep master's early MarkTCB. Registered kernels skip

@@ -80,7 +80,8 @@ struct NormalizeHIVMPass
                                                          archIsRegbased);
     populateNormalizeFinalArithmeticPatterns(patterns);
     populateNormalizeCmpVnePatterns(patterns);
-    populateNormalizeAtomicPatterns(patterns);
+    populateNormalizeAtomicPatterns(
+        patterns, hacc::utils::supportsRegBaseVectorLowering(moduleOp));
     populateNormalizeSortPatterns(patterns);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
