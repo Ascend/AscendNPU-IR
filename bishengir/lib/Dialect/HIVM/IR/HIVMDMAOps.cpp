@@ -1321,8 +1321,9 @@ LogicalResult FixpipeOp::verify() {
   }
 
   // Other modes do not imply support for channel splitting or dual
-  // destinations.
-  if (!is910_95) {
+  // destinations. Ascend960 reuses the Ascend910_95 fixpipe pipeline, so the
+  // same DMA modes and channel splitting are permitted there.
+  if (!is910_95 && !isAscend960) {
     if (dmaMode != FixpipeDMAMode::NZ2ND && dmaMode != FixpipeDMAMode::NZ2NZ &&
         !(dmaMode == FixpipeDMAMode::NZ2DN && supportsNZ2DN)) {
       return emitOpError(
@@ -1345,9 +1346,10 @@ LogicalResult FixpipeOp::verify() {
   if (!isDualDstEnabled(dualDstMode)) {
     return success();
   }
-  // dual_dst_mode can only be enabled on Ascend950.
-  if (!isAscend950) {
-    return emitOpError("dual_dst_mode is only supported on Ascend950!");
+  // dual_dst_mode can only be enabled on Ascend950/Ascend960.
+  if (!isAscend950 && !isAscend960) {
+    return emitOpError(
+        "dual_dst_mode is only supported on Ascend950/Ascend960!");
   }
 
   auto srcScope = getOptionalHIVMAddressSpace(getSrc().getType());
