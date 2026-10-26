@@ -182,7 +182,7 @@ template <typename... OpTypes> void registerAll(RewritePatternSet &patterns) {
 }
 
 void populateCloneTensorEmptyPattern(RewritePatternSet &patterns,
-                                     bool isAscend950) {
+                                     bool supportsRegBaseVector) {
   patterns.add<CloneTensorEmptyHIVMStructuredOpPattern<hivm::CopyOp>,
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::LoadOp>,
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::StoreOp>,
@@ -196,8 +196,8 @@ void populateCloneTensorEmptyPattern(RewritePatternSet &patterns,
                CloneTensorInsert, CloneTensorEmptyLoopPattern<scf::WhileOp>,
                CloneTensorEmptyLoopPattern<scf::ForOp>>(patterns.getContext());
 
-  // only 950 requires empty tensor of these types of op sinking.
-  if (isAscend950) {
+  // RegBase vector targets need independent empty tensors for these uses.
+  if (supportsRegBaseVector) {
     patterns.add<CloneTensorEmptyOperationPattern<hivm::EmbeddingGatherOp>,
                  CloneTensorEmptyOperationPattern<hivm::IndirectLoadOp>,
                  CloneTensorEmptyOperationPattern<hivm::StrideLoadOp>,
@@ -217,12 +217,13 @@ void CloneTensorEmptyPass::runOnOperation() {
   if (hacc::utils::isHost(funcOp))
     return;
 
-  bool archIs950 = false;
+  bool supportsRegBaseVector = false;
   if (auto moduleOp = funcOp->getParentOfType<ModuleOp>())
-    archIs950 = hacc::utils::isAscend950(moduleOp);
+    supportsRegBaseVector =
+        hacc::utils::supportsRegBaseVectorLowering(moduleOp);
 
   RewritePatternSet patterns(&getContext());
-  populateCloneTensorEmptyPattern(patterns, archIs950);
+  populateCloneTensorEmptyPattern(patterns, supportsRegBaseVector);
   GreedyRewriteConfig config;
   config.strictMode = GreedyRewriteStrictness::ExistingOps;
   (void)applyPatternsGreedily(funcOp, std::move(patterns), config);
