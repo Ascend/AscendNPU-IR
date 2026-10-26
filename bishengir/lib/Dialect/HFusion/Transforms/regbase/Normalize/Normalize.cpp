@@ -39,6 +39,8 @@ void populateNormalizeHFusionRegBasePatterns(RewritePatternSet &patterns,
   populateNormalizeMulRecPatterns(patterns);
   populateNormalizeModPatterns(patterns);
   populateNormalizePow2DivRemPatterns(patterns, enableDivRemPow2);
+  // General constant div/rem excludes powers of two handled above.
+  populateNormalizeConstDivRemPatterns(patterns);
   populateNormalizeCmpToCastPatterns(patterns);
   populateNormalizeArithmeticPatterns(patterns, enableFastDiv);
   populateNormalizePrimaryMathPatterns(patterns);

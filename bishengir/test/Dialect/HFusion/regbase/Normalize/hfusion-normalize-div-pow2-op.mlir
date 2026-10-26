@@ -154,10 +154,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 
 // -----
 
-// non-pow2 divisor 7: no shifts (general constant division is out of scope)
+// Non-power-of-two divisor 7 is handled by the general constant rules.
 // CHECK-LABEL: func.func @test_div_nonpow2_i32
-// CHECK:       linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
-// CHECK-NOT:   binary_fn<shr
+// CHECK:       hfusion.mulext
+// CHECK:       binary_fn<shrsi>
+// CHECK-NOT:   binary_fn<div>
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_div_nonpow2_i32(%arg0: tensor<16xi32>) -> tensor<16xi32> {
       %cst = arith.constant 7 : i32
