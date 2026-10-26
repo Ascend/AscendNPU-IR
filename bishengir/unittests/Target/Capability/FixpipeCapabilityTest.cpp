@@ -15,9 +15,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.h"
+#include "bishengir/Dialect/HIVM/IR/Contracts/DMA/Fixpipe/FixpipePreQuantContract.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Target/NPU/FixpipeCapability.h"
+#include "bishengir/Target/NPU/DMA/Fixpipe/FixpipeCapability.h"
 #include "bishengir/Target/NPU/NPUArchitecture.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
@@ -88,43 +88,44 @@ protected:
 };
 
 TEST_F(FixpipeCapabilityTest, RegisteredRowsAreNative) {
+  EXPECT_EQ(query(NPUArchitectureKind::kDavC220, f32, f32, kNz2nd, kNoQuant,
+                  kNoRelu, 0),
+            NativeSupport::Native);
+  EXPECT_EQ(query(NPUArchitectureKind::kDavC220, i32, i32, kNz2nd, kNoQuant,
+                  kNoRelu, 0),
+            NativeSupport::Native);
+  EXPECT_EQ(query(NPUArchitectureKind::kDavC220, i32, i8, kNz2nd, kS322I8,
+                  kNoRelu, 0),
+            NativeSupport::Native);
   for (int64_t dma : {kNz2nd, kNz2nz}) {
-    for (int64_t relu : {kNoRelu, kNormalRelu}) {
-      EXPECT_EQ(query(NPUArchitectureKind::kDavC220, f32, f32, dma, kNoQuant,
-                      relu, 0),
-                NativeSupport::Native);
-      EXPECT_EQ(query(NPUArchitectureKind::kDavC220, i32, i32, dma, kNoQuant,
-                      relu, 0),
-                NativeSupport::Native);
-      EXPECT_EQ(query(NPUArchitectureKind::kDavC220, f32, f16, dma, kF322F16,
-                      relu, 0),
-                NativeSupport::Native);
-      EXPECT_EQ(query(NPUArchitectureKind::kDavC220, f32, bf16, dma, kF322BF16,
-                      relu, 0),
-                NativeSupport::Native);
-      EXPECT_EQ(query(NPUArchitectureKind::kDavC220, i32, i8, dma, kS322I8, relu,
-                      0),
-                NativeSupport::Native);
-    }
+    EXPECT_EQ(query(NPUArchitectureKind::kDavC220, f32, f16, dma, kF322F16,
+                    kNoRelu, 0),
+              NativeSupport::Native);
+    EXPECT_EQ(query(NPUArchitectureKind::kDavC220, f32, bf16, dma, kF322BF16,
+                    kNoRelu, 0),
+              NativeSupport::Native);
   }
   for (int64_t dma : {kNz2nd, kNz2dn, kNz2nz}) {
-    for (int64_t relu : {kNoRelu, kNormalRelu}) {
-      EXPECT_EQ(query(NPUArchitectureKind::kDavC310, f32, f32, dma, kNoQuant,
-                      relu, 0),
-                NativeSupport::Native);
-      EXPECT_EQ(query(NPUArchitectureKind::kDavC310, f32, f32, dma,
-                      kQF322F32Pre, relu, 0),
-                NativeSupport::Native);
-      EXPECT_EQ(query(NPUArchitectureKind::kDavC310, f32, f32, dma, kNoQuant,
-                      relu, 1),
-                NativeSupport::Native);
-      EXPECT_EQ(query(NPUArchitectureKind::kDavC310, f32, f32, dma,
-                      kQF322F32Pre, relu, 1),
-                NativeSupport::Native);
-      EXPECT_EQ(query(NPUArchitectureKind::kDavC310, f32, f16, dma, kF322F16,
-                      relu, 0),
-                NativeSupport::Native);
-    }
+    EXPECT_EQ(query(NPUArchitectureKind::kDavC310, f32, f32, dma, kNoQuant,
+                    kNoRelu, 0),
+              NativeSupport::Native);
+    EXPECT_EQ(query(NPUArchitectureKind::kDavC310, f32, f32, dma, kQF322F32Pre,
+                    kNoRelu, 0),
+              NativeSupport::Native);
+    EXPECT_EQ(query(NPUArchitectureKind::kDavC310, i32, i32, dma, kNoQuant,
+                    kNoRelu, 0),
+              NativeSupport::Native);
+    EXPECT_EQ(query(NPUArchitectureKind::kDavC310, f32, f16, dma, kF322F16,
+                    kNoRelu, 0),
+              NativeSupport::Native);
+    EXPECT_EQ(query(NPUArchitectureKind::kDavC310, f32, bf16, dma, kF322BF16,
+                    kNoRelu, 0),
+              NativeSupport::Native);
+  }
+  for (int64_t dma : {kNz2nd, kNz2dn}) {
+    EXPECT_EQ(query(NPUArchitectureKind::kDavC310, i32, i8, dma, kS322I8,
+                    kNoRelu, 0),
+              NativeSupport::Native);
   }
 }
 
@@ -132,7 +133,19 @@ TEST_F(FixpipeCapabilityTest, PartialMissIsUnknown) {
   EXPECT_EQ(query(NPUArchitectureKind::kDavC220, f32, f32, kNz2dn, kNoQuant,
                   kNoRelu, 0),
             NativeSupport::Unknown);
-  EXPECT_EQ(query(NPUArchitectureKind::kDavC220, f32, f32, kNz2nd, kNoQuant,
+  EXPECT_EQ(query(NPUArchitectureKind::kDavC220, f32, f32, kNz2nz, kNoQuant,
+                  kNoRelu, 0),
+            NativeSupport::Unknown);
+  EXPECT_EQ(query(NPUArchitectureKind::kDavC220, i32, i8, kNz2nz, kS322I8,
+                  kNoRelu, 0),
+            NativeSupport::Unknown);
+  EXPECT_EQ(query(NPUArchitectureKind::kDavC220, f32, f16, kNz2nd, kF322F16,
+                  kNormalRelu, 0),
+            NativeSupport::Unknown);
+  EXPECT_EQ(query(NPUArchitectureKind::kDavC310, i32, i8, kNz2nz, kS322I8,
+                  kNoRelu, 0),
+            NativeSupport::Unknown);
+  EXPECT_EQ(query(NPUArchitectureKind::kDavC310, f32, f32, kNz2nd, kNoQuant,
                   kNoRelu, 1),
             NativeSupport::Unknown);
   EXPECT_EQ(query(NPUArchitectureKind::kDavC310, f32, f16, kNz2nd, kF322F16,

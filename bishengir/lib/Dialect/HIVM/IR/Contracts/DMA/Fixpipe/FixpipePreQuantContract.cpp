@@ -1,4 +1,4 @@
-//===- FixpipeCapability.cpp - Fixpipe capability query --------*- C++ -*-===//
+//===- FixpipePreQuantContract.cpp - pre-quant type contract ----*- C++ -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +15,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Target/NPU/FixpipeCapability.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 
-#include "bishengir/Target/NPU/FixpipeCapability.cpp.inc"
+// clang-format off
+// The generated definitions depend on the declarations in the generated
+// header; keep this include order despite alphabetical sorting.
+#include "bishengir/Dialect/HIVM/IR/Contracts/DMA/Fixpipe/FixpipePreQuantContract.h"
+#include "bishengir/Dialect/HIVM/IR/Contracts/DMA/Fixpipe/FixpipePreQuantContract.cpp.inc"
+// clang-format on

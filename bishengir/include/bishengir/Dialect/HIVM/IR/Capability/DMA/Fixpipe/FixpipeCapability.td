@@ -16,27 +16,18 @@
 //===----------------------------------------------------------------------===//
 //
 // Fixpipe execution-capability vocabulary. Architecture support rows live in
-// Target/NPU/FixpipeCapabilityProfile.td. This file does not include HACC.
-// The generic capability base does not include this file.
+// Target/NPU/DMA/Fixpipe/FixpipeCapabilityProfile.td. This file does not
+// include HACC. The generic capability base does not include this file.
 
-#ifndef BISHENGIR_DIALECT_HIVM_IR_FIXPIPECAPABILITY_TD
-#define BISHENGIR_DIALECT_HIVM_IR_FIXPIPECAPABILITY_TD
+#ifndef BISHENGIR_DIALECT_HIVM_IR_CAPABILITY_DMA_FIXPIPE_FIXPIPECAPABILITY_TD
+#define BISHENGIR_DIALECT_HIVM_IR_CAPABILITY_DMA_FIXPIPE_FIXPIPECAPABILITY_TD
 
+include "bishengir/Dialect/HIVM/IR/Capability/DMA/Common.td"
 include "bishengir/Dialect/HIVM/IR/HIVMAttrs.td"
 include "bishengir/Target/Capability/CapabilityBase.td"
 
-// ElementType is already a TableGen class, so the property record needs
-// another name. The generated C++ and text names stay ElementType / element_type.
-def FixpipeElementType
-    : CapabilitySlotProperty<MLIRTypeDomain, "ElementType", "element_type">;
-
 // Address space, layout, shape, and quant_scale presence are not fields.
 // Those facts are not observable on this early execution request.
-def Src : CapabilitySlot<[FixpipeElementType], "Src", "src">;
-def Dst : CapabilitySlot<[FixpipeElementType], "Dst", "dst">;
-def SrcType : SlotField<Src, FixpipeElementType>;
-def DstType : SlotField<Dst, FixpipeElementType>;
-
 // Parameters reuse the Fixpipe ODS attributes. Their domains are the enum
 // cases already declared for the IR, not a second value list.
 def DmaMode : EnumAttrCapabilityParameter<HIVM_FixpipeDMAModeAttr>;
@@ -55,4 +46,4 @@ def FixpipeF32ToF16 : TypeSignature<[SrcType, DstType], [F32, F16]>;
 def FixpipeF32ToBF16 : TypeSignature<[SrcType, DstType], [F32, BF16]>;
 def FixpipeI32ToI8 : TypeSignature<[SrcType, DstType], [I32, I8]>;
 
-#endif // BISHENGIR_DIALECT_HIVM_IR_FIXPIPECAPABILITY_TD
+#endif // BISHENGIR_DIALECT_HIVM_IR_CAPABILITY_DMA_FIXPIPE_FIXPIPECAPABILITY_TD

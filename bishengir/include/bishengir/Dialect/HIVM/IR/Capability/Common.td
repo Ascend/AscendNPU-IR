@@ -1,4 +1,4 @@
-//===- FixpipeCapability.h - Fixpipe capability query ---------*- C++ -*-===//
+//===- Common.td - shared capability properties -------------*- tablegen -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,13 +15,14 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Generated query for the production Fixpipe execution profiles. The request
-// carries mlir::Type values and raw enum/bool values. It does not include
-// HIVM headers, and HACC does not include this header.
+// Properties shared by HIVM capability schemas. An operation puts this record
+// on its own slots. The generated names are ElementType and element_type.
 
-#ifndef BISHENGIR_TARGET_NPU_FIXPIPECAPABILITY_H
-#define BISHENGIR_TARGET_NPU_FIXPIPECAPABILITY_H
+#ifndef BISHENGIR_DIALECT_HIVM_IR_CAPABILITY_COMMON_TD
+#define BISHENGIR_DIALECT_HIVM_IR_CAPABILITY_COMMON_TD
 
-#include "bishengir/Target/NPU/FixpipeCapability.h.inc"
+include "bishengir/Target/Capability/CapabilityBase.td"
 
-#endif // BISHENGIR_TARGET_NPU_FIXPIPECAPABILITY_H
+def ElementType : CapabilitySlotProperty<MLIRTypeDomain>;
+
+#endif // BISHENGIR_DIALECT_HIVM_IR_CAPABILITY_COMMON_TD

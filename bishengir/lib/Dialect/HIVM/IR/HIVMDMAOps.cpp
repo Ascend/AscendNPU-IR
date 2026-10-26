@@ -16,7 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
-#include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.h"
+#include "bishengir/Dialect/HIVM/IR/Contracts/DMA/Fixpipe/FixpipePreQuantContract.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"

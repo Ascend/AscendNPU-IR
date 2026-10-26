@@ -15,8 +15,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef BISHENGIR_DIALECT_HIVM_IR_FIXPIPEPREQUANTCONTRACT_H
-#define BISHENGIR_DIALECT_HIVM_IR_FIXPIPEPREQUANTCONTRACT_H
+#ifndef BISHENGIR_DIALECT_HIVM_IR_CONTRACTS_DMA_FIXPIPE_FIXPIPEPREQUANTCONTRACT_H
+#define BISHENGIR_DIALECT_HIVM_IR_CONTRACTS_DMA_FIXPIPE_FIXPIPEPREQUANTCONTRACT_H
 
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Types.h"
@@ -35,6 +35,6 @@ enum class FixpipePreQuantMode : uint32_t;
 } // namespace hivm
 } // namespace mlir
 
-#include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.h.inc"
+#include "bishengir/Dialect/HIVM/IR/Contracts/DMA/Fixpipe/FixpipePreQuantContract.h.inc"
 
-#endif // BISHENGIR_DIALECT_HIVM_IR_FIXPIPEPREQUANTCONTRACT_H
+#endif // BISHENGIR_DIALECT_HIVM_IR_CONTRACTS_DMA_FIXPIPE_FIXPIPEPREQUANTCONTRACT_H

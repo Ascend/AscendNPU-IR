@@ -1,4 +1,4 @@
-//===- FixpipePreQuantContract.cpp - pre-quant type contract ----*- C++ -*-===//
+//===- Common.td - shared DMA capability slots --------------*- tablegen -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,12 +14,18 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
+//
+// Source and destination slots shared by DMA capability schemas. Each slot
+// queries the common ElementType property.
 
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#ifndef BISHENGIR_DIALECT_HIVM_IR_CAPABILITY_DMA_COMMON_TD
+#define BISHENGIR_DIALECT_HIVM_IR_CAPABILITY_DMA_COMMON_TD
 
-// clang-format off
-// The generated definitions depend on the declarations in the generated
-// header; keep this include order despite alphabetical sorting.
-#include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.h"
-#include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.cpp.inc"
-// clang-format on
+include "bishengir/Dialect/HIVM/IR/Capability/Common.td"
+
+def Src : CapabilitySlot<[ElementType], "Src", "src">;
+def Dst : CapabilitySlot<[ElementType], "Dst", "dst">;
+def SrcType : SlotField<Src, ElementType>;
+def DstType : SlotField<Dst, ElementType>;
+
+#endif // BISHENGIR_DIALECT_HIVM_IR_CAPABILITY_DMA_COMMON_TD

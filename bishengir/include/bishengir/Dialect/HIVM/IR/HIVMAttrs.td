@@ -976,7 +976,7 @@ def HIVM_MemPlanModeEnum : HIVM_I32Enum<
 // Fixpipe
 //===----------------------------------------------------------------------===//
 
-include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.td"
+include "bishengir/Dialect/HIVM/IR/Contracts/DMA/Fixpipe/FixpipePreQuantContract.td"
 
 def HIVM_FIXPIPEPREQUANT_NO_QUANT :
     HIVM_FixpipePreQuantCase<"NO_QUANT", 0, [Sig_F32_F32, Sig_I32_I32]>;
