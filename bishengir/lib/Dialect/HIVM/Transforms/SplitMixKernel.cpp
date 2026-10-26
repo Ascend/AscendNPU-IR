@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Transforms/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/SplitKernelUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/TightlyCoupledBufferUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -779,41 +780,8 @@ void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
 }
 
 void SplitMixKernelPass::generateMixKernelDecl(func::FuncOp &funcOp) {
-  auto module = funcOp->getParentOfType<ModuleOp>();
-  std::optional<SymbolTable::UseRange> maybeUses = funcOp.getSymbolUses(module);
-  if (!maybeUses || maybeUses.value().empty()) {
-    // only generate decl if there exists at least one caller
-    return;
-  }
-
-  if (!llvm::all_of(maybeUses.value(), [&](SymbolTable::SymbolUse use) {
-        auto call = cast<func::CallOp>(use.getUser());
-        auto caller = call->getParentOfType<hacc::HACCFunction>();
-        return caller.isHost();
-      })) {
-    funcOp.emitError()
-        << "Currently, MIX kernels can only be called by host functions!";
-    return signalPassFailure();
-  }
-
-  OpBuilder builder(module);
-  builder.setInsertionPointToStart(module.getBody());
-  auto funcDeclOp = builder.create<func::FuncOp>(
-      funcOp->getLoc(), funcOp.getSymName(), funcOp.getFunctionType());
-  funcDeclOp.setPrivate();
-  funcDeclOp->setAttr(
-      hacc::HACCFuncTypeAttr::name,
-      hacc::HACCFuncTypeAttr::get(&getContext(), hacc::HACCFuncType::DEVICE));
-  funcDeclOp->setAttr(
-      hivm::TFuncCoreTypeAttr::name,
-      hivm::TFuncCoreTypeAttr::get(&getContext(), hivm::TFuncCoreType::MIX));
-  // Clone the core_ratio
-  if (auto coreRatio = hivm::getCoreRatioAttr(funcOp))
-    funcDeclOp->setAttr(hivm::TCoreRatioAttr::name, coreRatio);
-  if (hacc::utils::isDeviceEntry(funcOp))
-    funcDeclOp->setAttr(
-        hacc::stringifyEnum(hacc::HACCToLLVMIRTranslateAttr::MIX_ENTRY),
-        UnitAttr::get(&getContext()));
+  if (failed(hivm::generateMixKernelDecl(funcOp)))
+    signalPassFailure();
 }
 
 /// Lower Ascend950 MIX ratios 0:1 and 1:0 to one unsuffixed AIV/AIC function.

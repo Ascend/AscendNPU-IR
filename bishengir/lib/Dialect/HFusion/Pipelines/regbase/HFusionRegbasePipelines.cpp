@@ -403,6 +403,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   TreeReduceV2Options treeReduceOptions;
   treeReduceOptions.enableRA = treeReduceFlags.enableRA;
   treeReduceOptions.enableAR = treeReduceFlags.enableAR;
+  treeReduceOptions.ascendStyleRA = hfusionOptions.useAscendStyleRA;
   if (enableSIMDVFFusion(hfusionOptions)) {
     bool runRegBasePasses = !hfusionOptions.enableMixedCV &&
                             hacc::utils::isRegBasedArch(hfusionOptions.target);
@@ -451,6 +452,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     vecOptions.enableCrossIfFusion = hfusionOptions.hfusionEnableCrossIfFusion;
     pm.addPass(createHFusionAutoVectorizeV2Pass(vecOptions));
     pm.addPass(createOutlineVectorFunctionPass());
+    pm.addPass(hivm::createInlineVFScopePass());
   } else {
     AutoVectorizeOptions vecOptions;
     // Set maxVectorizeAxes to be 1 for compatiblity.

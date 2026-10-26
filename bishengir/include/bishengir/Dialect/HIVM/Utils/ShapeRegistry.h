@@ -43,6 +43,8 @@ bool isLoopShapeRegistered(llvm::StringRef name);
 /// buffer-size prep.
 /// Also covers the post-CVP independent-preload hoist and shared-A matmul
 /// clustering. Duplicate inserted L1 copies use the registry alone.
+/// Also covers the early-CBUF nested vf-scope. Off-registry kernels keep
+/// that copy in the outer preload scope.
 inline bool allowLoopShapeHeuristics(bool bypassShapeRegistry,
                                      llvm::StringRef funcName,
                                      bool enablePreload,

@@ -1613,6 +1613,17 @@ def MarkSimtScopeNoInline : HIVMPass<"mark-simt-scope-no-inline", "ModuleOp"> {
   let dependentDialects = ["scope::ScopeDialect"];
 }
 
+def InlineVFScope : HIVMPass<"hivm-inline-vf-scope", "ModuleOp"> {
+  let summary = "Inline vf-scope regions nested within preload scopes.";
+  let description = [{
+    Inlines `scope.scope` ops carrying the `vf-scope` attribute that are nested
+    inside a parent preload `scope.scope` with a core-type attribute after
+    vector function outlining.
+  }];
+  let constructor = "mlir::hivm::createInlineVFScopePass()";
+  let dependentDialects = ["scope::ScopeDialect", "hivm::HIVMDialect"];
+}
+
 def AutoScope : HIVMPass<"auto-scope"> {
   let summary = "Create scope for gather_load and scatter_store";
   let constructor = "mlir::hivm::createAutoScopePass()";
@@ -1804,6 +1815,39 @@ def FlattenModule : HIVMPass<"hivm-flatten-module", "ModuleOp"> {
   let dependentDialects = ["hivm::HIVMDialect",
                            "hivm_regbaseintrins::HIVMRegbaseIntrinsDialect",
                            "LLVM::LLVMDialect"];
+}
+
+//===----------------------------------------------------------------------===//
+// MIX pipeline passes
+//===----------------------------------------------------------------------===//
+
+def V2SplitKernel : HIVMPass<"hivm-v2-split-kernel", "ModuleOp"> {
+  let summary = "Split a MIX kernel on memref IR";
+  let constructor = "mlir::hivm::createV2SplitKernelPass()";
+  let dependentDialects = ["func::FuncDialect", "hivm::HIVMDialect",
+                           "scf::SCFDialect"];
+  let options = [
+    Option<"ghost", "ghost", "bool", /*default=*/"true",
+           "Keep the MIX function unsplit">
+  ];
+}
+
+def V2VerifyStage : HIVMPass<"hivm-v2-verify-stage", "ModuleOp"> {
+  let summary = "Verify the MIX pipeline stage invariants";
+  let description = [{
+    Debug-only stage checker for the v2 pipeline: asserts that the IR is still
+    tensor/memref, still unsplit, and so on at the requested stage.
+
+    TODO(v2): remove this pass from the final pipeline. It only exists while
+    the v2 stages are being brought up; the stage mechanism is as short-lived
+    as decompose.
+  }];
+  let constructor = "mlir::hivm::createV2VerifyStagePass()";
+  let options = [
+    Option<"stage", "stage", "std::string", /*default=*/"\"tail\"",
+           "Pipeline stage to verify: tensor, bufferized, planned, solved, "
+           "split, tail">
+  ];
 }
 
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_PASSES_TD

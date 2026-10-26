@@ -1761,6 +1761,13 @@ bool hfusion::isSupportedTreeReductionCandidate(Operation *op) {
   if (!isa<linalg::LinalgOp>(op))
     return false;
   auto linalgOp = cast<linalg::LinalgOp>(op);
+  if (auto genericOp = dyn_cast<linalg::GenericOp>(op)) {
+    // A bug in split_reduction prevents support for linalg.index payloads.
+    WalkResult result =
+        genericOp.walk([](linalg::IndexOp) { return WalkResult::interrupt(); });
+    if (result.wasInterrupted())
+      return false;
+  }
   if (!linalgOp.hasPureTensorSemantics())
     return false;
   if (linalgOp.getNumParallelLoops() == 0)
@@ -1774,6 +1781,14 @@ bool hfusion::isSupportedTreeReductionCandidate(Operation *op) {
 
   SmallVector<unsigned> reductionDims;
   linalgOp.getReductionDims(reductionDims);
+  // Generated fills and combining reductions assume that the
+  // utput preserves the parallel iterator order.
+  AffineMap outputMap =
+      linalgOp.getMatchingIndexingMap(linalgOp.getDpsInitOperand(0));
+  if (outputMap != AffineMap::getMultiDimIdentityMap(linalgOp.getNumLoops(),
+                                                     op->getContext())
+                       .dropResult(reductionDims.front()))
+    return false;
   auto initType = dyn_cast<RankedTensorType>(
       linalgOp.getDpsInitOperand(0)->get().getType());
   if (!initType || reductionDims.front() > initType.getRank())

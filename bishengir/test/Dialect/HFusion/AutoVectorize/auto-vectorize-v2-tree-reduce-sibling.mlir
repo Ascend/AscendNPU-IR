@@ -28,8 +28,8 @@
 // The same invariant applies when a node acquires one tree through producer
 // fusion and then considers a second tree producer for the same consumer.
 // CHECK-LABEL: func.func @producer_tree_reduction_sibling_outlined_vf_1
-// CHECK: %[[PROD_C64:[0-9A-Za-z_]+]] = arith.constant 64 : index
-// CHECK: %[[PROD_C1:[0-9A-Za-z_]+]] = arith.constant 1 : index
+// CHECK-DAG: %[[PROD_C64:[0-9A-Za-z_]+]] = arith.constant 64 : index
+// CHECK-DAG: %[[PROD_C1:[0-9A-Za-z_]+]] = arith.constant 1 : index
 // CHECK: scf.for {{.*}} to %[[PROD_C64]] step %[[PROD_C1]] iter_args({{.*}}) -> (tensor<64x64xf32>) {
 // CHECK: %[[PROD_CONSUMER:[0-9A-Za-z_]+]] = scf.for {{.*}} to %[[PROD_C64]] step %[[PROD_C1]] iter_args({{.*}}) -> (tensor<64x64xf32>) {
 // CHECK: return %[[PROD_CONSUMER]] : tensor<64x64xf32>

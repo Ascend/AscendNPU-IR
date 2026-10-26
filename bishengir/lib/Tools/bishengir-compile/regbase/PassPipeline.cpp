@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Tools/bishengir-compile/regbase/PassPipeline.h"
+#include "bishengir/Tools/bishengir-compile/regbase/PassPipelineV2.h"
 
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Conversion/FixCallUnknownLoc/FixCallUnknownLoc.h"
@@ -90,6 +91,7 @@ void setupHFusionPipelineOptions(
   auto &options = hfusionPipelineOptions;
 #define GEN_HFUSION_OPTION_SETUP
 #include "bishengir/Tools/bishengir-compile/ConfigUtils.cpp.inc"
+  hfusionPipelineOptions.useAscendStyleRA = config.getUseAscendStyleRA();
   // The new TreeReduce lowering can overflow the stack with CANN < 9.2.0.
   // Fall back to TreeReduceV2 before configuring VFFusion and vectorization,
   // including the delayed vectorization pipeline. Preserve the RA/AR mode.
@@ -336,6 +338,10 @@ static void buildDelayedHFusionRegBaseVectorizePipeline(
 
 void buildFinalHIVMPipelines(mlir::OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config) {
+  if (config.getUsePipelineVersion() == 2) {
+    buildV2FinalHIVMPipelines(pm, config);
+    return;
+  }
   if (config.getEnableHIVMCompile()) {
     auto options = std::make_unique<hivm::regbase::HIVMPipelineOptions>();
     setupHIVMPipelineOptions(*options, config);
@@ -479,6 +485,10 @@ static void buildSimdSimtMixPassPipeline(mlir::OpPassManager &pm) {
 
 void buildBiShengHIRPipeline(OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config) {
+  if (config.getUsePipelineVersion() == 2) {
+    buildV2HIRPipeline(pm, config);
+    return;
+  }
   if (!config.getCompileHost()) {
     pm.addPass(
         hacc::createAppendDeviceSpecPass(hacc::AppendTargetDeviceSpecOptions{

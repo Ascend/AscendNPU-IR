@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/TightlyCoupledBufferUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/HIVMAliasAnalysis.h"
 #include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
@@ -30,6 +31,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
+#include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -2609,6 +2611,97 @@ static void prioritizePreloadCrossCoreCopy(Block &body, bool sameIteration) {
   }
 }
 
+// Keep an early Cube publication separate from a later consumer that needs
+// another Cube result. Only accept a contiguous pure tensor producer chain;
+// tensor.empty and the copy's TCB annotation stay outside the fusion boundary.
+static void preserveEarlyPreloadCopy(Block &body, OpBuilder &builder) {
+  // Keep cross-stage returns directly traceable by multi-buffer analysis.
+  if (body.getTerminator()->getNumOperands())
+    return;
+  auto collect = [&](Operation *root, SetVector<Operation *> &slice) {
+    DenseSet<Operation *> inputs;
+    BackwardSliceOptions options;
+    options.inclusive = true;
+    options.omitBlockArguments = true;
+    options.filter = [&](Operation *op) {
+      if (auto tensor = dyn_cast<bufferization::ToTensorOp>(op)) {
+        Value buffer = tensor.getMemref();
+        if (getOptionalHIVMAddressSpace(buffer.getType()) == AddressSpace::UB &&
+            isTightlyCoupledValue(buffer))
+          if (Operation *alloc = traceAllocLike(buffer))
+            inputs.insert(alloc);
+        return false;
+      }
+      return op->getBlock() == &body && op->getNumResults() &&
+             !op->getNumRegions() && !isa<tensor::EmptyOp>(op) &&
+             isMemoryEffectFree(op) &&
+             llvm::all_of(op->getResultTypes(),
+                          [](Type type) { return isa<TensorType>(type); });
+    };
+    if (root)
+      getBackwardSlice(root, &slice, options);
+    return inputs;
+  };
+  for (CopyOp copy : llvm::make_early_inc_range(body.getOps<CopyOp>())) {
+    if (!isa<TensorType>(copy.getSrc().getType()) ||
+        !isStorePriorityCBuf(copy.getDst()))
+      continue;
+    SetVector<Operation *> producers;
+    auto inputs = collect(copy.getSrc().getDefiningOp(), producers);
+    if (inputs.empty())
+      continue;
+    SmallVector<Operation *> ordered;
+    for (Operation *op = copy->getPrevNode(); op; op = op->getPrevNode()) {
+      if (producers.contains(op)) {
+        ordered.push_back(op);
+        continue;
+      }
+      if (isa<tensor::EmptyOp>(op))
+        continue;
+      if (auto mark = dyn_cast<annotation::MarkOp>(op);
+          mark && mark.getSrc() == copy.getDst() &&
+          mark->hasAttr(HIVMTightlyCoupledBufferAttr::name))
+        continue;
+      break;
+    }
+    if (ordered.size() != producers.size())
+      continue;
+    SetVector<Value> outputs;
+    bool needsAnotherCubeInput = false;
+    for (Operation *op : ordered)
+      for (Value result : op->getResults())
+        for (Operation *user : result.getUsers()) {
+          if (user == copy || producers.contains(user))
+            continue;
+          outputs.insert(result);
+          SetVector<Operation *> consumerSlice;
+          auto consumerInputs = collect(user, consumerSlice);
+          needsAnotherCubeInput |=
+              llvm::any_of(consumerInputs,
+                           [&](auto input) { return !inputs.contains(input); });
+        }
+    // Extra live-outs can materialize unrelated vector work across the scope.
+    if (outputs.size() != 1 || !needsAnotherCubeInput)
+      continue;
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPoint(copy);
+    auto boundary = builder.create<scope::ScopeOp>(
+        copy.getLoc(), TypeRange(ValueRange(outputs.getArrayRef())));
+    boundary.setNoInline(true);
+    boundary->setAttr("vf-scope", builder.getUnitAttr());
+    Block *inner = builder.createBlock(&boundary.getRegion());
+    for (Operation *op : llvm::reverse(ordered))
+      op->moveBefore(inner, inner->end());
+    copy->moveBefore(inner, inner->end());
+    builder.setInsertionPointToEnd(inner);
+    Value output = outputs.front();
+    builder.create<scope::ReturnOp>(copy.getLoc(), output);
+    output.replaceUsesWithIf(boundary.getResult(0), [&](OpOperand &use) {
+      return !boundary->isProperAncestor(use.getOwner());
+    });
+  }
+}
+
 LogicalResult CVPipelineImpl::markScopesForPreload() {
   toErase.clear();
 
@@ -2622,12 +2715,15 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
     return failure();
   }
 
-  // Off-registry kernels keep the original GM-store / CBUF-copy order.
+  // Off-registry kernels keep the original GM-store / CBUF-copy order and
+  // do not nest an inner vf-scope around an early CBUF publication.
   if (allowShapeHeuristics) {
     for (auto &item : worklist)
-      if (item->core == TCoreType::VECTOR && item->scopeOp)
+      if (item->core == TCoreType::VECTOR && item->scopeOp) {
         prioritizePreloadCrossCoreCopy(item->scopeOp.getRegion().front(),
                                        pinAllPreloadNumToZero);
+        preserveEarlyPreloadCopy(item->scopeOp.getRegion().front(), builder);
+      }
   }
 
   LLVM_DEBUG({

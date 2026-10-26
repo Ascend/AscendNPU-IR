@@ -121,11 +121,20 @@ public:
   }
   std::string getExecutablePath() const { return executablePath; }
 
+  /// Select Ascend-style RA for an internally detected reduce-only module.
+  /// This policy is intentionally not exposed as a command-line option.
+  BiShengIRCompileMainConfig &setUseAscendStyleRA(bool enable) {
+    useAscendStyleRA = enable;
+    return *this;
+  }
+  bool getUseAscendStyleRA() const { return useAscendStyleRA; }
+
 protected:
   std::vector<std::string> clArgsFlag;
 
 private:
   std::string executablePath;
+  bool useAscendStyleRA{false};
 };
 
 } // namespace bishengir

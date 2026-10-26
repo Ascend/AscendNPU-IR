@@ -1,3 +1,5 @@
+file(GLOB Mix_PASSES CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/V2/*.cpp)
 file(GLOB ALIGN_BUFFER ${CMAKE_CURRENT_SOURCE_DIR}/AlignBuffer/*.cpp)
 file(GLOB BUBBLE_UP_EXTRACT_SLICE CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/BubbleUpExtractSlice/*.cpp)
@@ -15,6 +17,7 @@ file(GLOB PARTITION_AND_BIND_SUB_BLOCK CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/PartitionAndBindSubBlock/*.cpp)
 
 add_bishengir_dialect_library(BiShengIRHIVMTransforms
+  ${Mix_PASSES}
   ${ALIGN_BUFFER}
   ${BUBBLE_UP_EXTRACT_SLICE}
   ${GRAPH_SYNC_CONFLICT_SOLVER}
@@ -89,6 +92,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   InlineFixpipe.cpp
   InlineLoadCopy.cpp
   InlineOTFBroadcast.cpp
+  InlineVFScope.cpp
   InsertAllocBasePlaceholder.cpp
   InsertCVTightCoupledBuffer.cpp
   InsertMemSemanticForSimtVF.cpp

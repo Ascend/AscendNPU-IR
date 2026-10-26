@@ -24,6 +24,7 @@ endif()
 
 add_bishengir_library(BiShengIRRegBaseCompileLib
   PassPipeline.cpp
+  PassPipelineV2.cpp
   BiShengIRCompileMain.cpp
   Driver.cpp
   Utility.cpp

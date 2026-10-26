@@ -565,7 +565,7 @@ def Ascend950DT_95A2_Spec : Ascend950_BaseSpec<"Ascend950DT_95A2"> {
 //===----------------------------------------------------------------------===//
 
 class Ascend960_BaseSpec<string name> : TargetSpec<name> {
-  let UbSize = 2031616; // bits = 248KB, reserve 8KB for compiler
+  let UbSize = 2555904; // bits = 312KB, reserve 8KB for compiler
   let MinimalDCacheSize = 262144; // bits = 32KB
   let MaximumDCacheSize = 983040; // bits = 120KB
   let L1Size = 4194304;           // bits = 512KB
@@ -575,13 +575,31 @@ class Ascend960_BaseSpec<string name> : TargetSpec<name> {
   let UbAlignSize = 256;          // bits = 32B
   let L1AlignSize = 256;          // bits = 32B
   let L0cAlignSize = 4096;        // bits = 512B
-  let Arch = Dav_C310;
+  let Arch = Dav_920R1;
 }
 
 def Ascend960_Spec : Ascend960_BaseSpec<"Ascend960"> {
   let AiCoreCount = 32;
   let CubeCoreCount = 32;
   let VectorCoreCount = 64;
+}
+
+def Ascend960DT_969B5_Spec : Ascend960_BaseSpec<"Ascend960DT_969B5"> {
+  let AiCoreCount = 32;
+  let CubeCoreCount = 32;
+  let VectorCoreCount = 32;
+}
+
+def Ascend960DT_968B7_Spec : Ascend960_BaseSpec<"Ascend960DT_968B7"> {
+  let AiCoreCount = 36;
+  let CubeCoreCount = 36;
+  let VectorCoreCount = 36;
+}
+
+def Ascend960DT_961BX_Spec : Ascend960_BaseSpec<"Ascend960DT_961BX"> {
+  let AiCoreCount = 48;
+  let CubeCoreCount = 48;
+  let VectorCoreCount = 48;
 }
 
 #endif // BISHENGIR_DIALECT_HACC_TARGETS_NPUTARGETSPEC_TD

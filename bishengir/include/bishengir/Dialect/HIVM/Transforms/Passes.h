@@ -425,6 +425,9 @@ std::unique_ptr<Pass> createSplitSimtModulePass();
 // Mark SIMT scopes no_inline so inline-scope keeps them outlined
 std::unique_ptr<Pass> createMarkSimtScopeNoInlinePass();
 
+// Inline vf-scope regions nested within preload scopes
+std::unique_ptr<Pass> createInlineVFScopePass();
+
 // Create scope for gather_load and scatter_store
 std::unique_ptr<Pass> createAutoScopePass();
 
@@ -479,6 +482,15 @@ std::unique_ptr<Pass> createRemoveCopyOpsPass();
 /// Create a pass to fuse linalg.transpose into hivm.hir.load via DMA
 /// on-the-fly transpose.
 std::unique_ptr<Pass> createFuseTransposeIntoLoadPass();
+
+//===----------------------------------------------------------------------===//
+// V2 pipeline passes (see Passes.td)
+//===----------------------------------------------------------------------===//
+
+std::unique_ptr<Pass>
+createV2SplitKernelPass(const V2SplitKernelOptions &options = {});
+std::unique_ptr<Pass>
+createV2VerifyStagePass(const V2VerifyStageOptions &options = {});
 
 //===----------------------------------------------------------------------===//
 // Registration

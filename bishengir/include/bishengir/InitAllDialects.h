@@ -28,6 +28,7 @@
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "bishengir/Dialect/MathExt/IR/MathExt.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
@@ -47,7 +48,6 @@
 #include "bishengir/Dialect/HFusion/Transforms/TilingInterfaceImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/HIVMTilingInterfaceImpl.h"
-#include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
 #include "bishengir/Dialect/SCF/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Scope/Transforms/BufferizableOpInterfaceImpl.h"
@@ -75,6 +75,7 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
                   mlir::hacc::HACCDialect,
                   mlir::hfusion::HFusionDialect,
                   mlir::hivm::HIVMDialect,
+                  mlir::hivmave::AVEDialect,
                   mlir::mathExt::MathExtDialect,
                   mlir::scope::ScopeDialect,
                   mlir::symbol::SymbolDialect,
@@ -86,7 +87,6 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
   // clang-format off
   registry.insert<mlir::ascend_dpx::AscendDPXDialect,
                   mlir::hivm_regbaseintrins::HIVMRegbaseIntrinsDialect,
-                  mlir::hivmave::AVEDialect,
                   bishengir::triton_ext::TritonExtDialect>();
   // clang-format on
 #endif

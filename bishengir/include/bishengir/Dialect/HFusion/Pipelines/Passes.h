@@ -48,6 +48,9 @@ struct HFusionPipelineOptions
 
   bool insertFFTS{true};
 
+  /// Internal RegBase policy; not registered as a pipeline option.
+  bool useAscendStyleRA{false};
+
   PassOptions::Option<std::string> externalTilingFuncPath{
       *this, "external-tiling-func-path",
       llvm::cl::desc("auto add external tiling func"), llvm::cl::init("-")};

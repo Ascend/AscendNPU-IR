@@ -12,6 +12,8 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
+#include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/TilingUtils.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Attrs.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/PlanContext.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Verify.h"
@@ -38,11 +40,15 @@
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/bit.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/MathExtras.h"
 #include <cassert>
@@ -662,179 +668,343 @@ findBestFusedNodeForProducer(Block *block, Operation *producer,
   return bestFusedNode;
 }
 
+// Fold the tail into partial results with a power-of-two reduction dimension
+// size. Return the handle of the reduction that combines those partial results.
+//
+// Before:
+//   %result = linalg.reduce ins(%input : tensor<6x64xf32>)
+//       outs(%init : tensor<64xf32>) dimensions = [0] { ... }
+//
+// After:
+//   %empty = tensor.empty() : tensor<4x64xf32>
+//   %zero = linalg.fill ins(%cst : f32)
+//       outs(%empty : tensor<4x64xf32>) -> tensor<4x64xf32>
+//   // partials = [input[0] + input[4], input[1] + input[5],
+//   //             input[2], input[3]]
+//   %partials = scf.for %i = %c0 to %c6 step %c4
+//       iter_args(%acc = %zero) -> tensor<4x64xf32> {
+//     // For each valid row j: acc[j, :] += input[i + j, :].
+//     ...
+//   }
+//   %result = linalg.reduce ins(%partials : tensor<4x64xf32>)
+//       outs(%init : tensor<64xf32>) dimensions = [0] { ... }
+//
+// The returned handle refers to %result, which reduces mainRedSize partial
+// rows.
+static Value foldTreeReductionTail(
+    ImplicitLocOpBuilder &builder, Value handle, ArrayRef<int64_t> tileSize,
+    unsigned reductionDim, uint64_t mainRedSize, const std::string &label,
+    llvm::function_ref<void(Value, const std::string &, ArrayRef<int64_t>)>
+        annotateForVectorization) {
+  SmallVector<int64_t> tailTileSizes(tileSize.size(), 0);
+  tailTileSizes[reductionDim] = mainRedSize;
+
+  auto tailTiling =
+      builder.create<transform::TileReductionUsingForOp>(handle, tailTileSizes);
+
+  Value fill = tailTiling.getFillOp().front();
+  Value fold = tailTiling.getSplitLinalgOp();
+
+  // Tile the fill and fold down to individual reduction elements.
+  if (mainRedSize > static_cast<uint64_t>(tileSize[reductionDim])) {
+    SmallVector<int64_t> indicator(tileSize.size(), 0);
+    indicator[reductionDim] = 1;
+
+    fill = builder.create<transform::TileUsingForOp>(fill, indicator)
+               .getTiledLinalgOp();
+    fold = builder.create<transform::TileUsingForOp>(fold, indicator)
+               .getTiledLinalgOp();
+  }
+
+  annotateForVectorization(fill, label + "_tail_fill", tileSize);
+  annotateForVectorization(fold, label + "_tail_reduce", tileSize);
+
+  return tailTiling.getCombiningLinalgOp();
+}
+
+static uint64_t getMaxRowsPerTree(linalg::LinalgOp reductionOp) {
+  // Take into account only the tensor inputs.
+  // Scalar inputs do not generate VLoad operations.
+  unsigned numTensorIns =
+      llvm::count_if(reductionOp.getDpsInputs(),
+                     [](Value inp) { return isa<TensorType>(inp.getType()); });
+
+  // A limit of 16 vector loads per tree was chosen based on performance
+  // measurements.
+  constexpr unsigned maxVLoadsInsideLoop = 16;
+  unsigned maxTreeSize =
+      std::max<unsigned>(1u, maxVLoadsInsideLoop / numTensorIns);
+  return llvm::bit_floor(maxTreeSize);
+}
+
+// Emit transform sequence to build reduction tree from the reduction op.
+//
+// Before:
+//   %result = linalg.reduce ins(%input : tensor<8x64xf32>)
+//       outs(%init : tensor<64xf32>) dimensions = [0] { ... }
+//
+// After:
+//   // partials4 = [input[0] + input[4], input[1] + input[5],
+//   //              input[2] + input[6], input[3] + input[7]]
+//   // partials2 = [partials4[0] + partials4[2],
+//   //              partials4[1] + partials4[3]]
+//   // partial = partials2[0] + partials2[1]
+//   // result = init + partial
+static Value emitReductionTree(
+    ImplicitLocOpBuilder &builder, Value reduceOpHandle, int64_t reductionSize,
+    ArrayRef<int64_t> baseVectorSizes, unsigned reductionDim,
+    const std::string &prefix,
+    llvm::function_ref<void(Value, const std::string &, ArrayRef<int64_t>)>
+        annotateForVectorization) {
+  assert(reductionSize > 0 &&
+         llvm::isPowerOf2_64(static_cast<uint64_t>(reductionSize)) &&
+         "unexpected reduction size");
+
+  auto makeTilingIndicator = [](size_t rank, unsigned dim) {
+    SmallVector<int64_t> sizes(rank, 0);
+    sizes[dim] = 1;
+    return sizes;
+  };
+
+  auto unroll = [&builder](Value loop, int64_t factor) {
+    if (factor <= 1)
+      return;
+    builder.create<transform::LoopUnrollOp>(loop,
+                                            builder.getI64IntegerAttr(factor));
+  };
+
+  SmallVector<int64_t> vectorSizes(baseVectorSizes);
+
+  // All generated reduction computations are tiled down to one element
+  // along this iterator before vectorization.
+  vectorSizes[reductionDim] = 1;
+
+  auto tilingIndicator = makeTilingIndicator(vectorSizes.size(), reductionDim);
+
+  // inner_parallel inserts a parallel iterator after the reduction.
+  auto splitTilingIndicator =
+      makeTilingIndicator(vectorSizes.size() + 1, reductionDim + 1);
+
+  SmallVector<int64_t> splitVectorSizes = vectorSizes;
+  splitVectorSizes.insert(splitVectorSizes.begin() + reductionDim + 1, 1);
+
+  // Emit one transform sequence per tree level (e.g. 8 -> 4 -> 2 partial rows).
+  // The final pair is handled below before combining with the original init.
+  for (int64_t currentReductionSize = reductionSize; currentReductionSize > 2;
+       currentReductionSize /= 2) {
+    int64_t numPartials = currentReductionSize / 2;
+
+    auto split = builder.create<transform::SplitReductionOp>(
+        reduceOpHandle,
+        /*splitFactor=*/numPartials,
+        /*insertSplitDimension=*/reductionDim,
+        /*innerParallel=*/true);
+
+    // Preserve the fill annotation when tiling and fusing its producer.
+    annotateForVectorization(split.getFillOp(), prefix + "_block_fill",
+                             vectorSizes);
+
+    auto splitTiling = builder.create<transform::FuseOp>(
+        builder.getType<transform::AnyOpType>(),
+        TypeRange{builder.getType<transform::AnyOpType>()},
+        split.getSplitLinalgOp(),
+        builder.getI64ArrayAttr(splitTilingIndicator));
+
+    auto pairTiling = builder.create<transform::TileUsingForOp>(
+        splitTiling.getTransformed(), tilingIndicator);
+
+    // Annotate before cloning operations through unrolling.
+    annotateForVectorization(pairTiling.getTiledLinalgOp(),
+                             prefix + "_block_split_reduce", splitVectorSizes);
+
+    unroll(pairTiling.getLoops().front(), 2);
+    unroll(splitTiling.getLoops().front(), numPartials);
+
+    reduceOpHandle = split.getCombiningLinalgOp();
+  }
+
+  // Accumulate the final pair separately from the original destination.
+  if (reductionSize >= 2) {
+    auto pairTiling = builder.create<transform::TileReductionUsingForOp>(
+        reduceOpHandle, tilingIndicator);
+
+    annotateForVectorization(pairTiling.getFillOp().front(),
+                             prefix + "_pair_fill", vectorSizes);
+
+    annotateForVectorization(pairTiling.getSplitLinalgOp(),
+                             prefix + "_pair_reduce", vectorSizes);
+
+    unroll(pairTiling.getForOp(), 2);
+
+    reduceOpHandle = pairTiling.getCombiningLinalgOp();
+
+    // Vectorization does not support linalg.reduce with dynamic sizes.
+    // So we convert linalg.reduce to linalg.generic here.
+    reduceOpHandle = builder.create<transform::GeneralizeOp>(
+        builder.getType<transform::AnyOpType>(), reduceOpHandle);
+  }
+
+  annotateForVectorization(reduceOpHandle, prefix + "_combine", vectorSizes);
+
+  return reduceOpHandle;
+}
+
 static Value tileReductionOpTreeReduce(
-    OpBuilder &builder, transform::SequenceOp seqOp, Operation *op,
-    Value &linalgOpHandle, SmallVector<int64_t> tileSize, std::string label,
+    OpBuilder &baseBuilder, transform::SequenceOp seqOp, Operation *op,
+    Value &reduceOpHandle, SmallVector<int64_t> tileSize, std::string label,
     SmallVector<std::pair<std::string, SmallVector<int64_t>>>
         &otherVectorizableOps) {
-  assert(isa<linalg::LinalgOp>(op));
+  assert(isa<linalg::LinalgOp>(op) && "linalg op expected");
   auto reductionOp = cast<linalg::LinalgOp>(op);
+
+  // `shouldUseTreeReduction` should guarantee that these constraints hold.
   assert(reductionOp.getNumParallelLoops() > 0);
   assert(reductionOp.getNumReductionLoops() == 1);
-  auto loc = seqOp->getLoc();
-  // get parallel axis and tile.
-  // get reduction axis and tile.
+  assert(tileSize.size() == reductionOp.getNumLoops());
+
+  ImplicitLocOpBuilder builder(seqOp->getLoc(), baseBuilder);
+
   SmallVector<unsigned> reductionDims;
   reductionOp.getReductionDims(reductionDims);
-  auto reductionDim = reductionDims[0];
-  auto reductionTileSize = tileSize[reductionDim];
+  unsigned reductionDim = reductionDims.front();
+  uint64_t reductionSize = reductionOp.getStaticLoopRanges()[reductionDim];
 
-  int64_t reductionSize = reductionOp.getStaticLoopRanges()[reductionDim];
-  assert(reductionSize > 0 &&
-         "tree reduction requires a positive static extent");
+  // Annotate every operation, but register each label for vectorization once.
+  llvm::StringSet<> vectorizedLabels;
+  auto annotateForVectorization =
+      [&builder, &vectorizedLabels,
+       &otherVectorizableOps](Value handle, const std::string &opLabel,
+                              ArrayRef<int64_t> vectorSizes) {
+        builder.create<transform::AnnotateOp>(handle, opLabel, nullptr);
 
-  // Creates new Vector with tile sizes
-  // where "amount" 1s are added to idx position
-  auto createExtendedTileSizes = [&](size_t idx, size_t amount) {
-    SmallVector<int64_t> res = tileSize;
-    res.insert(res.begin() + idx, amount, 1);
+        if (!vectorizedLabels.insert(opLabel).second)
+          return;
 
-    return res;
-  };
+        otherVectorizableOps.emplace_back(opLabel,
+                                          SmallVector<int64_t>(vectorSizes));
+      };
 
-  auto getIterationTilingIndicator = [&](size_t iterCnt) {
-    SmallVector<int64_t> tilingIndicator(reductionOp.getNumLoops() + iterCnt,
-                                         0);
-    tilingIndicator[reductionDim + iterCnt] = 1;
-
-    return tilingIndicator;
-  };
-
-  // Processes (annotate + add to other vectorizable ops vector for futher
-  // vectorization) on of auxilary ops (fill or splited reduce) created in tree
-  // reduce algo
-  auto processAuxOpTreeReduce = [&](Value opHandle, std::string opName,
-                                    size_t opIdx) {
-    auto vectorizeTileSize = createExtendedTileSizes(reductionDim, opIdx);
-    std::string splitOpLabel =
-        label + "_" + opName + "_" + std::to_string(opIdx);
-    builder.create<transform::AnnotateOp>(loc, opHandle, splitOpLabel, nullptr);
-    otherVectorizableOps.push_back(
-        std::make_pair(splitOpLabel, vectorizeTileSize));
-  };
-
-  // Tile parallel axes and patch first reduce operation to be that reduce
-  // which was generated by parallel tilining (its new operation, we can't use
-  // old one)
-  // NOTE: reductionTileSizePairs guaranteed not empty
+  // 1. Tile the original parallel dimensions.
   SmallVector<unsigned> parallelDims;
   reductionOp.getParallelDims(parallelDims);
-  SmallVector<int64_t> parallelAxisTileSize(reductionOp.getNumLoops(), 0);
-  for (auto i : parallelDims)
-    parallelAxisTileSize[i] = tileSize[i];
-  // Tile all parallel dims
-  transform::TileUsingForOp parallelAxisTilingResult =
-      builder.create<transform::TileUsingForOp>(loc, linalgOpHandle,
-                                                parallelAxisTileSize);
-  linalgOpHandle = parallelAxisTilingResult.getTiledLinalgOp();
 
-  // Pad non-power-of-two reductions with the neutral element instead of
-  // reducing a power-of-two prefix and merging an unbalanced tail.  Besides
-  // keeping the reduction tree balanced, this also makes its reassociation
-  // deterministic for numerically sensitive floating-point reductions.
-  auto alignedRedSize = static_cast<int64_t>(
-      llvm::PowerOf2Ceil(static_cast<uint64_t>(reductionSize)));
-  if (reductionSize != alignedRedSize) {
-    SmallVector<int64_t> reductionAxisTileSize(reductionOp.getNumLoops(), 0);
-    reductionAxisTileSize[reductionDim] = alignedRedSize;
-    auto tileReductionRes = builder.create<transform::TileReductionUsingForOp>(
-        loc, linalgOpHandle, reductionAxisTileSize);
+  SmallVector<int64_t> parallelTileSizes(reductionOp.getNumLoops(), 0);
+  for (unsigned dim : parallelDims)
+    parallelTileSizes[dim] = tileSize[dim];
 
-    linalgOpHandle = tileReductionRes.getCombiningLinalgOp();
-    Value fillOpHandle = tileReductionRes.getFillOp().front();
-    auto splitedReductionOp = tileReductionRes.getSplitLinalgOp();
+  auto tiledReduction = builder.create<transform::TileUsingForOp>(
+      reduceOpHandle, parallelTileSizes);
 
-    if (alignedRedSize > reductionTileSize) {
-      auto tilingIndicator = getIterationTilingIndicator(0);
-      fillOpHandle = builder
-                         .create<transform::TileUsingForOp>(loc, fillOpHandle,
-                                                            tilingIndicator)
-                         .getTiledLinalgOp();
-      splitedReductionOp = builder
-                               .create<transform::TileUsingForOp>(
-                                   loc, splitedReductionOp, tilingIndicator)
-                               .getTiledLinalgOp();
-    }
-    processAuxOpTreeReduce(splitedReductionOp, "tile_reduce", 0);
-    processAuxOpTreeReduce(fillOpHandle, "tile_fill", 0);
+  Value outerLoop = tiledReduction.getLoops().front();
+  reduceOpHandle = tiledReduction.getTiledLinalgOp();
+
+  // 2. Fold the tail into the largest power-of-two prefix.
+  uint64_t mainRedSize = llvm::bit_floor(reductionSize);
+  if (reductionSize != mainRedSize)
+    reduceOpHandle =
+        foldTreeReductionTail(builder, reduceOpHandle, tileSize, reductionDim,
+                              mainRedSize, label, annotateForVectorization);
+
+  // Apply cleanup to avoid redundant extract/insert slices.
+  auto cleanup = [&builder](Value loop) {
+    builder.create<transform::ApplyPatternsOp>(loop, [](OpBuilder &innerBuilder,
+                                                        Location loc) {
+      innerBuilder.create<transform::ApplyForwardExtractSlicePatternsOp>(loc);
+    });
+  };
+
+  // 3. Build the main tree-reduce transform sequence.
+
+  // Choose a row count that emits at most 16 input vector loads per tree.
+  // Account for the possibility that the reduction is fused with another op.
+  // For example, a reduction fused with mul reads 2 tensor inputs per row,
+  // so each tree handles at most 8 rows.
+  uint64_t maxRowsPerTree = getMaxRowsPerTree(reductionOp);
+
+  uint64_t currentReductionSize = mainRedSize;
+  unsigned stage = 0;
+
+  while (currentReductionSize > maxRowsPerTree) {
+    const uint64_t treeDepth = currentReductionSize / maxRowsPerTree;
+    const std::string prefix = label + "_stage_" + std::to_string(stage++);
+
+    // Split the current reduction into two reductions (%partials and
+    // %combined):
+    //
+    // For example, with 16 input rows and groups of 4:
+    // Before:
+    //   %combined = linalg.reduce ins(%input : tensor<16x64xf32>)
+    //       outs(%init : tensor<64xf32>) dimensions = [0] { ... }
+    // After:
+    //   %rows = tensor.expand_shape %input [[0, 1], [2]]
+    //       output_shape [4, 4, 64] : tensor<16x64xf32>
+    //       into tensor<4x4x64xf32>
+    //   %empty = tensor.empty() : tensor<4x64xf32>
+    //   %zero = linalg.fill ins(%cst : f32)
+    //       outs(%empty : tensor<4x64xf32>) -> tensor<4x64xf32>
+    //   %partials = linalg.reduce ins(%rows : tensor<4x4x64xf32>)
+    //       outs(%zero : tensor<4x64xf32>) dimensions = [0] { ... }
+    //   %combined = linalg.reduce ins(%partials : tensor<4x64xf32>)
+    //       outs(%init : tensor<64xf32>) dimensions = [0] { ... }
+    auto grouped = builder.create<transform::SplitReductionOp>(
+        reduceOpHandle,
+        /*splitFactor=*/treeDepth,
+        /*insertSplitDimension=*/reductionDim,
+        /*innerParallel=*/true);
+
+    SmallVector<int64_t> groupFillVectorSizes = tileSize;
+    groupFillVectorSizes[reductionDim] = 1;
+    annotateForVectorization(grouped.getFillOp(), prefix + "_group_fill",
+                             groupFillVectorSizes);
+
+    SmallVector<int64_t> groupIndicator(tileSize.size() + 1, 0);
+    groupIndicator[reductionDim + 1] = 1;
+
+    // Tile the %partials reduction by its parallel dimension.
+    // Each %row is a reduction over one parallel slice.
+    // The next step converts this reduction into a tree.
+    //
+    // Before:
+    //   %zero = linalg.fill ... -> tensor<4x64xf32>
+    //   %partials = linalg.reduce ins(%rows : tensor<4x4x64xf32>)
+    //       outs(%zero : tensor<4x64xf32>) dimensions = [0] { ... }
+    // After:
+    //   scf.for %j = %c0 to %c4 step %c1 {
+    //     %zero_row = linalg.fill ... -> tensor<1x64xf32>
+    //     %row = linalg.reduce ins(%tile : tensor<4x1x64xf32>)
+    //         outs(%zero_row : tensor<1x64xf32>) dimensions = [0] { ... }
+    //   }
+    auto groupTiling = builder.create<transform::FuseOp>(
+        builder.getType<transform::AnyOpType>(),
+        TypeRange{builder.getType<transform::AnyOpType>()},
+        grouped.getSplitLinalgOp(), builder.getI64ArrayAttr(groupIndicator));
+
+    SmallVector<int64_t> innerVectorSizes = tileSize;
+    innerVectorSizes.insert(innerVectorSizes.begin() + reductionDim + 1, 1);
+
+    // Build the reduction tree from the %row reduction.
+    emitReductionTree(builder, groupTiling.getTransformed(), maxRowsPerTree,
+                      innerVectorSizes, reductionDim, prefix + "_group",
+                      annotateForVectorization);
+    cleanup(groupTiling.getLoops().front());
+
+    // At the next loop iteration handle the %combined.
+    reduceOpHandle = grouped.getCombiningLinalgOp();
+    currentReductionSize = treeDepth;
+
+    // The combining reduction has one tensor input, so its tree can handle
+    // up to 16 rows within the same vector-load budget.
+    constexpr unsigned maxRowsPerTreeForSingleInput = 16;
+    maxRowsPerTree = maxRowsPerTreeForSingleInput;
   }
 
-  SmallVector<int64_t, 4> splitedRedDims;
+  // The remaining elements fit in a tree of at most maxRowsPerTree elements.
+  reduceOpHandle = emitReductionTree(
+      builder, reduceOpHandle, currentReductionSize, tileSize, reductionDim,
+      label + "_finish", annotateForVectorization);
+  cleanup(outerLoop);
 
-  // For small reductions, preserve one global pairwise tree across the whole
-  // reduction axis.  Splitting a 64-element reduction directly by 32 creates
-  // the pairs (0, 32), (1, 33), ... that are expected from a balanced tree.
-  // The first split materializes at most 32 partial values per output lane.
-  // Keep the bounded radix-16 hierarchy for larger reductions to avoid an
-  // unbounded temporary tensor.
-  constexpr int64_t maxGlobalTreeReductionSize = 64;
-  if (alignedRedSize <= maxGlobalTreeReductionSize) {
-    splitedRedDims.push_back(alignedRedSize);
-  } else {
-    int64_t redRemain = alignedRedSize;
-    for (; redRemain > 16; redRemain /= 16)
-      splitedRedDims.push_back(16);
-    splitedRedDims.push_back(redRemain);
-  }
-
-  auto iterAmount = splitedRedDims.size();
-  for (auto [iterIdx, curSplitDim] :
-       llvm::enumerate(llvm::reverse(splitedRedDims))) {
-    auto curIterTilingIndicator = getIterationTilingIndicator(iterIdx);
-    auto nextIterTilingIndicator = getIterationTilingIndicator(iterIdx + 1);
-
-    Value nextLinalgOpHandle;
-    if (iterIdx != iterAmount - 1) {
-      auto splitReductionResult = builder.create<transform::SplitReductionOp>(
-          loc, linalgOpHandle, curSplitDim, reductionDim + iterIdx);
-
-      auto tiledSplitFillOp =
-          builder
-              .create<transform::TileUsingForOp>(
-                  loc, splitReductionResult.getFillOp(), curIterTilingIndicator)
-              .getTiledLinalgOp();
-      processAuxOpTreeReduce(tiledSplitFillOp, "split_fill", iterIdx);
-
-      nextLinalgOpHandle = builder
-                               .create<transform::TileUsingForOp>(
-                                   loc, splitReductionResult.getSplitLinalgOp(),
-                                   curIterTilingIndicator)
-                               .getTiledLinalgOp();
-
-      linalgOpHandle = splitReductionResult.getCombiningLinalgOp();
-    }
-
-    for (; curSplitDim > 2; curSplitDim /= 2) {
-      auto reductionTilingResult = builder.create<transform::SplitReductionOp>(
-          loc, linalgOpHandle, curSplitDim / 2, reductionDim + iterIdx, true);
-
-      auto tiledFill = builder
-                           .create<transform::TileUsingForOp>(
-                               loc, reductionTilingResult.getFillOp(),
-                               curIterTilingIndicator)
-                           .getTiledLinalgOp();
-      processAuxOpTreeReduce(tiledFill, "block_fill", iterIdx);
-
-      auto nextIterTilingResult = builder.create<transform::TileUsingForOp>(
-          loc, reductionTilingResult.getSplitLinalgOp(),
-          nextIterTilingIndicator);
-      auto curIterTilingResult = builder.create<transform::TileUsingForOp>(
-          loc, nextIterTilingResult.getTiledLinalgOp(), curIterTilingIndicator);
-      processAuxOpTreeReduce(curIterTilingResult.getTiledLinalgOp(),
-                             "block_split_reduce", iterIdx + 1);
-
-      linalgOpHandle = reductionTilingResult.getCombiningLinalgOp();
-    }
-
-    auto curIterTilingResult = builder.create<transform::TileUsingForOp>(
-        loc, linalgOpHandle, curIterTilingIndicator);
-    processAuxOpTreeReduce(curIterTilingResult.getTiledLinalgOp(),
-                           "block_combine_reduce", iterIdx);
-
-    linalgOpHandle = nextLinalgOpHandle;
-  }
-
-  return parallelAxisTilingResult.getLoops().front();
+  return outerLoop;
 }
 
 /// Tile a canonical RA reduction normally, but mark its dedicated loop for

@@ -108,6 +108,13 @@ def EnableHIVMCompile : FeatureControlOptions<
   "true"
 >;
 
+def UsePipelineVersion : FeatureControlOptions<
+  "Select the HIVM pipeline version: 1 = A5 regbase (default), "
+  "2 = hivm-v2-pipeline.",
+  "int",
+  "1"
+>;
+
 def EnableHfusionCompile : FeatureControlOptions<
   "Enable BiShengHIR HFusion compilation.",
   "bool",
@@ -773,6 +780,9 @@ llvm::cl::values(
                 REGISTER_TARGET(Ascend950DT_95A1), REGISTER_TARGET(Ascend950DT_95A2),
                 // Ascend960 series
                 REGISTER_TARGET(Ascend960),
+                // Ascend960DT series
+                REGISTER_TARGET(Ascend960DT_969B5), REGISTER_TARGET(Ascend960DT_968B7),
+                REGISTER_TARGET(Ascend960DT_961BX),
                 REGISTER_TARGET(Unknown)
   #undef REGISTER_TARGET
   #undef TO_STRING

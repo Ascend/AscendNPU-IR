@@ -303,5 +303,19 @@ def MultiBufferOp : Op<Transform_Dialect, "structured.multi_buffer",
    }];
 }
 
+def ApplyForwardExtractSlicePatternsOp : Op<Transform_Dialect,
+    "apply_patterns.hfusion.forward_extract_slice",
+    [DeclareOpInterfaceMethods<PatternDescriptorOpInterface>]> {
+  let summary = "Fold tensor slice chains produced by tiled tree reduction";
+  let description = [{
+    Adds conservative tensor rewrites to the enclosing transform.apply_patterns.
+    Forwards extracts through disjoint inserts, removes proven full slices,
+    moves point extracts through statically split reshape dimensions and folds
+    extracts of tensor.empty. Does not modify arithmetic or vector masks.
+    Unknown overlaps and unproven dynamic shape equalities are left untouched.
+  }];
+  let cppNamespace = "::mlir::transform";
+  let assemblyFormat = "attr-dict";
+}
 
 #endif // HFUSION_TRANSFORMOPS_HFUSIONTRANSFORMOPS
