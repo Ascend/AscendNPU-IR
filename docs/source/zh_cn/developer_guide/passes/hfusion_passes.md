@@ -370,9 +370,9 @@ attributes {hacc.function_kind = #hacc.function_kind<HOST>} {
 
 **功能**：在向量化之前，对带有扩展i1输入的Nx1 `linalg.generic`执行维度折叠（Collapse）。
 
-## -hfusion-pull-slice-into-vector-function
+## -hfusion-pull-fill-into-vector-function
 
-**功能**：将Tensor切片（Slice）操作下沉至VF被调函数中，以减少缓冲区拷贝。
+**功能**：将常量标量 `linalg.fill` 下沉至VF被调函数中，以减少缓冲区拷贝。
 
 ## -hfusion-recache-io
 
