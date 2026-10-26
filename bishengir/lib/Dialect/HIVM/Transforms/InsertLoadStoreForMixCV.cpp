@@ -113,7 +113,7 @@ public:
 
 private:
   void runLegacyInsertLoadStoreForMixCV();
-  bool isA5Target();
+  bool supportsRegBaseMixedCV();
   bool isEnabledTightCoupledBuffer();
   SmallVector<PropagationStep> getPropagationSteps();
   LogicalResult insertPropagationOp(func::FuncOp funcOp);
@@ -127,21 +127,31 @@ private:
   LogicalResult setOperationsCoreType(OpBuilder builder, func::FuncOp funcOp);
 };
 
-bool InsertLoadStoreForMixCVPass::isA5Target() {
+bool InsertLoadStoreForMixCVPass::supportsRegBaseMixedCV() {
   auto moduleOp = getOperation()->getParentOfType<ModuleOp>();
   auto moduleTarget = hacc::utils::getTargetDevice(moduleOp);
   if (moduleTarget.has_value())
-    return hacc::utils::isAscend950(moduleTarget.value());
-  return hacc::utils::isAscend950(this->target);
+    return hacc::utils::supportsRegBaseVectorLowering(moduleTarget.value());
+  return hacc::utils::supportsRegBaseVectorLowering(
+      hacc::symbolizeTargetDeviceEnum(this->target));
 }
 
 bool InsertLoadStoreForMixCVPass::isEnabledTightCoupledBuffer() {
-  if (disableTightCoupledBuffer || !isA5Target())
+  if (disableTightCoupledBuffer)
     return false;
-  // Ascend950: L0C-to-Ub and UB-to-L1 requires CV12.
-  // Disable this path for CV11
-  auto func = getOperation();
-  if (auto ratio = getCoreRatioAttr(func))
+  auto moduleOp = getOperation()->getParentOfType<ModuleOp>();
+  auto moduleTarget = hacc::utils::getTargetDevice(moduleOp);
+  auto targetDevice =
+      moduleTarget.value_or(hacc::symbolizeTargetDeviceEnum(this->target));
+  auto arch = hacc::getArchitecture(targetDevice);
+  auto ratio = getCoreRatioAttr(getOperation());
+  // Enable only the explicit 1:1 pairing for A6 coupled transfers.
+  if (arch == bishengir::npu::NPUArchitectureKind::kDav920R1)
+    return ratio && ratio.getCube() == 1 && ratio.getVector() == 1;
+  if (arch != bishengir::npu::NPUArchitectureKind::kDavC310)
+    return false;
+  // Preserve the C310 policy: explicit CV11 uses GM staging.
+  if (ratio)
     return ratio.getCube() != 1 || ratio.getVector() != 1;
   return true;
 }
@@ -1055,7 +1065,8 @@ InsertLoadStoreForMixCVPass::runPropagateOpPatterns(func::FuncOp funcOp,
                                                     PropagationStep step) {
   RewritePatternSet patterns(funcOp.getContext());
   GreedyRewriteConfig rewriteConfig;
-  patterns.add<PropagateUpPattern>(patterns.getContext(), step, isA5Target());
+  patterns.add<PropagateUpPattern>(patterns.getContext(), step,
+                                   supportsRegBaseMixedCV());
   patterns.add<PropagateDownPattern>(patterns.getContext(), step);
   if (step != PropagationStep::LOCAL && step != PropagationStep::ALL)
     patterns.add<ControlFlowPropagatePattern>(patterns.getContext(), step);
@@ -1092,7 +1103,7 @@ InsertLoadStoreForMixCVPass::insertPropagationOp(func::FuncOp funcOp) {
   RewritePatternSet patterns(funcOp.getContext());
   GreedyRewriteConfig rewriteConfig;
   patterns.add<InsertPropagationPattern>(patterns.getContext());
-  if (isA5Target())
+  if (supportsRegBaseMixedCV())
     patterns.add<A5InsertionPattern>(patterns.getContext());
   if (isEnabledTightCoupledBuffer()) {
     patterns.add<TightCoupledBufferInsertionPattern>(patterns.getContext());
@@ -1786,7 +1797,7 @@ static void setForcedOperationsCoreType(func::FuncOp funcOp,
 LogicalResult
 InsertLoadStoreForMixCVPass::setOperationsCoreType(OpBuilder builder,
                                                    func::FuncOp funcOp) {
-  if (isA5Target())
+  if (supportsRegBaseMixedCV())
     return setOperationsCoreTypeForA5(builder, funcOp);
   return setOperationsCoreTypeForA3(builder, funcOp);
 }
@@ -1802,7 +1813,7 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
     return;
 
   PassManager pm(ctx);
-  if (!isA5Target())
+  if (!supportsRegBaseMixedCV())
     pm.addPass(tensor::createReplicateOutEmptyTensorPass());
 
   if (isEnabledTightCoupledBuffer() && failed(addConvertLayoutUBToL1(funcOp))) {

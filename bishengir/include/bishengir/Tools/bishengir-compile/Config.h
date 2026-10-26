@@ -101,16 +101,18 @@ public:
 
   /// Returns true if Mixed CV compilation should be enabled.
   /// This gates the delayed RegBase vectorize pipeline after
-  /// convert-to-hivm + tensor optimizations for Ascend950 targets.
+  /// convert-to-hivm + tensor optimizations on supported architectures.
   bool shouldEnableMixedCV() const {
     return getEnableMixedCV() &&
-           mlir::hacc::utils::isAscend950(getTarget());
+           mlir::hacc::utils::supportsRegBaseVectorLowering(getTarget());
   }
 
-  /// Returns true if layout optimization should be enabled (Ascend950 only).
+  /// Returns true if layout optimization should be enabled (Ascend950/960
+  /// only).
   bool shouldEnableLayoutOptimization() const {
     return getEnableLayoutOptimization() &&
-           mlir::hacc::utils::isAscend950(getTarget());
+           (mlir::hacc::utils::isAscend950(getTarget()) ||
+            mlir::hacc::utils::isAscend960(getTarget()));
   }
 
   /// Set the path of the bishengir-compile executable (e.g. argv[0]).

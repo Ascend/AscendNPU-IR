@@ -88,7 +88,11 @@ static LogicalResult checkLoadOpMemSpace(LoadOp &op) {
     bool isSrcGm = srcAddrSpace == AddressSpace::GM;
     bool isDstGm = dstAddrSpace == AddressSpace::GM;
 
-    if (!isSrcGm || isDstGm) {
+    // InsertLoadStoreForMixCV inserted tight-coupled loads (e.g. reload of a
+    // fixpipe NZ2ND result inside UB) intentionally have src in UB; keep the
+    // strict src == gm requirement for ordinary loads.
+    bool isInsertedLoad = op->hasAttr(kInsertedLoadAttr::name);
+    if ((!isSrcGm && !isInsertedLoad) || isDstGm) {
       return op.emitOpError("only support src == gm and dst != gm currently!");
     }
   }
@@ -1276,6 +1280,18 @@ ParseResult FixpipeOp::parse(::mlir::OpAsmParser &parser,
   return ::mlir::success();
 }
 
+// NZ2DN is a cube transfer capability, independent of vector lowering.
+static bool supportsFixpipeNZ2DN(ModuleOp moduleOp) {
+  if (!moduleOp)
+    return false;
+  auto targetDevice = hacc::utils::getTargetDevice(moduleOp);
+  if (!targetDevice)
+    return false;
+  auto arch = hacc::getArchitecture(*targetDevice);
+  return arch == bishengir::npu::NPUArchitectureKind::kDavC310 ||
+         arch == bishengir::npu::NPUArchitectureKind::kDav920R1;
+}
+
 LogicalResult FixpipeOp::verify() {
   // The pre-quant mode's src/dst element-type contract is target-independent
   // and generated from the typed enum-case metadata. It runs before any
@@ -1289,23 +1305,27 @@ LogicalResult FixpipeOp::verify() {
 
   auto moduleOp = this->getOperation()->getParentOfType<mlir::ModuleOp>();
   bool isAscend950 = moduleOp && hacc::utils::isAscend950(moduleOp);
+  bool isAscend960 = moduleOp && hacc::utils::isAscend960(moduleOp);
   bool is910_95 = moduleOp && hacc::utils::isAscend910_95(moduleOp);
   auto dmaMode = getDmaMode();
   auto dstScope = getOptionalHIVMAddressSpace(getDst().getType());
 
-  // NZ2DN DMA mode is only supported on Ascend950.
-  if (dmaMode == FixpipeDMAMode::NZ2DN && !isAscend950) {
-    return emitOpError("NZ2DN is only supported on Ascend950!");
+  bool supportsNZ2DN = supportsFixpipeNZ2DN(moduleOp);
+  if (dmaMode == FixpipeDMAMode::NZ2DN && !supportsNZ2DN) {
+    return emitOpError("NZ2DN requires dav-c310 or dav-920r1 architecture");
   }
-  // dst=UB is only supported on Ascend950.
+  // dst=UB is only supported on Ascend950/Ascend960 (dav-920r1).
   if (dstScope.has_value() && dstScope.value() == hivm::AddressSpace::UB &&
-      !isAscend950) {
-    return emitOpError("dst=UB is only supported on Ascend950!");
+      !(isAscend950 || isAscend960)) {
+    return emitOpError("dst=UB is only supported on Ascend950/Ascend960!");
   }
 
-  // For non-910_95 hardware, only NZ2ND and NZ2NZ modes are supported.
-  if (!is910_95) {
-    if (dmaMode != FixpipeDMAMode::NZ2ND && dmaMode != FixpipeDMAMode::NZ2NZ) {
+  // Other modes do not imply support for channel splitting or dual
+  // destinations. Ascend960 reuses the Ascend910_95 fixpipe pipeline, so the
+  // same DMA modes and channel splitting are permitted there.
+  if (!is910_95 && !isAscend960) {
+    if (dmaMode != FixpipeDMAMode::NZ2ND && dmaMode != FixpipeDMAMode::NZ2NZ &&
+        !(dmaMode == FixpipeDMAMode::NZ2DN && supportsNZ2DN)) {
       return emitOpError(
           "The current hardware does not support dma mode is nz2nz");
     }
@@ -1326,9 +1346,10 @@ LogicalResult FixpipeOp::verify() {
   if (!isDualDstEnabled(dualDstMode)) {
     return success();
   }
-  // dual_dst_mode can only be enabled on Ascend950.
-  if (!isAscend950) {
-    return emitOpError("dual_dst_mode is only supported on Ascend950!");
+  // dual_dst_mode can only be enabled on Ascend950/Ascend960.
+  if (!isAscend950 && !isAscend960) {
+    return emitOpError(
+        "dual_dst_mode is only supported on Ascend950/Ascend960!");
   }
 
   auto srcScope = getOptionalHIVMAddressSpace(getSrc().getType());

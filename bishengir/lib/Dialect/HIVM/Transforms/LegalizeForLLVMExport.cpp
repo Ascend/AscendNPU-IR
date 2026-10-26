@@ -247,6 +247,16 @@ struct LowerBlockSetWaitToIntraBlockSetWait {
     std::optional<uint64_t> flagId;
     auto loc = convertOp.getLoc();
     auto core = convertOp.getTcoreTypeAttr().getTcoretype();
+    // The +16 partner addresses a second vector subcore. An explicit CV1:1
+    // layout has no such receiver; retain paired signaling for other or
+    // unspecified ratios. A5 CV1:1 takes its separate FFTS lowering below.
+    auto func = convertOp->template getParentOfType<FunctionOpInterface>();
+    auto ratio =
+        func
+            ? func->template getAttrOfType<TCoreRatioAttr>(TCoreRatioAttr::name)
+            : TCoreRatioAttr{};
+    bool needsPartner =
+        !ratio || ratio.getCube() != 1 || ratio.getVector() != 1;
     uint64_t pipeVal;
     if (isa<SyncBlockSetOp>(convertOp)) {
       pipeVal = static_cast<uint64_t>(convertOp.getTpipeAttr().getPipe());
@@ -260,7 +270,7 @@ struct LowerBlockSetWaitToIntraBlockSetWait {
       flagId = static_cast<uint64_t>(constOp.value());
     }
     if (flagId.has_value()) {
-      if (core == TCoreType::CUBE) {
+      if (core == TCoreType::CUBE && needsPartner) {
         rewriter.create<ImmT>(
             loc, pipeVal, flagId.value() + util::INTRA_BLOCK_FLAG_ID_OFFSET);
       }
@@ -269,7 +279,7 @@ struct LowerBlockSetWaitToIntraBlockSetWait {
       return success();
     }
     if (auto syncIdVal = convertOp.getDynamicFlagId()) {
-      if (core == TCoreType::CUBE) {
+      if (core == TCoreType::CUBE && needsPartner) {
         rewriter.create<RegT>(loc, pipeVal,
                               getPairFlagId(syncIdVal, rewriter, loc));
       }

@@ -76,9 +76,10 @@ using XCHG = NormalizeAtomicXCHGTemplate<hivm::AtomicXchgOp, HIVMAtomicTraits>;
 
 } // namespace NormalizeAtomicOps
 
-void populateNormalizeAtomicPatterns(RewritePatternSet &patterns) {
+void populateNormalizeAtomicPatterns(RewritePatternSet &patterns,
+                                     bool supportsRegBaseAtomic) {
   MLIRContext *ctx = patterns.getContext();
-  if (archisAscend950) {
+  if (supportsRegBaseAtomic) {
     patterns.add<NormalizeAtomicOps::Elemwise>(ctx);
     patterns.add<NormalizeAtomicOps::CAS>(ctx);
     patterns.add<NormalizeAtomicOps::XCHG>(ctx);

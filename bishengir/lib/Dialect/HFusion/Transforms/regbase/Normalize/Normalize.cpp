@@ -30,7 +30,8 @@ thread_local bool archisMembased{false};
 void populateNormalizeHFusionRegBasePatterns(RewritePatternSet &patterns,
                                              bool enableHighPrecision,
                                              bool enableFastDiv,
-                                             bool enableDivRemPow2) {
+                                             bool enableDivRemPow2,
+                                             bool supportsRegBaseAtomic) {
   populateNormalizeF16ToF32Patterns(patterns);
   populateNormalizeTrigPatterns(patterns, enableHighPrecision);
   populateNormalizeI8I32CmpPatterns(patterns);
@@ -59,7 +60,7 @@ void populateNormalizeHFusionRegBasePatterns(RewritePatternSet &patterns,
   populateNormalizeNonDenseScalarLikeBroadcastPatterns(patterns);
   populateNormalizeFinalArithmeticPatterns(patterns);
   populateNormalizeCmpVnePatterns(patterns);
-  populateNormalizeAtomicPatterns(patterns);
+  populateNormalizeAtomicPatterns(patterns, supportsRegBaseAtomic);
   populateNormalizeSortPatterns(patterns);
 }
 
@@ -71,8 +72,9 @@ LogicalResult runNormalizeRegBase(Operation *op, bool enableHighPrecision,
   archisAscend310B = hacc::utils::isAscend310B(moduleOp);
   archisMembased = hacc::utils::isMemBasedArch(moduleOp);
   RewritePatternSet patterns(op->getContext());
-  populateNormalizeHFusionRegBasePatterns(patterns, enableHighPrecision,
-                                          enableFastDiv, enableDivRemPow2);
+  populateNormalizeHFusionRegBasePatterns(
+      patterns, enableHighPrecision, enableFastDiv, enableDivRemPow2,
+      hacc::utils::supportsRegBaseVectorLowering(moduleOp));
   return applyPatternsGreedily(op, std::move(patterns));
 }
 

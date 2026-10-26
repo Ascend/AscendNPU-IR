@@ -374,6 +374,12 @@ static void
 applyArchDependentCompileDefaults(BiShengIRCompileMainConfig &config) {
   if (!mlir::hacc::utils::isRegBasedArch(config.getTarget()))
     return;
+  // The A6 memory plan validates simt-vf-dynamic-size against the
+  // platform's UB window; the frontend may forward an explicit value
+  // tuned for other platforms that the plan rejects, so force the A6
+  // default instead of trusting the CLI value.
+  if (mlir::hacc::utils::isAscend960(config.getTarget()))
+    config.setSimtVFDynamicSize(256);
   if (!hasExplicitCLOption("set-workspace-multibuffer"))
     config.setSetWorkspaceMultibuffer(2);
   if (!hasExplicitCLOption("limit-auto-multi-buffer-buffer"))

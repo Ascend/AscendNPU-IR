@@ -53,7 +53,8 @@ void populateNormalizeScalarLikeHIVMPatterns(RewritePatternSet &patterns);
 void populateNormalizeNonDenseScalarLikeBroadcastPatterns(
     RewritePatternSet &patterns, bool isRegbased);
 void populateNormalizePreReductionPatterns(RewritePatternSet &patterns);
-void populateNormalizeAtomicPatterns(RewritePatternSet &patterns);
+void populateNormalizeAtomicPatterns(RewritePatternSet &patterns,
+                                     bool supportsRegBaseAtomic);
 void populateNormalizeSortPatterns(RewritePatternSet &patterns);
 
 void populateNormalizeReductionPatterns(RewritePatternSet &patterns);

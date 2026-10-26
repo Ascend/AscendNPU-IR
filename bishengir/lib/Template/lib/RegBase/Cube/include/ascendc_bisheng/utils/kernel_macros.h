@@ -103,11 +103,15 @@
 #define TPIPE_MAX_TYPE 4
 #endif
 
-#if defined(__DAV_C220_CUBE__)  || defined(__DAV_C310_CUBE__) || defined(__DAV_310R6_CUBE__)
+#if defined(__DAV_C220_CUBE__) || defined(__DAV_C310_CUBE__) ||                \
+    defined(__DAV_310R6_CUBE__) ||                                             \
+    (defined(__DAV_920R1__) && defined(__DAV_CUBE__))
 #define SPLIT_CORE_CUBE
 #endif
 
-#if defined(__DAV_C220_VEC__) || defined(__DAV_C310_VEC__) || defined(__DAV_310R6_VEC__)
+#if defined(__DAV_C220_VEC__) || defined(__DAV_C310_VEC__) ||                  \
+    defined(__DAV_310R6_VEC__) ||                                              \
+    (defined(__DAV_920R1__) && defined(__DAV_VEC__))
 #define SPLIT_CORE_VEC
 #endif
 #if (defined(__NPU_ARCH__) &&                                                  \

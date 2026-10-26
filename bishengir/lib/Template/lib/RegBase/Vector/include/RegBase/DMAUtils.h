@@ -235,6 +235,45 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
               src_stride, dst_stride);
   }
 }
+#elif defined(__DAV_920R1__)
+// dav-920r1: copy_gm_to_ubuf_align_v2 13-param form (#906) with
+// pre_allocation=false and non_eod_ctrl=false, equivalent to the c310
+// 11-param form.
+template <typename T>
+__aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
+    __gm__ T *gm_ptr, int64_t gm_offset, __ubuf__ T *ub_ptr, int64_t ub_offset,
+    uint16_t burst_cnt, uint32_t burst_len, int64_t left_padding_num,
+    uint64_t src_gap, uint32_t dst_gap, uint8_t l2_cache_ctl) {
+  constexpr int32_t bytes = sizeof(T);
+  auto sizeWithPad = burst_len + (left_padding_num * bytes);
+  auto rightPaddingNum =
+      (CEIL_FACTOR(sizeWithPad, UB_ALIGN_BYTES) - sizeWithPad) / bytes;
+  uint32_t dst_align_gap = dst_gap / UB_ALIGN_BYTES;
+  bool data_select_bit = true;
+  const uint64_t src_stride = src_gap + burst_len;
+  const uint32_t dst_stride = dst_gap + burst_len;
+  if (left_padding_num == 0)
+    rightPaddingNum = 0;
+  if constexpr (bytes == BYTES_B8 || bytes == BYTES_B16 || bytes == BYTES_B32) {
+    INTRINSIC(copy_gm_to_ubuf_align_v2, (ub_ptr + ub_offset - left_padding_num),
+              gm_ptr + gm_offset, 0, burst_cnt, burst_len, left_padding_num,
+              rightPaddingNum, data_select_bit, /*pre_allocation=*/false,
+              l2_cache_ctl, src_stride, dst_stride, /*non_eod_ctrl=*/false);
+  } else if constexpr (bytes == BYTES_B64) {
+    // The intrinsic receives uint32_t pointers here, so its padding counts
+    // are expressed in B32 elements: one B64 element holds two B32 elements.
+    // burst_len and strides stay byte-based.
+    constexpr int64_t factor = sizeof(T) / sizeof(uint32_t);
+    INTRINSIC(copy_gm_to_ubuf_align_v2,
+              reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr + ub_offset -
+                                                    left_padding_num),
+              reinterpret_cast<__gm__ uint32_t *>(gm_ptr + gm_offset), 0,
+              burst_cnt, burst_len, left_padding_num * factor,
+              rightPaddingNum * factor, data_select_bit,
+              /*pre_allocation=*/false, l2_cache_ctl, src_stride, dst_stride,
+              /*non_eod_ctrl=*/false);
+  }
+}
 #else
 ///========================================
 /// m300 arch
@@ -248,59 +287,6 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
     uint16_t burst_cnt, uint32_t burst_len, int64_t left_padding_num,
     uint64_t src_gap, uint32_t dst_gap, uint8_t l2_cache_ctl) {
   constexpr int32_t bytes = sizeof(T);
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
-  // dav-920r1: `copy_gm_to_ubuf_align(_v2)` does not support the target
-  // feature (L311-only scalar). Route through the nddma descriptor DMA instead.
-  if (left_padding_num != 0) [[unlikely]] {
-    // nddma loop descriptors cannot neither express an inline left-padding run
-    // nor guarantee 32B alignment of the dst base when padding is present;
-    // fall back to a synchronized scalar copy in that case.
-    INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
-    INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
-    const uint32_t elems_per_burst = burst_len / bytes;
-    for (uint16_t b = 0; b < burst_cnt; b++) {
-      __ubuf__ T *ub_row =
-          ub_ptr + ub_offset + b * ((burst_len + dst_gap) / bytes);
-      __ubuf__ uint8_t *ub_pad_bytes =
-          reinterpret_cast<__ubuf__ uint8_t *>(ub_row - left_padding_num);
-      for (int64_t p = 0; p < left_padding_num * bytes; p++)
-        ub_pad_bytes[p] = 0;
-      __gm__ T *gm_row =
-          gm_ptr + gm_offset + b * ((burst_len + src_gap) / bytes);
-      for (uint32_t e = 0; e < elems_per_burst; e++)
-        ub_row[e] = gm_row[e];
-    }
-    INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
-    INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
-    return;
-  }
-  if constexpr (bytes == BYTES_B8 || bytes == BYTES_B16 || bytes == BYTES_B32) {
-    using nddma_elem_t = std::conditional_t<
-        bytes == BYTES_B8, uint8_t,
-        std::conditional_t<bytes == BYTES_B16, uint16_t, uint32_t>>;
-    const uint32_t elems_per_burst = burst_len / bytes;
-    const uint32_t dst_stride_elems = (burst_len + dst_gap) / bytes;
-    const uint64_t src_stride_bytes = burst_len + src_gap;
-    nddma_desc::loop_desc loop0(elems_per_burst, 1, 1);
-    nddma_desc::loop_desc loop1(burst_cnt, dst_stride_elems, src_stride_bytes);
-    nddma_desc desc(loop1, loop0);
-    INTRINSIC(nddma_out_to_ub,
-              reinterpret_cast<__ubuf__ nddma_elem_t *>(ub_ptr + ub_offset),
-              reinterpret_cast<__gm__ nddma_elem_t *>(gm_ptr + gm_offset), 0,
-              desc, 0, NEAREST_PADDING, l2_cache_ctl);
-  } else if constexpr (bytes == BYTES_B64) {
-    const uint32_t elems_per_burst = (burst_len / bytes) * 2;
-    const uint32_t dst_stride_elems = ((burst_len + dst_gap) / bytes) * 2;
-    const uint64_t src_stride_bytes = burst_len + src_gap;
-    nddma_desc::loop_desc loop0(elems_per_burst, 1, 1);
-    nddma_desc::loop_desc loop1(burst_cnt, dst_stride_elems, src_stride_bytes);
-    nddma_desc desc(loop1, loop0);
-    INTRINSIC(nddma_out_to_ub,
-              reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr + ub_offset),
-              reinterpret_cast<__gm__ uint32_t *>(gm_ptr + gm_offset), 0, desc,
-              0, NEAREST_PADDING, l2_cache_ctl);
-  }
-#else
   // Use rightPaddingNum to pad and the pad_value is 0 as default.
   auto sizeWithPad = burst_len + (left_padding_num * bytes);
   auto rightPaddingNum =
@@ -323,7 +309,6 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
               burst_cnt, burst_len, left_padding_num * factor,
               rightPaddingNum * factor, src_gap, dst_align_gap);
   }
-#endif
 }
 #endif
 

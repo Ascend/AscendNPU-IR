@@ -1041,8 +1041,9 @@ void MmadL1Op::setInitCondition(Value init) {
 
 llvm::SmallVector<int64_t>
 MmadL1Op::getBlockSizesTile(Value oper, bool isTranspose, bool isA) {
-  bool isA5 = hacc::utils::isAscend950(
-      this->getOperation()->getParentOfType<ModuleOp>());
+  ModuleOp moduleOp = this->getOperation()->getParentOfType<ModuleOp>();
+  bool isA5 =
+      hacc::utils::isAscend950(moduleOp) || hacc::utils::isAscend960(moduleOp);
   return ::getBlockSizesTile(oper, isTranspose, isA, isA5);
 }
 
@@ -1164,8 +1165,9 @@ FailureOr<DataLayoutAttr> BatchMmadL1Op::getOperandBiasLayout() {
 
 llvm::SmallVector<int64_t>
 BatchMmadL1Op::getBlockSizesTile(Value oper, bool isTranspose, bool isA) {
-  bool isA5 = hacc::utils::isAscend950(
-      this->getOperation()->getParentOfType<ModuleOp>());
+  ModuleOp moduleOp = this->getOperation()->getParentOfType<ModuleOp>();
+  bool isA5 =
+      hacc::utils::isAscend950(moduleOp) || hacc::utils::isAscend960(moduleOp);
   return ::getBlockSizesTile(oper, isTranspose, isA, isA5);
 }
 
@@ -1175,8 +1177,9 @@ MatmulBiasMode BatchMmadL1Op::getMatmulBiasMode() {
 
 llvm::SmallVector<int64_t>
 BatchMmadL1Op::getMatmulBlockSizesTile(Value oper, bool isTranspose, bool isA) {
-  bool isA5 = hacc::utils::isAscend950(
-      this->getOperation()->getParentOfType<ModuleOp>());
+  ModuleOp moduleOp = this->getOperation()->getParentOfType<ModuleOp>();
+  bool isA5 =
+      hacc::utils::isAscend950(moduleOp) || hacc::utils::isAscend960(moduleOp);
   return ::getBlockSizesTile(oper, isTranspose, isA, isA5);
 }
 

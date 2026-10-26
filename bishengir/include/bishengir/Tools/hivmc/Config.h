@@ -330,7 +330,8 @@ public:
   }
   bool shouldEnableLayoutOptimization() const {
     return enableLayoutOptimizationFlag &&
-           hacc::utils::isAscend950(this->getTargetBackend());
+           (hacc::utils::isAscend950(this->getTargetBackend()) ||
+            hacc::utils::isAscend960(this->getTargetBackend()));
   }
 
   HIVMCMainConfig &mixedCV(bool enable) {
@@ -339,7 +340,8 @@ public:
   }
   bool shouldEnableMixedCV() const {
     return enableMixedCVFlag &&
-           hacc::utils::isAscend950(this->getTargetBackend());
+           (hacc::utils::isAscend950(this->getTargetBackend()) ||
+            hacc::utils::isAscend960(this->getTargetBackend()));
   }
 
   HIVMCMainConfig &autoMultiBuffer(bool enable) {
