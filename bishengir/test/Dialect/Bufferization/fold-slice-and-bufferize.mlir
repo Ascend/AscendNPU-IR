@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -fold-slice-into-scf-for -merge-consecutive-insert-extract-slice -fold-extract-insert-pair -one-shot-bufferize='allow-return-allocs-from-loops bufferize-function-boundaries analysis-heuristic=top-down function-boundary-type-conversion=identity-layout-map unknown-type-conversion=identity-layout-map' -cse -canonicalize -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -hivm-normalize-tmp-buffer-in-vf -fold-slice-into-scf-for -merge-consecutive-insert-extract-slice -fold-extract-insert-pair -one-shot-bufferize='allow-return-allocs-from-loops bufferize-function-boundaries analysis-heuristic=top-down function-boundary-type-conversion=identity-layout-map unknown-type-conversion=identity-layout-map' -cse -canonicalize -split-input-file | FileCheck %s
 
 // CHECK-LABEL: func.func @test_loop_dominance_1d
 // CHECK-NOT: memref.alloc
@@ -54,7 +54,7 @@ module {
 // CHECK-NOT: memref.alloc
 // CHECK-NOT: memref.copy
 module {
-    func.func @test_loop_dominance_2d(%arg0: tensor<128x128xf32>, %arg00: tensor<128x128xf32>) -> tensor<128x128xf32> {
+    func.func @test_loop_dominance_2d(%arg0: tensor<128x128xf32>, %arg00: tensor<128x128xf32>) -> tensor<128x128xf32> attributes {hivm.vector_function} {
         %cst = arith.constant dense<1.000000e+00> : vector<64x64xf32>
         %c128 = arith.constant 128 : index
         %c1 = arith.constant 1 : index
