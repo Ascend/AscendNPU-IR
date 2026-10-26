@@ -41,6 +41,63 @@ func.func @pair(%arg0: tensor<bf16>) -> tensor<bf16> {
 
 // -----
 
+// CHECK-LABEL: @pairContractNoRoundMode
+// CHECK-SAME: (%[[arg0:.*]]: tensor<bf16>)
+// CHECK-NOT: hfusion.cast
+// CHECK: return %[[arg0]] : tensor<bf16>
+
+func.func @pairContractNoRoundMode(%arg0: tensor<bf16>) -> tensor<bf16> {
+    %empty_f32 = tensor.empty() : tensor<f32>
+    %empty_bf16 = tensor.empty() : tensor<bf16>
+    %up = hfusion.cast {arith.fastmath = #arith.fastmath<contract>}
+        ins(%arg0 : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+    %down = hfusion.cast {arith.fastmath = #arith.fastmath<contract>}
+        ins(%up : tensor<f32>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
+  return %down : tensor<bf16>
+}
+
+// -----
+
+// LegalizeBF16 stamps contract on the f32-to-bf16 boundary, but the explicit
+// rint still preserves the per-operation BF16 result before comparison.
+// CHECK-LABEL: @keepBF16RoundBeforeCmp
+// CHECK: hfusion.cast {arith.fastmath = #arith.fastmath<contract>, round_mode = #hfusion.round_mode<rint>} ins(%[[arg0:.*]] : tensor<f32>) outs({{.*}} : tensor<bf16>) -> tensor<bf16>
+// CHECK: hfusion.cast ins({{.*}} : tensor<bf16>) outs({{.*}} : tensor<f32>) -> tensor<f32>
+// CHECK: arith.cmpf
+// CHECK: return
+func.func @keepBF16RoundBeforeCmp(%arg0: tensor<f32>, %arg1: tensor<f32>) -> i1 {
+  %empty_f32 = tensor.empty() : tensor<f32>
+  %empty_bf16 = tensor.empty() : tensor<bf16>
+  %down = hfusion.cast {arith.fastmath = #arith.fastmath<contract>, round_mode = #hfusion.round_mode<rint>}
+      ins(%arg0 : tensor<f32>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
+  %up = hfusion.cast ins(%down : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+  %lhs = tensor.extract %up[] : tensor<f32>
+  %rhs = tensor.extract %arg1[] : tensor<f32>
+  %cmp = arith.cmpf ogt, %lhs, %rhs : f32
+  return %cmp : i1
+}
+
+// -----
+
+// The same LegalizeBF16 boundary must remain before conversion to an integer.
+// CHECK-LABEL: @keepBF16RoundBeforeIntCast
+// CHECK: hfusion.cast {arith.fastmath = #arith.fastmath<contract>, round_mode = #hfusion.round_mode<rint>} ins(%[[arg0:.*]] : tensor<f32>) outs({{.*}} : tensor<bf16>) -> tensor<bf16>
+// CHECK: hfusion.cast ins({{.*}} : tensor<bf16>) outs({{.*}} : tensor<f32>) -> tensor<f32>
+// CHECK: arith.fptosi
+// CHECK: return
+func.func @keepBF16RoundBeforeIntCast(%arg0: tensor<f32>) -> i64 {
+  %empty_f32 = tensor.empty() : tensor<f32>
+  %empty_bf16 = tensor.empty() : tensor<bf16>
+  %down = hfusion.cast {arith.fastmath = #arith.fastmath<contract>, round_mode = #hfusion.round_mode<rint>}
+      ins(%arg0 : tensor<f32>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
+  %up = hfusion.cast ins(%down : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+  %value = tensor.extract %up[] : tensor<f32>
+  %integer = arith.fptosi %value : f32 to i64
+  return %integer : i64
+}
+
+// -----
+
 // CHECK-LABEL: @pairNoFastmathUpcast
 // CHECK-SAME: (%[[arg0:.*]]: tensor<bf16>)
 // CHECK-NOT: hfusion.cast
@@ -818,4 +875,134 @@ func.func @keepIntegerNarrowInMixedChain(%arg0: tensor<4xi16>) -> tensor<4xi16> 
   %c3 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%c2 : tensor<4xf16>) outs(%e3 : tensor<4xi32>) -> tensor<4xi32>
   %c4 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%c3 : tensor<4xi32>) outs(%e4 : tensor<4xi16>) -> tensor<4xi16>
   return %c4 : tensor<4xi16>
+}
+
+// -----
+// FP8 rounding inserted at an f32 operation boundary is semantically required.
+// CHECK-LABEL: func.func @keepF8E4M3FNDownThenUp
+// CHECK: hfusion.cast ins(%{{.*}} : tensor<f32>) outs(%{{.*}} : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+// CHECK: hfusion.cast ins(%{{.*}} : tensor<f8E4M3FN>) outs(%{{.*}} : tensor<f32>) -> tensor<f32>
+// CHECK: return
+func.func @keepF8E4M3FNDownThenUp(%arg0: tensor<f32>) -> tensor<f32> {
+  %empty_f8 = tensor.empty() : tensor<f8E4M3FN>
+  %empty_f32 = tensor.empty() : tensor<f32>
+  %down = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+  %up = hfusion.cast ins(%down : tensor<f8E4M3FN>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+  return %up : tensor<f32>
+}
+
+// -----
+// FP8 rounding inserted at an f32 operation boundary is semantically required.
+// CHECK-LABEL: func.func @keepF8E5M2DownThenUp
+// CHECK: hfusion.cast ins(%{{.*}} : tensor<f32>) outs(%{{.*}} : tensor<f8E5M2>) -> tensor<f8E5M2>
+// CHECK: hfusion.cast ins(%{{.*}} : tensor<f8E5M2>) outs(%{{.*}} : tensor<f32>) -> tensor<f32>
+// CHECK: return
+func.func @keepF8E5M2DownThenUp(%arg0: tensor<f32>) -> tensor<f32> {
+  %empty_f8 = tensor.empty() : tensor<f8E5M2>
+  %empty_f32 = tensor.empty() : tensor<f32>
+  %down = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E5M2>) -> tensor<f8E5M2>
+  %up = hfusion.cast ins(%down : tensor<f8E5M2>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+  return %up : tensor<f32>
+}
+
+// -----
+// A store-only use may fold the transport round trip, but a live comparison
+// use keeps the FP8 boundary rounding observable.
+// CHECK-LABEL: func.func @keepF8DownThenUpStoreAndCompare
+// CHECK: hfusion.cast ins(%{{.*}} : tensor<f32>) outs(%{{.*}} : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+// CHECK: hfusion.cast ins(%{{.*}} : tensor<f8E4M3FN>) outs(%{{.*}} : tensor<f32>) -> tensor<f32>
+// CHECK: bufferization.materialize_in_destination
+// CHECK: arith.cmpf
+// CHECK: return
+func.func @keepF8DownThenUpStoreAndCompare(%arg0: tensor<f32>, %buf: memref<f32>, %rhs: f32) -> i1 {
+  %empty_f8 = tensor.empty() : tensor<f8E4M3FN>
+  %empty_f32 = tensor.empty() : tensor<f32>
+  %down = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+  %up = hfusion.cast ins(%down : tensor<f8E4M3FN>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+  bufferization.materialize_in_destination %up in writable %buf : (tensor<f32>, memref<f32>) -> ()
+  %value = tensor.extract %up[] : tensor<f32>
+  %cmp = arith.cmpf ogt, %value, %rhs : f32
+  return %cmp : i1
+}
+
+// -----
+// With no live compute consumer, the store boundary performs the final
+// conversion and the FP8 transport round trip can be removed.
+// CHECK-LABEL: func.func @foldF8DownThenUpStoreOnly
+// CHECK-NOT: f8E4M3FN
+// CHECK: bufferization.materialize_in_destination %[[STORED:.*]]
+// CHECK: return
+func.func @foldF8DownThenUpStoreOnly(%arg0: tensor<f32>, %buf: memref<f16>) {
+  %empty_f8 = tensor.empty() : tensor<f8E4M3FN>
+  %empty_f32 = tensor.empty() : tensor<f32>
+  %empty_f16 = tensor.empty() : tensor<f16>
+  %down = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+  %up = hfusion.cast ins(%down : tensor<f8E4M3FN>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+  %out = hfusion.cast ins(%up : tensor<f32>) outs(%empty_f16 : tensor<f16>) -> tensor<f16>
+  bufferization.materialize_in_destination %out in writable %buf : (tensor<f16>, memref<f16>) -> ()
+  return
+}
+
+// -----
+// Store assembly through tensor.insert_slice is also transparent: only the
+// final f32-to-f16 cast and the insert remain on the way to memory.
+// CHECK-LABEL: func.func @foldF8DownThenUpThroughInsertSlice
+// CHECK: hfusion.cast ins({{.*}} : tensor<4xf32>) outs({{.*}} : tensor<4xf16>) -> tensor<4xf16>
+// CHECK: tensor.insert_slice
+// CHECK: bufferization.materialize_in_destination
+// CHECK-NOT: f8E4M3FN
+// CHECK: return
+func.func @foldF8DownThenUpThroughInsertSlice(%arg0: tensor<4xf32>, %buf: memref<8xf16>) {
+  %empty_f8 = tensor.empty() : tensor<4xf8E4M3FN>
+  %empty_f32 = tensor.empty() : tensor<4xf32>
+  %empty_f16 = tensor.empty() : tensor<4xf16>
+  %empty_large = tensor.empty() : tensor<8xf16>
+  %down = hfusion.cast ins(%arg0 : tensor<4xf32>) outs(%empty_f8 : tensor<4xf8E4M3FN>) -> tensor<4xf8E4M3FN>
+  %up = hfusion.cast ins(%down : tensor<4xf8E4M3FN>) outs(%empty_f32 : tensor<4xf32>) -> tensor<4xf32>
+  %wide = hfusion.cast ins(%up : tensor<4xf32>) outs(%empty_f16 : tensor<4xf16>) -> tensor<4xf16>
+  %assembled = tensor.insert_slice %wide into %empty_large[0] [4] [1]
+      : tensor<4xf16> into tensor<8xf16>
+  bufferization.materialize_in_destination %assembled in writable %buf
+      : (tensor<8xf16>, memref<8xf16>) -> ()
+  return
+}
+
+// -----
+// A to_memref plus memref.copy is not a terminal store: the destination may
+// be read back, so the FP8 rounding must remain observable.
+// CHECK-LABEL: func.func @keepF8DownThenUpThroughMemrefCopy
+// CHECK: hfusion.cast ins(%arg0 : tensor<f32>) outs(%{{.*}} : tensor<4xf8E4M3FN>) -> tensor<4xf8E4M3FN>
+// CHECK: hfusion.cast ins(%{{.*}} : tensor<4xf8E4M3FN>) outs(%{{.*}} : tensor<4xf32>) -> tensor<4xf32>
+// CHECK: bufferization.to_memref
+// CHECK: memref.copy
+// CHECK: return
+func.func @keepF8DownThenUpThroughMemrefCopy(%arg0: tensor<f32>, %dst: memref<4xf32>) {
+  %empty_f8 = tensor.empty() : tensor<4xf8E4M3FN>
+  %empty_f32 = tensor.empty() : tensor<4xf32>
+  %down = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<4xf8E4M3FN>) -> tensor<4xf8E4M3FN>
+  %up = hfusion.cast ins(%down : tensor<4xf8E4M3FN>) outs(%empty_f32 : tensor<4xf32>) -> tensor<4xf32>
+  %src = bufferization.to_memref %up : memref<4xf32>
+  memref.copy %src, %dst : memref<4xf32> to memref<4xf32>
+  return
+}
+
+// -----
+// Requirement 04: an explicit rint on the final store-boundary cast is
+// preserved, while the preceding FP8 transport round trip is removed.
+// CHECK-LABEL: func.func @foldF8DownThenUpRintStoreBoundary
+// CHECK-NOT: f8E4M3FN
+// CHECK: hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%{{.*}} : tensor<f32>) outs({{.*}} : tensor<f16>) -> tensor<f16>
+// CHECK: bufferization.materialize_in_destination
+// CHECK: return
+func.func @foldF8DownThenUpRintStoreBoundary(%arg0: tensor<f32>, %buf: memref<f16>) {
+  %empty_f8 = tensor.empty() : tensor<f8E4M3FN>
+  %empty_f32 = tensor.empty() : tensor<f32>
+  %empty_f16 = tensor.empty() : tensor<f16>
+  %down = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+  %up = hfusion.cast ins(%down : tensor<f8E4M3FN>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+  %out = hfusion.cast {round_mode = #hfusion.round_mode<rint>}
+      ins(%up : tensor<f32>) outs(%empty_f16 : tensor<f16>) -> tensor<f16>
+  bufferization.materialize_in_destination %out in writable %buf
+      : (tensor<f16>, memref<f16>) -> ()
+  return
 }
