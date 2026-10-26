@@ -29,6 +29,7 @@
 #include "mlir/Conversion/LLVMCommon/Pattern.h"
 #include "mlir/Conversion/MathToLLVM/MathToLLVM.h"
 #include "mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h"
+#include "mlir/Conversion/UBToLLVM/UBToLLVM.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -37,6 +38,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinDialect.h"
@@ -112,6 +114,7 @@ struct ConvertHIVMToLLVM
         math::MathDialect,
         memref::MemRefDialect,
         scf::SCFDialect,
+        ub::UBDialect,
         vector::VectorDialect
         >();
     // clang-format on
@@ -374,6 +377,7 @@ void mlir::hivm::populateHIVMToLLVMConversionPatterns(
   mlir::arith::populateArithToHIVMLLVMConversionPatterns(converter, patterns);
   mlir::populateMathToLLVMConversionPatterns(converter, patterns);
   mlir::arith::populateArithToLLVMConversionPatterns(converter, patterns);
+  mlir::ub::populateUBToLLVMConversionPatterns(converter, patterns);
   patterns.add<PointerCastOpLowering>(converter);
   patterns.add<BitcastOpLowering>(converter);
   patterns.add<FoldOffsetIntoPtrCastOpLowering>(converter);

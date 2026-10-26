@@ -426,3 +426,33 @@ module {
     return
   }
 }
+
+// CHECK-LABEL: test_ub_poison_scalar
+// CHECK-NOT: ub.poison
+// CHECK: %[[P:.*]] = llvm.mlir.poison : i32
+// CHECK: llvm.store %[[P]]
+func.func @test_ub_poison_scalar(%arg0: !llvm.ptr) {
+  %0 = ub.poison : i32
+  llvm.store %0, %arg0 : i32, !llvm.ptr
+  return
+}
+
+// -----
+
+// CHECK-LABEL: test_ub_poison_index
+// CHECK-NOT: ub.poison
+// CHECK: llvm.mlir.poison : i{{[0-9]+}}
+func.func @test_ub_poison_index() -> index {
+  %0 = ub.poison : index
+  return %0 : index
+}
+
+// -----
+
+// CHECK-LABEL: test_ub_poison_vector
+// CHECK-NOT: ub.poison
+// CHECK: llvm.mlir.poison : vector<4xf32>
+func.func @test_ub_poison_vector() -> vector<4xf32> {
+  %0 = ub.poison : vector<4xf32>
+  return %0 : vector<4xf32>
+}
