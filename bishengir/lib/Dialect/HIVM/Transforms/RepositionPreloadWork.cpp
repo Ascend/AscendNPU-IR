@@ -2828,6 +2828,62 @@ struct RepositionPreloadWorkPass
   void runOnOperation() override;
 };
 
+/// Scalar index arithmetic still carries the iter-arg itself. A later user
+/// consumes the arg as data, and data flowing between stages is what
+/// pipelining is for, so the check stops there.
+static bool isIterArgCarrierOp(Operation *op) {
+  if (!op || isa<annotation::MarkOp>(op))
+    return false;
+  if (isa<arith::IndexCastOp, arith::IndexCastUIOp, arith::TruncIOp,
+          arith::ExtSIOp, arith::ExtUIOp>(op))
+    return true;
+  Dialect *dialect = op->getDialect();
+  return dialect && (dialect->getNamespace() == "arith" ||
+                     dialect->getNamespace() == "affine");
+}
+
+/// Preload stages do not share one iteration of an iter_arg. After
+/// repositioning, one iter_arg must not be read from scopes whose
+/// `hivm.preload_num` differ.
+static LogicalResult verifyPreloadIterArgUses(func::FuncOp func) {
+  LogicalResult result = success();
+  func.walk([&](scf::ForOp loop) {
+    bool preloaded = false;
+    for (auto scope : loop.getBody()->getOps<scope::ScopeOp>())
+      if (getScopePreloadNum(scope))
+        preloaded = true;
+    if (!preloaded)
+      return;
+    for (auto [idx, arg] : llvm::enumerate(loop.getRegionIterArgs())) {
+      DenseSet<int64_t> nums;
+      DenseSet<Value> seen;
+      SmallVector<Value> work = {Value(arg)};
+      while (!work.empty()) {
+        Value value = work.pop_back_val();
+        if (!seen.insert(value).second)
+          continue;
+        for (Operation *user : value.getUsers()) {
+          if (!loop->isAncestor(user))
+            continue;
+          if (auto scope = enclosingForBodyScope(user, loop))
+            if (auto num = getScopePreloadNum(scope))
+              nums.insert(*num);
+          if (!isIterArgCarrierOp(user))
+            continue;
+          for (Value result : user->getResults())
+            work.push_back(result);
+        }
+      }
+      if (nums.size() <= 1)
+        continue;
+      loop.emitError() << "iter_arg #" << idx
+                       << " is used by scopes with different hivm.preload_num";
+      result = failure();
+    }
+  });
+  return result;
+}
+
 void RepositionPreloadWorkPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
   if (isSplitMixModule(moduleOp))
@@ -2868,6 +2924,10 @@ void RepositionPreloadWorkPass::runOnOperation() {
       }
       if (sinkClosedRecurrences &&
           failed(sinkReturnedTensorsToConsumerImpl(forOp, true)))
+        return signalPassFailure();
+    }
+    if (this->enablePreload || sinkAcrossScopes) {
+      if (failed(verifyPreloadIterArgUses(funcOp)))
         return signalPassFailure();
     }
   }
