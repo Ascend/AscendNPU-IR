@@ -5,6 +5,7 @@ set(A5_REGBASE_CUBE_SOURCES
     LocalConv.cpp
     LocalMmad.cpp
     LocalMmadMx.cpp
+    TcbPool.cpp
     l12ub.cpp
     loadMXScale.cpp
     nchw2c1hwnc0.cpp
