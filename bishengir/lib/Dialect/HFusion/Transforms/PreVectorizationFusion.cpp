@@ -231,11 +231,8 @@ struct GeneralizeMulextPattern : public OpRewritePattern<HFusionMulExtOp> {
     }
 
     // Create empty output tensor
-    auto shape = lhsType.getShape();
-    Value lowEmpty = rewriter.create<tensor::EmptyOp>(
-        op.getLoc(), shape, getElementTypeOrSelf(lowType));
-    Value highEmpty = rewriter.create<tensor::EmptyOp>(
-        op.getLoc(), shape, getElementTypeOrSelf(highType));
+    Value lowEmpty = utils::createEmptyOp(rewriter, op.getLoc(), lhs);
+    Value highEmpty = utils::createEmptyOp(rewriter, op.getLoc(), lhs);
 
     // create linalg.generic
     auto genericOp = rewriter.create<linalg::GenericOp>(

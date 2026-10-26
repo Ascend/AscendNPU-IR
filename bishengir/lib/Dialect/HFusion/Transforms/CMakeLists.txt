@@ -84,6 +84,9 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   DEPENDS
   BiShengIRHFusionTransformsIncGen
 
+  LINK_COMPONENTS
+  Support
+
   LINK_LIBS PUBLIC
   BiShengIRDialectUtils
   BiShengIRSchedule
