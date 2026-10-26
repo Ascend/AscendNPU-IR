@@ -37,9 +37,13 @@ def ChannelSplit : BoolAttrCapabilityParameter<>;
 
 def FixpipeSchema
     : RequestSchema<[Src, Dst], [DmaMode, PreQuantMode, PreRelu, ChannelSplit]>;
-def Fixpipe : CapabilityKey<FixpipeSchema>;
+def Fixpipe : CapabilityKey<FixpipeSchema> {
+  let DocNote = "Address space, layout, shape, and quant_scale presence "
+                "are outside this schema.";
+}
 
-// Pairs stay whole. A later row that allows f32 -> f16 does not allow f32 -> i8.
+// Pairs stay whole. A later row that allows f32 -> f16 does not allow f32 ->
+// i8.
 def FixpipeF32ToF32 : TypeSignature<[SrcType, DstType], [F32, F32]>;
 def FixpipeI32ToI32 : TypeSignature<[SrcType, DstType], [I32, I32]>;
 def FixpipeF32ToF16 : TypeSignature<[SrcType, DstType], [F32, F16]>;

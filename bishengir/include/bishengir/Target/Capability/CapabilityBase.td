@@ -245,6 +245,9 @@ class CapabilityKey<RequestSchema schema, string cppName = "",
   string CppName = cppName;
   string Name = name;
   RequestSchema Schema = schema;
+  // Optional text printed by the documentation backend for this capability.
+  // Empty means the catalogue has no extra scope note.
+  string DocNote = "";
 }
 
 //===----------------------------------------------------------------------===//
@@ -305,18 +308,17 @@ class TypeSignature<list<SlotField> fields, list<Type> types>
 // Constraints on different fields in the same SupportCase are combined with
 // AND. Use AnyValue instead when the field should not restrict support.
 class EnumValueConstraint<CapabilityRequestField target,
-                          list<EnumAttrCaseInfo> values>
-    : CapabilityConstraint {
+                          list<I32EnumAttrCase> values> : CapabilityConstraint {
   CapabilityRequestField Field = target;
-  list<EnumAttrCaseInfo> Values = values;
+  list<I32EnumAttrCase> Values = values;
 }
 
 // Singleton shorthand: EnumEquals<Field, A> accepts only A.
-class EnumEquals<CapabilityRequestField target, EnumAttrCaseInfo value>
+class EnumEquals<CapabilityRequestField target, I32EnumAttrCase value>
     : EnumValueConstraint<target, [value]>;
 
 // Set shorthand: EnumAnyOf<Field, [A, B]> accepts either A or B.
-class EnumAnyOf<CapabilityRequestField target, list<EnumAttrCaseInfo> values>
+class EnumAnyOf<CapabilityRequestField target, list<I32EnumAttrCase> values>
     : EnumValueConstraint<target, values>;
 
 //===----------------------------------------------------------------------===//

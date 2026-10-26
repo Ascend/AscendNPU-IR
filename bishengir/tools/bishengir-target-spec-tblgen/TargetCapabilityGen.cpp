@@ -1635,8 +1635,7 @@ static SmallVector<DocColumn> getDocColumns(const Record *capability) {
   for (const Record *slot : getCapabilitySlots(capability)) {
     for (const Record *property : slot->getValueAsListOfDefs(kProperties)) {
       DocColumn column;
-      column.header =
-          getEffectiveName(slot) + "." + getEffectiveName(property);
+      column.header = getEffectiveName(slot) + "." + getEffectiveName(property);
       column.fieldKey = getSlotFieldKey(slot, property);
       column.typeField = isTypeDomain(property->getValueAsDef(kDomain));
       columns.push_back(std::move(column));
@@ -1667,6 +1666,12 @@ static bool emitTargetCapabilityDoc(const RecordKeeper &records,
      << "document are the support facts. A partial profile does not turn an\n"
      << "unlisted well-formed request into Unsupported.\n\n";
 
+  SmallPtrSet<const Record *, 8> profiledArchitectures;
+  for (const Record *profile : profiles)
+    profiledArchitectures.insert(profile->getValueAsDef(kArchitecture));
+
+  // Group by capability first. Architecture tables that follow a finished
+  // capability section would otherwise be read as belonging to the last key.
   for (const Record *capability : capabilities) {
     os << "## Capability `" << getEffectiveName(capability)
        << "`\n\nFields:\n\n";
@@ -1676,59 +1681,61 @@ static bool emitTargetCapabilityDoc(const RecordKeeper &records,
         os << " (MLIR type)";
       os << "\n";
     }
+    StringRef note = capability->getValueAsString("DocNote");
+    if (!note.empty())
+      os << "\n" << note << "\n";
     os << "\n";
-  }
 
-  SmallPtrSet<const Record *, 8> profiledArchitectures;
-  for (const Record *profile : profiles) {
-    const Record *architecture = profile->getValueAsDef(kArchitecture);
-    profiledArchitectures.insert(architecture);
-    os << "### `" << architecture->getValueAsString("Name") << "`\n\n";
-    for (const Record *coverage :
-         profile->getValueAsListOfDefs(kCapabilities)) {
-      const Record *capability = coverage->getValueAsDef(kCapability);
-      const Record *completeness = coverage->getValueAsDef(kCompleteness);
-      bool partial = completeness->getName() == "PartialProfile";
-      auto columns = getDocColumns(capability);
-      os << "Coverage: " << getEffectiveName(completeness)
-         << "\n\nA well-formed request that matches no row is "
-         << (partial ? "Unknown" : "Unsupported") << ".\n\n|";
-      for (const DocColumn &column : columns)
-        os << " " << column.header << " |";
-      os << "\n|";
-      for (unsigned index = 0; index < columns.size(); ++index)
-        os << " --- |";
-      os << "\n";
+    for (const Record *profile : profiles) {
+      const Record *architecture = profile->getValueAsDef(kArchitecture);
+      for (const Record *coverage :
+           profile->getValueAsListOfDefs(kCapabilities)) {
+        if (coverage->getValueAsDef(kCapability) != capability)
+          continue;
+        const Record *completeness = coverage->getValueAsDef(kCompleteness);
+        bool partial = completeness->getName() == "PartialProfile";
+        auto columns = getDocColumns(capability);
+        os << "### `" << architecture->getValueAsString("Name") << "`\n\n"
+           << "Coverage: " << getEffectiveName(completeness)
+           << "\n\nA well-formed request that matches no row is "
+           << (partial ? "Unknown" : "Unsupported") << ".\n\n|";
+        for (const DocColumn &column : columns)
+          os << " " << column.header << " |";
+        os << "\n|";
+        for (unsigned index = 0; index < columns.size(); ++index)
+          os << " --- |";
+        os << "\n";
 
-      for (const Record *supportCase :
-           coverage->getValueAsListOfDefs(kCases)) {
-        SmallVector<const Record *> signatures;
-        for (const Record *constraint :
-             supportCase->getValueAsListOfDefs(kConstraints)) {
-          if (constraint->isSubClassOf("TypeSignature"))
-            signatures.push_back(constraint);
-        }
-        if (signatures.empty())
-          signatures.push_back(nullptr);
-        for (const Record *signature : signatures) {
-          os << "|";
-          for (const DocColumn &column : columns) {
-            os << " ";
-            if (column.typeField) {
-              os << (signature ? formatTypeCell(signature, column.fieldKey)
-                               : "any");
-            } else if (const Record *constraint =
-                           findValueConstraint(supportCase, column.fieldKey)) {
-              os << formatConstraint(constraint);
-            } else {
-              os << "any";
-            }
-            os << " |";
+        for (const Record *supportCase :
+             coverage->getValueAsListOfDefs(kCases)) {
+          SmallVector<const Record *> signatures;
+          for (const Record *constraint :
+               supportCase->getValueAsListOfDefs(kConstraints)) {
+            if (constraint->isSubClassOf("TypeSignature"))
+              signatures.push_back(constraint);
           }
-          os << "\n";
+          if (signatures.empty())
+            signatures.push_back(nullptr);
+          for (const Record *signature : signatures) {
+            os << "|";
+            for (const DocColumn &column : columns) {
+              os << " ";
+              if (column.typeField) {
+                os << (signature ? formatTypeCell(signature, column.fieldKey)
+                                 : "any");
+              } else if (const Record *constraint = findValueConstraint(
+                             supportCase, column.fieldKey)) {
+                os << formatConstraint(constraint);
+              } else {
+                os << "any";
+              }
+              os << " |";
+            }
+            os << "\n";
+          }
         }
+        os << "\n";
       }
-      os << "\n";
     }
   }
 
@@ -1740,8 +1747,7 @@ static bool emitTargetCapabilityDoc(const RecordKeeper &records,
       continue;
     os << "- `" << architecture->getValueAsString("Name") << "`\n";
   }
-  os << "\nAddress space, layout, shape, and quant_scale presence are outside\n"
-     << "this schema.\n";
+  os << "\n";
   return false;
 }
 

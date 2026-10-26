@@ -1,4 +1,5 @@
-//===- FixpipeCapabilityTest.cpp - Production Fixpipe queries ----*- C++ -*-===//
+//===- FixpipeCapabilityTest.cpp - Production Fixpipe queries ----*- C++
+//-*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,9 +16,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Target/NPU/DMA/Fixpipe/FixpipeCapability.h"
 #include "bishengir/Dialect/HIVM/IR/Contracts/DMA/Fixpipe/FixpipePreQuantContract.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Target/NPU/DMA/Fixpipe/FixpipeCapability.h"
 #include "bishengir/Target/NPU/NPUArchitecture.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
@@ -53,17 +54,16 @@ CapabilityRequestStorage makeRequest(Type src, Type dst, int64_t dma,
                                      int64_t channelSplit) {
   CapabilityRequestStorage storage;
   storage.capability = CapabilityKind::Fixpipe;
-  storage.values = {
-      {Field::slot(0, Property::ElementType), src},
-      {Field::slot(1, Property::ElementType), dst},
-      {Field::parameter(Parameter::DmaMode),
-       CapabilityValue{Domain::FixpipeDMAMode, dma}},
-      {Field::parameter(Parameter::PreQuantMode),
-       CapabilityValue{Domain::FixpipePreQuantMode, preQuant}},
-      {Field::parameter(Parameter::PreRelu),
-       CapabilityValue{Domain::FixpipePreReluMode, preRelu}},
-      {Field::parameter(Parameter::ChannelSplit),
-       CapabilityValue{Domain::Bool, channelSplit}}};
+  storage.values = {{Field::slot(0, Property::ElementType), src},
+                    {Field::slot(1, Property::ElementType), dst},
+                    {Field::parameter(Parameter::DmaMode),
+                     CapabilityValue{Domain::FixpipeDMAMode, dma}},
+                    {Field::parameter(Parameter::PreQuantMode),
+                     CapabilityValue{Domain::FixpipePreQuantMode, preQuant}},
+                    {Field::parameter(Parameter::PreRelu),
+                     CapabilityValue{Domain::FixpipePreReluMode, preRelu}},
+                    {Field::parameter(Parameter::ChannelSplit),
+                     CapabilityValue{Domain::Bool, channelSplit}}};
   return storage;
 }
 
@@ -80,8 +80,7 @@ protected:
   NativeSupport query(NPUArchitectureKind architecture, Type src, Type dst,
                       int64_t dma, int64_t preQuant, int64_t preRelu,
                       int64_t channelSplit) {
-    auto storage =
-        makeRequest(src, dst, dma, preQuant, preRelu, channelSplit);
+    auto storage = makeRequest(src, dst, dma, preQuant, preRelu, channelSplit);
     EXPECT_TRUE(isCapabilityRequestWellFormed(storage.getRequest()));
     return queryNativeSupport(architecture, storage.getRequest());
   }
@@ -123,9 +122,9 @@ TEST_F(FixpipeCapabilityTest, RegisteredRowsAreNative) {
               NativeSupport::Native);
   }
   for (int64_t dma : {kNz2nd, kNz2dn}) {
-    EXPECT_EQ(query(NPUArchitectureKind::kDavC310, i32, i8, dma, kS322I8,
-                    kNoRelu, 0),
-              NativeSupport::Native);
+    EXPECT_EQ(
+        query(NPUArchitectureKind::kDavC310, i32, i8, dma, kS322I8, kNoRelu, 0),
+        NativeSupport::Native);
   }
 }
 
@@ -154,11 +153,11 @@ TEST_F(FixpipeCapabilityTest, PartialMissIsUnknown) {
   EXPECT_EQ(query(NPUArchitectureKind::kDavC220, f32, f32, kNz2nd, kNoQuant,
                   kLeakyRelu, 0),
             NativeSupport::Unknown);
-  EXPECT_EQ(query(NPUArchitectureKind::kDavC310, f32, f32, kNz2nd,
-                  kQF322F32Pre, kNoRelu, 0),
+  EXPECT_EQ(query(NPUArchitectureKind::kDavC310, f32, f32, kNz2nd, kQF322F32Pre,
+                  kNoRelu, 0),
             NativeSupport::Native);
-  EXPECT_EQ(query(NPUArchitectureKind::kDavC220, f32, f32, kNz2nd,
-                  kQF322F32Pre, kNoRelu, 0),
+  EXPECT_EQ(query(NPUArchitectureKind::kDavC220, f32, f32, kNz2nd, kQF322F32Pre,
+                  kNoRelu, 0),
             NativeSupport::Unknown);
   // Separately supported fields do not form a cross product.
   EXPECT_EQ(query(NPUArchitectureKind::kDavC310, i32, f16, kNz2nd, kF322F16,
@@ -179,9 +178,9 @@ TEST_F(FixpipeCapabilityTest, MalformedRequestIsInvalid) {
   auto missing = makeRequest(f32, f32, kNz2nd, kNoQuant, kNoRelu, 0);
   missing.values.pop_back();
   EXPECT_FALSE(isCapabilityRequestWellFormed(missing.getRequest()));
-  EXPECT_EQ(queryNativeSupport(NPUArchitectureKind::kDavC310,
-                               missing.getRequest()),
-            NativeSupport::InvalidRequest);
+  EXPECT_EQ(
+      queryNativeSupport(NPUArchitectureKind::kDavC310, missing.getRequest()),
+      NativeSupport::InvalidRequest);
 
   auto badDma = makeRequest(f32, f32, 99, kNoQuant, kNoRelu, 0);
   EXPECT_FALSE(isCapabilityRequestWellFormed(badDma.getRequest()));
@@ -191,9 +190,9 @@ TEST_F(FixpipeCapabilityTest, MalformedRequestIsInvalid) {
 
   auto nullType = makeRequest(Type(), f32, kNz2nd, kNoQuant, kNoRelu, 0);
   EXPECT_FALSE(isCapabilityRequestWellFormed(nullType.getRequest()));
-  EXPECT_EQ(queryNativeSupport(NPUArchitectureKind::kDavC220,
-                               nullType.getRequest()),
-            NativeSupport::InvalidRequest);
+  EXPECT_EQ(
+      queryNativeSupport(NPUArchitectureKind::kDavC220, nullType.getRequest()),
+      NativeSupport::InvalidRequest);
 }
 
 TEST_F(FixpipeCapabilityTest, RegisteredRowsSatisfyPreQuantContract) {
@@ -229,8 +228,8 @@ TEST_F(FixpipeCapabilityTest, RegisteredRowsSatisfyPreQuantContract) {
         ASSERT_FALSE(preQuantValues.empty());
         for (Type src : probes) {
           for (Type dst : probes) {
-            auto storage =
-                makeRequest(src, dst, kNz2nd, preQuantValues.front(), kNoRelu, 0);
+            auto storage = makeRequest(src, dst, kNz2nd, preQuantValues.front(),
+                                       kNoRelu, 0);
             bool matched = false;
             for (const auto &signature : supportCase.signatures)
               matched = matched || signature.matches(storage.getRequest());

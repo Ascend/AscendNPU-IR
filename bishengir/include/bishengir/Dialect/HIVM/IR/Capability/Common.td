@@ -1,4 +1,4 @@
-//===- Common.td - shared capability properties -------------*- tablegen -*-===//
+//===- Common.td - Shared capability properties -*- tablegen -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");

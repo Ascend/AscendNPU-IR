@@ -15,6 +15,7 @@ include "bishengir/Target/NPU/DMA/Fixpipe/FixpipeCapabilityProfile.td"
 // CHECK: `pre_quant_mode`
 // CHECK: `pre_relu`
 // CHECK: `channel_split`
+// CHECK: quant_scale presence are outside
 
 // C220 has separate NZ2ND and NZ2NZ (printed as normal) rows, and no NZ2DN.
 // CHECK: ### `dav-c220`
@@ -32,4 +33,3 @@ include "bishengir/Target/NPU/DMA/Fixpipe/FixpipeCapabilityProfile.td"
 // CHECK: ## No profile
 // CHECK: returns Unknown
 // CHECK: `dav-m300`
-// CHECK: quant_scale presence are outside
