@@ -122,11 +122,11 @@ LogicalResult handleReinterpretCast(memref::ExpandShapeOp expandOp,
       offsetOfr, sizesOfr, newStridesOfr);
 
   auto originalType = reinterpretCast.getResult().getType();
-  auto collapsedType = options.forRegbased
-                           ? memref::CollapseShapeOp::computeCollapsedType(
-                                 cast<MemRefType>(newReinterpret.getType()),
-                                 reassociation)
-                           : cast<MemRefType>(originalType);
+  auto collapsedType =
+      options.forRegbased
+          ? memref::CollapseShapeOp::computeCollapsedType(
+                cast<MemRefType>(newReinterpret.getType()), reassociation)
+          : cast<MemRefType>(originalType);
   auto newCollapse = rewriter.create<memref::CollapseShapeOp>(
       reinterpretCast->getLoc(), collapsedType, newReinterpret, reassociation);
   if (collapsedType == originalType) {
@@ -204,6 +204,16 @@ LogicalResult handleRegBaseSubView(memref::ExpandShapeOp expandOp,
                                    Operation *definingOp) {
   auto reassociation = expandOp.getReassociationIndices();
   auto subviewOp = cast<memref::SubViewOp>(definingOp);
+  auto targetType = cast<MemRefType>(expandOp.getResult().getType());
+  // Queried before any IR is created: a failure after creating ops would make
+  // the greedy driver see a change and re-run this pattern forever.
+  SmallVector<int64_t> targetStrides, subviewStrides;
+  int64_t targetOffset, subviewOffset;
+  if (failed(getStridesAndOffset(targetType, targetStrides, targetOffset)) ||
+      failed(getStridesAndOffset(subviewOp.getType(), subviewStrides,
+                                 subviewOffset)))
+    return failure();
+
   SmallVector<OpFoldResult> offsets, sizes, strides, outputShape;
   if (failed(tensor::reshape_utils::getSubviewModifyingOp(
           rewriter, subviewOp, reassociation,
@@ -219,34 +229,66 @@ LogicalResult handleRegBaseSubView(memref::ExpandShapeOp expandOp,
     return failure();
 
   auto loc = definingOp->getLoc();
+  // A null means the computed offsets/sizes/strides are not a valid
+  // subview of the expanded source.
+  auto newSubviewType =
+      dyn_cast_or_null<MemRefType>(memref::SubViewOp::inferResultType(
+          *expandedSourceType, offsets, sizes, strides));
+  if (!newSubviewType)
+    return failure();
+
   auto expandedSource = rewriter.create<memref::ExpandShapeOp>(
       loc, *expandedSourceType, subviewOp.getSource(), reassociation,
       outputShape);
   auto newSubview = rewriter.create<memref::SubViewOp>(
-      loc, expandedSource, offsets, sizes, strides);
+      loc, newSubviewType, expandedSource, offsets, sizes, strides);
   auto newCollapse = rewriter.create<memref::CollapseShapeOp>(
       loc, subviewOp.getResult().getType(), newSubview, reassociation);
   rewriter.replaceAllUsesExcept(subviewOp, newCollapse, expandOp);
 
   Value replacement = newSubview;
-  auto targetType = cast<MemRefType>(expandOp.getResult().getType());
   rewriter.setInsertionPointAfterValue(expandOp);
-  if (replacement.getType() != targetType) {
-    auto sourceType = cast<MemRefType>(replacement.getType());
-    if (memref::CastOp::areCastCompatible(sourceType, targetType)) {
-      replacement =
-          rewriter.create<memref::CastOp>(loc, targetType, replacement);
-    } else {
-      auto metadata =
-          rewriter.create<memref::ExtractStridedMetadataOp>(loc, expandOp);
-      replacement = rewriter.create<memref::ReinterpretCastOp>(
-          loc, targetType, replacement,
-          getAsOpFoldResult(metadata.getOffset()),
-          getAsOpFoldResult(metadata.getSizes()),
-          getAsOpFoldResult(metadata.getStrides()));
-      rewriter.replaceAllUsesExcept(expandOp, replacement, metadata);
-      return success();
+  if (newSubviewType != targetType &&
+      memref::CastOp::areCastCompatible(newSubviewType, targetType)) {
+    replacement = rewriter.create<memref::CastOp>(loc, targetType, newSubview);
+  } else if (newSubviewType != targetType) {
+    // memref.cast cannot bridge the layouts so rebuild the expand_shape view
+    // with a reinterpret_cast. Its offset and strides are derived from
+    // newCollapse.
+    memref::ExtractStridedMetadataOp metadata;
+    auto getMetadata = [&metadata, &rewriter, &loc, &newCollapse]() {
+      if (!metadata)
+        metadata =
+            rewriter.create<memref::ExtractStridedMetadataOp>(loc, newCollapse);
+      return metadata;
+    };
+    OpFoldResult offset =
+        ShapedType::isDynamic(targetOffset)
+            ? OpFoldResult(getMetadata().getOffset())
+            : OpFoldResult(rewriter.getIndexAttr(targetOffset));
+    SmallVector<OpFoldResult> targetSizes = getMixedValues(
+        expandOp.getStaticOutputShape(), expandOp.getOutputShape(), rewriter);
+    // Same layout rule as ExpandShapeOp::computeExpandedType: the innermost
+    // dim of each group keeps the source stride, every outer dim multiplies
+    // in the sizes of the dims inside it. Static target strides are used
+    // as-is; a dynamic one stays dynamic for all outer dims of its group.
+    SmallVector<OpFoldResult> targetStridesOfr(targetStrides.size());
+    for (auto [srcDim, group] : llvm::enumerate(reassociation)) {
+      OpFoldResult stride =
+          ShapedType::isDynamic(subviewStrides[srcDim])
+              ? OpFoldResult(getMetadata().getStrides()[srcDim])
+              : OpFoldResult(rewriter.getIndexAttr(subviewStrides[srcDim]));
+      for (auto [pos, dim] : llvm::enumerate(llvm::reverse(group))) {
+        targetStridesOfr[dim] =
+            ShapedType::isDynamic(targetStrides[dim])
+                ? stride
+                : OpFoldResult(rewriter.getIndexAttr(targetStrides[dim]));
+        if (pos + 1 < group.size())
+          stride = multiplyOFR(rewriter, loc, stride, targetSizes[dim]);
+      }
     }
+    replacement = rewriter.create<memref::ReinterpretCastOp>(
+        loc, targetType, newSubview, offset, targetSizes, targetStridesOfr);
   }
   rewriter.replaceOp(expandOp, replacement);
   return success();
