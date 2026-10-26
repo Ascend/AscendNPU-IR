@@ -503,7 +503,7 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
                                              config, "buildFinalHIVMPipelines");
     }
     if (!success) {
-      if ((hasUboverflow || hasVectorizationPipelineFailure) &&
+      if (hasVectorizationPipelineFailure &&
           config.getEnableOptimizeScalarTransfers()) {
         config.setEnableOptimizeScalarTransfers(false);
         tryTimes += 1;
