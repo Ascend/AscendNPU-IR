@@ -26,9 +26,9 @@
 // CHECK-LABEL: func.func @test_NormalizeCmpOp_compare_i1
 // CHECK-SAME: (%[[arg0:.*]]: tensor<16x32xi1>, %[[arg1:.*]]: tensor<16x32xi1>, %[[arg2:.*]]: tensor<16x32xi1>) -> tensor<16x32xi1>
 // CHECK: %[[empty0:.*]] = tensor.empty() : tensor<16x32xf16>
-// CHECK: %[[cast0:.*]] = hivm.hir.vcast ins(%[[arg0]] : tensor<16x32xi1>) outs(%[[empty0]] : tensor<16x32xf16>) round_mode = <trunc> -> tensor<16x32xf16>
+// CHECK: %[[cast0:.*]] = hivm.hir.vcast ins(%[[arg0]] : tensor<16x32xi1>) outs(%[[empty0]] : tensor<16x32xf16>) -> tensor<16x32xf16>
 // CHECK: %[[empty1:.*]] = tensor.empty() : tensor<16x32xf16>
-// CHECK: %[[cast1:.*]] = hivm.hir.vcast ins(%[[arg1]] : tensor<16x32xi1>) outs(%[[empty1]] : tensor<16x32xf16>) round_mode = <trunc> -> tensor<16x32xf16>
+// CHECK: %[[cast1:.*]] = hivm.hir.vcast ins(%[[arg1]] : tensor<16x32xi1>) outs(%[[empty1]] : tensor<16x32xf16>) -> tensor<16x32xf16>
 // CHECK: %[[cmp:.*]] = hivm.hir.vcmp ins(%[[cast0]], %[[cast1]] : tensor<16x32xf16>, tensor<16x32xf16>) outs(%[[arg2]] : tensor<16x32xi1>) compare_mode = <lt> -> tensor<16x32xi1>
 // CHECK: return %[[cmp]] : tensor<16x32xi1>
 func.func @test_NormalizeCmpOp_compare_i1(%arg0: tensor<16x32xi1>,%arg1: tensor<16x32xi1>,  %dst : tensor<16x32xi1>) -> (tensor<16x32xi1>) {
