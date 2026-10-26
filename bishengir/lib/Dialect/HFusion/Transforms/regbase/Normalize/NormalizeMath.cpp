@@ -18,8 +18,11 @@
 #include "bishengir/Dialect/HFusion/Transforms/regbase/NormalizePatterns.h"
 #include "bishengir/Dialect/HFusion/Transforms/regbase/NormalizeTraitsBase.h"
 #include "bishengir/Dialect/HFusion/Transforms/regbase/NormalizeUtils.h"
-#include "bishengir/Transforms/regbase/Normalize/Utils/ScalarTemplateHelpers.h"
+#include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Transforms/regbase/Normalize/NormalizeMathTemplate.h"
+#include "bishengir/Transforms/regbase/Normalize/Utils/ScalarTemplateHelpers.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "llvm/ADT/SmallPtrSet.h"
 
 namespace mlir::hfusion {
 
@@ -125,6 +128,173 @@ struct HFusionModTraits : public NormalizeTraitsBase {
                      utils::createEmptyOp(rewriter, loc, x))
                      ->getResults()[0];
     return hfusion::castTo(rewriter, divOp, elemType, hfusion::RoundMode::TRUNC);
+  }
+
+  /// Returns true when `value` is consumed as a 16-bit (f16/bf16) result.
+  ///
+  /// Triton lowers f16/bf16 `%` to `extf -> arith.remf (f32) -> truncf`, so the
+  /// mod looks like an f32 op even though the user-visible result is 16-bit.
+  /// The 16-bit test/reference computes `x - trunc(x/y) * y` in f32 and expects
+  /// the rounded-product result, while the FMA path removes that rounding (up
+  /// to half an ulp of the product). Keep the legacy `mul + sub` path whenever
+  /// the result is consumed as f16/bf16.
+  ///
+  /// The check walks through shape-only tensor ops so that a cast followed by
+  /// e.g. `tensor.extract_slice` cannot hide the 16-bit consumer.
+  static bool isConsumedAs16Bit(Value value) {
+    SmallVector<Value, 4> worklist{value};
+    SmallPtrSet<Operation *, 8> visited;
+    while (!worklist.empty()) {
+      Value current = worklist.pop_back_val();
+      for (Operation *user : current.getUsers()) {
+        if (!visited.insert(user).second)
+          continue;
+        if (auto castOp = dyn_cast<hfusion::CastOp>(user)) {
+          Type outElemType =
+              getElementTypeOrSelf(castOp->getResult(0).getType());
+          if (outElemType.isF16() || outElemType.isBF16())
+            return true;
+          continue;
+        }
+        if (isa<tensor::ExtractSliceOp, tensor::ExpandShapeOp,
+                tensor::CollapseShapeOp, tensor::CastOp>(user)) {
+          for (Value result : user->getResults())
+            worklist.push_back(result);
+        }
+      }
+    }
+    return false;
+  }
+
+  static bool shouldPreserveLowPrecision(ElemwiseBinaryOp op) {
+    return op.getNumResults() > 0 && isConsumedAs16Bit(op.getResult(0));
+  }
+
+  /// Compute the remainder residual `x - truncDiv * y`.
+  ///
+  /// On Ascend950 f32, use a fused multiply-add so that the intermediate
+  /// product is not rounded separately. The naive `x - truncDiv * y`
+  /// decomposition loses up to half an ulp of the product; when the exact
+  /// remainder is close to zero that error dominates the result and breaks
+  /// the `atol=1e-5` contract of ops such as aten.remainder.
+  ///
+  /// The FMA path is only used when the truncated quotient is within FP32's
+  /// exact-integer range (plus one binade, where the rounded quotient can be
+  /// off by at most one). Beyond that, `truncDiv` can be many units away from
+  /// the true integer quotient and FMA would expose that pre-existing error;
+  /// keep the historical `mul + sub` result instead. Two range/sign selects
+  /// repair the at-most-one-ulp quotient error at integer boundaries.
+  static Value createModResidual(PatternRewriter &rewriter, Location loc,
+                                 Value x, Value y, Value truncDiv,
+                                 Type elemType, bool preserveLowPrecision) {
+    Value mul =
+        createBinaryOp(rewriter, loc, truncDiv, y,
+                       utils::createEmptyOp(rewriter, loc, x), BinaryKind::Mul);
+    Value legacy =
+        createBinaryOp(rewriter, loc, x, mul,
+                       utils::createEmptyOp(rewriter, loc, x), BinaryKind::Sub);
+
+    if (!archIsAscend950() || !archisModFma || !elemType.isF32() ||
+        preserveLowPrecision)
+      return legacy;
+
+    Value negOne =
+        utils::createConstantOp<float>(rewriter, loc, elemType, -1.0f);
+
+    // `y` may be a scalar (e.g. `abs(exponent) % 2.0` inside powf); the range
+    // check below needs a shaped value to compare against.
+    auto ensureTensor = [&](Value value) -> Value {
+      if (isa<RankedTensorType>(value.getType()))
+        return value;
+      auto refTy = cast<RankedTensorType>(x.getType());
+      auto resultTy = RankedTensorType::get(refTy.getShape(), value.getType());
+      return rewriter.create<tensor::GenerateOp>(
+          loc, resultTy, ValueRange{},
+          [&](OpBuilder &b, Location genLoc, ValueRange) {
+            b.create<tensor::YieldOp>(genLoc, value);
+          });
+    };
+    Value yTensor = ensureTensor(y);
+
+    Value negTruncDiv =
+        createBinaryOp(rewriter, loc, truncDiv, negOne,
+                       utils::createEmptyOp(rewriter, loc, x), BinaryKind::Mul);
+    auto fmaInit = utils::createEmptyOp(rewriter, loc, x);
+    Value rem =
+        hfusion::createTernaryOp<hfusion::ElemwiseTernaryOp, hfusion::TernaryFn,
+                                 hfusion::TernaryFnAttr>(
+            rewriter, loc, hfusion::TernaryFn::fma,
+            ValueRange({negTruncDiv, y, x}), ValueRange(fmaInit))
+            ->getResult(0);
+
+    Value zero = utils::createConstantOp<float>(rewriter, loc, elemType, 0.0f);
+
+    // `trunc(fl(x/y))` can be one unit away from the true integer quotient at
+    // an integer boundary. If the quotient rounded down, the FMA residual is
+    // in `(y, 2y)`; reduce it once. If it rounded up, the residual is in
+    // `(-y, 0)` and has the wrong sign; add one `|y|` afterwards.
+    Value absY = createUnaryOp(rewriter, loc, yTensor,
+                               utils::createEmptyOp(rewriter, loc, yTensor),
+                               UnaryKind::Abs);
+    Value negAbsY = createBinaryOp(rewriter, loc, absY, negOne,
+                                   utils::createEmptyOp(rewriter, loc, absY),
+                                   BinaryKind::Mul);
+
+    Value absRem =
+        createUnaryOp(rewriter, loc, rem,
+                      utils::createEmptyOp(rewriter, loc, rem), UnaryKind::Abs);
+    Value tooLarge = hfusion::createCmpOp(rewriter, loc, absRem, absY,
+                                          hfusion::CompareFn::vge)
+                         ->getResult(0);
+    Value remNegForRange =
+        hfusion::createCmpOp(rewriter, loc, rem, zero, hfusion::CompareFn::vlt)
+            ->getResult(0);
+    Value rangeOffset =
+        createSelectOp(rewriter, loc, remNegForRange, negAbsY, absY,
+                       utils::createEmptyOp(rewriter, loc, absY));
+    Value reduced = createBinaryOp(rewriter, loc, rem, rangeOffset,
+                                   utils::createEmptyOp(rewriter, loc, rem),
+                                   BinaryKind::Sub);
+    rem = createSelectOp(rewriter, loc, tooLarge, reduced, rem,
+                         utils::createEmptyOp(rewriter, loc, rem));
+
+    Value remNonZero =
+        hfusion::createCmpOp(rewriter, loc, rem, zero, hfusion::CompareFn::vne)
+            ->getResult(0);
+    Value remNeg =
+        hfusion::createCmpOp(rewriter, loc, rem, zero, hfusion::CompareFn::vlt)
+            ->getResult(0);
+    Value xNeg =
+        hfusion::createCmpOp(rewriter, loc, x, zero, hfusion::CompareFn::vlt)
+            ->getResult(0);
+    Value signDiff = createBinaryOp(rewriter, loc, remNeg, xNeg,
+                                    utils::createEmptyOp(rewriter, loc, remNeg),
+                                    BinaryKind::Xor);
+    Value needSignFix = createBinaryOp(
+        rewriter, loc, remNonZero, signDiff,
+        utils::createEmptyOp(rewriter, loc, remNonZero), BinaryKind::And);
+    Value signOffset =
+        createSelectOp(rewriter, loc, xNeg, negAbsY, absY,
+                       utils::createEmptyOp(rewriter, loc, absY));
+    Value signFixed = createBinaryOp(rewriter, loc, rem, signOffset,
+                                     utils::createEmptyOp(rewriter, loc, rem),
+                                     BinaryKind::Add);
+    rem = createSelectOp(rewriter, loc, needSignFix, signFixed, rem,
+                         utils::createEmptyOp(rewriter, loc, rem));
+
+    // For larger quotients `truncDiv` is not an exact integer and FMA would
+    // preserve the pre-existing quotient error. Keep the legacy residual there
+    // instead of trying to correct an unbounded error with fixed-size steps.
+    Value absTruncDiv = createUnaryOp(
+        rewriter, loc, truncDiv, utils::createEmptyOp(rewriter, loc, truncDiv),
+        UnaryKind::Abs);
+    Value fmaLimit =
+        utils::createConstantOp<float>(rewriter, loc, elemType, 33554432.0f);
+    Value useFma = hfusion::createCmpOp(rewriter, loc, absTruncDiv, fmaLimit,
+                                        hfusion::CompareFn::vlt)
+                       ->getResult(0);
+    return createSelectOp(rewriter, loc, useFma, rem, legacy,
+                          utils::createEmptyOp(rewriter, loc, rem));
   }
 };
 

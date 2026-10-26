@@ -70,6 +70,7 @@ extern thread_local bool archIsRegbased;
 extern thread_local bool archisAscend950;
 extern thread_local bool archisAscend310B;
 extern thread_local bool archisMembased;
+extern thread_local bool archisModFma;
 
 enum class CalcMode { SIN, COS };
 

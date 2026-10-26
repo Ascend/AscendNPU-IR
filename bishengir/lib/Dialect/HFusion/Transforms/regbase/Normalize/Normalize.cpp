@@ -26,6 +26,7 @@ thread_local bool archIsRegbased{false};
 thread_local bool archisAscend950{false};
 thread_local bool archisAscend310B{false};
 thread_local bool archisMembased{false};
+thread_local bool archisModFma{false};
 
 void populateNormalizeHFusionRegBasePatterns(RewritePatternSet &patterns,
                                              bool enableHighPrecision,
@@ -64,12 +65,14 @@ void populateNormalizeHFusionRegBasePatterns(RewritePatternSet &patterns,
 }
 
 LogicalResult runNormalizeRegBase(Operation *op, bool enableHighPrecision,
-                                  bool enableFastDiv, bool enableDivRemPow2) {
+                                  bool enableFastDiv, bool enableDivRemPow2,
+                                  bool enableFma) {
   ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
   archIsRegbased = hacc::utils::isRegBasedArch(moduleOp);
   archisAscend950 = hacc::utils::isAscend950(moduleOp);
   archisAscend310B = hacc::utils::isAscend310B(moduleOp);
   archisMembased = hacc::utils::isMemBasedArch(moduleOp);
+  archisModFma = enableFma;
   RewritePatternSet patterns(op->getContext());
   populateNormalizeHFusionRegBasePatterns(patterns, enableHighPrecision,
                                           enableFastDiv, enableDivRemPow2);

@@ -10091,7 +10091,8 @@ public:
     ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
     if (hacc::utils::isRegBasedArch(moduleOp) || useRegBase) {
       if (failed(runNormalizeRegBase(getOperation(), enableHighPrecision,
-                                     enableFastDiv, enableDivRemPow2)))
+                                     enableFastDiv, enableDivRemPow2,
+                                     enableFma)))
         signalPassFailure();
       return;
     }

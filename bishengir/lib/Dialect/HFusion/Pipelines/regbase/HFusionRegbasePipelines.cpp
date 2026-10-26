@@ -195,6 +195,8 @@ static void preProcess(OpPassManager &pm,
   NormalizeOptions normalizeOptions;
   normalizeOptions.enableHighPrecision = options.enableHighPrecision;
   normalizeOptions.enableDivRemPow2 = options.enableDivRemPow2;
+  normalizeOptions.enableFma =
+      !options.disableHfusionVectorize && !options.enableMixedCV;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
 
@@ -355,6 +357,8 @@ static void postProcess(OpPassManager &pm,
   NormalizeOptions normalizeOptions;
   normalizeOptions.enableHighPrecision = options.enableHighPrecision;
   normalizeOptions.enableDivRemPow2 = options.enableDivRemPow2;
+  normalizeOptions.enableFma =
+      !options.disableHfusionVectorize && !options.enableMixedCV;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
 
@@ -597,6 +601,8 @@ void buildHFusionRegBasePipeline(OpPassManager &pm,
   normalizeOptions.enableHighPrecision = options.enableHighPrecision;
   normalizeOptions.enableFastDiv = options.enableFastDiv;
   normalizeOptions.enableDivRemPow2 = options.enableDivRemPow2;
+  normalizeOptions.enableFma =
+      !options.disableHfusionVectorize && !options.enableMixedCV;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
 
