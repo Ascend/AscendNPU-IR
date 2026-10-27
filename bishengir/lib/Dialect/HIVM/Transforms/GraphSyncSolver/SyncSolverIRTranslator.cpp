@@ -682,6 +682,8 @@ IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
          pipeWrite != hivm::PIPE::PIPE_UNASSIGNED);
   auto rwOp = std::make_unique<RWOperation>(op, parentOp, coreTypeVal, pipeRead,
                                             pipeWrite, readMemOps, writeMemOps);
+  rwOp->isAutoBlockifyDMA =
+      op->hasAttrOfType<UnitAttr>(hivm::AutoBlockifyDMAAttr::name);
   if (isa<UnitFlagEnabledInterface>(op)) {
     // A dual-dst fixpipe may fall back to a software split (two
     // copy_matrix_cc_to_ubuf intrinsics) in the template library; the
@@ -886,6 +888,15 @@ bool IRTranslator::isParallelLoop(Loop *loopOp) {
   return false;
 }
 
+bool IRTranslator::isAutoBlockifyLoop(Loop *loopOp) {
+  assert(loopOp != nullptr);
+  if (loopOp->op != nullptr) {
+    return loopOp->op->hasAttrOfType<UnitAttr>(
+        hivm::AutoBlockifySubloopAttr::name);
+  }
+  return false;
+}
+
 bool IRTranslator::isCVUnrolledLoop(Loop *loopOp) {
   assert(loopOp != nullptr);
   if (loopOp->op != nullptr) {
@@ -1013,6 +1024,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
       if (auto loopLikeOp = dyn_cast<LoopLikeOpInterface>(op)) {
         auto loopOp = std::make_unique<Loop>(&op, parScope);
         loopOp->isParallel = isParallelLoop(loopOp.get());
+        loopOp->isAutoBlockifyLoop = isAutoBlockifyLoop(loopOp.get());
         loopOp->isCVUnrolledLoop = isCVUnrolledLoop(loopOp.get());
         loopOp->multibufferUnrollNum =
             getLoopMultibufferUnrollNum(loopOp.get());

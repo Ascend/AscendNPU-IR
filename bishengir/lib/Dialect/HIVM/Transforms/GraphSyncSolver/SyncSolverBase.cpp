@@ -412,16 +412,46 @@ bool SyncSolverBase::checkSkipCrossCorePair(Occurrence *occ1,
   return checkSkipCrossCorePair(rwOp1->coreType, rwOp2->coreType);
 }
 
-bool SyncSolverBase::checkSkipParallelLoop(Occurrence *occ1, Occurrence *occ2) {
+Loop *SyncSolverBase::getBackwardLCALoop(Occurrence *occ1, Occurrence *occ2) {
   if (!isBackwardSync(occ1, occ2)) {
-    return false;
+    return nullptr;
   }
   auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
   assert(parOcc1 != nullptr && parOcc2 != nullptr);
   auto *parentLCALoopOcc = Occurrence::getParentloop(parOcc1);
   assert(parentLCALoopOcc != nullptr);
-  auto *parentLCALoopOp = llvm::cast<Loop>(parentLCALoopOcc->op);
-  return parentLCALoopOp->isParallel;
+  return llvm::cast<Loop>(parentLCALoopOcc->op);
+}
+
+bool SyncSolverBase::checkSkipParallelLoop(Occurrence *occ1, Occurrence *occ2) {
+  auto *parentLCALoopOp = getBackwardLCALoop(occ1, occ2);
+  return parentLCALoopOp != nullptr && parentLCALoopOp->isParallel;
+}
+
+bool SyncSolverBase::checkSkipAutoBlockifyDMAPair(Occurrence *occ1,
+                                                  Occurrence *occ2) {
+  // Two different ops may still write the same GM.
+  auto *rwOp = llvm::dyn_cast<RWOperation>(occ1->op);
+  if (rwOp == nullptr || occ1->op != occ2->op || !rwOp->isAutoBlockifyDMA) {
+    return false;
+  }
+  auto *parentLCALoopOp = getBackwardLCALoop(occ1, occ2);
+  if (parentLCALoopOp == nullptr || !parentLCALoopOp->isAutoBlockifyLoop) {
+    return false;
+  }
+  // Only the block-indexed GM write is disjoint across iterations, so every
+  // conflict has to be between GM writes, that is a kernel argument that the
+  // op writes.
+  auto memConflicts = getMemInfoConflict(rwOp, rwOp);
+  auto writeMemInfos = llvm::make_pointer_range(rwOp->writeMemInfo);
+  auto isGMWrite = [&](const MemInfo *memInfo) {
+    return memInfo->funcArgInfo.has_value() &&
+           llvm::is_contained(writeMemInfos, memInfo);
+  };
+  return !memConflicts.empty() &&
+         llvm::all_of(memConflicts, [&](const auto &memConflict) {
+           return isGMWrite(memConflict.first) && isGMWrite(memConflict.second);
+         });
 }
 
 // Check whether occurrences belong to impossible (if-else) pairing.
@@ -1019,16 +1049,6 @@ std::optional<EventIdInfo> SyncSolverBase::getMultiBufferEventIdInfo(
   auto eventIdNum = getMultiBufferEventIdNum(rwOp1, rwOp2, offsetPair);
   if (!eventIdNum.has_value()) {
     return {};
-  }
-
-  if (eventIdNum.value() > 2) {
-    for (auto *conditionOp = rwOp1->getParentOfType<Condition>(); conditionOp;
-         conditionOp = conditionOp->getParentOfType<Condition>()) {
-      if (conditionOp->isProperAncestor(rwOp2) &&
-          !conditionOp->isProperAncestor(multibufferScope)) {
-        return {};
-      }
-    }
   }
 
   auto [setOcc, waitOcc] = getSetWaitLCAPairOcc(occ1, occ2);

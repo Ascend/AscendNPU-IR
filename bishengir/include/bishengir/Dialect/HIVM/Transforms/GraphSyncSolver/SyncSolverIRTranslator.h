@@ -174,6 +174,7 @@ protected:
 
   bool isParallelLoop(Loop *loopOp);
 
+  bool isAutoBlockifyLoop(Loop *loopOp);
   bool isCVUnrolledLoop(Loop *loopOp);
 
   std::optional<int64_t> getLoopMultibufferUnrollNum(Loop *loopOp);

@@ -259,6 +259,9 @@ std::string Loop::str(int indent, bool recursive) const {
   if (isParallel) {
     ret += " parallel-loop";
   }
+  if (isAutoBlockifyLoop) {
+    ret += " auto-blockify-loop";
+  }
   if (multibufferUnrollNum.has_value()) {
     ret += " multibuffer-unroll-num=" +
            std::to_string(multibufferUnrollNum.value());
@@ -318,7 +321,8 @@ std::string RWOperation::str(int indent, bool recursive) const {
     pipesStr = "[<" + stringifyPIPE(this->pipeRead).str() + ">]";
   }
   ret += std::string(indent, ' ') + opStr + " " + coreTypeStr + " " + pipesStr +
-         " " + mergedUnitFlagInfo.str() + "\n";
+         " " + mergedUnitFlagInfo.str() +
+         (isAutoBlockifyDMA ? " auto-blockify-dma" : "") + "\n";
   if (indent) {
     for (auto memInfo : this->readMemInfo) {
       ret += std::string(indent + 2, ' ') + "read: " + memInfo.str() + "\n";
