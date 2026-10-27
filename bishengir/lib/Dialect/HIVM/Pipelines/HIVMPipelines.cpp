@@ -64,18 +64,6 @@ markCoreTypeOpts(const HIVMPipelineOptions &pipelineOpts,
   return opts;
 }
 
-void canonicalizationHIVMPipeline(OpPassManager &pm) {
-  pm.addPass(createArithToAffineConversionPass());
-  pm.nest<func::FuncOp>().addPass(scf::createCanonicalizeIterArgPass());
-  pm.addPass(bishengir::createExtendedCanonicalizerPass());
-  pm.addPass(createSCFForLoopCanonicalizationPass());
-  pm.addPass(createCSEPass());
-  pm.nest<func::FuncOp>().addPass(bishengir::createExtendedCanonicalizerPass());
-  pm.nest<func::FuncOp>().addPass(createHIVMOptSinglePointPass());
-  pm.nest<func::FuncOp>().addPass(bishengir::createExtendedCanonicalizerPass());
-  pm.nest<func::FuncOp>().addPass(memref::createDeadStoreEliminationPass());
-}
-
 static void
 hivmNormSyncPipeline(OpPassManager &pm,
                      const HIVMPipelineOptions &hivmPipelineOptions) {

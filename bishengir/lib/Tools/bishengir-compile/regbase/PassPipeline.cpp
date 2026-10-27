@@ -110,9 +110,8 @@ void setupHFusionPipelineOptions(
       hacc::stringifyTargetDeviceEnum(config.getTarget()).str();
 }
 
-void setupHIVMPipelineOptions(
-    hivm::regbase::HIVMPipelineOptions &hivmPipelineOptions,
-    const BiShengIRCompileMainConfig &config) {
+void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &hivmPipelineOptions,
+                              const BiShengIRCompileMainConfig &config) {
   auto &options = hivmPipelineOptions;
 #define GEN_HIVM_OPTION_SETUP
 #include "bishengir/Tools/bishengir-compile/ConfigUtils.cpp.inc"
@@ -418,7 +417,7 @@ void buildFinalHIVMPipelines(mlir::OpPassManager &pm,
     return;
   }
   if (config.getEnableHIVMCompile()) {
-    auto options = std::make_unique<hivm::regbase::HIVMPipelineOptions>();
+    auto options = std::make_unique<hivm::HIVMPipelineOptions>();
     setupHIVMPipelineOptions(*options, config);
     if (config.getEnableSimdSimtMixCompile()) {
       buildDelayedHFusionRegBaseVectorizePipeline(
@@ -600,7 +599,7 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
         config.getEnableTritonKernelCompile();
     convertOptions->enableRegBaseHIVMPipe =
         hacc::utils::isRegBasedArch(config.getTarget());
-    auto options = std::make_unique<hivm::regbase::HIVMPipelineOptions>();
+    auto options = std::make_unique<hivm::HIVMPipelineOptions>();
     setupHIVMPipelineOptions(*options, config);
     hivm::regbase::buildConvertToHIVMPipeline(pm, *convertOptions);
     hivm::regbase::buildHIVMTensorOptimizations(pm, *options);

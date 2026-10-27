@@ -137,22 +137,6 @@ private:
 #define ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS                             \
   pm.nest<func::FuncOp>().addPass(createCanonicalizerPass(options))
 
-void canonicalizationHIVMPipeline(OpPassManager &pm) {
-  pm.addPass(createArithToAffineConversionPass());
-  pm.nest<func::FuncOp>().addPass(scf::createCanonicalizeIterArgPass());
-  ADD_CANONICALIZER_PASS;
-  pm.addPass(createSCFForLoopCanonicalizationPass());
-  pm.addPass(createCSEPass());
-  // No canonicalizer between cse and single-point: its folds are subsumed by
-  // the trailing canonicalizer of this cluster.
-  pm.nest<func::FuncOp>().addPass(createHIVMOptSinglePointPass());
-  // No canonicalizer between single-point and dead store elimination:
-  // dead-store matching does not depend on its rewrites, and the trailing
-  // canonicalizer subsumes them.
-  pm.nest<func::FuncOp>().addPass(memref::createDeadStoreEliminationPass());
-  ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
-}
-
 static void hivmCodeMotionPipeline(OpPassManager &pm) {
   pm.addPass(createLoopInvariantCodeMotionPass());
   pm.addPass(createLoopInvariantSubsetHoistingPass());

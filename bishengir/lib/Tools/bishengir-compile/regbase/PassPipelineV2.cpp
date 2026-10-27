@@ -37,16 +37,15 @@ namespace regbase {
 // Defined in PassPipeline.cpp.
 void setupHFusionPipelineOptions(hfusion::HFusionPipelineOptions &options,
                                  const BiShengIRCompileMainConfig &config);
-void setupHIVMPipelineOptions(hivm::regbase::HIVMPipelineOptions &options,
+void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &options,
                               const BiShengIRCompileMainConfig &config);
 
 namespace {
 
 /// Fill the shared v2 pipeline options for the two driver stages.
-void setupV2PipelineOptions(
-    const BiShengIRCompileMainConfig &config,
-    const hivm::regbase::HIVMPipelineOptions &hivmOptions,
-    hivm::v2::V2PipelineOptions &v2Options) {
+void setupV2PipelineOptions(const BiShengIRCompileMainConfig &config,
+                            const hivm::HIVMPipelineOptions &hivmOptions,
+                            hivm::v2::V2PipelineOptions &v2Options) {
   v2Options.target = hacc::stringifyTargetDeviceEnum(config.getTarget()).str();
   v2Options.enablePreload = hivmOptions.enablePreload;
   v2Options.enableMultiBuffer = config.getEnableAutoMultiBuffer();
@@ -71,7 +70,7 @@ void validateV2Target(const BiShengIRCompileMainConfig &config) {
 
 void appendV2Pipeline(OpPassManager &pm,
                       const BiShengIRCompileMainConfig &config,
-                      const hivm::regbase::HIVMPipelineOptions &hivmOptions,
+                      const hivm::HIVMPipelineOptions &hivmOptions,
                       V2Stage stage) {
   validateV2Target(config);
   hivm::v2::V2PipelineOptions v2Options;
@@ -121,7 +120,7 @@ void buildV2HIRPipeline(OpPassManager &pm,
         config.getEnableTritonKernelCompile();
     convertOptions->enableRegBaseHIVMPipe =
         hacc::utils::isRegBasedArch(config.getTarget());
-    auto options = std::make_unique<hivm::regbase::HIVMPipelineOptions>();
+    auto options = std::make_unique<hivm::HIVMPipelineOptions>();
     setupHIVMPipelineOptions(*options, config);
     hivm::regbase::buildConvertToHIVMPipeline(pm, *convertOptions);
     appendV2Pipeline(pm, config, *options, V2Stage::Tensor);
@@ -130,7 +129,7 @@ void buildV2HIRPipeline(OpPassManager &pm,
 
 void buildV2FinalHIVMPipelines(OpPassManager &pm,
                                const BiShengIRCompileMainConfig &config) {
-  auto options = std::make_unique<hivm::regbase::HIVMPipelineOptions>();
+  auto options = std::make_unique<hivm::HIVMPipelineOptions>();
   setupHIVMPipelineOptions(*options, config);
   appendV2Pipeline(pm, config, *options, V2Stage::Final);
 }
