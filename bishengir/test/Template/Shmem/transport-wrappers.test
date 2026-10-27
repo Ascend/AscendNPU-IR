@@ -1,6 +1,7 @@
 // REQUIRES: shmem, enable-lir-compile, shmem-transport-wrappers
 // This expensive ABI audit reads 16 linked bitcode files. Run explicitly with:
 //   build_a5/bin/llvm-lit -v -Dshmem-transport-wrappers=1 <path-to-this-test>
-// Verify that the build compiles and links every typed transport wrapper into
-// every architecture/core bitcode group, with the expected memref/scalar ABI.
+// Verify that the built C220/C310 architecture/core bitcode groups contain
+// typed transport wrappers with the expected ABI, and that the build
+// excludes atomic operation/type combinations unsupported by the hardware.
 // RUN: %python %S/Inputs/check-transport-wrappers.py %bishengir_lib_dir %bisheng_compiler %shmem_rdma_backend %shmem_relay_support

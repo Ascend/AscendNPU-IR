@@ -3,18 +3,202 @@
 #ifndef BISHENGIR_TEMPLATE_SHMEM_TRANSPORT_H
 #define BISHENGIR_TEMPLATE_SHMEM_TRANSPORT_H
 
-// Included after the SHMEM device headers by Shmem.cpp. Keep these wrappers in
-// the same translation unit because those headers define device globals.
 extern "C" {
+
+#define ACLSHMEM_MTE_GET_NBI_WRAPPER(NAME, TYPE)                               \
+  __aicore__ __attribute__((always_inline)) void                               \
+      _mlir_ciface_aclshmemx_mte_get_nbi_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
+                                                memref_t<__gm__ TYPE, 1> *src, \
+                                                uint32_t nbytes, int32_t pe) { \
+    auto *state = aclshmemi_get_state();                                       \
+    aclshmemx_mte_get_nbi<char>(                                               \
+        reinterpret_cast<__gm__ char *>(dst->aligned + dst->offset),           \
+        reinterpret_cast<__gm__ char *>(src->aligned + src->offset),           \
+        reinterpret_cast<__ubuf__ char *>(state->mte_config.aclshmem_ub),      \
+        state->mte_config.ub_size, nbytes, pe, state->mte_config.sync_id);     \
+  }
+
+#define ACLSHMEM_MTE_PUT_NBI_WRAPPER(NAME, TYPE)                               \
+  __aicore__ __attribute__((always_inline)) void                               \
+      _mlir_ciface_aclshmemx_mte_put_nbi_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
+                                                memref_t<__gm__ TYPE, 1> *src, \
+                                                uint32_t nbytes, int32_t pe) { \
+    auto *state = aclshmemi_get_state();                                       \
+    aclshmemx_mte_put_nbi<char>(                                               \
+        reinterpret_cast<__gm__ char *>(dst->aligned + dst->offset),           \
+        reinterpret_cast<__gm__ char *>(src->aligned + src->offset),           \
+        reinterpret_cast<__ubuf__ char *>(state->mte_config.aclshmem_ub),      \
+        state->mte_config.ub_size, nbytes, pe, state->mte_config.sync_id);     \
+  }
+
+ACLSHMEM_MTE_GET_NBI_WRAPPER(half, half)
+ACLSHMEM_MTE_GET_NBI_WRAPPER(float, float)
+ACLSHMEM_MTE_GET_NBI_WRAPPER(int8, int8_t)
+ACLSHMEM_MTE_GET_NBI_WRAPPER(int16, int16_t)
+ACLSHMEM_MTE_GET_NBI_WRAPPER(int32, int32_t)
+ACLSHMEM_MTE_GET_NBI_WRAPPER(int64, int64_t)
+ACLSHMEM_MTE_GET_NBI_WRAPPER(uint8, uint8_t)
+ACLSHMEM_MTE_GET_NBI_WRAPPER(uint16, uint16_t)
+ACLSHMEM_MTE_GET_NBI_WRAPPER(uint32, uint32_t)
+ACLSHMEM_MTE_GET_NBI_WRAPPER(uint64, uint64_t)
+ACLSHMEM_MTE_GET_NBI_WRAPPER(char, char)
+ACLSHMEM_MTE_GET_NBI_WRAPPER(bfloat16, bfloat16_t)
+
+#undef ACLSHMEM_MTE_GET_NBI_WRAPPER
+
+ACLSHMEM_MTE_PUT_NBI_WRAPPER(half, half)
+ACLSHMEM_MTE_PUT_NBI_WRAPPER(float, float)
+ACLSHMEM_MTE_PUT_NBI_WRAPPER(int8, int8_t)
+ACLSHMEM_MTE_PUT_NBI_WRAPPER(int16, int16_t)
+ACLSHMEM_MTE_PUT_NBI_WRAPPER(int32, int32_t)
+ACLSHMEM_MTE_PUT_NBI_WRAPPER(int64, int64_t)
+ACLSHMEM_MTE_PUT_NBI_WRAPPER(uint8, uint8_t)
+ACLSHMEM_MTE_PUT_NBI_WRAPPER(uint16, uint16_t)
+ACLSHMEM_MTE_PUT_NBI_WRAPPER(uint32, uint32_t)
+ACLSHMEM_MTE_PUT_NBI_WRAPPER(uint64, uint64_t)
+ACLSHMEM_MTE_PUT_NBI_WRAPPER(char, char)
+ACLSHMEM_MTE_PUT_NBI_WRAPPER(bfloat16, bfloat16_t)
+
+#undef ACLSHMEM_MTE_PUT_NBI_WRAPPER
+
+__aicore__ __attribute__((always_inline)) void
+_mlir_ciface_aclshmemx_mte_quiet() {
+  aclshmemx_mte_quiet();
+}
+
+#if defined(__DAV_C310__)
+#define ACLSHMEM_MTE_ATOMIC_FETCH(NAME, TYPE)                                  \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+      _mlir_ciface_aclshmemx_mte_atomic_fetch_##NAME(                          \
+          memref_t<__gm__ TYPE, 1> *dst, int32_t pe) {                         \
+    return aclshmemx_mte_atomic_fetch<TYPE>(dst->aligned + dst->offset, pe);   \
+  }
+
+ACLSHMEM_MTE_ATOMIC_FETCH(float, float)
+ACLSHMEM_MTE_ATOMIC_FETCH(int32, int32_t)
+ACLSHMEM_MTE_ATOMIC_FETCH(int64, int64_t)
+ACLSHMEM_MTE_ATOMIC_FETCH(uint32, uint32_t)
+ACLSHMEM_MTE_ATOMIC_FETCH(uint64, uint64_t)
+
+#undef ACLSHMEM_MTE_ATOMIC_FETCH
+
+#define ACLSHMEM_MTE_ATOMIC_SET(NAME, TYPE)                                    \
+  __aicore__ __attribute__((always_inline)) void                               \
+      _mlir_ciface_aclshmemx_mte_atomic_set_##NAME(                            \
+          memref_t<__gm__ TYPE, 1> *dst, TYPE value, int32_t pe) {             \
+    aclshmemx_mte_atomic_set<TYPE>(dst->aligned + dst->offset, value, pe);     \
+  }
+
+ACLSHMEM_MTE_ATOMIC_SET(uint32, uint32_t)
+ACLSHMEM_MTE_ATOMIC_SET(uint64, uint64_t)
+
+#undef ACLSHMEM_MTE_ATOMIC_SET
+
+#define ACLSHMEM_MTE_ATOMIC_SWAP(NAME, TYPE)                                   \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+      _mlir_ciface_aclshmemx_mte_atomic_swap_##NAME(                           \
+          memref_t<__gm__ TYPE, 1> *dst, TYPE value, int32_t pe) {             \
+    return aclshmemx_mte_atomic_swap<TYPE>(dst->aligned + dst->offset, value,  \
+                                           pe);                                \
+  }
+
+ACLSHMEM_MTE_ATOMIC_SWAP(uint32, uint32_t)
+ACLSHMEM_MTE_ATOMIC_SWAP(uint64, uint64_t)
+
+#undef ACLSHMEM_MTE_ATOMIC_SWAP
+
+#define ACLSHMEM_MTE_ATOMIC_COMPARE_SWAP(NAME, TYPE)                           \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+      _mlir_ciface_aclshmemx_mte_atomic_compare_swap_##NAME(                   \
+          memref_t<__gm__ TYPE, 1> *dst, TYPE cond, TYPE value, int32_t pe) {  \
+    return aclshmemx_mte_atomic_compare_swap<TYPE>(dst->aligned + dst->offset, \
+                                                   cond, value, pe);           \
+  }
+
+ACLSHMEM_MTE_ATOMIC_COMPARE_SWAP(uint32, uint32_t)
+ACLSHMEM_MTE_ATOMIC_COMPARE_SWAP(uint64, uint64_t)
+
+#undef ACLSHMEM_MTE_ATOMIC_COMPARE_SWAP
+
+#define ACLSHMEM_MTE_ATOMIC_INC(NAME, TYPE)                                    \
+  __aicore__ __attribute__((always_inline)) void                               \
+      _mlir_ciface_aclshmemx_mte_atomic_inc_##NAME(                            \
+          memref_t<__gm__ TYPE, 1> *dst, int32_t pe) {                         \
+    aclshmemx_mte_atomic_inc<TYPE>(dst->aligned + dst->offset, pe);            \
+  }
+
+ACLSHMEM_MTE_ATOMIC_INC(float, float)
+ACLSHMEM_MTE_ATOMIC_INC(int32, int32_t)
+ACLSHMEM_MTE_ATOMIC_INC(int64, int64_t)
+ACLSHMEM_MTE_ATOMIC_INC(uint32, uint32_t)
+ACLSHMEM_MTE_ATOMIC_INC(uint64, uint64_t)
+
+#undef ACLSHMEM_MTE_ATOMIC_INC
+#endif // defined(__DAV_C310__)
+
+#define ACLSHMEM_MTE_ATOMIC_ADD(NAME, TYPE)                                    \
+  __aicore__ __attribute__((always_inline)) void                               \
+      _mlir_ciface_aclshmemx_mte_atomic_add_##NAME(                            \
+          memref_t<__gm__ TYPE, 1> *dst, TYPE value, int32_t pe) {             \
+    aclshmemx_mte_atomic_add<TYPE>(dst->aligned + dst->offset, value, pe);     \
+  }
+
+ACLSHMEM_MTE_ATOMIC_ADD(float, float)
+ACLSHMEM_MTE_ATOMIC_ADD(int32, int32_t)
+ACLSHMEM_MTE_ATOMIC_ADD(half, half)
+ACLSHMEM_MTE_ATOMIC_ADD(int8, int8_t)
+ACLSHMEM_MTE_ATOMIC_ADD(int16, int16_t)
+ACLSHMEM_MTE_ATOMIC_ADD(bfloat16, bfloat16_t)
+#if defined(__DAV_C310__)
+ACLSHMEM_MTE_ATOMIC_ADD(int64, int64_t)
+ACLSHMEM_MTE_ATOMIC_ADD(uint32, uint32_t)
+ACLSHMEM_MTE_ATOMIC_ADD(uint64, uint64_t)
+#endif
+
+#undef ACLSHMEM_MTE_ATOMIC_ADD
+
+#if defined(__DAV_C310__)
+#define ACLSHMEM_MTE_ATOMIC_FETCH_INC(NAME, TYPE)                              \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+      _mlir_ciface_aclshmemx_mte_atomic_fetch_inc_##NAME(                      \
+          memref_t<__gm__ TYPE, 1> *dst, int32_t pe) {                         \
+    return aclshmemx_mte_atomic_fetch_inc<TYPE>(dst->aligned + dst->offset,    \
+                                                pe);                           \
+  }
+
+ACLSHMEM_MTE_ATOMIC_FETCH_INC(float, float)
+ACLSHMEM_MTE_ATOMIC_FETCH_INC(int32, int32_t)
+ACLSHMEM_MTE_ATOMIC_FETCH_INC(int64, int64_t)
+ACLSHMEM_MTE_ATOMIC_FETCH_INC(uint32, uint32_t)
+ACLSHMEM_MTE_ATOMIC_FETCH_INC(uint64, uint64_t)
+
+#undef ACLSHMEM_MTE_ATOMIC_FETCH_INC
+
+#define ACLSHMEM_MTE_ATOMIC_FETCH_ADD(NAME, TYPE)                              \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+      _mlir_ciface_aclshmemx_mte_atomic_fetch_add_##NAME(                      \
+          memref_t<__gm__ TYPE, 1> *dst, TYPE value, int32_t pe) {             \
+    return aclshmemx_mte_atomic_fetch_add<TYPE>(dst->aligned + dst->offset,    \
+                                                value, pe);                    \
+  }
+
+ACLSHMEM_MTE_ATOMIC_FETCH_ADD(float, float)
+ACLSHMEM_MTE_ATOMIC_FETCH_ADD(int32, int32_t)
+ACLSHMEM_MTE_ATOMIC_FETCH_ADD(int64, int64_t)
+ACLSHMEM_MTE_ATOMIC_FETCH_ADD(uint32, uint32_t)
+ACLSHMEM_MTE_ATOMIC_FETCH_ADD(uint64, uint64_t)
+
+#undef ACLSHMEM_MTE_ATOMIC_FETCH_ADD
+#endif // defined(__DAV_C310__)
 
 // RoCE uses the same runtime-configured UB workspace and event ID as generic
 // SHMEM RMA. Transfer counts are bytes; apply typed memref offsets before
 // casting payload pointers to char for the element-counted SHMEM APIs.
 #define ACLSHMEM_ROCE_GET_NBI_WRAPPER(NAME, TYPE)                              \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_roce_get_nbi_##NAME(memref_t<__gm__ TYPE, 1> *dst,    \
-                                             memref_t<__gm__ TYPE, 1> *src,    \
-                                             uint32_t nbytes, int32_t pe) {    \
+      _mlir_ciface_aclshmemx_roce_get_nbi_##NAME(                              \
+          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
+          uint32_t nbytes, int32_t pe) {                                       \
     auto *state = aclshmemi_get_state();                                       \
     auto *buf =                                                                \
         reinterpret_cast<__ubuf__ char *>(state->rdma_config.aclshmem_ub);     \
@@ -27,9 +211,9 @@ extern "C" {
 
 #define ACLSHMEM_ROCE_PUT_NBI_WRAPPER(NAME, TYPE)                              \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_roce_put_nbi_##NAME(memref_t<__gm__ TYPE, 1> *dst,    \
-                                             memref_t<__gm__ TYPE, 1> *src,    \
-                                             uint32_t nbytes, int32_t pe) {    \
+      _mlir_ciface_aclshmemx_roce_put_nbi_##NAME(                              \
+          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
+          uint32_t nbytes, int32_t pe) {                                       \
     auto *state = aclshmemi_get_state();                                       \
     auto *buf =                                                                \
         reinterpret_cast<__ubuf__ char *>(state->rdma_config.aclshmem_ub);     \
@@ -42,7 +226,7 @@ extern "C" {
 
 #define ACLSHMEM_ROCE_QUIET_WRAPPER(NAME, TYPE)                                \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_roce_quiet_##NAME(uint32_t pe) {                      \
+      _mlir_ciface_aclshmemx_roce_quiet_##NAME(uint32_t pe) {                  \
     auto *state = aclshmemi_get_state();                                       \
     auto *buf =                                                                \
         reinterpret_cast<__ubuf__ TYPE *>(state->rdma_config.aclshmem_ub);     \
@@ -53,9 +237,9 @@ extern "C" {
 // Match the existing PIPE_S UDMA put ABI: no UB workspace or event is needed.
 #define ACLSHMEM_UDMA_GET_NBI_WRAPPER(NAME, TYPE)                              \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_udma_get_nbi_##NAME(memref_t<__gm__ TYPE, 1> *dst,    \
-                                             memref_t<__gm__ TYPE, 1> *src,    \
-                                             uint32_t nbytes, int32_t pe) {    \
+      _mlir_ciface_aclshmemx_udma_get_nbi_##NAME(                              \
+          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
+          uint32_t nbytes, int32_t pe) {                                       \
     aclshmemx_udma_get_nbi<char, PIPE_S>(                                      \
         reinterpret_cast<__gm__ char *>(dst->aligned + dst->offset),           \
         reinterpret_cast<__gm__ char *>(src->aligned + src->offset),           \
@@ -64,9 +248,9 @@ extern "C" {
 
 #define ACLSHMEM_UDMA_PUT_NBI_WRAPPER(NAME, TYPE)                              \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_udma_put_nbi_##NAME(memref_t<__gm__ TYPE, 1> *dst,    \
-                                             memref_t<__gm__ TYPE, 1> *src,    \
-                                             uint32_t nbytes, int32_t pe) {    \
+      _mlir_ciface_aclshmemx_udma_put_nbi_##NAME(                              \
+          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
+          uint32_t nbytes, int32_t pe) {                                       \
     aclshmemx_udma_put_nbi<char, PIPE_S>(                                      \
         reinterpret_cast<__gm__ char *>(dst->aligned + dst->offset),           \
         reinterpret_cast<__gm__ char *>(src->aligned + src->offset),           \
@@ -78,9 +262,9 @@ extern "C" {
 #ifdef ACLSHMEM_RELAY_SUPPORT
 #define ACLSHMEM_UDMA_RELAY_GET_NBI_WRAPPER(NAME, TYPE)                        \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_udma_relay_get_nbi_##NAME(                            \
-      memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
-      uint32_t nbytes, int32_t pe, int32_t relay_pe) {                         \
+      _mlir_ciface_aclshmemx_udma_relay_get_nbi_##NAME(                        \
+          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
+          uint32_t nbytes, int32_t pe, int32_t relay_pe) {                     \
     aclshmemx_udma_relay_get_nbi<char, PIPE_S>(                                \
         reinterpret_cast<__gm__ char *>(dst->aligned + dst->offset),           \
         reinterpret_cast<__gm__ char *>(src->aligned + src->offset),           \
@@ -89,9 +273,9 @@ extern "C" {
 
 #define ACLSHMEM_UDMA_RELAY_PUT_NBI_WRAPPER(NAME, TYPE)                        \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_udma_relay_put_nbi_##NAME(                            \
-      memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
-      uint32_t nbytes, int32_t pe, int32_t relay_pe) {                         \
+      _mlir_ciface_aclshmemx_udma_relay_put_nbi_##NAME(                        \
+          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
+          uint32_t nbytes, int32_t pe, int32_t relay_pe) {                     \
     aclshmemx_udma_relay_put_nbi<char, PIPE_S>(                                \
         reinterpret_cast<__gm__ char *>(dst->aligned + dst->offset),           \
         reinterpret_cast<__gm__ char *>(src->aligned + src->offset),           \
@@ -136,45 +320,13 @@ ACLSHMEM_TRANSPORT_WRAPPERS(bfloat16, bfloat16_t)
 #undef ACLSHMEM_UDMA_RELAY_GET_NBI_WRAPPER
 #undef ACLSHMEM_UDMA_RELAY_PUT_NBI_WRAPPER
 
-// Deprecated compatibility wrappers for Python udma_put_nbi and
-// udma_put_signal_nbi. These retain element counts; the replacement low-level
-// putmem APIs take byte counts.
-#define ACLSHMEM_UDMA_PUT_NBI_WRAPPER(NAME, TYPE)                              \
-  __aicore__ __attribute__((                                                   \
-      always_inline,                                                           \
-      deprecated("udma_put_nbi is deprecated; use putmem_nbi_lowlevel with "   \
-                 "UDMA transport and convert element counts to bytes"))) void  \
-  _mlir_ciface_aclshmemi_udma_put_nbi_##NAME(memref_t<__gm__ TYPE, 1> *dst,    \
-                                             memref_t<__gm__ TYPE, 1> *src,    \
-                                             uint32_t elem_size, int32_t pe) { \
-    aclshmemx_udma_put_nbi<TYPE, PIPE_S>(                                      \
-        dst->aligned + dst->offset, src->aligned + src->offset,                \
-        (__ubuf__ TYPE *)nullptr, elem_size, pe, 0);                           \
-  }
-
-#define ACLSHMEM_UDMA_PUT_SIGNAL_NBI_WRAPPER(NAME, TYPE)                       \
-  __aicore__ __attribute__((                                                   \
-      always_inline,                                                           \
-      deprecated(                                                              \
-          "udma_put_signal_nbi is deprecated; use putmem_signal_nbi_lowlevel " \
-          "with UDMA transport and convert element counts to bytes"))) void    \
-  _mlir_ciface_aclshmemx_udma_put_signal_nbi_##NAME(                           \
-      memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
-      uint32_t elem_size, memref_t<__gm__ uint64_t, 1> *sig_addr,              \
-      uint64_t signal, int32_t pe) {                                           \
-    aclshmemx_udma_put_signal_nbi<TYPE, PIPE_S>(                               \
-        dst->aligned + dst->offset, src->aligned + src->offset, elem_size,     \
-        sig_addr->aligned + sig_addr->offset, signal, pe,                      \
-        (__ubuf__ uint8_t *)nullptr, 0);                                       \
-  }
-
-// NEW: Byte-counted UDMA PUTMEM SIGNAL
+// Byte-counted UDMA put-with-signal.
 #define ACLSHMEM_UDMA_PUTMEM_SIGNAL_NBI_WRAPPER(NAME, TYPE)                    \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_udma_putmem_signal_nbi_##NAME(                        \
-      memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
-      uint32_t nbytes, memref_t<__gm__ uint64_t, 1> *sig_addr,                 \
-      uint64_t signal, int32_t pe) {                                           \
+      _mlir_ciface_aclshmemx_udma_putmem_signal_nbi_##NAME(                    \
+          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
+          uint32_t nbytes, memref_t<__gm__ uint64_t, 1> *sig_addr,             \
+          uint64_t signal, int32_t pe) {                                       \
     aclshmemx_udma_put_signal_nbi<char, PIPE_S>(                               \
         reinterpret_cast<__gm__ char *>(dst->aligned + dst->offset),           \
         reinterpret_cast<__gm__ char *>(src->aligned + src->offset), nbytes,   \
@@ -182,29 +334,20 @@ ACLSHMEM_TRANSPORT_WRAPPERS(bfloat16, bfloat16_t)
         (__ubuf__ uint8_t *)nullptr, 0);                                       \
   }
 
-#define ACLSHMEM_EXPAND_UDMA_PUT_OPS(NAME, TYPE)                               \
-  ACLSHMEM_UDMA_PUT_NBI_WRAPPER(NAME, TYPE)                                    \
-  ACLSHMEM_UDMA_PUT_SIGNAL_NBI_WRAPPER(NAME, TYPE)                             \
-  ACLSHMEM_UDMA_PUTMEM_SIGNAL_NBI_WRAPPER(NAME, TYPE)
-
-ACLSHMEM_EXPAND_UDMA_PUT_OPS(half, half)
-ACLSHMEM_EXPAND_UDMA_PUT_OPS(float, float)
-ACLSHMEM_EXPAND_UDMA_PUT_OPS(int8, int8_t)
-ACLSHMEM_EXPAND_UDMA_PUT_OPS(int16, int16_t)
-ACLSHMEM_EXPAND_UDMA_PUT_OPS(int32, int32_t)
-ACLSHMEM_EXPAND_UDMA_PUT_OPS(int64, int64_t)
-ACLSHMEM_EXPAND_UDMA_PUT_OPS(uint8, uint8_t)
-ACLSHMEM_EXPAND_UDMA_PUT_OPS(uint16, uint16_t)
-ACLSHMEM_EXPAND_UDMA_PUT_OPS(uint32, uint32_t)
-ACLSHMEM_EXPAND_UDMA_PUT_OPS(uint64, uint64_t)
-ACLSHMEM_EXPAND_UDMA_PUT_OPS(bfloat16, bfloat16_t)
+ACLSHMEM_UDMA_PUTMEM_SIGNAL_NBI_WRAPPER(half, half)
+ACLSHMEM_UDMA_PUTMEM_SIGNAL_NBI_WRAPPER(float, float)
+ACLSHMEM_UDMA_PUTMEM_SIGNAL_NBI_WRAPPER(int8, int8_t)
+ACLSHMEM_UDMA_PUTMEM_SIGNAL_NBI_WRAPPER(int16, int16_t)
+ACLSHMEM_UDMA_PUTMEM_SIGNAL_NBI_WRAPPER(int32, int32_t)
+ACLSHMEM_UDMA_PUTMEM_SIGNAL_NBI_WRAPPER(int64, int64_t)
+ACLSHMEM_UDMA_PUTMEM_SIGNAL_NBI_WRAPPER(uint8, uint8_t)
+ACLSHMEM_UDMA_PUTMEM_SIGNAL_NBI_WRAPPER(uint16, uint16_t)
+ACLSHMEM_UDMA_PUTMEM_SIGNAL_NBI_WRAPPER(uint32, uint32_t)
+ACLSHMEM_UDMA_PUTMEM_SIGNAL_NBI_WRAPPER(uint64, uint64_t)
+ACLSHMEM_UDMA_PUTMEM_SIGNAL_NBI_WRAPPER(bfloat16, bfloat16_t)
 ACLSHMEM_UDMA_PUTMEM_SIGNAL_NBI_WRAPPER(char, char)
 
-#undef ACLSHMEM_EXPAND_UDMA_PUT_OPS
-#undef ACLSHMEM_UDMA_PUT_NBI_WRAPPER
-#undef ACLSHMEM_UDMA_PUT_SIGNAL_NBI_WRAPPER
 #undef ACLSHMEM_UDMA_PUTMEM_SIGNAL_NBI_WRAPPER
-
 
 __aicore__ __attribute__((always_inline)) void
 _mlir_ciface_aclshmemx_udma_quiet(int32_t pe) {
@@ -213,15 +356,14 @@ _mlir_ciface_aclshmemx_udma_quiet(int32_t pe) {
 
 // Transport RMA wrappers accept byte counts. Apply typed memref offsets before
 // casting payload pointers to char for the element-counted SHMEM APIs.
-// QP-specific wrappers preserve the upstream transport restrictions. In a
-// relay-enabled build, UDMA QP APIs abort; these wrappers do not bypass that
-// restriction. UDMA uses PIPE_S, matching the existing workspace-free ABI.
+// QP-specific wrappers preserve the upstream transport restrictions.
+// In a relay-enabled build, UDMA QP APIs abort.
 
 #define ACLSHMEMX_ROCE_QP_GET_NBI_WRAPPER(NAME, TYPE)                          \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_roce_qp_get_nbi_##NAME(                               \
-      memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
-      uint32_t nbytes, int32_t pe, uint32_t qp_idx) {                          \
+      _mlir_ciface_aclshmemx_roce_qp_get_nbi_##NAME(                           \
+          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
+          uint32_t nbytes, int32_t pe, uint32_t qp_idx) {                      \
     auto *state = aclshmemi_get_state();                                       \
     auto *buf =                                                                \
         reinterpret_cast<__ubuf__ char *>(state->rdma_config.aclshmem_ub);     \
@@ -234,9 +376,9 @@ _mlir_ciface_aclshmemx_udma_quiet(int32_t pe) {
 
 #define ACLSHMEMX_ROCE_QP_PUT_NBI_WRAPPER(NAME, TYPE)                          \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_roce_qp_put_nbi_##NAME(                               \
-      memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
-      uint32_t nbytes, int32_t pe, uint32_t qp_idx) {                          \
+      _mlir_ciface_aclshmemx_roce_qp_put_nbi_##NAME(                           \
+          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
+          uint32_t nbytes, int32_t pe, uint32_t qp_idx) {                      \
     auto *state = aclshmemi_get_state();                                       \
     auto *buf =                                                                \
         reinterpret_cast<__ubuf__ char *>(state->rdma_config.aclshmem_ub);     \
@@ -249,9 +391,9 @@ _mlir_ciface_aclshmemx_udma_quiet(int32_t pe) {
 
 #define ACLSHMEMX_UDMA_QP_GET_NBI_WRAPPER(NAME, TYPE)                          \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_udma_qp_get_nbi_##NAME(                               \
-      memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
-      uint32_t nbytes, int32_t pe, uint32_t qp_idx) {                          \
+      _mlir_ciface_aclshmemx_udma_qp_get_nbi_##NAME(                           \
+          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
+          uint32_t nbytes, int32_t pe, uint32_t qp_idx) {                      \
     aclshmemx_udma_qp_get_nbi<char, PIPE_S>(                                   \
         reinterpret_cast<__gm__ char *>(dst->aligned + dst->offset),           \
         reinterpret_cast<__gm__ char *>(src->aligned + src->offset),           \
@@ -260,9 +402,9 @@ _mlir_ciface_aclshmemx_udma_quiet(int32_t pe) {
 
 #define ACLSHMEMX_UDMA_QP_PUT_NBI_WRAPPER(NAME, TYPE)                          \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_udma_qp_put_nbi_##NAME(                               \
-      memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
-      uint32_t nbytes, int32_t pe, uint32_t qp_idx) {                          \
+      _mlir_ciface_aclshmemx_udma_qp_put_nbi_##NAME(                           \
+          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
+          uint32_t nbytes, int32_t pe, uint32_t qp_idx) {                      \
     aclshmemx_udma_qp_put_nbi<char, PIPE_S>(                                   \
         reinterpret_cast<__gm__ char *>(dst->aligned + dst->offset),           \
         reinterpret_cast<__gm__ char *>(src->aligned + src->offset),           \
@@ -271,7 +413,8 @@ _mlir_ciface_aclshmemx_udma_quiet(int32_t pe) {
 
 #define ACLSHMEMX_ROCE_QP_QUIET_WRAPPER(NAME, TYPE)                            \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_roce_qp_quiet_##NAME(uint32_t pe, uint32_t qp_idx) {  \
+      _mlir_ciface_aclshmemx_roce_qp_quiet_##NAME(uint32_t pe,                 \
+                                                  uint32_t qp_idx) {           \
     auto *state = aclshmemi_get_state();                                       \
     auto *buf =                                                                \
         reinterpret_cast<__ubuf__ TYPE *>(state->rdma_config.aclshmem_ub);     \
@@ -281,10 +424,10 @@ _mlir_ciface_aclshmemx_udma_quiet(int32_t pe) {
 
 #define ACLSHMEMX_UDMA_QP_PUT_SIGNAL_NBI_WRAPPER(NAME, TYPE)                   \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_udma_qp_put_signal_nbi_##NAME(                        \
-      memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
-      uint32_t nbytes, memref_t<__gm__ uint64_t, 1> *sig_addr,                 \
-      uint64_t signal, int32_t pe, uint32_t qp_idx) {                          \
+      _mlir_ciface_aclshmemx_udma_qp_put_signal_nbi_##NAME(                    \
+          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
+          uint32_t nbytes, memref_t<__gm__ uint64_t, 1> *sig_addr,             \
+          uint64_t signal, int32_t pe, uint32_t qp_idx) {                      \
     aclshmemx_udma_qp_put_signal_nbi<char, PIPE_S>(                            \
         reinterpret_cast<__gm__ char *>(dst->aligned + dst->offset),           \
         reinterpret_cast<__gm__ char *>(src->aligned + src->offset), nbytes,   \
@@ -371,8 +514,8 @@ _mlir_ciface_aclshmemx_roce_barrier_all(void) {
 // Wrapper for aclshmemx_roce_atomic_fetch
 #define ACLSHMEMX_ROCE_ATOMIC_FETCH_WRAPPER(NAME, TYPE)                        \
   __aicore__ __attribute__((always_inline)) TYPE                               \
-  _mlir_ciface_aclshmemx_roce_atomic_fetch_##NAME(                             \
-      memref_t<__gm__ TYPE, 1> *src, int pe) {                                 \
+      _mlir_ciface_aclshmemx_roce_atomic_fetch_##NAME(                         \
+          memref_t<__gm__ TYPE, 1> *src, int pe) {                             \
     return aclshmemx_roce_atomic_fetch<TYPE>(src->aligned + src->offset, pe);  \
   }
 
@@ -390,8 +533,8 @@ ACLSHMEMX_ROCE_ATOMIC_FETCH_WRAPPER(float, float)
 // Wrapper for aclshmemx_roce_atomic_fetch_inc
 #define ACLSHMEMX_ROCE_ATOMIC_FETCH_INC_WRAPPER(NAME, TYPE)                    \
   __aicore__ __attribute__((always_inline)) TYPE                               \
-  _mlir_ciface_aclshmemx_roce_atomic_fetch_inc_##NAME(                         \
-      memref_t<__gm__ TYPE, 1> *dst, int pe) {                                 \
+      _mlir_ciface_aclshmemx_roce_atomic_fetch_inc_##NAME(                     \
+          memref_t<__gm__ TYPE, 1> *dst, int pe) {                             \
     return aclshmemx_roce_atomic_fetch_inc<TYPE>(dst->aligned + dst->offset,   \
                                                  pe);                          \
   }
@@ -406,8 +549,8 @@ ACLSHMEMX_ROCE_ATOMIC_FETCH_INC_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_roce_atomic_inc
 #define ACLSHMEMX_ROCE_ATOMIC_INC_WRAPPER(NAME, TYPE)                          \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_roce_atomic_inc_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
-                                                int pe) {                      \
+      _mlir_ciface_aclshmemx_roce_atomic_inc_##NAME(                           \
+          memref_t<__gm__ TYPE, 1> *dst, int pe) {                             \
     aclshmemx_roce_atomic_inc<TYPE>(dst->aligned + dst->offset, pe);           \
   }
 
@@ -421,8 +564,8 @@ ACLSHMEMX_ROCE_ATOMIC_INC_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_roce_atomic_set
 #define ACLSHMEMX_ROCE_ATOMIC_SET_WRAPPER(NAME, TYPE)                          \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_roce_atomic_set_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
-                                                const TYPE value, int pe) {    \
+      _mlir_ciface_aclshmemx_roce_atomic_set_##NAME(                           \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     aclshmemx_roce_atomic_set<TYPE>(dst->aligned + dst->offset, value, pe);    \
   }
 
@@ -440,8 +583,8 @@ ACLSHMEMX_ROCE_ATOMIC_SET_WRAPPER(float, float)
 // Wrapper for aclshmemx_roce_atomic_swap
 #define ACLSHMEMX_ROCE_ATOMIC_SWAP_WRAPPER(NAME, TYPE)                         \
   __aicore__ __attribute__((always_inline)) TYPE                               \
-  _mlir_ciface_aclshmemx_roce_atomic_swap_##NAME(                              \
-      memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {               \
+      _mlir_ciface_aclshmemx_roce_atomic_swap_##NAME(                          \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     return aclshmemx_roce_atomic_swap<TYPE>(dst->aligned + dst->offset, value, \
                                             pe);                               \
   }
@@ -460,8 +603,8 @@ ACLSHMEMX_ROCE_ATOMIC_SWAP_WRAPPER(float, float)
 // Wrapper for aclshmemx_roce_atomic_add
 #define ACLSHMEMX_ROCE_ATOMIC_ADD_WRAPPER(NAME, TYPE)                          \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_roce_atomic_add_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
-                                                const TYPE value, int pe) {    \
+      _mlir_ciface_aclshmemx_roce_atomic_add_##NAME(                           \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     aclshmemx_roce_atomic_add<TYPE>(dst->aligned + dst->offset, value, pe);    \
   }
 
@@ -475,8 +618,8 @@ ACLSHMEMX_ROCE_ATOMIC_ADD_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_roce_atomic_fetch_add
 #define ACLSHMEMX_ROCE_ATOMIC_FETCH_ADD_WRAPPER(NAME, TYPE)                    \
   __aicore__ __attribute__((always_inline)) TYPE                               \
-  _mlir_ciface_aclshmemx_roce_atomic_fetch_add_##NAME(                         \
-      memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {               \
+      _mlir_ciface_aclshmemx_roce_atomic_fetch_add_##NAME(                     \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     return aclshmemx_roce_atomic_fetch_add<TYPE>(dst->aligned + dst->offset,   \
                                                  value, pe);                   \
   }
@@ -491,8 +634,8 @@ ACLSHMEMX_ROCE_ATOMIC_FETCH_ADD_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_roce_atomic_and
 #define ACLSHMEMX_ROCE_ATOMIC_AND_WRAPPER(NAME, TYPE)                          \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_roce_atomic_and_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
-                                                const TYPE value, int pe) {    \
+      _mlir_ciface_aclshmemx_roce_atomic_and_##NAME(                           \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     aclshmemx_roce_atomic_and<TYPE>(dst->aligned + dst->offset, value, pe);    \
   }
 
@@ -506,8 +649,8 @@ ACLSHMEMX_ROCE_ATOMIC_AND_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_roce_atomic_or
 #define ACLSHMEMX_ROCE_ATOMIC_OR_WRAPPER(NAME, TYPE)                           \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_roce_atomic_or_##NAME(memref_t<__gm__ TYPE, 1> *dst,  \
-                                               const TYPE value, int pe) {     \
+      _mlir_ciface_aclshmemx_roce_atomic_or_##NAME(                            \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     aclshmemx_roce_atomic_or<TYPE>(dst->aligned + dst->offset, value, pe);     \
   }
 
@@ -521,8 +664,8 @@ ACLSHMEMX_ROCE_ATOMIC_OR_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_roce_atomic_xor
 #define ACLSHMEMX_ROCE_ATOMIC_XOR_WRAPPER(NAME, TYPE)                          \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_roce_atomic_xor_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
-                                                const TYPE value, int pe) {    \
+      _mlir_ciface_aclshmemx_roce_atomic_xor_##NAME(                           \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     aclshmemx_roce_atomic_xor<TYPE>(dst->aligned + dst->offset, value, pe);    \
   }
 
@@ -536,8 +679,8 @@ ACLSHMEMX_ROCE_ATOMIC_XOR_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_roce_atomic_fetch_and
 #define ACLSHMEMX_ROCE_ATOMIC_FETCH_AND_WRAPPER(NAME, TYPE)                    \
   __aicore__ __attribute__((always_inline)) TYPE                               \
-  _mlir_ciface_aclshmemx_roce_atomic_fetch_and_##NAME(                         \
-      memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {               \
+      _mlir_ciface_aclshmemx_roce_atomic_fetch_and_##NAME(                     \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     return aclshmemx_roce_atomic_fetch_and<TYPE>(dst->aligned + dst->offset,   \
                                                  value, pe);                   \
   }
@@ -552,8 +695,8 @@ ACLSHMEMX_ROCE_ATOMIC_FETCH_AND_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_roce_atomic_fetch_or
 #define ACLSHMEMX_ROCE_ATOMIC_FETCH_OR_WRAPPER(NAME, TYPE)                     \
   __aicore__ __attribute__((always_inline)) TYPE                               \
-  _mlir_ciface_aclshmemx_roce_atomic_fetch_or_##NAME(                          \
-      memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {               \
+      _mlir_ciface_aclshmemx_roce_atomic_fetch_or_##NAME(                      \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     return aclshmemx_roce_atomic_fetch_or<TYPE>(dst->aligned + dst->offset,    \
                                                 value, pe);                    \
   }
@@ -568,8 +711,8 @@ ACLSHMEMX_ROCE_ATOMIC_FETCH_OR_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_roce_atomic_fetch_xor
 #define ACLSHMEMX_ROCE_ATOMIC_FETCH_XOR_WRAPPER(NAME, TYPE)                    \
   __aicore__ __attribute__((always_inline)) TYPE                               \
-  _mlir_ciface_aclshmemx_roce_atomic_fetch_xor_##NAME(                         \
-      memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {               \
+      _mlir_ciface_aclshmemx_roce_atomic_fetch_xor_##NAME(                     \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     return aclshmemx_roce_atomic_fetch_xor<TYPE>(dst->aligned + dst->offset,   \
                                                  value, pe);                   \
   }
@@ -584,9 +727,9 @@ ACLSHMEMX_ROCE_ATOMIC_FETCH_XOR_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_roce_atomic_compare_swap
 #define ACLSHMEMX_ROCE_ATOMIC_COMPARE_SWAP_WRAPPER(NAME, TYPE)                 \
   __aicore__ __attribute__((always_inline)) TYPE                               \
-  _mlir_ciface_aclshmemx_roce_atomic_compare_swap_##NAME(                      \
-      memref_t<__gm__ TYPE, 1> *dst, const TYPE cond, const TYPE value,        \
-      int pe) {                                                                \
+      _mlir_ciface_aclshmemx_roce_atomic_compare_swap_##NAME(                  \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE cond, const TYPE value,    \
+          int pe) {                                                            \
     return aclshmemx_roce_atomic_compare_swap<TYPE>(                           \
         dst->aligned + dst->offset, cond, value, pe);                          \
   }
@@ -605,8 +748,8 @@ ACLSHMEMX_ROCE_ATOMIC_COMPARE_SWAP_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_udma_atomic_fetch
 #define ACLSHMEMX_UDMA_ATOMIC_FETCH_WRAPPER(NAME, TYPE)                        \
   __aicore__ __attribute__((always_inline)) TYPE                               \
-  _mlir_ciface_aclshmemx_udma_atomic_fetch_##NAME(                             \
-      memref_t<__gm__ TYPE, 1> *src, int pe) {                                 \
+      _mlir_ciface_aclshmemx_udma_atomic_fetch_##NAME(                         \
+          memref_t<__gm__ TYPE, 1> *src, int pe) {                             \
     return aclshmemx_udma_atomic_fetch<TYPE>(src->aligned + src->offset, pe);  \
   }
 
@@ -620,8 +763,8 @@ ACLSHMEMX_UDMA_ATOMIC_FETCH_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_udma_atomic_fetch_inc
 #define ACLSHMEMX_UDMA_ATOMIC_FETCH_INC_WRAPPER(NAME, TYPE)                    \
   __aicore__ __attribute__((always_inline)) TYPE                               \
-  _mlir_ciface_aclshmemx_udma_atomic_fetch_inc_##NAME(                         \
-      memref_t<__gm__ TYPE, 1> *dst, int pe) {                                 \
+      _mlir_ciface_aclshmemx_udma_atomic_fetch_inc_##NAME(                     \
+          memref_t<__gm__ TYPE, 1> *dst, int pe) {                             \
     return aclshmemx_udma_atomic_fetch_inc<TYPE>(dst->aligned + dst->offset,   \
                                                  pe);                          \
   }
@@ -636,8 +779,8 @@ ACLSHMEMX_UDMA_ATOMIC_FETCH_INC_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_udma_atomic_inc
 #define ACLSHMEMX_UDMA_ATOMIC_INC_WRAPPER(NAME, TYPE)                          \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_udma_atomic_inc_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
-                                                int pe) {                      \
+      _mlir_ciface_aclshmemx_udma_atomic_inc_##NAME(                           \
+          memref_t<__gm__ TYPE, 1> *dst, int pe) {                             \
     aclshmemx_udma_atomic_inc<TYPE>(dst->aligned + dst->offset, pe);           \
   }
 
@@ -651,8 +794,8 @@ ACLSHMEMX_UDMA_ATOMIC_INC_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_udma_atomic_add
 #define ACLSHMEMX_UDMA_ATOMIC_ADD_WRAPPER(NAME, TYPE)                          \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_udma_atomic_add_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
-                                                const TYPE value, int pe) {    \
+      _mlir_ciface_aclshmemx_udma_atomic_add_##NAME(                           \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     aclshmemx_udma_atomic_add<TYPE>(dst->aligned + dst->offset, value, pe);    \
   }
 
@@ -667,8 +810,8 @@ ACLSHMEMX_UDMA_ATOMIC_ADD_WRAPPER(float, float)
 // Wrapper for aclshmemx_udma_atomic_fetch_add
 #define ACLSHMEMX_UDMA_ATOMIC_FETCH_ADD_WRAPPER(NAME, TYPE)                    \
   __aicore__ __attribute__((always_inline)) TYPE                               \
-  _mlir_ciface_aclshmemx_udma_atomic_fetch_add_##NAME(                         \
-      memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {               \
+      _mlir_ciface_aclshmemx_udma_atomic_fetch_add_##NAME(                     \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     return aclshmemx_udma_atomic_fetch_add<TYPE>(dst->aligned + dst->offset,   \
                                                  value, pe);                   \
   }
@@ -683,8 +826,8 @@ ACLSHMEMX_UDMA_ATOMIC_FETCH_ADD_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_udma_atomic_set
 #define ACLSHMEMX_UDMA_ATOMIC_SET_WRAPPER(NAME, TYPE)                          \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_udma_atomic_set_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
-                                                const TYPE value, int pe) {    \
+      _mlir_ciface_aclshmemx_udma_atomic_set_##NAME(                           \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     aclshmemx_udma_atomic_set<TYPE>(dst->aligned + dst->offset, value, pe);    \
   }
 
@@ -698,8 +841,8 @@ ACLSHMEMX_UDMA_ATOMIC_SET_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_udma_atomic_swap
 #define ACLSHMEMX_UDMA_ATOMIC_SWAP_WRAPPER(NAME, TYPE)                         \
   __aicore__ __attribute__((always_inline)) TYPE                               \
-  _mlir_ciface_aclshmemx_udma_atomic_swap_##NAME(                              \
-      memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {               \
+      _mlir_ciface_aclshmemx_udma_atomic_swap_##NAME(                          \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     return aclshmemx_udma_atomic_swap<TYPE>(dst->aligned + dst->offset, value, \
                                             pe);                               \
   }
@@ -714,8 +857,8 @@ ACLSHMEMX_UDMA_ATOMIC_SWAP_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_udma_atomic_fetch_and
 #define ACLSHMEMX_UDMA_ATOMIC_FETCH_AND_WRAPPER(NAME, TYPE)                    \
   __aicore__ __attribute__((always_inline)) TYPE                               \
-  _mlir_ciface_aclshmemx_udma_atomic_fetch_and_##NAME(                         \
-      memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {               \
+      _mlir_ciface_aclshmemx_udma_atomic_fetch_and_##NAME(                     \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     return aclshmemx_udma_atomic_fetch_and<TYPE>(dst->aligned + dst->offset,   \
                                                  value, pe);                   \
   }
@@ -730,8 +873,8 @@ ACLSHMEMX_UDMA_ATOMIC_FETCH_AND_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_udma_atomic_and
 #define ACLSHMEMX_UDMA_ATOMIC_AND_WRAPPER(NAME, TYPE)                          \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_udma_atomic_and_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
-                                                const TYPE value, int pe) {    \
+      _mlir_ciface_aclshmemx_udma_atomic_and_##NAME(                           \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     aclshmemx_udma_atomic_and<TYPE>(dst->aligned + dst->offset, value, pe);    \
   }
 
@@ -745,8 +888,8 @@ ACLSHMEMX_UDMA_ATOMIC_AND_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_udma_atomic_fetch_or
 #define ACLSHMEMX_UDMA_ATOMIC_FETCH_OR_WRAPPER(NAME, TYPE)                     \
   __aicore__ __attribute__((always_inline)) TYPE                               \
-  _mlir_ciface_aclshmemx_udma_atomic_fetch_or_##NAME(                          \
-      memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {               \
+      _mlir_ciface_aclshmemx_udma_atomic_fetch_or_##NAME(                      \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     return aclshmemx_udma_atomic_fetch_or<TYPE>(dst->aligned + dst->offset,    \
                                                 value, pe);                    \
   }
@@ -761,8 +904,8 @@ ACLSHMEMX_UDMA_ATOMIC_FETCH_OR_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_udma_atomic_or
 #define ACLSHMEMX_UDMA_ATOMIC_OR_WRAPPER(NAME, TYPE)                           \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_udma_atomic_or_##NAME(memref_t<__gm__ TYPE, 1> *dst,  \
-                                               const TYPE value, int pe) {     \
+      _mlir_ciface_aclshmemx_udma_atomic_or_##NAME(                            \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     aclshmemx_udma_atomic_or<TYPE>(dst->aligned + dst->offset, value, pe);     \
   }
 
@@ -776,8 +919,8 @@ ACLSHMEMX_UDMA_ATOMIC_OR_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_udma_atomic_fetch_xor
 #define ACLSHMEMX_UDMA_ATOMIC_FETCH_XOR_WRAPPER(NAME, TYPE)                    \
   __aicore__ __attribute__((always_inline)) TYPE                               \
-  _mlir_ciface_aclshmemx_udma_atomic_fetch_xor_##NAME(                         \
-      memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {               \
+      _mlir_ciface_aclshmemx_udma_atomic_fetch_xor_##NAME(                     \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     return aclshmemx_udma_atomic_fetch_xor<TYPE>(dst->aligned + dst->offset,   \
                                                  value, pe);                   \
   }
@@ -792,8 +935,8 @@ ACLSHMEMX_UDMA_ATOMIC_FETCH_XOR_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_udma_atomic_xor
 #define ACLSHMEMX_UDMA_ATOMIC_XOR_WRAPPER(NAME, TYPE)                          \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_udma_atomic_xor_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
-                                                const TYPE value, int pe) {    \
+      _mlir_ciface_aclshmemx_udma_atomic_xor_##NAME(                           \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
     aclshmemx_udma_atomic_xor<TYPE>(dst->aligned + dst->offset, value, pe);    \
   }
 
@@ -807,9 +950,9 @@ ACLSHMEMX_UDMA_ATOMIC_XOR_WRAPPER(uint64, uint64_t)
 // Wrapper for aclshmemx_udma_atomic_compare_swap
 #define ACLSHMEMX_UDMA_ATOMIC_COMPARE_SWAP_WRAPPER(NAME, TYPE)                 \
   __aicore__ __attribute__((always_inline)) TYPE                               \
-  _mlir_ciface_aclshmemx_udma_atomic_compare_swap_##NAME(                      \
-      memref_t<__gm__ TYPE, 1> *dst, const TYPE cond, const TYPE value,        \
-      int pe) {                                                                \
+      _mlir_ciface_aclshmemx_udma_atomic_compare_swap_##NAME(                  \
+          memref_t<__gm__ TYPE, 1> *dst, const TYPE cond, const TYPE value,    \
+          int pe) {                                                            \
     return aclshmemx_udma_atomic_compare_swap<TYPE>(                           \
         dst->aligned + dst->offset, cond, value, pe);                          \
   }

@@ -1,3 +1,4 @@
+import itertools
 import pathlib
 import re
 import subprocess
@@ -13,6 +14,8 @@ types = [
 # C wrappers receive pointers to rank-one memref descriptors. Count, PE, relay
 # PE, and event ID remain 32-bit scalar arguments.
 operations = {
+    "mte_get_nbi": ["ptr", "ptr", "i32", "i32"],
+    "mte_put_nbi": ["ptr", "ptr", "i32", "i32"],
     "roce_get_nbi": ["ptr", "ptr", "i32", "i32"],
     "roce_put_nbi": ["ptr", "ptr", "i32", "i32"],
     "roce_qp_get_nbi": ["ptr", "ptr", "i32", "i32", "i32"],
@@ -31,6 +34,7 @@ relay_operations = {
     "udma_relay_put_nbi": ["ptr", "ptr", "i32", "i32", "i32"],
 }
 collectives = {
+    "mte_quiet": ("void", []),
     "udma_quiet": ("void", ["i32"]),
     "udma_qp_quiet": ("void", ["i32", "i32"]),
     "roce_team_sync": ("i32", ["i32"]),
@@ -50,9 +54,9 @@ def check(definitions, name, result, arguments):
         assert arg.strip().startswith(expected + " "), (name, arg, expected)
 
 
-for arch in ("c220", "c310"):
+for arch, opt_level in itertools.product(("c220", "c310"), ("O2", "O0")):
     for core in ("aic", "aiv", "mix.aic", "mix.aiv"):
-        bitcode = pathlib.Path(lib_dir) / f"meta_op.{core}.{arch}.bc"
+        bitcode = pathlib.Path(lib_dir) / f"meta_op.{core}.{arch}.{opt_level}.bc"
         # CANN device bitcode can contain extensions that the community LLVM
         # reader cannot decode. Use its matching reader without running passes.
         ir = subprocess.check_output([
@@ -66,6 +70,16 @@ for arch in ("c220", "c310"):
             # Mixed-core bitcode decorates symbols for the destination core.
             name = re.sub(r"\.(vector|cube)$", "", name)
             definitions[name] = (result, params)
+        assert not any(
+            name.startswith("_mlir_ciface_aclshmemx_mte_" + op)
+            for name in definitions
+            for op in ("barrier", "sync", "team_sync", "putmem_signal_nbi")
+        ), "Synthetic MTE API wrapper must not be exported"
+        assert not any(
+            name.startswith(("_mlir_ciface_aclshmemi_udma_put_nbi_",
+                             "_mlir_ciface_aclshmemx_udma_put_signal_nbi_"))
+            for name in definitions
+        ), "Deprecated UDMA put wrapper must not be exported"
         for op, args in operations.items():
             for ty in types:
                 name = f"_mlir_ciface_aclshmemx_{op}_{ty}"
@@ -82,6 +96,54 @@ for arch in ("c220", "c310"):
                     assert name not in definitions, name
         for op, (result, args) in collectives.items():
             check(definitions, f"_mlir_ciface_aclshmemx_{op}", result, args)
+        for op in ("fetch", "set", "swap", "compare_swap", "inc", "add",
+                   "fetch_inc", "fetch_add"):
+            scalar_types = [("uint32", "i32"), ("uint64", "i64")]
+            if op not in ("set", "swap", "compare_swap"):
+                scalar_types += [("int32", "i32"), ("int64", "i64"), ("float", "float")]
+            if op == "add":
+                scalar_types += [("int8", "i8"), ("int16", "i16"),
+                                 ("half", "half"), ("bfloat16", "bfloat")]
+            for ty, scalar in scalar_types:
+                name = f"_mlir_ciface_aclshmemx_mte_atomic_{op}_{ty}"
+                if arch == "c220" and (op != "add" or
+                                       ty in ("uint32", "int64", "uint64")):
+                    assert name not in definitions, name
+                    continue
+                operands = 0 if op in ("fetch", "inc", "fetch_inc") else 1
+                if op == "compare_swap":
+                    operands = 2
+                result = "void" if op in ("set", "inc", "add") else scalar
+                check(definitions, name, result, ["ptr"] + [scalar] * operands + ["i32"])
+        # Generic atomics have the same hardware restriction. Verify the
+        # existing Shmem.cpp guards as well as the transport-specific guards.
+        for op in ("fetch", "set", "swap", "compare_swap", "inc", "add",
+                   "fetch_inc", "fetch_add", "and", "or", "xor",
+                   "fetch_and", "fetch_or", "fetch_xor"):
+            scalar_types = [("int32", "i32"), ("uint32", "i32"),
+                            ("int64", "i64"), ("uint64", "i64")]
+            if op in ("add", "set", "swap"):
+                scalar_types += [("float", "float")]
+            if op == "add":
+                scalar_types += [("int8", "i8"), ("int16", "i16"),
+                                 ("half", "half"), ("bfloat16", "bfloat")]
+            for ty, scalar in scalar_types:
+                name = f"_mlir_ciface_aclshmem_atomic_{op}_{ty}"
+                if arch == "c220" and (op != "add" or
+                                       ty in ("uint32", "int64", "uint64")):
+                    assert name not in definitions, name
+                    continue
+                operands = 0 if op in ("fetch", "inc", "fetch_inc") else 1
+                if op == "compare_swap":
+                    operands = 2
+                result = scalar if (op.startswith("fetch") or
+                                    op in ("swap", "compare_swap")) else "void"
+                check(definitions, name, result,
+                      ["ptr"] + [scalar] * operands + ["i32"])
+        if arch == "c220":
+            assert not any(name.startswith(("_mlir_ciface_aclshmemx_roce_atomic_",
+                                            "_mlir_ciface_aclshmemx_udma_atomic_"))
+                           for name in definitions), "950-only transport atomic on C220"
         if arch == "c310":
             for transport in ("roce", "udma"):
                 for ty, scalar in (("int32", "i32"), ("uint32", "i32"),
@@ -104,4 +166,4 @@ for arch in ("c220", "c310"):
                 else:
                     check(definitions, name, "void" if op == "set" else "float",
                           ["ptr"] + ([] if op == "fetch" else ["float"]) + ["i32"])
-        print(f"Verified transport wrapper ABI: {core}.{arch}")
+        print(f"Verified transport wrapper ABI: {core}.{arch}.{opt_level}")
