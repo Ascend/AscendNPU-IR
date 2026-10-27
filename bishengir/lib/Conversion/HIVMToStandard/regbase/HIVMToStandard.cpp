@@ -42,6 +42,7 @@
 #include <cstddef>
 #include <set>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 using namespace mlir;
@@ -2142,6 +2143,46 @@ class PlainOpToLibraryCallPattern : public OpRewritePattern<T> {
   }
 };
 
+// The pool is already planned; alloc/get return absolute byte addresses.
+template <typename OpTy>
+class TcbPoolOpToLibraryCallPattern : public OpRewritePattern<OpTy> {
+public:
+  using OpRewritePattern<OpTy>::OpRewritePattern;
+  LogicalResult matchAndRewrite(OpTy op,
+                                PatternRewriter &rewriter) const final {
+    SmallVector<Value> operands{op.getMetadata()};
+    auto i32 = [&](int64_t value) -> Value {
+      return rewriter.create<arith::ConstantIntOp>(op.getLoc(), value, 32);
+    };
+    std::string name;
+    if constexpr (std::is_same_v<OpTy, TcbPoolInitOp>) {
+      name = "tcb_pool_init";
+    } else if constexpr (std::is_same_v<OpTy, TcbPoolReleaseOp>) {
+      name = "tcb_pool_release";
+      operands.append({i32(op.getEntryOffset()), i32(op.getQueueDepth()),
+                       op.getSeq(), i32(op.getSlots())});
+    } else {
+      auto pointer = op.getPool().template getDefiningOp<PointerCastOp>();
+      if (!pointer || pointer.getAddrs().size() != 1)
+        return rewriter.notifyMatchFailure(
+            op, "expected a planned pool pointer_cast");
+      operands.append({pointer.getSingleAddr(), i32(op.getSlotBytes()),
+                       i32(op.getEntryOffset()), i32(op.getQueueDepth()),
+                       op.getSeq()});
+      if constexpr (std::is_same_v<OpTy, TcbPoolAllocOp>) {
+        name = "tcb_pool_alloc";
+        auto type = cast<MemRefType>(op.getPool().getType());
+        operands.append({i32(op.getSlots()),
+                         i32(type.getNumElements() / op.getSlotBytes())});
+      } else {
+        name = "tcb_pool_get_address";
+      }
+    }
+    replaceWithLibCall(rewriter, op, name, operands, op->getResultTypes());
+    return success();
+  }
+};
+
 template <typename SyncBlockOp>
 class SyncBlockOpToLibraryCallPattern : public OpRewritePattern<SyncBlockOp> {
 public:
@@ -2232,6 +2273,10 @@ void populateHIVMToStandardConversionPatternsRegBase(
                VInterleaveOpToLibraryCallPattern,
                PlainOpToLibraryCallPattern<hivm::InitDebugOp>,
                PlainOpToLibraryCallPattern<hivm::FinishDebugOp>,
+               TcbPoolOpToLibraryCallPattern<hivm::TcbPoolInitOp>,
+               TcbPoolOpToLibraryCallPattern<hivm::TcbPoolAllocOp>,
+               TcbPoolOpToLibraryCallPattern<hivm::TcbPoolGetOp>,
+               TcbPoolOpToLibraryCallPattern<hivm::TcbPoolReleaseOp>,
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockLockOp>,
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockUnlockOp>,
                SyncBlockOpToLibraryCallPattern<hivm::FreeLockVarOp>,
@@ -2320,6 +2365,10 @@ LogicalResult ConvertHIVMToStandardRegBasePass::runOnOperation(
                       hivm::VGatherOp,
                       hivm::VGatherMaskOp,
                       hivm::DebugOp,
+                      hivm::TcbPoolInitOp,
+                      hivm::TcbPoolAllocOp,
+                      hivm::TcbPoolGetOp,
+                      hivm::TcbPoolReleaseOp,
                       hivm::SyncBlockLockOp,
                       hivm::SyncBlockUnlockOp,
                       hivm::FreeLockVarOp,

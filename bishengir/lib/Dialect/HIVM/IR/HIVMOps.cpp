@@ -28,6 +28,7 @@
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -1105,4 +1106,119 @@ void EmbeddingGatherOp::getEffects(
                        SideEffects::DefaultResource::get());
   effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
                        SideEffects::DefaultResource::get());
+}
+
+namespace {
+LogicalResult verifyTcbMetadata(Operation *op, Value metadata) {
+  auto type = cast<MemRefType>(metadata.getType());
+  SmallVector<int64_t> strides;
+  int64_t offset;
+  if (getHIVMAddressSpace(type) != AddressSpace::SSBUF ||
+      !type.hasStaticShape() || type.getDimSize(0) < 1 ||
+      failed(utils::getStridesAndOffsetCompat(type, strides, offset)) ||
+      strides[0] != 1)
+    return op->emitOpError(
+        "metadata must be a static contiguous i32 SSBuffer vector");
+  return success();
+}
+
+LogicalResult verifyTcbCore(Operation *op, TCoreType expected) {
+  auto func = op->getParentOfType<func::FuncOp>();
+  if (!func)
+    return success();
+  auto type = queryFuncCoreType(func);
+  if (type && ((*type == TFuncCoreType::AIC && expected != TCoreType::CUBE) ||
+               (*type == TFuncCoreType::AIV && expected != TCoreType::VECTOR)))
+    return op->emitOpError("operation is on the wrong core");
+  return success();
+}
+
+LogicalResult verifyTcbPool(Operation *op, Value pool, int64_t bytes) {
+  auto type = cast<MemRefType>(pool.getType());
+  if (getHIVMAddressSpace(type) != AddressSpace::UB || !type.hasStaticShape() ||
+      !type.getLayout().isIdentity() || bytes <= 0 || bytes % 32 ||
+      type.getNumElements() % bytes || type.getNumElements() / bytes < 1 ||
+      type.getNumElements() / bytes > 32)
+    return op->emitOpError("pool must contain 1..32 aligned whole UB slots");
+  return success();
+}
+
+LogicalResult verifyTcbRange(Operation *op, Value metadata, int64_t offset,
+                             int64_t depth) {
+  if (offset < 1 || depth < 1 ||
+      offset + depth > cast<MemRefType>(metadata.getType()).getDimSize(0))
+    return op->emitOpError(
+        "queue entry range must fit metadata after the bitmap");
+  // Check only direct users of this metadata SSA value. Cross-function
+  // configuration consistency and synchronization are caller responsibilities.
+  for (Operation *other : metadata.getUsers()) {
+    if (!isa<TcbPoolAllocOp, TcbPoolGetOp, TcbPoolReleaseOp>(other) ||
+        other == op)
+      continue;
+    // These direct users share a bitmap with one common UB slot geometry.
+    if (isa<TcbPoolAllocOp, TcbPoolGetOp>(op) &&
+        isa<TcbPoolAllocOp, TcbPoolGetOp>(other)) {
+      if (op->getOperand(1) != other->getOperand(1) ||
+          op->getAttr("slot_bytes") != other->getAttr("slot_bytes"))
+        return op->emitOpError(
+            "shared metadata pool geometry must remain consistent");
+    }
+    auto start = other->getAttrOfType<IntegerAttr>("entry_offset");
+    auto size = other->getAttrOfType<IntegerAttr>("queue_depth");
+    if (!start || !size)
+      continue; // The other operation's ODS verifier reports missing attrs.
+    int64_t a = start.getInt(), b = size.getInt();
+    if (offset < a + b && a < offset + depth && (a != offset || b != depth))
+      return op->emitOpError(
+          "queue entry ranges must be identical or disjoint");
+    if (a != offset || b != depth)
+      continue;
+    auto slots = op->getAttrOfType<IntegerAttr>("slots");
+    auto otherSlots = other->getAttrOfType<IntegerAttr>("slots");
+    if (slots && otherSlots && slots.getInt() != otherSlots.getInt())
+      return op->emitOpError("allocation/release slot demands must match");
+  }
+  return success();
+}
+} // namespace
+
+LogicalResult TcbPoolInitOp::verify() {
+  if (failed(verifyTcbMetadata(*this, getMetadata())))
+    return failure();
+  return verifyTcbCore(*this, TCoreType::CUBE);
+}
+
+LogicalResult TcbPoolAllocOp::verify() {
+  if (failed(verifyTcbMetadata(*this, getMetadata())) ||
+      failed(verifyTcbCore(*this, TCoreType::CUBE)) ||
+      failed(verifyTcbRange(*this, getMetadata(), getEntryOffset(),
+                            getQueueDepth())) ||
+      failed(verifyTcbPool(*this, getPool(), getSlotBytes())))
+    return failure();
+  int64_t slots = getSlots();
+  if (slots < 1 ||
+      slots > cast<MemRefType>(getPool().getType()).getNumElements() /
+                  getSlotBytes())
+    return emitOpError("slots must fit pool capacity");
+  return success();
+}
+
+LogicalResult TcbPoolGetOp::verify() {
+  if (failed(verifyTcbMetadata(*this, getMetadata())) ||
+      failed(verifyTcbCore(*this, TCoreType::VECTOR)) ||
+      failed(verifyTcbRange(*this, getMetadata(), getEntryOffset(),
+                            getQueueDepth())))
+    return failure();
+  return verifyTcbPool(*this, getPool(), getSlotBytes());
+}
+
+LogicalResult TcbPoolReleaseOp::verify() {
+  if (failed(verifyTcbMetadata(*this, getMetadata())) ||
+      failed(verifyTcbCore(*this, TCoreType::CUBE)) ||
+      failed(verifyTcbRange(*this, getMetadata(), getEntryOffset(),
+                            getQueueDepth())))
+    return failure();
+  if (getSlots() < 1 || getSlots() > 32)
+    return emitOpError("slots must be in [1,32]");
+  return success();
 }
