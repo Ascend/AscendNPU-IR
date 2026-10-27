@@ -334,7 +334,6 @@ store_ubuf_to_gm_1d_core(memref_t<__ubuf__ T, 1> *src,
   // stride [stride, 1], where last dimension of viewed_src is contiguous
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
   if (src->strides[0] != 1 && src->strides[0] % num_per_block != 0) {
-    // TODO: see "DMA/DMAUtils.h" for details.
     store_ubuf_to_gm_1d_by_scalar(src, dst);
     return;
   }

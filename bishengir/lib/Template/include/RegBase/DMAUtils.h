@@ -68,7 +68,7 @@ __aicore__ __attribute__((always_inline)) void load_gm_to_cbuf_intrin_core(
     __gm__ T *gm_ptr, int64_t gm_offset, __cbuf__ T *cbuf_ptr,
     int64_t cbuf_offset, uint16_t burst_cnt, uint32_t burst_len,
     uint32_t src_gap, uint32_t dst_gap, pad_t pad_mode) {
-
+#if !BISHENG_TPL_REGBASE
   INTRINSIC(copy_gm_to_cbuf,
             cbuf_ptr + cbuf_offset, // dst
             gm_ptr + gm_offset,     // src
@@ -78,6 +78,36 @@ __aicore__ __attribute__((always_inline)) void load_gm_to_cbuf_intrin_core(
             src_gap,                // src_gap
             dst_gap,                // dst_gap
             pad_t::PAD_NONE);       // pad_mode
+#elif BISHENG_TPL_HAS_DMA_PRE_ALLOCATION
+  INTRINSIC(copy_gm_to_cbuf_align_v2,
+            (__cbuf__ T *)cbuf_ptr + cbuf_offset, // dst_addr
+            (__gm__ T *)gm_ptr + gm_offset,       // src_addr
+            0,                                    // sid
+            burst_cnt,                            // burst_num
+            burst_len,                            // burst_len
+            0,                                    // left_padding_count
+            0,                                    // right_padding_count
+            true,                                 // data_select_bit
+            false,                                // pre_allocation
+            0,                                    // l2_cache_ctl
+            src_gap + burst_len,                  // burst_src_stride
+            dst_gap + burst_len                   // burst_dst_stride
+  );
+#else
+  INTRINSIC(copy_gm_to_cbuf_align_v2,
+            (__cbuf__ T *)cbuf_ptr + cbuf_offset, // dst_addr
+            (__gm__ T *)gm_ptr + gm_offset,       // src_addr
+            0,                                    // sid
+            burst_cnt,                            // burst_num
+            burst_len,                            // burst_len
+            0,                                    // left_padding_count
+            0,                                    // right_padding_count
+            true,                                 // data_select_bit
+            0,                                    // l2_cache_ctl
+            src_gap + burst_len,                  // burst_src_stride
+            dst_gap + burst_len                   // burst_dst_stride
+  );
+#endif
 }
 
 template <typename T>
@@ -89,8 +119,12 @@ load_gm_to_cbuf_1d_core_with_contiguous_last_dim(memref_t<__gm__ T, 1> *gm,
   auto dst_ptr = cbuf->aligned + cbuf->offset;
   const int64_t size0 = gm->sizes[0];
   constexpr int bytes = sizeof(T);
+#if !BISHENG_TPL_REGBASE
   // burst_len of gm <-> l1 is in units of 32bytes.
   uint32_t burst_len = CEIL_DIV(size0 * bytes, L1_ALIGN_BYTES);
+#else
+  uint32_t burst_len = size0 * bytes;
+#endif
   load_gm_to_cbuf_intrin_core(src_ptr, 0, dst_ptr, 0, 1, burst_len, 0, 0,
                               pad_mode);
 }
@@ -195,7 +229,7 @@ load_gm_to_cbuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
   }
 }
 
-#if BISHENG_TPL_REGBASE
+#if BISHENG_TPL_C310
 // Copy gm to ubuf intrin for 1d and 2d, all dtypes are supported.
 // For copy 1d, burst_cnt is 1 and gap is 0.
 // For copy 2d, burst_cnt, burst_len and gap are all needed to compute.
@@ -233,6 +267,45 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
               burst_cnt, burst_len, left_padding_num * factor,
               rightPaddingNum * factor, data_select_bit, l2_cache_ctl,
               src_stride, dst_stride);
+  }
+}
+#elif BISHENG_TPL_920R1
+// dav-920r1: copy_gm_to_ubuf_align_v2 13-param form (#906) with
+// pre_allocation=false and non_eod_ctrl=false, equivalent to the c310
+// 11-param form.
+template <typename T>
+__aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
+    __gm__ T *gm_ptr, int64_t gm_offset, __ubuf__ T *ub_ptr, int64_t ub_offset,
+    uint16_t burst_cnt, uint32_t burst_len, int64_t left_padding_num,
+    uint64_t src_gap, uint32_t dst_gap, uint8_t l2_cache_ctl) {
+  constexpr int32_t bytes = sizeof(T);
+  auto sizeWithPad = burst_len + (left_padding_num * bytes);
+  auto rightPaddingNum =
+      (CEIL_FACTOR(sizeWithPad, UB_ALIGN_BYTES) - sizeWithPad) / bytes;
+  uint32_t dst_align_gap = dst_gap / UB_ALIGN_BYTES;
+  bool data_select_bit = true;
+  const uint64_t src_stride = src_gap + burst_len;
+  const uint32_t dst_stride = dst_gap + burst_len;
+  if (left_padding_num == 0)
+    rightPaddingNum = 0;
+  if constexpr (bytes == BYTES_B8 || bytes == BYTES_B16 || bytes == BYTES_B32) {
+    INTRINSIC(copy_gm_to_ubuf_align_v2, (ub_ptr + ub_offset - left_padding_num),
+              gm_ptr + gm_offset, 0, burst_cnt, burst_len, left_padding_num,
+              rightPaddingNum, data_select_bit, /*pre_allocation=*/false,
+              l2_cache_ctl, src_stride, dst_stride, /*non_eod_ctrl=*/false);
+  } else if constexpr (bytes == BYTES_B64) {
+    // The intrinsic receives uint32_t pointers here, so its padding counts
+    // are expressed in B32 elements: one B64 element holds two B32 elements.
+    // burst_len and strides stay byte-based.
+    constexpr int64_t factor = sizeof(T) / sizeof(uint32_t);
+    INTRINSIC(copy_gm_to_ubuf_align_v2,
+              reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr + ub_offset -
+                                                    left_padding_num),
+              reinterpret_cast<__gm__ uint32_t *>(gm_ptr + gm_offset), 0,
+              burst_cnt, burst_len, left_padding_num * factor,
+              rightPaddingNum * factor, data_select_bit,
+              /*pre_allocation=*/false, l2_cache_ctl, src_stride, dst_stride,
+              /*non_eod_ctrl=*/false);
   }
 }
 #else
@@ -273,7 +346,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
 }
 #endif
 
-#if BISHENG_TPL_REGBASE
+#if BISHENG_TPL_C310
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 store_ubuf_to_gm_intrin_core(__ubuf__ T *ub_ptr, int64_t ub_offset,
@@ -297,6 +370,36 @@ store_ubuf_to_gm_intrin_core(__ubuf__ T *ub_ptr, int64_t ub_offset,
               reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr) +
                   ub_offset * factor,
               0, burst_cnt, burst_len, l2_cache_ctl, dst_stride, src_stride);
+  }
+}
+#elif BISHENG_TPL_920R1
+// dav-920r1: `copy_ubuf_to_gm_align(_v2)` only has the 12-param form with
+// rsw_ctrl/rsw_packet_ctrl/rsw_buffset_size/non_eod_ctrl; keep them off to
+// preserve the plain 8-param semantics.
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+store_ubuf_to_gm_intrin_core(__ubuf__ T *ub_ptr, int64_t ub_offset,
+                             __gm__ T *gm_ptr, int64_t gm_offset,
+                             uint16_t burst_cnt, uint32_t burst_len,
+                             uint32_t src_gap, uint64_t dst_gap) {
+  constexpr int32_t bytes = sizeof(T);
+  uint8_t l2_cache_ctl = 0;
+  const uint32_t src_stride = src_gap + burst_len;
+  const uint64_t dst_stride = dst_gap + burst_len;
+  if constexpr (bytes == BYTES_B8 || bytes == BYTES_B16 || bytes == BYTES_B32) {
+    INTRINSIC(copy_ubuf_to_gm_align_v2, gm_ptr + gm_offset, ub_ptr + ub_offset,
+              0, burst_cnt, burst_len, /*rsw_ctrl=*/false,
+              /*rsw_packet_ctrl=*/false, /*rsw_buffset_size=*/0, l2_cache_ctl,
+              dst_stride, src_stride, /*non_eod_ctrl=*/false);
+  } else if constexpr (bytes == BYTES_B64) {
+    int32_t factor = 2;
+    INTRINSIC(copy_ubuf_to_gm_align_v2,
+              reinterpret_cast<__gm__ uint32_t *>(gm_ptr) + gm_offset * factor,
+              reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr) +
+                  ub_offset * factor,
+              0, burst_cnt, burst_len, /*rsw_ctrl=*/false,
+              /*rsw_packet_ctrl=*/false, /*rsw_buffset_size=*/0, l2_cache_ctl,
+              dst_stride, src_stride, /*non_eod_ctrl=*/false);
   }
 }
 #else
@@ -1451,6 +1554,16 @@ copy_ubuf_to_ubuf_1d_core_with_contiguous_last_dim(
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
   int burst_len = CEIL_DIV(size0, num_per_block);
 
+  if (size0 % num_per_block != 0) {
+    // In order to prevent repeated use of vmax/vor instead of copy_ub_to_ub.
+    if constexpr (std::is_same<float, T>::value ||
+                  std::is_same<half, T>::value) {
+      vector_eltwise_vv_1d<VectorOpTy::VMAX, T>(src, src, dst);
+    } else {
+      vector_eltwise_vv_1d<VectorOpTy::VOR, T>(src, src, dst);
+    }
+    return;
+  }
   copy_ubuf_to_ubuf_intrin_core(dst_ptr, src_ptr,
                                 1,         // burst_cnt
                                 burst_len, // burst_len
@@ -1504,7 +1617,7 @@ copy_ubuf_to_ubuf_2d_intrin_core(memref_t<__ubuf__ T, 2> *src,
 /// branches inside the VF loop.
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
-copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim(
+copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim_full_asm_variant(
     memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst) {
   constexpr int num_per_register = REG_REGISTER_SIZE / sizeof(T);
   const int64_t size1 = src->sizes[1];
@@ -1523,6 +1636,32 @@ copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim(
     } else {
       vector_dma_unalign_vv_2d_vf<T, false, false>(src, dst);
     }
+  }
+}
+
+// Version with "per-raw dispatch" is able to employ DMA copy for
+// overlapped perfectly aligned src rows or for a subset of perfectly
+// aligned rows while other rows will go via vector copy.
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim(
+    memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst) {
+  const int64_t size0 = src->sizes[0];
+  const int64_t size1 = src->sizes[1];
+  int64_t src_stride0 = src->strides[0];
+  int64_t dst_stride0 = dst->strides[0];
+  for (int64_t i = 0; i < size0; i++) {
+    memref_t<__ubuf__ T, 1> src_1d = {src->allocated,
+                                      src->aligned,
+                                      src->offset + src_stride0 * i,
+                                      {size1},
+                                      {1}};
+    memref_t<__ubuf__ T, 1> dst_1d = {dst->allocated,
+                                      dst->aligned,
+                                      dst->offset + dst_stride0 * i,
+                                      {size1},
+                                      {1}};
+    copy_ubuf_to_ubuf_1d_core_with_contiguous_last_dim<T>(&src_1d, &dst_1d);
   }
 }
 
@@ -1561,6 +1700,14 @@ copy_ubuf_to_ubuf_2d_core_with_contiguous_last_dim(
   const int64_t dst_stride1 = dst->strides[1];
   constexpr int32_t bytes = sizeof(T);
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / bytes;
+  const int64_t src_gap = calc_ub_gap<T>(src_stride0, size1);
+  const int64_t dst_gap = calc_ub_gap<T>(dst_stride0, size1);
+
+  if (0 > src_gap || 0 > dst_gap) [[unlikely]] {
+    // at least src self-overlapped but perfectly aligned tensors exist,
+    // and we want copy them using series of DMA calls
+    copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim(src, dst);
+  }
   // the start addr is 32B aligned
   if (isAddress32ByteAligned(src_ptr) && isAddress32ByteAligned(dst_ptr)) {
     // axis 0 is contiguous
@@ -1583,6 +1730,10 @@ copy_ubuf_to_ubuf_2d_core_with_contiguous_last_dim(
   }
   // remaining cases
   copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim<T>(src, dst);
+  // this alternative version leaved in sources for some time
+  // in order to conveniently make perf experiments
+  // copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim_full_asm_variant(src,
+  // dst);
   return;
 }
 #else
@@ -1605,6 +1756,14 @@ copy_ubuf_to_ubuf_2d_core_with_contiguous_last_dim(
 
   if (0 > src_gap || 0 > dst_gap) [[unlikely]] {
     copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim(src, dst);
+  } else if (size1 % num_per_block != 0) {
+    // In order to prevent repeated use of vmax/vor instead of copy_ub_to_ub.
+    if constexpr (std::is_same<float, T>::value ||
+                  std::is_same<half, T>::value) {
+      vector_eltwise_vv_2d<VectorOpTy::VMAX, T>(src, src, dst);
+    } else {
+      vector_eltwise_vv_2d<VectorOpTy::VOR, T>(src, src, dst);
+    }
   } else {
     copy_ubuf_to_ubuf_2d_intrin_core<T>(src, dst);
   }
