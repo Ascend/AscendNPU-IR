@@ -665,15 +665,23 @@ load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim(
   for (int64_t i = 0; i < main_count; ++i) {
     const int64_t gm_offset = i * aligned_max_burst_cnt * stride0_gm;
     const int64_t ub_offset = i * aligned_max_burst_cnt;
+    // Only the first DMA may write the leading pad: each intrin call with
+    // lp != 0 rewrites [ub_offset - lp, ub_offset) with pad elements, which
+    // would corrupt the tail of the previous chunk for i > 0.
     load_gm_to_ubuf_intrin_core(src_ptr, gm_offset, dst_ptr, ub_offset,
-                                aligned_max_burst_cnt, bytes, left_padding_num,
-                                src_gap, 0, l2_cache_ctl);
+                                aligned_max_burst_cnt, bytes,
+                                i == 0 ? left_padding_num : 0, src_gap, 0,
+                                l2_cache_ctl);
   }
   if (tail_burst_cnt > 0) {
     const int64_t gm_offset = main_count * aligned_max_burst_cnt * stride0_gm;
     const int64_t ub_offset = main_count * aligned_max_burst_cnt;
+    // Same as above: when no main chunk ran, the tail is the first DMA and
+    // owns the leading pad; otherwise pass 0 to avoid overwriting the last
+    // main chunk's tail.
     load_gm_to_ubuf_intrin_core(src_ptr, gm_offset, dst_ptr, ub_offset,
-                                tail_burst_cnt, bytes, left_padding_num,
+                                tail_burst_cnt, bytes,
+                                main_count == 0 ? left_padding_num : 0,
                                 src_gap, 0, l2_cache_ctl);
   }
 }
