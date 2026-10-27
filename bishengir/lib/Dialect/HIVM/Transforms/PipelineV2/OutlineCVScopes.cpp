@@ -382,17 +382,17 @@ bool CVScopeOutliner::hasMultipleNestedIf() {
 }
 
 bool CVScopeOutliner::hasIllegalRegionedOp() {
-  for (Region &reg : loopOp->getRegions()) {
-    for (Block &block : reg) {
-      for (Operation &op : block) {
-        if (op.getNumRegions() > 0 && !isa<scf::IfOp>(&op) &&
-            !op.hasAttr(kPipelinedLoopCoreTypeAttrName) &&
-            !op.hasAttr(TCoreTypeAttr::name))
-          return true;
-      }
-    }
-  }
-  return false;
+  // If branches are split between work items, so validate their operations
+  // too. Other classified regions are kept intact as a single operation.
+  WalkResult result = loopOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (op == loopOp || op->getNumRegions() == 0 || isa<scf::IfOp>(op))
+      return WalkResult::advance();
+    if (!op->hasAttr(kPipelinedLoopCoreTypeAttrName) &&
+        !op->hasAttr(TCoreTypeAttr::name))
+      return WalkResult::interrupt();
+    return WalkResult::skip();
+  });
+  return result.wasInterrupted();
 }
 
 void CVScopeOutliner::addLocalOutput(Value val) {
@@ -827,15 +827,15 @@ void CVScopeOutliner::collectUnmappedOps() {
 void CVScopeOutliner::computeHoistedOps(WorkItem *item) {
   for (auto &[_, cOps] : item->condOps) {
     scf::IfOp enclosingIf = cOps.ifOp;
-    SmallVector<Operation *> candidateThenOps;
-    for (Operation &tOp : *enclosingIf.thenBlock()) {
-      if (!isa<scf::YieldOp>(&tOp) && cOps.thenOps.contains(&tOp))
-        candidateThenOps.push_back(&tOp);
-    }
+    SmallVector<Operation *> candidates;
+    for (Region &region : enclosingIf->getRegions())
+      for (Operation &op : region.getOps())
+        if (cOps.thenOps.contains(&op) || cOps.elseOps.contains(&op))
+          candidates.push_back(&op);
 
     for (bool changed = true; changed;) {
       changed = false;
-      for (Operation *tOp : candidateThenOps) {
+      for (Operation *tOp : candidates) {
         if (item->hoistedOps.contains(tOp))
           continue;
         bool isAlloc = isa<memref::AllocOp, AllocWorkspaceOp>(tOp) &&
@@ -996,6 +996,10 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
 
   Block *origBody = origForOp.getBody();
   Block *newBody = newForOp.getBody();
+  // Resultless loops get an implicit yield from the builder. The rewritten
+  // body creates its own terminator after all outlined scopes.
+  if (!newBody->empty())
+    newBody->getTerminator()->erase();
   IRMapping globalIRMap;
   globalIRMap.map(origForOp.getInductionVar(), newForOp.getInductionVar());
   for (auto [origArg, newArg] :
@@ -1066,7 +1070,11 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
         SmallVector<Operation *> elseOpsToClone;
         if (enclosingIf.elseBlock()) {
           for (Operation &eOp : *enclosingIf.elseBlock()) {
-            if (!isa<scf::YieldOp>(&eOp) && cOps.elseOps.contains(&eOp))
+            if (isa<scf::YieldOp>(&eOp) || !cOps.elseOps.contains(&eOp))
+              continue;
+            if (item->hoistedOps.contains(&eOp))
+              opsToHoist.push_back(&eOp);
+            else
               elseOpsToClone.push_back(&eOp);
           }
         }
@@ -1087,6 +1095,8 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
               !ifYieldSet.insert(ifRes).second)
             continue;
           ifYieldSet.insert(thenVal);
+          if (elseVal)
+            ifYieldSet.insert(elseVal);
           ifThenYieldVals.push_back(thenVal);
           ifElseYieldVals.push_back(elseVal);
           ifOrigResultsToMap.push_back(ifRes);
@@ -1101,6 +1111,18 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
               ifElseYieldVals.push_back(nullptr);
               ifOrigResultsToMap.push_back(res);
             }
+          }
+        }
+
+        for (Operation *eOp : elseOpsToClone) {
+          if (opToWorkItemMap.lookup(eOp) != item)
+            continue;
+          for (Value res : eOp->getResults()) {
+            if (!cOps.outputs.contains(res) || !ifYieldSet.insert(res).second)
+              continue;
+            ifThenYieldVals.push_back(nullptr);
+            ifElseYieldVals.push_back(res);
+            ifOrigResultsToMap.push_back(res);
           }
         }
 
@@ -1123,37 +1145,29 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
         if (newIfOp.elseBlock() && !newIfOp.elseBlock()->empty())
           newIfOp.elseBlock()->getTerminator()->erase();
 
-        // Populate thenBlock
-        builder.setInsertionPointToStart(newIfOp.thenBlock());
-        for (Operation *tOp : thenOpsToClone)
-          builder.clone(*tOp, scopeMap);
-
-        SmallVector<Value> thenYieldOperands;
-        for (Value v : ifThenYieldVals)
-          thenYieldOperands.push_back(scopeMap.lookupOrDefault(v));
-        builder.setInsertionPointToEnd(newIfOp.thenBlock());
-        builder.create<scf::YieldOp>(enclosingIf.thenYield().getLoc(),
-                                     thenYieldOperands);
-
-        // Populate elseBlock
-        if (needElse) {
-          builder.setInsertionPointToStart(newIfOp.elseBlock());
-          for (Operation *eOp : elseOpsToClone)
-            builder.clone(*eOp, scopeMap);
-
-          builder.setInsertionPointToEnd(newIfOp.elseBlock());
-          SmallVector<Value> elseYieldOperands;
-          for (auto [thenVal, origElseVal] :
-               llvm::zip(ifThenYieldVals, ifElseYieldVals)) {
-            Value mappedElse =
-                origElseVal ? scopeMap.lookupOrDefault(origElseVal) : Value();
-            elseYieldOperands.push_back(getOrCreateElseYieldValue(
-                builder, loc, scopeMap.lookupOrDefault(thenVal), mappedElse));
+        // Build both branches identically, exporting branch-local values
+        // through if results before they are returned from the scope.
+        auto populateBranch = [&](Block *block, ArrayRef<Operation *> ops,
+                                  ArrayRef<Value> values, Location yieldLoc) {
+          builder.setInsertionPointToStart(block);
+          for (Operation *op : ops)
+            builder.clone(*op, scopeMap);
+          builder.setInsertionPointToEnd(block);
+          SmallVector<Value> operands;
+          for (auto [idx, value] : llvm::enumerate(values)) {
+            Value mapped = value ? scopeMap.lookupOrDefault(value) : Value();
+            operands.push_back(getOrCreateElseYieldValue(
+                builder, loc, scopeMap.lookupOrDefault(ifOrigResultsToMap[idx]),
+                mapped));
           }
-          Location elseLoc =
-              enclosingIf.elseBlock() ? enclosingIf.elseYield().getLoc() : loc;
-          builder.create<scf::YieldOp>(elseLoc, elseYieldOperands);
-        }
+          builder.create<scf::YieldOp>(yieldLoc, operands);
+        };
+        populateBranch(newIfOp.thenBlock(), thenOpsToClone, ifThenYieldVals,
+                       enclosingIf.thenYield().getLoc());
+        if (needElse)
+          populateBranch(
+              newIfOp.elseBlock(), elseOpsToClone, ifElseYieldVals,
+              enclosingIf.elseBlock() ? enclosingIf.elseYield().getLoc() : loc);
 
         // Map results of newIfOp
         auto mapIfValues = [&](ArrayRef<Value> vals, bool checkAncestor) {
