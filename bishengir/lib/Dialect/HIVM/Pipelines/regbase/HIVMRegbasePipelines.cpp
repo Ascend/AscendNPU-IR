@@ -7,15 +7,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Conversion/ArithToAffine/ArithToAffine.h"
-#include "bishengir/Conversion/HFusionToHIVM/HFusionToHIVMPass.h"
 #include "bishengir/Conversion/LowerMemRefExt/LowerMemRefExt.h"
-#include "bishengir/Conversion/ProtonToHIVM/ProtonToHIVM.h"
-#include "bishengir/Conversion/TensorToHIVM/TensorToHIVM.h"
 #include "bishengir/Dialect/Arith/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/Pipelines/ConvertToHIVMPipeline.h"
 #include "bishengir/Dialect/HIVM/Pipelines/HIVMBufferizationPipeline.h"
 #include "bishengir/Dialect/HIVM/Pipelines/regbase/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -27,12 +23,10 @@
 #include "bishengir/Dialect/Vector/Transforms/Passes.h"
 #include "bishengir/Transforms/Passes.h"
 
-#include "mlir/Conversion/SCFToGPU/SCFToGPUPass.h"
 #include "mlir/Dialect/Bufferization/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
 #include "mlir/Dialect/Linalg/Passes.h"
-#include "mlir/Dialect/SCF/Transforms/Passes.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
@@ -780,34 +774,6 @@ static void hivmPostBufferizationOptimizationPipeline(
   }
 }
 
-void buildConvertToHIVMPipeline(OpPassManager &pm,
-                                const ConvertToHIVMPipelineOptions &options) {
-  pm.addPass(bishengir::triton::proton::a5::createConvertProtonToHIVMPass());
-  registerKernelKindPassesForRegbase();
-  ConvertHFusionToHIVMOptions hfs2hivmOptions;
-  hfs2hivmOptions.mmMapMode = options.enableTritonKernelCompile
-                                  ? hfusion::MmMapMode::MacroInstr
-                                  : hfusion::MmMapMode::CoreOp;
-
-  if (options.enableRegBaseHIVMPipe)
-    pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
-  pm.addPass(createHFusionToHIVMConversionPass(hfs2hivmOptions));
-  if (options.enableTritonKernelCompile) {
-    pm.addPass(createTritonGlobalKernelArgsToHIVMOpPass());
-  }
-  pm.addPass(createTensorToHIVMConversionPass());
-  pm.addPass(createConvertToHIVMOpPass());
-  if (!options.enableRegBaseHIVMPipe) {
-    // HIVM brc/reduce op's operands have the same rank, so after converting
-    // from Linalg/HFusion to HIVM, reshape ops will be inserted. Need to
-    // propagate them.
-    PropagateReshapeOptions propagateOption;
-    propagateOption.forHIVM = true;
-    pm.nest<func::FuncOp>().addPass(
-        tensor::createPropagateReshapePass(propagateOption));
-  }
-}
-
 void buildHIVMTensorOptimizations(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
   registerKernelKindPassesForRegbase();
@@ -843,14 +809,6 @@ void registerLowerHIVMPipelines() {
       [](OpPassManager &pm, const HIVMPipelineOptions &options) {
         buildHIVMTensorOptimizations(pm, options);
         buildLowerHIVMPipelines(pm, options);
-      });
-}
-
-void registerConvertToHIVMPipelines() {
-  PassPipelineRegistration<ConvertToHIVMPipelineOptions>(
-      "convert-to-hivm-pipeline", "convert to hivm pipeline",
-      [](OpPassManager &pm, const ConvertToHIVMPipelineOptions &options) {
-        regbase::buildConvertToHIVMPipeline(pm, options);
       });
 }
 

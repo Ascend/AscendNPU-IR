@@ -594,14 +594,14 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
   if (config.getEnableHIVMCompile()) {
     // Build convert to HIVM Dialect pipeline.
     auto convertOptions =
-        std::make_unique<hivm::regbase::ConvertToHIVMPipelineOptions>();
+        std::make_unique<hivm::ConvertToHIVMPipelineOptions>();
     convertOptions->enableTritonKernelCompile =
         config.getEnableTritonKernelCompile();
     convertOptions->enableRegBaseHIVMPipe =
         hacc::utils::isRegBasedArch(config.getTarget());
     auto options = std::make_unique<hivm::HIVMPipelineOptions>();
     setupHIVMPipelineOptions(*options, config);
-    hivm::regbase::buildConvertToHIVMPipeline(pm, *convertOptions);
+    hivm::buildConvertToHIVMPipeline(pm, *convertOptions);
     hivm::regbase::buildHIVMTensorOptimizations(pm, *options);
     if (config.shouldEnableMixedCV()) {
       HIVMAggregatedDecomposeOpOptions decomposeOption;
