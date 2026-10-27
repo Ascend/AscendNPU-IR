@@ -22,6 +22,7 @@
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/IR/OpImplementation.h"
@@ -513,8 +514,33 @@ void hivmave::VFPregTypeCastOp::getCanonicalizationPatterns(
 // VFAddsOp canonicalization
 //===----------------------------------------------------------------------===//
 
-// Fold identity vadds where scalar is 0:
-//   ave.hir.vadds %vec, %cst_0, %mask -> %vec
+// Return true when the predicate is provably all-true, so a zero-scalar
+// vadds can be folded to its vector operand without changing masked lanes.
+static bool isAllTrueMask(Value mask) {
+  if (auto pge = mask.getDefiningOp<VFPgeOp>()) {
+    auto maskTy = dyn_cast<VectorType>(pge.getType());
+    if (!maskTy)
+      return false;
+    if (pge.getPattern() == PgePattern::ALL)
+      return true;
+    // Only plain VLn patterns prove a lane count without extra attributes.
+    StringRef pattern = stringifyPgePattern(pge.getPattern());
+    int64_t lanes;
+    return pattern.consume_front("VL") && !pattern.getAsInteger(10, lanes) &&
+           lanes == maskTy.getNumElements();
+  }
+  if (auto cst = mask.getDefiningOp<arith::ConstantOp>()) {
+    auto dense = dyn_cast<DenseElementsAttr>(cst.getValue());
+    return dense && dense.getType().getElementType().isInteger(1) &&
+           dense.isSplat() && dense.getSplatValue<bool>();
+  }
+  return false;
+}
+
+// Fold identity vadds where scalar is 0 and the mask is all-true:
+//   ave.hir.vadds %vec, %cst_0, %all_true_mask -> %vec
+// With a partial mask the inactive lanes must still be zeroed, so the op
+// cannot be replaced by %vec.
 struct IdentityVFAddsOpPattern : public OpRewritePattern<VFAddsOp> {
   using OpRewritePattern<VFAddsOp>::OpRewritePattern;
 
@@ -526,22 +552,15 @@ struct IdentityVFAddsOpPattern : public OpRewritePattern<VFAddsOp> {
       return failure();
 
     auto constValue = constOp.getValue();
+    bool isZero = (isa<FloatType>(constValue.getType()) &&
+                   utils::isConst<FloatAttr, float_t>(constValue, 0.0)) ||
+                  (isa<IntegerType>(constValue.getType()) &&
+                   utils::isConst<IntegerAttr, int64_t>(constValue, 0));
+    if (!isZero || !isAllTrueMask(op.getMask()))
+      return failure();
 
-    // Float zero: vadds(vec, 0.0) -> vec
-    if (isa<FloatType>(constValue.getType()) &&
-        utils::isConst<FloatAttr, float_t>(constValue, 0.0)) {
-      rewriter.replaceOp(op, op.getVec());
-      return success();
-    }
-
-    // Integer zero: vadds(vec, 0) -> vec
-    if (isa<IntegerType>(constValue.getType()) &&
-        utils::isConst<IntegerAttr, int64_t>(constValue, 0)) {
-      rewriter.replaceOp(op, op.getVec());
-      return success();
-    }
-
-    return failure();
+    rewriter.replaceOp(op, op.getVec());
+    return success();
   }
 };
 
