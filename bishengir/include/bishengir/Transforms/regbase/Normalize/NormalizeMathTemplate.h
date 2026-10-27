@@ -1079,7 +1079,7 @@ public:
     // A NaN src0 fails the compare, so only src1 needs a NaN check; with both
     // NaN the select then yields src0, which is NaN.
     Value cond = Traits::createCmpOp(rewriter, loc, src0, src1, targetKind);
-    if (!isNonNanSplat(src1)) {
+    if (utils::needsNanCheck(src1)) {
       Value src1NanMask = Traits::createIsNanOp(rewriter, loc, src1);
       cond = Traits::createBinaryOp(rewriter, loc, cond, src1NanMask,
                                     utils::createEmptyOp(rewriter, loc, cond),
@@ -1091,15 +1091,6 @@ public:
 
     rewriter.replaceOp(op, result);
     return success();
-  }
-
-private:
-  /// Returns true when `src` is a splat of a constant that cannot be NaN.
-  static bool isNonNanSplat(Value src) {
-    auto fill = src.template getDefiningOp<linalg::FillOp>();
-    FloatAttr value;
-    return fill && matchPattern(fill.getInputs()[0], m_Constant(&value)) &&
-           !value.getValue().isNaN();
   }
 };
 

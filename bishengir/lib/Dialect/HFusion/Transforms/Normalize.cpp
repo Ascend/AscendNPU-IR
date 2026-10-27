@@ -8395,7 +8395,7 @@ private:
     // NaN the select then yields src0, which is NaN.
     Value cond = createCmpOp(rewriter, loc, src0, src1, cmpFn)->getResult(0);
 
-    if (!isNonNanSplat(src1)) {
+    if (utils::needsNanCheck(src1)) {
       auto isNanResultTensorType = utils::getTensorTypeWithSameShape(
           src0.getType(), rewriter.getI1Type());
       Value src1NanMask =
@@ -8409,18 +8409,6 @@ private:
                                            ValueRange({cond, src0, src1}),
                                            ValueRange(resOut));
     return resOp->getResult(0);
-  }
-
-  /// Returns true when `src` is a splat of a constant that cannot be NaN.
-  static bool isNonNanSplat(Value src) {
-    auto fillOp = src.getDefiningOp<linalg::FillOp>();
-    if (!fillOp)
-      return false;
-    auto cstOp = fillOp.getInputs()[0].getDefiningOp<arith::ConstantOp>();
-    if (!cstOp)
-      return false;
-    auto floatAttr = dyn_cast<FloatAttr>(cstOp.getValue());
-    return floatAttr && !floatAttr.getValue().isNaN();
   }
 };
 
