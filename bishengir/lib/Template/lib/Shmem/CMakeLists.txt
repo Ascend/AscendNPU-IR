@@ -6,14 +6,6 @@ if(NOT BISHENGIR_SHMEM_CANN_ROOT)
         "${BISHENG_COMPILER_PATH}/.." ABSOLUTE)
 endif()
 
-# Only instantiate optional compatibility APIs declared by the selected SHMEM
-# revision. Header changes must trigger reconfiguration as well as recompilation.
-set(shmem_collective_header
-    "${PROJECT_SOURCE_DIR}/third-party/shmem/include/device/gm2gm/shmem_device_cc.h")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    "${shmem_collective_header}")
-file(STRINGS "${shmem_collective_header}" shmem_collective_declarations
-    REGEX "^ACLSHMEM_DEVICE void aclshmemx_sync_vec")
 set(BISHENGIR_SHMEM_API_DEFINES)
 option(BISHENGIR_SHMEM_RELAY_SUPPORT
     "Enable C310 SHMEM relay wrappers; requires a matching relay-enabled runtime" OFF)
@@ -28,13 +20,6 @@ if(BISHENGIR_SHMEM_RDMA_BACKEND STREQUAL "XSCALE" OR
 elseif(NOT BISHENGIR_SHMEM_RDMA_BACKEND STREQUAL "IN_DIE")
     message(FATAL_ERROR "Unknown SHMEM RoCE backend: ${BISHENGIR_SHMEM_RDMA_BACKEND}")
 endif()
-foreach(api sync_vec sync_vec_all)
-    if(shmem_collective_declarations MATCHES "aclshmemx_${api}[(]")
-        string(TOUPPER "${api}" api_upper)
-        list(APPEND BISHENGIR_SHMEM_API_DEFINES
-            "-DBISHENGIR_SHMEM_HAS_${api_upper}")
-    endif()
-endforeach()
 
 file(GLOB cpp_list CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 
