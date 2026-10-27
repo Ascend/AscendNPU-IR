@@ -233,6 +233,21 @@ DiagnosedSilenceableFailure mapForallToBlocksImpl(
 /// `isLoopShapeRegistered`); the pass filters before calling the impl.
 LogicalResult sinkReturnedTensorsToConsumer(scf::ForOp forOp);
 
+/// Append one loop-carried value per entry of `inits`, each initialized to that
+/// value and yielded straight back, and return the index of the first appended
+/// iter-arg. Callers rewrite a new yield operand once they know what their copy
+/// has to advance to.
+///
+/// This gives a second reader of a loop-carried scalar a copy of its own, so
+/// that readers which no longer run in the same iteration stop sharing one
+/// iter-arg. Both CV-Pipelining (for the scalars a lazy load reads) and
+/// preload repositioning (for a cross-stage sink) privatize that way.
+///
+/// `loop` is replaced in place. Its body block is moved rather than cloned, so
+/// `Operation *` collected from the old body stay valid across the call.
+FailureOr<unsigned> appendPassThroughIterArgs(scf::ForOp &loop,
+                                              ValueRange inits);
+
 /// Remove attr from markOp, and remove markOp if no attr left.
 void removeMarkOpAttr(annotation::MarkOp markOp, ::llvm::StringLiteral attrName,
                       bool removeOp = true);
