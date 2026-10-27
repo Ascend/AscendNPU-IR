@@ -20,6 +20,7 @@
 #include "device/ub2gm/shmem_device_rma.h"
 #include "device/ub2gm/engine/shmem_device_mte.h"
 #include "device/team/shmem_device_team.h"
+#include "ShmemTransport.h"
 // clang-format on
 
 #ifdef __cplusplus
@@ -111,17 +112,23 @@ _mlir_ciface_aclshmem_sync_all(void) {
   aclshmem_sync_all();
 }
 
+#ifdef BISHENGIR_SHMEM_HAS_SYNC_VEC
 // Wrapper for aclshmemx_sync_vec
 __aicore__ __attribute__((always_inline)) void
 _mlir_ciface_aclshmemx_sync_vec(aclshmem_team_t team) {
   aclshmemx_sync_vec(team);
 }
 
+#endif // BISHENGIR_SHMEM_HAS_SYNC_VEC
+
+#ifdef BISHENGIR_SHMEM_HAS_SYNC_VEC_ALL
 // Wrapper for aclshmemx_sync_vec_all
 __aicore__ __attribute__((always_inline)) void
 _mlir_ciface_aclshmemx_sync_vec_all(void) {
   aclshmemx_sync_vec_all();
 }
+
+#endif // BISHENGIR_SHMEM_HAS_SYNC_VEC_ALL
 
 // Wrapper for aclshmemx_signal_op
 __aicore__ __attribute__((always_inline)) void
@@ -335,6 +342,117 @@ ACLSHMEM_EXPAND_UDMA_PUT_OPS(bfloat16, bfloat16_t)
 __aicore__ __attribute__((always_inline)) void
 _mlir_ciface_aclshmemx_udma_quiet(int32_t pe) {
   aclshmemx_udma_quiet(pe);
+}
+
+// QP-specific wrappers preserve the upstream transport restrictions. In a
+// relay-enabled build, UDMA QP APIs abort; these wrappers do not bypass that
+// restriction. UDMA uses PIPE_S, matching the existing workspace-free ABI.
+
+#define ACLSHMEMX_ROCE_QP_GET_NBI_WRAPPER(NAME, TYPE)                          \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmemx_roce_qp_get_nbi_##NAME(                               \
+      memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
+      memref_t<__ubuf__ TYPE, 1> *buf, uint32_t elem_size, int32_t pe,         \
+      uint32_t qp_idx, uint32_t sync_id) {                                     \
+    aclshmemx_roce_qp_get_nbi<TYPE>(                                           \
+        dst->aligned + dst->offset, src->aligned + src->offset,                \
+        buf->aligned + buf->offset, elem_size, pe, qp_idx, sync_id);           \
+  }
+
+#define ACLSHMEMX_ROCE_QP_PUT_NBI_WRAPPER(NAME, TYPE)                          \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmemx_roce_qp_put_nbi_##NAME(                               \
+      memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
+      memref_t<__ubuf__ TYPE, 1> *buf, uint32_t elem_size, int32_t pe,         \
+      uint32_t qp_idx, uint32_t sync_id) {                                     \
+    aclshmemx_roce_qp_put_nbi<TYPE>(                                           \
+        dst->aligned + dst->offset, src->aligned + src->offset,                \
+        buf->aligned + buf->offset, elem_size, pe, qp_idx, sync_id);           \
+  }
+
+#define ACLSHMEMX_UDMA_QP_GET_NBI_WRAPPER(NAME, TYPE)                          \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmemx_udma_qp_get_nbi_##NAME(                               \
+      memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
+      uint32_t elem_size, int32_t pe, uint32_t qp_idx) {                       \
+    aclshmemx_udma_qp_get_nbi<TYPE, PIPE_S>(                                   \
+        dst->aligned + dst->offset, src->aligned + src->offset,                \
+        (__ubuf__ TYPE *)nullptr, elem_size, pe, qp_idx, 0);                   \
+  }
+
+#define ACLSHMEMX_UDMA_QP_PUT_NBI_WRAPPER(NAME, TYPE)                          \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmemx_udma_qp_put_nbi_##NAME(                               \
+      memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
+      uint32_t elem_size, int32_t pe, uint32_t qp_idx) {                       \
+    aclshmemx_udma_qp_put_nbi<TYPE, PIPE_S>(                                   \
+        dst->aligned + dst->offset, src->aligned + src->offset,                \
+        (__ubuf__ TYPE *)nullptr, elem_size, pe, qp_idx, 0);                   \
+  }
+
+#define ACLSHMEMX_ROCE_QP_QUIET_WRAPPER(NAME, TYPE)                            \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmemx_roce_qp_quiet_##NAME(uint32_t pe, uint32_t qp_idx,    \
+                                              memref_t<__ubuf__ TYPE, 1> *buf, \
+                                              uint32_t sync_id) {              \
+    aclshmemx_roce_qp_quiet<TYPE>(pe, qp_idx, buf->aligned + buf->offset,      \
+                                  sync_id);                                    \
+  }
+
+#define ACLSHMEMX_UDMA_QP_PUT_SIGNAL_NBI_WRAPPER(NAME, TYPE)                   \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmemx_udma_qp_put_signal_nbi_##NAME(                        \
+      memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
+      uint32_t elem_size, memref_t<__gm__ uint64_t, 1> *sig_addr,              \
+      uint64_t signal, int32_t pe, uint32_t qp_idx) {                          \
+    aclshmemx_udma_qp_put_signal_nbi<TYPE, PIPE_S>(                            \
+        dst->aligned + dst->offset, src->aligned + src->offset, elem_size,     \
+        sig_addr->aligned + sig_addr->offset, signal, pe, qp_idx,              \
+        (__ubuf__ uint8_t *)nullptr, 0);                                       \
+  }
+
+// The default IN_DIE RoCE backend rejects QP API instantiation.
+#if defined(ACLSHMEMI_RDMA_K_BACKEND_XSCALE) ||                                \
+    defined(ACLSHMEMI_RDMA_K_BACKEND_HNS_1825)
+#define ACLSHMEMX_ROCE_QP_WRAPPERS(NAME, TYPE)                                 \
+  ACLSHMEMX_ROCE_QP_GET_NBI_WRAPPER(NAME, TYPE)                                \
+  ACLSHMEMX_ROCE_QP_PUT_NBI_WRAPPER(NAME, TYPE)                                \
+  ACLSHMEMX_ROCE_QP_QUIET_WRAPPER(NAME, TYPE)
+#else
+#define ACLSHMEMX_ROCE_QP_WRAPPERS(NAME, TYPE)
+#endif
+
+#define ACLSHMEMX_QP_WRAPPERS(NAME, TYPE)                                      \
+  ACLSHMEMX_ROCE_QP_WRAPPERS(NAME, TYPE)                                       \
+  ACLSHMEMX_UDMA_QP_GET_NBI_WRAPPER(NAME, TYPE)                                \
+  ACLSHMEMX_UDMA_QP_PUT_NBI_WRAPPER(NAME, TYPE)                                \
+  ACLSHMEMX_UDMA_QP_PUT_SIGNAL_NBI_WRAPPER(NAME, TYPE)
+
+ACLSHMEMX_QP_WRAPPERS(half, half)
+ACLSHMEMX_QP_WRAPPERS(float, float)
+ACLSHMEMX_QP_WRAPPERS(int8, int8_t)
+ACLSHMEMX_QP_WRAPPERS(int16, int16_t)
+ACLSHMEMX_QP_WRAPPERS(int32, int32_t)
+ACLSHMEMX_QP_WRAPPERS(int64, int64_t)
+ACLSHMEMX_QP_WRAPPERS(uint8, uint8_t)
+ACLSHMEMX_QP_WRAPPERS(uint16, uint16_t)
+ACLSHMEMX_QP_WRAPPERS(uint32, uint32_t)
+ACLSHMEMX_QP_WRAPPERS(uint64, uint64_t)
+ACLSHMEMX_QP_WRAPPERS(char, char)
+ACLSHMEMX_QP_WRAPPERS(bfloat16, bfloat16_t)
+
+#undef ACLSHMEMX_QP_WRAPPERS
+#undef ACLSHMEMX_ROCE_QP_WRAPPERS
+#undef ACLSHMEMX_ROCE_QP_GET_NBI_WRAPPER
+#undef ACLSHMEMX_ROCE_QP_PUT_NBI_WRAPPER
+#undef ACLSHMEMX_UDMA_QP_GET_NBI_WRAPPER
+#undef ACLSHMEMX_UDMA_QP_PUT_NBI_WRAPPER
+#undef ACLSHMEMX_ROCE_QP_QUIET_WRAPPER
+#undef ACLSHMEMX_UDMA_QP_PUT_SIGNAL_NBI_WRAPPER
+
+__aicore__ __attribute__((always_inline)) void
+_mlir_ciface_aclshmemx_udma_qp_quiet(int32_t pe, uint32_t qp_idx) {
+  aclshmemx_udma_qp_quiet(pe, qp_idx);
 }
 
 // Macro to generate wrappers for aclshmem_##NAME##_p functions
@@ -755,7 +873,10 @@ ACLSHMEMX_ROCE_ATOMIC_FETCH_WRAPPER(int32, int32_t)
 ACLSHMEMX_ROCE_ATOMIC_FETCH_WRAPPER(uint32, uint32_t)
 ACLSHMEMX_ROCE_ATOMIC_FETCH_WRAPPER(int64, int64_t)
 ACLSHMEMX_ROCE_ATOMIC_FETCH_WRAPPER(uint64, uint64_t)
+// HNS_1825 atomics accept only 32-bit and 64-bit integers.
+#ifndef ACLSHMEMI_RDMA_K_BACKEND_HNS_1825
 ACLSHMEMX_ROCE_ATOMIC_FETCH_WRAPPER(float, float)
+#endif
 
 #undef ACLSHMEMX_ROCE_ATOMIC_FETCH_WRAPPER
 
@@ -802,7 +923,10 @@ ACLSHMEMX_ROCE_ATOMIC_SET_WRAPPER(int32, int32_t)
 ACLSHMEMX_ROCE_ATOMIC_SET_WRAPPER(uint32, uint32_t)
 ACLSHMEMX_ROCE_ATOMIC_SET_WRAPPER(int64, int64_t)
 ACLSHMEMX_ROCE_ATOMIC_SET_WRAPPER(uint64, uint64_t)
+// HNS_1825 atomics accept only 32-bit and 64-bit integers.
+#ifndef ACLSHMEMI_RDMA_K_BACKEND_HNS_1825
 ACLSHMEMX_ROCE_ATOMIC_SET_WRAPPER(float, float)
+#endif
 
 #undef ACLSHMEMX_ROCE_ATOMIC_SET_WRAPPER
 
@@ -819,7 +943,10 @@ ACLSHMEMX_ROCE_ATOMIC_SWAP_WRAPPER(int32, int32_t)
 ACLSHMEMX_ROCE_ATOMIC_SWAP_WRAPPER(uint32, uint32_t)
 ACLSHMEMX_ROCE_ATOMIC_SWAP_WRAPPER(int64, int64_t)
 ACLSHMEMX_ROCE_ATOMIC_SWAP_WRAPPER(uint64, uint64_t)
+// HNS_1825 atomics accept only 32-bit and 64-bit integers.
+#ifndef ACLSHMEMI_RDMA_K_BACKEND_HNS_1825
 ACLSHMEMX_ROCE_ATOMIC_SWAP_WRAPPER(float, float)
+#endif
 
 #undef ACLSHMEMX_ROCE_ATOMIC_SWAP_WRAPPER
 
