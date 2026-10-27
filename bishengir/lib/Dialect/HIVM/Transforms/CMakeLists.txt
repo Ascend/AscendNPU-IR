@@ -91,6 +91,9 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   InjectBlockSync.cpp
   FixpipeUtils.cpp
   InlineFixpipe.cpp
+  InlineFixpipeFallback.cpp
+  InlineFixpipeFusion.cpp
+  InlineFixpipeShared.cpp
   InsertFixpipe.cpp
   InlineLoadCopy.cpp
   InlineOTFBroadcast.cpp
