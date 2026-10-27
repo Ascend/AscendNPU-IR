@@ -23,6 +23,10 @@
 namespace bishengir {
 namespace regbase {
 
+/// Build the pipeline dedicated to affinity compilation.
+void buildAffinityPipeline(mlir::OpPassManager &pm,
+                           const BiShengIRCompileMainConfig &config);
+
 /// Build the pipelines of BiShengHIR from config.
 void buildBiShengHIRPipeline(mlir::OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config);
