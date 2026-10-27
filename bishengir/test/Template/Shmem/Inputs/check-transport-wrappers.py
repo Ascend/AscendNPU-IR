@@ -13,15 +13,15 @@ types = [
 # C wrappers receive pointers to rank-one memref descriptors. Count, PE, relay
 # PE, and event ID remain 32-bit scalar arguments.
 operations = {
-    "roce_get_nbi": ["ptr", "ptr", "ptr", "i32", "i32", "i32"],
-    "roce_put_nbi": ["ptr", "ptr", "ptr", "i32", "i32", "i32"],
-    "roce_qp_get_nbi": ["ptr", "ptr", "ptr", "i32", "i32", "i32", "i32"],
-    "roce_qp_put_nbi": ["ptr", "ptr", "ptr", "i32", "i32", "i32", "i32"],
-    "roce_qp_quiet": ["i32", "i32", "ptr", "i32"],
+    "roce_get_nbi": ["ptr", "ptr", "i32", "i32"],
+    "roce_put_nbi": ["ptr", "ptr", "i32", "i32"],
+    "roce_qp_get_nbi": ["ptr", "ptr", "i32", "i32", "i32"],
+    "roce_qp_put_nbi": ["ptr", "ptr", "i32", "i32", "i32"],
+    "roce_qp_quiet": ["i32", "i32"],
     "udma_qp_get_nbi": ["ptr", "ptr", "i32", "i32", "i32"],
     "udma_qp_put_nbi": ["ptr", "ptr", "i32", "i32", "i32"],
     "udma_qp_put_signal_nbi": ["ptr", "ptr", "i32", "ptr", "i64", "i32", "i32"],
-    "roce_quiet": ["i32", "ptr", "i32"],
+    "roce_quiet": ["i32"],
     "udma_get_nbi": ["ptr", "ptr", "i32", "i32"],
     "udma_put_nbi": ["ptr", "ptr", "i32", "i32"],
 }
@@ -32,8 +32,8 @@ relay_operations = {
 collectives = {
     "udma_quiet": ("void", ["i32"]),
     "udma_qp_quiet": ("void", ["i32", "i32"]),
-    "roce_team_sync": ("i32", ["ptr"]),
-    "roce_barrier": ("i32", ["ptr"]),
+    "roce_team_sync": ("i32", ["i32"]),
+    "roce_barrier": ("i32", ["i32"]),
     "roce_sync_all": ("void", []),
     "roce_barrier_all": ("void", []),
 }

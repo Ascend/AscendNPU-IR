@@ -7,36 +7,44 @@
 // the same translation unit because those headers define device globals.
 extern "C" {
 
-// RoCE requires caller-owned UB scratch and a hardware synchronization ID.
-// Transfer counts are in elements; every memref uses its aligned pointer plus
-// offset, including the UB workspace.
+// RoCE uses the same runtime-configured UB workspace and event ID as generic
+// SHMEM RMA. Transfer counts are in elements; payload memrefs retain offsets.
 #define ACLSHMEM_ROCE_GET_NBI_WRAPPER(NAME, TYPE)                              \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_roce_get_nbi_##NAME(                                  \
-      memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
-      memref_t<__ubuf__ TYPE, 1> *buf, uint32_t elem_size, int32_t pe,         \
-      uint32_t sync_id) {                                                      \
-    aclshmemx_roce_get_nbi<TYPE>(                                              \
-        dst->aligned + dst->offset, src->aligned + src->offset,                \
-        buf->aligned + buf->offset, elem_size, pe, sync_id);                   \
+  _mlir_ciface_aclshmemx_roce_get_nbi_##NAME(memref_t<__gm__ TYPE, 1> *dst,    \
+                                             memref_t<__gm__ TYPE, 1> *src,    \
+                                             uint32_t elem_size, int32_t pe) { \
+    auto *state = aclshmemi_get_state();                                       \
+    auto *buf =                                                                \
+        reinterpret_cast<__ubuf__ TYPE *>(state->rdma_config.aclshmem_ub);     \
+    uint32_t sync_id = state->rdma_config.sync_id;                             \
+    aclshmemx_roce_get_nbi<TYPE>(dst->aligned + dst->offset,                   \
+                                 src->aligned + src->offset, buf, elem_size,   \
+                                 pe, sync_id);                                 \
   }
 
 #define ACLSHMEM_ROCE_PUT_NBI_WRAPPER(NAME, TYPE)                              \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_roce_put_nbi_##NAME(                                  \
-      memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
-      memref_t<__ubuf__ TYPE, 1> *buf, uint32_t elem_size, int32_t pe,         \
-      uint32_t sync_id) {                                                      \
-    aclshmemx_roce_put_nbi<TYPE>(                                              \
-        dst->aligned + dst->offset, src->aligned + src->offset,                \
-        buf->aligned + buf->offset, elem_size, pe, sync_id);                   \
+  _mlir_ciface_aclshmemx_roce_put_nbi_##NAME(memref_t<__gm__ TYPE, 1> *dst,    \
+                                             memref_t<__gm__ TYPE, 1> *src,    \
+                                             uint32_t elem_size, int32_t pe) { \
+    auto *state = aclshmemi_get_state();                                       \
+    auto *buf =                                                                \
+        reinterpret_cast<__ubuf__ TYPE *>(state->rdma_config.aclshmem_ub);     \
+    uint32_t sync_id = state->rdma_config.sync_id;                             \
+    aclshmemx_roce_put_nbi<TYPE>(dst->aligned + dst->offset,                   \
+                                 src->aligned + src->offset, buf, elem_size,   \
+                                 pe, sync_id);                                 \
   }
 
 #define ACLSHMEM_ROCE_QUIET_WRAPPER(NAME, TYPE)                                \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_roce_quiet_##NAME(                                    \
-      uint32_t pe, memref_t<__ubuf__ TYPE, 1> *buf, uint32_t sync_id) {        \
-    aclshmemx_roce_quiet<TYPE>(pe, buf->aligned + buf->offset, sync_id);       \
+  _mlir_ciface_aclshmemx_roce_quiet_##NAME(uint32_t pe) {                      \
+    auto *state = aclshmemi_get_state();                                       \
+    auto *buf =                                                                \
+        reinterpret_cast<__ubuf__ TYPE *>(state->rdma_config.aclshmem_ub);     \
+    uint32_t sync_id = state->rdma_config.sync_id;                             \
+    aclshmemx_roce_quiet<TYPE>(pe, buf, sync_id);                              \
   }
 
 // Match the existing PIPE_S UDMA put ABI: no UB workspace or event is needed.
@@ -123,14 +131,14 @@ ACLSHMEM_TRANSPORT_WRAPPERS(bfloat16, bfloat16_t)
 
 // Use the SHMEM-configured workspace for the default collective overload.
 __aicore__ __attribute__((always_inline)) int
-_mlir_ciface_aclshmemx_roce_team_sync(aclshmemx_team_t *team) {
-  return aclshmemx_roce_team_sync(team);
+_mlir_ciface_aclshmemx_roce_team_sync(aclshmem_team_t team) {
+  return aclshmemx_roce_team_sync(aclshmemi_get_state()->team_pools[team]);
 }
 
 // Use the SHMEM-configured workspace for the default collective overload.
 __aicore__ __attribute__((always_inline)) int
-_mlir_ciface_aclshmemx_roce_barrier(aclshmemx_team_t *team) {
-  return aclshmemx_roce_barrier(team);
+_mlir_ciface_aclshmemx_roce_barrier(aclshmem_team_t team) {
+  return aclshmemx_roce_barrier(aclshmemi_get_state()->team_pools[team]);
 }
 
 // Use the SHMEM-configured workspace for the default collective overload.

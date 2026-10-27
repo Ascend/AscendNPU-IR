@@ -352,22 +352,28 @@ _mlir_ciface_aclshmemx_udma_quiet(int32_t pe) {
   __aicore__ __attribute__((always_inline)) void                               \
   _mlir_ciface_aclshmemx_roce_qp_get_nbi_##NAME(                               \
       memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
-      memref_t<__ubuf__ TYPE, 1> *buf, uint32_t elem_size, int32_t pe,         \
-      uint32_t qp_idx, uint32_t sync_id) {                                     \
-    aclshmemx_roce_qp_get_nbi<TYPE>(                                           \
-        dst->aligned + dst->offset, src->aligned + src->offset,                \
-        buf->aligned + buf->offset, elem_size, pe, qp_idx, sync_id);           \
+      uint32_t elem_size, int32_t pe, uint32_t qp_idx) {                       \
+    auto *state = aclshmemi_get_state();                                       \
+    auto *buf =                                                                \
+        reinterpret_cast<__ubuf__ TYPE *>(state->rdma_config.aclshmem_ub);     \
+    uint32_t sync_id = state->rdma_config.sync_id;                             \
+    aclshmemx_roce_qp_get_nbi<TYPE>(dst->aligned + dst->offset,                \
+                                    src->aligned + src->offset, buf,           \
+                                    elem_size, pe, qp_idx, sync_id);           \
   }
 
 #define ACLSHMEMX_ROCE_QP_PUT_NBI_WRAPPER(NAME, TYPE)                          \
   __aicore__ __attribute__((always_inline)) void                               \
   _mlir_ciface_aclshmemx_roce_qp_put_nbi_##NAME(                               \
       memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
-      memref_t<__ubuf__ TYPE, 1> *buf, uint32_t elem_size, int32_t pe,         \
-      uint32_t qp_idx, uint32_t sync_id) {                                     \
-    aclshmemx_roce_qp_put_nbi<TYPE>(                                           \
-        dst->aligned + dst->offset, src->aligned + src->offset,                \
-        buf->aligned + buf->offset, elem_size, pe, qp_idx, sync_id);           \
+      uint32_t elem_size, int32_t pe, uint32_t qp_idx) {                       \
+    auto *state = aclshmemi_get_state();                                       \
+    auto *buf =                                                                \
+        reinterpret_cast<__ubuf__ TYPE *>(state->rdma_config.aclshmem_ub);     \
+    uint32_t sync_id = state->rdma_config.sync_id;                             \
+    aclshmemx_roce_qp_put_nbi<TYPE>(dst->aligned + dst->offset,                \
+                                    src->aligned + src->offset, buf,           \
+                                    elem_size, pe, qp_idx, sync_id);           \
   }
 
 #define ACLSHMEMX_UDMA_QP_GET_NBI_WRAPPER(NAME, TYPE)                          \
@@ -392,11 +398,12 @@ _mlir_ciface_aclshmemx_udma_quiet(int32_t pe) {
 
 #define ACLSHMEMX_ROCE_QP_QUIET_WRAPPER(NAME, TYPE)                            \
   __aicore__ __attribute__((always_inline)) void                               \
-  _mlir_ciface_aclshmemx_roce_qp_quiet_##NAME(uint32_t pe, uint32_t qp_idx,    \
-                                              memref_t<__ubuf__ TYPE, 1> *buf, \
-                                              uint32_t sync_id) {              \
-    aclshmemx_roce_qp_quiet<TYPE>(pe, qp_idx, buf->aligned + buf->offset,      \
-                                  sync_id);                                    \
+  _mlir_ciface_aclshmemx_roce_qp_quiet_##NAME(uint32_t pe, uint32_t qp_idx) {  \
+    auto *state = aclshmemi_get_state();                                       \
+    auto *buf =                                                                \
+        reinterpret_cast<__ubuf__ TYPE *>(state->rdma_config.aclshmem_ub);     \
+    uint32_t sync_id = state->rdma_config.sync_id;                             \
+    aclshmemx_roce_qp_quiet<TYPE>(pe, qp_idx, buf, sync_id);                   \
   }
 
 #define ACLSHMEMX_UDMA_QP_PUT_SIGNAL_NBI_WRAPPER(NAME, TYPE)                   \
