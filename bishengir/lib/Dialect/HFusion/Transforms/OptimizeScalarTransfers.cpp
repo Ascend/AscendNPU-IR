@@ -178,19 +178,12 @@ static bool normalizeConsumedReduce(linalg::ReduceOp reduceOp,
       initType.getEncoding())
     return false;
 
-  // Restrict the normalization to statically-shaped 1-D reductions over 1024
-  // or 2048 elements. Scalar optimization itself and the tree-reduce feature it
-  // enables both increase UB usage, so wider shapes are not profitable.
-  // Tree-reduce also changes the precision of floating-point operations, so it
-  // is limited to powers of two to keep the precision loss small. Finally,
-  // applying tree-reduce to very small shapes degrades performance, so those
-  // are filtered out as well.
   unsigned rank = inputType.getRank();
-  if (rank != 1 || !isa<mlir::FloatType>(inputType.getElementType()))
+  if (rank != 1)
     return false;
 
   int64_t dimSize = inputType.getDimSize(0);
-  if (ShapedType::isDynamic(dimSize) || (dimSize != 1024 && dimSize != 2048))
+  if (ShapedType::isDynamic(dimSize))
     return false;
 
   SmallVector<ReassociationIndices> reassociation;
