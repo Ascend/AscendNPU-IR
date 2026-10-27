@@ -12,8 +12,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     %dst = memref.reinterpret_cast %dst_storage to offset: [0], sizes: [2, 16], strides: [17, 1]
       : memref<34xf32, #hivm.address_space<ub>> to memref<2x16xf32, strided<[17, 1]>, #hivm.address_space<ub>>
     // CHECK-LABEL: @copyop2d_load_left_padding
-    // CHECK: %[[C1:.*]] = arith.constant 1 : index
-    // CHECK: call @load_gm_to_ubuf_2d_float(%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %[[C1]], %{{.*}})
+    // CHECK-DAG: %[[LEFT_PAD:.*]] = arith.constant 1 : index
+    // CHECK-DAG: %[[RIGHT_PAD:.*]] = arith.constant 0 : index
+    // Operands: src, dst, pad_mode, pad_value, left_padding_num,
+    // right_padding_num, eviction_policy.
+    // CHECK: call @load_gm_to_ubuf_2d_float(%{{[^,]+}}, %{{[^,]+}}, %{{[^,]+}}, %{{[^,]+}}, %[[LEFT_PAD]], %[[RIGHT_PAD]], %{{[^,)]+}})
     hivm.hir.load ins(%src : memref<2x8xf32, strided<[8, 1]>, #hivm.address_space<gm>>)
                   outs(%dst : memref<2x16xf32, strided<[17, 1]>, #hivm.address_space<ub>>)
                   pad_mode = #hivm.padmode<PadValue>
@@ -35,8 +38,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     %dst = memref.reinterpret_cast %dst_storage to offset: [0], sizes: [2, 2, 16], strides: [34, 17, 1]
       : memref<68xf32, #hivm.address_space<ub>> to memref<2x2x16xf32, strided<[34, 17, 1]>, #hivm.address_space<ub>>
     // CHECK-LABEL: @copyop3d_load_left_padding
-    // CHECK: %[[C1:.*]] = arith.constant 1 : index
-    // CHECK: call @load_gm_to_ubuf_3d_float(%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %[[C1]], %{{.*}})
+    // CHECK-DAG: %[[LEFT_PAD:.*]] = arith.constant 1 : index
+    // CHECK-DAG: %[[RIGHT_PAD:.*]] = arith.constant 0 : index
+    // Operands: src, dst, pad_mode, pad_value, left_padding_num,
+    // right_padding_num, eviction_policy.
+    // CHECK: call @load_gm_to_ubuf_3d_float(%{{[^,]+}}, %{{[^,]+}}, %{{[^,]+}}, %{{[^,]+}}, %[[LEFT_PAD]], %[[RIGHT_PAD]], %{{[^,)]+}})
     hivm.hir.load ins(%src : memref<2x2x8xf32, strided<[16, 8, 1]>, #hivm.address_space<gm>>)
                   outs(%dst : memref<2x2x16xf32, strided<[34, 17, 1]>, #hivm.address_space<ub>>)
                   pad_mode = #hivm.padmode<PadValue>

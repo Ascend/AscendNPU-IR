@@ -70,7 +70,8 @@ template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
     memref_t<__gm__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst, PadMode pad_mode,
     typename PadValueType<T>::type pad_value, int64_t left_padding_num,
-    EvictionPolicy eviction_policy, AtomicKind atomic_kind = AtomicKind::None) {
+    int64_t right_padding_num, EvictionPolicy eviction_policy,
+    AtomicKind atomic_kind = AtomicKind::None) {
   if (is_no_op<1>(src->sizes)) {
     return;
   }
@@ -88,17 +89,34 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
 
   auto dst_ptr = dst->aligned + dst->offset;
   if (!isAddress32ByteAligned(dst_ptr)) {
-    load_gm_to_ubuf_1d_by_scalar<T, DisableDCache>(src, dst);
+    load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 1, DisableDCache>(
+        src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
+        static_cast<uint8_t>(eviction_policy));
     return;
   }
 
   uint8_t l2_cache_ctl = static_cast<uint8_t>(eviction_policy);
   const int64_t stride0_gm = src->strides[0];
   const int64_t stride0_ub = dst->strides[0];
+  // Only the fully contiguous form below turns the window into one
+  // multi-element burst, which is the only shape whose trailing pad the
+  // intrinsic can place once; every other form here is one burst per element,
+  // where the count would be repeated per element. The burst must also be able
+  // to express the count exactly. Anything else goes to the descriptor, which
+  // extends loop0 by whole iterations.
+  if (right_padding_num != 0 &&
+      ((stride0_gm != 1 || stride0_ub != 1) ||
+       !block_dma_can_pad<T>(src->sizes[0], left_padding_num,
+                             right_padding_num))) {
+    load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 1, DisableDCache>(
+        src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
+        l2_cache_ctl);
+    return;
+  }
   if (stride0_gm == 1 && stride0_ub == 1) [[likely]] {
     // last dimension is contiguous
     load_gm_to_ubuf_1d_core_with_contiguous_last_dim<T>(
-        src, dst, left_padding_num, l2_cache_ctl);
+        src, dst, left_padding_num, right_padding_num, l2_cache_ctl);
     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
       // No need to add zero padding, it is correct by default for b64 types
       int64_t scalar = static_cast<int64_t>(pad_value);
@@ -137,7 +155,9 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
 
   // last dimension is not contiguous,
   if (stride0_ub != 1 && !isStrideAligned<T>(stride0_ub)) {
-    load_gm_to_ubuf_1d_by_scalar<T, DisableDCache>(src, dst);
+    load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 1, DisableDCache>(
+        src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
+        l2_cache_ctl);
     return;
   }
   // view the src (size) with stride [stride] as viewed_src (size, 1) with
@@ -149,7 +169,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
       dst->allocated, dst->aligned, dst->offset, {size0, 1}, {stride0_ub, 1}};
 
   load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
-      &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
+      &gm_2d, &ub_2d, left_padding_num, right_padding_num, l2_cache_ctl);
 }
 #else
 ///========================================
@@ -160,7 +180,8 @@ template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
     memref_t<__gm__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst, PadMode pad_mode,
     typename PadValueType<T>::type pad_value, int64_t left_padding_num,
-    EvictionPolicy eviction_policy, AtomicKind atomic_kind = AtomicKind::None) {
+    int64_t right_padding_num, EvictionPolicy eviction_policy,
+    AtomicKind atomic_kind = AtomicKind::None) {
   if (is_no_op<1>(src->sizes)) {
     return;
   }
@@ -182,7 +203,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
   if (stride0_gm == 1 && stride0_ub == 1) [[likely]] {
     // last dimension is contiguous
     load_gm_to_ubuf_1d_core_with_contiguous_last_dim<T>(
-        src, dst, left_padding_num, l2_cache_ctl);
+        src, dst, left_padding_num, right_padding_num, l2_cache_ctl);
     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
       if (pad_mode == PadMode::Value) {
         INTRINSIC(set_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
@@ -204,7 +225,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
       dst->allocated, dst->aligned, dst->offset, {size0, 1}, {stride0_ub, 1}};
 
   load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
-      &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
+      &gm_2d, &ub_2d, left_padding_num, right_padding_num, l2_cache_ctl);
 }
 #endif
 

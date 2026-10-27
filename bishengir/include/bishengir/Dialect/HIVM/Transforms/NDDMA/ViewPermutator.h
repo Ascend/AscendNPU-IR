@@ -15,10 +15,18 @@ namespace mlir {
 namespace hivm {
 namespace nddma {
 
-/// Helpers for the last-two-dim transpose pattern used by NDDMA load fusion.
-bool isLastTwoDimTranspose(ArrayRef<int64_t> permutation);
+/// NDDMA drives up to five nested loops (loop0 .. loop4), so a permutation
+/// of at most this rank folds into a single descriptor. A higher rank still
+/// reaches the descriptor for its innermost axes: the library call keeps five
+/// axes and MultiDimOpToLibraryCallPattern peels the rest into loops.
+constexpr int64_t kMaxNDDMARank = 5;
 
-SmallVector<int64_t> getLastTwoDimPermutation(int64_t rank);
+/// True for any non-identity permutation the NDDMA load path can carry.
+bool isSupportedNDDMAPermutation(ArrayRef<int64_t> permutation);
+
+/// True when the permutation maps the last axis onto itself. The load pad
+/// counts address that axis, so they only survive such a permutation.
+bool permutationKeepsLastAxis(ArrayRef<int64_t> permutation);
 
 /// Applies a visible-dimension permutation to a TileView.
 class ViewPermutator {

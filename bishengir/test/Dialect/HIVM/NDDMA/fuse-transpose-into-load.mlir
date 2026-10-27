@@ -5,17 +5,15 @@
 // only when that offset is not 0 (runtime skip recovers last-dim-only kda).
 // CHECK-LABEL: func.func @fuse_load_with_dyn_size
 // CHECK:       %[[NEW:.*]] = memref.alloc() : memref<256x128xbf16>
-// CHECK:       arith.cmpi ne
 // CHECK:       scf.if
 // CHECK:         linalg.fill ins(%{{.*}} : bf16) outs(%[[NEW]] : memref<256x128xbf16>)
 // Dynamic last-dim offset: keep fill, do not expand dest to rootLast-offset.
 // CHECK-NOT:   arith.subi
+// CHECK: memref.copy %{{.*}}, %{{.*}} : memref<256x?xbf16, strided<[1, 256], offset: ?>> to memref<256x?xbf16, strided<[128, 1], offset: ?>>
 // CHECK:       %[[res:.*]] = bufferization.to_tensor
-// CHECK:       hivm.hir.load ins(%{{.*}} : memref<256x?xbf16, strided<[1, 256], offset: ?>>)
-// CHECK-SAME:                outs(%{{.*}} : memref<256x?xbf16, strided<[128, 1], offset: ?>>)
 // CHECK-NOT:   transpose
 // CHECK:       return %[[res]] : tensor<256x128xbf16>
-func.func @fuse_load_with_dyn_size(%arg0: memref<?xbf16>, %arg1: index, %arg2: index, %arg3: index, %arg4: i1) -> tensor<256x128xbf16> {
+func.func @fuse_load_with_dyn_size(%arg0: memref<?xbf16>, %arg1: index, %arg2: index, %arg3: index, %arg4: i1) -> tensor<256x128xbf16> attributes {mix_mode = "aiv"} {
   %c128 = arith.constant 128 : index
   %cst = arith.constant 0.000000e+00 : bf16
   %alloc = memref.alloc() : memref<128x256xbf16>
@@ -27,7 +25,7 @@ func.func @fuse_load_with_dyn_size(%arg0: memref<?xbf16>, %arg1: index, %arg2: i
   scf.if %1 {
     linalg.fill ins(%cst : bf16) outs(%alloc : memref<128x256xbf16>)
   }
-  hivm.hir.load ins(%subview : memref<?x256xbf16, strided<[256, 1], offset: ?>>) outs(%subview_0 : memref<?x256xbf16, strided<[256, 1], offset: ?>>) pad_mode = <PadValue> pad_value = %cst : bf16
+  memref.copy %subview, %subview_0 : memref<?x256xbf16, strided<[256, 1], offset: ?>> to memref<?x256xbf16, strided<[256, 1], offset: ?>>
   %2 = bufferization.to_tensor %alloc restrict writable : memref<128x256xbf16>
   %3 = tensor.empty() : tensor<256x128xbf16>
   %transposed = linalg.transpose ins(%2 : tensor<128x256xbf16>) outs(%3 : tensor<256x128xbf16>) permutation = [1, 0]
@@ -41,12 +39,11 @@ func.func @fuse_load_with_dyn_size(%arg0: memref<?xbf16>, %arg1: index, %arg2: i
 // CHECK-LABEL: func.func @fuse_load_last_dim_proven_zero_offset
 // CHECK:       %[[NEW:.*]] = memref.alloc() : memref<256x128xbf16>
 // CHECK-NOT:   arith.cmpi ne
-// CHECK-NOT:   linalg.fill
-// CHECK:       hivm.hir.load ins(%{{.*}} : memref<256x?xbf16, strided<[1, 256], offset: ?>>)
-// CHECK-SAME:                outs(%{{.*}} : memref<256x?xbf16, strided<[128, 1], offset: ?>>)
+// CHECK:       linalg.fill
+// CHECK: memref.copy %{{.*}}, %{{.*}} : memref<256x?xbf16, strided<[1, 256], offset: ?>> to memref<256x?xbf16, strided<[128, 1], offset: ?>>
 // CHECK-NOT:   transpose
 // CHECK:       return %{{.*}} : tensor<256x128xbf16>
-func.func @fuse_load_last_dim_proven_zero_offset(%arg0: memref<?xbf16>, %arg1: index, %arg2: index, %arg3: index, %arg4: i1) -> tensor<256x128xbf16> {
+func.func @fuse_load_last_dim_proven_zero_offset(%arg0: memref<?xbf16>, %arg1: index, %arg2: index, %arg3: index, %arg4: i1) -> tensor<256x128xbf16> attributes {mix_mode = "aiv"} {
   %c128 = arith.constant 128 : index
   %cst = arith.constant 0.000000e+00 : bf16
   %alloc = memref.alloc() : memref<128x256xbf16>
@@ -59,7 +56,7 @@ func.func @fuse_load_last_dim_proven_zero_offset(%arg0: memref<?xbf16>, %arg1: i
   scf.if %1 {
     linalg.fill ins(%cst : bf16) outs(%alloc : memref<128x256xbf16>)
   }
-  hivm.hir.load ins(%subview : memref<?x256xbf16, strided<[256, 1], offset: ?>>) outs(%subview_0 : memref<?x256xbf16, strided<[256, 1], offset: ?>>) pad_mode = <PadValue> pad_value = %cst : bf16
+  memref.copy %subview, %subview_0 : memref<?x256xbf16, strided<[256, 1], offset: ?>> to memref<?x256xbf16, strided<[256, 1], offset: ?>>
   %2 = bufferization.to_tensor %alloc restrict writable : memref<128x256xbf16>
   %3 = tensor.empty() : tensor<256x128xbf16>
   %transposed = linalg.transpose ins(%2 : tensor<128x256xbf16>) outs(%3 : tensor<256x128xbf16>) permutation = [1, 0]
@@ -71,11 +68,10 @@ func.func @fuse_load_last_dim_proven_zero_offset(%arg0: memref<?xbf16>, %arg1: i
 // CHECK-LABEL: func.func @fuse_load_with_min_max_bounded_sizes
 // CHECK:       %[[ALLOC:.*]] = memref.alloc() : memref<32x32xf16>
 // CHECK:       linalg.fill ins(%{{.*}} : f16) outs(%[[ALLOC]] : memref<32x32xf16>)
-// CHECK:       hivm.hir.load ins(%{{.*}} : memref<?x?xf16, strided<[1, 128], offset: ?>>)
-// CHECK-SAME:                outs(%{{.*}} : memref<?x32xf16, strided<[32, 1]>>)
+// CHECK: memref.copy %{{.*}}, %{{.*}} : memref<?x?xf16, strided<[1, 128], offset: ?>> to memref<?x?xf16, strided<[32, 1]>>
 // CHECK-NOT:   linalg.transpose
 // CHECK:       return %{{.*}} : tensor<32x32xf16>
-func.func @fuse_load_with_min_max_bounded_sizes(%arg0: memref<?xf16>, %arg1: index, %arg2: index, %arg3: index) -> tensor<32x32xf16> {
+func.func @fuse_load_with_min_max_bounded_sizes(%arg0: memref<?xf16>, %arg1: index, %arg2: index, %arg3: index) -> tensor<32x32xf16> attributes {mix_mode = "aiv"} {
   %c0 = arith.constant 0 : index
   %c32 = arith.constant 32 : index
   %cst = arith.constant 0.000000e+00 : f16
@@ -88,7 +84,7 @@ func.func @fuse_load_with_min_max_bounded_sizes(%arg0: memref<?xf16>, %arg1: ind
   %3 = arith.minsi %2, %c32 : index
   %subview = memref.subview %reinterpret_cast[0, 0] [%1, %3] [1, 1] : memref<32x32xf16, strided<[128, 1], offset: ?>> to memref<?x?xf16, strided<[128, 1], offset: ?>>
   %subview_0 = memref.subview %alloc[0, 0] [%1, %3] [1, 1] : memref<32x32xf16> to memref<?x?xf16, strided<[32, 1]>>
-  hivm.hir.load ins(%subview : memref<?x?xf16, strided<[128, 1], offset: ?>>) outs(%subview_0 : memref<?x?xf16, strided<[32, 1]>>) pad_mode = <PadValue> pad_value = %cst : f16
+  memref.copy %subview, %subview_0 : memref<?x?xf16, strided<[128, 1], offset: ?>> to memref<?x?xf16, strided<[32, 1]>>
   %4 = bufferization.to_tensor %alloc restrict writable : memref<32x32xf16>
   %5 = tensor.empty() : tensor<32x32xf16>
   %transposed = linalg.transpose ins(%4 : tensor<32x32xf16>) outs(%5 : tensor<32x32xf16>) permutation = [1, 0]
@@ -101,16 +97,15 @@ func.func @fuse_load_with_min_max_bounded_sizes(%arg0: memref<?xf16>, %arg1: ind
 // CHECK:       scf.for
 // CHECK:       %[[ALLOC:.*]] = memref.alloc() : memref<2x32x32xf16>
 // CHECK:       %[[READ:.*]] = memref.subview %[[ALLOC]][%{{.*}}, 0, 0] [1, 32, 32] [1, 1, 1] : memref<2x32x32xf16> to memref<32x32xf16, strided<[32, 1], offset: ?>>
+// CHECK: memref.copy %{{.*}}, %{{.*}} : memref<?x?xf16, strided<[1, 128], offset: ?>> to memref<?x?xf16, strided<[32, 1], offset: ?>>
 // CHECK:       %[[RETURN:.*]] = bufferization.to_tensor %[[READ]] restrict writable : memref<32x32xf16, strided<[32, 1], offset: ?>>
-// CHECK:       hivm.hir.load ins(%{{.*}} : memref<?x?xf16, strided<[1, 128], offset: ?>>)
-// CHECK-SAME:                outs(%{{.*}} : memref<?x32xf16, strided<[32, 1], offset: ?>>)
 // CHECK-NOT:   linalg.transpose
 // CHECK:       scf.yield %[[RETURN]] : tensor<32x32xf16>
 #map = affine_map<(d0)[s0] -> (d0 + s0)>
 #map1 = affine_map<()[s0, s1, s2] -> (s0 + s1 + s2 * 128)>
 #map2 = affine_map<()[s0, s1] -> (-s1 - s0 floordiv 128 + 128)>
 #map3 = affine_map<()[s0] -> (-s0 + (s0 floordiv 128) * 128 + 128)>
-func.func @fuse_loop_tail_rank_reduced_dst_with_bounded_sizes(%arg0: memref<?xf16>, %arg1: index, %arg2: index, %arg3: index, %arg4: tensor<32x32xf16>) -> tensor<32x32xf16> {
+func.func @fuse_loop_tail_rank_reduced_dst_with_bounded_sizes(%arg0: memref<?xf16>, %arg1: index, %arg2: index, %arg3: index, %arg4: tensor<32x32xf16>) -> tensor<32x32xf16> attributes {mix_mode = "aiv"} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c2 = arith.constant 2 : index
@@ -142,7 +137,7 @@ func.func @fuse_loop_tail_rank_reduced_dst_with_bounded_sizes(%arg0: memref<?xf1
     scf.if %15 {
       linalg.fill ins(%cst : f16) outs(%alloc : memref<2x32x32xf16>)
     }
-    hivm.hir.load ins(%subview_0 : memref<?x?xf16, strided<[128, 1], offset: ?>>) outs(%subview_1 : memref<?x?xf16, strided<[32, 1], offset: ?>>) pad_mode = <PadValue> pad_value = %cst : f16
+    memref.copy %subview_0, %subview_1 : memref<?x?xf16, strided<[128, 1], offset: ?>> to memref<?x?xf16, strided<[32, 1], offset: ?>>
     %16 = bufferization.to_tensor %subview restrict writable : memref<32x32xf16, strided<[32, 1], offset: ?>>
     %17 = tensor.empty() : tensor<32x32xf16>
     %transposed = linalg.transpose ins(%16 : tensor<32x32xf16>) outs(%17 : tensor<32x32xf16>) permutation = [1, 0]
@@ -157,9 +152,9 @@ func.func @fuse_loop_tail_rank_reduced_dst_with_bounded_sizes(%arg0: memref<?xf1
 // transpose is not fused.
 // CHECK-LABEL: func.func @fuse_load_with_generic_fill
 // CHECK:       linalg.generic
-// CHECK:       hivm.hir.load
+// CHECK:       memref.copy
 // CHECK:       linalg.transpose
-func.func @fuse_load_with_generic_fill(%arg0: memref<?xf16>, %arg1: index, %arg2: index) -> tensor<32x32xf16> {
+func.func @fuse_load_with_generic_fill(%arg0: memref<?xf16>, %arg1: index, %arg2: index) -> tensor<32x32xf16> attributes {mix_mode = "aiv"} {
   %cst = arith.constant 0.000000e+00 : f16
   %alloc = memref.alloc() : memref<2x32x32xf16>
   linalg.generic {indexing_maps = [affine_map<(d0, d1, d2) -> (d0, d1, d2)>], iterator_types = ["parallel", "parallel", "parallel"]} outs(%alloc : memref<2x32x32xf16>) {
@@ -168,7 +163,7 @@ func.func @fuse_load_with_generic_fill(%arg0: memref<?xf16>, %arg1: index, %arg2
   }
   %subview = memref.subview %alloc[%arg2, 0, 0] [1, 32, 32] [1, 1, 1] : memref<2x32x32xf16> to memref<32x32xf16, strided<[32, 1], offset: ?>>
   %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [32, 32], strides: [128, 1] : memref<?xf16> to memref<32x32xf16, strided<[128, 1], offset: ?>>
-  hivm.hir.load ins(%reinterpret_cast : memref<32x32xf16, strided<[128, 1], offset: ?>>) outs(%subview : memref<32x32xf16, strided<[32, 1], offset: ?>>) pad_mode = <PadValue> pad_value = %cst : f16
+  memref.copy %reinterpret_cast, %subview : memref<32x32xf16, strided<[128, 1], offset: ?>> to memref<32x32xf16, strided<[32, 1], offset: ?>>
   %subview_0 = memref.subview %alloc[%arg2, 0, 0] [1, 32, 32] [1, 1, 1] : memref<2x32x32xf16> to memref<32x32xf16, strided<[32, 1], offset: ?>>
   %0 = bufferization.to_tensor %subview_0 restrict writable : memref<32x32xf16, strided<[32, 1], offset: ?>>
   %1 = tensor.empty() : tensor<32x32xf16>
@@ -179,18 +174,17 @@ func.func @fuse_load_with_generic_fill(%arg0: memref<?xf16>, %arg1: index, %arg2
 // -----
 
 // CHECK-LABEL: func.func @fuse_load_dst_with_rank_reduce_subview
+// CHECK: memref.copy %{{.*}}, %{{.*}} : memref<32x32xf16, strided<[1, 128], offset: ?>> to memref<32x32xf16, strided<[32, 1], offset: ?>>
 // CHECK:       %[[res:.*]] = bufferization.to_tensor
-// CHECK:       hivm.hir.load ins(%{{.*}} : memref<32x32xf16, strided<[1, 128], offset: ?>>)
-// CHECK-SAME:                outs(%{{.*}} : memref<32x32xf16, strided<[32, 1], offset: ?>>)
 // CHECK-NOT:   transpose
 // CHECK:       return %[[res]] : tensor<32x32xf16>
-func.func @fuse_load_dst_with_rank_reduce_subview(%arg0: memref<?xf16>, %arg1: index, %arg2: index) -> tensor<32x32xf16> {
+func.func @fuse_load_dst_with_rank_reduce_subview(%arg0: memref<?xf16>, %arg1: index, %arg2: index) -> tensor<32x32xf16> attributes {mix_mode = "aiv"} {
   %cst = arith.constant 0.000000e+00 : f16
   %alloc = memref.alloc() : memref<2x32x32xf16>
   linalg.fill ins(%cst : f16) outs(%alloc : memref<2x32x32xf16>)
   %subview = memref.subview %alloc[%arg2, 0, 0] [1, 32, 32] [1, 1, 1] : memref<2x32x32xf16> to memref<32x32xf16, strided<[32, 1], offset: ?>>
   %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [32, 32], strides: [128, 1] : memref<?xf16> to memref<32x32xf16, strided<[128, 1], offset: ?>>
-  hivm.hir.load ins(%reinterpret_cast : memref<32x32xf16, strided<[128, 1], offset: ?>>) outs(%subview : memref<32x32xf16, strided<[32, 1], offset: ?>>) pad_mode = <PadValue> pad_value = %cst : f16
+  memref.copy %reinterpret_cast, %subview : memref<32x32xf16, strided<[128, 1], offset: ?>> to memref<32x32xf16, strided<[32, 1], offset: ?>>
   %subview_0 = memref.subview %alloc[%arg2, 0, 0] [1, 32, 32] [1, 1, 1] : memref<2x32x32xf16> to memref<32x32xf16, strided<[32, 1], offset: ?>>
   %0 = bufferization.to_tensor %subview_0 restrict writable : memref<32x32xf16, strided<[32, 1], offset: ?>>
   %1 = tensor.empty() : tensor<32x32xf16>
@@ -201,13 +195,13 @@ func.func @fuse_load_dst_with_rank_reduce_subview(%arg0: memref<?xf16>, %arg1: i
 // -----
 
 // CHECK-LABEL: func.func @fuse_load_dst_with_rank_reduce_rectangular
-func.func @fuse_load_dst_with_rank_reduce_rectangular(%arg0: memref<?xf16>, %arg1: index, %arg2: index) -> tensor<32x16xf16> {
+func.func @fuse_load_dst_with_rank_reduce_rectangular(%arg0: memref<?xf16>, %arg1: index, %arg2: index) -> tensor<32x16xf16> attributes {mix_mode = "aiv"} {
   %cst = arith.constant 0.000000e+00 : f16
   %alloc = memref.alloc() : memref<2x16x32xf16>
   linalg.fill ins(%cst : f16) outs(%alloc : memref<2x16x32xf16>)
   %subview = memref.subview %alloc[%arg2, 0, 0] [1, 16, 32] [1, 1, 1] : memref<2x16x32xf16> to memref<16x32xf16, strided<[32, 1], offset: ?>>
   %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [16, 32], strides: [128, 1] : memref<?xf16> to memref<16x32xf16, strided<[128, 1], offset: ?>>
-  hivm.hir.load ins(%reinterpret_cast : memref<16x32xf16, strided<[128, 1], offset: ?>>) outs(%subview : memref<16x32xf16, strided<[32, 1], offset: ?>>) pad_mode = <PadValue> pad_value = %cst : f16
+  memref.copy %reinterpret_cast, %subview : memref<16x32xf16, strided<[128, 1], offset: ?>> to memref<16x32xf16, strided<[32, 1], offset: ?>>
   %subview_0 = memref.subview %alloc[%arg2, 0, 0] [1, 16, 32] [1, 1, 1] : memref<2x16x32xf16> to memref<16x32xf16, strided<[32, 1], offset: ?>>
   %0 = bufferization.to_tensor %subview_0 restrict writable : memref<16x32xf16, strided<[32, 1], offset: ?>>
   %1 = tensor.empty() : tensor<32x16xf16>
@@ -217,13 +211,12 @@ func.func @fuse_load_dst_with_rank_reduce_rectangular(%arg0: memref<?xf16>, %arg
 
 // -----
 
-// CHECK-LABEL: func.func @fuse_load_rectangular_padded_dst_nested_src_subview
-// CHECK:       %[[res:.*]] = bufferization.to_tensor
-// CHECK:       hivm.hir.load ins(%{{.*}} : memref<?x?xbf16, strided<[1, 128], offset: ?>>)
-// CHECK-SAME:                outs(%{{.*}} : memref<?x?xbf16, strided<[64, 1], offset: ?>>)
-// CHECK-NOT:   linalg.transpose
-// CHECK:       return %[[res]] : tensor<32x64xbf16>
-func.func @fuse_load_rectangular_padded_dst_nested_src_subview(%arg0: memref<?xbf16>, %arg1: index, %arg2: index, %arg3: index, %arg4: i32, %arg5: index) -> tensor<32x64xbf16> {
+// The dest row offset is dynamic, so nothing proves it is zero and the copy
+// is left alone - the load form used to fuse this because its pad covered the
+// head of the row.
+// CHECK-LABEL: func.func @no_fuse_rectangular_dst_dynamic_last_dim_offset
+// CHECK:       linalg.transpose
+func.func @no_fuse_rectangular_dst_dynamic_last_dim_offset(%arg0: memref<?xbf16>, %arg1: index, %arg2: index, %arg3: index, %arg4: i32, %arg5: index) -> tensor<32x64xbf16> attributes {mix_mode = "aiv"} {
   %c0 = arith.constant 0 : index
   %c0_i32 = arith.constant 0 : i32
   %c32 = arith.constant 32 : index
@@ -261,7 +254,7 @@ func.func @fuse_load_rectangular_padded_dst_nested_src_subview(%arg0: memref<?xb
   scf.if %needs_fill {
     linalg.fill ins(%cst : bf16) outs(%alloc : memref<64x32xbf16>)
   }
-  hivm.hir.load ins(%subview_0 : memref<?x?xbf16, strided<[128, 1], offset: ?>>) outs(%subview_1 : memref<?x?xbf16, strided<[32, 1], offset: ?>>) pad_mode = <PadValue> pad_value = %cst : bf16
+  memref.copy %subview_0, %subview_1 : memref<?x?xbf16, strided<[128, 1], offset: ?>> to memref<?x?xbf16, strided<[32, 1], offset: ?>>
   %5 = bufferization.to_tensor %alloc restrict writable : memref<64x32xbf16>
   %6 = tensor.empty() : tensor<32x64xbf16>
   %transposed = linalg.transpose ins(%5 : tensor<64x32xbf16>) outs(%6 : tensor<32x64xbf16>) permutation = [1, 0]
@@ -272,14 +265,15 @@ func.func @fuse_load_rectangular_padded_dst_nested_src_subview(%arg0: memref<?xb
 
 // CHECK-LABEL: func.func @no_fuse_load_with_padding
 // CHECK: linalg.transpose
-func.func @no_fuse_load_with_padding(%arg0: memref<?xf16>, %arg1: index, %arg2: index) -> tensor<32x32xf16> {
+func.func @no_fuse_load_with_padding(%arg0: memref<?xf16>, %arg1: index, %arg2: index) -> tensor<32x32xf16> attributes {mix_mode = "aiv"} {
   %c0 = arith.constant 0 : index
   %cst = arith.constant 0.000000e+00 : f16
   %alloc = memref.alloc() : memref<2x32x32xf16>
   linalg.fill ins(%cst : f16) outs(%alloc : memref<2x32x32xf16>)
-  %subview = memref.subview %alloc[%arg2, 0, 0] [1, 32, 32] [1, 1, 1] : memref<2x32x32xf16> to memref<32x32xf16, strided<[32, 1], offset: ?>>
+  %subview = memref.subview %alloc[%arg2, 0, 3] [1, 32, 29] [1, 1, 1] : memref<2x32x32xf16> to memref<32x29xf16, strided<[32, 1], offset: ?>>
   %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [32, 32], strides: [128, 1] : memref<?xf16> to memref<32x32xf16, strided<[128, 1], offset: ?>>
-  hivm.hir.load ins(%reinterpret_cast : memref<32x32xf16, strided<[128, 1], offset: ?>>) outs(%subview : memref<32x32xf16, strided<[32, 1], offset: ?>>) pad_mode = <PadValue> pad_value = %cst : f16 left_padding_num = %c0 : index
+  %src = memref.subview %reinterpret_cast[0, 0] [32, 29] [1, 1] : memref<32x32xf16, strided<[128, 1], offset: ?>> to memref<32x29xf16, strided<[128, 1], offset: ?>>
+  memref.copy %src, %subview : memref<32x29xf16, strided<[128, 1], offset: ?>> to memref<32x29xf16, strided<[32, 1], offset: ?>>
   %subview_0 = memref.subview %alloc[%arg2, 0, 0] [1, 32, 32] [1, 1, 1] : memref<2x32x32xf16> to memref<32x32xf16, strided<[32, 1], offset: ?>>
   %0 = bufferization.to_tensor %subview_0 restrict writable : memref<32x32xf16, strided<[32, 1], offset: ?>>
   %1 = tensor.empty() : tensor<32x32xf16>
@@ -289,13 +283,13 @@ func.func @no_fuse_load_with_padding(%arg0: memref<?xf16>, %arg1: index, %arg2: 
 
 // CHECK-LABEL: func.func @no_fuse_multi_use_to_tensor
 // CHECK: linalg.transpose
-func.func @no_fuse_multi_use_to_tensor(%arg0: memref<?xf16>, %arg1: index, %arg2: index) -> (tensor<32x32xf16>, tensor<32x32xf16>) {
+func.func @no_fuse_multi_use_to_tensor(%arg0: memref<?xf16>, %arg1: index, %arg2: index) -> (tensor<32x32xf16>, tensor<32x32xf16>) attributes {mix_mode = "aiv"} {
   %cst = arith.constant 0.000000e+00 : f16
   %alloc = memref.alloc() : memref<2x32x32xf16>
   linalg.fill ins(%cst : f16) outs(%alloc : memref<2x32x32xf16>)
   %subview = memref.subview %alloc[%arg2, 0, 0] [1, 32, 32] [1, 1, 1] : memref<2x32x32xf16> to memref<32x32xf16, strided<[32, 1], offset: ?>>
   %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [32, 32], strides: [128, 1] : memref<?xf16> to memref<32x32xf16, strided<[128, 1], offset: ?>>
-  hivm.hir.load ins(%reinterpret_cast : memref<32x32xf16, strided<[128, 1], offset: ?>>) outs(%subview : memref<32x32xf16, strided<[32, 1], offset: ?>>) pad_mode = <PadValue> pad_value = %cst : f16
+  memref.copy %reinterpret_cast, %subview : memref<32x32xf16, strided<[128, 1], offset: ?>> to memref<32x32xf16, strided<[32, 1], offset: ?>>
   %subview_0 = memref.subview %alloc[%arg2, 0, 0] [1, 32, 32] [1, 1, 1] : memref<2x32x32xf16> to memref<32x32xf16, strided<[32, 1], offset: ?>>
   %0 = bufferization.to_tensor %subview_0 restrict writable : memref<32x32xf16, strided<[32, 1], offset: ?>>
   %1 = tensor.empty() : tensor<32x32xf16>
@@ -313,12 +307,11 @@ func.func @no_fuse_multi_use_to_tensor(%arg0: memref<?xf16>, %arg1: index, %arg2
 // CHECK:         linalg.fill ins(%{{.*}} : bf16) outs(%[[NEW]] : memref<128x32xbf16>)
 // CHECK:       } {hivm.unlikely_condition}
 // CHECK:       annotation.mark %[[NEW]] {hivm.multi_buffer = 2 : i32}
+// CHECK: memref.copy %{{.*}}, %{{.*}} : memref<128x?xbf16, strided<[1, 4096], offset: ?>> to memref<128x?xbf16, strided<[32, 1], offset: ?>>
 // CHECK:       %[[res:.*]] = bufferization.to_tensor
-// CHECK:       hivm.hir.load ins(%{{.*}} : memref<128x?xbf16, strided<[1, 4096], offset: ?>>)
-// CHECK-SAME:                outs(%{{.*}} : memref<128x?xbf16, strided<[32, 1], offset: ?>>)
 // CHECK-NOT:   transpose
 // CHECK:       return %[[res]] : tensor<128x32xbf16>
-func.func @fuse_load_with_multibuffer_annotation(%arg0: memref<?xbf16>, %arg1: index, %arg2: index, %arg3: index, %arg4: i1) -> tensor<128x32xbf16> {
+func.func @fuse_load_with_multibuffer_annotation(%arg0: memref<?xbf16>, %arg1: index, %arg2: index, %arg3: index, %arg4: i1) -> tensor<128x32xbf16> attributes {mix_mode = "aiv"} {
   %c32 = arith.constant 32 : index
   %cst = arith.constant 0.000000e+00 : bf16
   %alloc = memref.alloc() : memref<32x128xbf16>
@@ -331,7 +324,7 @@ func.func @fuse_load_with_multibuffer_annotation(%arg0: memref<?xbf16>, %arg1: i
   scf.if %1 {
     linalg.fill ins(%cst : bf16) outs(%alloc : memref<32x128xbf16>)
   } {hivm.unlikely_condition}
-  hivm.hir.load ins(%subview : memref<?x128xbf16, strided<[4096, 1], offset: ?>>) outs(%subview_0 : memref<?x128xbf16, strided<[128, 1], offset: ?>>) pad_mode = <PadValue> pad_value = %cst : bf16
+  memref.copy %subview, %subview_0 : memref<?x128xbf16, strided<[4096, 1], offset: ?>> to memref<?x128xbf16, strided<[128, 1], offset: ?>>
   %2 = bufferization.to_tensor %alloc restrict writable : memref<32x128xbf16>
   %3 = tensor.empty() : tensor<128x32xbf16>
   %transposed = linalg.transpose ins(%2 : tensor<32x128xbf16>) outs(%3 : tensor<128x32xbf16>) permutation = [1, 0]
@@ -346,17 +339,16 @@ func.func @fuse_load_with_multibuffer_annotation(%arg0: memref<?xbf16>, %arg1: i
 // CHECK:       annotation.mark %[[NEW_ALLOC]] {hivm.multi_buffer = 2 : i32} : memref<32x16xf16>
 // CHECK-NOT:   arith.cmpi ne
 // CHECK-NOT:   linalg.fill
-// CHECK:       hivm.hir.load ins(%{{.*}} : memref<32x16xf16, strided<[1, 128], offset: ?>>)
-// CHECK-SAME:                outs(%[[NEW_ALLOC]] : memref<32x16xf16>)
+// CHECK: memref.copy %{{.*}}, %[[NEW_ALLOC]] : memref<32x16xf16, strided<[1, 128], offset: ?>> to memref<32x16xf16>
 // CHECK-NOT:   linalg.transpose
 // CHECK:       return %{{.*}} : tensor<32x16xf16>
-func.func @fuse_load_transfer_multi_buffer_mark(%arg0: memref<?xf16>, %arg1: index) -> tensor<32x16xf16> {
+func.func @fuse_load_transfer_multi_buffer_mark(%arg0: memref<?xf16>, %arg1: index) -> tensor<32x16xf16> attributes {mix_mode = "aiv"} {
   %cst = arith.constant 0.000000e+00 : f16
   %alloc = memref.alloc() : memref<16x32xf16>
   annotation.mark %alloc {hivm.multi_buffer = 2 : i32} : memref<16x32xf16>
   linalg.fill ins(%cst : f16) outs(%alloc : memref<16x32xf16>)
   %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [16, 32], strides: [128, 1] : memref<?xf16> to memref<16x32xf16, strided<[128, 1], offset: ?>>
-  hivm.hir.load ins(%reinterpret_cast : memref<16x32xf16, strided<[128, 1], offset: ?>>) outs(%alloc : memref<16x32xf16>) pad_mode = <PadValue> pad_value = %cst : f16 eviction_policy = <EvictFirst>
+  memref.copy %reinterpret_cast, %alloc : memref<16x32xf16, strided<[128, 1], offset: ?>> to memref<16x32xf16>
   %0 = bufferization.to_tensor %alloc restrict writable : memref<16x32xf16>
   %1 = tensor.empty() : tensor<32x16xf16>
   %transposed = linalg.transpose ins(%0 : tensor<16x32xf16>) outs(%1 : tensor<32x16xf16>) permutation = [1, 0]
@@ -369,18 +361,17 @@ func.func @fuse_load_transfer_multi_buffer_mark(%arg0: memref<?xf16>, %arg1: ind
 // CHECK:       %[[NEW_ALLOC:.*]] = memref.alloc() : memref<2x64x32xf16>
 // CHECK:       annotation.mark %[[NEW_ALLOC]] {hivm.multi_buffer = 2 : i32} : memref<2x64x32xf16>
 // CHECK-NOT:   linalg.fill
-// CHECK:       hivm.hir.load ins(%{{.*}} : memref<64x32xf16, strided<[1, 128], offset: ?>>)
-// CHECK-SAME:                outs(%{{.*}} : memref<64x32xf16, strided<[32, 1], offset: ?>>)
+// CHECK: memref.copy %{{.*}}, %{{.*}} : memref<64x32xf16, strided<[1, 128], offset: ?>> to memref<64x32xf16, strided<[32, 1], offset: ?>>
 // CHECK-NOT:   linalg.transpose
 // CHECK:       return %{{.*}} : tensor<64x32xf16>
-func.func @fuse_load_transfer_mark_rank_reduced_subview(%arg0: memref<?xf16>, %arg1: index, %arg2: index) -> tensor<64x32xf16> {
+func.func @fuse_load_transfer_mark_rank_reduced_subview(%arg0: memref<?xf16>, %arg1: index, %arg2: index) -> tensor<64x32xf16> attributes {mix_mode = "aiv"} {
   %cst = arith.constant 0.000000e+00 : f16
   %alloc = memref.alloc() : memref<2x32x64xf16>
   annotation.mark %alloc {hivm.multi_buffer = 2 : i32} : memref<2x32x64xf16>
   linalg.fill ins(%cst : f16) outs(%alloc : memref<2x32x64xf16>)
   %subview = memref.subview %alloc[%arg2, 0, 0] [1, 32, 64] [1, 1, 1] : memref<2x32x64xf16> to memref<32x64xf16, strided<[64, 1], offset: ?>>
   %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [32, 64], strides: [128, 1] : memref<?xf16> to memref<32x64xf16, strided<[128, 1], offset: ?>>
-  hivm.hir.load ins(%reinterpret_cast : memref<32x64xf16, strided<[128, 1], offset: ?>>) outs(%subview : memref<32x64xf16, strided<[64, 1], offset: ?>>) pad_mode = <PadValue> pad_value = %cst : f16 eviction_policy = <EvictFirst>
+  memref.copy %reinterpret_cast, %subview : memref<32x64xf16, strided<[128, 1], offset: ?>> to memref<32x64xf16, strided<[64, 1], offset: ?>>
   %subview_0 = memref.subview %alloc[%arg2, 0, 0] [1, 32, 64] [1, 1, 1] : memref<2x32x64xf16> to memref<32x64xf16, strided<[64, 1], offset: ?>>
   %0 = bufferization.to_tensor %subview_0 restrict writable : memref<32x64xf16, strided<[64, 1], offset: ?>>
   %1 = tensor.empty() : tensor<64x32xf16>
@@ -394,17 +385,17 @@ func.func @fuse_load_transfer_mark_rank_reduced_subview(%arg0: memref<?xf16>, %a
 // CHECK:       %[[NEW_ALLOC:.*]] = memref.alloc() : memref<2x64x32xf16>
 // CHECK:       annotation.mark %[[NEW_ALLOC]] {some_other_attr = 1 : i32} : memref<2x64x32xf16>
 // CHECK-NOT:   linalg.fill
-// CHECK:       hivm.hir.load
+// CHECK:       memref.copy
 // CHECK-NOT:   linalg.transpose
 // CHECK:       return %{{.*}} : tensor<64x32xf16>
-func.func @fuse_load_transfer_plain_mark(%arg0: memref<?xf16>, %arg1: index) -> tensor<64x32xf16> {
+func.func @fuse_load_transfer_plain_mark(%arg0: memref<?xf16>, %arg1: index) -> tensor<64x32xf16> attributes {mix_mode = "aiv"} {
   %cst = arith.constant 0.000000e+00 : f16
   %alloc = memref.alloc() : memref<2x32x64xf16>
   annotation.mark %alloc {some_other_attr = 1 : i32} : memref<2x32x64xf16>
   linalg.fill ins(%cst : f16) outs(%alloc : memref<2x32x64xf16>)
   %subview = memref.subview %alloc[%arg1, 0, 0] [1, 32, 64] [1, 1, 1] : memref<2x32x64xf16> to memref<32x64xf16, strided<[64, 1], offset: ?>>
   %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [32, 64], strides: [128, 1] : memref<?xf16> to memref<32x64xf16, strided<[128, 1], offset: ?>>
-  hivm.hir.load ins(%reinterpret_cast : memref<32x64xf16, strided<[128, 1], offset: ?>>) outs(%subview : memref<32x64xf16, strided<[64, 1], offset: ?>>) pad_mode = <PadValue> pad_value = %cst : f16 eviction_policy = <EvictFirst>
+  memref.copy %reinterpret_cast, %subview : memref<32x64xf16, strided<[128, 1], offset: ?>> to memref<32x64xf16, strided<[64, 1], offset: ?>>
   %subview_0 = memref.subview %alloc[%arg1, 0, 0] [1, 32, 64] [1, 1, 1] : memref<2x32x64xf16> to memref<32x64xf16, strided<[64, 1], offset: ?>>
   %0 = bufferization.to_tensor %subview_0 restrict writable : memref<32x64xf16, strided<[64, 1], offset: ?>>
   %1 = tensor.empty() : tensor<64x32xf16>
@@ -421,11 +412,10 @@ func.func @fuse_load_transfer_plain_mark(%arg0: memref<?xf16>, %arg1: index) -> 
 // CHECK:       %[[NEW:.*]] = memref.alloc() : memref<32x16xbf16>
 // CHECK:       linalg.fill ins(%{{.*}} : bf16) outs(%[[NEW]] : memref<32x16xbf16>)
 // CHECK-NOT:   arith.cmpi ne
-// CHECK:       hivm.hir.load ins(%{{.*}} : memref<?x?xbf16, strided<[1, 32], offset: ?>>)
-// CHECK-SAME:                outs(%{{.*}} : memref<?x16xbf16, strided<[16, 1]>>)
+// CHECK: memref.copy %{{.*}}, %{{.*}} : memref<?x?xbf16, strided<[1, 32], offset: ?>> to memref<?x?xbf16, strided<[16, 1]>>
 // CHECK-NOT:   linalg.transpose
 // CHECK:       return %{{.*}} : tensor<32x16xbf16>
-func.func @fuse_load_keep_fill_on_transposed_dst(%arg0: memref<?xbf16>, %arg1: index, %arg2: index, %arg3: index) -> tensor<32x16xbf16> {
+func.func @fuse_load_keep_fill_on_transposed_dst(%arg0: memref<?xbf16>, %arg1: index, %arg2: index, %arg3: index) -> tensor<32x16xbf16> attributes {mix_mode = "aiv"} {
   %c0 = arith.constant 0 : index
   %c16 = arith.constant 16 : index
   %c32 = arith.constant 32 : index
@@ -439,7 +429,7 @@ func.func @fuse_load_keep_fill_on_transposed_dst(%arg0: memref<?xbf16>, %arg1: i
   %3 = arith.minsi %2, %c32 : index
   %subview = memref.subview %reinterpret_cast[0, 0] [%1, %3] [1, 1] : memref<16x32xbf16, strided<[32, 1], offset: ?>> to memref<?x?xbf16, strided<[32, 1], offset: ?>>
   %subview_0 = memref.subview %alloc[0, 0] [%1, %3] [1, 1] : memref<16x32xbf16> to memref<?x?xbf16, strided<[32, 1]>>
-  hivm.hir.load ins(%subview : memref<?x?xbf16, strided<[32, 1], offset: ?>>) outs(%subview_0 : memref<?x?xbf16, strided<[32, 1]>>) pad_mode = <PadValue> pad_value = %cst : bf16
+  memref.copy %subview, %subview_0 : memref<?x?xbf16, strided<[32, 1], offset: ?>> to memref<?x?xbf16, strided<[32, 1]>>
   %4 = bufferization.to_tensor %alloc restrict writable : memref<16x32xbf16>
   %5 = tensor.empty() : tensor<32x16xbf16>
   %transposed = linalg.transpose ins(%4 : tensor<16x32xbf16>) outs(%5 : tensor<32x16xbf16>) permutation = [1, 0]
@@ -456,11 +446,10 @@ func.func @fuse_load_keep_fill_on_transposed_dst(%arg0: memref<?xbf16>, %arg1: i
 // CHECK:         linalg.fill ins(%{{.*}} : bf16) outs(%[[NEW]] : memref<32x16xbf16>)
 // CHECK:       } {hivm.unlikely_condition}
 // CHECK-NOT:   arith.cmpi ne
-// CHECK:       hivm.hir.load ins(%{{.*}} : memref<?x?xbf16, strided<[1, 32], offset: ?>>)
-// CHECK-SAME:                outs(%{{.*}} : memref<?x16xbf16, strided<[16, 1]>>)
+// CHECK: memref.copy %{{.*}}, %{{.*}} : memref<?x?xbf16, strided<[1, 32], offset: ?>> to memref<?x?xbf16, strided<[16, 1]>>
 // CHECK-NOT:   linalg.transpose
 // CHECK:       return %{{.*}} : tensor<32x16xbf16>
-func.func @fuse_load_keep_fill_in_unlikely_if(%arg0: memref<?xbf16>, %arg1: index, %arg2: index, %arg3: index) -> tensor<32x16xbf16> {
+func.func @fuse_load_keep_fill_in_unlikely_if(%arg0: memref<?xbf16>, %arg1: index, %arg2: index, %arg3: index) -> tensor<32x16xbf16> attributes {mix_mode = "aiv"} {
   %c0 = arith.constant 0 : index
   %c16 = arith.constant 16 : index
   %c32 = arith.constant 32 : index
@@ -477,9 +466,289 @@ func.func @fuse_load_keep_fill_in_unlikely_if(%arg0: memref<?xbf16>, %arg1: inde
   } {hivm.unlikely_condition}
   %subview = memref.subview %reinterpret_cast[0, 0] [%1, %3] [1, 1] : memref<16x32xbf16, strided<[32, 1], offset: ?>> to memref<?x?xbf16, strided<[32, 1], offset: ?>>
   %subview_0 = memref.subview %alloc[0, 0] [%1, %3] [1, 1] : memref<16x32xbf16> to memref<?x?xbf16, strided<[32, 1]>>
-  hivm.hir.load ins(%subview : memref<?x?xbf16, strided<[32, 1], offset: ?>>) outs(%subview_0 : memref<?x?xbf16, strided<[32, 1]>>) pad_mode = <PadValue> pad_value = %cst : bf16
+  memref.copy %subview, %subview_0 : memref<?x?xbf16, strided<[32, 1], offset: ?>> to memref<?x?xbf16, strided<[32, 1]>>
   %5 = bufferization.to_tensor %alloc restrict writable : memref<16x32xbf16>
   %6 = tensor.empty() : tensor<32x16xbf16>
   %transposed = linalg.transpose ins(%5 : tensor<16x32xbf16>) outs(%6 : tensor<32x16xbf16>) permutation = [1, 0]
   return %transposed : tensor<32x16xbf16>
+}
+
+// -----
+
+// perm(0, 2, 1, 3) keeps the last axis in place and permutes two middle axes.
+// NDDMA drives loop0 .. loop4, so the whole rank-4 permutation folds into the
+// load: dst becomes a 4x8x16x32 alloc and src takes the permuted strides.
+// CHECK-LABEL: func.func @fuse_load_rank4_middle_axes
+// CHECK:       %[[NEW:.*]] = memref.alloc() : memref<4x8x16x32xf16>
+// CHECK: memref.copy %{{.*}}, %[[NEW]] : memref<4x8x16x32xf16, strided<[4096, 32, 256, 1], offset: ?>> to memref<4x8x16x32xf16>
+// CHECK-NOT:   linalg.transpose
+// CHECK:       return %{{.*}} : tensor<4x8x16x32xf16>
+func.func @fuse_load_rank4_middle_axes(%arg0: memref<?xf16>, %arg1: index) -> tensor<4x8x16x32xf16> attributes {mix_mode = "aiv"} {
+  %alloc = memref.alloc() : memref<4x16x8x32xf16>
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [4, 16, 8, 32], strides: [4096, 256, 32, 1] : memref<?xf16> to memref<4x16x8x32xf16, strided<[4096, 256, 32, 1], offset: ?>>
+  memref.copy %reinterpret_cast, %alloc : memref<4x16x8x32xf16, strided<[4096, 256, 32, 1], offset: ?>> to memref<4x16x8x32xf16>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<4x16x8x32xf16>
+  %1 = tensor.empty() : tensor<4x8x16x32xf16>
+  %transposed = linalg.transpose ins(%0 : tensor<4x16x8x32xf16>) outs(%1 : tensor<4x8x16x32xf16>) permutation = [0, 2, 1, 3]
+  return %transposed : tensor<4x8x16x32xf16>
+}
+
+// -----
+
+// A rank-3 cycle perm(2, 0, 1) moves every axis; still one NDDMA descriptor.
+// CHECK-LABEL: func.func @fuse_load_rank3_cycle
+// CHECK:       %[[NEW:.*]] = memref.alloc() : memref<32x8x16xf16>
+// CHECK: memref.copy %{{.*}}, %[[NEW]] : memref<32x8x16xf16, strided<[1, 512, 32], offset: ?>> to memref<32x8x16xf16>
+// CHECK-NOT:   linalg.transpose
+// CHECK:       return %{{.*}} : tensor<32x8x16xf16>
+func.func @fuse_load_rank3_cycle(%arg0: memref<?xf16>, %arg1: index) -> tensor<32x8x16xf16> attributes {mix_mode = "aiv"} {
+  %alloc = memref.alloc() : memref<8x16x32xf16>
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [8, 16, 32], strides: [512, 32, 1] : memref<?xf16> to memref<8x16x32xf16, strided<[512, 32, 1], offset: ?>>
+  memref.copy %reinterpret_cast, %alloc : memref<8x16x32xf16, strided<[512, 32, 1], offset: ?>> to memref<8x16x32xf16>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<8x16x32xf16>
+  %1 = tensor.empty() : tensor<32x8x16xf16>
+  %transposed = linalg.transpose ins(%0 : tensor<8x16x32xf16>) outs(%1 : tensor<32x8x16xf16>) permutation = [2, 0, 1]
+  return %transposed : tensor<32x8x16xf16>
+}
+
+// -----
+
+// A padded load fuses when the permutation keeps the last axis: the pad
+// counts still address the dst innermost axis, which NDDMA pads on loop0.
+// CHECK-LABEL: func.func @fuse_padded_load_last_axis_kept
+// CHECK:       %[[NEW:.*]] = memref.alloc() : memref<8x16x32xf16>
+// CHECK:       memref.copy
+// CHECK-NOT:   linalg.transpose
+// CHECK:       return %{{.*}} : tensor<8x16x32xf16>
+func.func @fuse_padded_load_last_axis_kept(%arg0: memref<?xf16>, %arg1: index) -> tensor<8x16x32xf16> attributes {mix_mode = "aiv"} {
+  %c3 = arith.constant 3 : index
+  %cst = arith.constant 0.000000e+00 : f16
+  %alloc = memref.alloc() : memref<16x8x32xf16>
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [16, 8, 32], strides: [256, 32, 1] : memref<?xf16> to memref<16x8x32xf16, strided<[256, 32, 1], offset: ?>>
+  %subview = memref.subview %reinterpret_cast[0, 0, 0] [16, 8, 29] [1, 1, 1] : memref<16x8x32xf16, strided<[256, 32, 1], offset: ?>> to memref<16x8x29xf16, strided<[256, 32, 1], offset: ?>>
+  %subview_0 = memref.subview %alloc[0, 0, 3] [16, 8, 29] [1, 1, 1] : memref<16x8x32xf16> to memref<16x8x29xf16, strided<[256, 32, 1], offset: 3>>
+  memref.copy %subview, %subview_0 : memref<16x8x29xf16, strided<[256, 32, 1], offset: ?>> to memref<16x8x29xf16, strided<[256, 32, 1], offset: 3>>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<16x8x32xf16>
+  %1 = tensor.empty() : tensor<8x16x32xf16>
+  %transposed = linalg.transpose ins(%0 : tensor<16x8x32xf16>) outs(%1 : tensor<8x16x32xf16>) permutation = [1, 0, 2]
+  return %transposed : tensor<8x16x32xf16>
+}
+
+// -----
+
+// The same padded load with a permutation that moves the last axis is left
+// alone: the pad counts would no longer name the dst innermost axis.
+// CHECK-LABEL: func.func @no_fuse_padded_load_last_axis_moved
+// CHECK:       memref.copy
+// CHECK:       linalg.transpose
+func.func @no_fuse_padded_load_last_axis_moved(%arg0: memref<?xf16>, %arg1: index) -> tensor<16x32x8xf16> attributes {mix_mode = "aiv"} {
+  %c3 = arith.constant 3 : index
+  %cst = arith.constant 0.000000e+00 : f16
+  %alloc = memref.alloc() : memref<16x8x32xf16>
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [16, 8, 32], strides: [256, 32, 1] : memref<?xf16> to memref<16x8x32xf16, strided<[256, 32, 1], offset: ?>>
+  %subview = memref.subview %reinterpret_cast[0, 0, 0] [16, 8, 29] [1, 1, 1] : memref<16x8x32xf16, strided<[256, 32, 1], offset: ?>> to memref<16x8x29xf16, strided<[256, 32, 1], offset: ?>>
+  %subview_0 = memref.subview %alloc[0, 0, 3] [16, 8, 29] [1, 1, 1] : memref<16x8x32xf16> to memref<16x8x29xf16, strided<[256, 32, 1], offset: 3>>
+  memref.copy %subview, %subview_0 : memref<16x8x29xf16, strided<[256, 32, 1], offset: ?>> to memref<16x8x29xf16, strided<[256, 32, 1], offset: 3>>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<16x8x32xf16>
+  %1 = tensor.empty() : tensor<16x32x8xf16>
+  %transposed = linalg.transpose ins(%0 : tensor<16x8x32xf16>) outs(%1 : tensor<16x32x8xf16>) permutation = [0, 2, 1]
+  return %transposed : tensor<16x32x8xf16>
+}
+
+// -----
+
+// Rank 6 exceeds the five NDDMA loops, so the lowering peels the outer axes
+// into loops around a five-loop descriptor. Collapsing the axes the
+// permutation leaves contiguous is hivm-flatten-ops' job and is checked in
+// fuse-transpose-then-flatten.mlir.
+// CHECK-LABEL: func.func @fuse_rank6_transpose
+// CHECK:       %[[NEW:.*]] = memref.alloc() : memref<2x2x2x2x4x2xf16>
+// CHECK: memref.copy %{{.*}}, %[[NEW]] : memref<2x2x2x2x4x2xf16, strided<[64, 32, 16, 8, 1, 4], offset: ?>> to memref<2x2x2x2x4x2xf16>
+// CHECK-NOT:   linalg.transpose
+func.func @fuse_rank6_transpose(%arg0: memref<?xf16>, %arg1: index) -> tensor<2x2x2x2x4x2xf16> attributes {mix_mode = "aiv"} {
+  %alloc = memref.alloc() : memref<2x2x2x2x2x4xf16>
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [2, 2, 2, 2, 2, 4], strides: [64, 32, 16, 8, 4, 1] : memref<?xf16> to memref<2x2x2x2x2x4xf16, strided<[64, 32, 16, 8, 4, 1], offset: ?>>
+  memref.copy %reinterpret_cast, %alloc : memref<2x2x2x2x2x4xf16, strided<[64, 32, 16, 8, 4, 1], offset: ?>> to memref<2x2x2x2x2x4xf16>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<2x2x2x2x2x4xf16>
+  %1 = tensor.empty() : tensor<2x2x2x2x4x2xf16>
+  %transposed = linalg.transpose ins(%0 : tensor<2x2x2x2x2x4xf16>) outs(%1 : tensor<2x2x2x2x4x2xf16>) permutation = [0, 1, 2, 3, 5, 4]
+  return %transposed : tensor<2x2x2x2x4x2xf16>
+}
+
+// -----
+
+// perm(4, 3, 2, 1, 0) reverses every axis, so no adjacent pair stays
+// contiguous on both operands and the load keeps all five. It still needs one
+// descriptor, which has exactly five loops.
+// CHECK-LABEL: func.func @fuse_rank5_reversal_no_collapse
+// CHECK-NOT:   memref.collapse_shape
+// CHECK: memref.copy %{{.*}}, %{{.*}} : memref<6x5x4x3x2xf16, strided<[1, 6, 30, 120, 360], offset: ?>> to memref<6x5x4x3x2xf16>
+// CHECK-NOT:   linalg.transpose
+// CHECK:       return %{{.*}} : tensor<6x5x4x3x2xf16>
+func.func @fuse_rank5_reversal_no_collapse(%arg0: memref<?xf16>, %arg1: index) -> tensor<6x5x4x3x2xf16> attributes {mix_mode = "aiv"} {
+  %alloc = memref.alloc() : memref<2x3x4x5x6xf16>
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [2, 3, 4, 5, 6], strides: [360, 120, 30, 6, 1] : memref<?xf16> to memref<2x3x4x5x6xf16, strided<[360, 120, 30, 6, 1], offset: ?>>
+  memref.copy %reinterpret_cast, %alloc : memref<2x3x4x5x6xf16, strided<[360, 120, 30, 6, 1], offset: ?>> to memref<2x3x4x5x6xf16>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<2x3x4x5x6xf16>
+  %1 = tensor.empty() : tensor<6x5x4x3x2xf16>
+  %transposed = linalg.transpose ins(%0 : tensor<2x3x4x5x6xf16>) outs(%1 : tensor<6x5x4x3x2xf16>) permutation = [4, 3, 2, 1, 0]
+  return %transposed : tensor<6x5x4x3x2xf16>
+}
+
+// -----
+
+// The Triton frontend emits the load as a memref.copy into a fresh contiguous
+// alloc and the permute as a separate linalg.transpose; convert-to-hivm-op
+// only turns the copy into a hivm.hir.load much later, so this is the form the
+// pass meets on real input. Fusing rewrites the copy to read the permuted view
+// and drops the transpose.
+// CHECK-LABEL: func.func @fuse_memref_copy_rank3
+// CHECK:       %[[NEW:.*]] = memref.alloc() : memref<4x16x8xf32>
+// CHECK:       memref.copy %{{.*}}, %[[NEW]] : memref<4x16x8xf32, strided<[128, 1, 16]>> to memref<4x16x8xf32>
+// CHECK:       bufferization.to_tensor %[[NEW]]
+// CHECK-NOT:   linalg.transpose
+func.func @fuse_memref_copy_rank3(%arg0: memref<?xf32>, %arg1: memref<?xf32>) attributes {mix_mode = "aiv"} {
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [4, 8, 16], strides: [128, 16, 1] : memref<?xf32> to memref<4x8x16xf32, strided<[128, 16, 1]>>
+  %alloc = memref.alloc() : memref<4x8x16xf32>
+  memref.copy %reinterpret_cast, %alloc : memref<4x8x16xf32, strided<[128, 16, 1]>> to memref<4x8x16xf32>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<4x8x16xf32>
+  %1 = tensor.empty() : tensor<4x16x8xf32>
+  %transposed = linalg.transpose ins(%0 : tensor<4x8x16xf32>) outs(%1 : tensor<4x16x8xf32>) permutation = [0, 2, 1]
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [4, 16, 8], strides: [128, 8, 1] : memref<?xf32> to memref<4x16x8xf32, strided<[128, 8, 1]>>
+  bufferization.materialize_in_destination %transposed in writable %reinterpret_cast_0 : (tensor<4x16x8xf32>, memref<4x16x8xf32, strided<[128, 8, 1]>>) -> ()
+  return
+}
+
+// -----
+
+// A permutation that moves an inner axis pair but not the innermost one, at a
+// rank only NDDMA can drive in one descriptor.
+// CHECK-LABEL: func.func @fuse_memref_copy_rank4
+// CHECK:       %[[NEW:.*]] = memref.alloc() : memref<2x8x4x16xf32>
+// CHECK:       memref.copy %{{.*}}, %[[NEW]] : memref<2x8x4x16xf32, strided<[512, 16, 128, 1]>> to memref<2x8x4x16xf32>
+// CHECK:       bufferization.to_tensor %[[NEW]]
+// CHECK-NOT:   linalg.transpose
+func.func @fuse_memref_copy_rank4(%arg0: memref<?xf32>, %arg1: memref<?xf32>) attributes {mix_mode = "aiv"} {
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [2, 4, 8, 16], strides: [512, 128, 16, 1] : memref<?xf32> to memref<2x4x8x16xf32, strided<[512, 128, 16, 1]>>
+  %alloc = memref.alloc() : memref<2x4x8x16xf32>
+  memref.copy %reinterpret_cast, %alloc : memref<2x4x8x16xf32, strided<[512, 128, 16, 1]>> to memref<2x4x8x16xf32>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<2x4x8x16xf32>
+  %1 = tensor.empty() : tensor<2x8x4x16xf32>
+  %transposed = linalg.transpose ins(%0 : tensor<2x4x8x16xf32>) outs(%1 : tensor<2x8x4x16xf32>) permutation = [0, 2, 1, 3]
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [2, 8, 4, 16], strides: [512, 64, 16, 1] : memref<?xf32> to memref<2x8x4x16xf32, strided<[512, 64, 16, 1]>>
+  bufferization.materialize_in_destination %transposed in writable %reinterpret_cast_0 : (tensor<2x8x4x16xf32>, memref<2x8x4x16xf32, strided<[512, 64, 16, 1]>>) -> ()
+  return
+}
+
+// -----
+
+// A copy between two local buffers is not a DMA, so permuting it would buy
+// nothing; the transpose stays.
+// CHECK-LABEL: func.func @no_fuse_copy_between_locals
+// CHECK:       linalg.transpose
+func.func @no_fuse_copy_between_locals() -> tensor<4x16x8xf32> attributes {mix_mode = "aiv"} {
+  %cst = arith.constant 0.000000e+00 : f32
+  %src = memref.alloc() : memref<4x8x16xf32>
+  linalg.fill ins(%cst : f32) outs(%src : memref<4x8x16xf32>)
+  %alloc = memref.alloc() : memref<4x8x16xf32>
+  memref.copy %src, %alloc : memref<4x8x16xf32> to memref<4x8x16xf32>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<4x8x16xf32>
+  %1 = tensor.empty() : tensor<4x16x8xf32>
+  %transposed = linalg.transpose ins(%0 : tensor<4x8x16xf32>) outs(%1 : tensor<4x16x8xf32>) permutation = [0, 2, 1]
+  return %transposed : tensor<4x16x8xf32>
+}
+
+// -----
+
+// memref.copy names no address space, so a GM source alone does not make the
+// destination UB. In a kernel with a cube half the same shape is a GM->L1
+// matmul operand, which NDDMA cannot write, so the transpose has to stay.
+// CHECK-LABEL: func.func @no_fuse_gm_copy_in_mix_kernel
+// CHECK:       linalg.transpose
+func.func @no_fuse_gm_copy_in_mix_kernel(%arg0: memref<?xf16>, %arg1: memref<?xf16>, %arg2: memref<?xf32>) attributes {mix_mode = "mix"} {
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [32, 32], strides: [32, 1] : memref<?xf16> to memref<32x32xf16, strided<[32, 1]>>
+  %alloc = memref.alloc() : memref<32x32xf16>
+  memref.copy %reinterpret_cast, %alloc : memref<32x32xf16, strided<[32, 1]>> to memref<32x32xf16>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<32x32xf16>
+  %1 = tensor.empty() : tensor<32x32xf16>
+  %transposed = linalg.transpose ins(%0 : tensor<32x32xf16>) outs(%1 : tensor<32x32xf16>) permutation = [1, 0]
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [32, 32], strides: [32, 1] : memref<?xf16> to memref<32x32xf16, strided<[32, 1]>>
+  bufferization.materialize_in_destination %transposed in writable %reinterpret_cast_0 : (tensor<32x32xf16>, memref<32x32xf16, strided<[32, 1]>>) -> ()
+  return
+}
+
+// -----
+
+// convert-to-hivm-op derives left_padding_num from the last-dim offset of the
+// destination subview, so this copy becomes a padded load. NDDMA applies the
+// count on loop0, which only keeps its meaning while the innermost axis stays
+// in place, and permutation [0, 2, 1] moves it - so the transpose has to stay.
+// CHECK-LABEL: func.func @no_fuse_left_padded_copy
+// CHECK:       linalg.transpose
+func.func @no_fuse_left_padded_copy(%arg0: memref<?xf32>, %arg1: memref<?xf32>) attributes {mix_mode = "aiv"} {
+  %cst = arith.constant 0.000000e+00 : f32
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [4, 8, 16], strides: [128, 16, 1] : memref<?xf32> to memref<4x8x16xf32, strided<[128, 16, 1]>>
+  %alloc = memref.alloc() : memref<4x8x16xf32>
+  linalg.fill ins(%cst : f32) outs(%alloc : memref<4x8x16xf32>)
+  %subview = memref.subview %reinterpret_cast[0, 0, 0] [4, 8, 13] [1, 1, 1] : memref<4x8x16xf32, strided<[128, 16, 1]>> to memref<4x8x13xf32, strided<[128, 16, 1]>>
+  %subview_0 = memref.subview %alloc[0, 0, 3] [4, 8, 13] [1, 1, 1] : memref<4x8x16xf32> to memref<4x8x13xf32, strided<[128, 16, 1], offset: 3>>
+  memref.copy %subview, %subview_0 : memref<4x8x13xf32, strided<[128, 16, 1]>> to memref<4x8x13xf32, strided<[128, 16, 1], offset: 3>>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<4x8x16xf32>
+  %1 = tensor.empty() : tensor<4x16x8xf32>
+  %transposed = linalg.transpose ins(%0 : tensor<4x8x16xf32>) outs(%1 : tensor<4x16x8xf32>) permutation = [0, 2, 1]
+  %reinterpret_cast_1 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [4, 16, 8], strides: [128, 8, 1] : memref<?xf32> to memref<4x16x8xf32, strided<[128, 8, 1]>>
+  bufferization.materialize_in_destination %transposed in writable %reinterpret_cast_1 : (tensor<4x16x8xf32>, memref<4x16x8xf32, strided<[128, 8, 1]>>) -> ()
+  return
+}
+
+// -----
+
+// The same shape with the window at offset 0 is the masked-load form: the pad
+// is a fill over the whole buffer, carries no count, and permutes with the
+// buffer, so it fuses.
+// CHECK-LABEL: func.func @fuse_masked_copy_offset_zero
+// CHECK:       %[[NEW:.*]] = memref.alloc() : memref<4x16x8xf32>
+// CHECK:       linalg.fill ins(%{{.*}} : f32) outs(%[[NEW]] : memref<4x16x8xf32>)
+// CHECK:       memref.copy
+// CHECK-NOT:   linalg.transpose
+func.func @fuse_masked_copy_offset_zero(%arg0: memref<?xf32>, %arg1: memref<?xf32>) attributes {mix_mode = "aiv"} {
+  %cst = arith.constant 0.000000e+00 : f32
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [4, 8, 16], strides: [128, 16, 1] : memref<?xf32> to memref<4x8x16xf32, strided<[128, 16, 1]>>
+  %alloc = memref.alloc() : memref<4x8x16xf32>
+  linalg.fill ins(%cst : f32) outs(%alloc : memref<4x8x16xf32>)
+  %subview = memref.subview %reinterpret_cast[0, 0, 0] [4, 8, 10] [1, 1, 1] : memref<4x8x16xf32, strided<[128, 16, 1]>> to memref<4x8x10xf32, strided<[128, 16, 1]>>
+  %subview_0 = memref.subview %alloc[0, 0, 0] [4, 8, 10] [1, 1, 1] : memref<4x8x16xf32> to memref<4x8x10xf32, strided<[128, 16, 1]>>
+  memref.copy %subview, %subview_0 : memref<4x8x10xf32, strided<[128, 16, 1]>> to memref<4x8x10xf32, strided<[128, 16, 1]>>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<4x8x16xf32>
+  %1 = tensor.empty() : tensor<4x16x8xf32>
+  %transposed = linalg.transpose ins(%0 : tensor<4x8x16xf32>) outs(%1 : tensor<4x16x8xf32>) permutation = [0, 2, 1]
+  %reinterpret_cast_1 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [4, 16, 8], strides: [128, 8, 1] : memref<?xf32> to memref<4x16x8xf32, strided<[128, 8, 1]>>
+  bufferization.materialize_in_destination %transposed in writable %reinterpret_cast_1 : (tensor<4x16x8xf32>, memref<4x16x8xf32, strided<[128, 8, 1]>>) -> ()
+  return
+}
+
+// -----
+
+// A collapse root with a static shape can still carry a dynamic offset or
+// dynamic strides. Those read back from the type as the kDynamic sentinel,
+// which is not something reinterpret_cast can be handed as a literal, so the
+// real values come off the buffer with extract_strided_metadata.
+// CHECK-LABEL: func.func @fuse_memref_copy_collapse_root_dynamic_offset
+// CHECK:       %[[C:.*]] = memref.collapse_shape
+// CHECK:       %{{.*}}, %[[OFF:.*]], %{{.*}}:3, %{{.*}}:3 = memref.extract_strided_metadata %[[C]]
+// CHECK:       %[[P:.*]] = memref.reinterpret_cast %[[C]] to offset: [%[[OFF]]], sizes: [8, 16, 8], strides: [128, 1, 16]
+// CHECK:       %[[NEW:.*]] = memref.alloc() : memref<8x16x8xf32>
+// CHECK:       memref.copy %[[P]], %[[NEW]]
+// CHECK-NOT:   linalg.transpose
+func.func @fuse_memref_copy_collapse_root_dynamic_offset(%arg0: memref<?xf32>, %arg1: memref<?xf32>, %off: index) attributes {mix_mode = "aiv"} {
+  %cast = memref.reinterpret_cast %arg0 to offset: [%off], sizes: [2, 4, 8, 16], strides: [512, 128, 16, 1] : memref<?xf32> to memref<2x4x8x16xf32, strided<[512, 128, 16, 1], offset: ?>>
+  %collapsed = memref.collapse_shape %cast [[0, 1], [2], [3]] : memref<2x4x8x16xf32, strided<[512, 128, 16, 1], offset: ?>> into memref<8x8x16xf32, strided<[128, 16, 1], offset: ?>>
+  %alloc = memref.alloc() : memref<8x8x16xf32>
+  memref.copy %collapsed, %alloc : memref<8x8x16xf32, strided<[128, 16, 1], offset: ?>> to memref<8x8x16xf32>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<8x8x16xf32>
+  %1 = tensor.empty() : tensor<8x16x8xf32>
+  %transposed = linalg.transpose ins(%0 : tensor<8x8x16xf32>) outs(%1 : tensor<8x16x8xf32>) permutation = [0, 2, 1]
+  %out = memref.reinterpret_cast %arg1 to offset: [0], sizes: [8, 16, 8], strides: [128, 8, 1] : memref<?xf32> to memref<8x16x8xf32, strided<[128, 8, 1]>>
+  bufferization.materialize_in_destination %transposed in writable %out : (tensor<8x16x8xf32>, memref<8x16x8xf32, strided<[128, 8, 1]>>) -> ()
+  return
 }

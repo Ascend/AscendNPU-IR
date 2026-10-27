@@ -36,27 +36,6 @@ enum class PadMode : uint32_t {
   Value = 2
 };
 
-// The following padValueType is used to convert the FP8 PadValue to the float
-// type. The reason for doing so is that if the PadValue is of FP8 type, an FP8
-// constant will be automatically generated, which is not allowed in the LLVM IR
-// received by bisheng. Thus, the conversion here is only to avoid generating
-// FP8 constants.
-template <typename T> struct PadValueType {
-  using type = T;
-};
-
-#if BISHENG_TPL_REGBASE
-template <> struct PadValueType<float8_e4m3_t> {
-  using type = float;
-};
-
-template <> struct PadValueType<float8_e5m2_t> {
-  using type = float;
-};
-#endif
-
-template <typename T> using PadValueT = typename PadValueType<T>::type;
-
 enum class EvictionPolicy : uint32_t { EvictFirst = 0, EvictLast = 1 };
 
 enum class AtomicKind : uint32_t { None = 0, Add = 1, Max = 2, Min = 3 };
@@ -250,6 +229,57 @@ load_gm_to_cbuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
   }
 }
 
+/// Trailing pad count for one block-DMA burst, in elements.
+///
+/// The burst writes `left_padding_num` pad elements, `burst_len` bytes of
+/// data and then the trailing pad. Its start is the pulled-back, block
+/// aligned address, so the span it covers is rounded up to a whole UB block;
+/// that rounding is why an unpadded request must stay at zero, which is the
+/// Compact encoding the callers rely on (`dst_stride == burst_len`
+/// byte-exactly, cf. CANN CopyGmToUbufAlignV2 PaddingMode::Compact).
+///
+/// A caller asking for `right_padding_num` therefore gets at least that many
+/// pad elements, and the callers' row-pitch checks must leave room for the
+/// rounded-up span, exactly as they already do for a left-padded burst.
+template <typename T>
+__aiv__ __attribute__((always_inline)) int64_t block_dma_right_pad(
+    uint32_t burst_len, int64_t left_padding_num, int64_t right_padding_num) {
+  if (left_padding_num == 0 && right_padding_num == 0) {
+    return 0;
+  }
+  constexpr int32_t bytes = sizeof(T);
+  const int64_t spanWithPad =
+      burst_len + (left_padding_num + right_padding_num) * bytes;
+  return right_padding_num +
+         (CEIL_FACTOR(spanWithPad, UB_ALIGN_BYTES) - spanWithPad) / bytes;
+}
+
+/// Whether one block-DMA burst can carry this trailing pad request exactly.
+///
+/// With nothing requested the burst keeps the block-alignment fill it has
+/// always used. With a count requested, two things must hold: the hardware
+/// trailing pad reaches at most one UB block past the data, and the padded
+/// span must already end on a block so the rounding in block_dma_right_pad
+/// does not write more pad than was asked for. Measured on Ascend950PR: a
+/// burst whose trailing pad exceeds one block raises a vector core exception
+/// (ACL_ERROR_RT_VECTOR_CORE_EXCEPTION), for b32 at nine elements and for b16
+/// at seventeen.
+///
+/// A request this burst cannot express belongs on the NDDMA descriptor, whose
+/// pad fields extend loop0 by whole iterations and so place any count exactly.
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+block_dma_can_pad(int64_t size, int64_t left_padding_num,
+                  int64_t right_padding_num) {
+  if (right_padding_num == 0) {
+    return true;
+  }
+  constexpr int64_t num_per_block = UB_ALIGN_BYTES / sizeof(T);
+  return right_padding_num <= num_per_block &&
+         block_dma_right_pad<T>(size * sizeof(T), left_padding_num,
+                                right_padding_num) == right_padding_num;
+}
+
 #if BISHENG_TPL_C310
 // Copy gm to ubuf intrin for 1d and 2d, all dtypes are supported.
 // For copy 1d, burst_cnt is 1 and gap is 0.
@@ -258,19 +288,16 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
     __gm__ T *gm_ptr, int64_t gm_offset, __ubuf__ T *ub_ptr, int64_t ub_offset,
     uint16_t burst_cnt, uint32_t burst_len, int64_t left_padding_num,
-    uint64_t src_gap, uint32_t dst_gap, uint8_t l2_cache_ctl) {
+    int64_t right_padding_num, uint64_t src_gap, uint32_t dst_gap,
+    uint8_t l2_cache_ctl) {
   constexpr int32_t bytes = sizeof(T);
-  // Use rightPaddingNum to pad and the pad_value is 0 as default.
-  auto sizeWithPad = burst_len + (left_padding_num * bytes);
-  auto rightPaddingNum =
-      (CEIL_FACTOR(sizeWithPad, UB_ALIGN_BYTES) - sizeWithPad) / bytes;
+  const int64_t rightPaddingNum =
+      block_dma_right_pad<T>(burst_len, left_padding_num, right_padding_num);
   uint32_t dst_align_gap = dst_gap / UB_ALIGN_BYTES;
   // TODO: figure out what are these fields for
   bool data_select_bit = true;
   const uint64_t src_stride = src_gap + burst_len;
   const uint32_t dst_stride = dst_gap + burst_len;
-  if (left_padding_num == 0)
-    rightPaddingNum = 0;
   if constexpr (bytes == BYTES_B8 || bytes == BYTES_B16 || bytes == BYTES_B32) {
     INTRINSIC(copy_gm_to_ubuf_align_v2, (ub_ptr + ub_offset - left_padding_num),
               gm_ptr + gm_offset, 0, burst_cnt, burst_len, left_padding_num,
@@ -298,17 +325,15 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
     __gm__ T *gm_ptr, int64_t gm_offset, __ubuf__ T *ub_ptr, int64_t ub_offset,
     uint16_t burst_cnt, uint32_t burst_len, int64_t left_padding_num,
-    uint64_t src_gap, uint32_t dst_gap, uint8_t l2_cache_ctl) {
+    int64_t right_padding_num, uint64_t src_gap, uint32_t dst_gap,
+    uint8_t l2_cache_ctl) {
   constexpr int32_t bytes = sizeof(T);
-  auto sizeWithPad = burst_len + (left_padding_num * bytes);
-  auto rightPaddingNum =
-      (CEIL_FACTOR(sizeWithPad, UB_ALIGN_BYTES) - sizeWithPad) / bytes;
+  const int64_t rightPaddingNum =
+      block_dma_right_pad<T>(burst_len, left_padding_num, right_padding_num);
   uint32_t dst_align_gap = dst_gap / UB_ALIGN_BYTES;
   bool data_select_bit = true;
   const uint64_t src_stride = src_gap + burst_len;
   const uint32_t dst_stride = dst_gap + burst_len;
-  if (left_padding_num == 0)
-    rightPaddingNum = 0;
   if constexpr (bytes == BYTES_B8 || bytes == BYTES_B16 || bytes == BYTES_B32) {
     INTRINSIC(copy_gm_to_ubuf_align_v2, (ub_ptr + ub_offset - left_padding_num),
               gm_ptr + gm_offset, 0, burst_cnt, burst_len, left_padding_num,
@@ -340,15 +365,12 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
     __gm__ T *gm_ptr, int64_t gm_offset, __ubuf__ T *ub_ptr, int64_t ub_offset,
     uint16_t burst_cnt, uint32_t burst_len, int64_t left_padding_num,
-    uint64_t src_gap, uint32_t dst_gap, uint8_t l2_cache_ctl) {
+    int64_t right_padding_num, uint64_t src_gap, uint32_t dst_gap,
+    uint8_t l2_cache_ctl) {
   constexpr int32_t bytes = sizeof(T);
-  // Use rightPaddingNum to pad and the pad_value is 0 as default.
-  auto sizeWithPad = burst_len + (left_padding_num * bytes);
-  auto rightPaddingNum =
-      (CEIL_FACTOR(sizeWithPad, UB_ALIGN_BYTES) - sizeWithPad) / bytes;
+  const int64_t rightPaddingNum =
+      block_dma_right_pad<T>(burst_len, left_padding_num, right_padding_num);
   uint32_t dst_align_gap = dst_gap / UB_ALIGN_BYTES;
-  if (left_padding_num == 0)
-    rightPaddingNum = 0;
   if constexpr (bytes == BYTES_B8 || bytes == BYTES_B16 || bytes == BYTES_B32) {
     INTRINSIC(copy_gm_to_ubuf_align, (ub_ptr + ub_offset - left_padding_num),
               gm_ptr + gm_offset, 0, burst_cnt, burst_len, left_padding_num,
@@ -523,6 +545,37 @@ load_gm_to_ubuf_2d_by_scalar(memref_t<__gm__ T, 2> *src,
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
 }
 
+/// Scalar GM->UB copy of an N-axis window, for shapes no DMA form can
+/// express. Peels the outermost axis and recurses, bottoming out on the 2D
+/// loop. `load_gm_to_ubuf_3d_by_scalar` is the hand-written N == 3 case.
+template <typename T, size_t N, bool DisableDCache = false>
+__aiv__ __attribute__((always_inline)) void
+load_gm_to_ubuf_nd_by_scalar(memref_t<__gm__ T, N> *src,
+                             memref_t<__ubuf__ T, N> *dst) {
+  static_assert(N >= 2, "the scalar peel bottoms out on the 2D loop");
+  if constexpr (N == 2) {
+    load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst);
+  } else {
+    for (int64_t i = 0; i < src->sizes[0]; ++i) {
+      memref_t<__gm__ T, N - 1> src_sub;
+      memref_t<__ubuf__ T, N - 1> dst_sub;
+      src_sub.allocated = src->allocated;
+      src_sub.aligned = src->aligned;
+      src_sub.offset = src->offset + i * src->strides[0];
+      dst_sub.allocated = dst->allocated;
+      dst_sub.aligned = dst->aligned;
+      dst_sub.offset = dst->offset + i * dst->strides[0];
+      for (size_t d = 0; d + 1 < N; ++d) {
+        src_sub.sizes[d] = src->sizes[d + 1];
+        src_sub.strides[d] = src->strides[d + 1];
+        dst_sub.sizes[d] = dst->sizes[d + 1];
+        dst_sub.strides[d] = dst->strides[d + 1];
+      }
+      load_gm_to_ubuf_nd_by_scalar<T, N - 1, DisableDCache>(&src_sub, &dst_sub);
+    }
+  }
+}
+
 template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_by_scalar(memref_t<__gm__ T, 3> *src,
@@ -651,6 +704,7 @@ __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_1d_core_with_contiguous_last_dim(memref_t<__gm__ T, 1> *gm,
                                                  memref_t<__ubuf__ T, 1> *ub,
                                                  int64_t left_padding_num,
+                                                 int64_t right_padding_num,
                                                  uint8_t l2_cache_ctl) {
   auto src_ptr = gm->aligned + gm->offset;
   auto dst_ptr = ub->aligned + ub->offset;
@@ -658,11 +712,17 @@ load_gm_to_ubuf_1d_core_with_contiguous_last_dim(memref_t<__gm__ T, 1> *gm,
   constexpr int bytes = sizeof(T);
 
   load_gm_to_ubuf_intrin_core(src_ptr, 0, dst_ptr, 0, 1, size0 * bytes,
-                              left_padding_num, 0, 0, l2_cache_ctl);
+                              left_padding_num, right_padding_num, 0, 0,
+                              l2_cache_ctl);
 }
 
 /// Compact GM -> UB load with `burst_len = dtypeBytes`.
 /// Prerequisites: `strideUB[0] == 1, strideGM[0] != 1`.
+///
+/// This form emits one burst per element, so the intrinsic would repeat a pad
+/// count for every element instead of once per row. It therefore takes no
+/// trailing pad count: `load_gm_to_ubuf_1d_core` keeps a right-padded load off
+/// this path and sends it to the descriptor, which pads whole loop0 runs.
 template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim(
@@ -698,9 +758,9 @@ load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim(
     // div/rem and the main loop of the main/tail split below, which cost
     // extra scalar instructions on every call for the small sizes that
     // dominate 1D strided copies.
-    load_gm_to_ubuf_intrin_core(src_ptr, 0, dst_ptr, 0,
-                                static_cast<uint16_t>(size0), bytes,
-                                left_padding_num, src_gap, 0, l2_cache_ctl);
+    load_gm_to_ubuf_intrin_core(
+        src_ptr, 0, dst_ptr, 0, static_cast<uint16_t>(size0), bytes,
+        left_padding_num, /*right_padding_num=*/0, src_gap, 0, l2_cache_ctl);
     return;
   }
   const int64_t main_count = size0 / aligned_max_burst_cnt;
@@ -712,10 +772,10 @@ load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim(
     // Only the first DMA may write the leading pad: each intrin call with
     // lp != 0 rewrites [ub_offset - lp, ub_offset) with pad elements, which
     // would corrupt the tail of the previous chunk for i > 0.
-    load_gm_to_ubuf_intrin_core(src_ptr, gm_offset, dst_ptr, ub_offset,
-                                aligned_max_burst_cnt, bytes,
-                                i == 0 ? left_padding_num : 0, src_gap, 0,
-                                l2_cache_ctl);
+    load_gm_to_ubuf_intrin_core(
+        src_ptr, gm_offset, dst_ptr, ub_offset, aligned_max_burst_cnt, bytes,
+        i == 0 ? left_padding_num : 0, /*right_padding_num=*/0, src_gap, 0,
+        l2_cache_ctl);
   }
   if (tail_burst_cnt > 0) {
     const int64_t gm_offset = main_count * aligned_max_burst_cnt * stride0_gm;
@@ -723,10 +783,10 @@ load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim(
     // Same as above: when no main chunk ran, the tail is the first DMA and
     // owns the leading pad; otherwise pass 0 to avoid overwriting the last
     // main chunk's tail.
-    load_gm_to_ubuf_intrin_core(src_ptr, gm_offset, dst_ptr, ub_offset,
-                                tail_burst_cnt, bytes,
-                                main_count == 0 ? left_padding_num : 0,
-                                src_gap, 0, l2_cache_ctl);
+    load_gm_to_ubuf_intrin_core(
+        src_ptr, gm_offset, dst_ptr, ub_offset, tail_burst_cnt, bytes,
+        main_count == 0 ? left_padding_num : 0, /*right_padding_num=*/0,
+        src_gap, 0, l2_cache_ctl);
   }
 }
 
@@ -788,6 +848,7 @@ __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
                                                  memref_t<__ubuf__ T, 2> *ub,
                                                  int64_t left_padding_num,
+                                                 int64_t right_padding_num,
                                                  uint8_t l2_cache_ctl) {
   const int64_t size0 = gm->sizes[0];
   const int64_t size1 = gm->sizes[1];
@@ -817,7 +878,7 @@ load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
                                        {size1},
                                        {1}};
       load_gm_to_ubuf_1d_core_with_contiguous_last_dim<T>(
-          &gm_1d, &ub_1d, left_padding_num, l2_cache_ctl);
+          &gm_1d, &ub_1d, left_padding_num, right_padding_num, l2_cache_ctl);
     }
     return;
   }
@@ -840,8 +901,8 @@ load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
           i * alignd_intrin_max_burst_cnt * stride0_ub;
       load_gm_to_ubuf_intrin_core<T>(
           gm_ptr, main_gm_offset, ub_ptr, main_ub_offset,
-          alignd_intrin_max_burst_cnt, burst_len, left_padding_num, gm_gap,
-          ub_gap, l2_cache_ctl);
+          alignd_intrin_max_burst_cnt, burst_len, left_padding_num,
+          right_padding_num, gm_gap, ub_gap, l2_cache_ctl);
     }
   }
   if (burst_cnt_tail > 0) [[likely]] {
@@ -851,9 +912,10 @@ load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
         burst_cnt_main * alignd_intrin_max_burst_cnt * stride0_gm;
     const int64_t main_ub_offset =
         burst_cnt_main * alignd_intrin_max_burst_cnt * stride0_ub;
-    load_gm_to_ubuf_intrin_core<T>(
-        gm_ptr, main_gm_offset, ub_ptr, main_ub_offset, burst_cnt_tail,
-        burst_len, left_padding_num, gm_gap, ub_gap, l2_cache_ctl);
+    load_gm_to_ubuf_intrin_core<T>(gm_ptr, main_gm_offset, ub_ptr,
+                                   main_ub_offset, burst_cnt_tail, burst_len,
+                                   left_padding_num, right_padding_num, gm_gap,
+                                   ub_gap, l2_cache_ctl);
   }
   return;
 }
@@ -867,6 +929,7 @@ __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
                                                  memref_t<__ubuf__ T, 2> *ub,
                                                  int64_t left_padding_num,
+                                                 int64_t right_padding_num,
                                                  uint8_t l2_cache_ctl) {
   int64_t size1 = gm->sizes[1];
   int64_t stride0_gm = gm->strides[0];
@@ -891,7 +954,7 @@ load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
                                        {size1},
                                        {1}};
       load_gm_to_ubuf_1d_core_with_contiguous_last_dim<T>(
-          &gm_1d, &ub_1d, left_padding_num, l2_cache_ctl);
+          &gm_1d, &ub_1d, left_padding_num, right_padding_num, l2_cache_ctl);
     }
   } else {
     // split burst cnt into main and tail part
@@ -913,8 +976,8 @@ load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
             i * alignd_intrin_max_burst_cnt * stride0_ub;
         load_gm_to_ubuf_intrin_core<T>(
             gm_ptr, main_gm_offset, ub_ptr, main_ub_offset,
-            alignd_intrin_max_burst_cnt, burst_len, left_padding_num, gm_gap,
-            ub_gap, l2_cache_ctl);
+            alignd_intrin_max_burst_cnt, burst_len, left_padding_num,
+            right_padding_num, gm_gap, ub_gap, l2_cache_ctl);
       }
     }
     if (burst_cnt_tail > 0) [[likely]] {
@@ -924,9 +987,10 @@ load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
           burst_cnt_main * alignd_intrin_max_burst_cnt * stride0_gm;
       const int64_t main_ub_offset =
           burst_cnt_main * alignd_intrin_max_burst_cnt * stride0_ub;
-      load_gm_to_ubuf_intrin_core<T>(
-          gm_ptr, main_gm_offset, ub_ptr, main_ub_offset, burst_cnt_tail,
-          burst_len, left_padding_num, gm_gap, ub_gap, l2_cache_ctl);
+      load_gm_to_ubuf_intrin_core<T>(gm_ptr, main_gm_offset, ub_ptr,
+                                     main_ub_offset, burst_cnt_tail, burst_len,
+                                     left_padding_num, right_padding_num,
+                                     gm_gap, ub_gap, l2_cache_ctl);
     }
   }
 }
@@ -1161,6 +1225,7 @@ __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                                  memref_t<__ubuf__ T, 3> *ub,
                                                  int64_t left_padding_num,
+                                                 int64_t right_padding_num,
                                                  uint8_t l2_cache_ctl) {
   int64_t size0 = gm->sizes[0];
   int64_t size1 = gm->sizes[1];
@@ -1183,7 +1248,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                   {size0, size1 * size2},
                                   {stride0_ub, 1}};
     load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
-        &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
+        &gm_2d, &ub_2d, left_padding_num, right_padding_num, l2_cache_ctl);
     return;
   }
   // axis 1 is non-contiguous
@@ -1200,7 +1265,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                   {size0 * size1, size2},
                                   {stride1_ub, 1}};
     load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
-        &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
+        &gm_2d, &ub_2d, left_padding_num, right_padding_num, l2_cache_ctl);
     return;
   }
   // axis 0 is non-contiguous
@@ -1227,7 +1292,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                       {size1, size2},
                                       {stride1_ub, 1}};
         load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
-            &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
+            &gm_2d, &ub_2d, left_padding_num, right_padding_num, l2_cache_ctl);
       }
       return;
     }
@@ -1244,7 +1309,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                     {size0, size2},
                                     {stride0_ub, 1}};
       load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
-          &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
+          &gm_2d, &ub_2d, left_padding_num, right_padding_num, l2_cache_ctl);
     }
     return;
   }
@@ -1264,7 +1329,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                   {size1, size2},
                                   {stride1_ub, 1}};
     load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
-        &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
+        &gm_2d, &ub_2d, left_padding_num, right_padding_num, l2_cache_ctl);
   }
   return;
 }
@@ -1278,6 +1343,7 @@ __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                                  memref_t<__ubuf__ T, 3> *ub,
                                                  int64_t left_padding_num,
+                                                 int64_t right_padding_num,
                                                  uint8_t l2_cache_ctl) {
   int64_t size0 = gm->sizes[0];
   int64_t size1 = gm->sizes[1];
@@ -1300,7 +1366,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                   {size0, size1 * size2},
                                   {stride0_ub, 1}};
     load_gm_to_ubuf_2d_core_with_contiguous_last_dim(
-        &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
+        &gm_2d, &ub_2d, left_padding_num, right_padding_num, l2_cache_ctl);
     return;
   }
 
@@ -1339,7 +1405,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                      {stride1_ub, 1}};
 
     load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
-        &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
+        &gm_2d, &ub_2d, left_padding_num, right_padding_num, l2_cache_ctl);
   }
 }
 #endif
@@ -2038,175 +2104,87 @@ copy_ubuf_to_cbuf_3d_core_with_contiguous_last_dim(
   }
 }
 
-template <typename T>
+/// GM->UB NDDMA load of an N-axis window, 1 <= N <= 5.
+///
+/// loop0 is the innermost descriptor level, so axis N-1 drives loop0 and
+/// axis 0 drives loop N-1. Only loop0 carries the pad counts, because they
+/// address the innermost axis. `lp_size` / `rp_size` extend that loop past
+/// the valid data: the descriptor runs `lp + size + rp` innermost iterations
+/// and advances the GM cursor only on the `size` data ones, so the UB
+/// pointer addresses the first *padded* element and is pulled back by
+/// `left_padding_num` here. That mirrors the pull-back
+/// `load_gm_to_ubuf_intrin_core` applies on the contiguous path.
+///
+/// `pad_word` is the raw pattern the hardware replicates into each padded
+/// element; callers encode it with nddma_pad_bits. `pad_nearest` selects
+/// replication of the nearest valid element instead.
+///
+/// `nddma_desc` exposes one fixed-arity constructor per loop count, so only
+/// the final assembly is spelled out per rank.
+template <typename T, size_t N>
 __aiv__ __attribute__((always_inline)) void
-load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
-                            memref_t<__ubuf__ T, 2> *dst, PadMode pad_mode,
-                            typename PadValueType<T>::type pad_value,
-                            int64_t left_padding_num, uint8_t l2_cache_ctl) {
-  static_assert(
-      sizeof(T) <= 8,
-      "DMA only supports types up to 64-bit. "
-      "Larger types (e.g., long double, __int128) are not supported.");
-  // nddma_out_to_ub does not support FP8, and this is only data movement which
-  // has no impact on precision. Conversion to U8 is feasible as long as the bit
-  // width is the same.
-  using DmaType = std::conditional_t<std::is_same_v<T, float8_e4m3_t> ||
-                                         std::is_same_v<T, float8_e5m2_t>,
-                                     uint8_t, T>;
+load_gm_to_ubuf_nd_by_nddma(memref_t<__gm__ T, N> *src,
+                            memref_t<__ubuf__ T, N> *dst, uint32_t pad_word,
+                            bool pad_nearest, int64_t left_padding_num,
+                            int64_t right_padding_num, uint8_t l2_cache_ctl) {
+  static_assert(N >= 1 && N <= 5,
+                "NDDMA drives loop0 .. loop4, so at most five axes.");
+  static_assert(sizeof(T) <= 4,
+                "nddma_out_to_ub has no 64-bit overload; the load cores keep "
+                "wider elements on the scalar path.");
 
-  // NDDMA expresses padding natively in the descriptor: every loop_desc
-  // level carries 8-bit element-granular lp/rp counts, and the pad_val
-  // operand (written to the PAD_VAL_NDDMA SPR, a register separate from the
-  // MTE set_mov_pad_val SPR) supplies the CONSTANT_PADDING fill. Alignment
-  // padding lives on the innermost (loop0) axis: lp is the tile's left
-  // padding and rp rounds (lp + size) up to a whole 32B block, mirroring the
-  // MTE rightPaddingNum. FirstElem keeps zero counts and NEAREST_PADDING:
-  // the exact replication element of the hardware mode is not yet confirmed
-  // against the hardware spec, so padded FirstElem loads stay on the scalar
-  // path at the call site and this branch preserves the old descriptor.
-  //
-  // The per-loop placement of the fill (whole-transfer vs per-iteration) is
-  // also unconfirmed, so a padded call is sound only when each row's padded
-  // span stays inside the row itself. The caller must guarantee:
-  //   1) dst->strides[0] * sizeof(T) is 32B aligned, and
-  //   2) CEIL_FACTOR(lp + sizes[1], 32B/sizeof(T)) <= dst->strides[0].
-  // Under both, either fill placement yields identical UB contents (the
-  // per-row overlap regions are gaps written with the same pad constant);
-  // load_gm_to_ubuf_2d_core enforces exactly these gates.
-  constexpr int64_t npb = UB_ALIGN_BYTES / sizeof(T);
-  int64_t lp = 0;
-  int64_t rp = 0;
-  if (left_padding_num != 0 &&
-      (pad_mode == PadMode::Null || pad_mode == PadMode::Value)) {
-    lp = left_padding_num;
-    int64_t span = lp + dst->sizes[1];
-    rp = CEIL_FACTOR(span, npb) - span;
-  }
-  uint32_t nddma_pad_val = 0;
-  if (pad_mode == PadMode::Value) {
-    using PadValueT = typename PadValueType<T>::type;
-    if constexpr (sizeof(PadValueT) == 1) {
-      nddma_pad_val = *((uint8_t *)(&pad_value));
-    } else if constexpr (sizeof(PadValueT) == 2) {
-      nddma_pad_val = *((uint16_t *)(&pad_value));
-    } else {
-      // 32-bit element types, and the low half of a 64-bit pattern: the
-      // padded b64 transpose path is diverted to scalar at the call site,
-      // so the high half never matters here.
-      nddma_pad_val = *((uint32_t *)(&pad_value));
-    }
-  }
-  // The fill precedes the data at the DMA start, so the DMA start is the
-  // pulled-back address dst->offset - lp, the same address whose 32B
-  // alignment the caller verified (mirroring the MTE pull-back).
-  __gm__ DmaType *src_ptr =
-      reinterpret_cast<__gm__ DmaType *>(src->aligned + src->offset);
-  __ubuf__ DmaType *dst_ptr =
-      reinterpret_cast<__ubuf__ DmaType *>(dst->aligned + dst->offset - lp);
-
-  if constexpr (sizeof(T) <= 4) {
-    // 32-bit and below version
-    nddma_desc::loop_desc loop0(dst->sizes[1], dst->strides[1], src->strides[1],
-                                lp, rp);
-    nddma_desc::loop_desc loop1(dst->sizes[0], dst->strides[0],
-                                src->strides[0]);
-    nddma_desc desc(loop1, loop0);
-
-    if (pad_mode == PadMode::FirstElem) {
-      INTRINSIC(nddma_out_to_ub, dst_ptr, src_ptr, 0, desc, 0, NEAREST_PADDING,
-                l2_cache_ctl);
-    } else {
-      INTRINSIC(nddma_out_to_ub, dst_ptr, src_ptr, 0, desc, nddma_pad_val,
-                CONSTANT_PADDING, l2_cache_ctl);
-    }
-
-  } else if constexpr (sizeof(T) == 8) {
-    // 64-bit version
-    using T32 = typename std::conditional<std::is_same_v<T, int64_t>, int32_t,
-                                          uint32_t>::type;
-
-    __gm__ T32 *src_32 = reinterpret_cast<__gm__ T32 *>(src_ptr);
-    __ubuf__ T32 *dst_32 = reinterpret_cast<__ubuf__ T32 *>(dst_ptr);
-
-    nddma_desc::loop_desc loop0(dst->sizes[1] * 2, dst->strides[1] * 2,
-                                src->strides[1] * 2, lp * 2, rp * 2);
-    nddma_desc::loop_desc loop1(dst->sizes[0] * 2, dst->strides[0] * 2,
-                                src->strides[0] * 2);
-    nddma_desc desc(loop1, loop0);
-
-    if (pad_mode == PadMode::FirstElem) {
-      INTRINSIC(nddma_out_to_ub, dst_32, src_32, 0, desc, 0, NEAREST_PADDING,
-                l2_cache_ctl);
-    } else {
-      INTRINSIC(nddma_out_to_ub, dst_32, src_32, 0, desc, nddma_pad_val,
-                CONSTANT_PADDING, l2_cache_ctl);
-    }
-  }
-}
-
-template <typename T>
-__aiv__ __attribute__((always_inline)) void
-load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
-                            memref_t<__ubuf__ T, 3> *dst) {
-  static_assert(
-      sizeof(T) <= 8,
-      "DMA only supports types up to 64-bit. "
-      "Larger types (e.g., long double, __int128) are not supported.");
-
+  // nddma_out_to_ub has no FP8 overload, and this is pure data movement, so
+  // the buffers move through u8 of the same bit width.
   using DmaType = std::conditional_t<std::is_same_v<T, float8_e4m3_t> ||
                                          std::is_same_v<T, float8_e5m2_t>,
                                      uint8_t, T>;
 
   __gm__ DmaType *src_ptr =
       reinterpret_cast<__gm__ DmaType *>(src->aligned + src->offset);
-  __ubuf__ DmaType *dst_ptr =
-      reinterpret_cast<__ubuf__ DmaType *>(dst->aligned + dst->offset);
+  __ubuf__ DmaType *dst_ptr = reinterpret_cast<__ubuf__ DmaType *>(
+      dst->aligned + dst->offset - left_padding_num * dst->strides[N - 1]);
 
-  if constexpr (sizeof(T) <= 4) {
-    // 32-bit and below version
-    nddma_desc::loop_desc loop0(dst->sizes[2], dst->strides[2],
-                                src->strides[2]);
-    nddma_desc::loop_desc loop1(dst->sizes[1], dst->strides[1],
-                                src->strides[1]);
-    nddma_desc::loop_desc loop2(dst->sizes[0], dst->strides[0],
-                                src->strides[0]);
-    nddma_desc desc(loop2, loop1, loop0);
+  // loops[level] is descriptor level loop<level>, which drives axis
+  // N-1-level.
+  nddma_desc::loop_desc loops[N];
+  for (size_t level = 0; level < N; ++level) {
+    const size_t axis = N - 1 - level;
+    const uint8_t lp =
+        level == 0 ? static_cast<uint8_t>(left_padding_num) : uint8_t{0};
+    const uint8_t rp =
+        level == 0 ? static_cast<uint8_t>(right_padding_num) : uint8_t{0};
+    // The extent is the source's. A loop's `size` counts the iterations on
+    // which the GM cursor advances, so taking it from the destination reads
+    // dst->sizes[axis] elements out of a window that holds only
+    // src->sizes[axis] of them - and the two differ exactly in the case this
+    // function exists for, where the destination is the wider padded window.
+    // Every other core takes the extent from the source; so does
+    // load_gm_to_ubuf_nd_by_block_dma.
+    loops[level] = nddma_desc::loop_desc(src->sizes[axis], dst->strides[axis],
+                                         src->strides[axis], lp, rp);
+  }
 
+  nddma_desc desc;
+  if constexpr (N == 1) {
+    desc = nddma_desc(loops[0]);
+  } else if constexpr (N == 2) {
+    desc = nddma_desc(loops[1], loops[0]);
+  } else if constexpr (N == 3) {
+    desc = nddma_desc(loops[2], loops[1], loops[0]);
+  } else if constexpr (N == 4) {
+    desc = nddma_desc(loops[3], loops[2], loops[1], loops[0]);
+  } else {
+    desc = nddma_desc(loops[4], loops[3], loops[2], loops[1], loops[0]);
+  }
+
+  if (pad_nearest) {
     INTRINSIC(nddma_out_to_ub, dst_ptr, src_ptr, 0, desc, 0, NEAREST_PADDING,
-              0);
-
-  } else if constexpr (sizeof(T) == 8) {
-    // 64-bit version
-    using T32 = typename std::conditional<std::is_same_v<T, int64_t>, int32_t,
-                                          uint32_t>::type;
-
-    __gm__ T32 *src_32 = reinterpret_cast<__gm__ T32 *>(src_ptr);
-    __ubuf__ T32 *dst_32 = reinterpret_cast<__ubuf__ T32 *>(dst_ptr);
-
-    nddma_desc::loop_desc loop0(dst->sizes[2] * 2, dst->strides[2] * 2,
-                                src->strides[2] * 2);
-    nddma_desc::loop_desc loop1(dst->sizes[1] * 2, dst->strides[1] * 2,
-                                src->strides[1] * 2);
-    nddma_desc::loop_desc loop2(dst->sizes[0] * 2, dst->strides[0] * 2,
-                                src->strides[0] * 2);
-    nddma_desc desc(loop2, loop1, loop0);
-
-    INTRINSIC(nddma_out_to_ub, dst_32, src_32, 0, desc, 0, NEAREST_PADDING, 0);
+              l2_cache_ctl);
+  } else {
+    INTRINSIC(nddma_out_to_ub, dst_ptr, src_ptr, 0, desc, pad_word,
+              CONSTANT_PADDING, l2_cache_ctl);
   }
 }
-
-template <typename T>
-__aiv__ __attribute__((always_inline)) void
-load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
-                            memref_t<__ubuf__ T, 2> *dst, PadMode pad_mode,
-                            typename PadValueType<T>::type pad_value,
-                            int64_t left_padding_num, uint8_t l2_cache_ctl);
-
-template <typename T>
-__aiv__ __attribute__((always_inline)) void
-load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
-                            memref_t<__ubuf__ T, 3> *dst);
 
 #endif
 
@@ -2399,15 +2377,431 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
 }
 #endif
 
+// The following padValueType is used to convert the FP8 PadValue to the float
+// type. The reason for doing so is that if the PadValue is of FP8 type, an FP8
+// constant will be automatically generated, which is not allowed in the LLVM IR
+// received by bisheng. Thus, the conversion here is only to avoid generating
+// FP8 constants.
+template <typename T> struct PadValueType {
+  using type = T;
+};
+
 #if BISHENG_TPL_REGBASE
+template <> struct PadValueType<float8_e4m3_t> {
+  using type = float;
+};
+
+template <> struct PadValueType<float8_e5m2_t> {
+  using type = float;
+};
+#endif
+
+template <typename T> using PadValueT = typename PadValueType<T>::type;
+
+/// NDDMA pad counts live in 8-bit descriptor fields.
+constexpr int64_t NDDMA_MAX_PAD = 255;
+
+/// Whether `load_gm_to_ubuf_*_by_nddma` can carry this padding request.
+///
+/// The b64 path drives the descriptor as pairs of b32 elements, which would
+/// double every pad count, and the fp8 path reinterprets the buffer as u8 so
+/// a `float` pad value no longer names the stored bit pattern. Both keep
+/// padded loads on the scalar path. NDDMA itself only exists on RegBase.
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+nddma_can_pad(int64_t left_padding_num, int64_t right_padding_num) {
+  if (left_padding_num == 0 && right_padding_num == 0) {
+    return true;
+  }
+#if BISHENG_TPL_REGBASE
+  if constexpr (sizeof(T) == 8 || std::is_same_v<T, float8_e4m3_t> ||
+                std::is_same_v<T, float8_e5m2_t>) {
+    return false;
+  } else {
+    return left_padding_num >= 0 && left_padding_num <= NDDMA_MAX_PAD &&
+           right_padding_num >= 0 && right_padding_num <= NDDMA_MAX_PAD;
+  }
+#else
+  return false;
+#endif
+}
+
+#if BISHENG_TPL_REGBASE
+
+/// Raw pad pattern for `nddma_out_to_ub`. The hardware replicates the low
+/// sizeof(T) bytes of this word into every padded element; a b16 load given
+/// 0xABCD1234 pads with 0x1234.
+///
+/// Element types whose pad value is widened (fp8 carries a `float`) or that
+/// are wider than the descriptor's pad field have no pattern to forward, and
+/// `nddma_can_pad` already keeps them off the padded path.
+template <typename T>
+__aiv__ __attribute__((always_inline)) uint32_t
+nddma_pad_bits(typename PadValueType<T>::type pad_value) {
+  using PadT = typename PadValueType<T>::type;
+  if constexpr (sizeof(PadT) != sizeof(T) || sizeof(T) > 4) {
+    return 0;
+  } else if constexpr (sizeof(T) == 1) {
+    return static_cast<uint32_t>(*reinterpret_cast<uint8_t *>(&pad_value));
+  } else if constexpr (sizeof(T) == 2) {
+    return static_cast<uint32_t>(*reinterpret_cast<uint16_t *>(&pad_value));
+  } else {
+    return *reinterpret_cast<uint32_t *>(&pad_value);
+  }
+}
+
+/// Descriptor pad mode for a HIVM `pad_mode`. `PadFirstElem` replicates the
+/// nearest valid element, every other mode writes a constant.
+__aiv__ __attribute__((always_inline)) inline bool
+nddma_pads_with_nearest(PadMode pad_mode) {
+  return pad_mode == PadMode::FirstElem;
+}
+
+/// Descriptor field widths: nddma_desc::loop_desc packs each loop's size and
+/// UB stride into 20 bits and the GM stride into 40, and the pad counts into
+/// 8. A tile outside those ranges cannot be described.
+constexpr int64_t NDDMA_MAX_LOOP_SIZE = (int64_t{1} << 20) - 1;
+constexpr int64_t NDDMA_MAX_DST_STRIDE = (int64_t{1} << 20) - 1;
+constexpr int64_t NDDMA_MAX_SRC_STRIDE = (int64_t{1} << 40) - 1;
+
+/// Whether the descriptor can express this tile at all. Unlike the block-DMA
+/// burst it needs no aligned destination and no monotonic stride order, so
+/// the only limits are the element widths it has overloads for, the five loop
+/// levels, and the field widths above.
+template <typename T, size_t N>
+__aiv__ __attribute__((always_inline)) bool
+nddma_can_move(memref_t<__gm__ T, N> *src, memref_t<__ubuf__ T, N> *dst,
+               int64_t left_padding_num, int64_t right_padding_num) {
+  if constexpr (sizeof(T) > 4 || N > 5) {
+    // nddma_out_to_ub has no 64-bit overload, and loop0 .. loop4 is five.
+    return false;
+  } else {
+    if (!nddma_can_pad<T>(left_padding_num, right_padding_num)) {
+      return false;
+    }
+
+    if (left_padding_num != 0 || right_padding_num != 0) {
+      // A pad count extends loop0, and a loop0 iteration advances the UB
+      // cursor by the innermost stride, so the fill lands on the same lattice
+      // as the data. With a strided innermost axis the valid elements fan out
+      // across gaps while the counts measure elements, and a fill can reach
+      // another row's valid element; only a unit stride makes the row's own
+      // span delimit what the fill may touch. Upstream reached the same
+      // condition for the 2D core; it belongs here, where it covers all ranks.
+      if (dst->strides[N - 1] != 1) {
+        return false;
+      }
+      if constexpr (N >= 2) {
+        // And the padded span has to stay inside the row, so one row's fill
+        // cannot reach the row before it.
+        constexpr int64_t npb = INTR_BYTES_PER_BLOCK / sizeof(T);
+        const int64_t span = left_padding_num + dst->sizes[N - 1];
+        if (CEIL_FACTOR(span, npb) > dst->strides[N - 2]) {
+          return false;
+        }
+      }
+    }
+    for (size_t d = 0; d < N; ++d) {
+      // Negative strides would be reinterpreted as huge positive offsets by
+      // the unsigned bitfields.
+      if (src->strides[d] < 0 || dst->strides[d] < 0) {
+        return false;
+      }
+      if (dst->sizes[d] > NDDMA_MAX_LOOP_SIZE ||
+          dst->strides[d] > NDDMA_MAX_DST_STRIDE ||
+          src->strides[d] > NDDMA_MAX_SRC_STRIDE) {
+        return false;
+      }
+    }
+    return true;
+  }
+}
+
+/// Carry a GM->UB tile that no block-DMA burst can take.
+///
+/// The descriptor handles any stride pattern at any alignment, so it is
+/// always a better answer than copying element by element: a scalar copy
+/// drives one load and one store per element through the scalar unit, and a
+/// measured 256-element tile cost about three times the same tile by DMA.
+/// Scalar therefore runs only for what the descriptor cannot express:
+/// 64-bit elements, more than five axes, negative strides, pad counts past
+/// the 8-bit fields, or sizes and strides past the descriptor's.
+template <typename T, size_t N, bool DisableDCache = false>
+__aiv__ __attribute__((always_inline)) void
+load_gm_to_ubuf_nd_by_nddma_or_scalar(
+    memref_t<__gm__ T, N> *src, memref_t<__ubuf__ T, N> *dst, PadMode pad_mode,
+    typename PadValueType<T>::type pad_value, int64_t left_padding_num,
+    int64_t right_padding_num, uint8_t l2_cache_ctl) {
+  if constexpr (sizeof(T) <= 4 && N <= 5) {
+    if (nddma_can_move<T, N>(src, dst, left_padding_num, right_padding_num)) {
+      load_gm_to_ubuf_nd_by_nddma<T, N>(src, dst, nddma_pad_bits<T>(pad_value),
+                                        nddma_pads_with_nearest(pad_mode),
+                                        left_padding_num, right_padding_num,
+                                        l2_cache_ctl);
+      return;
+    }
+  }
+  if constexpr (N == 1) {
+    load_gm_to_ubuf_1d_by_scalar<T, DisableDCache>(src, dst);
+  } else {
+    load_gm_to_ubuf_nd_by_scalar<T, N, DisableDCache>(src, dst);
+  }
+}
+
+/// Move a monotonic N-axis tile with block DMA.
+///
+/// Adjacent axes that are contiguous on *both* operands carry no gap across
+/// the boundary, so they describe one longer run and are merged; what remains
+/// goes to the contiguous-last-dim helpers, which own the descriptor field
+/// encoding (burst splitting, gaps, Compact mode). Axes past the third are
+/// walked in a loop, as the lower-rank cores do for shapes their cascades
+/// cannot merge.
+///
+/// Returns false when no block-DMA form applies, so the caller can fall back.
+/// The alignment rules are the ones load_gm_to_ubuf_{2,3}d_core apply: a UB
+/// row pitch must be block aligned unless the rows are packed and unpadded,
+/// which is the hardware's Compact mode.
+template <typename T, size_t N>
+__aiv__ __attribute__((always_inline)) bool load_gm_to_ubuf_nd_by_block_dma(
+    memref_t<__gm__ T, N> *src, memref_t<__ubuf__ T, N> *dst,
+    int64_t left_padding_num, int64_t right_padding_num, uint8_t l2_cache_ctl) {
+  // Decline a trailing pad at this rank: returning false sends the load to
+  // load_gm_to_ubuf_nd_by_nddma_or_scalar, whose descriptor places any count
+  // up to NDDMA_MAX_PAD exactly. Block DMA cannot answer here, because the axis
+  // merging below is what fixes the burst length, and block_dma_can_pad needs
+  // that length to tell whether the burst carries the count exactly or rounds
+  // it up to a UB block.
+  if (right_padding_num != 0) {
+    return false;
+  }
+  int64_t sizes[N + 1];
+  int64_t gmStrides[N + 1];
+  int64_t ubStrides[N + 1];
+  size_t rank = 0;
+  for (size_t d = 0; d < N; ++d) {
+    if (rank > 0 && gmStrides[rank - 1] == src->strides[d] * src->sizes[d] &&
+        ubStrides[rank - 1] == dst->strides[d] * dst->sizes[d]) {
+      sizes[rank - 1] *= src->sizes[d];
+      gmStrides[rank - 1] = src->strides[d];
+      ubStrides[rank - 1] = dst->strides[d];
+      continue;
+    }
+    sizes[rank] = src->sizes[d];
+    gmStrides[rank] = src->strides[d];
+    ubStrides[rank] = dst->strides[d];
+    ++rank;
+  }
+
+  // A non-unit innermost stride means one element per burst. The lower-rank
+  // cores express that by viewing the tile with a trailing unit axis; do the
+  // same so a single dispatch covers both forms.
+  if (gmStrides[rank - 1] != 1 || ubStrides[rank - 1] != 1) {
+    if (ubStrides[rank - 1] != 1 && !isStrideAligned<T>(ubStrides[rank - 1])) {
+      return false;
+    }
+    sizes[rank] = 1;
+    gmStrides[rank] = 1;
+    ubStrides[rank] = 1;
+    ++rank;
+  }
+
+  // The row pitch feeding the burst loop must be block aligned, unless the
+  // rows are packed and unpadded, which is Compact mode.
+  if (rank >= 2) {
+    constexpr int64_t num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
+    const int64_t pitch = ubStrides[rank - 2];
+    const bool packed = left_padding_num == 0 && right_padding_num == 0 &&
+                        pitch == sizes[rank - 1];
+    if (!packed && !isStrideAligned<T>(pitch)) {
+      return false;
+    }
+    // Each padded burst spans CEIL(lp + size + rp, npb) elements from the
+    // row's pulled-back start and must not reach into the next row. Mirrors
+    // the row-pitch check in load_gm_to_ubuf_2d_core.
+    if (!packed &&
+        CEIL_FACTOR(left_padding_num + sizes[rank - 1] + right_padding_num,
+                    num_per_block) > pitch) {
+      return false;
+    }
+  }
+  if (rank >= 3 && !isStrideAligned<T>(ubStrides[rank - 3])) {
+    return false;
+  }
+
+  if (rank == 1) {
+    memref_t<__gm__ T, 1> gm1{
+        src->allocated, src->aligned, src->offset, {sizes[0]}, {gmStrides[0]}};
+    memref_t<__ubuf__ T, 1> ub1{
+        dst->allocated, dst->aligned, dst->offset, {sizes[0]}, {ubStrides[0]}};
+    load_gm_to_ubuf_1d_core_with_contiguous_last_dim<T>(
+        &gm1, &ub1, left_padding_num, right_padding_num, l2_cache_ctl);
+    return true;
+  }
+
+  if (rank == 2) {
+    memref_t<__gm__ T, 2> gm2{src->allocated,
+                              src->aligned,
+                              src->offset,
+                              {sizes[0], sizes[1]},
+                              {gmStrides[0], gmStrides[1]}};
+    memref_t<__ubuf__ T, 2> ub2{dst->allocated,
+                                dst->aligned,
+                                dst->offset,
+                                {sizes[0], sizes[1]},
+                                {ubStrides[0], ubStrides[1]}};
+    load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
+        &gm2, &ub2, left_padding_num, right_padding_num, l2_cache_ctl);
+    return true;
+  }
+
+  // Three axes go straight to the 3D helper; anything above is walked in a
+  // loop over the outermost axes, which is what the peeling in
+  // MultiDimOpToLibraryCallPattern would otherwise do in the IR.
+  const size_t inner = rank - 3;
+  int64_t outerCount = 1;
+  for (size_t d = 0; d < inner; ++d) {
+    outerCount *= sizes[d];
+  }
+  for (int64_t flat = 0; flat < outerCount; ++flat) {
+    int64_t gmOffset = src->offset;
+    int64_t ubOffset = dst->offset;
+    int64_t rem = flat;
+    for (size_t d = inner; d-- > 0;) {
+      const int64_t idx = rem % sizes[d];
+      rem /= sizes[d];
+      gmOffset += idx * gmStrides[d];
+      ubOffset += idx * ubStrides[d];
+    }
+    memref_t<__gm__ T, 3> gm3{
+        src->allocated,
+        src->aligned,
+        gmOffset,
+        {sizes[inner], sizes[inner + 1], sizes[inner + 2]},
+        {gmStrides[inner], gmStrides[inner + 1], gmStrides[inner + 2]}};
+    memref_t<__ubuf__ T, 3> ub3{
+        dst->allocated,
+        dst->aligned,
+        ubOffset,
+        {sizes[inner], sizes[inner + 1], sizes[inner + 2]},
+        {ubStrides[inner], ubStrides[inner + 1], ubStrides[inner + 2]}};
+    load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T>(
+        &gm3, &ub3, left_padding_num, right_padding_num, l2_cache_ctl);
+  }
+  return true;
+}
+
+/// Core func of loading GM -> UB for four and five axes.
+///
+/// At this rank only the implicit-transposition case has a DMA form, and
+/// NDDMA covers it for any permutation up to five axes. The block-DMA
+/// cascade that `load_gm_to_ubuf_{2,3}d_core` use to merge contiguous axes
+/// is deliberately not replicated: a load that would need it never reaches
+/// these entry points, because InferMaxRankExternalModel<LoadOp> keeps a
+/// non-permuting load at rank 3 and lets MultiDimOpToLibraryCallPattern peel
+/// the outer axes into loops around the 3D template. The scalar fallback
+/// below is the safety net if one ever does.
+template <typename T, size_t N, bool DisableDCache = false>
+__aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_nd_core(
+    memref_t<__gm__ T, N> *src, memref_t<__ubuf__ T, N> *dst, PadMode pad_mode,
+    typename PadValueType<T>::type pad_value, int64_t left_padding_num,
+    int64_t right_padding_num, EvictionPolicy eviction_policy,
+    AtomicKind atomic_kind = AtomicKind::None) {
+  static_assert(N >= 4 && N <= 5,
+                "ranks up to three have their own cores; NDDMA stops at five "
+                "axes");
+  if (is_no_op<N>(src->sizes)) {
+    return;
+  }
+
+  using PadValueT = typename PadValueType<T>::type;
+  if (pad_mode == PadMode::Value) {
+    INTRINSIC(set_mov_pad_val, *((uint64_t *)((PadValueT *)(&pad_value))));
+  } else if (pad_mode == PadMode::Null) {
+    INTRINSIC(set_mov_pad_val, 0);
+  }
+
+  const uint8_t l2_cache_ctl = static_cast<uint8_t>(eviction_policy);
+
+  // nddma_desc::loop_desc holds strides in unsigned bitfields, so a negative
+  // stride (e.g. a flipped axis) would be reinterpreted as a huge positive
+  // offset. Keep those on the scalar path.
+  for (size_t d = 0; d < N; ++d) {
+    if (src->strides[d] < 0 || dst->strides[d] < 0) [[unlikely]] {
+      load_gm_to_ubuf_nd_by_nddma_or_scalar<T, N, DisableDCache>(
+          src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
+          l2_cache_ctl);
+      return;
+    }
+  }
+
+  // Implicit transposition: some adjacent axis pair is inverted on one of the
+  // operands, so no single block-DMA burst walks both tiles in order.
+  bool is_transposing = false;
+  for (size_t d = 0; d + 1 < N; ++d) {
+    if (src->strides[d] < src->strides[d + 1] ||
+        dst->strides[d] < dst->strides[d + 1]) {
+      is_transposing = true;
+    }
+  }
+
+  // The descriptor walks both tiles stride by stride and writes element
+  // granular, so it needs no aligned destination; that requirement belongs to
+  // the block-DMA burst below. Which of the descriptor and the scalar loop can
+  // take the tile is load_gm_to_ubuf_nd_by_nddma_or_scalar's decision, made
+  // from the same strides, so there is nothing to choose between here.
+  if (is_transposing) {
+    load_gm_to_ubuf_nd_by_nddma_or_scalar<T, N, DisableDCache>(
+        src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
+        l2_cache_ctl);
+    return;
+  }
+
+  // Monotonic: a block-DMA burst can walk both tiles. Its start is the
+  // pulled-back address when left padding is present.
+  auto dst_ptr = dst->aligned + dst->offset - left_padding_num;
+  if (isAddress32ByteAligned(dst_ptr) &&
+      load_gm_to_ubuf_nd_by_block_dma<T, N>(src, dst, left_padding_num,
+                                            right_padding_num, l2_cache_ctl)) {
+    return;
+  }
+  load_gm_to_ubuf_nd_by_nddma_or_scalar<T, N, DisableDCache>(
+      src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
+      l2_cache_ctl);
+}
+
+/// Named entry points REGISTE_DMA_LOAD expands to.
+template <typename T, bool DisableDCache = false>
+__aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_4d_core(
+    memref_t<__gm__ T, 4> *src, memref_t<__ubuf__ T, 4> *dst, PadMode pad_mode,
+    typename PadValueType<T>::type pad_value, int64_t left_padding_num,
+    int64_t right_padding_num, EvictionPolicy eviction_policy,
+    AtomicKind atomic_kind = AtomicKind::None) {
+  load_gm_to_ubuf_nd_core<T, 4, DisableDCache>(
+      src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
+      eviction_policy, atomic_kind);
+}
+
+template <typename T, bool DisableDCache = false>
+__aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_5d_core(
+    memref_t<__gm__ T, 5> *src, memref_t<__ubuf__ T, 5> *dst, PadMode pad_mode,
+    typename PadValueType<T>::type pad_value, int64_t left_padding_num,
+    int64_t right_padding_num, EvictionPolicy eviction_policy,
+    AtomicKind atomic_kind = AtomicKind::None) {
+  load_gm_to_ubuf_nd_core<T, 5, DisableDCache>(
+      src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
+      eviction_policy, atomic_kind);
+}
+
 #define REGISTE_DMA_LOAD_NOCACHE(dim, type)                                    \
   __aiv__ __attribute__((always_inline)) void                                  \
       _mlir_ciface_load_gm_to_ubuf_##dim##d_##type##_nocache(                  \
           memref_t<__gm__ type, dim> *src, memref_t<__ubuf__ type, dim> *dst,  \
           PadMode pad_mode, PadValueT<type> pad_value,                         \
-          int64_t left_padding_num, EvictionPolicy eviction_policy) {          \
+          int64_t left_padding_num, int64_t right_padding_num,                 \
+          EvictionPolicy eviction_policy) {                                    \
     load_gm_to_ubuf_##dim##d_core<type, true>(                                 \
-        src, dst, pad_mode, pad_value, left_padding_num, eviction_policy);     \
+        src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,    \
+        eviction_policy);                                                      \
   }
 #else
 #define REGISTE_DMA_LOAD_NOCACHE(dim, type)
@@ -2418,12 +2812,13 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
       _mlir_ciface_load_gm_to_ubuf_##dim##d_##type(                            \
           memref_t<__gm__ type, dim> *src, memref_t<__ubuf__ type, dim> *dst,  \
           PadMode pad_mode, type pad_value, int64_t left_padding_num,          \
-          EvictionPolicy eviction_policy)
+          int64_t right_padding_num, EvictionPolicy eviction_policy)
 
 #define REGISTE_DMA_LOAD(dim, type)                                            \
   DECLARE_DMA_LOAD(dim, type) {                                                \
     load_gm_to_ubuf_##dim##d_core<type>(src, dst, pad_mode, pad_value,         \
-                                        left_padding_num, eviction_policy);    \
+                                        left_padding_num, right_padding_num,   \
+                                        eviction_policy);                      \
   }                                                                            \
   REGISTE_DMA_LOAD_NOCACHE(dim, type)
 
@@ -2434,12 +2829,13 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
       _mlir_ciface_load_gm_to_ubuf_##dim##d_##type(                            \
           memref_t<__gm__ type, dim> *src, memref_t<__ubuf__ type, dim> *dst,  \
           PadMode pad_mode, float pad_value, int64_t left_padding_num,         \
-          EvictionPolicy eviction_policy)
+          int64_t right_padding_num, EvictionPolicy eviction_policy)
 
 #define REGISTE_DMA_LOAD_FP8(dim, type)                                        \
   DECLARE_DMA_LOAD_FP8(dim, type) {                                            \
     load_gm_to_ubuf_##dim##d_core<type>(src, dst, pad_mode, pad_value,         \
-                                        left_padding_num, eviction_policy);    \
+                                        left_padding_num, right_padding_num,   \
+                                        eviction_policy);                      \
   }                                                                            \
   REGISTE_DMA_LOAD_NOCACHE(dim, type)
 

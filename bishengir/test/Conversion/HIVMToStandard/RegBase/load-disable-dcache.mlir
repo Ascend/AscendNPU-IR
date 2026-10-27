@@ -18,11 +18,13 @@ func.func @load_rank1(%rw: memref<2xi8, #hivm.address_space<gm>>, %ro: memref<2x
 
 // -----
 
-// Rank > 3 takes the separate rank-reduction lowering path.
+// A rank-4 load resolves to the rank-4 template. The DCache policy still
+// follows the buffer: the written one takes the nocache entry point and the
+// read-only one does not.
 // CHECK-LABEL: func.func @load_rank4
-// CHECK: call @load_gm_to_ubuf_3d_int8_t_nocache(
-// CHECK: call @load_gm_to_ubuf_3d_int8_t(
-// CHECK-NOT: call @load_gm_to_ubuf_3d_int8_t_nocache
+// CHECK: call @load_gm_to_ubuf_4d_int8_t_nocache(
+// CHECK: call @load_gm_to_ubuf_4d_int8_t(
+// CHECK-NOT: call @load_gm_to_ubuf_4d_int8_t_nocache
 func.func @load_rank4(%rw: memref<2x2x2x2xi8, #hivm.address_space<gm>>, %ro: memref<2x2x2x2xi8, #hivm.address_space<gm>>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
   %c0 = arith.constant 0 : index
   %one = arith.constant 1 : i8
