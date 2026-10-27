@@ -8,33 +8,36 @@
 extern "C" {
 
 // RoCE uses the same runtime-configured UB workspace and event ID as generic
-// SHMEM RMA. Transfer counts are in elements; payload memrefs retain offsets.
+// SHMEM RMA. Transfer counts are bytes; apply typed memref offsets before
+// casting payload pointers to char for the element-counted SHMEM APIs.
 #define ACLSHMEM_ROCE_GET_NBI_WRAPPER(NAME, TYPE)                              \
   __aicore__ __attribute__((always_inline)) void                               \
   _mlir_ciface_aclshmemx_roce_get_nbi_##NAME(memref_t<__gm__ TYPE, 1> *dst,    \
                                              memref_t<__gm__ TYPE, 1> *src,    \
-                                             uint32_t elem_size, int32_t pe) { \
+                                             uint32_t nbytes, int32_t pe) {    \
     auto *state = aclshmemi_get_state();                                       \
     auto *buf =                                                                \
-        reinterpret_cast<__ubuf__ TYPE *>(state->rdma_config.aclshmem_ub);     \
+        reinterpret_cast<__ubuf__ char *>(state->rdma_config.aclshmem_ub);     \
     uint32_t sync_id = state->rdma_config.sync_id;                             \
-    aclshmemx_roce_get_nbi<TYPE>(dst->aligned + dst->offset,                   \
-                                 src->aligned + src->offset, buf, elem_size,   \
-                                 pe, sync_id);                                 \
+    aclshmemx_roce_get_nbi<char>(                                              \
+        reinterpret_cast<__gm__ char *>(dst->aligned + dst->offset),           \
+        reinterpret_cast<__gm__ char *>(src->aligned + src->offset), buf,      \
+        nbytes, pe, sync_id);                                                  \
   }
 
 #define ACLSHMEM_ROCE_PUT_NBI_WRAPPER(NAME, TYPE)                              \
   __aicore__ __attribute__((always_inline)) void                               \
   _mlir_ciface_aclshmemx_roce_put_nbi_##NAME(memref_t<__gm__ TYPE, 1> *dst,    \
                                              memref_t<__gm__ TYPE, 1> *src,    \
-                                             uint32_t elem_size, int32_t pe) { \
+                                             uint32_t nbytes, int32_t pe) {    \
     auto *state = aclshmemi_get_state();                                       \
     auto *buf =                                                                \
-        reinterpret_cast<__ubuf__ TYPE *>(state->rdma_config.aclshmem_ub);     \
+        reinterpret_cast<__ubuf__ char *>(state->rdma_config.aclshmem_ub);     \
     uint32_t sync_id = state->rdma_config.sync_id;                             \
-    aclshmemx_roce_put_nbi<TYPE>(dst->aligned + dst->offset,                   \
-                                 src->aligned + src->offset, buf, elem_size,   \
-                                 pe, sync_id);                                 \
+    aclshmemx_roce_put_nbi<char>(                                              \
+        reinterpret_cast<__gm__ char *>(dst->aligned + dst->offset),           \
+        reinterpret_cast<__gm__ char *>(src->aligned + src->offset), buf,      \
+        nbytes, pe, sync_id);                                                  \
   }
 
 #define ACLSHMEM_ROCE_QUIET_WRAPPER(NAME, TYPE)                                \
@@ -52,20 +55,22 @@ extern "C" {
   __aicore__ __attribute__((always_inline)) void                               \
   _mlir_ciface_aclshmemx_udma_get_nbi_##NAME(memref_t<__gm__ TYPE, 1> *dst,    \
                                              memref_t<__gm__ TYPE, 1> *src,    \
-                                             uint32_t elem_size, int32_t pe) { \
-    aclshmemx_udma_get_nbi<TYPE, PIPE_S>(                                      \
-        dst->aligned + dst->offset, src->aligned + src->offset,                \
-        (__ubuf__ TYPE *)nullptr, elem_size, pe, 0);                           \
+                                             uint32_t nbytes, int32_t pe) {    \
+    aclshmemx_udma_get_nbi<char, PIPE_S>(                                      \
+        reinterpret_cast<__gm__ char *>(dst->aligned + dst->offset),           \
+        reinterpret_cast<__gm__ char *>(src->aligned + src->offset),           \
+        (__ubuf__ char *)nullptr, nbytes, pe, 0);                              \
   }
 
 #define ACLSHMEM_UDMA_PUT_NBI_WRAPPER(NAME, TYPE)                              \
   __aicore__ __attribute__((always_inline)) void                               \
   _mlir_ciface_aclshmemx_udma_put_nbi_##NAME(memref_t<__gm__ TYPE, 1> *dst,    \
                                              memref_t<__gm__ TYPE, 1> *src,    \
-                                             uint32_t elem_size, int32_t pe) { \
-    aclshmemx_udma_put_nbi<TYPE, PIPE_S>(                                      \
-        dst->aligned + dst->offset, src->aligned + src->offset,                \
-        (__ubuf__ TYPE *)nullptr, elem_size, pe, 0);                           \
+                                             uint32_t nbytes, int32_t pe) {    \
+    aclshmemx_udma_put_nbi<char, PIPE_S>(                                      \
+        reinterpret_cast<__gm__ char *>(dst->aligned + dst->offset),           \
+        reinterpret_cast<__gm__ char *>(src->aligned + src->offset),           \
+        (__ubuf__ char *)nullptr, nbytes, pe, 0);                              \
   }
 
 // Relay wrappers are opt-in via BISHENGIR_SHMEM_RELAY_SUPPORT for C310 and
@@ -75,20 +80,22 @@ extern "C" {
   __aicore__ __attribute__((always_inline)) void                               \
   _mlir_ciface_aclshmemx_udma_relay_get_nbi_##NAME(                            \
       memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
-      uint32_t elem_size, int32_t pe, int32_t relay_pe) {                      \
-    aclshmemx_udma_relay_get_nbi<TYPE, PIPE_S>(                                \
-        dst->aligned + dst->offset, src->aligned + src->offset,                \
-        (__ubuf__ TYPE *)nullptr, elem_size, pe, relay_pe, 0);                 \
+      uint32_t nbytes, int32_t pe, int32_t relay_pe) {                         \
+    aclshmemx_udma_relay_get_nbi<char, PIPE_S>(                                \
+        reinterpret_cast<__gm__ char *>(dst->aligned + dst->offset),           \
+        reinterpret_cast<__gm__ char *>(src->aligned + src->offset),           \
+        (__ubuf__ char *)nullptr, nbytes, pe, relay_pe, 0);                    \
   }
 
 #define ACLSHMEM_UDMA_RELAY_PUT_NBI_WRAPPER(NAME, TYPE)                        \
   __aicore__ __attribute__((always_inline)) void                               \
   _mlir_ciface_aclshmemx_udma_relay_put_nbi_##NAME(                            \
       memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
-      uint32_t elem_size, int32_t pe, int32_t relay_pe) {                      \
-    aclshmemx_udma_relay_put_nbi<TYPE, PIPE_S>(                                \
-        dst->aligned + dst->offset, src->aligned + src->offset,                \
-        (__ubuf__ TYPE *)nullptr, elem_size, pe, relay_pe, 0);                 \
+      uint32_t nbytes, int32_t pe, int32_t relay_pe) {                         \
+    aclshmemx_udma_relay_put_nbi<char, PIPE_S>(                                \
+        reinterpret_cast<__gm__ char *>(dst->aligned + dst->offset),           \
+        reinterpret_cast<__gm__ char *>(src->aligned + src->offset),           \
+        (__ubuf__ char *)nullptr, nbytes, pe, relay_pe, 0);                    \
   }
 
 #define ACLSHMEM_UDMA_RELAY_WRAPPERS(NAME, TYPE)                               \

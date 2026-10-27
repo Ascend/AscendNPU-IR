@@ -24,6 +24,7 @@ operations = {
     "roce_quiet": ["i32"],
     "udma_get_nbi": ["ptr", "ptr", "i32", "i32"],
     "udma_put_nbi": ["ptr", "ptr", "i32", "i32"],
+    "udma_putmem_signal_nbi": ["ptr", "ptr", "i32", "ptr", "i64", "i32"],
 }
 relay_operations = {
     "udma_relay_get_nbi": ["ptr", "ptr", "i32", "i32", "i32"],
