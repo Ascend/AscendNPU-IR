@@ -646,10 +646,21 @@ load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim(
   constexpr uint16_t num_per_block = INTR_BYTES_PER_BLOCK / bytes;
   constexpr uint16_t aligned_max_burst_cnt =
       FLOOR_FACTOR(INTRIN_MAX_BURST_CNT, num_per_block);
-  const int64_t main_count = size0 / aligned_max_burst_cnt;
-  const uint16_t tail_burst_cnt = size0 % aligned_max_burst_cnt;
   const uint64_t src_stride = static_cast<uint64_t>(stride0_gm) * bytes;
   const uint64_t src_gap = src_stride - bytes;
+
+  if (size0 <= aligned_max_burst_cnt) [[likely]] {
+    // Fast path: a single DMA covers the whole copy. Avoids the non-pow2
+    // div/rem and the main loop of the main/tail split below, which cost
+    // extra scalar instructions on every call for the small sizes that
+    // dominate 1D strided copies.
+    load_gm_to_ubuf_intrin_core(src_ptr, 0, dst_ptr, 0,
+                                static_cast<uint16_t>(size0), bytes,
+                                left_padding_num, src_gap, 0, l2_cache_ctl);
+    return;
+  }
+  const int64_t main_count = size0 / aligned_max_burst_cnt;
+  const uint16_t tail_burst_cnt = size0 % aligned_max_burst_cnt;
 
   for (int64_t i = 0; i < main_count; ++i) {
     const int64_t gm_offset = i * aligned_max_burst_cnt * stride0_gm;
