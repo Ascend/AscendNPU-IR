@@ -468,12 +468,13 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownSubView(
   if (!resultType)
     return failure();
 
+  auto [tilingDim, tiledOffset, tiledSize] = getTilingDimInfo(propagateOp);
   if (auto parallelLoopOp = dyn_cast<scf::ForOp>(subViewOp->getParentOp());
-      parallelLoopOp && parallelLoopOp->hasAttr(hivm::ParallelLoopAttr::name)) {
+      parallelLoopOp && parallelLoopOp->hasAttr(hivm::ParallelLoopAttr::name) &&
+      getExtractOrInsertDim(subViewOp).contains(tilingDim)) {
     return handleParallelLoop(parallelLoopOp, subViewOp, propagateOp, rewriter);
   }
 
-  auto [tilingDim, tiledOffset, tiledSize] = getTilingDimInfo(propagateOp);
   if (tilingDim == -1)
     return failure();
   auto newOffsets = subViewOp.getMixedOffsets();
