@@ -1730,11 +1730,8 @@ struct FmaOpScalarToVectorPattern : public OpRewritePattern<math::FmaOp> {
   }
 };
 
-// Vectorize a single-use scalar chain ending in `vector.broadcast %scalar :
-// T to vector<64xT>` (T = f32 or i32). Each link is a bit-exact op (bitcast
-// / andi / addi / subi / muli / minsi / maxsi / math.absf). Vectorizing the
-// whole chain at once avoids leaving a scalar `arith.bitcast f32<->i32`,
-// whose LLVM lowering the AIC vec backend cannot select.
+// Vectorize a single-use scalar chain ending in a 64-lane broadcast.
+// Keep comparison/select types consistent and lower scalar bitcasts together.
 struct ScalarChainBroadcastToVectorPattern
     : public OpRewritePattern<vector::BroadcastOp> {
   using OpRewritePattern<vector::BroadcastOp>::OpRewritePattern;
@@ -1761,12 +1758,10 @@ struct ScalarChainBroadcastToVectorPattern
     if (chain.empty())
       return failure();
 
-    // Only fire when the chain actually contains a bitcast. Vectorizing a
-    // chain of, say, pure arithmetic ops that happen to end in a broadcast is
-    // not necessary (the scalar form lowers fine to LLVM) and could mask a
-    // genuine remaining scalar bitcast elsewhere.
-    if (!llvm::any_of(chain,
-                      [](Operation *op) { return isa<arith::BitcastOp>(op); }))
+    // Scalar bitcasts and floating-point comparisons need vector lowering.
+    if (!llvm::any_of(chain, [](Operation *op) {
+          return isa<arith::BitcastOp, arith::CmpFOp>(op);
+        }))
       return failure();
 
     Location loc = brcOp.getLoc();
@@ -1819,6 +1814,12 @@ struct ScalarChainBroadcastToVectorPattern
             loc, opVecType, cmpi.getPredicate(),
             curVec, broadcastOrCast(rewriter, loc, cmpi.getRhs(),
                                      cmpOperandVecType));
+      } else if (auto cmpf = dyn_cast<arith::CmpFOp>(op)) {
+        VectorType operandType = VectorType::get({64}, cmpf.getLhs().getType());
+        curVec = rewriter.create<arith::CmpFOp>(
+            loc, opVecType, cmpf.getPredicate(), curVec,
+            broadcastOrCast(rewriter, loc, cmpf.getRhs(), operandType),
+            cmpf.getFastmath());
       } else if (auto select = dyn_cast<arith::SelectOp>(op)) {
         // Select is a fork: spine continues on the condition (operand 0);
         // true_val/false_val are side inputs broadcast/cast to the result
@@ -1844,7 +1845,7 @@ private:
   static bool isScalarChainOp(Operation *op) {
     return isa<arith::BitcastOp, arith::AndIOp, arith::AddIOp, arith::MinSIOp,
                arith::MaxSIOp, arith::SubIOp, arith::MulIOp, math::AbsFOp,
-               arith::SelectOp, arith::CmpIOp>(op);
+               arith::SelectOp, arith::CmpIOp, arith::CmpFOp>(op);
   }
 
   static Value broadcastOrCast(PatternRewriter &rewriter, Location loc,
