@@ -909,6 +909,10 @@ static Value tileReductionOpTreeReduce(
   auto cleanup = [&builder](Value loop) {
     builder.create<transform::ApplyPatternsOp>(loop, [](OpBuilder &innerBuilder,
                                                         Location loc) {
+      innerBuilder.create<transform::ApplyCanonicalizationPatternsOp>(loc);
+      innerBuilder
+          .create<transform::ApplyMergeConsecutiveInsertExtractSlicePatternsOp>(
+              loc);
       innerBuilder.create<transform::ApplyForwardExtractSlicePatternsOp>(loc);
     });
   };
