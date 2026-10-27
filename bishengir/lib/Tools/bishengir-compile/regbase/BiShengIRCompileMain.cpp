@@ -18,6 +18,7 @@
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/bishengir-compile/regbase/PassPipeline.h"
 #include "bishengir/Tools/bishengir-compile/regbase/Utility.h"
+#include "bishengir/Tools/bishengir-compile/regbase/VectorizationFailure.h"
 #include "bishengir/Tools/hivmc/Config.h"
 #include "bishengir/Tools/hivmc/HIVMC.h"
 #include "bishengir/Tools/hivmc/HIVMCA5.h"
@@ -467,6 +468,7 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
   // Overflow tracking: UB gets a Vector-only multi-buffer fallback; L1/L0C
   // overflow still uses the coarse enable-auto-multi-buffer switch.
   bool hasUboverflow = false;
+  bool hasVectorizationPipelineFailure = false;
   MLIRContext *ctx = mod->getContext();
   mlir::DiagnosticEngine &diagEngine = ctx->getDiagEngine();
   std::vector<Diagnostic> collectedDiagnostics;
@@ -484,6 +486,14 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
       if (msg.find("ub overflow") != std::string::npos) {
         hasUboverflow = true;
       }
+      if (isVectorizationPipelineFailure(msg))
+        hasVectorizationPipelineFailure = true;
+    } else if (diag.getSeverity() == mlir::DiagnosticSeverity::Warning) {
+      std::string warnMsg;
+      llvm::raw_string_ostream warnStream(warnMsg);
+      warnStream << diag;
+      if (isVectorizationPipelineFailure(warnStream.str()))
+        hasVectorizationPipelineFailure = true;
     }
     collectedDiagnostics.emplace_back(std::move(diag));
   });
@@ -565,6 +575,7 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     ModuleOp hirCompileMode = mod.clone();
     bool success = true;
     hasUboverflow = false;
+    hasVectorizationPipelineFailure = false;
 
     if (compileFlow == CompileFlow::Affinity) {
       success = runAffinityPipelines(hirCompileMode, config);
@@ -585,6 +596,23 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
                                              config, "buildFinalHIVMPipelines");
     }
     if (!success) {
+      if (hasVectorizationPipelineFailure &&
+          config.getEnableOptimizeScalarTransfers()) {
+        config.setEnableOptimizeScalarTransfers(false);
+        tryTimes += 1;
+
+        llvm::errs() << "[NOTE] ";
+        if (hasUboverflow && hasVectorizationPipelineFailure)
+          llvm::errs() << "UB overflow and vectorization pipeline failure";
+        else if (hasUboverflow)
+          llvm::errs() << "UB overflow";
+        else
+          llvm::errs() << "vectorization pipeline failure";
+        llvm::errs() << " detected; retrying with "
+                        "enable-optimize-scalar-transfers=false.\n";
+        collectedDiagnostics.clear();
+        continue;
+      }
       // The pre-existing UB overflow fallback (all-op fusion plus more
       // auto-schedule buffers); combined with the stack limit when that was
       // already applied as a retry.
@@ -597,8 +625,7 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
           llvm::errs() << "[NOTE] the VF stack retry hit a UB overflow; "
                           "retrying with vf-fusion-mode=all-op and "
                           "hfusion-max-buffer-count-tuning+2.\n";
-          if (tryTimes < i + 2)
-            tryTimes = i + 2;
+          tryTimes += 1;
         }
         LDBG("ub overflow detected at attempt "
              << (i + 1) << "/" << tryTimes << ", fallback with all-op mode");
