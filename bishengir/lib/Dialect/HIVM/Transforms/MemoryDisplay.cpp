@@ -142,13 +142,16 @@ generateMemoryInfo(const StorageEntry *storageEntry,
   assert(storageEntry->bufInfo != nullptr);
   memoryInfo.extent =
       AlignUp(storageEntry->bufInfo->constBits, utils::kBitsToByte);
-  assert(storageEntry->bufferLifeVec.size() == 1 &&
-         "The final bufferlife corresponding to the buffer should be 1");
-  assert(storageEntry->bufferLifeVec[0] != nullptr);
-  memoryInfo.lifeTimeInIR =
-      std::make_pair(storageEntry->bufferLifeVec[0]->allocTime,
-                     storageEntry->bufferLifeVec[0]->freeTime);
-  memoryInfo.allocTimeInIR = storageEntry->bufferLifeVec[0]->allocTime;
+  std::optional<BufferLifeView> life =
+      storageEntry->GetBufferLifeByValue(value);
+  // An interior buffer dropped by merge has no stored life.
+  if (life) {
+    memoryInfo.lifeTimeInIR = std::make_pair(life->allocTime, life->freeTime);
+    memoryInfo.allocTimeInIR = life->allocTime;
+  } else {
+    memoryInfo.lifeTimeInIR = std::make_pair(int64_t{-1}, int64_t{-1});
+    memoryInfo.allocTimeInIR = -1;
+  }
   memoryInfo.isTmpBuf = oper->hasAttr("is_tmpbuf") ? true : false;
   return memoryInfo;
 }
@@ -176,7 +179,7 @@ void collectMemoryInfoForDebug(
       for (auto &buffer : childrenStorageEntry->inplaceBuffers) {
         if (buffer.getDefiningOp()) {
           if (auto allocOp =
-               dyn_cast<memref::AllocOp>(buffer.getDefiningOp())) {
+                  dyn_cast<memref::AllocOp>(buffer.getDefiningOp())) {
             MemoryInfo memoryLeafInfo = generateMemoryInfo(
                 childrenStorageEntry, buffer2Offsets, allocOp);
             memoryDisplayInfo.memoryInfoArray.emplace_back(memoryLeafInfo);
