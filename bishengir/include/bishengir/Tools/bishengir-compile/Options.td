@@ -1310,11 +1310,27 @@ def EnableFlatten : GeneralOptimizationControlOptions<
 }
 
 def EnableFuseReductionIntoLoop : GeneralOptimizationControlOptions<
-  "Enable fuse post-loop reductions into the loop body",
+  "Fuse post-loop sums into the loop (allows floating-point reassociation)",
   "bool",
   "false"
 > {
   let passGroup = ["HFUSION"];
+}
+
+def FuseReductionIntoLoopMode : GeneralOptimizationControlOptions<
+  "Loop initializer handling when fusion is enabled: zero-only or late",
+  "bishengir::FuseReductionIntoLoopMode",
+  "bishengir::FuseReductionIntoLoopMode::ZeroOnly"
+> {
+  let passGroup = ["HFUSION"];
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(bishengir::FuseReductionIntoLoopMode::ZeroOnly, "zero-only",
+             "Fuse only known-zero initializers"),
+  clEnumValN(bishengir::FuseReductionIntoLoopMode::Late, "late",
+             "Reduce the initializer after the loop")
+)
+  }];
 }
 
 def SimtOptimizationMode : GeneralOptimizationControlOptions<
