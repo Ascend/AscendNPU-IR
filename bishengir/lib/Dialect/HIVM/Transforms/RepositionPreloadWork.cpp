@@ -2892,6 +2892,239 @@ void SinkExclusivePreloadWorkPass::runOnOperation() {
   }
 }
 
+// ==== Prefetch (hoist forward) for loop-outside mmadL1 ====
+//
+// Hoist a top-level mmadL1's cbuf prep chain (expand_shape -> [vtranspose]
+// -> expand_shape -> alloc -> mark -> copy -> to_tensor) to right after its
+// producer, so Cube can issue the mmadL1 without stalling on MTE1/MTE2
+// preparation. Loop-internal cases are handled by
+// sinkCopyChainPastUnusedMmad / hoistIndependentPreloadWork above.
+//
+// If another mmad sits between the producer and the chain head, the chain
+// lands after that mmad's fixpipe instead, so the preload does not block it.
+struct MmadPrepChain {
+  hivm::MmadL1Op mmad;
+  SmallVector<Operation *, 8> aChain;
+  SmallVector<Operation *, 8> bChain;
+};
+
+// Collect the mark (via collectMarks, for view-tree marks) and copy pair
+// attached to alloc.
+static bool findPrepMarkAndCopy(memref::AllocOp allocOp,
+                                annotation::MarkOp &markOp,
+                                hivm::CopyOp &copyOp) {
+  SmallVector<Operation *, 4> markUsers;
+  collectMarks(allocOp.getResult(), markUsers);
+  if (markUsers.empty())
+    return false;
+  markOp = cast<annotation::MarkOp>(markUsers.front());
+  for (Operation *user : allocOp->getUsers()) {
+    auto c = dyn_cast<hivm::CopyOp>(user);
+    if (c && c->hasAttr("hivm.inserted-copy")) {
+      copyOp = c;
+      break;
+    }
+  }
+  return copyOp != nullptr;
+}
+
+static FailureOr<SmallVector<Operation *, 8>>
+matchPrepChainWithVtranspose(Value operand) {
+  SmallVector<Operation *, 8> chain;
+  auto toTensorOp = operand.getDefiningOp<bufferization::ToTensorOp>();
+  if (!toTensorOp)
+    return failure();
+  auto allocOp = toTensorOp.getMemref().getDefiningOp<memref::AllocOp>();
+  if (!allocOp)
+    return failure();
+  annotation::MarkOp markOp;
+  hivm::CopyOp copyOp;
+  if (!findPrepMarkAndCopy(allocOp, markOp, copyOp))
+    return failure();
+  auto expand2 = copyOp.getSrc().getDefiningOp<tensor::ExpandShapeOp>();
+  if (!expand2)
+    return failure();
+  auto vtranspose = expand2->getOperand(0).getDefiningOp<hivm::VTransposeOp>();
+  if (!vtranspose)
+    return failure();
+  auto expand1 = vtranspose.getSrc().getDefiningOp<tensor::ExpandShapeOp>();
+  if (!expand1)
+    return failure();
+  chain.push_back(expand1);
+  chain.push_back(vtranspose);
+  chain.push_back(expand2);
+  chain.push_back(allocOp);
+  chain.push_back(markOp);
+  chain.push_back(copyOp);
+  chain.push_back(toTensorOp);
+  return chain;
+}
+
+static FailureOr<SmallVector<Operation *, 8>>
+matchPrepChainWithoutVtranspose(Value operand) {
+  SmallVector<Operation *, 8> chain;
+  auto toTensorOp = operand.getDefiningOp<bufferization::ToTensorOp>();
+  if (!toTensorOp)
+    return failure();
+  auto allocOp = toTensorOp.getMemref().getDefiningOp<memref::AllocOp>();
+  if (!allocOp)
+    return failure();
+  annotation::MarkOp markOp;
+  hivm::CopyOp copyOp;
+  if (!findPrepMarkAndCopy(allocOp, markOp, copyOp))
+    return failure();
+  auto expand1 = copyOp.getSrc().getDefiningOp<tensor::ExpandShapeOp>();
+  if (!expand1)
+    return failure();
+  chain.push_back(expand1);
+  chain.push_back(allocOp);
+  chain.push_back(markOp);
+  chain.push_back(copyOp);
+  chain.push_back(toTensorOp);
+  return chain;
+}
+
+static FailureOr<SmallVector<Operation *, 8>> matchPrepChain(Value operand) {
+  if (auto chain = matchPrepChainWithVtranspose(operand); succeeded(chain))
+    return std::move(*chain);
+  return matchPrepChainWithoutVtranspose(operand);
+}
+
+static FailureOr<MmadPrepChain> matchStdPrepChain(hivm::MmadL1Op mmad) {
+  MmadPrepChain info;
+  info.mmad = mmad;
+  auto aChain = matchPrepChain(mmad.getA());
+  if (failed(aChain))
+    return failure();
+  info.aChain = std::move(*aChain);
+  auto bChain = matchPrepChain(mmad.getB());
+  if (failed(bChain))
+    return failure();
+  info.bChain = std::move(*bChain);
+  return info;
+}
+
+static LogicalResult hoistChainAfterProducer(ArrayRef<Operation *> chain) {
+  if (chain.empty())
+    return failure();
+
+  Operation *chainHead = chain.front();
+  Value src = chainHead->getOperand(0);
+  Operation *producer = src.getDefiningOp();
+  if (!producer)
+    return failure();
+  if (producer->getBlock() != chainHead->getBlock())
+    return failure();
+  if (!producer->isBeforeInBlock(chainHead))
+    return failure();
+
+  for (Operation *op : chain)
+    if (op->getBlock() != producer->getBlock())
+      return failure();
+
+  // Track the latest def the chain depends on (e.g. a shared tensor.empty
+  // used as vtranspose's outs) so the hoisted chain lands after it.
+  DenseSet<Operation *> chainOps(chain.begin(), chain.end());
+  Operation *latestBlockingDef = producer;
+  for (Operation *op : chain) {
+    for (Value operand : op->getOperands()) {
+      Operation *defOp = operand.getDefiningOp();
+      if (!defOp || defOp == producer || chainOps.count(defOp))
+        continue;
+      if (defOp->getBlock() != producer->getBlock())
+        return failure();
+      if (defOp->isBeforeInBlock(producer))
+        continue;
+      if (!defOp->isBeforeInBlock(chainHead))
+        continue; // scratch def defined after chainHead; pure, safe to skip
+      if (latestBlockingDef->isBeforeInBlock(defOp))
+        latestBlockingDef = defOp;
+    }
+  }
+
+  // Insert after the latest blocking def, or after the fixpipe of the last
+  // mmad sitting between the producer and chainHead, whichever comes later.
+  auto findLastFixpipeBefore = [](Operation *start,
+                                  Operation *limit) -> Operation * {
+    Operation *last = nullptr;
+    for (Operation *it = start; it && it != limit; it = it->getNextNode())
+      if (isa<hivm::FixpipeOp>(it))
+        last = it;
+    return last;
+  };
+
+  Operation *insertPt = latestBlockingDef->getNextNode();
+  if (Operation *fp =
+          findLastFixpipeBefore(producer->getNextNode(), chainHead)) {
+    Operation *afterFp = fp->getNextNode();
+    if (afterFp && insertPt->isBeforeInBlock(afterFp))
+      insertPt = afterFp;
+  }
+
+  // Move each chain op in original order, landing after any intervening
+  // mmad's fixpipe.
+  SmallVector<Operation *> ordered;
+  for (Operation *op : chain)
+    if (op->getBlock() == chainHead->getBlock())
+      ordered.push_back(op);
+  llvm::sort(ordered,
+             [](Operation *a, Operation *b) { return a->isBeforeInBlock(b); });
+
+  bool changed = false;
+  Operation *prev = nullptr; // last landed chain op
+  for (Operation *op : ordered) {
+    Operation *landBefore;
+    if (!prev) {
+      // First chain op (chainHead) goes right before the insertion point.
+      landBefore = insertPt;
+    } else {
+      // Land after the previously landed op, hopping over the fixpipe of any
+      // intervening mmad so the preload does not block it.
+      landBefore = prev->getNextNode();
+      if (Operation *fp = findLastFixpipeBefore(prev->getNextNode(), op))
+        landBefore = fp->getNextNode();
+    }
+    if (!landBefore)
+      break;
+    // Never land before a non-chain operand's def, or SSA dominance breaks.
+    for (Value operand : op->getOperands()) {
+      Operation *defOp = operand.getDefiningOp();
+      if (!defOp || defOp == producer || chainOps.count(defOp))
+        continue;
+      if (defOp->getBlock() != op->getBlock())
+        continue;
+      Operation *afterDef = defOp->getNextNode();
+      if (afterDef && landBefore->isBeforeInBlock(afterDef))
+        landBefore = afterDef;
+    }
+    if (op != landBefore && op->getNextNode() != landBefore) {
+      op->moveBefore(landBefore);
+      changed = true;
+    }
+    prev = op;
+  }
+
+  return changed ? success() : failure();
+}
+
+static LogicalResult prefetchTopLevelMmadInput(func::FuncOp funcOp) {
+  SmallVector<hivm::MmadL1Op, 4> mmads;
+  funcOp.walk([&](hivm::MmadL1Op mmad) {
+    if (mmad->getParentOfType<scope::ScopeOp>())
+      return;
+    mmads.push_back(mmad);
+  });
+
+  for (auto mmad : llvm::reverse(mmads)) {
+    auto prepInfo = matchStdPrepChain(mmad);
+    if (failed(prepInfo))
+      continue;
+    (void)hoistChainAfterProducer(prepInfo->aChain);
+    (void)hoistChainAfterProducer(prepInfo->bChain);
+  }
+  return success();
+}
+
 struct RepositionPreloadWorkPass
     : public impl::RepositionPreloadWorkBase<RepositionPreloadWorkPass> {
   using Base = impl::RepositionPreloadWorkBase<RepositionPreloadWorkPass>;
@@ -2949,6 +3182,12 @@ void RepositionPreloadWorkPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
   if (isSplitMixModule(moduleOp))
     return;
+  for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
+    if (!this->enablePreload)
+      continue;
+    if (failed(prefetchTopLevelMmadInput(funcOp)))
+      return signalPassFailure();
+  }
   for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
     bool sinkAcrossScopes = hivm::allowLoopShapeHeuristics(
         this->bypassShapeRegistry, funcOp.getName(), this->enablePreload,
