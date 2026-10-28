@@ -96,13 +96,12 @@ void buildV2TensorPhase(OpPassManager &pm, const V2PipelineOptions &options) {
   buildCanonicalization(pm);
   pm.addPass(createNormalizeMatmulPass());
 
-  // Insert the CV boundaries.
-  if (options.enableCVDataMovement) {
-    InsertLoadStoreForMixCVOptions cvOptions;
-    cvOptions.enableLegacy = false;
-    cvOptions.target = options.target;
-    addFuncPass(pm, createInsertLoadStoreForMixCVPass(cvOptions));
-  }
+  // Reuse the existing CV movement pass; TCB insertion owns UB -> L1.
+  addFuncPass(pm, createInsertCVTightCoupledBufferPass());
+  InsertLoadStoreForMixCVOptions cvOptions;
+  cvOptions.enableLegacy = false;
+  cvOptions.target = options.target;
+  addFuncPass(pm, createInsertLoadStoreForMixCVPass(cvOptions));
 
   addFuncPass(pm, createMarkTightlyCoupledBufferPass());
   addFuncPass(pm, createHoistTightlyCoupledAllocPass());
