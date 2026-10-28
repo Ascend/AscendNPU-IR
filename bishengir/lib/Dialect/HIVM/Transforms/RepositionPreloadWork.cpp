@@ -1113,7 +1113,8 @@ static scope::ScopeOp exportSunkValueToLaterUsers(scope::ScopeOp consumer,
 /// walk repeats so an earlier producer can follow a sunk consumer.
 static LogicalResult
 sinkReturnedTensorsToConsumerImpl(scf::ForOp &forOp,
-                                  bool closedRecurrences = false) {
+                                  bool closedRecurrences = false,
+                                  bool pureTensorsOnly = false) {
   for (int iter = 0; iter < 32; ++iter) {
     SmallVector<scope::ScopeOp> scopes;
     for (Operation &op : *forOp.getBody()) {
@@ -1157,10 +1158,45 @@ sinkReturnedTensorsToConsumerImpl(scf::ForOp &forOp,
                                              destEmpties, extras,
                                              closedRecurrences))
           continue;
+        if (pureTensorsOnly &&
+            (llvm::any_of(cluster,
+                          [](Operation *op) {
+                            return op->getNumRegions() ||
+                                   !isMemoryEffectFree(op);
+                          }) ||
+             llvm::any_of(extras, [](Value value) {
+               return !isa<RankedTensorType>(value.getType());
+             })))
+          continue;
         auto consumer = returnedTensorSinkTarget(
             producer, scopeRes, forOp, cluster, extras, closedRecurrences);
         if (!consumer)
           continue;
+        if (pureTensorsOnly) {
+          // Preserve reads of captured tensor storage.
+          SmallVector<Value> inputs;
+          for (Operation *op : cluster)
+            llvm::append_range(inputs, op->getOperands());
+          AliasAnalysis aliases(forOp->getParentOfType<func::FuncOp>());
+          bool canMove = true, afterFirst = false;
+          for (Operation &op : producer.getRegion().front()) {
+            if (llvm::is_contained(cluster, &op))
+              afterFirst = true;
+            else if (afterFirst)
+              canMove &= recurrenceCanCross(&op, inputs, aliases);
+          }
+          for (Operation *op = producer->getNextNode(); op != consumer;
+               op = op->getNextNode())
+            canMove &= recurrenceCanCross(op, inputs, aliases);
+          Operation *firstUse = firstUseInScope(scopeRes, consumer);
+          for (Operation &op : consumer.getRegion().front()) {
+            if (&op == firstUse)
+              break;
+            canMove &= recurrenceCanCross(&op, inputs, aliases);
+          }
+          if (!canMove)
+            continue;
+        }
         collectForwardedDepsForScalarExtras(producer, extras);
         // VECTOR ops stay out of CUBE scopes. A CUBE consumer is rewritten
         // to the VECTOR in front of it before we get here.
@@ -3203,6 +3239,10 @@ void RepositionPreloadWorkPass::runOnOperation() {
     SmallVector<scf::ForOp> forOps;
     funcOp.walk([&](scf::ForOp forOp) { forOps.push_back(forOp); });
     for (scf::ForOp forOp : forOps) {
+      if (sinkClosedRecurrences && !sinkAcrossScopes &&
+          !allScopesPinnedToZero(forOp) &&
+          failed(sinkReturnedTensorsToConsumerImpl(forOp, false, true)))
+        return signalPassFailure();
       if (sinkAcrossScopes) {
         clusterSharedLeftMatrixMads(forOp);
         // Only returned-tensor sinking is unsafe for all-zero scopes: moving
