@@ -1652,7 +1652,7 @@ copy_ubuf_to_ubuf_2d_intrin_core(memref_t<__ubuf__ T, 2> *src,
 /// branches inside the VF loop.
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
-copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim_full_asm_variant(
+copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim(
     memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst) {
   constexpr int num_per_register = REG_REGISTER_SIZE / sizeof(T);
   const int64_t size1 = src->sizes[1];
@@ -1675,11 +1675,11 @@ copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim_full_asm_variant(
 }
 
 // Version with "per-raw dispatch" is able to employ DMA copy for
-// overlapped perfectly aligned src rows or for a subset of perfectly
-// aligned rows while other rows will go via vector copy.
+// overlapped perfectly aligned src rows...
+// But this is abstact/potential case...
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
-copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim(
+copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim_double_disp(
     memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst) {
   const int64_t size0 = src->sizes[0];
   const int64_t size1 = src->sizes[1];
@@ -1739,9 +1739,9 @@ copy_ubuf_to_ubuf_2d_core_with_contiguous_last_dim(
   const int64_t dst_gap = calc_ub_gap<T>(dst_stride0, size1);
 
   if (0 > src_gap || 0 > dst_gap) [[unlikely]] {
-    // at least src self-overlapped but perfectly aligned tensors exist,
-    // and we want copy them using series of DMA calls
-    copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim(src, dst);
+    copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim_double_disp(src,
+                                                                         dst);
+    return;
   }
   // the start addr is 32B aligned
   if (isAddress32ByteAligned(src_ptr) && isAddress32ByteAligned(dst_ptr)) {
@@ -1765,10 +1765,6 @@ copy_ubuf_to_ubuf_2d_core_with_contiguous_last_dim(
   }
   // remaining cases
   copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim<T>(src, dst);
-  // this alternative version leaved in sources for some time
-  // in order to conveniently make perf experiments
-  // copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim_full_asm_variant(src,
-  // dst);
   return;
 }
 #else
