@@ -203,7 +203,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 
 > **Note**
 >
-> The content in this section applies only to <term>Ascend 950PR&950DT products</term>.
+> The content in this section applies only to Ascend 950PR&950DT products.
 
 Automatic blockification in SIMT mode is essentially the same as in SIMD mode in terms of functionality and usage. This document mainly describes the features specific to the SIMT path.
 <!-- end id4 -->

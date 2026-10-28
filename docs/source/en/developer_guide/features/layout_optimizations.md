@@ -3,7 +3,7 @@
 **Applicable Products**
 
 <!-- npu="950" id1 -->
-- <term>Ascend 950PR/Ascend 950DT</term>
+- Ascend 950PR/Ascend 950DT
 <!-- end id1 -->
 
 This document describes the `DecomposeReduction` pass in the Triton layer. This pass decomposes a large-scale `tt.ReduceOp` into multiple small-scale reduction operations and inserts `ttg.ConvertLayout` layout conversions between them, so as to leverage the warp synchronization reduction, avoid global memory atomic operations, and improve reduction performance.
