@@ -1169,6 +1169,11 @@ def OptimizeTransposePlacement
   let constructor = "mlir::hivm::createOptimizeTransposePlacementPass()";
   let dependentDialects = ["hivm::HIVMDialect", "arith::ArithDialect",
                            "tensor::TensorDialect"];
+  let options = [Option<
+      "dumpDir", "dump-dir", "std::string",
+      /*default=*/"\"\"",
+      "Write one Mermaid .mmd graph per analyzed candidate into this "
+      "directory. Empty disables dumping.">];
 }
 
 def InlineFixpipe

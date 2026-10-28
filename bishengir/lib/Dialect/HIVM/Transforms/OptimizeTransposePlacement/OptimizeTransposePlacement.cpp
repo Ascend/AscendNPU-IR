@@ -39,12 +39,16 @@
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/AsmState.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/raw_ostream.h"
 #include <optional>
 
 #define DEBUG_TYPE "hivm-optimize-transpose-placement"
@@ -133,57 +137,51 @@ matchCancellable(Value value, Block *block) {
 }
 
 /// At this point solver already ran the RootReachabilityAnalysis.
+/// 'reason' is used purely for debugging purposes.
 static std::optional<SinkPlan> analyze(VTransposeOp transpose,
-                                       const DataFlowSolver &solver) {
-  if (!isSwapTranspose(transpose))
+                                       const DataFlowSolver &solver,
+                                       StringRef *reason = nullptr) {
+  auto reject = [&](StringRef why) -> std::optional<SinkPlan> {
+    if (reason)
+      *reason = why;
+    LDBG("skip: " << why);
     return std::nullopt;
+  };
+  if (!isSwapTranspose(transpose))
+    return reject("not a rank-2 [1, 0] transpose");
 
   Block *block = transpose->getBlock();
-  if (!hasRealLeaf(transpose.getResult()[0], block)) {
-    LDBG("skip: transpose result has no real user");
-    return std::nullopt;
-  }
+  if (!hasRealLeaf(transpose.getResult()[0], block))
+    return reject("transpose result has no real user");
 
   SinkPlan plan;
   Value cur = transpose.getSrc();
   SmallVector<Operation *> reverseChain;
   // The chain goes UP only, backward to one nz2nd fixpipe root.
   while (Operation *def = cur.getDefiningOp()) {
-    if (def->getBlock() != block) {
-      LDBG("skip: chain crosses a block boundary");
-      return std::nullopt;
-    }
+    if (def->getBlock() != block)
+      return reject("chain crosses a block boundary");
 
     if (auto fixpipe = dyn_cast<FixpipeOp>(def)) {
       if (!fixpipe.getResultTensor() ||
           fixpipe.getDmaMode() != FixpipeDMAMode::NZ2ND ||
-          !hasSingleRealUse(fixpipe.getResultTensor())) {
-        LDBG("skip: fixpipe is not a single-user nz2nd root");
-        return std::nullopt;
-      }
+          !hasSingleRealUse(fixpipe.getResultTensor()))
+        return reject("fixpipe is not a single-user nz2nd root");
       plan.root = fixpipe;
       break;
     }
 
-    if (isa<LoadOp>(def)) {
-      LDBG("skip: producer is hivm.hir.load");
-      return std::nullopt;
-    }
-    if (!isTransparentChainOp(def) || !hasSingleRealUse(def->getResult(0))) {
-      LDBG("skip: producer is not a single-use layout-agnostic op");
-      return std::nullopt;
-    }
-    if (failed(swap2D(def->getResult(0).getType()))) {
-      LDBG("skip: shape is not static rank 2");
-      return std::nullopt;
-    }
+    if (isa<LoadOp>(def))
+      return reject("producer is hivm.hir.load");
+    if (!isTransparentChainOp(def) || !hasSingleRealUse(def->getResult(0)))
+      return reject("producer is not a single-use layout-agnostic op");
+    if (failed(swap2D(def->getResult(0).getType())))
+      return reject("shape is not static rank 2");
 
     auto dps = cast<DestinationStyleOpInterface>(def);
     for (Value init : dps.getDpsInits())
-      if (failed(swap2D(init.getType()))) {
-        LDBG("skip: init shape is not static rank 2");
-        return std::nullopt;
-      }
+      if (failed(swap2D(init.getType())))
+        return reject("init shape is not static rank 2");
 
     // Two roots (a diamond, or two fixpipes) currently not supported.
     SmallVector<Value> inputs = dps.getDpsInputs();
@@ -193,24 +191,18 @@ static std::optional<SinkPlan> analyze(VTransposeOp transpose,
         continue;
       if (localRootsIn(solver, input, block).empty())
         continue;
-      if (chainSrc) {
-        LDBG("skip: more than one shaped input reaches a root");
-        return std::nullopt;
-      }
+      if (chainSrc)
+        return reject("more than one shaped input reaches a root");
       chainSrc = input;
     }
-    if (!chainSrc) {
-      LDBG("skip: no shaped input reaches a root");
-      return std::nullopt;
-    }
+    if (!chainSrc)
+      return reject("no shaped input reaches a root");
 
     for (Value input : inputs) {
       if (input == chainSrc || !isa<RankedTensorType>(input.getType()))
         continue;
-      if (!isRank2Static(input.getType())) {
-        LDBG("skip: sibling shape is not static rank 2");
-        return std::nullopt;
-      }
+      if (!isRank2Static(input.getType()))
+        return reject("sibling shape is not static rank 2");
       Sibling sibling;
       sibling.value = input;
       sibling.user = def;
@@ -218,15 +210,12 @@ static std::optional<SinkPlan> analyze(VTransposeOp transpose,
         sibling.cancelled = matched->first;
         sibling.replay = std::move(matched->second);
         for (Operation *op : sibling.replay)
-          if (failed(swap2D(op->getResult(0).getType()))) {
-            LDBG("skip: replay shape is not static rank 2");
-            return std::nullopt;
-          }
+          if (failed(swap2D(op->getResult(0).getType())))
+            return reject("replay shape is not static rank 2");
       } else if (!isFreelyTransposableSource(input)) {
         // Rebuilding this operand would need a fresh vtranspose.
         // This is not supported yet. (Cost of fresh vtranspose unknown)
-        LDBG("skip: sibling is neither cancellable nor free");
-        return std::nullopt;
+        return reject("sibling is neither cancellable nor free");
       }
       plan.siblings.push_back(std::move(sibling));
     }
@@ -234,18 +223,84 @@ static std::optional<SinkPlan> analyze(VTransposeOp transpose,
     reverseChain.push_back(def);
   }
 
-  if (!plan.root) {
-    LDBG("skip: no nz2nd fixpipe root");
-    return std::nullopt;
-  }
+  if (!plan.root)
+    return reject("no nz2nd fixpipe root");
   // Already direct consumer. InlineFixpipe folds already.
-  if (reverseChain.empty()) {
-    LDBG("skip: already the direct user of the fixpipe");
-    return std::nullopt;
-  }
+  if (reverseChain.empty())
+    return reject("already the direct user of the fixpipe");
   plan.chain.assign(llvm::reverse(reverseChain).begin(),
                     llvm::reverse(reverseChain).end());
+  if (reason)
+    *reason = "ok";
   return plan;
+}
+
+/// Write one Mermaid flowchart for a candidate: solid edges along the
+/// root-to-anchor chain, dashed edges for siblings (they are rebuilt, not
+/// moved). A rejected candidate is a single node with the reject cause.
+/// DEBUGGING PURPOSES ONLY.
+static void dumpMermaid(VTransposeOp anchor, const SinkPlan *plan,
+                        StringRef reason, int serial, StringRef dumpDir) {
+  std::string path = (Twine(dumpDir) + "/otp-" + Twine(serial) + ".mmd").str();
+  std::error_code ec;
+  llvm::raw_fd_ostream os(path, ec);
+  if (ec) {
+    LDBG("mermaid dump failed for " << path << ": " << ec.message());
+    return;
+  }
+  Operation *scope = anchor->getParentOfType<func::FuncOp>();
+  if (!scope)
+    scope = anchor->getParentOfType<ModuleOp>();
+  AsmState state(scope);
+
+  DenseMap<Operation *, unsigned> ids;
+  auto node = [&](Operation *op) {
+    return ids.try_emplace(op, ids.size()).first->second;
+  };
+  auto emitNode = [&](Operation *op) {
+    std::string text;
+    llvm::raw_string_ostream ss(text);
+    ss << op->getName().getStringRef();
+    for (Value result : op->getResults()) {
+      ss << "\\n";
+      result.printAsOperand(ss, state);
+    }
+    os << "  n" << node(op) << "[\"" << ss.str() << "\"]\n";
+  };
+  auto emitEdge = [&](Operation *from, Operation *to, bool dashed) {
+    os << "  n" << node(from) << (dashed ? " -.-> " : " --> ") << 'n'
+       << node(to) << "\n";
+  };
+
+  os << "flowchart LR\n";
+  emitNode(anchor);
+  if (!plan) {
+    os << "  %% rejected: " << reason << "\n";
+    return;
+  }
+  emitNode(plan->root);
+  Operation *prev = plan->root;
+  for (Operation *link : plan->chain) {
+    emitNode(link);
+    emitEdge(prev, link, /*dashed=*/false);
+    prev = link;
+  }
+  emitEdge(prev, anchor, /*dashed=*/false);
+  for (const Sibling &sibling : plan->siblings) {
+    if (sibling.cancelled) {
+      emitNode(sibling.cancelled);
+      Operation *tail = sibling.cancelled;
+      for (Operation *op : sibling.replay) {
+        emitNode(op);
+        emitEdge(tail, op, /*dashed=*/true);
+        tail = op;
+      }
+      emitEdge(tail, sibling.user, /*dashed=*/true);
+    } else if (Operation *def = sibling.value.getDefiningOp()) {
+      emitNode(def);
+      emitEdge(def, sibling.user, /*dashed=*/true);
+    }
+  }
 }
 
 /// cloneWithSwappedLayout requires a replacement for every shaped DPS
@@ -449,9 +504,18 @@ struct OptimizeTransposePlacementPass
     if (failed(runSolver(solver, getOperation())))
       return;
     SmallVector<std::pair<VTransposeOp, std::optional<SinkPlan>>> plans;
+    if (!dumpDir.empty())
+      (void)llvm::sys::fs::create_directories(dumpDir);
+    int serial = 0;
     getOperation()->walk([&](VTransposeOp transpose) {
-      if (isRegBaseScope(transpose))
-        plans.emplace_back(transpose, analyze(transpose, solver));
+      if (!isRegBaseScope(transpose))
+        return;
+      StringRef reason;
+      plans.emplace_back(transpose, analyze(transpose, solver, &reason));
+      if (!dumpDir.empty())
+        dumpMermaid(transpose,
+                    plans.back().second ? &*plans.back().second : nullptr,
+                    reason, serial++, dumpDir);
     });
 
     IRRewriter rewriter(&getContext());
