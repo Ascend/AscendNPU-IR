@@ -118,10 +118,10 @@ When troubleshooting whether multi-buffer actually takes effect, search the IR f
 The default value of `--limit-auto-multi-buffer-buffer` depends on the target hardware:
 
 <!-- npu="950" id1 -->
-- <term>Ascend 950PR&950DT</term>: `no-limit`
+- Ascend 950PR&950DT: `no-limit`
 <!-- end id1 -->
 <!-- npu="A3,910b" id2 -->
-- <term>Atlas A3 products</term>, <term>Atlas A2 products</term>: `only-cube`
+- Atlas A3 products, Atlas A2 products: `only-cube`
 <!-- end id2 -->
 
 When this option is explicitly passed, the user-specified value takes precedence.

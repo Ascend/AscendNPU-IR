@@ -46,13 +46,13 @@ The multi-level interfaces described above support flexible integration with cus
 Supported target devices include:
 
 <!-- npu="950" id1 -->
-- <term>Ascend 950PR/Ascend 950DT</term>
+- Ascend 950PR/Ascend 950DT
 <!-- end id1 -->
 <!-- npu="A3" id2 -->
-- <term>Atlas A3 training products/Atlas A3 inference products</term>
+- Atlas A3 training products/Atlas A3 inference products
 <!-- end id2 -->
 <!-- npu="910b" id3 -->
-- <term>Atlas A2 training products/Atlas A2 inference products</term>
+- Atlas A2 training products/Atlas A2 inference products
 <!-- end id3 -->
 
 ### Function Attributes

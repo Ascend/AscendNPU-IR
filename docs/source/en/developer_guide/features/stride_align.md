@@ -79,7 +79,7 @@ hivm-enable-stride-align        // Enabling phase: propagate annotations + reall
 
 > **Note**:
 >
-> The content in this section applies only to the <term>Ascend 950PR&950DT product series</term>.
+> The content in this section applies only to the Ascend 950PR&950DT product series.
 
 ### Function Overview
 
