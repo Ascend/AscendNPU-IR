@@ -13,6 +13,7 @@
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Tools/hivmc/Config.h"
+#include "bishengir/Tools/Utils/AuxBitcodePaths.h"
 #include "bishengir/Tools/Utils/Utils.h"
 
 #include "mlir/IR/BuiltinOps.h"
@@ -101,6 +102,13 @@ llvm::StringRef getAscendPath();
 /// Modify the ir string for downgrade the llvm version
 std::string modifyForVersionMismatch(std::string src);
 
+/// Serialize an LLVM Module to the IR string fed to the device compiler:
+/// `Module::print` then `modifyForVersionMismatch`.  This is the in-memory
+/// equivalent of what `saveToFiles` writes to disk, and must stay in sync
+/// with it so the Native (in-process) and Process (external bisheng) backends
+/// receive identical IR.
+std::string moduleToIrString(const llvm::Module &module);
+
 std::string tryReplaceExtension(llvm::StringRef path,
                                 llvm::StringRef newExtension);
 
@@ -150,6 +158,21 @@ checkOptionValidity(const bishengir::HIVMCMainConfig &config);
 /// Only returns entries where the attribute is set.
 std::map<SubCoreTarget, std::string>
 getBitcodePathsBySubCoreTarget(mlir::ModuleOp mod);
+
+/// Convert the early-resolved `ResolvedAuxBitcodePaths` (pure path
+/// calculator output, no MLIR) to the `map<SubCoreTarget, string>` shape used
+/// by `getBitcodePathsBySubCoreTarget`. Only non-empty fields are inserted.
+std::map<SubCoreTarget, std::string>
+toSubCoreTargetPaths(const auxbitcode::ResolvedAuxBitcodePaths &paths);
+
+/// Verify the early-resolved aux paths match the Module Attr paths written
+/// by `addBitcodeAttrsToModule`.  Returns true on match, false on mismatch.
+/// The caller logs a warning on mismatch but does NOT fail-closed: this is a
+/// perf diagnostic (PreloadBase may have warmed a stale path; `handleCompile`
+/// delta preload will still cover the authoritative Attr paths).
+bool verifyEarlyAuxSha(
+    mlir::ModuleOp module,
+    const std::map<SubCoreTarget, std::string> &earlyPaths);
 
 /// Get the absolute path of the current executable. Resolves symlinks and
 /// handles invocation via PATH. \p argv0 is argv[0] from main, \p mainAddr
