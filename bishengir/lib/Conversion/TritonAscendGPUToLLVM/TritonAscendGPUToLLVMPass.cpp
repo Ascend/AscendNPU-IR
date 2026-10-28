@@ -55,7 +55,6 @@ namespace mlir::triton {
 #define GEN_PASS_DEF_CONVERTTRITONASCENDGPUTOLLVM
 #include "bishengir/Conversion/Passes.h.inc"
 
-#ifdef BSPUB_DAVINCI_BISHENGIR
 namespace {
 class ScratchSwizzleTargetInfo final : public ascend::TargetInfo {
 public:
@@ -77,7 +76,6 @@ private:
   const bool enabled;
 };
 } // namespace
-#endif
 
 class TritonLLVMFunctionConversionTarget : public ConversionTarget {
 public:
@@ -120,11 +118,7 @@ struct ConvertTritonAscendGPUToLLVMPass
 
     // Higher benefit to prioritize these patterns during conversion
     constexpr int kDefaultPatternBenefit = 10;
-#ifdef BSPUB_DAVINCI_BISHENGIR
     ScratchSwizzleTargetInfo targetInfo(enableA5BankAwareSwizzle);
-#else
-    ascend::TargetInfo targetInfo{};
-#endif
     mlir::LowerToLLVMOptions option(context);
     option.overrideIndexBitwidth(32);
     TritonGPUToLLVMTypeConverter typeConverter(context, option, targetInfo);
