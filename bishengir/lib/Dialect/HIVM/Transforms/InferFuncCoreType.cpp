@@ -148,20 +148,25 @@ public:
         }
       }
 
-      // A declared core-ratio attr always makes this a mix kernel.
+      // A ratio describes the whole MIX task, including after SplitMixKernel
+      // has cloned it onto the individual AIC/AIV functions.
       if (auto coreRatio = hivm::getCoreRatioAttr(func)) {
-        // Preserve the core type of split MIX members.
-        if (!func->hasAttr(hivm::TPartOfMixAttr::name)) {
-          auto annotated = func->getAttrOfType<hivm::TFuncCoreTypeAttr>(
-              hivm::TFuncCoreTypeAttr::name);
-          if (annotated &&
-              annotated.getFuncCoreType() != hivm::TFuncCoreType::MIX) {
-            func->emitError()
-                << "hivm.core_ratio is only valid on a MIX "
-                   "function, but hivm.func_core_type is "
-                << stringifyTFuncCoreType(annotated.getFuncCoreType());
-            fail = true;
-          }
+        auto annotated = func->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+            hivm::TFuncCoreTypeAttr::name);
+        bool isSplitMixPart =
+            func->hasAttr(hivm::TPartOfMixAttr::name) && annotated &&
+            (annotated.getFuncCoreType() == hivm::TFuncCoreType::AIC ||
+             annotated.getFuncCoreType() == hivm::TFuncCoreType::AIV);
+        if (isSplitMixPart) {
+          e = annotated.getFuncCoreType();
+        } else if (annotated &&
+                   annotated.getFuncCoreType() != hivm::TFuncCoreType::MIX) {
+          func->emitError()
+              << "hivm.core_ratio is only valid on a MIX "
+                 "function, but hivm.func_core_type is "
+              << stringifyTFuncCoreType(annotated.getFuncCoreType());
+          fail = true;
+        } else {
           e = hivm::TFuncCoreType::MIX;
         }
         inferredModuleCoreType = hivm::TModuleCoreType::MIX;
@@ -171,6 +176,19 @@ public:
                     hivm::TFuncCoreTypeAttr::get(func->getContext(), e));
 
       auto parentModule = func->getParentOfType<ModuleOp>();
+      // Materialize the A6 default before sub-block partitioning and MIX
+      // splitting. Those passes also inspect the attribute directly, so
+      // changing only CoreRatio::getEffective would leave implicit 1:2 tiling
+      // enabled.
+      if (e == hivm::TFuncCoreType::MIX &&
+          hacc::utils::isAscend960(parentModule) &&
+          !hivm::getCoreRatioAttr(func)) {
+        if (failed(hivm::setCoreRatioAttr(func, 1, 1))) {
+          fail = true;
+          continue;
+        }
+      }
+
       if (moduleMap.find(parentModule) == moduleMap.end()) {
         moduleMap.insert({parentModule, inferredModuleCoreType});
       } else {

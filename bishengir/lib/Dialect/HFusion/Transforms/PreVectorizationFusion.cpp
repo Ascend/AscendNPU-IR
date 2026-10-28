@@ -900,7 +900,8 @@ void InsertPadConstMark(Operation *moduleOp) {
 void PreVectorizationFusionPass::runOnOperation() {
   Operation *op = getOperation();
   archisAscend950 =
-      hacc::utils::isAscend950(getOperation()->getParentOfType<ModuleOp>());
+      hacc::utils::isAscend950(getOperation()->getParentOfType<ModuleOp>()) ||
+      hacc::utils::isAscend960(getOperation()->getParentOfType<ModuleOp>());
   MLIRContext *context = op->getContext();
   RewritePatternSet patterns(context);
   OpBuilder builder(context);

@@ -165,9 +165,10 @@ struct CastOpPattern : public OpRewritePattern<CastOp> {
     return {};
   }
 
-  // Rebuild a transparent reshape op using the source value and its element type.
+  // Rebuild a transparent reshape op using the source value and its element
+  // type.
   static Value buildReshapeTo(Operation *reshapeTo, Value source,
-                           PatternRewriter &rewriter) {
+                              PatternRewriter &rewriter) {
 
     auto elementType = getElementTypeOrSelf(source);
     auto resultType =

@@ -576,7 +576,8 @@ LogicalResult VReduceOp::verify() {
 
   // fp8 check
   mlir::ModuleOp moduleOp = (*this)->getParentOfType<mlir::ModuleOp>();
-  if (!hacc::utils::isAscend950(moduleOp)) {
+  if (!hacc::utils::isAscend950(moduleOp) &&
+      !hacc::utils::isAscend960(moduleOp)) {
     Type srcType = this->getSrc().getType();
     ShapedType srcVecType = cast<ShapedType>(srcType);
     Type eleType = srcVecType.getElementType();

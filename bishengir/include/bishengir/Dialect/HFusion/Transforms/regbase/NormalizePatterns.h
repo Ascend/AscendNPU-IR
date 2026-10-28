@@ -103,7 +103,8 @@ void populateNormalizePreReductionPatterns(RewritePatternSet &patterns);
 void populateNormalizeReductionPatterns(RewritePatternSet &patterns);
 void populateNormalizeShiftI8ToI16(RewritePatternSet &patterns);
 void populateNormalizeFinalReductionPatterns(RewritePatternSet &patterns);
-void populateNormalizeAtomicPatterns(RewritePatternSet &patterns);
+void populateNormalizeAtomicPatterns(RewritePatternSet &patterns,
+                                     bool supportsRegBaseAtomic);
 void populateNormalizeSortPatterns(RewritePatternSet &patterns);
 
 } // namespace mlir::hfusion

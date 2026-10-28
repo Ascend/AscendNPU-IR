@@ -65,6 +65,11 @@ Rules:
   message, the commit message must contain the exact trailer `Assisted-by: AI`.
   Do not include the agent name or model version. Omit the trailer only when the
   change is completely human-written.
+ - If modified file is indexed as crlf file in local git, it must be renormalized:
+ 	 
+ 	   ```bash
+ 	   git add --renormalize <modified file>
+ 	   ```
 
 ## Commit Message Hook
 

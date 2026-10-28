@@ -11,7 +11,8 @@
  * for the full text of the License.
  */
 
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 5102)
+#if defined(__NPU_ARCH__) &&                                                   \
+    (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 5102 || __NPU_ARCH__ == 9201)
 #define CATLASS_ARCH_A5_ENABLED
 #endif
 

@@ -48,13 +48,15 @@ static FailureOr<Value> buildHIVMVFLdOrSTOp(SourceOp op,
                                             PatternRewriter &rewriter,
                                             Location loc, Args &&...args) {
   auto moduleOp = op->template getParentOfType<mlir::ModuleOp>();
-  bool archIs950 = hacc::utils::isAscend950(moduleOp);
+  bool supportsRegBaseVector =
+      hacc::utils::supportsRegBaseVectorLowering(moduleOp);
   if constexpr (std::is_same_v<SourceOp, vector::LoadOp> ||
                 std::is_same_v<SourceOp, vector::MaskedLoadOp>) {
     mlir::Type resTy = op.getResult().getType();
     auto loadRes =
         rewriter.create<VFAlignedOp>(loc, resTy, std::forward<Args>(args)...);
-    if (archIs950 && !isLoadStoreIndexAligned(op.getBase(), op.getIndices())) {
+    if (supportsRegBaseVector &&
+        !isLoadStoreIndexAligned(op.getBase(), op.getIndices())) {
       loadRes->setAttr(UnalignedAttr::name,
                        UnalignedAttr::get(rewriter.getContext()));
     }
@@ -63,7 +65,8 @@ static FailureOr<Value> buildHIVMVFLdOrSTOp(SourceOp op,
                        std::is_same_v<SourceOp, vector::StoreOp>) {
     auto storeRes =
         rewriter.create<VFAlignedOp>(loc, std::forward<Args>(args)...);
-    if (archIs950 && !isLoadStoreIndexAligned(op.getBase(), op.getIndices())) {
+    if (supportsRegBaseVector &&
+        !isLoadStoreIndexAligned(op.getBase(), op.getIndices())) {
       storeRes->setAttr(UnalignedAttr::name,
                         UnalignedAttr::get(rewriter.getContext()));
     }
@@ -391,8 +394,9 @@ struct TransferReadOpPattern : public OpRewritePattern<vector::TransferReadOp> {
         loc, resVecType, source, readOp.getIndices());
 
     auto moduleOp = readOp->getParentOfType<mlir::ModuleOp>();
-    bool archIs950 = hacc::utils::isAscend950(moduleOp);
-    if (archIs950 &&
+    bool supportsRegBaseVector =
+        hacc::utils::supportsRegBaseVectorLowering(moduleOp);
+    if (supportsRegBaseVector &&
         !isLoadStoreIndexAligned(readOp.getSource(), readOp.getIndices())) {
       loadOp->setAttr(UnalignedAttr::name,
                       UnalignedAttr::get(rewriter.getContext()));
@@ -545,13 +549,14 @@ struct TransferWriteOpPattern
         rewriter.create<hivmave::VFMaskedStoreOp>(
             loc, storePattern, source, writeOp.getIndices(), mask, vector);
     auto moduleOp = writeOp->getParentOfType<mlir::ModuleOp>();
-    bool archIs950 = hacc::utils::isAscend950(moduleOp);
-    if (archIs950 &&
+    bool supportsRegBaseVector =
+        hacc::utils::supportsRegBaseVectorLowering(moduleOp);
+    if (supportsRegBaseVector &&
         !isLoadStoreIndexAligned(writeOp.getSource(), writeOp.getIndices())) {
       storeOp->setAttr(UnalignedAttr::name,
                        UnalignedAttr::get(rewriter.getContext()));
     }
-    if (archIs950 && checkVectorStoreContinuity(writeOp)) {
+    if (supportsRegBaseVector && checkVectorStoreContinuity(writeOp)) {
       storeOp->setAttr("hivm.is_continuous", rewriter.getUnitAttr());
     }
     rewriter.replaceOp(writeOp, storeOp);

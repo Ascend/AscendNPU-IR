@@ -393,6 +393,21 @@ bool isRegBasedArch(llvm::StringRef targetDevice) {
   return isRegBasedArch(symbolizeTargetDeviceEnum(targetDevice));
 }
 
+bool supportsRegBaseVectorLowering(TargetDevice targetDevice) {
+  if (static_cast<unsigned>(targetDevice) >= targetDevices.size())
+    return false;
+  auto arch = getArchitecture(targetDevice);
+  return arch == bishengir::npu::NPUArchitectureKind::kDavC310 ||
+         arch == bishengir::npu::NPUArchitectureKind::kDav920R1;
+}
+
+bool supportsRegBaseVectorLowering(ModuleOp op) {
+  if (!op)
+    return false;
+  auto targetDevice = getTargetDevice(op);
+  return targetDevice && supportsRegBaseVectorLowering(*targetDevice);
+}
+
 bool isFFTSSupportedArch(TargetDevice targetDevice) {
   return isAscend910B(targetDevice) || isAscend910_93(targetDevice) ||
          isAscend950(targetDevice) || isAscend960(targetDevice);
