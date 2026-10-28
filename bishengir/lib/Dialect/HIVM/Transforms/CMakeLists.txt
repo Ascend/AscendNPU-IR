@@ -135,6 +135,9 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   NormalizeConvOps.cpp
   NormalizeMatmul.cpp
   OptMemPlanForPipeline.cpp
+  OptimizeTransposePlacement/OptimizeTransposePlacement.cpp
+  OptimizeTransposePlacement/RootReachability.cpp
+  OptimizeTransposePlacement/Utils.cpp
   OutlineAllocInVF.cpp
   OutlineCopyInVF.cpp
   PlanMemory.cpp
