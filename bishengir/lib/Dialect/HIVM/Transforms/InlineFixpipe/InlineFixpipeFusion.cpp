@@ -249,7 +249,19 @@ void inlineFixpipeWithTranspose(PatternRewriter &rewriter, hivm::FixpipeOp op,
       transpose.getDst(), dmaMode, op.getDualDstModeAttr(),
       op.getSubBlockIdxAttr(), op.getPreQuantAttr(), op.getPreReluAttr(),
       op.getChannelSplitAttr(), op.getC0PadEnAttr(), op.getQuantScale());
-  rewriter.replaceOp(transpose, newFixpipe.getResultTensor());
+  Value newResult = newFixpipe.getResultTensor();
+  // The mark usually sits on the old fixpipe, which is before this new
+  // result. Clone it after the result so the use dominates.
+  for (Operation *user :
+       llvm::make_early_inc_range(op.getResultTensor().getUsers())) {
+    if (!isa<annotation::MarkOp>(user))
+      continue;
+    rewriter.setInsertionPointAfterValue(newResult);
+    Operation *cloned = rewriter.clone(*user);
+    cloned->replaceUsesOfWith(op.getResultTensor(), newResult);
+    rewriter.eraseOp(user);
+  }
+  rewriter.replaceOp(transpose, newResult);
   rewriter.eraseOp(op);
   LDBG("InlineFixpipeWithTranspose");
 }
