@@ -21,6 +21,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/DenseMap.h"
@@ -102,6 +103,7 @@ private:
                               bool &failedLoop);
   LogicalResult sortWorkItems();
   void mapOpsToWorkItems();
+  LogicalResult collectScalarState();
   void collectUnmappedOps();
   void computeHoistedOps(WorkItem *item);
   void populateWorkItemIO(Operation *origLoopTerminator);
@@ -327,6 +329,8 @@ bool CVScopeOutliner::canCloneOpInWorkItem(Operation *op,
     return true;
   if (isCoreOp(op) || isa<memref::AllocOp, AllocWorkspaceOp,
                           bufferization::ToTensorOp, annotation::MarkOp>(op))
+    return false;
+  if (!isMemoryEffectFree(op))
     return false;
   if (isViewLikeMemRefOp(op) && op->getNumOperands() > 0 &&
       getRootAlloc(op->getOperand(0)))
@@ -772,6 +776,47 @@ LogicalResult CVScopeOutliner::sortWorkItems() {
   return (sortedWorkItems.size() == n) ? success() : failure();
 }
 
+LogicalResult CVScopeOutliner::collectScalarState() {
+  // Keep a counter's initialization, updates and reads together. Export the
+  // scalar reads to consumers instead of cloning uninitialized allocations.
+  SmallVector<Operation *> pending;
+  for (auto alloca :
+       cast<scf::ForOp>(loopOp).getBody()->getOps<memref::AllocaOp>())
+    if (alloca->hasAttr(kNormalizeMatmulCounterAttr))
+      llvm::append_range(pending, alloca->getUsers());
+  SmallPtrSet<Operation *, 16> stateOps;
+  while (!pending.empty()) {
+    Operation *op = pending.pop_back_val();
+    if (!loopOp->isProperAncestor(op) || !stateOps.insert(op).second)
+      continue;
+    if (op->getNumRegions() || isCoreOp(op) ||
+        (!isMemoryEffectFree(op) &&
+         !isa<memref::AllocaOp, memref::LoadOp, memref::StoreOp>(op)))
+      return failure();
+    for (Value operand : op->getOperands())
+      if (Operation *def = operand.getDefiningOp())
+        pending.push_back(def);
+    if (auto ifOp = dyn_cast<scf::IfOp>(op->getParentOp()))
+      if (Operation *def = ifOp.getCondition().getDefiningOp())
+        pending.push_back(def);
+  }
+  if (stateOps.empty())
+    return success();
+  auto state = std::make_unique<WorkItem>();
+  state->id = nextWorkItemId++;
+  state->coreType = TCoreType::CUBE_AND_VECTOR;
+  loopOp->walk([&](Operation *op) {
+    if (!stateOps.contains(op))
+      return;
+    state->orderedOps.insert(op);
+    if (auto ifOp = dyn_cast<scf::IfOp>(op->getParentOp()))
+      getOrCreateCondOps(*state, ifOp, op);
+  });
+  sortedWorkItems.insert(sortedWorkItems.begin(), state.get());
+  workItems.push_back(std::move(state));
+  return success();
+}
+
 void CVScopeOutliner::mapOpsToWorkItems() {
   for (WorkItem *item : sortedWorkItems) {
     for (Operation *op : item->orderedOps)
@@ -1016,6 +1061,12 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
     if (item->ops.empty() && !hasIfOutputs && item->outputs.empty())
       continue;
 
+    struct DeferredMerge {
+      OpResult result;
+      Value carried;
+      bool updatedInThen;
+    };
+    SmallVector<DeferredMerge> deferredMerges;
     SmallVector<Value> scopeReturnVals;
     for (Operation *op : item->orderedOps) {
       if (opToWorkItemMap.lookup(op) != item)
@@ -1097,6 +1148,26 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
           ifYieldSet.insert(thenVal);
           if (elseVal)
             ifYieldSet.insert(elseVal);
+          Value updated = thenVal, carried = elseVal;
+          auto isCarry = [&](Value value) {
+            return llvm::is_contained(origForOp.getRegionIterArgs(), value);
+          };
+          if (!isCarry(carried))
+            std::swap(updated, carried);
+          // Export a hoisted buffer directly. The pass-through selection does
+          // not belong to CUBE: capturing a VECTOR carry here keeps it on AIC.
+          if (item->coreType == TCoreType::CUBE &&
+              isa<TensorType>(ifRes.getType()) && isCarry(carried) &&
+              item->hoistedOps.contains(updated.getDefiningOp()) &&
+              item->outputs.contains(ifRes) &&
+              llvm::none_of(ifRes.getUsers(), [&](Operation *user) {
+                return item->ops.contains(user);
+              })) {
+            scopeMap.map(ifRes, scopeMap.lookup(updated));
+            scopeReturnVals.push_back(enclosingIf.getCondition());
+            deferredMerges.push_back({ifRes, carried, updated == thenVal});
+            continue;
+          }
           ifThenYieldVals.push_back(thenVal);
           ifElseYieldVals.push_back(elseVal);
           ifOrigResultsToMap.push_back(ifRes);
@@ -1212,6 +1283,31 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
 
     for (auto [origVal, resIdx] : origValToResIdx)
       globalIRMap.map(origVal, scopeOp.getResult(resIdx));
+
+    for (auto [result, carried, updatedInThen] : deferredMerges) {
+      auto origIf = cast<scf::IfOp>(result.getOwner());
+      builder.setInsertionPointToEnd(newBody);
+      auto merge = builder.create<scope::ScopeOp>(origIf.getLoc(), TypeRange{});
+      merge->setAttr(kPipelinedLoopCoreTypeAttrName,
+                     TCoreTypeAttr::get(ctx, TCoreType::CUBE_AND_VECTOR));
+      builder.createBlock(&merge.getRegion());
+      auto select = builder.create<scf::IfOp>(
+          origIf.getLoc(), TypeRange{result.getType()},
+          globalIRMap.lookupOrDefault(origIf.getCondition()), true);
+      select->setAttr(kPipelineIfCondAttrName,
+                      builder.getI64IntegerAttr(getOrAssignIfId(origIf)));
+      Value updated = globalIRMap.lookup(result);
+      carried = globalIRMap.lookupOrDefault(carried);
+      builder.setInsertionPointToEnd(select.thenBlock());
+      builder.create<scf::YieldOp>(origIf.getLoc(),
+                                   updatedInThen ? updated : carried);
+      builder.setInsertionPointToEnd(select.elseBlock());
+      builder.create<scf::YieldOp>(origIf.getLoc(),
+                                   updatedInThen ? carried : updated);
+      auto newMerge = recreateScope(merge, select.getResults());
+      merge.erase();
+      globalIRMap.map(result, newMerge.getResult(0));
+    }
   }
 
   // Final loop yield
@@ -1302,6 +1398,8 @@ LogicalResult CVScopeOutliner::run() {
   });
 
   // Step 4: Map ops to work items (first-come, first-served)
+  if (failed(collectScalarState()))
+    return success();
   mapOpsToWorkItems();
 
   // Step 5: Final iteration for unmapped ops
