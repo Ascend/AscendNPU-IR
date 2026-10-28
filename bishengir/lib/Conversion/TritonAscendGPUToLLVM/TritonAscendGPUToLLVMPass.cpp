@@ -94,7 +94,7 @@ struct ConvertTritonAscendGPUToLLVMPass
 
     // Higher benefit to prioritize these patterns during conversion
     constexpr int kDefaultPatternBenefit = 10;
-    ascend::TargetInfo targetInfo{};
+    ascend::TargetInfo targetInfo(enableA5BankAwareSwizzle);
     mlir::LowerToLLVMOptions option(context);
     option.overrideIndexBitwidth(32);
     TritonGPUToLLVMTypeConverter typeConverter(context, option, targetInfo);

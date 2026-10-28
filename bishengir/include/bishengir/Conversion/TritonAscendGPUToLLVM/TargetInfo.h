@@ -24,7 +24,19 @@ namespace mlir::triton::ascend {
 
 class TargetInfo : public mlir::triton::NVIDIA::TargetInfo {
 public:
-  TargetInfo() : NVIDIA::TargetInfo(70, 73) {}
+  explicit TargetInfo(bool enableBankAwareSwizzle = false)
+      : NVIDIA::TargetInfo(70, 73),
+        enableBankAwareSwizzle(enableBankAwareSwizzle) {}
+
+  std::optional<gpu::SharedMemoryBankInfo>
+  getSharedMemoryBankInfo(int bitwidth) const override {
+    // The dav-c310 CAModel SIMT 32-bit read probes support this effective
+    // model. Keep other widths on the existing path until independently
+    // validated.
+    if (!enableBankAwareSwizzle || bitwidth != 32)
+      return std::nullopt;
+    return gpu::SharedMemoryBankInfo{16, 64};
+  }
 
   Value getClusterCTAId(RewriterBase &rewriter, Location loc) const override;
 
@@ -105,6 +117,9 @@ public:
   }
 
   bool supportVectorizedAtomics() const override { return false; }
+
+private:
+  bool enableBankAwareSwizzle;
 };
 
 } // namespace mlir::triton::ascend

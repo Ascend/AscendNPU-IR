@@ -2,12 +2,21 @@
 #define TRITON_CONVERSION_TRITONGPU_TO_LLVM_TARGETINFOBASE_H
 
 #include "triton/Conversion/MLIRTypes.h"
+#include "triton/Tools/GenericSwizzling.h"
+#include <optional>
 
 namespace mlir::triton {
 enum class ProgramIDDim : uint32_t;
 
 class TargetInfoBase {
 public:
+  // No override retains the generic scratch-layout planner exactly. Targets
+  // can limit the bank model to element widths with validated service behavior.
+  virtual std::optional<gpu::SharedMemoryBankInfo>
+  getSharedMemoryBankInfo(int bitwidth) const {
+    return std::nullopt;
+  }
+
   virtual bool supportMaximumMinimum() const = 0;
 
   virtual Value getClusterCTAId(RewriterBase &rewriter, Location loc) const = 0;
