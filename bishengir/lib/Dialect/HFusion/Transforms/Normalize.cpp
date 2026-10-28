@@ -8498,6 +8498,67 @@ private:
   }
 };
 
+/// Normalize a maxnumf/minnumf reduction to maximumf/minimumf after replacing
+/// NaN elements in the input with the corresponding reduction identity.
+///
+/// This preserves the number-aware semantics expected by maxnumf/minnumf while
+/// using the NaN-propagating reduction supported by the target.
+struct NormalizeReduceMinMaxNumFOp : public OpRewritePattern<linalg::ReduceOp> {
+public:
+  using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(linalg::ReduceOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics())
+      return failure();
+
+    Block &body = op.getCombiner().front();
+    auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
+    if (!yieldOp || yieldOp.getValues().size() != 1)
+      return failure();
+
+    Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
+    bool isMax = isa_and_nonnull<arith::MaxNumFOp>(bodyOp);
+    if (!isMax && !isa_and_nonnull<arith::MinNumFOp>(bodyOp))
+      return failure();
+
+    Value src = op.getInputs().front();
+    Type elemType = getElementTypeOrSelf(src.getType());
+    if (!isa<FloatType>(elemType))
+      return failure();
+
+    Location loc = op.getLoc();
+    double identity = isMax ? -std::numeric_limits<double>::infinity()
+                            : std::numeric_limits<double>::infinity();
+    Value identityValue =
+        utils::createConstantOp<double>(rewriter, loc, elemType, identity);
+    auto maskType =
+        utils::getTensorTypeWithSameShape(src.getType(), rewriter.getI1Type());
+    Value nanMask =
+        rewriter.create<hfusion::IsNanOp>(loc, maskType, src)->getResult(0);
+    Value selectOut = utils::createEmptyOp(rewriter, loc, src);
+    Value newSrc =
+        rewriter
+            .create<hfusion::SelectOp>(loc, TypeRange{selectOut.getType()},
+                                       ValueRange{nanMask, identityValue, src},
+                                       ValueRange{selectOut})
+            ->getResult(0);
+
+    rewriter.modifyOpInPlace(op, [&]() { op->setOperand(0, newSrc); });
+    PatternRewriter::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPoint(bodyOp);
+    Operation *newBodyOp =
+        isMax ? static_cast<Operation *>(rewriter.create<arith::MaximumFOp>(
+                    bodyOp->getLoc(), bodyOp->getOperand(0),
+                    bodyOp->getOperand(1)))
+              : static_cast<Operation *>(rewriter.create<arith::MinimumFOp>(
+                    bodyOp->getLoc(), bodyOp->getOperand(0),
+                    bodyOp->getOperand(1)));
+    rewriter.replaceOp(bodyOp, newBodyOp->getResults());
+    return success();
+  }
+};
+
 template <>
 struct NormalizeToTargetType<bool, hfusion::InterleaveOp>
     : public OpRewritePattern<hfusion::InterleaveOp> {
@@ -10412,6 +10473,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizePowfOp>(patterns.getContext());
   patterns.add<NormalizeMinMaxNumFOp<BinaryFn::maxnumf>>(patterns.getContext());
   patterns.add<NormalizeMinMaxNumFOp<BinaryFn::minnumf>>(patterns.getContext());
+  patterns.add<NormalizeReduceMinMaxNumFOp>(patterns.getContext());
   patterns.add<NormalizeF16ReduceSum>(patterns.getContext());
   patterns.add<ReduceWithIndexRAHighPerformance>(patterns.getContext());
   patterns.add<NormalizetruncfExtf>(patterns.getContext());
