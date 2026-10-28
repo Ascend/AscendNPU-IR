@@ -94,23 +94,13 @@ static bool shouldLegalizeBF16Op(Operation *op) {
                       isa<hfusion::Conv3DOp>(op) || isCopysignOp(op);
 
     if (isAscend950Arch) {
+      // Ascend 950 supports hardware instructions for BF16 floor operations.
       if (isa<linalg::ElemwiseUnaryOp>(op)) {
         auto unaryOp = cast<linalg::ElemwiseUnaryOp>(op);
         auto funAttr = unaryOp.getFun();
         isExcluded |= funAttr == linalg::UnaryFn::floor;
       }
       isExcluded |= isa<hfusion::GatherOp>(op);
-      // Native BF16 add/sub/mul avoid casts without changing rounding:
-      // f32 has enough precision for add/sub, and BF16 products are exact in
-      // f32.
-      if (auto binaryOp = dyn_cast<linalg::ElemwiseBinaryOp>(op)) {
-        auto fun = binaryOp.getFun();
-        isExcluded |= fun == linalg::BinaryFn::add ||
-                      fun == linalg::BinaryFn::sub ||
-                      fun == linalg::BinaryFn::mul;
-      }
-      // BF16-to-f32 widening is exact and preserves comparison results.
-      isExcluded |= isa<hfusion::CompareOp>(op);
     }
     return hasBF16Operand(op) && !isExcluded;
   }

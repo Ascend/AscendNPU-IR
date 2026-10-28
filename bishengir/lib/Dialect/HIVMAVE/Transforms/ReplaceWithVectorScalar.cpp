@@ -105,10 +105,6 @@ public:
     if (!resVecType || resVecType.getRank() != 1) {
       return failure();
     }
-    // CANN rejects BF16 vmuls; keep the broadcast and native vector vmul.
-    if (isa<hivmave::VFMulOp>(op.getOperation()) &&
-        resVecType.getElementType().isBF16())
-      return failure();
     auto new_operands = foldBroadcastInOperands(op, rewriter);
     if (new_operands) {
       auto replacer =
