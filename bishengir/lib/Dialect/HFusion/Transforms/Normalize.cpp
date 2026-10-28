@@ -63,6 +63,21 @@ using namespace mlir::hfusion;
 
 static constexpr llvm::StringLiteral kAlreadyInitalizeInit = "already_denaned";
 
+/// Set the sign of `magnitude` to the sign of `sign`, preserving the magnitude
+/// bits (including the sign of zero).
+static Value buildCopysign(OpBuilder &builder, Location loc, Value magnitude,
+                           Value sign) {
+  auto empty = utils::createEmptyOp(builder, loc, magnitude);
+  return builder
+      .create<hfusion::ElemwiseBinaryOp>(
+          loc, TypeRange{empty.getType()}, ValueRange{magnitude, sign},
+          ValueRange{empty},
+          ArrayRef<NamedAttribute>{builder.getNamedAttr(
+              "fun", hfusion::BinaryFnAttr::get(builder.getContext(),
+                                                hfusion::BinaryFn::copysign))})
+      ->getResult(0);
+}
+
 // norm(x,x_round,offset) = x-x_round*(pi1+pi2+pi3+pi4+pi5)+offset
 // (pi1+pi2+pi3+pi4+pi5) approximates pi
 static Value norm(PatternRewriter &rewriter, Location loc, Value x,
@@ -2572,7 +2587,8 @@ public:
     assert(!inType.isInteger() && "Cast in floor/ceil mode doesn't support "
                                   "integer type input");
     OpBuilder builder(op);
-    Value src = op.getInputs()[0];
+    Value originalSrc = op.getInputs()[0];
+    Value src = originalSrc;
     hfusion::RoundMode roundMode = op.getFun() == linalg::UnaryFn::ceil
                                        ? hfusion::RoundMode::CEIL
                                        : hfusion::RoundMode::FLOOR;
@@ -2590,9 +2606,19 @@ public:
       src = hfusion::castTo(builder, intermediate, rewriter.getF32Type(),
                             roundMode);
     }
-    auto castOp =
+    Value result =
         hfusion::castTo(builder, src, outType, roundMode, op.getOutputs()[0]);
-    rewriter.replaceOp(op, castOp);
+    // The cast above rounds through an integer intermediate, which turns
+    // -0.0 into +0.0. Restore the sign bit from the original input for the
+    // types supported by the HFusion copysign lowering.
+    if (outType.isF16() || outType.isBF16() || outType.isF32()) {
+      Value signSrc = originalSrc;
+      if (inType != outType)
+        signSrc = hfusion::castTo(builder, originalSrc, outType,
+                                  hfusion::RoundMode::ROUND);
+      result = buildCopysign(builder, op.getLoc(), result, signSrc);
+    }
+    rewriter.replaceOp(op, result);
     return success();
   }
 };
@@ -2641,20 +2667,6 @@ public:
     result = buildCopysign(builder, op.getLoc(), result, signSrc);
     rewriter.replaceOp(op, result);
     return success();
-  }
-
-private:
-  Value buildCopysign(OpBuilder &builder, Location loc, Value magnitude,
-                      Value sign) const {
-    auto empty = utils::createEmptyOp(builder, loc, magnitude);
-    return builder
-        .create<hfusion::ElemwiseBinaryOp>(
-            loc, TypeRange{empty.getType()}, ValueRange{magnitude, sign},
-            ValueRange{empty},
-            ArrayRef<NamedAttribute>{builder.getNamedAttr(
-                "fun", hfusion::BinaryFnAttr::get(
-                           builder.getContext(), hfusion::BinaryFn::copysign))})
-        ->getResult(0);
   }
 };
 

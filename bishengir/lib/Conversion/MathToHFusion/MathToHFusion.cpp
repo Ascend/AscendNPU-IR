@@ -518,9 +518,16 @@ void MathToHFusionConversionPass::runOnOperation() {
   auto *module = getOperation();
   auto moduleOp = dyn_cast<ModuleOp>(module);
 
-  if (moduleOp && hacc::utils::isRegBasedArch(moduleOp)) {
+  bool isMemBased = moduleOp && hacc::utils::isMemBasedArch(moduleOp);
+  bool isRegBased = moduleOp && hacc::utils::isRegBasedArch(moduleOp);
+  // Unknown architectures are neither mem- nor reg-based; leave their scalar
+  // math unchanged, matching the previous behavior.
+  if (isMemBased || isRegBased) {
     RewritePatternSet scalarPatterns(&getContext());
-    populateScalarMathPromotionPatterns(scalarPatterns);
+    if (isMemBased)
+      populateScalarMathPromotionPatternsMemBased(scalarPatterns);
+    else
+      populateScalarMathPromotionPatterns(scalarPatterns);
     if (failed(applyPatternsGreedily(module, std::move(scalarPatterns)))) {
       signalPassFailure();
       return;
