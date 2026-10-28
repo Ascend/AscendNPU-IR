@@ -137,8 +137,7 @@ struct BinaryLowerToIntrinsic : public OpConversionPattern<OpTy> {
     uint64_t totalSize = static_cast<uint64_t>(vecType.getNumElements());
     Type elementType = vecType.getElementType();
     auto dataWidth = elementType.getIntOrFloatBitWidth();
-    Value mask =
-        getVLRegValueOrSelf(op.getMask(), rewriter);
+    Value mask = getVLRegValueOrSelf(op.getMask(), rewriter);
     auto vlLength = util::VL_BITS / dataWidth;
     VectorType oriVecType = vecType;
     if (totalSize != vlLength) {
@@ -298,7 +297,8 @@ struct HIVMVunpackOpLowering
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     Value src = adaptor.getSrc();
-    Value part = rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(adaptor.getPart()));
+    Value part = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI32IntegerAttr(adaptor.getPart()));
     VectorType vecType = cast<VectorType>(op.getRes().getType());
     Type elemType = vecType.getElementType();
     Type llvmVecType = getTypeConverter()->convertType(vecType);
@@ -332,35 +332,34 @@ struct HIVMPregCastOpLowering
     auto loc = op.getLoc();
     auto castMode = op.getPregCastMode();
 
-    Value part = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI32IntegerAttr(0));
+    Value part =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(0));
     auto srcVLVectorTy = createVLVectorType(rewriter.getI1Type());
     UnrealizedConversionCastOp castOp =
-        rewriter.create<UnrealizedConversionCastOp>(loc, srcVLVectorTy, op.getSrc());
+        rewriter.create<UnrealizedConversionCastOp>(loc, srcVLVectorTy,
+                                                    op.getSrc());
     if (castMode == hivmave::PregCastMode::PK4_B32) {
-      Operation *ppackOp = buildPpackOp(
-          loc, part, castOp->getResult(0), rewriter);
-      ppackOp = buildPpackOp(
-          loc, part, ppackOp->getResult(0), rewriter);
+      Operation *ppackOp =
+          buildPpackOp(loc, part, castOp->getResult(0), rewriter);
+      ppackOp = buildPpackOp(loc, part, ppackOp->getResult(0), rewriter);
       rewriter.replaceOp(op, ppackOp->getResult(0));
       return success();
     } else if (castMode == hivmave::PregCastMode::PK_B32 ||
                castMode == hivmave::PregCastMode::PK_B16) {
-      Operation *ppackOp = buildPpackOp(
-          loc, part, castOp->getResult(0), rewriter);
+      Operation *ppackOp =
+          buildPpackOp(loc, part, castOp->getResult(0), rewriter);
       rewriter.replaceOp(op, ppackOp->getResult(0));
       return success();
     } else if (castMode == hivmave::PregCastMode::UNPK4_B8) {
-      Operation *punpackOp = buildPunpackOp(
-          loc, part, castOp->getResult(0), rewriter);
-      punpackOp = buildPunpackOp(
-          loc, part, punpackOp->getResult(0), rewriter);
+      Operation *punpackOp =
+          buildPunpackOp(loc, part, castOp->getResult(0), rewriter);
+      punpackOp = buildPunpackOp(loc, part, punpackOp->getResult(0), rewriter);
       rewriter.replaceOp(op, punpackOp->getResult(0));
       return success();
     } else if (castMode == hivmave::PregCastMode::UNPK_B16 ||
                castMode == hivmave::PregCastMode::UNPK_B8) {
-      Operation *punpackOp = buildPunpackOp(
-          loc, part, castOp->getResult(0), rewriter);
+      Operation *punpackOp =
+          buildPunpackOp(loc, part, castOp->getResult(0), rewriter);
       rewriter.replaceOp(op, punpackOp->getResult(0));
       return success();
     }
@@ -539,8 +538,7 @@ struct UnaryLowerToIntrinsic : public OpConversionPattern<OpTy> {
     uint64_t totalSize = static_cast<uint64_t>(vecType.getNumElements());
     Type elementType = vecType.getElementType();
     auto dataWidth = elementType.getIntOrFloatBitWidth();
-    Value mask =
-        getVLRegValueOrSelf(op.getMask(), rewriter);
+    Value mask = getVLRegValueOrSelf(op.getMask(), rewriter);
 
     auto vlLength = util::VL_BITS / dataWidth;
     VectorType oriVecType = vecType;
@@ -645,8 +643,10 @@ struct HIVMBroadCastScalarOpLowering : public ConvertOpToLLVMPattern<OpTy> {
       auto i8Type = IntegerType::get(rewriter.getContext(), 8);
       auto i8VecTy =
           VectorType::get(SmallVector<int64_t>{vecTy.getNumElements()}, i8Type);
-      if (isa<Float8E4M3FNType>(elementType) || isa<Float8E5M2Type>(elementType) ||
-          scalar.getType().isFloat8E4M3FN() || scalar.getType().isFloat8E5M2()) {
+      if (isa<Float8E4M3FNType>(elementType) ||
+          isa<Float8E5M2Type>(elementType) ||
+          scalar.getType().isFloat8E4M3FN() ||
+          scalar.getType().isFloat8E5M2()) {
         i8Value = rewriter.create<LLVM::BitcastOp>(loc, i8Type, scalar);
       } else if (scalar.getType().getIntOrFloatBitWidth() == 16) {
         i8Value = rewriter.create<arith::TruncIOp>(loc, i8Type, scalar);
@@ -723,7 +723,7 @@ static bool isONEPTDist(Value dist) {
 static Value createMaskByPGE(PatternRewriter &rewriter, Location loc) {
   auto pgeType = VectorType::get(256, rewriter.getI1Type());
   Value zero = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(),
-                                                  rewriter.getI32IntegerAttr(0));
+                                                 rewriter.getI32IntegerAttr(0));
   Operation *newOp = rewriter.create<PgeB8>(loc, pgeType, zero, zero);
   Value pge = newOp->getResult(0);
   return pge;
@@ -974,8 +974,8 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
       int pbMode = getBitWidthFromAttr(load);
       bool shouldSparsifyLayout = pbMode == 16 || pbMode == 32;
       if (archIs910_95 && shouldSparsifyLayout) {
-        Value res = preginterleaveDataLayoutForExtCast(rewriter, loc, pLoadRes,
-                                                       pbMode);
+        Value res =
+            preginterleaveDataLayoutForExtCast(rewriter, loc, pLoadRes, pbMode);
         res = castToTypeIfNeeded(rewriter, loc, res, origLoadTy);
         rewriter.replaceOp(load, res);
       } else {
@@ -1549,13 +1549,29 @@ struct HIVMSelectOpLowering : public ConvertOpToLLVMPattern<VFSelectOp> {
     trueValue = getVLRegValueOrSelf(trueValue, rewriter);
     falseValue = getVLRegValueOrSelf(falseValue, rewriter);
     Value result;
-    if (elementType.isUnsignedInteger(8) || elementType.isSignedInteger(8) ||
-        elementType.isSignlessInteger(8) || elementType.isUnsignedInteger(16) ||
-        elementType.isSignedInteger(16) || elementType.isSignlessInteger(16) ||
-        elementType.isBF16() || elementType.isF16() ||
-        elementType.isUnsignedInteger(32) || elementType.isSignedInteger(32) ||
-        elementType.isSignlessInteger(32) || elementType.isF32() ||
-        isa<Float8E4M3FNType>(elementType) || isa<Float8E5M2Type>(elementType)) {
+    if (elementType.isInteger(1)) {
+      // Predicate select: vsel(mask, t, f) = por(pand(mask, t),
+      // pand(pnot(mask), f))
+      Value allTrue = createMaskByPGE(rewriter, loc);
+      Value notMask =
+          rewriter.create<PnotB8InstrOp>(loc, vlType, mask, allTrue);
+      Value andTrue =
+          rewriter.create<PandB8InstrOp>(loc, vlType, mask, trueValue, allTrue);
+      Value andFalse = rewriter.create<PandB8InstrOp>(loc, vlType, notMask,
+                                                      falseValue, allTrue);
+      result = rewriter.create<PorB8InstrOp>(loc, vlType, andTrue, andFalse,
+                                             allTrue);
+    } else if (elementType.isUnsignedInteger(8) ||
+               elementType.isSignedInteger(8) ||
+               elementType.isSignlessInteger(8) ||
+               elementType.isUnsignedInteger(16) ||
+               elementType.isSignedInteger(16) ||
+               elementType.isSignlessInteger(16) || elementType.isBF16() ||
+               elementType.isF16() || elementType.isUnsignedInteger(32) ||
+               elementType.isSignedInteger(32) ||
+               elementType.isSignlessInteger(32) || elementType.isF32() ||
+               isa<Float8E4M3FNType>(elementType) ||
+               isa<Float8E5M2Type>(elementType)) {
       result = rewriter.create<VselInstrOp>(loc, vlType, trueValue, falseValue,
                                             mask);
     } else {
@@ -1677,8 +1693,6 @@ struct HIVMCmpOpLowering : public ConvertOpToLLVMPattern<VFCmpOp> {
     return success();
   }
 };
-
-
 
 struct HIVMReductionOpLowering : public ConvertOpToLLVMPattern<ReductionOp> {
   explicit HIVMReductionOpLowering(LLVMTypeConverter &converter)
@@ -2120,8 +2134,9 @@ private:
       return buildVcMinMaxOp<umax, width, OpSMax, OpUMax, OpFMax>(
           rewriter, elementType, loc, vType, vector, mask);
     } else {
-      llvm::report_fatal_error("unsupported CombiningKind (should be detected in "
-                       "compile timeon newer clang)");
+      llvm::report_fatal_error(
+          "unsupported CombiningKind (should be detected in "
+          "compile timeon newer clang)");
     }
   }
 
@@ -2277,7 +2292,8 @@ static Value vdupLowerToIntrin(VFBroadcastVectorOp vecBrcOp,
 
   VectorType vecType = cast<VectorType>(resType);
   Type elemType = vecType.getElementType();
-  VectorType newType = VectorType::get({getVectorSizeByElementType(elemType)}, elemType);
+  VectorType newType =
+      VectorType::get({getVectorSizeByElementType(elemType)}, elemType);
 
   auto src = vecBrcOp.getSrc();
   auto loc = vecBrcOp->getLoc();
