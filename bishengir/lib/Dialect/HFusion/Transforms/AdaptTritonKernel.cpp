@@ -562,15 +562,26 @@ struct TritonIndirectLoadToHFusionIndirectLoadPattern
       auto offsetType = mlir::cast<RankedTensorType>(offsets.getType());
       auto srcType = mlir::cast<MemRefType>(src.getType());
       auto elementType = srcType.getElementType();
-      auto otherType =
-          RankedTensorType::get(offsetType.getShape(), elementType);
 
       assert(mlir::isa<IntegerType>(elementType) ||
              mlir::isa<FloatType>(elementType));
-      Value zeroValue = rewriter.create<arith::ConstantOp>(
-          loc, rewriter.getZeroAttr(elementType));
-      other = rewriter.create<tensor::SplatOp>(loc, otherType, zeroValue)
-                  .getResult();
+      // f64 is not supported as ave.hir.masked_store data operand.
+      if (elementType.isF64()) {
+        auto f32Type = rewriter.getF32Type();
+        auto f32OtherType =
+            RankedTensorType::get(offsetType.getShape(), f32Type);
+        Value f32Zero = rewriter.create<arith::ConstantOp>(
+            loc, rewriter.getZeroAttr(f32Type));
+        other = rewriter.create<tensor::SplatOp>(loc, f32OtherType, f32Zero)
+                    .getResult();
+      } else {
+        auto otherType =
+            RankedTensorType::get(offsetType.getShape(), elementType);
+        Value zeroValue = rewriter.create<arith::ConstantOp>(
+            loc, rewriter.getZeroAttr(elementType));
+        other = rewriter.create<tensor::SplatOp>(loc, otherType, zeroValue)
+                    .getResult();
+      }
     }
 
     constexpr StringRef directlyUsedGMArgListName = "DirectlyUsedGMArgIdxList";

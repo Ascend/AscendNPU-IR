@@ -208,6 +208,11 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
           (inType.isF32() || inType.isF16() || inType.isBF16()) &&
           (isa<Float8E4M3FNType>(outType) || isa<Float8E5M2Type>(outType)))
         return hfusion::RoundMode::RINT;
+      // A5 has no fp64 vector conversion instruction. This pair is lowered to
+      // hivm.hir.vcast and implemented by the scalar software template.
+      bool isF64ToF32Cast = inType.isF64() && outType.isF32();
+      if (isRegBasedArch && isF64ToF32Cast)
+        return hfusion::RoundMode::RINT;
       llvm::report_fatal_error(
           "unsupported datatype for arith::TruncFOp to hfusion");
     } else if (isa<arith::ExtFOp>(op)) {

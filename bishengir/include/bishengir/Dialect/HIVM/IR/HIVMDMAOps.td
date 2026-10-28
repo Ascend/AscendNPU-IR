@@ -59,19 +59,25 @@ class HIVM_DmaOp<string mnemonic, list<Trait> traits = []> :
   }] # opNameDeclaration;
 }
 
-def LoadOp : HIVM_DmaOp<"load", [
-  AttrSizedOperandSegments,
-  SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_MTE2">,
-  DeclareOpInterfaceMethods<HIVMInferCoreTypeInterface, ["inferCoreType"]>,
-  // Will automatically use the default uniform reassociation impl
-  UniformReassociationFlattenTrait,
-  DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
-  // TODO: Use trait to avoid writing duplicate type constraints
-  OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8,
-    I16, UI16, F16, BF16, I32, UI32, F32, UI64, I64]>,
-  DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
-    ["decomposeOperation", "getDecomposePhase"]>,
-  DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
+def LoadOp
+    : HIVM_DmaOp<
+          "load",
+          [AttrSizedOperandSegments, SinglePipeOpTrait,
+           OpPipeTrait<"PIPE::PIPE_MTE2">,
+           DeclareOpInterfaceMethods<
+               HIVMInferCoreTypeInterface, ["inferCoreType"]>,
+           // Will automatically use the default uniform reassociation impl
+           UniformReassociationFlattenTrait,
+           DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
+           // TODO: Use trait to avoid writing duplicate type constraints
+           OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8, I16,
+                                         UI16, F16, BF16, I32, UI32, F32, F64,
+                                         UI64, I64]>,
+           DeclareOpInterfaceMethods<
+               BiShengIRAggregatedOpInterface, ["decomposeOperation",
+                                                "getDecomposePhase"]>,
+           DeclareOpInterfaceMethods<
+               HIVMStructuredOpInterface, ["getIndexingMaps"]>,
 ]> {
   let summary = "HIVM data load operation";
   let description = [{
