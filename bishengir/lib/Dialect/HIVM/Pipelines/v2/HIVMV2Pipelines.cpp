@@ -15,17 +15,14 @@
 #include "bishengir/Dialect/HIVM/Pipelines/v2/TargetUtils.h"
 
 #include "bishengir/Conversion/LowerMemRefExt/LowerMemRefExt.h"
-#include "bishengir/Dialect/Bufferization/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/Transforms/Passes.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
-#include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
+#include "bishengir/Dialect/HIVM/Pipelines/HIVMBufferizationPipeline.h"
 #include "bishengir/Dialect/HIVM/Pipelines/regbase/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/MemRef/Transforms/Passes.h"
 #include "bishengir/Dialect/SCF/Transforms/Passes.h"
 #include "bishengir/Transforms/Passes.h"
 
-#include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/Bufferization/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Pass/PassManager.h"
@@ -144,29 +141,8 @@ void buildV2TensorPhase(OpPassManager &pm, const V2PipelineOptions &options) {
 /// The tensor -> memref anchor.
 void buildV2BufferizationPhase(OpPassManager &pm,
                                const V2PipelineOptions &options) {
-  addFuncPass(pm, bishengir::bufferization::createNormalizeToTensorOpPass());
-
-  bufferization::OneShotBufferizationOptions oneShotOptions;
-  oneShotOptions.bufferizeFunctionBoundaries = true;
-  oneShotOptions.setFunctionBoundaryTypeConversion(
-      bufferization::LayoutMapOption::IdentityLayoutMap);
-  oneShotOptions.allowReturnAllocsFromLoops = true;
-  oneShotOptions.allowUnknownOps = true;
-  oneShotOptions.unknownTypeConverterFn =
-      [=](Value value, Attribute memorySpace,
-          const bufferization::BufferizationOptions &options) {
-        auto tensorType = cast<TensorType>(value.getType());
-        return bufferization::getMemRefTypeWithStaticIdentityLayout(
-            tensorType, memorySpace);
-      };
-  oneShotOptions.analysisHeuristic =
-      bufferization::OneShotBufferizationOptions::AnalysisHeuristic::TopDown;
-
-  pm.addPass(createDecomposeAllocTensorCopyPass());
-  pm.addPass(
-      bishengir::bufferization::createTensorCopyInsertionPass(oneShotOptions));
-  pm.addPass(createDecomposeAllocTensorCopyPass());
-  pm.addPass(bufferization::createOneShotBufferizePass(oneShotOptions));
+  // The v2 pipeline only supports reg-based targets.
+  bufferizationPipelineBase(pm, /*isRegBased=*/true);
   buildCanonicalization(pm);
   pm.addPass(createConvertToHIVMOpPass());
   pm.addPass(bufferization::createDropEquivalentBufferResultsPass());

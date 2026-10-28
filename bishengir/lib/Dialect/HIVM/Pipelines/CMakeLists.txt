@@ -1,5 +1,7 @@
 add_bishengir_dialect_library(BiShengIRHIVMPipelines
   ConvertToHIVMPipeline.cpp
+  HIVMBufferizationPipeline.cpp
+  HIVMPipelineBase.cpp
   HIVMPipelines.cpp
 
   ADDITIONAL_HEADER_DIRS
@@ -12,11 +14,13 @@ add_bishengir_dialect_library(BiShengIRHIVMPipelines
   BiShengIRHIVMTransforms
   BiShengIRMathExtDialect
   BiShengIRMemRefTransforms
+  BiShengIRProtonToHIVM
   BiShengIRSCFTransforms
   BiShengIRTensorToHIVM
   BiShengIRTensorTransforms
   BiShengIRTransform
   MLIRArithDialect
+  MLIRBufferizationTransforms
   MLIRFuncDialect
   MLIRMathDialect
   MLIRMemRefDialect

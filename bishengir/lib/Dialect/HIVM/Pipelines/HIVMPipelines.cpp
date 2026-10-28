@@ -19,10 +19,9 @@
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/Arith/Transforms/Passes.h"
-#include "bishengir/Dialect/Bufferization/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
-#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Pipelines/HIVMBufferizationPipeline.h"
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/MemRef/Transforms/Passes.h"
@@ -31,8 +30,6 @@
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Transforms/Passes.h"
 
-#include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
-#include "mlir/Dialect/Bufferization/Transforms/Passes.h"
 #include "mlir/Dialect/SCF/Transforms/Passes.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
@@ -62,18 +59,6 @@ markCoreTypeOpts(const HIVMPipelineOptions &pipelineOpts,
   opts.workspaceMultiBufferNum = pipelineOpts.setWorkspaceMultibuffer;
   opts.removeCoreTypeAttrs = removeCoreTypeAttrs;
   return opts;
-}
-
-void canonicalizationHIVMPipeline(OpPassManager &pm) {
-  pm.addPass(createArithToAffineConversionPass());
-  pm.nest<func::FuncOp>().addPass(scf::createCanonicalizeIterArgPass());
-  pm.addPass(bishengir::createExtendedCanonicalizerPass());
-  pm.addPass(createSCFForLoopCanonicalizationPass());
-  pm.addPass(createCSEPass());
-  pm.nest<func::FuncOp>().addPass(bishengir::createExtendedCanonicalizerPass());
-  pm.nest<func::FuncOp>().addPass(createHIVMOptSinglePointPass());
-  pm.nest<func::FuncOp>().addPass(bishengir::createExtendedCanonicalizerPass());
-  pm.nest<func::FuncOp>().addPass(memref::createDeadStoreEliminationPass());
 }
 
 static void
@@ -143,74 +128,6 @@ inferAndSetBufferSizePipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(createConstantizeBufferSizePass(
       constantizeBufferSizeOpts(hivmPipelineOptions)));
   pm.nest<func::FuncOp>().addPass(createSetBufferSizePass());
-}
-
-static void
-bufferizationPipeline(OpPassManager &pm,
-                      const HIVMPipelineOptions &hivmPipelineOptions) {
-  if (hivmPipelineOptions.enableTritonKernelCompile) {
-    pm.nest<func::FuncOp>().addPass(
-        tensor::createOptimizeDpsOpWithYieldedInsertSlicePass());
-  }
-  if (hivmPipelineOptions.enableUbufSaving) {
-    pm.nest<func::FuncOp>().addPass(createSinkOpToConsumerInLoopPass());
-  }
-  // Fold extract_slice/insert_slice pairs around scf.for loops into the loop
-  // body, merge the consecutive slice chains this creates and CSE away the
-  // duplicated slices, so fold-extract-insert-pair can fold the redundant
-  // slice round trips.
-  pm.nest<func::FuncOp>().addPass(tensor::createFoldSliceIntoScfForPass());
-  pm.nest<func::FuncOp>().addPass(
-      tensor::createMergeConsecutiveInsertExtractSlicePass());
-  pm.nest<func::FuncOp>().addPass(createCSEPass());
-  pm.nest<func::FuncOp>().addPass(tensor::createFoldExtractInsertPairPass());
-  // CSE merges identical tensor.empty ops; need to run clone-tensor-empty
-  pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
-  // TODO: support process toTensorOp in one-shot-bufferize.
-  // Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis
-  // by inserting an `alloc_tensor(copy...)` for each writable to_tensor.
-  pm.nest<func::FuncOp>().addPass(
-      bishengir::bufferization::createNormalizeToTensorOpPass());
-  bufferization::OneShotBufferizationOptions oneShotOptions;
-  oneShotOptions.bufferizeFunctionBoundaries = true;
-  oneShotOptions.setFunctionBoundaryTypeConversion(
-      bufferization::LayoutMapOption::IdentityLayoutMap);
-  oneShotOptions.allowReturnAllocsFromLoops = true;
-  oneShotOptions.allowUnknownOps = true;
-  // We don't expect dynamic shape beacuse LiftLowestStride pass will generate
-  // extract_strided_metadata op, which can't be lowered in planMemory pass. So
-  // static identity layout for unknown type conversion should be used to avoid
-  // dynamic layout map in the generated memref type.
-  oneShotOptions.unknownTypeConverterFn =
-      [=](Value value, Attribute memorySpace,
-          const bufferization::BufferizationOptions &options) {
-        auto tensorType = cast<TensorType>(value.getType());
-        return bufferization::getMemRefTypeWithStaticIdentityLayout(
-            tensorType, memorySpace);
-      };
-  oneShotOptions.analysisHeuristic =
-      bufferization::OneShotBufferizationOptions::AnalysisHeuristic::TopDown;
-  pm.addPass(createDecomposeAllocTensorCopyPass());
-  // Run a first round of analysis + tensor copy insertion.
-  pm.addPass(
-      bishengir::bufferization::createTensorCopyInsertionPass(oneShotOptions));
-  pm.addPass(createDecomposeAllocTensorCopyPass());
-  pm.addPass(bufferization::createOneShotBufferizePass(oneShotOptions));
-  canonicalizationHIVMPipeline(pm);
-  if (hivmPipelineOptions.enableTritonKernelCompile) {
-    // For triton kernels, bufferization will generate `memref.copy` ops,
-    // and they need to be converted to `hivm.copy` ops.
-    pm.addPass(createConvertToHIVMOpPass());
-  }
-  pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
-  canonicalizationHIVMPipeline(pm);
-  pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
-  if (!hivmPipelineOptions.enableTritonKernelCompile) {
-    // For non-triton kernels, there could also be `memref.copy` ops generated
-    // during bufferization. But we want to convert them after canonicalizing
-    // the IR.
-    pm.addPass(createConvertToHIVMOpPass());
-  }
 }
 
 static void hivmAutoInsertLdStForMixCVPipeline(
