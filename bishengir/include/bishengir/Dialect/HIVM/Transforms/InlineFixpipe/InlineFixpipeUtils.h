@@ -1,4 +1,4 @@
-//===- InlineFixpipeShared.h - Shared InlineFixpipe queries ---------------===//
+//===- InlineFixpipeUtils.h - Shared InlineFixpipe queries ---------------===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,8 +14,8 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
-#ifndef BISHENGIR_DIALECT_HIVM_TRANSFORMS_INLINEFIXPIPESHARED_H
-#define BISHENGIR_DIALECT_HIVM_TRANSFORMS_INLINEFIXPIPESHARED_H
+#ifndef BISHENGIR_DIALECT_HIVM_TRANSFORMS_INLINEFIXPIPEUTILS_H
+#define BISHENGIR_DIALECT_HIVM_TRANSFORMS_INLINEFIXPIPEUTILS_H
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -47,4 +47,4 @@ std::optional<FixpipePreReluMode> getReluMode(OpType op) {
 
 } // namespace mlir::hivm
 
-#endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_INLINEFIXPIPESHARED_H
+#endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_INLINEFIXPIPEUTILS_H

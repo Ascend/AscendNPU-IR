@@ -15,9 +15,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/HIVM/Transforms/InlineFixpipeFallback.h"
+#include "bishengir/Dialect/HIVM/Transforms/InlineFixpipe/InlineFixpipeFallback.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
-#include "bishengir/Dialect/HIVM/Transforms/InlineFixpipeShared.h"
+#include "bishengir/Dialect/HIVM/Transforms/InlineFixpipe/InlineFixpipeUtils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/IRMapping.h"
