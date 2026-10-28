@@ -7,19 +7,19 @@
 - Supports flexible integration of custom DSLs and ecosystem frameworks based on the multi-level interfaces, enabling high-performance execution of custom operators on Ascend NPUs.
 
 ```text
-  Torch-MLIR / Triton      (Framework/DSL layer)
+  Torch-MLIR / Triton      (framework/DSL layer)
           |
           v
-  Linalg / Tensor           (General tensor algebra layer)
+  Linalg / Tensor           (general tensor algebra layer)
           |
           v
-  HFusion                   (Hardware-aware fusion scheduling layer)
+  HFusion                   (hardware-aware fusion scheduling layer)
           |
           v
   HIVM                      (NPU instruction layer)
           |
           v
-  LIR -> Binary             (Machine code generation)
+  LIR -> Binary             (machine code generation)
 ```
 
 - **Linalg / Tensor layer**: Uses standard MLIR dialects to express operator semantics, supporting operations such as `Elemwise`, `Broadcast`, `Reduce`, `Transpose`, and `Concat`. HFusion automatically performs operator fusion, tiling, and scheduling.
@@ -45,9 +45,15 @@ The multi-level interfaces described above support flexible integration with cus
 
 Supported target devices include:
 
-- Ascend 950PR/Ascend 950DT
-- Atlas A3 training products/Atlas A3 inference products
-- Atlas A2 training products/Atlas A2 inference products
+<!-- npu="950" id1 -->
+- <term>Ascend 950PR/Ascend 950DT</term>
+<!-- end id1 -->
+<!-- npu="A3" id2 -->
+- <term>Atlas A3 training products/Atlas A3 inference products</term>
+<!-- end id2 -->
+<!-- npu="910b" id3 -->
+- <term>Atlas A2 training products/Atlas A2 inference products</term>
+<!-- end id3 -->
 
 ### Function Attributes
 
@@ -55,11 +61,11 @@ The following attributes annotate the kernel entry function and are common to al
 
 | Attribute | Description |
 |------|------|
-| `hacc.entry` | Marks the current function as the kernel entry. |
-| `hacc.function_kind = #hacc.function_kind<DEVICE>` | Indicates that the function runs on the DEVICE side. |
-| `hacc.function_kind = #hacc.function_kind<HOST>` | Indicates that the function runs on the HOST side, and HFusion automatically outlines the device kernel. |
+| `hacc.entry` | Marks the current function as a kernel entry |
+| `hacc.function_kind = #hacc.function_kind<DEVICE>` | Indicates that the function runs on the DEVICE side |
+| `hacc.function_kind = #hacc.function_kind<HOST>` | Indicates that the function runs on the HOST side, and HFusion automatically outlines the device kernel |
 
-Example:
+Code example:
 
 ```mlir
 func.func @kernel(...) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
