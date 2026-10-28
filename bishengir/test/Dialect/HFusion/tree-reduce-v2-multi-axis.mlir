@@ -1,7 +1,8 @@
-// RUN: bishengir-opt %s --tree-reduce-v2="enable-ar=true enable-ra=true" | FileCheck %s
-// RUN: bishengir-opt %s --tree-reduce-v2="enable-ra=true enable-ar=true only-marked=true direct-register-ra=true" | FileCheck %s --check-prefixes=CHECK,MARKED
-// RUN: bishengir-opt %s --tree-reduce-v2="enable-ar=true enable-ra=true" --one-shot-bufferize="bufferize-function-boundaries allow-return-allocs-from-loops allow-unknown-ops" -o %t
-// RUN: bishengir-opt %s --tree-reduce-v2="enable-ar=false enable-ra=true" | FileCheck %s --check-prefix=NOAR
+// RUN: bishengir-opt %s --tree-reduce-v2="enable-ar=true enable-ra=true ascend-style-ra=true" | FileCheck %s
+// RUN: bishengir-opt %s --tree-reduce-v2="enable-ra=true enable-ar=true ascend-style-ra=true only-marked=true direct-register-ra=true" | FileCheck %s --check-prefixes=CHECK,MARKED
+// RUN: bishengir-opt %s --tree-reduce-v2="enable-ar=true enable-ra=true ascend-style-ra=true" --one-shot-bufferize="bufferize-function-boundaries allow-return-allocs-from-loops allow-unknown-ops" -o %t
+// RUN: bishengir-opt %s --tree-reduce-v2="enable-ar=false enable-ra=true ascend-style-ra=true" | FileCheck %s --check-prefix=NOAR
+// RUN: bishengir-opt %s --tree-reduce-v2="enable-ar=true enable-ra=true" | FileCheck %s --check-prefix=LEGACY-RA
 
 // CHECK-LABEL: func.func @separated_axes(
 // CHECK: tensor.collapse_shape %arg0 {{.*}} tensor<17x3x6xf32> into tensor<51x6xf32>
@@ -423,6 +424,10 @@ func.func @multi_ra_preserve_live_input(%input: tensor<17x2x4xf32>,
 
 // A rank-3 reduction with one reduction axis still needs staged lowering: its
 // physical view is [outer, R, inner], not either of the legacy rank-2 forms.
+
+// LEGACY-RA-LABEL: func.func @single_axis_batched_ra(
+// LEGACY-RA: vector.multi_reduction <add>
+// LEGACY-RA: return
 
 // CHECK-LABEL: func.func @single_axis_batched_ra(
 // CHECK: tensor.collapse_shape {{.*}} tensor<2x68xf32> into tensor<136xf32>

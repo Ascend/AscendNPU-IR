@@ -3852,6 +3852,10 @@ TreeReduceV2Pass::createRewritePlan(const ReductionMatch &match,
       LDBG("Skipping staged tree rewrite - RA stage disabled");
       return std::nullopt;
     }
+    if (requiresRA && !ascendStyleRA) {
+      LDBG("Skipping staged tree rewrite - Ascend-style RA disabled");
+      return std::nullopt;
+    }
     plan.loweringKind = ReductionLoweringKind::Staged;
     plan.stages = std::move(*stages);
     return plan;
