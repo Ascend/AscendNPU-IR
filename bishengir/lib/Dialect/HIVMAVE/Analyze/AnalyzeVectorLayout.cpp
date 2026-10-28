@@ -1,3 +1,4 @@
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -14,6 +15,7 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -34,6 +36,86 @@ namespace {
 
 using State = hivmave::VecMemType;
 using FunctionType = hivmave::FunctionDistType;
+
+/// Returns the number of bits one logical lane of \p elemBitWidth occupies in a
+/// vector register when the value is laid out as \p state.
+///
+/// The packed layouts replicate a lane over 2 (B*_2VL) or 4 (B8_4VL) slots, so
+/// their per-lane footprint doubles/quadruples. Dense layouts keep the natural
+/// element width.
+static unsigned getLayoutLaneBitWidth(State state, unsigned elemBitWidth) {
+  switch (state) {
+  case State::B8_2VL:
+  case State::B16_2VL:
+    return elemBitWidth * 2;
+  case State::B8_4VL:
+    return elemBitWidth * 4;
+  default:
+    return elemBitWidth;
+  }
+}
+
+/// Returns the number of lanes one store instruction can move when the value is
+/// laid out as \p state, i.e. how long a single write under that layout is.
+///
+/// A masked store is lowered to a single VSTS that consumes exactly one vector
+/// register (see AVENormalizeOps::changeStoreVectorType), so it covers the
+/// register capacity of the selected layout: dense layouts move one element per
+/// lane, while the packed ones replicate a lane over 2 or 4 slots and therefore
+/// cover fewer elements.
+static int64_t getLayoutCoveredLanes(State state, unsigned elemBitWidth) {
+  // A predicate lane is one bit of the predicate register, so its footprint
+  // does not depend on the predication granularity the layout selects.
+  if (elemBitWidth == 1)
+    return static_cast<int64_t>(hivm::util::PREDICATE_BITS);
+
+  // 64-bit lanes are served by two 32-bit passes (see elemBitwidthOf).
+  if (elemBitWidth == 64)
+    elemBitWidth = 32;
+
+  return static_cast<int64_t>(hivm::util::VL_BITS /
+                              getLayoutLaneBitWidth(state, elemBitWidth));
+}
+
+/// Returns the number of elements a masked store writes into its destination,
+/// or std::nullopt when that cannot be bounded statically.
+///
+/// A store value is built for a whole vector register, so it can be wider than
+/// the region actually stored: the padded tail is dead, because the mask only
+/// selects the destination. The write is therefore bounded by the innermost
+/// static dimension of the destination.
+///
+/// A dynamic destination extent is not bounded at all: an unknown extent cannot
+/// prove a truncation, and rejecting every packed layout there would turn
+/// otherwise valid IR into "No Solve".
+static std::optional<int64_t>
+getStoredElementCount(hivmave::VFMaskedStoreOp store) {
+  auto vecType = dyn_cast<VectorType>(store.getVal().getType());
+  if (!vecType || !vecType.hasStaticShape())
+    return std::nullopt;
+
+  ArrayRef<int64_t> shape = store.getMemRefType().getShape();
+  if (shape.empty() || ShapedType::isDynamic(shape.back()))
+    return std::nullopt;
+
+  int64_t numElements = vecType.getNumElements();
+  return shape.back() < numElements ? shape.back() : numElements;
+}
+
+/// Returns true when writing \p value under \p state covers the
+/// \p storedElements lanes the destination needs.
+static bool isLayoutWritableFor(Value value, State state,
+                                int64_t storedElements) {
+  auto vecType = dyn_cast<VectorType>(value.getType());
+  if (!vecType || !vecType.hasStaticShape())
+    return true;
+
+  int64_t requiredLanes = vecType.getNumElements();
+  if (storedElements < requiredLanes)
+    requiredLanes = storedElements;
+  return getLayoutCoveredLanes(state, vecType.getElementTypeBitWidth()) >=
+         requiredLanes;
+}
 
 template <typename S1, typename S2> constexpr uint32_t COMB_CASE(S1 s1, S2 s2) {
   return (static_cast<uint32_t>(s1) << 8) | static_cast<uint32_t>(s2);
@@ -1505,9 +1587,55 @@ public:
     return {};
   }
 
+  /// Prunes solutions in which a masked store can only write part of its
+  /// destination.
+  ///
+  /// `VFMaskedStoreOp` is lowered by a single VSTS that consumes exactly one
+  /// vector register: `changeStoreVectorType` re-casts the stored value to one
+  /// register worth of lanes and `AVEStorePattern` rewrites NORM_B* to PK/PK4
+  /// for the packed layouts, so the dist mode always processes one register.
+  /// How many lanes that write covers is a property of the layout (see
+  /// getLayoutCoveredLanes), so a layout covering fewer lanes than the
+  /// destination needs silently leaves the rest of it untouched, e.g. B8_4VL
+  /// for a 128 element i8 row is stored by PK4, which only fills 64 of the 128
+  /// bytes.
+  ///
+  /// Deliberately restricted to masked stores: VFStoreWithStrideOp densifies a
+  /// multi-register value with dintlv before storing it, and element-wise /
+  /// cast ops legitimately process several registers, so a blanket limit would
+  /// make valid IR unsolvable.
+  TreeSolves dropTruncatingStoreLayouts(Operation *op,
+                                        TreeSolves candidates) const {
+    auto store = dyn_cast<hivmave::VFMaskedStoreOp>(op);
+    if (!store)
+      return candidates;
+
+    std::optional<int64_t> storedElements = getStoredElementCount(store);
+    if (!storedElements)
+      return candidates;
+
+    SmallVector<Value> accessValues{store.getVal(), store.getMask()};
+    llvm::erase_if(candidates, [&](const TreeSolvePtr &candidate) {
+      return llvm::any_of(accessValues, [&](Value value) {
+        auto state = candidate->inputs.find(value);
+        return state != candidate->inputs.end() &&
+               !isLayoutWritableFor(value, state->second, *storedElements);
+      });
+    });
+    return candidates;
+  }
+
   TreeSolves getSolveSpace(Operation *op, const TreeSolvePtr &solve) {
     DBG(llvm::dbgs() << "Solving problem of: " << *op;);
     TreeSolves candidates = solve->solveProblem(op);
+    size_t candidateCount = candidates.size();
+    candidates = dropTruncatingStoreLayouts(op, std::move(candidates));
+    DBG(if (candidates.size() != candidateCount) {
+      llvm::dbgs()
+          << "Dropped " << candidateCount - candidates.size()
+          << " candidate(s) whose store layout covers only part of the "
+             "destination";
+    };);
     DBG(llvm::dbgs() << "Current path produced " << candidates.size()
                      << " candidate(s)";);
     return candidates;
