@@ -1579,6 +1579,178 @@ NativeSupport queryNativeSupport(::bishengir::npu::NPUArchitectureKind architect
   return false;
 }
 
+static std::string getTypeSummary(const Record *type) {
+  StringRef summary = mlir::tblgen::Constraint(type).getSummary();
+  if (!summary.empty())
+    return summary.str();
+  return type->getName().str();
+}
+
+static std::string formatConstraint(const Record *constraint) {
+  if (constraint->isSubClassOf("AnyValue"))
+    return "any";
+  if (constraint->isSubClassOf("BoolValueConstraint"))
+    return constraint->getValueAsBit(kValue) ? "true" : "false";
+
+  std::string text;
+  for (auto [index, enumCase] :
+       llvm::enumerate(constraint->getValueAsListOfDefs(kValues))) {
+    if (index)
+      text += ", ";
+    text += enumCase->getValueAsString("str");
+  }
+  return text;
+}
+
+static const Record *findValueConstraint(const Record *supportCase,
+                                         StringRef fieldKey) {
+  for (const Record *constraint :
+       supportCase->getValueAsListOfDefs(kConstraints)) {
+    if (constraint->isSubClassOf("TypeSignature"))
+      continue;
+    if (getRequestFieldKey(constraint->getValueAsDef(kField)) == fieldKey)
+      return constraint;
+  }
+  return nullptr;
+}
+
+static std::string formatTypeCell(const Record *signature, StringRef fieldKey) {
+  auto fields = signature->getValueAsListOfDefs(kFields);
+  auto types = signature->getValueAsListOfDefs(kTypes);
+  for (auto [signatureField, type] : llvm::zip(fields, types)) {
+    if (getRequestFieldKey(signatureField) == fieldKey)
+      return getTypeSummary(type);
+  }
+  return "any";
+}
+
+struct DocColumn {
+  std::string header;
+  std::string fieldKey;
+  bool typeField = false;
+};
+
+static SmallVector<DocColumn> getDocColumns(const Record *capability) {
+  SmallVector<DocColumn> columns;
+  for (const Record *slot : getCapabilitySlots(capability)) {
+    for (const Record *property : slot->getValueAsListOfDefs(kProperties)) {
+      DocColumn column;
+      column.header = getEffectiveName(slot) + "." + getEffectiveName(property);
+      column.fieldKey = getSlotFieldKey(slot, property);
+      column.typeField = isTypeDomain(property->getValueAsDef(kDomain));
+      columns.push_back(std::move(column));
+    }
+  }
+  for (const Record *parameter : getCapabilityParameters(capability)) {
+    DocColumn column;
+    column.header = getEffectiveName(parameter);
+    column.fieldKey = (Twine("parameter:") + parameter->getName()).str();
+    columns.push_back(std::move(column));
+  }
+  return columns;
+}
+
+// Prints the schema, each registered support row, coverage completeness, and
+// the architectures that have no profile. The catalogue TD remains the source
+// of the rows; this backend does not invent hardware facts.
+static bool emitTargetCapabilityDoc(const RecordKeeper &records,
+                                    raw_ostream &os) {
+  if (validateCapabilityRecords(records))
+    return true;
+
+  auto capabilities =
+      asConstRecords(records.getAllDerivedDefinitions("CapabilityKey"));
+  auto profiles = getDefinitions(records, "ArchitectureCapabilityProfile");
+  os << "# Target capability support\n\n"
+     << "Generated from the capability catalogue. Registered rows in this\n"
+     << "document are the support facts. A partial profile does not turn an\n"
+     << "unlisted well-formed request into Unsupported.\n\n";
+
+  SmallPtrSet<const Record *, 8> profiledArchitectures;
+  for (const Record *profile : profiles)
+    profiledArchitectures.insert(profile->getValueAsDef(kArchitecture));
+
+  // Group by capability first. Architecture tables that follow a finished
+  // capability section would otherwise be read as belonging to the last key.
+  for (const Record *capability : capabilities) {
+    os << "## Capability `" << getEffectiveName(capability)
+       << "`\n\nFields:\n\n";
+    for (const DocColumn &column : getDocColumns(capability)) {
+      os << "- `" << column.header << "`";
+      if (column.typeField)
+        os << " (MLIR type)";
+      os << "\n";
+    }
+    StringRef note = capability->getValueAsString("DocNote");
+    if (!note.empty())
+      os << "\n" << note << "\n";
+    os << "\n";
+
+    for (const Record *profile : profiles) {
+      const Record *architecture = profile->getValueAsDef(kArchitecture);
+      for (const Record *coverage :
+           profile->getValueAsListOfDefs(kCapabilities)) {
+        if (coverage->getValueAsDef(kCapability) != capability)
+          continue;
+        const Record *completeness = coverage->getValueAsDef(kCompleteness);
+        bool partial = completeness->getName() == "PartialProfile";
+        auto columns = getDocColumns(capability);
+        os << "### `" << architecture->getValueAsString("Name") << "`\n\n"
+           << "Coverage: " << getEffectiveName(completeness)
+           << "\n\nA well-formed request that matches no row is "
+           << (partial ? "Unknown" : "Unsupported") << ".\n\n|";
+        for (const DocColumn &column : columns)
+          os << " " << column.header << " |";
+        os << "\n|";
+        for (unsigned index = 0; index < columns.size(); ++index)
+          os << " --- |";
+        os << "\n";
+
+        for (const Record *supportCase :
+             coverage->getValueAsListOfDefs(kCases)) {
+          SmallVector<const Record *> signatures;
+          for (const Record *constraint :
+               supportCase->getValueAsListOfDefs(kConstraints)) {
+            if (constraint->isSubClassOf("TypeSignature"))
+              signatures.push_back(constraint);
+          }
+          if (signatures.empty())
+            signatures.push_back(nullptr);
+          for (const Record *signature : signatures) {
+            os << "|";
+            for (const DocColumn &column : columns) {
+              os << " ";
+              if (column.typeField) {
+                os << (signature ? formatTypeCell(signature, column.fieldKey)
+                                 : "any");
+              } else if (const Record *constraint = findValueConstraint(
+                             supportCase, column.fieldKey)) {
+                os << formatConstraint(constraint);
+              } else {
+                os << "any";
+              }
+              os << " |";
+            }
+            os << "\n";
+          }
+        }
+        os << "\n";
+      }
+    }
+  }
+
+  os << "## No profile\n\n"
+     << "An architecture with no coverage returns Unknown.\n\n";
+  for (const Record *architecture :
+       getDefinitions(records, "NPUArchitecture")) {
+    if (profiledArchitectures.contains(architecture))
+      continue;
+    os << "- `" << architecture->getValueAsString("Name") << "`\n";
+  }
+  os << "\n";
+  return false;
+}
+
 static mlir::GenRegistration
     genTargetCapabilityDecls("gen-target-capability-decls",
                              "Generate target capability declarations",
@@ -1592,5 +1764,12 @@ static mlir::GenRegistration
                             [](const RecordKeeper &records, raw_ostream &os) {
                               return emitTargetCapabilityDefs(records, os);
                             });
+
+static mlir::GenRegistration
+    genTargetCapabilityDoc("gen-target-capability-doc",
+                           "Generate a Markdown capability support table",
+                           [](const RecordKeeper &records, raw_ostream &os) {
+                             return emitTargetCapabilityDoc(records, os);
+                           });
 
 } // namespace

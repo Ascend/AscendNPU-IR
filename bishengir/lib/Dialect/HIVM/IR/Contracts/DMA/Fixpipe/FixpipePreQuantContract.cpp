@@ -20,6 +20,6 @@
 // clang-format off
 // The generated definitions depend on the declarations in the generated
 // header; keep this include order despite alphabetical sorting.
-#include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.h"
-#include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.cpp.inc"
+#include "bishengir/Dialect/HIVM/IR/Contracts/DMA/Fixpipe/FixpipePreQuantContract.h"
+#include "bishengir/Dialect/HIVM/IR/Contracts/DMA/Fixpipe/FixpipePreQuantContract.cpp.inc"
 // clang-format on
