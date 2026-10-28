@@ -31,6 +31,7 @@ namespace mlir::hivm {
 inline constexpr llvm::StringLiteral kFallbackNotExec = "fallback_not_exec";
 
 bool isInsideVectorScope(Operation *op);
+bool isFixpipeStoreInlinable(hivm::StoreOp storeOp);
 Operation *getSingleSiftedUser(Value v);
 SmallVector<VCastOp> collectVCastChain(VCastOp firstCast);
 std::optional<FixpipePreQuantMode>
