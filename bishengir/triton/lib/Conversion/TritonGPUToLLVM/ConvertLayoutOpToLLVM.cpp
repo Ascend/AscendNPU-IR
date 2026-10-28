@@ -192,15 +192,11 @@ struct ConvertLayoutOpConversion
     // At this point we have a type that's at least 8-bit
     // and we don't have broadcasting in the registers
     auto bitwidth = llvmElemTy.getIntOrFloatBitWidth();
-    auto bankInfo = targetInfo.getSharedMemoryBankInfo(bitwidth);
+    auto smem = optimalSwizzlingLdSt(srcLayout, dstLayout, bitwidth);
 #ifdef BSPUB_DAVINCI_BISHENGIR
-    // The UB bank model does not describe global scratch memory.
-    if (switchToGM)
-      bankInfo = std::nullopt;
+    if (!switchToGM)
+      targetInfo.refineSharedMemoryLayout(srcLayout, dstLayout, bitwidth, smem);
 #endif
-    auto smem = bankInfo ? optimalSwizzlingLdSt(srcLayout, dstLayout, bitwidth,
-                                                *bankInfo)
-                         : optimalSwizzlingLdSt(srcLayout, dstLayout, bitwidth);
 
     // Extract reps from smem
     auto kReg = str_attr("register");

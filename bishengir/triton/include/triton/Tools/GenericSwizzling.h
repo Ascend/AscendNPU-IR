@@ -12,14 +12,6 @@ class TargetInfoBase;
 } // namespace mlir::triton
 
 namespace mlir::triton::gpu {
-// Effective shared-memory service resources, rather than a description of the
-// physical SRAM organization. Repeated accesses to one aligned bank word are
-// counted once. The transaction size is numBanks * bankWidthBits.
-struct SharedMemoryBankInfo {
-  unsigned numBanks = 32;
-  unsigned bankWidthBits = 32;
-};
-
 // Store the lane indices that are used in the contiguous part
 // of an operation and in the address part.
 // The laneAddr part just represents the indices used in one wavefront
@@ -48,27 +40,10 @@ optimalSwizzling(const LinearLayout &src, const LinearLayout &dst,
 LinearLayout optimalSwizzlingLdSt(const LinearLayout &src,
                                   const LinearLayout &dst, int32_t bitwidth);
 
-// Refine the default scratch layout using the target's bank-word model.
-// Only permute bank bases: scratch size, repetitions and vectorization in both
-// directions are preserved. Keep the default on ties or conflicting tradeoffs.
-LinearLayout optimalSwizzlingLdSt(const LinearLayout &src,
-                                  const LinearLayout &dst, int32_t bitwidth,
-                                  const SharedMemoryBankInfo &bankInfo);
-
 std::pair<int, int> logBankConflictsLdSt(const LinearLayout &src,
                                          const LinearLayout &dst,
                                          const LinearLayout &smem,
                                          int32_t bitwidth);
-
-// Log2 of the maximum distinct aligned bank words per service resource, in
-// {read, write} order, accounting for the emitted vector width and transaction
-// lane groups. Subword accesses to the same word do not introduce a conflict.
-// Requires power-of-two bank geometry and bitwidth <= bankWidthBits.
-std::pair<int, int> logBankConflictsLdSt(const LinearLayout &src,
-                                         const LinearLayout &dst,
-                                         const LinearLayout &smem,
-                                         int32_t bitwidth,
-                                         const SharedMemoryBankInfo &bankInfo);
 
 std::pair<int, int> logBankConflicts(llvm::ArrayRef<int32_t> tileSrc,
                                      llvm::ArrayRef<int32_t> tileDst,

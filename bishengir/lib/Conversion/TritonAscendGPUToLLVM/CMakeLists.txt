@@ -7,6 +7,7 @@ add_bishengir_conversion_library(TritonAscendGPUToLLVM
   DotOpToLLVM/FMADotUtility.cpp
   DebugOpToLLVM.cpp
   ReduceOpToLLVM.cpp
+  SharedMemorySwizzle.cpp
   TargetInfo.cpp
   TritonAscendGPUToLLVMPass.cpp
   ElementwiseOpToLLVM.cpp

@@ -12,6 +12,7 @@
 #include "bishengir/Conversion/GPUToDPX/GPUOpToDPX.h"
 #include "bishengir/Conversion/TritonAscendGPUToLLVM/LoadStoreOpToLLVM.h"
 #include "bishengir/Conversion/TritonAscendGPUToLLVM/PatternTritonAscendGPUOpToLLVM.h"
+#include "bishengir/Conversion/TritonAscendGPUToLLVM/SharedMemorySwizzle.h"
 #include "bishengir/Conversion/TritonAscendGPUToLLVM/TargetInfo.h"
 #include "bishengir/Conversion/TritonAscendGPUToLLVM/TritonOpToDPX.h"
 #include "bishengir/Dialect/AscendDPX/IR/AscendDPX.h"
@@ -41,6 +42,7 @@
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
+#include "triton/Tools/LinearLayout.h"
 #include "llvm/Support/Casting.h"
 
 #include <numeric>
@@ -52,6 +54,30 @@ namespace mlir::triton {
 
 #define GEN_PASS_DEF_CONVERTTRITONASCENDGPUTOLLVM
 #include "bishengir/Conversion/Passes.h.inc"
+
+#ifdef BSPUB_DAVINCI_BISHENGIR
+namespace {
+class ScratchSwizzleTargetInfo final : public ascend::TargetInfo {
+public:
+  explicit ScratchSwizzleTargetInfo(bool enabled) : enabled(enabled) {}
+
+  void refineSharedMemoryLayout(const LinearLayout &src,
+                                const LinearLayout &dst, int bitwidth,
+                                LinearLayout &smem) const override {
+    if (!enabled || bitwidth != 32)
+      return;
+    // dav-c310 CAModel reads support this effective aligned-word model. The
+    // temporary policy gate is separate from the UB service geometry.
+    constexpr ascend::SharedMemoryBankInfo bankInfo{16, 64};
+    smem =
+        ascend::refineSharedMemorySwizzle(src, dst, smem, bitwidth, bankInfo);
+  }
+
+private:
+  const bool enabled;
+};
+} // namespace
+#endif
 
 class TritonLLVMFunctionConversionTarget : public ConversionTarget {
 public:
@@ -94,7 +120,11 @@ struct ConvertTritonAscendGPUToLLVMPass
 
     // Higher benefit to prioritize these patterns during conversion
     constexpr int kDefaultPatternBenefit = 10;
-    ascend::TargetInfo targetInfo(enableA5BankAwareSwizzle);
+#ifdef BSPUB_DAVINCI_BISHENGIR
+    ScratchSwizzleTargetInfo targetInfo(enableA5BankAwareSwizzle);
+#else
+    ascend::TargetInfo targetInfo{};
+#endif
     mlir::LowerToLLVMOptions option(context);
     option.overrideIndexBitwidth(32);
     TritonGPUToLLVMTypeConverter typeConverter(context, option, targetInfo);

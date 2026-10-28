@@ -2,21 +2,15 @@
 #define TRITON_CONVERSION_TRITONGPU_TO_LLVM_TARGETINFOBASE_H
 
 #include "triton/Conversion/MLIRTypes.h"
-#include "triton/Tools/GenericSwizzling.h"
-#include <optional>
 
 namespace mlir::triton {
+#ifdef BSPUB_DAVINCI_BISHENGIR
+class LinearLayout;
+#endif
 enum class ProgramIDDim : uint32_t;
 
 class TargetInfoBase {
 public:
-  // No override retains the generic scratch-layout planner exactly. Targets
-  // can limit the bank model to element widths with validated service behavior.
-  virtual std::optional<gpu::SharedMemoryBankInfo>
-  getSharedMemoryBankInfo(int bitwidth) const {
-    return std::nullopt;
-  }
-
   virtual bool supportMaximumMinimum() const = 0;
 
   virtual Value getClusterCTAId(RewriterBase &rewriter, Location loc) const = 0;
@@ -56,6 +50,12 @@ public:
   }
 
 #ifdef BSPUB_DAVINCI_BISHENGIR
+  // Refinements must preserve scratch dimensions, repetitions and the emitted
+  // vector widths so allocation and the transfer schedule remain valid.
+  virtual void refineSharedMemoryLayout(const LinearLayout &src,
+                                        const LinearLayout &dst, int bitwidth,
+                                        LinearLayout &smem) const {}
+
   virtual void storeDGlobal(RewriterBase &rewriter, Location loc, Value ptr,
                             std::optional<Value> ctaId, Value val,
                             Value pred) const {
