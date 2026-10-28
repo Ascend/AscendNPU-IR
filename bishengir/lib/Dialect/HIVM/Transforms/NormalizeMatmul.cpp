@@ -905,7 +905,6 @@ struct CCFInfo {
   Operation *insertPointOp = nullptr;
   bool isFailure = false;
   bool mayNotExec = false;
-  bool mayNotExecWithIf = false;
 
   static CCFInfo getFailure(CCFInfo &info) {
     info.isFailure = true;
@@ -1061,7 +1060,6 @@ CCFInfo getOutermostCCFInfo(Operation *op, CCFInfo info) {
 
     if (!matchPattern(ifOp.getCondition(), m_One())) {
       info.mayNotExec = true;
-      info.mayNotExecWithIf = true;
     }
     info.outVal = ifOp->getResult(resultIdx);
     info.insertPointOp = ifOp;
@@ -1249,8 +1247,29 @@ Value findCounterBufFor(Operation *ccfOp, unsigned idx) {
 // whatever this CCF leaves behind is never read and no zero fill is needed. The
 // guard only matters when the chain ends here, e.g. at a store or a return.
 bool needsTailFallback(Value ccfOutVal) {
+  for (OpOperand &use : ccfOutVal.getUses()) {
+    Operation *user = use.getOwner();
+    auto yieldOp = dyn_cast<scf::YieldOp>(user);
+    if (!yieldOp || getCCFKind(yieldOp->getParentOp()) != CCFKind::If)
+      continue;
+
+    auto ifOp = cast<scf::IfOp>(yieldOp->getParentOp());
+    unsigned resultIdx = use.getOperandNumber();
+    if (resultIdx >= ifOp->getNumResults() ||
+        !isCCFOpResultInL0C(ifOp, ifOp->getResult(resultIdx)))
+      continue;
+
+    bool allUsesInsideIf =
+        llvm::all_of(ccfOutVal.getUses(), [&ifOp](OpOperand &candidateUse) {
+          return ifOp->isAncestor(candidateUse.getOwner());
+        });
+    if (allUsesInsideIf)
+      return false;
+  }
+
   if (!ccfOutVal.hasOneUse())
     return true;
+
   Operation *user = *ccfOutVal.getUsers().begin();
   if (isLoopCCFOp(user)) {
     for (auto [i, init] : llvm::enumerate(getLoopCCFInits(user))) {
@@ -1259,6 +1278,7 @@ bool needsTailFallback(Value ccfOutVal) {
       }
     }
   }
+
   return !isa<hivm::MmadL1Op, hivm::BatchMmadL1Op, hivm::MmadMxL1Op>(user);
 }
 
@@ -1467,7 +1487,6 @@ matchPostPerChannelAddWithSplitK(Value ccfOutVal, Operation *hookOp) {
 //   2. PostPerChannel(vbrc0):  ccfInVal = Vbrc(0) with perChannel vadd
 //   3. ZeroInitNoAccumulation: ccfInVal = Vbrc(0) without vadd
 //   4. ReuseL0C:               ccfInVal is reusable L0C from previous mmad
-//                              TODO: mayNotExecWithIf should be removed
 //   5. PostPerChannel(empty):  ccfInVal traces to empty() with perChannel vadd
 //   6. NoBias:                 ccfInVal traces to empty() without vadd
 //   7. ElementwiseAdd:         fallback x[n, m]
@@ -1493,7 +1512,7 @@ BrcBiasInfo getBrcBiasMode(CCFInfo ccfinfo) {
     }
   }
 
-  if (couldReuse(ccfInVal) && (!ccfinfo.mayNotExecWithIf)) {
+  if (couldReuse(ccfInVal)) {
     BrcBiasInfo info;
     info.brcBiasMode = MatmulBiasMode::ReuseL0C;
     return info;
@@ -1982,7 +2001,6 @@ struct NormalizeMmadCCFPattern
     if (auto parantop = mmadOp->getParentOp()) {
       if (parantop->hasAttr(hivm::MatmulLimitedInCubeAttr::name)) {
         ccfInfo.mayNotExec = false;
-        ccfInfo.mayNotExecWithIf = false;
       }
     }
 
