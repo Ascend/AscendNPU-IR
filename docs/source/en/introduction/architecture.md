@@ -26,19 +26,21 @@ The HFusion (Hybrid Fusion) dialect is an extension set based on the Linalg dial
 
 HIVM (Hybrid ISA Virtual Machine): It abstracts computation, data movement, synchronization, and other operations for Ascend hardware, provides Tile-level Operation to support Tensor or `Memref` operation types of arbitrary dimensions and sizes, and shields the underlying instruction parameters of Ascend hardware. The compilation optimization at the HIVM layer is mainly divided into the following three layers:
 
-- **CV core mapping compilation**: With awareness of the NPU CV core separation hardware architecture, it automatically performs CV fusion compilation optimization on Mix Kernels (kernel functions that include both `cube` operations and `vector` operations). By analyzing the data dependency between `cube` and `vector` operations, it automatically inserts `store` and `load` to perform CV core data interaction, calculates the workspace global memory size required for intermediate interaction, and generates a Host-side function for deriving the size. At the same time, it inserts inter-core synchronization at locations with CV data dependency to ensure the dependency order, and finally automatically splits the MixKernel into separate AIC kernel functions and AIV kernel functions, thereby implementing CV fusion compilation. In terms of performance optimization, the CVPipeline pass automatically adjusts the order of Cube code and Vector code to ensure CV core pipeline parallelism, and AutoSubTiling automatically implements the CV 1:2 ratio splitting feature.
+- **CV core mapping compilation**: With awareness of the NPU CV core separated hardware architecture, it automatically performs CV fusion compilation optimization on Mix Kernels (kernel functions that include both `cube` operations and `vector` operations). By analyzing the data dependency relationships between `cube` and `vector` operations, it automatically inserts `store` and `load` to perform CV core data interaction, calculates the workspace global memory space size required for intermediate interaction, and generates a Host-side function for deriving the size. At the same time, it inserts inter-core synchronization at locations with CV data dependencies to ensure dependency ordering, and finally automatically splits the MixKernel into separate AIC kernel functions and AIV kernel functions, thereby implementing the CV fusion compilation capability. In terms of performance optimization, the CVPipeline pass automatically adjusts the order of Cube code and Vector code to ensure CV core pipeline parallelism, and AutoSubTiling automatically implements the CV 1:2 ratio splitting feature.
 
 - **Intra-core on-chip memory mapping**: With awareness of the NPU intra-core on-chip memory structure, the compilation optimization automatically implements on-chip memory space derivation, on-chip memory data format derivation, automatic on-chip memory access alignment, Op temporary space application, and on-chip memory address allocation.
 
 - **Intra-core processing unit mapping**: With awareness of the NPU intra-core multi-level pipeline processing units, it automatically inserts pipeline synchronization operations to ensure that different pipelines execute in an orderly manner while optimizing parallel pipelines. With awareness of NPU instruction details, it automatically completes policy-based automatic instruction mapping, enabling efficient NPU SIMD instructions.
 
+<!-- npu="950" id1 -->
 ### Features on Ascend 950PR/Ascend 950DT Chips and AscendNPU IR Support Optimization
 
 The Ascend 950PR/Ascend 950DT chips inherit the RegBase (Register-based) programming model of the 310B chip. Compared with the Memory-based programming model of the Atlas A2 series products/Atlas A3 series products, the hardware adds a register layer; adds a data path between the Cube and Vector cores to provide more optimization space for CV fusion; adds components such as the Warp Scheduler to introduce SIMT capability; and adds new hardware instructions such as `ND-DMA`.
 
 AscendNPU IR provides support for the new hardware features in the HIVM dialect, including the Arith and Vector dialects supporting computation and reduction Ops. For pure SIMD compilation, VF fusion, vectorization, mask optimization, and Combine optimization are added. On Ascend 950PR/Ascend 950DT, SIMT compilation support is newly added, connecting the community's TritonGPU dialect to HIVM and building Ascend-affinity algorithms for layout optimization, shared memory allocation, and core instruction mapping optimization. In addition to supporting pure SIMD mode and pure SIMT mode, AscendNPU IR also supports SIMD/SIMT hybrid compilation on Ascend 950PR/Ascend 950DT.
 
-![AscendNPU IR architecture of Ascend 950PR/Ascend 950DT](../../images/introduction/architecture_A5_zh.png)
+![AscendNPU IR architecture of the Ascend 950PR/Ascend 950DT product series](../../images/introduction/architecture_A5_zh.png)
+<!-- end id1 -->
 
 ## Code Architecture
 
@@ -46,20 +48,20 @@ AscendNPU IR is built on the MLIR (Multi-Level Intermediate Representation) ecos
 
 ```text
 .
-├── bishengir // AscendNPU IR-related implementation
+├── bishengir // AscendNPU IR related implementation
 ├── build-tools // Directory containing AscendNPU IR build scripts
 │   └── build.sh
 └── third-party
-    ├── llvm-project // Ascend-maintained branch: Ascend/AscendNPU-IR/llvmorg-19.1.7
+    ├── llvm-project // Ascend maintained branch: Ascend/AscendNPU-IR/llvmorg-19.1.7
     ├── shmem
-    └── torch-mlir   // Ascend-maintained branch: Ascend/AscendNPU-IR/main-20250716
+    └── torch-mlir   // Ascend maintained branch: Ascend/AscendNPU-IR/main-20250716
 ```
 
 The directory structure of `bishengir` is consistent with that of `mlir`: the `include` directory stores declaration files, including C++ header files (`.h`, `.hpp`) and TableGen definition files (`.td`), and the build directory `build/include` contains files automatically generated by TableGen (`.h.inc`, `.cpp.inc`). The `lib` directory stores implementation code (`.cpp`), and its directory structure is basically consistent with that of `include`.
 
 ```text
 .
-├── bishengir // AscendNPU IR-related implementation
+├── bishengir // AscendNPU IR related implementation
 │   ├── include
 │   │   └── bishengir
 │   │       ├── Conversion
@@ -68,7 +70,7 @@ The directory structure of `bishengir` is consistent with that of `mlir`: the `i
 │   │           └── Self-developed dialects // Custom dialects
 ├── lib
 └── tools
-    ├── bishengir-compile // Command-line driver of the AscendNPU IR compiler.
+    ├── bishengir-compile // AscendNPU IR compiler command-line driver
     └── bishengir-opt
 ```
 

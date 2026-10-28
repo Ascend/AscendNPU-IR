@@ -1,5 +1,11 @@
 # Vector Layout Analysis
 
+**Applicable Products**:
+
+<!-- npu="950" id1 -->
+- Ascend 950PR/Ascend 950DT
+<!-- end id1 -->
+
 This document introduces the vector layout analysis transformation (**AnalyzeVectorLayoutPass**) in HIVMAVE, covering the hardware background, algorithm principles, test cases, interface description, and usage constraints.
 
 ## Hardware Layout Planning
@@ -8,14 +14,14 @@ The Ascend Vector compute unit adopts a SIMD architecture, where a single instru
 
 Taking a 256-byte vector register as an example, HIVMAVE uses `VecMemType` to describe the layout of vector data. The main layouts are as follows:
 
-| Layout | Arrangement | Effective Occupancy Per Element | Number of Logical Elements Per Vector Register |
+| Layout | Arrangement | Effective Placeholder Per Element | Number of Logical Elements Per Vector Register |
 |-----|-----|-----|-----|
-| `B8` | 8-bit elements packed tightly | 8 bit | 256 |
-| `B8_2VL` | 8-bit elements arranged with a stride of 2 | 16 bit | 128 |
-| `B8_4VL` | 8-bit elements arranged with a stride of 4 | 32 bit | 64 |
-| `B16` | 16-bit elements packed tightly | 16 bit | 128 |
-| `B16_2VL` | 16-bit elements arranged with a stride of 2 | 32 bit | 64 |
-| `B32` | 32-bit elements packed tightly | 32 bit | 64 |
+| `B8` | 8-bit elements in contiguous arrangement | 8 bits | 256 |
+| `B8_2VL` | 8-bit elements arranged with a stride of 2 | 16 bits | 128 |
+| `B8_4VL` | 8-bit elements arranged with a stride of 4 | 32 bits | 64 |
+| `B16` | 16-bit elements in contiguous arrangement | 16 bits | 128 |
+| `B16_2VL` | 16-bit elements arranged with a stride of 2 | 32 bits | 64 |
+| `B32` | 32-bit elements in contiguous arrangement | 32 bits | 64 |
 
 Although `B8_2VL`, `B8_4VL`, and `B16_2VL` still store logical elements of 8-bit or 16-bit respectively, each element occupies a wider effective slot. A strided layout can establish a lossless correspondence with the packed layout of wider elements:
 
@@ -31,10 +37,10 @@ This correspondence is the basis of hardware type conversion instructions. For e
 
 Vector Load/Store instructions are responsible not only for moving data but also for completing the data layout conversion between memory and vector registers. The Load/Store distribution modes in HIVMAVE correspond to the dist modes of hardware instructions:
 
-- `NORM`: Data is loaded or stored tightly according to the element bit width.
-- `UNPK`: During Load, the tightly packed data in memory is expanded into a strided layout in registers.
-- `PK`: During Store, the strided layout in registers is compressed into tightly packed data in memory.
-- `INTLV` and `DINTLV`: Interleaving and de-interleaving are completed during data movement or computation.
+- `NORM`: Data is loaded or stored tightly according to the element bit width;
+- `UNPK`: During Load, the tightly packed data in memory is expanded into a strided layout in registers;
+- `PK`: During Store, the strided layout in registers is compressed into tightly packed data in memory;
+- `INTLV` and `DINTLV`: Interleaving and de-interleaving are completed during data movement or computation;
 - `PB8`, `PB16`, and `PB32`: Predicate data is generated at 8-bit, 16-bit, or 32-bit granularity.
 
 Therefore, the logical vector type `vector<Nxi8>` alone cannot determine which Load/Store instruction should be used. If the result layout is `B8`, Load typically uses `NORM`; if the result layout is `B8_2VL` or `B8_4VL`, the corresponding `PK` or `PK4` distribution form is required. Store also needs to select a matching mode based on the vector layout and the Mask layout.
@@ -44,12 +50,12 @@ Therefore, the logical vector type `vector<Nxi8>` alone cannot determine which L
 The type conversion instructions of the AVE hardware perform conversion by register slot and select channels through parameters such as `part`. Bit width conversion does not merely change the element type in the MLIR type; it also changes the effective arrangement of elements in the register:
 
 ```text
-trunc direction (conversion from a higher bit width to a lower bit width):
+trunc direction (converting from a higher bit width to a lower bit width):
 B32      -- trunc 32->8  --> B8_4VL
 B32      -- trunc 32->16 --> B16_2VL
 B16      -- trunc 16->8  --> B8_2VL
 
-ext direction (conversion from a lower bit width to a higher bit width):
+ext direction (converting from a lower bit width to a higher bit width):
 B8_2VL  -- ext 8->16  --> B16
 B8_4VL  -- ext 8->32  --> B32
 B16_2VL -- ext 16->32 --> B32
@@ -61,30 +67,30 @@ If the layout of the source data does not satisfy the requirements of the conver
 
 AVE uses predicate registers to store masks. The logical element type of a mask is usually `i1`, but its control granularity must match the effective bit width of the data instruction:
 
-| Data layout | Actual Processing Granularity of the Instruction | Mask Layout |
+| Data Layout | Actual Instruction Processing Granularity | Mask Layout |
 |-----|-----|-----|
-| `B8` | 8 bit | `B8` |
-| `B16` | 16 bit | `B16` |
-| `B32` | 32 bit | `B32` |
-| `B8_2VL` | 16 bit | `B16` |
-| `B8_4VL` | 32 bit | `B32` |
-| `B16_2VL` | 32 bit | `B32` |
+| `B8` | 8 bits | `B8` |
+| `B16` | 16 bits | `B16` |
+| `B32` | 32 bits | `B32` |
+| `B8_2VL` | 16 bits | `B16` |
+| `B8_4VL` | 32 bits | `B32` |
+| `B16_2VL` | 32 bits | `B32` |
 
 For example, although the element type of `B8_2VL` data is 8-bit, the hardware processes it in 16-bit slots, so the corresponding mask must use the `B16` granularity. If the mask is still interpreted at the `B8` granularity, the correspondence between predicate bits and data lanes will be incorrect.
 
-## Related Terms
+## Related Terminology
 
 | Term | Meaning |
 |-----|-----|
-| VecMemType | The physical layout status of a vector value in Vector registers, defined in `HIVMAVEAttrs.td`. |
+| VecMemType | The physical layout state of a vector value in a Vector register, defined in `HIVMAVEAttrs.td`. |
 | VectorLayoutAttr | The `ave.vector_layout` attribute attached to a `VectorType`, which internally stores a `VecMemTypeAttr`. For example: `#ave.vector_layout<{mem = #ave.vec_mem_type<b16>}>`. |
-| FunctionDistType | The function type or distribution type used by an operation, stored as the `functionType` attribute. It describes the hardware instruction variant or additional layout processing method that the operation needs to adopt. |
-| Effective bit width | The bit width used by a hardware instruction when actually processing one element slot. For strided layouts, the effective bit width may be greater than the logical element bit width. For example, the effective bit width of `B8_2VL` is 16 bit. |
+| FunctionDistType | The function type or distribution type used by an operation, stored as the `functionType` attribute. It describes the hardware instruction variant or additional layout handling that the operation needs to adopt. |
+| Effective bit width | The bit width used by a hardware instruction when actually processing one element slot. For strided layouts, the effective bit width may be larger than the logical element bit width; for example, the effective bit width of `B8_2VL` is 16 bit. |
 | Dense layout | A layout in which elements are arranged contiguously, including `B8`, `B16`, and `B32`. |
-| Sparse layout | A layout in which there are gaps between elements, including `B8_2VL`, `B8_4VL`, and `B16_2VL`. |
+| Sparse layout | A layout in which there is spacing between elements, including `B8_2VL`, `B8_4VL`, and `B16_2VL`. |
 | INTLV/DINTLV | Layout rearrangement operations. INTLV converts data into a sparser interleaved arrangement, and DINTLV converts data into a denser arrangement. |
 
-## Algorithm Principles
+## Algorithm Principle
 
 ### Software Background
 
@@ -92,9 +98,9 @@ Preceding transformations convert standard Vector/Arith operations into HIVMAVE 
 
 Subsequent AVE normalization and instruction lowering require this information to accomplish the following tasks:
 
-- Select the `NORM`, `UNPK`, or `UNPK4` mode of Load based on the layout of the vector result;
-- Select the `NORM`, `PK`, or `PK4` mode based on the layout of the Store input;
-- Select the correct predicate granularity for the Mask;
+- Select the mode of Load based on the layout of the vector result;
+- Select the mode based on the layout of the Store input;
+- Select the correct predicate granularity for Mask;
 - Select the correct hardware conversion form and lanes for ext/trunc;
 - Insert `INTLV` or `DINTLV` when the source layout and the target layout are inconsistent;
 - Ensure that multiple consumers on the same data flow observe a consistent layout.
@@ -103,13 +109,13 @@ If the layout is selected independently for each operation, mismatches can easil
 
 AnalyzeVectorLayout models layout derivation as a constraint satisfaction problem. It starts from the vector results at the end of the function, enumerates possible layouts, and then propagates constraints backward along the data flow. Each operation produces one or more legal candidates according to its own hardware semantics; candidates are continuously merged during propagation and removed when conflicts occur. The final selected solution simultaneously satisfies the constraints of data layout, Mask granularity, type conversion, and control flow boundaries.
 
-### Solving Process
+### Solution Process
 
-1. Initialize the solution space: collect vector results that have no users, and enumerate initial layouts based on element bit width;
-2. Traverse operations in reverse order: process all operations that contain vector operands or vector results from the end of the function backward;
-3. Resolve operation constraints: dispatch to the solution function corresponding to the operation type through `TypeSwitch`;
-4. Merge candidate solutions: merge the input status produced by the current operation into the existing status, and discard candidates when conflicts are detected;
-5. Apply the solution result: add layout attributes to vector result types, add the `functionType` attribute to operations, and rewrite special operations.
+1. Initialize the solution space: collect vector results that have no users, enumerate candidate layouts based on element bit width, and take the Cartesian product to obtain all initial solutions;
+2. Traverse operations in reverse order: for each initial solution, process all operations that contain vector operands or vector results from the end of the function backward;
+3. Resolve operation constraints: dispatch to the solution function corresponding to the operation type through `TypeSwitch`, producing one or more candidate solutions;
+4. Branch and backtrack: when there are multiple candidate solutions, select the first one and retain the remaining candidates to establish branches; when there is no candidate solution, prefer conflict-driven backjumping, followed by chronological backtracking; if all initial solutions are exhausted and no solution is found, output `No Solve`;
+5. Apply the solution result: take the first complete solution, add layout attributes to vector result types, add the `functionType` attribute to operations, and rewrite special operations.
 
 ### Operation Solving Rules
 
@@ -117,27 +123,27 @@ AnalyzeVectorLayout models layout derivation as a constraint satisfaction proble
 
 `solveProblem(Operation *)` uses `TypeSwitch` to dispatch solution functions based on the operation type. The main dispatch relationships are as follows:
 
-| Operation Type | Solution Function | Main Processing Content |
+| Operation Type | Solving Function | Main Processing Content |
 |-----|-----|-----|
 | `VFLoadOp` | `solveProblem(VFLoadOp)` | Selects the `NORM`, `PK`, `PK4`, or predicate Load form based on the result bit width and layout |
-| `VFMaskedStoreOp` | `solveProblem(VFMaskedStoreOp)` | Constrains the data vector and Mask layout simultaneously |
-| `VFStoreWithStrideOp` | `solveProblem(VFStoreWithStrideOp)` | Selects `NORM`, `DINTLV2`, or `DINTLV4` based on the stride layout |
+| `VFMaskedStoreOp` | `solveProblem(VFMaskedStoreOp)` | Constrains both the data vector and the Mask layout simultaneously |
+| `VFStoreWithStrideOp` | `solveProblem(VFStoreWithStrideOp)` | Selects `NORM`, `DINTLV2`, or `DINTLV4` based on the strided layout |
 | `VFPgeOp`, `VFPltOp` | `solvePregGenProblem` | Selects `PB8`, `PB16`, or `PB32` based on the predicate result status |
-| Element-wise vector operations | `solveMaskProblem` | Constrains the data operands, result, and Mask layout |
-| `VFCmpOp` | `solveProblem(VFCmpOp)` | Constrains the left and right inputs based on the comparison data bit width and Mask result status |
+| Element-wise Vector operations | `solveMaskProblem` | Constrains the data operands, result, and Mask layout |
+| `VFCmpOp` | `solveProblem(VFCmpOp)` | Constrains the left and right inputs based on the comparison data bit width and the Mask result status |
 | `VFTruncFOp`, `VFTruncIOp` | `solveTruncProblem` | Handles layout conversion from a higher bit width to a lower bit width |
 | `VFExtFOp`, `VFExtUIOp`, `VFExtSIOp` | `solveExtProblem` | Handles layout conversion from a lower bit width to a higher bit width |
-| Other type conversion operations | `solveTypeConvertProblem` | Forwards to ext, trunc, or Mask solution based on the source and result bit width relationship |
-| `VFGatherOp` | `solveProblem(VFGatherOp)` | Constrains the index vector and Mask layout |
+| Other type conversion operations | `solveTypeConvertProblem` | Forwards to the ext, trunc, or Mask solver based on the source and result bit width relationship |
+| `VFGatherOp` | `solveProblem(VFGatherOp)` | Constrains the index vector and the Mask layout |
 | `VFInterleaveOp`, `VFDeInterleaveOp` | `solveLayoutChangeProblem` | Handles layout changes and the interleaving direction |
 | `scf.for` | `solveProblem(scf::ForOp)` | Constrains the loop iteration parameters, initial values, and loop results |
 | `scf.yield` | `solveProblem(scf::YieldOp)` | Propagates the loop result status to the yield operands |
-| `func.call` | `solveProblem(func::CallOp)` | Handles the vector status combination at the call boundary |
+| `func.call` | `solveProblem(func::CallOp)` | Handles the combination of vector states at the call boundary |
 | Other operations with vector results | `solveProblemDefault` | Assumes by default that the vector operands and the first vector result have the same status |
 
 Operations that are not explicitly handled in `TypeSwitch` enter the default branch. The default branch requires the operation to contain at least one vector result; otherwise, constraints cannot be established. If multiple vector operands exist, the status of the first vector result is propagated to all vector operands.
 
-#### Load, Store, and Mask Solution
+#### Load, Store, and Mask Solving
 
 For `VFLoadOp`, the result layout directly determines the Load function type:
 
@@ -162,7 +168,7 @@ For `VFLoadOp`, the result layout directly determines the Load function type:
 
 For element-wise Mask operations, non-Mask vector operands are generally required to use the same layout as the result, while the Mask operand selects its status according to the effective bit width corresponding to the result layout. `VFCmpOp` differs: its result is itself `vector<...xi1>`, so the layouts of the left and right inputs are jointly determined by the input element bit width and the result Mask status. For example, an 8-bit input requires `B8_2VL` when the result is `B16`, and `B8_4VL` when the result is `B32`.
 
-#### Type Conversion Solution
+#### Type Conversion Solving
 
 `solveTruncProblem()` searches for a valid combination based on the source element bit width and the result status. The `EVEN` function type is typically used, indicating that valid channels are extracted from the corresponding wide slots:
 
@@ -193,8 +199,8 @@ Other integer and floating-point type conversions are handled by `solveTypeConve
 
 | `layout_change` | Meaning | Typical Constraint |
 |-----|-----|-----|
-| No attribute | Original Interleave/DeInterleave operation | The source state and the result state are the same, or `INTLV2/4` is selected |
-| `UNCHANGED` | The layout does not change | Delegated to the default solver, where the source state equals the result state |
+| No attribute | Original Interleave/DeInterleave operation | Source status and result status are the same, or `INTLV2/4` is selected |
+| `UNCHANGED` | Layout does not change | Delegated to the default solver, source status equals result status |
 | `DENSE` | Changes from a sparse layout to a dense layout | When the result is `B16`, the source is `B16_2VL` |
 | `SPARSE` | Changes from a dense layout to a sparse layout | When the result is `B16_2VL`, the source is `B16` |
 
@@ -231,10 +237,10 @@ For `func.call`, if the call result contains vectors, the solver uses the defaul
 
 | Option | Description |
 |-----|-----|
-| `-analyze-vector-layout` | Performs vector layout analysis at the `func::FuncOp` granularity. |
-| `-remove-vector-layout-attr` | Removes layout attributes and `VectorLayoutCastOp`; not an option of AnalyzeVectorLayout itself. |
+| `-analyze-vector-layout` | Performs vector layout analysis at the granularity of `func::FuncOp` |
+| `-remove-vector-layout-attr` | Removes layout attributes and `VectorLayoutCastOp`; this is not an option of AnalyzeVectorLayout itself |
 
-AnalyzeVectorLayout has no additional parameters. During debugging, you can view the operation solution and the number of candidate solutions through LLVM debug output:
+`AnalyzeVectorLayout` has no additional parameters. During debugging, you can view the operation solution and the number of candidate solutions through LLVM debug output:
 
 ```bash
 build/bin/bishengir-opt -analyze-vector-layout \
@@ -260,10 +266,9 @@ When an operation has not has not undergone HIVMAVE lowering, the operation type
 
 Failure diagnosis outputs the following information:
 
-- The location of the failed operation and the complete operation;
-- The opcode, operand types, and result type;
-- The number of candidate solutions remaining before the failure;
-- The input status already recorded in the failed candidates;
+- Search statistics, including aggregate data such as the total number of vector operations, the number of initial solutions, the number of failed paths, the number of branch points, and the numbers of backjumps and backtracking;
+- The location of the failed operation, the complete operation, the opcode, operand types, and result type;
+- The number of vector operations already solved before the failure, the search depth, and the layout status already determined for each vector result and vector operand of the failed operation, with unassigned values displayed as `<unassigned>`;
 - Possible causes and suggested handling methods.
 
 A typical error message is as follows:
@@ -271,22 +276,29 @@ A typical error message is as follows:
 ```text
 No Solve
 ========== Vector Layout Analysis Failure ==========
-Location: ...
-Operation: ...
+Search summary:
+  Vector operations: 4
+  Initial solutions: 1
+  ...
+Deepest failed partial solution:
+  Initial solution: 1 / 1
+  Solved vector operations: 1 / 4
+  Search depth: 1
+Location: loc("vector-layout-nosolve-test.mlir":44:8)
+Operation: %1 = ave.hir.vtrc %res, <rint>, %0 : vector<64xf32>, vector<64xi1>, vector<64xf16>
 Opcode: ave.hir.vtrc
 Operand types:
   vector<64xf32>
   vector<64xi1>
 Result types:
   vector<64xf16>
-Candidates in the solution space: 0
+Vector states used by the failed operation:
+  Result: %1 = ave.hir.vtrc ...  State: b16
+  Operand: %res = ave.hir.vload ...  State: <unassigned>
+  Operand: %0 = ave.hir.pge ...  State: b16
 Possible causes and solutions:
   1. The operation may not have been lowered to the HIVMAVE dialect before VectorLayout analysis.
-  2. The operation type may not be handled in solveProblem TypeSwitch.
-  3. The specific VecMemType combination is not supported by this op.
-  4. Conflicting layout requirements from multiple consumers.
-  5. Unsupported element bit width (only 1/8/16/32 are supported).
+     -> If running end-to-end: an upstream pass failed to lower this op. Op: ave.hir.vtrc
+  ...
 ======================================================
 ```
-
-If a new HIVMAVE operation or a new layout combination needs to be supported, positive constraints should be added in the corresponding `solveProblem()` function to explicitly define the status relationships among operands, results, and Mask, and both success and failure tests should be supplemented. Layout problems must not be circumvented by skipping the operation, relaxing constraints by default, or rewriting an analysis failure as a pattern matching failure.

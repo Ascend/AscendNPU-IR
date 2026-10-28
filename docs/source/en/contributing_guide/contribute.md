@@ -29,13 +29,13 @@ Developer contribution scenarios mainly include:
     - If the issue has been open for a long time, perform a pre-check before resolving it.
     - For issues you submit and fix yourself, briefly describe the resolution before closing them.
 
-- Consulation
+- Consultation
 
   If you have questions while using this project, you can create an Issue to provide feedback and seek consultation.
 
   You can create a [Question](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=Question|%E9%97%AE%E9%A2%98%E5%92%A8%E8%AF%A2&template=.gitcode%252FISSUE_TEMPLATE%252F300-usage.yml) type Issue to raise your questions.
 
-- Help resolve others' issues
+- Help resolve others' Issues
 
   If you have a feasible solution to a problem encountered by other community developers, you are welcome to comment on the Issue to discuss and help resolve the problem and pain point, jointly improving usability.
 
@@ -88,7 +88,7 @@ Code gate exceptions mainly fall into the following categories. Follow the CI pr
 - **Static check failure**: Follow the prompts to locate and fix the static check issues in the code.
 - **CI pipeline failure**: Follow the prompts to locate and fix the failed test cases, and then retrigger CI.
 
-## Notes
+## Precautions
 
 - Avoid introducing changes unrelated to this modification in the PR.
 - Keep the commit history concise and well-organized (squash/rebase can be used as appropriate).

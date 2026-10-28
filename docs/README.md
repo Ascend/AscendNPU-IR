@@ -45,17 +45,17 @@ pip install -r docs/requirements.txt
 
 > **Note**: install `cmake` and `ninja` via pip (or another up-to-date channel) — building the doc generator tools requires CMake ≥ 3.28 and Ninja ≥ 1.12, while the Ubuntu 22.04 default repositories only ship CMake 3.22 / Ninja 1.10, which fail at configure time.
 
-## How to build
+## How to Build
 
-From the **repository root**:
+Run the following command in the **repository root directory**:
 
 ```bash
 make -C docs html      # English only → docs/_build/en
 make -C docs html-zh   # Chinese only → docs/_build/zh_cn
-make -C docs html-all  # Both
+make -C docs html-all  # Build both English and Chinese
 ```
 
-Or from `docs/`:
+Or run the following command in the `docs/` directory:
 
 ```bash
 make html
@@ -63,7 +63,7 @@ make html-zh
 make html-all
 ```
 
-## Local preview
+## Local Preview
 
 ```bash
 # English
@@ -72,44 +72,44 @@ open docs/_build/en/index.html
 # Chinese
 open docs/_build/zh_cn/index.html
 
-# Or serve with HTTP (e.g. port 8080 for English, 8081 for Chinese)
+# Or use an HTTP service (for example, port 8080 for English and port 8081 for Chinese).
 cd docs/_build/en && python3 -m http.server 8080
 cd docs/_build/zh_cn && python3 -m http.server 8081
 ```
 
-## Deploy on Read the Docs
+## Deploying on Read the Docs
 
-1. Import the repository on [Read the Docs](https://readthedocs.org/).
+1. Import this repository on [Read the Docs](https://readthedocs.org/).
 2. **Main project (English)**  
    - In **Admin → Environment variables**, add `READTHEDOCS_LANGUAGE` = `en`.  
-   - Builds will use `index.rst` and `.md`; URL like `https://<slug>.readthedocs.io/en/latest/`.
+   - The build uses `index.rst` and `.md`; the URL takes the form `https://<slug>.readthedocs.io/en/latest/`.
 3. **Translation project (Chinese)**  
-   - Create a **new** RTD project for the same repo.  
+   - **Create** a new RTD project for the same repository.  
    - Set **Language** to Chinese (Simplified).  
-   - Add `READTHEDOCS_LANGUAGE` = `zh_CN` (or leave unset; default is zh_CN).  
-   - In the **main** project, go to **Admin → Translations** and add this project.  
-   - URL like `https://<slug>.readthedocs.io/zh_CN/latest/`.
-4. The Translations flyout in the RTD theme will let users switch between English and Chinese.
+   - Add `READTHEDOCS_LANGUAGE` = `zh_CN` (or leave it unset, in which case it defaults to zh_CN).  
+   - In the **main project**, go to **Admin → Translations** and add this translation project.  
+   - The URL is in the form of `https://<slug>.readthedocs.io/zh_CN/latest/`.
+4. The Translations drop-down in the RTD theme allows readers to switch between English and Chinese.
 
-## Adding a new document
+## Adding a New Document
 
-1. Add the **English** file, e.g. `source/en/introduction/new_doc.md`.
-2. Add the **Chinese** file, e.g. `source/zh_cn/introduction/new_doc.md`.
-3. Add the doc to the right toctree:
-   - In **English**: `docs/source/en/index.rst` or the relevant subdir `index.rst`(e.g. `source/en/introduction/quick_start/index.rst`) with entry `new_doc` (or path like `section/new_doc`).
-   - In **Chinese**: `docs/source/zh_cn/index.rst` or the subdir `index.rst`(e.g. `source/zh_cn/introduction/quick_start/index.rst`) with entry `new_doc` (or `section/new_doc`).
-4. Optionally append the doc to `_main_doc_order` in `conf.py` if you use it for ordering or tooling.
+1. Add the **English** file, for example, `source/en/introduction/new_doc.md`.
+2. Add the **Chinese** file, for example, `source/zh_cn/introduction/new_doc.md`.
+3. Add the document to the corresponding toctree:
+   - **English**: Add `new_doc` (or a path such as `section/new_doc`) to `docs/source/en/index.rst` or to the `index.rst` in the corresponding subdirectory (for example, `source/en/introduction/quick_start/index.rst`).
+   - **Chinese**: Add `new_doc` (or `section/new_doc`) to `docs/source/zh_cn/index.rst` or to the `index.rst` in the subdirectory (for example, `source/zh_cn/introduction/quick_start/index.rst`).
+4. If the document needs to participate in ordering or tool processing, append its path to `_main_doc_order` in `conf.py`.
 
-## Doc layout
+## Document Structure
 
 | Path | Description |
 |------|-------------|
-| conf.py | Sphinx config; `language` and `root_doc` from `READTHEDOCS_LANGUAGE`; `_main_doc_order` for canonical order |
-| source/en/index.rst | English home and toctrees |
-| source/zh_cn/index.rst | Chinese home and toctrees |
-| source/en/**/\*.md | English content |
-| source/zh_cn/**/\*.md | Chinese content |
-| source/en/**/index.rst| English section toctrees |
-| source/zh_cn/**/index.rst | Chinese section toctrees |
-| Makefile | `html` (en), `html-zh` (zh), `html-all` |
+| conf.py| Sphinx configuration; `language` and `root_doc` are determined by `READTHEDOCS_LANGUAGE`; `_main_doc_order` is used to standardize the order |
+| source/en/index.rst | English home page and toctree |
+| source/zh_cn/index.rst | Chinese home page and toctree |
+| source/en/**/\*.md | English body text |
+| source/zh_cn/**/\*.md | Chinese body text |
+| source/en/**/index.rst | English toctree for each chapter |
+| source/zh_cn/**/index.rst | Chinese toctree for each chapter |
+| Makefile | `html` (English), `html-zh` (Chinese), `html-all` |
 | requirements.txt | Sphinx, myst-parser, furo |

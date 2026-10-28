@@ -14,39 +14,49 @@ Synchronization ops are defined in `bishengir/include/bishengir/Dialect/HIVM/IR/
 
 #### Intra-Core-Sync (Normal-Sync)
 
-- **`hivm.set_flag`**
-  Operands/attributes: `set_pipe`, `wait_pipe`, and event id (`static_event_id` and/or `dynamic_event_id`)
-  Executes on `set_pipe` after all previous instructions on that pipe have finished.
-  Triggers the event id on execution.
+- `hivm.set_flag`
 
-- **`hivm.wait_flag`**
   Operands/attributes: `set_pipe`, `wait_pipe`, and event id (`static_event_id` and/or `dynamic_event_id`)
-  Executes on `wait_pipe`.
-  Blocks all following instructions on that pipe until the matching event id is triggered.
 
-- **`hivm.pipe_barrier`**
+  Execution logic: executes on `set_pipe` after all previous instructions on that pipe have finished. Triggers the corresponding event id on execution.
+
+- `hivm.wait_flag`
+
+  Operands/attributes: `set_pipe`, `wait_pipe`, and event id (`static_event_id` and/or `dynamic_event_id`)
+
+  Execution logic: executes on `wait_pipe`. Blocks all following instructions until the matching event id is triggered.
+
+- `hivm.pipe_barrier`
+
   Operands/attributes: `pipe`
-  Barrier across a given pipe.
-  Blocks all following instructions on `pipe` until all previous instructions on that pipe finish.
 
-#### Cross-Core-Sync (Block-Sync) (Intra-Block)
+  Execution logic: a barrier operation on the specified pipe. Blocks all subsequent instructions on the `pipe` until all previous instructions on that pipe have finished.
 
-- **`hivm.sync_block_set`**
-  Operands/attributes:
+Blocks all following instructions on `pipe` until all previous instructions on that pipe finish.
+
+- `hivm.sync_block_set`
+
+  Operands/attributes: `tcore_type`, `tpipe`, `pipe`, flag ID (`static_flag_id` and/or `dynamic_flag_id`), optional `ffts_base_addr`, `tsync_instr_mode`
+
+  Parameter description:
+
     - `tcore_type` — target core type (`TCoreTypeAttr`: CUBE/VECTOR/CUBE_OR_VECTOR/CUBE_AND_VECTOR; CUBE = cube core, VECTOR = vector core)
-    - `tpipe`, `pipe` — set/wait pipes on the target core
-    - flag id (`static_flag_id` and/or `dynamic_flag_id`)
-    - optional `ffts_base_addr` (required on memory-based architectures such as Ascend910B)
+    - `tpipe`, `pipe` — set/wait pipe on the target core
+    - flag ID — static and/or dynamic flag
+    - `ffts_base_addr` — usually required on memory-based architectures (such as Ascend910B)
     - `tsync_instr_mode` (default `INTRA_BLOCK_SYNCHRONIZATION`)
 
   Executes on `tpipe` (set pipe) on the `tcore_type` core after all previous instructions on that pipe finish.
   Sets the flag id.
 
-- **`hivm.sync_block_wait`**
-  Operands/attributes:
+- `hivm.sync_block_wait`
+
+  Operands/attributes: `tcore_type`, `tpipe`, `pipe`, flag ID (`static_flag_id` and/or `dynamic_flag_id`), `tsync_instr_mode`
+
+  Parameter description:
+
     - `tcore_type` — target core type (`TCoreTypeAttr`: CUBE/VECTOR/CUBE_OR_VECTOR/CUBE_AND_VECTOR; CUBE = cube core, VECTOR = vector core)
-    - `tpipe`, `pipe` — set/wait pipes on the target core
-    - flag id (`static_flag_id` and/or `dynamic_flag_id`)
+    - `tpipe`, `pipe` — set/wait pipe on the target core
     - `tsync_instr_mode` (default `INTRA_BLOCK_SYNCHRONIZATION`)
 
   Executes on `pipe` (wait pipe) on the `tcore_type` core.
@@ -56,7 +66,7 @@ Related ops used by some flows (not always emitted by auto-sync itself): `hivm.s
 
 ## Algorithm Principles
 
-### AutoSync Solution Overview
+### AutoSync
 
 The codebase provides two families of auto-sync solutions. Pipelines select between them via compile options (see [Interfaces](#interfaces)).
 
@@ -80,16 +90,13 @@ In Triton-Ascend, graph sync can also be selected via `sync_solver=True` (maps t
 
 - Headers: `bishengir/include/bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/`
 - Implementation: `bishengir/lib/Dialect/HIVM/Transforms/GraphSyncSolver/`
-  (`GraphSyncSolver.cpp`, `SyncSolverBase.cpp`, `SyncSolverV1.cpp`, `SyncSolverV2.cpp`, `SyncSolverIR.cpp`, `SyncSolverIRTranslator.cpp`, `SyncSolverCodeGen.cpp`, `GraphSolver.cpp`, `GraphSolverBase.cpp`, `GraphSolverUnitFlag.cpp`, `EventIdSolver.cpp`, `MemInfo.cpp`, `CustomMacroSync.cpp`, `Utility.cpp`, plus tester helpers)
+  (`GraphSyncSolver.cpp`, `SyncSolverBase.cpp`, `SyncSolverV1.cpp`, `SyncSolverV2.cpp`, `SyncSolverIR.cpp`, `SyncSolverIRTranslator.cpp`, `SyncSolverCodeGen.cpp`, `GraphSolver.cpp`, `GraphSolverBase.cpp`, `GraphSolverUnitFlag.cpp`, `EventIdSolver.cpp`, `MemInfo.cpp`, `CustomMacroSync.cpp`, `Utility.cpp`, and tester-related files)
 
 **Stages**:
 
-1. **IRTranslator**:
-   Build Sync-IR from the input function (function, scopes, loops, conditions, RW operations).
-2. **Solver** (`SyncSolverV1` / `SyncSolverV2`, default **v2**):
-   Collect conflict pairs (producer–consumer), run pair selection and ordering under a graph reachability model, allocate/reuse event ids, optionally apply unit-flag and custom-macro reservations.
-3. **CodeGenerator**:
-   Emit `hivm.set_flag` / `hivm.wait_flag` / `hivm.pipe_barrier`.
+1. IRTranslator: Build Sync-IR from the input function (function, scopes, loops, conditions, RW operations).
+2. Solver (`SyncSolverV1` / `SyncSolverV2`, default **v2**): Collect conflict pairs (producer–consumer), run pair selection and ordering under a graph reachability model, allocate/reuse event IDs; optionally enable unit-flag and custom-macro reservations.
+3. CodeGenerator: Emit `hivm.set_flag` / `hivm.wait_flag` / `hivm.pipe_barrier`.
 
 ### CrossCoreGSS
 
@@ -100,10 +107,11 @@ In Triton-Ascend, graph sync can also be selected via `sync_solver=True` (maps t
 **Working Principles**:
 
 - Same solver stack as intra-core GSS, configured for `CROSS_CORE_SYNC`.
-- Runs only on **MIX** kernels (not host, not pure AIC/AIV).
+- Runs only on MIX kernels (not host, not pure AIC/AIV).
 - On memory-based architectures, inserts `SetFFTSBaseAddrOp` when an FFTS base-addr kernel argument is present.
-- Supports CV patterns, multibuffer flag-id strategies, round-robin event-id retry on mem-based arches.
+- Supports CV patterns, multibuffer flag-id strategies, and round-robin event-id retry on memory-based architectures. (The block-all mode is **not** a CrossCoreGSS capability — enabling `--enable-hivm-inject-block-all-sync` switches the pipeline from CrossCoreGSS to InjectBlockSync.)
 
+<!-- npu="950" id1 -->
 ### DelayedCrossCoreGSS
 
 **Purpose** (RegBase pipeline): Resolve cross-core sync **after** mix-kernel splitting, using anchors and a backup mix function so positional RW information survives cube/vector split.
@@ -115,7 +123,8 @@ In Triton-Ascend, graph sync can also be selected via `sync_solver=True` (maps t
 1. **Step 1** (before split): Run CrossCoreGSS (often with CV patterns disabled), then `InsertAnchorsAndBackup` to place `hivm.anchor` markers and clone a backup mix function.
 2. **Step 2** (after plan-memory rewrites): `DelayedCrossCoreGSS` matches backup mix + split cube/vector functions, removes stale intra-block syncs, rebuilds interval RW info from anchors, solves, and materializes syncs into mix/cube/vector functions; cleanup removes anchors/backups. The solve is delayed until after `PlanMemoryRegBase` (and before `HIVMLowerToLoops`) because earlier sync results would be invalidated by bufferization / memory-planning rewrites.
 
-Enabled when both `--enable-hivm-cross-core-gss` and `--enable-hivm-delayed-cross-core-gss` are true (both default `true` on the RegBase compile surface).
+This is enabled when both `--enable-hivm-cross-core-gss` and `--enable-hivm-delayed-cross-core-gss` are `true` (both default to `true` on the RegBase compilation surface).
+<!-- end id1 -->
 
 ### InjectSync
 
@@ -131,16 +140,11 @@ Enabled when both `--enable-hivm-cross-core-gss` and `--enable-hivm-delayed-cros
 
 **Stages**:
 
-1. **IRTranslator**:
-   Build Sync-IR from the input function (compound elements, loops, conditions, memory ops).
-2. **SyncAnalyzer**:
-   For each pair of conflicting operations, insert a set_flag/wait_flag pair, or a `pipe_barrier` if both operations are on the same pipe.
-3. **MoveSyncState**:
-   Reposition sync ops to reduce stalls while preserving semantics.
-4. **RemoveRedundantSync**:
-   Drop redundant sync pairs.
-5. **SyncEventIdAllocation**:
-   Assign static or dynamic event IDs; reuse them when safe.
+1. IRTranslator: Build Sync-IR from the input function (compound elements, loops, conditions, memory operations).
+2. SyncAnalyzer: For each pair of conflicting operations, insert a set_flag/wait_flag pair; if both operations belong to the same pipe, insert a `pipe_barrier`.
+3. MoveSyncState: Reposition synchronization operations to reduce stalls while preserving semantics.
+4. RemoveRedundantSync: Remove redundant synchronization pairs.
+5. SyncEventIdAllocation: Assign static or dynamic event IDs; reuse them when safe.
 6. **SyncCodegen**:
    Emit `hivm.set_flag` / `hivm.wait_flag` / `hivm.pipe_barrier`.
 
@@ -156,98 +160,38 @@ Barrier-all debug mode (`--enable-hivm-inject-barrier-all-sync`) inserts `pipe_b
 
 - Runs only on **MIX** kernels (not host, not pure AIC/AIV).
 - Inserts `SetFFTSBaseAddrOp` when an FFTS base-addr kernel argument is present (still done even if auto insertion of set/wait is disabled).
-- Modes (controlled by options and fusion kind):
+- Modes (controlled by options and fusion type):
     - **InjectAllBlockSync** — Emit block sync around every relevant handoff (`--enable-hivm-inject-block-all-sync`).
     - **InjectBlockShallowSync** — For `ShallowCV` fusion: sync around matmul / mix-matmul / call sites.
     - **InjectBlockMixSync** — Full mix: build block sync IR via `SyncBlockIRTranslator`, then run SyncAnalyzer (`BLOCKSYNC`), MoveSyncState, RemoveRedundantSync, SyncEventIdAllocation, SyncCodegen.
 
 ## Interfaces
 
-### Command Line Options
+**Command-line options**:
 
 These are typically wired in the compiler driver (e.g. `bishengir-compile`); see `bishengir/include/bishengir/Tools/bishengir-compile/Options.td`, HIVM `Passes.td`, and `bishengir/lib/Dialect/HIVM/Pipelines/` for exact mapping.
 
-<table>
-  <thead>
-    <tr>
-      <th style="white-space: nowrap;">Flag</th>
-      <th>Type</th>
-      <th>Default</th>
-      <th>Description</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td style="white-space: nowrap;">`--enable-hivm-graph-sync-solver`</td>
-      <td>bool</td>
-      <td>true</td>
-      <td>Use GraphSyncSolver instead of InjectSync for intra-core auto-sync.</td>
-    </tr>
-    <tr>
-      <td style="white-space: nowrap;">`--enable-hivm-cross-core-gss`</td>
-      <td>bool</td>
-      <td>true</td>
-      <td>Use CrossCoreGSS (or DelayedCrossCoreGSS) instead of InjectBlockSync for cross-core auto-sync.</td>
-    </tr>
-    <tr>
-      <td style="white-space: nowrap;">`--enable-hivm-delayed-cross-core-gss`</td>
-      <td>bool</td>
-      <td>true</td>
-      <td>On RegBase, run delayed cross-core GSS (anchors + post-split solve) when cross-core GSS is enabled.</td>
-    </tr>
-    <tr>
-      <td style="white-space: nowrap;">`--hivm-sync-solver-version`</td>
-      <td>string</td>
-      <td>v2</td>
-      <td>Select SyncSolver implementation (`v1` or `v2`) for graph-based auto-sync passes.</td>
-    </tr>
-    <tr>
-      <td style="white-space: nowrap;">`--disable-auto-inject-block-sync`</td>
-      <td>bool</td>
-      <td>false</td>
-      <td>Disable automatic block-level set/wait insertion (InjectBlockSync / CrossCoreGSS / DelayedCrossCoreGSS). FFTS base-addr setup may still run.</td>
-    </tr>
-    <tr>
-      <td style="white-space: nowrap;">`--disable-hivm-auto-inject-sync`</td>
-      <td>bool</td>
-      <td>false</td>
-      <td>Disable intra-core auto-sync entirely (GraphSyncSolver and InjectSync).</td>
-    </tr>
-    <tr>
-      <td style="white-space: nowrap;">`--enable-hivm-inject-barrier-all-sync`</td>
-      <td>bool</td>
-      <td>false</td>
-      <td>Force InjectSync barrier-all mode (also overrides GraphSyncSolver selection). Useful when diagnosing auto-sync failures.</td>
-    </tr>
-    <tr>
-      <td style="white-space: nowrap;">`--enable-hivm-inject-block-all-sync`</td>
-      <td>bool</td>
-      <td>false</td>
-      <td>Force block-all insertion for block sync (InjectBlockSync / CrossCoreGSS / DelayedCrossCoreGSS).</td>
-    </tr>
-    <tr>
-      <td style="white-space: nowrap;">`--enable-hivm-unit-flag-sync`</td>
-      <td>bool</td>
-      <td>false*</td>
-      <td>Enable unit-flag sync for supported ops. *On Ascend950/RegBase, enabled by default unless the flag is set explicitly.</td>
-    </tr>
-    <tr>
-      <td style="white-space: nowrap;">`--enable-hivm-assume-alive-loops`</td>
-      <td>bool</td>
-      <td>false</td>
-      <td>Assume `for`/`while` loops execute at least once (affects InjectSync / InjectBlockSync analysis).</td>
-    </tr>
-  </tbody>
-</table>
+| Flag | Type | Default Value | Description |
+| --- | --- | --- | --- |
+| `--enable-hivm-graph-sync-solver` | bool | true | Use GraphSyncSolver instead of InjectSync for intra-core automatic synchronization |
+| `--enable-hivm-cross-core-gss` | bool | true | Use CrossCoreGSS (or DelayedCrossCoreGSS) instead of InjectBlockSync for cross-core automatic synchronization |
+| `--enable-hivm-delayed-cross-core-gss` | bool | true | On RegBase, when cross-core GSS is enabled, use delayed cross-core GSS (anchors + solve after splitting) |
+| `--hivm-sync-solver-version` | string | v2 | Select the graph sync solver implementation version (`v1` or `v2`) |
+| `--disable-auto-inject-block-sync` | bool | false | Disable automatic block-level set/wait insertion (InjectBlockSync / CrossCoreGSS / DelayedCrossCoreGSS); FFTS base-addr setup may still be performed |
+| `--disable-hivm-auto-inject-sync` | bool | false | Completely disable intra-core automatic synchronization (GraphSyncSolver and InjectSync) |
+| `--enable-hivm-inject-barrier-all-sync` | bool | false | Force InjectSync to use barrier-all mode (also overrides GraphSyncSolver selection); used to diagnose automatic synchronization failures |
+| `--enable-hivm-inject-block-all-sync` | bool | false | Force block sync to use block-all insertion (InjectBlockSync / CrossCoreGSS / DelayedCrossCoreGSS) |
+| `--enable-hivm-unit-flag-sync` | bool | false* | Enable unit-flag synchronization for supported operations. *On Ascend 950PR&950DT series products/RegBase, enabled by default unless this flag is explicitly specified |
+| `--enable-hivm-assume-alive-loops` | bool | false | Assume `for`/`while` loops execute at least once (affects InjectSync / InjectBlockSync analysis) |
 
 Pipeline selection summary:
 
 - Intra-core: GraphSyncSolver if `--enable-hivm-graph-sync-solver` and not barrier-all; else InjectSync (unless `--disable-hivm-auto-inject-sync`).
 - Cross-core: if block sync disabled, skip; else if cross-core GSS disabled → InjectBlockSync; else if delayed GSS enabled (RegBase) → DelayedCrossCoreGSS flow; else → CrossCoreGSS.
 
-## Constraints and Capabilities
+## Usage Constraints
 
-- **Hardware ordering model**: Auto-sync orders execution by inserting HIVM synchronization ops (`hivm.set_flag` / `hivm.wait_flag`, `hivm.pipe_barrier`, and when applicable `hivm.sync_block_set` / `hivm.sync_block_wait` / `hivm.sync_block`). Ordering is expressed in terms of **cores** and **pipes**, plus event/flag ids.
+- **Hardware ordering model**: Auto-Sync orders execution by inserting HIVM synchronization ops (`hivm.set_flag` / `hivm.wait_flag`, `hivm.pipe_barrier`, and when applicable `hivm.sync_block_set` / `hivm.sync_block_wait` / `hivm.sync_block`). Ordering is expressed in terms of **cores** and **pipes**, plus event/flag ids.
 - **Correctness via feasibility checking**: For the solver-based flow, candidate sync constraints are accepted only if they remain feasible under a graph-based reachability/ordering model (avoids deadlock or over-constraining schedules).
 - **Kernel coverage (block-level sync)**: Block-level cross-core sync is intended for **MIX** kernels (cube/vector handoff). InjectBlockSync / CrossCoreGSS / DelayedCrossCoreGSS do not apply to non-MIX flows (host or pure AIC/AIV).
 - **Architecture differences**: Memory-based arches require FFTS base addr for mix block sync; RegBase can use delayed cross-core GSS after split; unit-flag defaults differ by target.

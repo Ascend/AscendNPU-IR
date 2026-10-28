@@ -1,6 +1,6 @@
 # Framework Integration
 
-AscendNPU IR supports integration of frameworks (PyTorch/TensorFlow/MindSpore) in two ways:
+AscendNPU IR supports framework integration (PyTorch/TensorFlow/MindSpore) through two approaches:
 
 - **DSL integration**: Integrate through domain-specific languages such as Triton and TileLang, compiling operators into AscendNPU IR.
 - **IR integration**: Integrate through IR representation, supporting multi-level access via Torch IR, Linalg/HFusion IR, and HIVM IR, with automatic operator fusion and splitting to generate high-performance Ascend-affinity operators.
@@ -26,7 +26,7 @@ AscendNPU IR supports multi-level IR integration, with different levels varying 
 
 Directly use the ATen operators of the Torch dialect, automatically convert them to Linalg/HFusion Named Ops through passes such as `convert-torch-to-hfusion`, and then enter the automatic fusion and scheduling flow.
 
-#### Torch-to-AscendNPU IR Conversion Flow
+#### Torch to AscendNPU IR Conversion Workflow
 
 Torch IR is integrated into AscendNPU IR through the `torch-backend-to-named-op-backend-pipeline` conversion pipeline. The BiShengIR custom `convert-torch-to-hfusion` pass preferentially converts Torch ATen operators into Linalg/HFusion Named Ops, while uncovered operators fall back to the standard lowering path of the upstream torch-mlir. The main conversion stages are as follows:
 
@@ -62,7 +62,7 @@ func.func @torch.aten.mul_tensor(%arg0: tensor<4096xf16>, %arg1: tensor<1x56x409
 
 - **End-to-end compilation**: Use `bishengir-compile` to compile Torch IR directly into an executable binary, going through the complete Torch → HFusion → HIVM IR compilation pipeline.
     - Command: `bishengir-compile -enable-torch-compile=true -enable-hfusion-compile=true -enable-hivm-compile=true -target=Ascend910B1 torch.mlir -o torch_kernel.o`
-    - Expected output: an Ascend NPU operator binary file (in `.o` format), which can run on the device in conjunction with the CANN runtime.
+    - Expected output: An Ascend NPU operator binary file (`.o` format), which can run on the device in conjunction with the CANN runtime.
 
 #### Supported Torch Operators
 
@@ -168,7 +168,7 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 **Invocation method**:
 
 - Command: `bishengir-compile -enable-hfusion-compile=true -enable-hivm-compile=true -target=Ascend910B1 hfusion.mlir -o hfusion_kernel.o`
-- Expected output: an Ascend NPU operator binary file (in `.o` format), which can run on the device in conjunction with the CANN runtime.
+- Expected output: An Ascend NPU operator binary file (`.o` format), which can run on the device in conjunction with the CANN runtime.
 
 **Automatic fusion**:
 

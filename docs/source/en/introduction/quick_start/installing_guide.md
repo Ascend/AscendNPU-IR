@@ -4,25 +4,25 @@ This document describes the dependency installation, build method (source/binary
 
 ## Environment Dependency Preparation
 
-**Compiler and Toolchain Requirements**:
+**Compiler and toolchain requirements**:
 
 - CMake >= 3.28
 - Ninja >= 1.12.0
 
-**Recommended Tools**:
+**Recommended tools**:
 
 - Clang >= 10
 - LLD >= 10 (Using LLVM LLD significantly improves the build speed.)
 
-**Source Code Retrieval and Submodule Initialization**:
+**Source code retrieval and submodule initialization**:
 
 This project depends on third-party libraries such as LLVM and Torch-MLIR, which need to be retrieved and updated to the specified `commit id`.
 
 ```bash
-# Clone the main repository and enter the project root directory.
+# Clone the main repository and enter the project root directory
 git clone https://gitcode.com/Ascend/ascendnpu-ir.git
 cd ascendnpu-ir
-# Initialize and update the submodules.
+# Initialize and update the submodules
 git submodule update --init --recursive
 ```
 
@@ -35,7 +35,7 @@ End-to-end execution of AscendNPU IR depends on the CANN environment.
 2. Install the CANN package:
 
    ```bash
-   # Take installing the CANN package on an x86 Atlas A3 series product as an example, where {version} is the CANN version, such as 9.0.0.
+   # Take installing the CANN package on an x86 system with Atlas A3 series products as an example, where {version} is the CANN version, such as 9.0.0
    chmod +x Ascend-cann_{version}_linux-x86_64.run
    chmod +x Ascend-cann-A3-ops_{version}_linux-x86_64.run
    ./Ascend-cann_{version}_linux-x86_64.run --full [--install-path=${PATH-TO-CANN}]
@@ -45,7 +45,7 @@ End-to-end execution of AscendNPU IR depends on the CANN environment.
 3. Set the environment variables:
 
    ```bash
-   # For version 8.5.0 and earlier, the path is ${PATH-TO-CANN}/ascend-toolkit/set_env.sh.
+   # For version 8.5.0 and earlier, the path is ${PATH-TO-CANN}/ascend-toolkit/set_env.sh
    source ${PATH-TO-CANN}/cann/set_env.sh
    ```
 
@@ -56,13 +56,13 @@ End-to-end execution of AscendNPU IR depends on the CANN environment.
 Run `./build-tools/build.sh` in the project root directory to complete configuration, building, and installation. The script automatically handles CMake configuration, Ninja compilation, and installation steps.
 
 ```bash
-# First build (initialize submodules first).
+# First build (submodules must be initialized first)
 ./build-tools/build.sh -o ./build --build-type Release
 
-# Existing build directory, incremental compilation.
+# Existing build directory, incremental compilation
 ./build-tools/build.sh -o ./build --build-type Release
 
-# Clear the build directory and perform a full rebuild.
+# Clear the build directory and rebuild from scratch
 ./build-tools/build.sh -o ./build --build-type Release -r
 ```
 
@@ -72,38 +72,41 @@ Run `./build-tools/build.sh` in the project root directory to complete configura
 |------|------|--------|
 | `-o`, `--build PATH` | Build output directory | `./build` |
 | `--build-type TYPE` | Build type | `Release` |
-| `-r`, `--rebuild` | Clear the build directory and reconfigure | Off |
-| `-j`, `--jobs N` | Number of parallel compilation threads | 3/4 of the CPU core count |
+| `-r`, `--rebuild` | Clear the build directory and reconfigure | Disabled |
+| `-j`, `--jobs N` | Number of parallel compilation threads | 3/4 of CPU cores |
 | `--install-prefix PATH` | Installation path | `BUILD_DIR/install` |
 | `--c-compiler PATH` | `C` compiler path | clang |
 | `--cxx-compiler PATH` | C++ compiler path | clang++ |
 | `--llvm-source-dir DIR` | LLVM source directory | `third-party/llvm-project` |
-| `--build-test` | Build and run tests | Off |
-| `--build-bishengir-doc` | Build BiShengIR documentation | Off |
-| `-t`, `--build-bishengir-template` | Build the BiShengIR template library. **Enabling this option requires CANN 9.0.0, and it must be enabled to run end-to-end test cases.** | Off |
-| `--bisheng-compiler PATH` | Directory of the bisheng compiler. **Must be specified when building the template library.** | None |
-| `--build-torch-mlir` | Build torch-mlir as well | Off |
-| `--python-binding` | Enable MLIR python-binding | Off |
-| `--enable-cpu-runner` | Enable the CPU runner | Off |
+| `--build-test` | Build and run tests | Disabled |
+| `--build-bishengir-doc` | Build BiShengIR documentation | Disabled |
+| `-t`, `--build-bishengir-template` | Build the BiShengIR template library. **Enabling this option requires CANN 9.0.0, and it must be enabled to run end-to-end test cases** | Disabled |
+| `--bisheng-compiler PATH` | Directory of the bisheng compiler. **Required when building the template library** | None |
+| `--build-torch-mlir` | Build torch-mlir as well | Disabled |
+| `--python-binding` | Enable MLIR python-binding | Disabled |
+| `--enable-cpu-runner` | Enable CPU runner | Disabled |
 | `--disable-ccache` | Disable ccache | Enabled (if installed) |
-| `--enable-assertion` | Enable assertions | Off |
-| `--fast-build` | Skip the installation step | Off |
+| `--enable-assertion` | Enable assertions | Disabled |
+| `--fast-build` | Skip the installation step | Disabled |
 | `--add-cmake-options OPTIONS` | Append CMake options | None |
 
 **Common examples**:
 
 ```bash
-# Debug build and run tests.
+# Debug build and run tests
 ./build-tools/build.sh -o ./build --build-type Debug --build-test
 
-# Specify the compiler and the number of threads.
+# Specify the compiler and number of threads
 ./build-tools/build.sh -o ./build --c-compiler /usr/bin/clang-15 --cxx-compiler /usr/bin/clang++-15 -j 256
 
-# Quick build (without installation)
+# Fast build (skip installation)
 ./build-tools/build.sh -o ./build --fast-build
 
-# Rebuild and build the template library (end-to-end test case execution depends on the template library)
+# Rebuild and build the template library (end-to-end test execution depends on the template library)
 ./build-tools/build.sh -r -o ./build --fast-build -t --bisheng-compiler=/usr/Ascend/cann/bin
+
+# If the build fails, try adding the following to the build options
+--add-cmake-options "-DLLVM_ENABLE_LLD=ON -DCMAKE_LINKER=lld"
 ```
 
 ### Manual CMake+Ninja Build (Custom Compilation Parameters)
@@ -111,11 +114,11 @@ Run `./build-tools/build.sh` in the project root directory to complete configura
 This method applies to scenarios that require fine-grained control over compilation parameters. Prerequisite: submodule initialization has been completed (`git submodule update --init --recursive`).
 
 ```bash
-# In the project root directory.
+# In the project root directory
 mkdir -p build
 cd build
 
-# LLVM source path: third-party/llvm-project/llvm.
+# LLVM source path: third-party/llvm-project/llvm
 export LLVM_SOURCE_DIR="$(realpath ../third-party/llvm-project)"
 cmake ${LLVM_SOURCE_DIR}/llvm -G Ninja \
     -DCMAKE_C_COMPILER=clang \
@@ -125,12 +128,19 @@ cmake ${LLVM_SOURCE_DIR}/llvm -G Ninja \
     -DLLVM_EXTERNAL_PROJECTS="bishengir" \
     -DLLVM_EXTERNAL_BISHENGIR_SOURCE_DIR="$(realpath ..)" \
     -DBSPUB_DAVINCI_BISHENGIR=ON \
+    -DBISHENG_DAVINCI_BISHENGIR=ON \
+    -DLLVM_BSPUB_DAVINCI_BISHENGIR_A5=ON \
+    -DLLVM_BSPUB_DAVINCI_BISHENGIR_A5_NPUIR=ON \
+    -DBISHENGIR_ENABLE_PM_CL_OPTIONS=ON \
+    -DBISHENGIR_ENABLE_TRITON_COMPILE=ON \
+    -DLLVM_BSPUB_DAVINCI_BISHENGIR=ON \
+    -DLLVM_ENABLE_LLD=ON \
+    -DCMAKE_LINKER=lld
     # [-DCMAKE_INSTALL_PREFIX="${PWD}/install"] \
     # [-DLLVM_MAJOR_VERSION_21_COMPATIBLE=ON] \
     # [-DLLVM_ENABLE_ASSERTIONS=ON] \
     # [-DMLIR_ENABLE_BINDINGS_PYTHON=ON] \
     # [-DLLVM_TARGETS_TO_BUILD="host;Native"] \
-    # [-DBISHENGIR_PUBLISH=OFF] \
     # [-DBISHENGIR_BUILD_TEMPLATE=ON -DBISHENG_COMPILER_PATH=/path/to/bisheng-compiler] \
     # [-Dother options=value]
 
@@ -143,16 +153,16 @@ ninja -j32
 
 **Optional extension parameters**:
 
-| Parameter | Description |
+| Optional Parameter | Description |
 |----------|------|
 | `-DCMAKE_INSTALL_PREFIX="${PWD}/install"` | Installation path |
-| `-DLLVM_MAJOR_VERSION_21_COMPATIBLE=ON` | Required when the LLVM version is 21 or later |
-| `-DLLVM_ENABLE_ASSERTIONS=ON` | Enables assertions (commonly used in Debug builds) |
-| `-DMLIR_ENABLE_BINDINGS_PYTHON=ON` | Enables MLIR python-binding |
-| `-DLLVM_TARGETS_TO_BUILD="host;Native"` | Enables the CPU runner |
-| `-DBISHENGIR_PUBLISH=OFF` | Disables unpublished features |
-| `-DBISHENGIR_BUILD_TEMPLATE=ON -DBISHENG_COMPILER_PATH=...` | Builds the BiShengIR template library |
-| `-DBISHENGIR_OPTIMIZE_TEMPLATE_BITCODE=OFF` | Disables C310 template bitcode optimization (enabled by default) |
+| `-DLLVM_MAJOR_VERSION_21_COMPATIBLE=ON` | Required when LLVM version ≥ 21 |
+| `-DLLVM_ENABLE_ASSERTIONS=ON` | Enable assertions (commonly used in Debug) |
+| `-DMLIR_ENABLE_BINDINGS_PYTHON=ON` | Enable MLIR python-binding |
+| `-DLLVM_TARGETS_TO_BUILD="host;Native"` | Enable CPU runner |
+| `-DBISHENGIR_PUBLISH=OFF` | Disable unpublished features |
+| `-DBISHENGIR_BUILD_TEMPLATE=ON -DBISHENG_COMPILER_PATH=...` | Build the BiShengIR template library |
+| `-DBISHENGIR_OPTIMIZE_TEMPLATE_BITCODE=OFF` | Disable C310 template bitcode optimization (enabled by default) |
 
 ### Binary Installation (No Compilation Required)
 
@@ -182,19 +192,19 @@ The base images for different architectures are as follows:
 Build method:
 
 ```bash
-# Build the x86_64 image.
+# Build the x86_64 image
 docker build -t ascendnpu-ir:latest -f docker/Dockerfile.x86_64 .
 ```
 
 ### Using the Image
 
 ```bash
-IMAGE_NAME="ascendnpu-ir:latest"       # The CANN image can be ascend/cann:9.0.0-a3-openeuler24.03-py3.12.
+IMAGE_NAME="ascendnpu-ir:latest"       # The CANN image can be ascend/cann:9.0.0-a3-openeuler24.03-py3.12
 # After entering, the environment can directly use AscendNPU IR related tools, such as bisheng-compile.
 docker run -it \
-  --net=host --privileged \            # Develop in host mode.
-  --security-opt seccomp=unconfined \  # Disable security restrictions.
-  --device=/dev/davinci0 \             # Mount the NPU device.
+  --net=host --privileged \            # Develop in host mode
+  --security-opt seccomp=unconfined \  # Disable security restrictions
+  --device=/dev/davinci0 \             # Mount the NPU device
   --device=/dev/davinci1 \
   --device=/dev/davinci2 \
   --device=/dev/davinci3 \
@@ -205,17 +215,17 @@ docker run -it \
   --device=/dev/davinci_manager \
   --device=/dev/devmm_svm \
   --device=/dev/hisi_hdc \
-  -v /usr/local/dcmi:/usr/local/dcmi \ # Mount devices such as dcmi.
+  -v /usr/local/dcmi:/usr/local/dcmi \ # Mount dcmi and other devices
   -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi \
   -v /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi \
   -v /usr/local/Ascend/driver:/usr/local/Ascend/driver \
   -v /etc/ascend_install.info:/etc/ascend_install.info \
-  --name ascendnpu-ir   \              # Container name.
-  -v $(pwd):/workspace  \              # Mount the current directory to the container.
+  --name ascendnpu-ir   \              # Container name
+  -v $(pwd):/workspace  \              # Mount the current directory to the container
   -w /workspace         \
   $IMAGE_NAME  /bin/bash
 
-bishengir-compile --version # View the version information of AscendNPU IR.
+bishengir-compile --version # View the version information of AscendNPU IR
 ```
 
 ## Running Tests
@@ -223,7 +233,7 @@ bishengir-compile --version # View the version information of AscendNPU IR.
 **Compile test target**:
 
 ```bash
-# In the `build` directory.
+# In the `build` directory
 cmake --build . --target "check-mlir;check-bishengir"
 ```
 
@@ -252,12 +262,12 @@ PASS: bishengir :: bishengir-compile/commandline.mlir (1 of 388)
 ...
 FAIL: bishengir :: test/failing-case.mlir (42 of 388)
 ******************** TEST 'FAIL: bishengir :: test/failing-case1.mlir' FAILED ********************
-...(failure details)...
+... (failure details) ...
 
 ********************
 FAIL: bishengir :: test/failing-case.mlir (256 of 388)
 ******************** TEST 'FAIL: bishengir :: test/failing-case2.mlir' FAILED ********************
-...(failure details)...
+... (failure details) ...
 
 ********************
 ********************
@@ -278,21 +288,21 @@ Total Discovered Tests: 388
 
 - **Test passed**: The command exit code is 0 and `Failed` is 0. The following results are all counted as passed:
 
-    - **PASS**: The test passes normally.
+    - **PASS**: The test passes normally
 
-    - **UNSUPPORTED**: The current environment does not support it (for example, `UNSUPPORTED: bishengir_published`).
+    - **UNSUPPORTED**: The current environment does not support it (for example, `UNSUPPORTED: bishengir_published`)
 
-    - **XFAIL**: Expected to fail and actually fails.
+    - **Expectedly Failed**: Expected to fail and actually failed
 
 - **Test failed**: The command exit code is not 0, or `Failed` > 0. The following results are all counted as failed:
 
-    - **FAIL**: The test execution fails.
+    - **FAIL**: The test execution failed
 
-    - **XPASS**: Expected to fail but actually passes.
+    - **XPASS**: Expected to fail but actually passed
 
-    - **UNRESOLVED**: The result cannot be determined.
+    - **UNRESOLVED**: Unable to determine the result
 
-    - **TIMEOUT**: Timeout.
+    - **TIMEOUT**: Timed out
 
 **Use `LLVM-LIT` to execute the test suite**:
 
