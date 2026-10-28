@@ -1871,6 +1871,24 @@ void ReduceWithIndexOp::print(OpAsmPrinter &p) {
   }
 }
 
+/// Return the arith reduction kind of a reduce_with_index.
+static arith::AtomicRMWKind getReduceWithIndexRMWKind(ReduceWithIndexOp op,
+                                                      Type elemType) {
+  ReduceWithIndexKind kind = op.getReduceKind().getReduceWithIndexKind();
+  bool isMax =
+      kind == ReduceWithIndexKind::MAX || kind == ReduceWithIndexKind::MAXUI;
+  if (isa<FloatType>(elemType))
+    return isMax ? arith::AtomicRMWKind::maximumf
+                 : arith::AtomicRMWKind::minimumf;
+  // Unsignedness is carried either by the MAXUI/MINUI kinds or, on regbase
+  // archs, by the `unsigned_src` attribute.
+  bool isUnsigned = kind == ReduceWithIndexKind::MAXUI ||
+                    kind == ReduceWithIndexKind::MINUI || op.getUnsignedSrc();
+  if (isMax)
+    return isUnsigned ? arith::AtomicRMWKind::maxu : arith::AtomicRMWKind::maxs;
+  return isUnsigned ? arith::AtomicRMWKind::minu : arith::AtomicRMWKind::mins;
+}
+
 /// If result index is not used, replace hfusion.reduce_with_index with
 /// linalg.reduce.
 struct ReplaceWithLinalgReduce : public OpRewritePattern<ReduceWithIndexOp> {
@@ -1888,26 +1906,18 @@ struct ReplaceWithLinalgReduce : public OpRewritePattern<ReduceWithIndexOp> {
     Value inValue = reduceWithIndexOp.getInputs()[0];
     Value outValue = reduceWithIndexOp.getInits()[0];
     Value shapeResult = reduceWithIndexOp.getResult()[0];
-    auto &region = reduceWithIndexOp.getRegion();
-    assert(region.hasOneBlock() && "reduce_with_index has more than one block");
-    auto &block = *(region.begin());
-    Operation &binOp = *(block.begin());
-    Value binOpBlockArg0 = block.getArgument(0);
-    Value binOpBlockArg1 = reduceWithIndexOp.getInputs().size() == 1
-                               ? block.getArgument(1)
-                               : block.getArgument(2);
+    Type elemType = getElementTypeOrSelf(inValue.getType());
+
+    arith::AtomicRMWKind rmwKind =
+        getReduceWithIndexRMWKind(reduceWithIndexOp, elemType);
     auto linalgReduceOp = rewriter.create<linalg::ReduceOp>(
         inValue.getLoc(), ValueRange{inValue}, ValueRange{outValue},
         reduceWithIndexOp.getDimensions(),
         [&](OpBuilder &nestedBuilder, Location nestedLoc,
             ValueRange blockArgs) {
-          IRMapping mapping;
-          mapping.map(binOpBlockArg0, blockArgs[0]);
-          mapping.map(binOpBlockArg1, blockArgs[1]);
-          Operation *newBinOp = nestedBuilder.clone(binOp, mapping);
-          Value newResultValue = newBinOp->getResult(0);
-          nestedBuilder.create<linalg::YieldOp>(newResultValue.getLoc(),
-                                                ValueRange({newResultValue}));
+          Value result = arith::getReductionOp(
+              rmwKind, nestedBuilder, nestedLoc, blockArgs[0], blockArgs[1]);
+          nestedBuilder.create<linalg::YieldOp>(nestedLoc, result);
         });
     rewriter.replaceAllUsesWith(shapeResult,
                                 linalgReduceOp.getODSResults(0)[0]);
