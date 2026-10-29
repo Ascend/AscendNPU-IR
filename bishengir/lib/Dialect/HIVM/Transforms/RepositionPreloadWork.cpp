@@ -1170,8 +1170,12 @@ sinkReturnedTensorsToConsumerImpl(scf::ForOp &forOp,
           continue;
         if (changesCrossCoreDistance(cluster, producer, consumer, forOp))
           continue;
+        // Closed-recurrence coalescing keeps a tensor iter-arg with the
+        // moved update. Other cross-stage sinks still refuse or privatize
+        // an iter-arg.
         SmallVector<unsigned> privatizeIdx;
-        if (!adoptIterationOpsForCrossStageSink(cluster, extras, producer,
+        if (!closedRecurrences &&
+            !adoptIterationOpsForCrossStageSink(cluster, extras, producer,
                                                 consumer, forOp, privatizeIdx))
           continue;
         if (llvm::any_of(cluster,
