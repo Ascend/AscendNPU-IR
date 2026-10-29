@@ -228,6 +228,8 @@ struct HIVMModTraits : public NormalizeTraitsBase {
 
   static BinaryKind getModKind(OpTy) { return ModKind; }
 
+  static bool shouldPreserveLowPrecision(OpTy) { return false; }
+
   static Value createDivOpForMod(PatternRewriter &rewriter, Location loc,
                                  Value x, Value y, Type elemType) {
     auto divDst = utils::createEmptyOp(rewriter, loc, x);
@@ -246,6 +248,19 @@ struct HIVMModTraits : public NormalizeTraitsBase {
                                rewriter.getAttr<hivm::TypeFnAttr>(
                                    hivm::TypeFn::cast_signed))
         .getResults()[0];
+  }
+
+  static Value createModResidual(PatternRewriter &rewriter, Location loc,
+                                 Value x, Value y, Value truncDiv,
+                                 Type elemType, bool /*preserveLowPrecision*/) {
+    // HIVM has no vector FMA op; keep the historical mul/sub residual.
+    // Triton/HFusion f32 mod uses the HFusion traits FMA path instead.
+    Value mul =
+        createBinaryOp(rewriter, loc, truncDiv, y,
+                       utils::createEmptyOp(rewriter, loc, x), BinaryKind::Mul);
+    return createBinaryOp(rewriter, loc, x, mul,
+                          utils::createEmptyOp(rewriter, loc, x),
+                          BinaryKind::Sub);
   }
 };
 

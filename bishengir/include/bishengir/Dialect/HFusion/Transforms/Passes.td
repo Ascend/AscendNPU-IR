@@ -316,7 +316,10 @@ def Normalize : Pass<"hfusion-normalize-ops", "func::FuncOp"> {
               "Enable strength reduction of integer div/div_unsigned/mod/modui "
               "with "
               "a power-of-two constant divisor into shift/and ops (regbased "
-              "Ascend950 only)">];
+              "Ascend950 only)">,
+       Option<"enableFma", "enable-fma", "bool", /*default=*/"false",
+              "Enable fused multiply-add for the floating-point mod residual "
+              "(requires the vectorization path)">];
 }
 
 def NormalizeSliceOps : Pass<"hfusion-normalize-slice-ops", "func::FuncOp"> {
