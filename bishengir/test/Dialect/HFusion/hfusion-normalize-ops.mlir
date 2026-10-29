@@ -2739,6 +2739,48 @@ func.func @test_hfusion_muli_i1(%src1: tensor<32xi1>, %src2: tensor<32xi1>) -> t
   return %1 : tensor<32xi1>
 }
 
+// -----
+// CHECK-LABEL: func.func @test_reduce_xori_i1_to_i16
+// CHECK: %[[INPUT_I16:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<8xi1>) outs({{.*}} : tensor<8xi16>) -> tensor<8xi16>
+// CHECK: %[[INIT_EMPTY:.*]] = tensor.empty() : tensor<i16>
+// CHECK: %[[INIT_I16:.*]] = linalg.fill ins(%{{.*}} : i16) outs(%[[INIT_EMPTY]] : tensor<i16>) -> tensor<i16>
+// CHECK: %[[REDUCED:.*]] = linalg.reduce ins(%[[INPUT_I16]] : tensor<8xi16>) outs(%[[INIT_I16]] : tensor<i16>) dimensions = [0]
+// CHECK:   arith.xori %{{.*}}, %{{.*}} : i16
+// CHECK: %[[RESULT_F16:.*]] = hfusion.cast {{.*}} ins(%[[REDUCED]] : tensor<i16>) outs({{.*}} : tensor<f16>) -> tensor<f16>
+// CHECK: %[[IS_ZERO:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[RESULT_F16]], %{{.*}} : tensor<f16>, f16) outs({{.*}} : tensor<i1>) -> tensor<i1>
+// CHECK: %[[RESULT:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[IS_ZERO]] : tensor<i1>) outs({{.*}} : tensor<i1>) -> tensor<i1>
+// CHECK: return %[[RESULT]] : tensor<i1>
+func.func @test_reduce_xori_i1_to_i16(%arg0: tensor<8xi1>) -> tensor<i1> {
+  %false = arith.constant false
+  %out = tensor.empty() : tensor<i1>
+  %init = linalg.fill ins(%false : i1) outs(%out : tensor<i1>) -> tensor<i1>
+  %reduced = linalg.reduce { arith.xori }
+      ins(%arg0 : tensor<8xi1>) outs(%init : tensor<i1>) dimensions = [0]
+  return %reduced : tensor<i1>
+}
+
+// -----
+// CHECK-LABEL: func.func @test_noncanonical_reduce_xori_i1_not_normalized
+// CHECK: linalg.reduce
+// CHECK: arith.xori %{{.*}}, %{{.*}} : i1
+// CHECK-NOT: arith.xori %{{.*}}, %{{.*}} : i16
+// CHECK: return
+func.func @test_noncanonical_reduce_xori_i1_not_normalized(
+    %arg0: tensor<8xi1>) -> tensor<i1> {
+  %false = arith.constant false
+  %true = arith.constant true
+  %out = tensor.empty() : tensor<i1>
+  %init = linalg.fill ins(%false : i1) outs(%out : tensor<i1>) -> tensor<i1>
+  %reduced = linalg.reduce ins(%arg0 : tensor<8xi1>)
+      outs(%init : tensor<i1>) dimensions = [0]
+      (%in: i1, %acc: i1) {
+        %xor = arith.xori %in, %true : i1
+        linalg.yield %xor : i1
+      }
+  return %reduced : tensor<i1>
+}
+
+// -----
 // CHECK-LABEL: func.func @test_hfusion_select_cast_i1_to_i16
 // CHECK-SAME: %[[arg0:.*]]: tensor<32xi1>
 // CHECK: %[[EMPTYI1:.*]] : tensor<32xi1>
