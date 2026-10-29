@@ -132,6 +132,12 @@ std::unique_ptr<mlir::Pass> createOptimizeMathPass();
 /// Optimize shared expressions after SIMT auto blockification.
 std::unique_ptr<mlir::Pass> createOptimizeSIMTExpressionsPass();
 
+/// Create a pass that folds the no-op lanes of a select chain feeding a
+/// `tt.atomic_rmw` reduction (e.g. `fadd` with `0`) into the atomic's mask so
+/// those lanes are skipped. Only applies to atomic reductions with an unused
+/// result.
+std::unique_ptr<mlir::Pass> createOptimizeAtomicReductionPass();
+
 /// Run two complementary transformations on K-tile chain loops:
 ///   1. Hoist any tt.trans whose source is loop-invariant out of every
 ///      scf.for (targeted LICM specialization).

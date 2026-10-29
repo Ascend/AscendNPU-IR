@@ -62,6 +62,11 @@ struct LowerTritonPipelineOptions
       *this, "enable-optimize-math",
       llvm::cl::desc("enable optimize math pass"),
       llvm::cl::init(false)};
+  PassOptions::Option<bool> enableOptimizeAtomicReduction{
+      *this, "enable-optimize-atomic-reduction",
+      llvm::cl::desc("enable the pass that skips no-op atomic reductions, e.g. "
+                     "atomic.rmw.fadd(ptr, 0.f)"),
+      llvm::cl::init(true)};
   PassOptions::Option<int> KTileSize{
       *this, "k-tile-size",
       llvm::cl::desc("custom tile size for k tiling (must perfectly divide K)"),
