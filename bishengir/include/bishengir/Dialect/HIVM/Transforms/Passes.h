@@ -231,6 +231,11 @@ std::unique_ptr<Pass> createMarkTightlyCoupledBufferPass(
 // the AIC/AIV multi-buffer anchor stays consistent after SplitMixKernel.
 std::unique_ptr<Pass> createHoistTightlyCoupledAllocPass();
 
+// Create a pass to hoist loop-invariant GM->UB load clusters (alloc + guarded
+// fill + hivm.hir.load + to_tensor) out of scf.for loops as one unit
+// (Ascend950 / RegBase).
+std::unique_ptr<Pass> createHoistLoopInvariantDmaLoadPass();
+
 // Create a pass to mark scalar operations with core-type attribute.
 std::unique_ptr<Pass>
 createMarkRealCoreTypePass(const MarkRealCoreTypeOptions &options = {});
