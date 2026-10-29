@@ -2,7 +2,8 @@
 //
 // Membased (Ascend910B1) control: the membased pipeline uses the legacy
 // monolithic populateNormalizeHFusionPatterns (the RUN line has no use-regbase), so these pow2
-// patterns are not registered at all: mod is preserved, div shows no shift/and ops
+// regbase patterns are not registered: mod is preserved, while signed i32
+// division has its own membase constant-divisor fast path.
 // Unlike the Ascend310B4 cases (regbased, patterns loaded but rejected by the
 // 950 gate), 910B is membased: the patterns are never even registered.
 
@@ -21,10 +22,15 @@ module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 
 // -----
 
-// membased div i32 lowers to an f32 division sequence (existing behavior), no shifts allowed
+// Membase signed i32 division by 8 uses an exact integer fast path.
+// Keep checking the behavior separately from the regbase pow2 optimization.
 // CHECK-LABEL: func.func @test_div_pow2_membased
+// CHECK-NOT:   f32
+// CHECK:       arith.constant 3 : i32
+// CHECK:       #hfusion.binary_fn<shrui>
 // CHECK-NOT:   binary_fn<vand>
-// CHECK-NOT:   binary_fn<shr
+// CHECK-NOT:   f32
+// CHECK:       return
 module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
   func.func @test_div_pow2_membased(%arg0: tensor<16xi32>) -> tensor<16xi32> {
       %cst = arith.constant 8 : i32

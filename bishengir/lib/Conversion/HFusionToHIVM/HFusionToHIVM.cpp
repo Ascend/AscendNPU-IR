@@ -153,9 +153,25 @@ public:
       }
 
     } else {
-      if constexpr (std::is_base_of_v<
-                        mlir::hivm::detail::ExtraBufferOpInterfaceTrait<opType>,
-                        opType>) {
+      if constexpr (std::is_same_v<opType, VShROp>) {
+        // Propagate the logical/arithmetic right-shift semantics of hfusion
+        // shrui/shrsi through VShROp::is_signed; the template name and the
+        // scalar-loop lowering are selected from this attribute.
+        bool isSigned = true;
+        if (isa<hfusion::ElemwiseBinaryOp>(op)) {
+          isSigned = cast<hfusion::ElemwiseBinaryOp>(op).getFun() !=
+                     hfusion::BinaryFn::shrui;
+        }
+        hivmOp = b.create<opType>(loc, resultTypes, inputs, inits,
+                                  /*temp_buffer=*/Value(), isSigned);
+        // HFusion shrui/shrsi do not round. Although A3 templates already
+        // disable rounding, explicitly override HIVM's default true value
+        // so the IR preserves the source operation's semantics.
+        hivmOp->setAttr("round", b.getBoolAttr(false));
+      } else if constexpr (std::is_base_of_v<
+                               mlir::hivm::detail::ExtraBufferOpInterfaceTrait<
+                                   opType>,
+                               opType>) {
         // don't need temp buffer, but need to pass extra operand to create op
         hivmOp = b.create<opType>(loc, resultTypes, inputs, inits,
                                   /*temp_buffer=*/Value());
