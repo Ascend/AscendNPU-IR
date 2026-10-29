@@ -67,7 +67,6 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
-#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -510,9 +509,6 @@ static bool collectExclusiveReturnedCluster(
 static Value cloneProducerScalar(Value v, scope::ScopeOp producer,
                                  Operation *insertBefore,
                                  DenseMap<Value, Value> &cloned);
-static scope::ScopeOp exportSunkValueToLaterUsers(scope::ScopeOp consumer,
-                                                  Value inner,
-                                                  scope::ScopeOp producer);
 static void collectForwardedDepsForScalarExtras(scope::ScopeOp producer,
                                                 SmallVector<Value> &extras);
 static void remapClonedScalarOperands(const DenseMap<Value, Value> &cloned,
@@ -548,218 +544,6 @@ static std::optional<int64_t> getScopePreloadNum(scope::ScopeOp scope) {
   if (auto attr = scope->getAttrOfType<IntegerAttr>("hivm.preload_num"))
     return attr.getInt();
   return std::nullopt;
-}
-
-static bool dependsOnValue(Value value, Value target, Operation *limit) {
-  DenseSet<Value> seen;
-  SmallVector<Value> work = {value};
-  while (!work.empty()) {
-    Value current = work.pop_back_val();
-    if (!seen.insert(current).second)
-      continue;
-    if (current == target)
-      return true;
-    Operation *def = current.getDefiningOp();
-    if (!def || !limit->isAncestor(def))
-      continue;
-    for (Value operand : def->getOperands())
-      work.push_back(operand);
-  }
-  return false;
-}
-
-/// Scalar index arithmetic: an op that still carries the iter-arg itself, not
-/// a value loaded through it. The private-copy path clones these onto the
-/// duplicated iter-arg.
-static bool isScalarAdvanceOp(Operation *op) {
-  if (!op || isa<annotation::MarkOp>(op))
-    return false;
-  if (isa<arith::IndexCastOp, arith::IndexCastUIOp, arith::TruncIOp,
-          arith::ExtSIOp, arith::ExtUIOp>(op))
-    return true;
-  Dialect *dialect = op->getDialect();
-  return dialect && (dialect->getNamespace() == "arith" ||
-                     dialect->getNamespace() == "affine");
-}
-
-/// The value a `scope.scope` returns for `result`, or `result` unchanged when
-/// it is not a scope result. One level only: that is where the update of a
-/// loop-carried scalar lives.
-static Value peelScopeResult(Value result) {
-  auto scope = result.getDefiningOp<scope::ScopeOp>();
-  if (!scope)
-    return result;
-  auto ret =
-      dyn_cast<scope::ReturnOp>(scope.getRegion().front().getTerminator());
-  if (!ret)
-    return result;
-  return ret.getOperand(cast<OpResult>(result).getResultNumber());
-}
-
-/// Whether a duplicate of the scalar iter-arg `argIdx` would track the shared
-/// one. True when the arg is loop-invariant -- the duplicate is then identical
-/// by construction -- or when every op advancing it is index arithmetic that
-/// `installPrivateIterArgAdvance` can clone onto the duplicate. Otherwise the
-/// duplicate would stay pinned to its init value, which verifies but computes
-/// the wrong addresses, so the caller has to refuse the sink instead.
-static bool privateCopyCanTrackIterArg(scf::ForOp loop, unsigned argIdx) {
-  BlockArgument arg = loop.getRegionIterArg(argIdx);
-  Value advance = peelScopeResult(loop.getYieldedValues()[argIdx]);
-  if (advance == arg)
-    return true;
-  DenseSet<Value> seen;
-  SmallVector<Value> work = {advance};
-  while (!work.empty()) {
-    Value value = work.pop_back_val();
-    if (value == arg || !seen.insert(value).second)
-      continue;
-    // Values that do not carry the iter-arg are read unchanged by the clone.
-    if (!dependsOnValue(value, arg, loop))
-      continue;
-    Operation *def = value.getDefiningOp();
-    if (!def || !loop->isAncestor(def) || !isScalarAdvanceOp(def))
-      return false;
-    for (Value operand : def->getOperands())
-      work.push_back(operand);
-  }
-  return true;
-}
-
-struct PrivateIterRequest {
-  unsigned sharedIdx;
-  scope::ScopeOp consumer;
-};
-
-struct PrivateIterBinding {
-  unsigned sharedIdx;
-  unsigned privateIdx;
-  scope::ScopeOp consumer;
-};
-
-/// One private iter_arg per (shared iter-arg, consumer), same init as the
-/// shared one. The new yield passes the private arg through until the consumer
-/// installs its own advance. This is the privatization CV-Pipeline performs
-/// for the scalars a lazy load reads; both go through
-/// `hivm::appendPassThroughIterArgs`.
-static LogicalResult
-bindPrivateIterArgs(scf::ForOp &loop, ArrayRef<PrivateIterRequest> requests,
-                    SmallVectorImpl<PrivateIterBinding> &bindings) {
-  if (requests.empty())
-    return success();
-  SmallVector<Value> inits;
-  inits.reserve(requests.size());
-  for (const PrivateIterRequest &request : requests)
-    inits.push_back(loop.getInitArgs()[request.sharedIdx]);
-  FailureOr<unsigned> base = hivm::appendPassThroughIterArgs(loop, inits);
-  if (failed(base))
-    return loop.emitError(
-        "failed to duplicate an iter_arg for a cross-stage sink");
-  bindings.clear();
-  for (auto [i, request] : llvm::enumerate(requests))
-    bindings.push_back({request.sharedIdx, *base + static_cast<unsigned>(i),
-                        request.consumer});
-  return success();
-}
-
-/// Clone the shared iter-arg's advance into `consumer`, remapped onto the
-/// private iter_arg, and yield that clone as the private arg's next value.
-/// Callers gate on `privateCopyCanTrackIterArg`, so the clone cannot come up
-/// empty; failing loudly here keeps a private arg from silently staying at its
-/// init value if it ever did.
-static FailureOr<scope::ScopeOp>
-installPrivateIterArgAdvance(scf::ForOp loop, scope::ScopeOp consumer,
-                             scope::ScopeOp owner, unsigned sharedIdx,
-                             unsigned privateIdx) {
-  Value advance = peelScopeResult(loop.getYieldedValues()[sharedIdx]);
-  BlockArgument shared = loop.getRegionIterArg(sharedIdx);
-  // Loop-invariant: passing the init value through is what the shared arg
-  // does too, so there is no advance to clone.
-  if (advance == shared)
-    return consumer;
-  Operation *insertBefore = consumer.getRegion().front().getTerminator();
-  DenseMap<Value, Value> cloned;
-  cloned[shared] = loop.getRegionIterArg(privateIdx);
-  auto cloneAdvance = [&](auto &self, Value value) -> Value {
-    if (auto it = cloned.find(value); it != cloned.end())
-      return it->second;
-    Operation *def = value.getDefiningOp();
-    if (!def || !loop->isAncestor(def) || !isScalarAdvanceOp(def))
-      return value;
-    IRMapping mapping;
-    for (Value operand : def->getOperands()) {
-      Value mapped = self(self, operand);
-      if (mapped != operand)
-        mapping.map(operand, mapped);
-    }
-    OpBuilder builder(insertBefore);
-    Operation *copy = builder.clone(*def, mapping);
-    cloned[value] = copy->getResult(0);
-    return copy->getResult(0);
-  };
-  Value clonedAdvance = cloneAdvance(cloneAdvance, advance);
-  if (clonedAdvance == advance) {
-    loop.emitError("cannot clone the advance of iter_arg #")
-        << sharedIdx << " onto its private copy";
-    return failure();
-  }
-  cast<scf::YieldOp>(loop.getBody()->getTerminator())
-      .setOperand(privateIdx, clonedAdvance);
-  return exportSunkValueToLaterUsers(consumer, clonedAdvance, owner);
-}
-
-/// A cross-stage sink reads each scalar iter-arg through a private copy.
-/// A tensor iter-arg blocks the sink: the two stages would observe different
-/// iterations of the same value. Returns false when the sink is abandoned.
-static bool adoptIterationOpsForCrossStageSink(
-    ArrayRef<Operation *> cluster, ArrayRef<Value> extras,
-    scope::ScopeOp producer, scope::ScopeOp consumer, scf::ForOp loop,
-    SmallVectorImpl<unsigned> &privatize) {
-  auto from = getScopePreloadNum(producer);
-  auto to = getScopePreloadNum(consumer);
-  if (!from || !to || *from == *to)
-    return true;
-
-  auto touches = [&](Value value, BlockArgument arg) {
-    return dependsOnValue(value, arg, loop);
-  };
-  for (auto enumerated : llvm::enumerate(loop.getRegionIterArgs())) {
-    unsigned idx = enumerated.index();
-    BlockArgument iterArg = enumerated.value();
-    bool touched =
-        llvm::any_of(cluster,
-                     [&](Operation *op) {
-                       return llvm::any_of(op->getOperands(), [&](Value value) {
-                         return touches(value, iterArg);
-                       });
-                     }) ||
-        llvm::any_of(extras,
-                     [&](Value extra) { return touches(extra, iterArg); });
-    if (!touched)
-      continue;
-    if (isa<ShapedType>(iterArg.getType()))
-      return false;
-    if (!privateCopyCanTrackIterArg(loop, idx))
-      return false;
-    privatize.push_back(idx);
-  }
-  return true;
-}
-
-static void dropReturnsDefinedByMovedOps(scope::ScopeOp producer,
-                                         ArrayRef<Operation *> moved,
-                                         SmallVector<Value> &newReturns) {
-  DenseSet<Operation *> movedSet(moved.begin(), moved.end());
-  auto ret =
-      cast<scope::ReturnOp>(producer.getRegion().front().getTerminator());
-  for (auto [idx, retVal] : llvm::enumerate(ret.getOperands())) {
-    Operation *def = retVal.getDefiningOp();
-    if (def && movedSet.contains(def))
-      producer.getResult(idx).replaceAllUsesWith(retVal);
-  }
-  llvm::erase_if(newReturns, [&](Value value) {
-    Operation *def = value.getDefiningOp();
-    return def && movedSet.contains(def);
-  });
 }
 
 static std::optional<hivm::TCoreType> getScopeCoreType(scope::ScopeOp scope) {
@@ -1112,7 +896,7 @@ static scope::ScopeOp exportSunkValueToLaterUsers(scope::ScopeOp consumer,
 /// cloned (not returned). Producers are visited last-to-first, and the
 /// walk repeats so an earlier producer can follow a sunk consumer.
 static LogicalResult
-sinkReturnedTensorsToConsumerImpl(scf::ForOp &forOp,
+sinkReturnedTensorsToConsumerImpl(scf::ForOp forOp,
                                   bool closedRecurrences = false) {
   for (int iter = 0; iter < 32; ++iter) {
     SmallVector<scope::ScopeOp> scopes;
@@ -1139,10 +923,8 @@ sinkReturnedTensorsToConsumerImpl(scf::ForOp &forOp,
         SmallVector<Value> extras;
         SmallVector<Value> destEmpties;
         SmallVector<Operation *> cluster;
-        SmallVector<unsigned> privatizeIdx;
-        SmallVector<PrivateIterBinding> bindings;
       };
-      SmallVector<Move, 1> moves;
+      SmallVector<Move> moves;
       DenseSet<unsigned> moveIdx;
       DenseSet<Operation *> claimed;
 
@@ -1170,10 +952,6 @@ sinkReturnedTensorsToConsumerImpl(scf::ForOp &forOp,
           continue;
         if (changesCrossCoreDistance(cluster, producer, consumer, forOp))
           continue;
-        SmallVector<unsigned> privatizeIdx;
-        if (!adoptIterationOpsForCrossStageSink(cluster, extras, producer,
-                                                consumer, forOp, privatizeIdx))
-          continue;
         if (llvm::any_of(cluster,
                          [&](Operation *op) { return claimed.contains(op); }))
           continue;
@@ -1185,35 +963,12 @@ sinkReturnedTensorsToConsumerImpl(scf::ForOp &forOp,
         m.extras = std::move(extras);
         m.destEmpties = std::move(destEmpties);
         m.cluster = std::move(cluster);
-        m.privatizeIdx = std::move(privatizeIdx);
         claimed.insert(m.cluster.begin(), m.cluster.end());
         moveIdx.insert(idx);
         moves.push_back(std::move(m));
       }
       if (moves.empty())
         continue;
-
-      SmallVector<PrivateIterRequest> requests;
-      for (const Move &m : moves) {
-        for (unsigned idx : m.privatizeIdx) {
-          bool seen =
-              llvm::any_of(requests, [&](const PrivateIterRequest &request) {
-                return request.sharedIdx == idx &&
-                       request.consumer == m.consumer;
-              });
-          if (!seen)
-            requests.push_back({idx, m.consumer});
-        }
-      }
-      SmallVector<PrivateIterBinding> bound;
-      if (failed(bindPrivateIterArgs(forOp, requests, bound)))
-        return failure();
-      for (Move &m : moves) {
-        for (const PrivateIterBinding &binding : bound)
-          if (binding.consumer == m.consumer &&
-              llvm::is_contained(m.privatizeIdx, binding.sharedIdx))
-            m.bindings.push_back(binding);
-      }
 
       SmallVector<Value> newReturns;
       for (auto [idx, retVal] : llvm::enumerate(ret.getOperands())) {
@@ -1235,8 +990,6 @@ sinkReturnedTensorsToConsumerImpl(scf::ForOp &forOp,
       DenseSet<Operation *> leaveBehind;
       for (const Move &m : moves)
         leaveBehind.insert(m.cluster.begin(), m.cluster.end());
-      SmallVector<Operation *> moved(leaveBehind.begin(), leaveBehind.end());
-      dropReturnsDefinedByMovedOps(producer, moved, newReturns);
 
       for (const Move &m : moves) {
         Value scopeRes = producer.getResult(m.resIdx);
@@ -1252,9 +1005,6 @@ sinkReturnedTensorsToConsumerImpl(scf::ForOp &forOp,
           insertBefore = consumerInsertPoint(m.consumer);
 
         DenseMap<Value, Value> clonedScalars;
-        for (const PrivateIterBinding &binding : m.bindings)
-          clonedScalars[forOp.getRegionIterArg(binding.sharedIdx)] =
-              forOp.getRegionIterArg(binding.privateIdx);
         for (Value extra : m.extras) {
           if (isa<ShapedType, MemRefType>(extra.getType()))
             continue;
@@ -1311,35 +1061,8 @@ sinkReturnedTensorsToConsumerImpl(scf::ForOp &forOp,
         scope::ScopeOp current = liveConsumer.lookup(key);
         if (!current)
           current = m.consumer;
-        current = exportSunkValueToLaterUsers(current, m.dest, producer);
-        // Iter-arg ops pulled along may still feed the loop yield.
-        for (Operation *op : m.cluster) {
-          for (Value result : op->getResults()) {
-            if (result == m.dest)
-              continue;
-            current = exportSunkValueToLaterUsers(current, result, producer);
-          }
-        }
-        liveConsumer[key] = current;
-      }
-
-      DenseSet<unsigned> installedPrivate;
-      for (Move &m : moves) {
-        Operation *key = m.consumer.getOperation();
-        scope::ScopeOp current = liveConsumer.lookup(key);
-        if (!current)
-          current = m.consumer;
-        for (const PrivateIterBinding &binding : m.bindings) {
-          if (!installedPrivate.insert(binding.privateIdx).second)
-            continue;
-          FailureOr<scope::ScopeOp> advanced = installPrivateIterArgAdvance(
-              forOp, current, newProducer, binding.sharedIdx,
-              binding.privateIdx);
-          if (failed(advanced))
-            return failure();
-          current = *advanced;
-        }
-        liveConsumer[key] = current;
+        liveConsumer[key] =
+            exportSunkValueToLaterUsers(current, m.dest, producer);
       }
 
       producer.erase();
@@ -1702,7 +1425,7 @@ static void remapClonedScalarOperands(const DenseMap<Value, Value> &cloned,
 
 /// Move a load→VF→hir.copy chain past unused mmad scopes so the copy sits
 /// in the VECTOR immediately before the mmad that actually reads it.
-static LogicalResult sinkCopyChainPastUnusedMmad(scf::ForOp &forOp) {
+static LogicalResult sinkCopyChainPastUnusedMmad(scf::ForOp forOp) {
   for (int iter = 0; iter < 32; ++iter) {
     SmallVector<scope::ScopeOp> scopes;
     for (Operation &op : *forOp.getBody()) {
@@ -1752,16 +1475,6 @@ static LogicalResult sinkCopyChainPastUnusedMmad(scf::ForOp &forOp) {
                                        extras))
         continue;
       collectForwardedDepsForScalarExtras(producer, extras);
-      SmallVector<unsigned> privatizeIdx;
-      if (!adoptIterationOpsForCrossStageSink(cluster, extras, producer,
-                                              destScope, forOp, privatizeIdx))
-        continue;
-      SmallVector<PrivateIterRequest> requests;
-      for (unsigned idx : privatizeIdx)
-        requests.push_back({idx, destScope});
-      SmallVector<PrivateIterBinding> bindings;
-      if (failed(bindPrivateIterArgs(forOp, requests, bindings)))
-        return failure();
 
       SmallVector<Value> newReturns(ret.getOperands().begin(),
                                     ret.getOperands().end());
@@ -1777,15 +1490,11 @@ static LogicalResult sinkCopyChainPastUnusedMmad(scf::ForOp &forOp) {
       }
 
       DenseSet<Operation *> leaveBehind(cluster.begin(), cluster.end());
-      dropReturnsDefinedByMovedOps(producer, cluster, newReturns);
       scope::ScopeOp newProducer =
           rebuildScopeLeavingOps(producer, newReturns, leaveBehind);
 
       Operation *insertBefore = destScope.getRegion().front().getTerminator();
       DenseMap<Value, Value> clonedScalars;
-      for (const PrivateIterBinding &binding : bindings)
-        clonedScalars[forOp.getRegionIterArg(binding.sharedIdx)] =
-            forOp.getRegionIterArg(binding.privateIdx);
       for (Value extra : scalarExtras)
         cloneProducerScalar(extra, newProducer, insertBefore, clonedScalars);
       remapClonedScalarOperands(clonedScalars, newReturns, newProducer);
@@ -1823,21 +1532,8 @@ static LogicalResult sinkCopyChainPastUnusedMmad(scf::ForOp &forOp) {
         }
       }
       moveOpsBefore(cluster, insertBefore);
-      scope::ScopeOp exportedScope = destScope;
-      for (Operation *op : cluster)
-        for (Value result : op->getResults())
-          exportedScope =
-              exportSunkValueToLaterUsers(exportedScope, result, producer);
-      for (const PrivateIterBinding &binding : bindings) {
-        FailureOr<scope::ScopeOp> advanced =
-            installPrivateIterArgAdvance(forOp, exportedScope, newProducer,
-                                         binding.sharedIdx, binding.privateIdx);
-        if (failed(advanced))
-          return failure();
-        exportedScope = *advanced;
-      }
       producer.erase();
-      moveEarlyToTensorsAfter(dest, exportedScope);
+      moveEarlyToTensorsAfter(dest, destScope);
 
       if (failed(mlir::verify(forOp))) {
         forOp.emitError("verification failed after sinking copy chain");
@@ -2899,52 +2595,6 @@ struct RepositionPreloadWorkPass
   void runOnOperation() override;
 };
 
-/// Preload stages do not share one iteration of an iter_arg. After
-/// repositioning, one iter_arg must not be read from scopes whose
-/// `hivm.preload_num` differ.
-///
-/// The walk follows index arithmetic, which still carries the iter_arg itself.
-/// It stops at every other user: that one consumes the arg as data, and data
-/// flowing from one stage into the next is what pipelining is for.
-static LogicalResult verifyPreloadIterArgUses(func::FuncOp func) {
-  LogicalResult result = success();
-  func.walk([&](scf::ForOp loop) {
-    bool preloaded = false;
-    for (auto scope : loop.getBody()->getOps<scope::ScopeOp>())
-      if (getScopePreloadNum(scope))
-        preloaded = true;
-    if (!preloaded)
-      return;
-    for (auto [idx, arg] : llvm::enumerate(loop.getRegionIterArgs())) {
-      DenseSet<int64_t> nums;
-      DenseSet<Value> seen;
-      SmallVector<Value> work = {Value(arg)};
-      while (!work.empty()) {
-        Value value = work.pop_back_val();
-        if (!seen.insert(value).second)
-          continue;
-        for (Operation *user : value.getUsers()) {
-          if (!loop->isAncestor(user))
-            continue;
-          if (auto scope = enclosingForBodyScope(user, loop))
-            if (auto num = getScopePreloadNum(scope))
-              nums.insert(*num);
-          if (!isScalarAdvanceOp(user))
-            continue;
-          for (Value result : user->getResults())
-            work.push_back(result);
-        }
-      }
-      if (nums.size() <= 1)
-        continue;
-      loop.emitError() << "iter_arg #" << idx
-                       << " is used by scopes with different hivm.preload_num";
-      result = failure();
-    }
-  });
-  return result;
-}
-
 void RepositionPreloadWorkPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
   if (isSplitMixModule(moduleOp))
@@ -2979,10 +2629,6 @@ void RepositionPreloadWorkPass::runOnOperation() {
       }
       if (sinkClosedRecurrences &&
           failed(sinkReturnedTensorsToConsumerImpl(forOp, true)))
-        return signalPassFailure();
-    }
-    if (this->enablePreload || sinkAcrossScopes) {
-      if (failed(verifyPreloadIterArgUses(funcOp)))
         return signalPassFailure();
     }
   }

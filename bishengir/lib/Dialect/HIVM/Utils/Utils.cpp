@@ -1598,23 +1598,6 @@ std::optional<uint32_t> getHWAlignBytes(Type t) {
   return hwAlignBytes;
 }
 
-FailureOr<unsigned> appendPassThroughIterArgs(scf::ForOp &loop,
-                                              ValueRange inits) {
-  unsigned base = loop.getNumRegionIterArgs();
-  if (inits.empty())
-    return base;
-  IRRewriter rewriter(loop.getContext());
-  FailureOr<LoopLikeOpInterface> replaced = loop.replaceWithAdditionalYields(
-      rewriter, inits, /*replaceInitOperandUsesInLoop=*/false,
-      [](OpBuilder &, Location, ArrayRef<BlockArgument> newArgs) {
-        return SmallVector<Value>(newArgs.begin(), newArgs.end());
-      });
-  if (failed(replaced))
-    return failure();
-  loop = cast<scf::ForOp>(*replaced);
-  return base;
-}
-
 namespace util {
 //===----------------------------------------------------------------------===//
 // This file contains code from the LLVM Project.
