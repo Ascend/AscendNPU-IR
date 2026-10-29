@@ -132,9 +132,21 @@ def HIVM_DataLayoutAttr : HIVM_Attr<"DataLayout", "data_layout"> {
     OptionalParameter<"DenseI64ArrayAttr">:$fractalSizes
   );
   let description = [{
-    HIVM data layout mapping attribute. Maps to DOTA_ND, DOTB_ND, DOTC_ND, zN, nZ and ND.
+    HIVM data layout mapping attribute. Specifies tensor/memref memory layout:
+      - `ND`: Natural/dense row-major layout
+      - `nZ`: Non-fractal layout optimized for matrix operands
+      - `zN`: Fractal block layout (Z-order curve)
+      - `DOTA_ND`: Matrix A layout for dot product operations
+      - `DOTB_ND`: Matrix B layout for dot product operations
+      - `DOTC_ND`: Matrix C (accumulator) layout for dot product operations
+      - `Fractal`: Generic fractal layout with configurable block sizes
+      - `NCHW`, `NC1HWC0`, `C1HWNC0`: Convolution-specific layouts
+      - `SCALEA_ND`, `SCALEB_DN`, `SCALEA_zZ`, `SCALEB_nN`: MX-format scale layouts
+
+    Parameters:
       - `transpose`: Indicates that the layout is transposed.
                      Only valid and must be present for DOTA_ND and DOTB_ND layout.
+      - `fractalSizes`: Block dimensions for fractal layouts
   }];
   let builders = [
     AttrBuilder<(ins "hivm::DataLayout":$data_layout), [{
