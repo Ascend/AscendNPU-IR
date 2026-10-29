@@ -84,7 +84,16 @@ void bufferizationPipelineBase(OpPassManager &pm, bool isRegBased) {
   pm.addPass(
       bishengir::bufferization::createTensorCopyInsertionPass(oneShotOptions));
   pm.addPass(createDecomposeAllocTensorCopyPass());
-  pm.addPass(createOneShotBufferizePass(oneShotOptions));
+  pm.addPass(
+      bishengir::bufferization::createTensorCopyInsertionPass(oneShotOptions));
+  // one-shot-bufferize is split into tensor copy insertion and module
+  // bufferization so that other passes can run in between. In particular, once
+  // vector functions are inlined into their callers, running tensor copy
+  // insertion after the inlining would place the copies at unexpected
+  // locations, so it must run before the inlining while the bufferization
+  // itself runs after it.
+  pm.addPass(
+      bishengir::bufferization::createBufferizeModuleOpPass(oneShotOptions));
 }
 
 void bufferizationPipeline(OpPassManager &pm,

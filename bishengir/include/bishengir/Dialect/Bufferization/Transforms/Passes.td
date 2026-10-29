@@ -58,7 +58,7 @@ def TensorCopyInsertion : Pass<"tensor-copy-insertion", "mlir::ModuleOp"> {
   let dependentDialects = ["mlir::bufferization::BufferizationDialect",
                            "mlir::memref::MemRefDialect",
                            "mlir::tensor::TensorDialect",
-  ];
+                           "mlir::func::FuncDialect"];
   let options =
       [Option<"allowReturnAllocsFromLoops", "allow-return-allocs-from-loops",
               "bool", /*default=*/"false",
@@ -66,12 +66,96 @@ def TensorCopyInsertion : Pass<"tensor-copy-insertion", "mlir::ModuleOp"> {
        Option<"allowUnknownOps", "allow-unknown-ops", "bool",
               /*default=*/"false",
               "Allows unknown (not bufferizable) ops in the input IR.">,
+       Option<
+           "analysisFuzzerSeed", "analysis-fuzzer-seed", "unsigned",
+           /*default=*/"0",
+           "Test only: Analyze ops in random order with a given seed (fuzzer)">,
        Option<"analysisHeuristic", "analysis-heuristic", "std::string",
               /*default=*/"\"bottom-up\"",
               "Heuristic that control the IR traversal during analysis">,
        Option<"bufferizeFunctionBoundaries", "bufferize-function-boundaries",
               "bool", /*default=*/"false",
               "Bufferize function boundaries (experimental).">,
+       Option<"checkParallelRegions", "check-parallel-regions", "bool",
+              /*default=*/"true",
+              "Account for parallel regions in RaW analysis.">,
+       Option<"copyBeforeWrite", "copy-before-write", "bool",
+              /*default=*/"false",
+              "Skip the analysis. Make a buffer copy on every write.">,
+       ListOption<"dialectFilter", "dialect-filter", "std::string",
+                  "Restrict bufferization to ops from these dialects.">,
+       Option<"dumpAliasSets", "dump-alias-sets", "bool", /*default=*/"false",
+              "Test only: Annotate tensor IR with alias sets">,
+       ListOption<"noAnalysisFuncFilter", "no-analysis-func-filter",
+                  "std::string",
+                  "Skip analysis of functions with these symbol names."
+                  "Set copyBeforeWrite to true when bufferizing them.">,
+       Option<"mustInferMemorySpace", "must-infer-memory-space", "bool",
+              /*default=*/"false",
+              "The memory space of an memref types must always be inferred. If "
+              "unset, a default memory space of 0 is used otherwise.">,
+       Option<"testAnalysisOnly", "test-analysis-only", "bool",
+              /*default=*/"false",
+              "Test only: Only run inplaceability analysis and annotate IR">,
+       Option<"printConflicts", "print-conflicts", "bool",
+              /*default=*/"false",
+              "Test only: Annotate IR with RaW conflicts. Requires "
+              "test-analysis-only.">,
+  ];
+
+  let statistics = [Statistic<"numTensorInPlace", "num-tensor-in-place",
+                              "Number of in-place tensor OpOperands">,
+                    Statistic<"numTensorOutOfPlace", "num-tensor-out-of-place",
+                              "Number of out-of-place tensor OpOperands">,
+  ];
+}
+
+def BufferizeModuleOp : Pass<"bufferize-module-op", "mlir::ModuleOp"> {
+  let summary = "Bufferize a module and its function boundaries";
+  let description = [{
+    This pass rewrites tensor IR to memref IR, bufferizing the module and
+    its function boundaries. It is the bufferization (rewrite) phase of
+    `one-shot-bufferize` and typically runs after `tensor-copy-insertion`,
+    which performs the inplaceability analysis and inserts the required
+    `bufferization.alloc_tensor` copies. Running the two passes separately
+    avoids re-running the analysis.
+
+    This pass always bufferizes function boundaries (the equivalent of
+    `bufferize-function-boundaries` in `one-shot-bufferize`).
+  }];
+  let constructor = "bishengir::bufferization::createBufferizeModuleOpPass()";
+  let dependentDialects = ["mlir::bufferization::BufferizationDialect",
+                           "mlir::memref::MemRefDialect",
+                           "mlir::tensor::TensorDialect",
+                           "mlir::func::FuncDialect"];
+  let options =
+      [Option<"allowUnknownOps", "allow-unknown-ops", "bool",
+              /*default=*/"false",
+              "Allows unknown (not bufferizable) ops in the input IR.">,
+       Option<"copyBeforeWrite", "copy-before-write", "bool",
+              /*default=*/"false",
+              "Skip the analysis. Make a buffer copy on every write.">,
+       ListOption<"dialectFilter", "dialect-filter", "std::string",
+                  "Restrict bufferization to ops from these dialects.">,
+       Option<"functionBoundaryTypeConversion",
+              "function-boundary-type-conversion", "std::string",
+              /*default=*/"\"infer-layout-map\"",
+              "Controls layout maps when bufferizing function signatures.">,
+       Option<"mustInferMemorySpace", "must-infer-memory-space", "bool",
+              /*default=*/"false",
+              "The memory space of an memref types must always be inferred. If "
+              "unset, a default memory space of 0 is used otherwise.">,
+       ListOption<"noAnalysisFuncFilter", "no-analysis-func-filter",
+                  "std::string",
+                  "Skip analysis of functions with these symbol names."
+                  "Set copyBeforeWrite to true when bufferizing them.">,
+       Option<"unknownTypeConversion", "unknown-type-conversion", "std::string",
+              /*default=*/"\"fully-dynamic-layout-map\"",
+              "Controls layout maps for non-inferrable memref types.">,
+  ];
+
+  let statistics = [Statistic<"numBufferAlloc", "num-buffer-alloc",
+                              "Number of buffer allocations">,
   ];
 }
 
