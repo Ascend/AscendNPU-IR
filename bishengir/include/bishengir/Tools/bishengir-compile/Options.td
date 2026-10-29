@@ -1368,6 +1368,12 @@ def InlineQuantScaleInFixpipe : HIVMOptimizationControlOptions<
   let passGroup = ["HIVM"];
 }
 
+def UsePipelinev2 : HIVMOptimizationControlOptions<
+  "Enable pipeline v2, bypassing cv-pipelining pass and using pipeline v2 passes (RegBase only for now).",
+  "bool",
+  "false"
+>;
+
 //===----------------------------------------------------------------------===//
 // SIMT / Proton / Other Options
 //===----------------------------------------------------------------------===//

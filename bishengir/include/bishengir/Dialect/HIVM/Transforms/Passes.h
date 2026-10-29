@@ -403,6 +403,9 @@ std::unique_ptr<Pass> createAutoBlockifyParallelLoopPass();
 std::unique_ptr<Pass>
 createCVPipeliningPass(const CVPipeliningOptions &options = {});
 
+// Create Outline CV Scopes pass for CV pipelining v2
+std::unique_ptr<Pass> createOutlineCVScopesPass();
+
 // Create a pass to compose expands and collapses ops
 std::unique_ptr<Pass> createComposeCollapseExpandPass();
 
