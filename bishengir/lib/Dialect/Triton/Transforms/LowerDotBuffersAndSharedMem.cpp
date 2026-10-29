@@ -241,7 +241,7 @@ struct ScratchAccess {
 arith::IndexCastOp findTileIdx(Operation *op) {
   if (!op)
     return nullptr;
-  
+
   for (Value operand : op->getOperands()) {
     if (auto defOp = operand.getDefiningOp()) {
       if (auto indexCastOp = dyn_cast<arith::IndexCastOp>(defOp)) {
@@ -725,9 +725,8 @@ struct BasePtrInfo {
   Attribute fractalAttr;
   SmallVector<triton::LoadOp> loads;
   SmallVector<triton::StoreOp> stores;
-  /// True when the same base has an access this pass cannot lower. Keeping the
-  /// whole group in ptr form avoids changing the base type for only the
-  /// vector accesses and leaving scalar tt.load/tt.store ops behind.
+  /// Keep the group in pointer form if any access is scalar or masked; this
+  /// rewrite cannot preserve those accesses after changing the base type.
   bool hasUnsupportedAccess = false;
   /// Chains of AddPtrOp / SplatOp to DCE after rewriting.
   SmallVector<Operation *> deadOps;
@@ -886,7 +885,7 @@ private:
 
     func.walk([&](triton::StoreOp store) {
       auto dataTy = dyn_cast<RankedTensorType>(store.getValue().getType());
-      if (!dataTy || dataTy.getRank() == 0) {
+      if (!dataTy || dataTy.getRank() == 0 || store.getMask()) {
         markUnsupportedAccess(store.getPtr());
         return;
       }
@@ -896,7 +895,7 @@ private:
 
     func.walk([&](triton::LoadOp load) {
       auto resTy = dyn_cast<RankedTensorType>(load.getResult().getType());
-      if (!resTy || resTy.getRank() == 0) {
+      if (!resTy || resTy.getRank() == 0 || load.getMask()) {
         markUnsupportedAccess(load.getPtr());
         return;
       }
@@ -913,7 +912,7 @@ private:
       if (info.hasUnsupportedAccess) {
         LLVM_DEBUG(llvm::dbgs()
                    << "[LowerDotBuffersAndSharedMem] skip base with "
-                      "unsupported scalar memory access\n");
+                      "unsupported memory access\n");
         continue;
       }
       auto memDescTy =
