@@ -121,21 +121,38 @@ SmallVector<OpFoldResult> Flattener::getFlattenMixedSizes(Value res) const {
                                    inferrableArg, minParent.second));
         }
       } else {
-        assert(valueReplacement.count(res));
-        OpResult replacementValue = cast<OpResult>(valueReplacement.at(res));
+        Operation *valueOwner = res.getDefiningOp();
         if (auto subviewOp =
-                replacementValue.getDefiningOp<memref::SubViewOp>()) {
+                dyn_cast_if_present<memref::SubViewOp>(valueOwner)) {
           return subviewOp.getMixedSizes();
         }
-        LDBG("[Parent not part of args] " << res << " " << idx);
         ReifiedRankedShapedTypeDims reifiedDims;
-        auto reifyRes = reifyResultShapes(builder, replacementValue.getOwner(),
-                                          reifiedDims);
-        if (failed(reifyRes)) {
-          report_fatal_error("Cant get shape of mixed size");
+        auto reifyRes = reifyResultShapes(builder, valueOwner, reifiedDims);
+        if (succeeded(reifyRes)) {
+          auto reifiedDim =
+              reifiedDims[cast<OpResult>(res).getResultNumber()][idx];
+          outputShape.push_back(reifiedDim);
+          continue;
         }
-        auto reifiedDim = reifiedDims[replacementValue.getResultNumber()][idx];
-        outputShape.push_back(reifiedDim);
+        if (valueReplacement.count(res)) {
+          OpResult replacementValue = cast<OpResult>(valueReplacement.at(res));
+          if (auto subviewOp =
+                  replacementValue.getDefiningOp<memref::SubViewOp>()) {
+            return subviewOp.getMixedSizes();
+          }
+          reifyRes = reifyResultShapes(builder, replacementValue.getOwner(),
+                                       reifiedDims);
+          if (succeeded(reifyRes)) {
+            auto reifiedDim =
+                reifiedDims[replacementValue.getResultNumber()][idx];
+            outputShape.push_back(reifiedDim);
+            continue;
+          }
+        }
+        LDBG("[Parent not part of args, not reified size] " << res << " "
+                                                            << idx);
+        report_fatal_error(
+            "Flattener::getFlattenMixedSizes Cant get shape of mixed size");
       }
     }
   }
@@ -807,10 +824,13 @@ void Flattener::calculateOffsets(T slicingOp,
                                  SmallVector<OpFoldResult> &newMixedOffsets,
                                  OpBuilder &builder) {
   ShapedType srcMemRefType;
+  Value srcValue;
   if (std::is_same_v<T, tensor::InsertSliceOp>) {
     srcMemRefType = dyn_cast<ShapedType>(slicingOp.getResult().getType());
+    srcValue = slicingOp.getResult();
   } else {
     srcMemRefType = dyn_cast<ShapedType>(previousType_[slicingOp.getSource()]);
+    srcValue = slicingOp.getSource();
   }
   if (!srcMemRefType)
     llvm::report_fatal_error("srcMemRefType is NULL");
@@ -825,6 +845,15 @@ void Flattener::calculateOffsets(T slicingOp,
     cumSize[i] = curSize;
     curSize *= srcShape[idx];
   }
+
+  SmallVector<bool> cumSizeDynamic(groupSize, false);
+  bool suffixHasDynamic = false;
+  for (int64_t i = groupSize - 1; i >= 0; --i) {
+    cumSizeDynamic[i] = suffixHasDynamic;
+    if (ShapedType::isDynamic(srcShape[collapseGroup[i]]))
+      suffixHasDynamic = true;
+  }
+
   int64_t realVal = 0;
   bool isStatic = true;
   for (int64_t i = 0; i < groupSize; ++i) {
@@ -838,19 +867,58 @@ void Flattener::calculateOffsets(T slicingOp,
       auto offsetInt = getConstantIntValue(ofr);
       if (!offsetInt.has_value())
         continue;
+      if (cumSizeDynamic[i]) {
+        if (offsetInt.value() != 0)
+          isStatic = false;
+        continue;
+      }
       realVal += offsetInt.value() * cumSize[i];
     }
   }
   if (!isStatic) {
     builder.setInsertionPoint(slicingOp);
     Value adder = builder.create<arith::ConstantIndexOp>(loc, realVal);
+
+    auto flattenMixedSizes = getFlattenMixedSizes(srcValue);
+    SmallVector<Value> runtimeCumSize(groupSize, Value());
+    auto getRuntimeCumSize = [&](int64_t i) -> Value {
+      if (runtimeCumSize[i])
+        return runtimeCumSize[i];
+      Value acc = builder.create<arith::ConstantIndexOp>(loc, 1);
+      for (int64_t j = i + 1; j < groupSize; ++j) {
+        int64_t dimIdx = collapseGroup[j];
+        OpFoldResult sizeOfr = flattenMixedSizes[dimIdx];
+        Value dimVal;
+        if (auto constSize = getConstantIntValue(sizeOfr))
+          dimVal =
+              builder.create<arith::ConstantIndexOp>(loc, constSize.value());
+        else
+          dimVal = cast<Value>(sizeOfr);
+        acc = builder.create<arith::MulIOp>(loc, acc, dimVal);
+      }
+      runtimeCumSize[i] = acc;
+      return acc;
+    };
     for (int64_t i = 0; i < groupSize; ++i) {
       auto idx = collapseGroup[i];
       if (mixedOffsets[idx].template is<Value>()) {
         auto val = mixedOffsets[idx].template get<Value>();
-        Value constVal =
-            builder.create<arith::ConstantIndexOp>(loc, cumSize[i]);
-        Value product = builder.create<arith::MulIOp>(loc, val, constVal);
+        Value multiplier =
+            cumSizeDynamic[i]
+                ? getRuntimeCumSize(i)
+                : builder.create<arith::ConstantIndexOp>(loc, cumSize[i]);
+        Value product = builder.create<arith::MulIOp>(loc, val, multiplier);
+        adder = builder.create<arith::AddIOp>(loc, adder, product);
+      } else if (cumSizeDynamic[i]) {
+        auto offsetInt = getConstantIntValue(mixedOffsets[idx]);
+        if (!offsetInt.has_value())
+          continue;
+        if (offsetInt.value() == 0)
+          continue;
+        Value constOffset =
+            builder.create<arith::ConstantIndexOp>(loc, offsetInt.value());
+        Value product = builder.create<arith::MulIOp>(loc, constOffset,
+                                                      getRuntimeCumSize(i));
         adder = builder.create<arith::AddIOp>(loc, adder, product);
       }
     }
@@ -900,11 +968,36 @@ void Flattener::calculateSubviewStrides(
       }
       continue;
     }
-    // Process cases with dynamic values
-    // size of a collapse group for the dynamical stride  must be 1
-    // so just pass the old mixedStrides values.
     if (!strideInt.has_value() ||
         ShapedType::isDynamic(srcStride.value()[idx])) {
+      if (i != lastGroupIdx) {
+        SmallVector<OpFoldResult> flattenMixedSizes = getFlattenMixedSizes(src);
+        if (flattenMixedSizes.size() == mixedStrides.size()) {
+          OpBuilder::InsertionGuard guard(builder);
+          builder.setInsertionPoint(slicingOp);
+          Value acc;
+          if (auto constStride = getConstantIntValue(mixedStrides[idx]))
+            acc = builder.create<arith::ConstantIndexOp>(slicingOp.getLoc(),
+                                                         constStride.value());
+          else
+            acc = cast<Value>(mixedStrides[idx]);
+          for (int64_t j = i + 1; j < groupSize; ++j) {
+            int64_t dimIdx = collapseGroup[j];
+            OpFoldResult sizeOfr = flattenMixedSizes[dimIdx];
+            if (auto constSize = getConstantIntValue(sizeOfr)) {
+              acc = builder.create<arith::MulIOp>(
+                  slicingOp.getLoc(), acc,
+                  builder.create<arith::ConstantIndexOp>(slicingOp.getLoc(),
+                                                         constSize.value()));
+            } else {
+              acc = builder.create<arith::MulIOp>(slicingOp.getLoc(), acc,
+                                                  cast<Value>(sizeOfr));
+            }
+          }
+          newMixedStrides.push_back(acc);
+          return;
+        }
+      }
       newMixedStrides.push_back(mixedStrides[idx]);
       return;
     }
@@ -1639,16 +1732,29 @@ Flattener::tryGetOriginalSliceMixedSizes(Value value) const {
     current = prev;
   }
 
-  if (auto subviewOp = current.getDefiningOp<memref::SubViewOp>()) {
-    SmallVector<OpFoldResult> sizes;
-    llvm::append_range(sizes, subviewOp.getMixedSizes());
-    return sizes;
-  }
+  while (true) {
+    if (auto subviewOp = current.getDefiningOp<memref::SubViewOp>()) {
+      SmallVector<OpFoldResult> sizes;
+      llvm::append_range(sizes, subviewOp.getMixedSizes());
+      return sizes;
+    }
 
-  if (auto extractSliceOp = current.getDefiningOp<tensor::ExtractSliceOp>()) {
-    SmallVector<OpFoldResult> sizes;
-    llvm::append_range(sizes, extractSliceOp.getMixedSizes());
-    return sizes;
+    if (auto extractSliceOp = current.getDefiningOp<tensor::ExtractSliceOp>()) {
+      SmallVector<OpFoldResult> sizes;
+      llvm::append_range(sizes, extractSliceOp.getMixedSizes());
+      return sizes;
+    }
+
+    Operation *defOp = current.getDefiningOp();
+    if (!defOp || defOp->getNumOperands() == 0)
+      break;
+    if (!isa<memref::CastOp, memref::ReinterpretCastOp, memref::ExpandShapeOp,
+             memref::CollapseShapeOp>(defOp))
+      break;
+    Value operand = defOp->getOperand(0);
+    if (!visited.insert(operand).second)
+      break;
+    current = operand;
   }
 
   return std::nullopt;
