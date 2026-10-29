@@ -2,8 +2,9 @@
 // UNSUPPORTED: bishengir_published
 // RUN: bishengir-compile -enable-hfusion-compile=true -enable-hivm-compile=true -enable-lir-compile=false -enable-tree-reduce-v2=true -enable-tree-reduce-mode=ra -target=Ascend950PR_9579 -debug-only=bishengir-compile-regbase,tree-reduce-v2 %s 2>&1 | FileCheck %s
 
+// CHECK: Not reduce-only: module contains a non-reduction compute op
 // CHECK-NOT: Detected reduce-only
-// CHECK: Reduction rewrite plan: kind=legacy-ra
+// CHECK: [tree-reduce-v2] === Processing func: None enableRA=1 enableAR=0 ===
 
 func.func @shaped_arith_before_reduce(
     %lhs: tensor<64x128xf32>, %rhs: tensor<64x128xf32>)
