@@ -116,7 +116,7 @@ isUbufTileFullyPacked3d(const memref_t<__gm__ T, 3> *gm,
 ///       DMA transferring multiple bursts per instruction might yield slightly
 ///       better performance than pure scalar transfer, this corner case will
 ///       not be optimized for now.
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
     memref_t<__gm__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst, PadMode pad_mode,
     typename PadValueType<T>::type pad_value, int64_t left_padding_num,
@@ -137,7 +137,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
 
   auto dst_ptr = dst->aligned + dst->offset;
   if (!isAddress32ByteAligned(dst_ptr)) {
-    load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+    load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
     return;
   }
 
@@ -154,14 +154,14 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
   // offset. Keep those on the scalar path.
   if (stride0_gm < 0 || stride1_gm < 0 || stride2_gm < 0 || stride0_ub < 0 ||
       stride1_ub < 0 || stride2_ub < 0) [[unlikely]] {
-    load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+    load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
     return;
   }
   if (((stride0_gm < stride1_gm || stride1_gm < stride2_gm) ||
        (stride0_ub < stride1_ub || stride1_ub < stride2_ub))) {
     // Implicit transposition scenarios
     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
-      load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+      load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
     } else {
       load_gm_to_ubuf_3d_by_nddma<T>(src, dst);
     }
@@ -174,10 +174,10 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
         hasUnalignedUbufStrideFor3dDma<T>(dst->sizes[1], dst->sizes[2],
                                           dst->strides[0], dst->strides[1],
                                           src->strides[0], src->strides[1])) {
-      load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+      load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
       return;
     }
-    load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T>(
+    load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T, DisableDCache>(
         src, dst, left_padding_num, l2_cache_ctl);
     return;
   }
@@ -190,7 +190,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
     // axis 0 is contiguous
     if (stride0_ub == stride1_ub * size1 && stride0_gm == stride1_gm * size1) {
       if (!has_padding && !isStrideAligned<T>(stride2_ub)) {
-        load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+        load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
         return;
       }
       memref_t<__gm__ T, 2> gm_2d{src->allocated,
@@ -203,7 +203,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
                                     dst->offset,
                                     {size0 * size1 * size2, 1},
                                     {stride2_ub, 1}};
-      load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
+      load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
           &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
       return;
     }
@@ -222,10 +222,10 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
         hasUnalignedUbufStrideFor3dDma<T>(ub_3d.sizes[1], ub_3d.sizes[2],
                                           ub_3d.strides[0], ub_3d.strides[1],
                                           gm_3d.strides[0], gm_3d.strides[1])) {
-      load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+      load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
       return;
     }
-    load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T>(
+    load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T, DisableDCache>(
         &gm_3d, &ub_3d, left_padding_num, l2_cache_ctl);
     return;
   }
@@ -246,22 +246,22 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
         hasUnalignedUbufStrideFor3dDma<T>(ub_3d.sizes[1], ub_3d.sizes[2],
                                           ub_3d.strides[0], ub_3d.strides[1],
                                           gm_3d.strides[0], gm_3d.strides[1])) {
-      load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+      load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
       return;
     }
-    load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T>(
+    load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T, DisableDCache>(
         &gm_3d, &ub_3d, left_padding_num, l2_cache_ctl);
     return;
   }
   // axis 0 is non-contiguous
-  load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+  load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
   return;
 }
 #else
 ///========================================
 /// m300 arch
 ///========================================
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
     memref_t<__gm__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst, PadMode pad_mode,
     typename PadValueType<T>::type pad_value, int64_t left_padding_num,
@@ -292,8 +292,8 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
 
   if (src->strides[2] == 1 && dst->strides[2] == 1) [[likely]] {
     // last dimension is contiguous
-    load_gm_to_ubuf_3d_core_with_contiguous_last_dim(src, dst, left_padding_num,
-                                                     l2_cache_ctl);
+    load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T, DisableDCache>(
+        src, dst, left_padding_num, l2_cache_ctl);
     return;
   }
 
@@ -309,7 +309,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
        (stride0_ub < stride1_ub || stride1_ub < stride2_ub)) &&
       (stride0_ub % num_per_block != 0 || stride1_ub % num_per_block != 0 ||
        stride2_ub % num_per_block != 0)) {
-    load_gm_to_ubuf_3d_by_scalar(src, dst);
+    load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
     return;
   }
 

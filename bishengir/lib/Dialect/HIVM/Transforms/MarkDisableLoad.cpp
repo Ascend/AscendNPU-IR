@@ -15,7 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This pass marks the memref.loads that need to disable dcache.
+// This pass marks scalar and structured loads that need to disable dcache.
 //
 //===----------------------------------------------------------------------===//
 
@@ -94,13 +94,13 @@ std::optional<func::FuncOp> findPairedMixFunc(func::FuncOp func,
   return funcOp;
 }
 
-// Determine whether a memref.load needs dcache disabled and set the appropriate
+// Determine whether a load needs dcache disabled and set the appropriate
 // attribute.  The analysis checks:
 //   1. Whether the load's source memref originates from a function argument.
 //   2. Whether that argument (or the corresponding argument in the paired mix
 //      function, _mix_aic <-> _mix_aiv) is also the target of a write
-//      operation anywhere in the module.
-void processLoadOp(memref::LoadOp loadOp, ModuleOp moduleOp) {
+//      operation in either function.
+void processLoadOp(Operation *loadOp, Value source, ModuleOp moduleOp) {
   if (loadOp->hasAttr(kMarkDCacheVisitedAttr))
     return;
 
@@ -113,7 +113,7 @@ void processLoadOp(memref::LoadOp loadOp, ModuleOp moduleOp) {
     return;
   }
 
-  auto argInfo = traceToFuncArgWithIndex(loadOp.getMemref(), f);
+  auto argInfo = traceToFuncArgWithIndex(source, f);
   if (!argInfo) {
     loadOp->setAttr(kMarkDCacheVisitedAttr, i32Zero);
     return;
@@ -147,8 +147,18 @@ struct MarkDisableLoad : public impl::MarkDisableLoadBase<MarkDisableLoad> {
 
 void MarkDisableLoad::runOnOperation() {
   ModuleOp moduleOp = cast<ModuleOp>(getOperation());
-  moduleOp.walk(
-      [&](memref::LoadOp loadOp) { processLoadOp(loadOp, moduleOp); });
+  moduleOp.walk([&](memref::LoadOp loadOp) {
+    processLoadOp(loadOp, loadOp.getMemref(), moduleOp);
+  });
+  // GM-to-UB template calls can fall back to scalar reads.
+  // Carry the nocache policy into those calls.
+  moduleOp.walk([&](hivm::LoadOp loadOp) {
+    if (!loadOp.hasPureBufferSemantics() ||
+        getHIVMAddressSpace(loadOp.getSrc().getType()) != AddressSpace::GM ||
+        getHIVMAddressSpace(loadOp.getDst().getType()) != AddressSpace::UB)
+      return;
+    processLoadOp(loadOp, loadOp.getSrc(), moduleOp);
+  });
 }
 
 } // namespace

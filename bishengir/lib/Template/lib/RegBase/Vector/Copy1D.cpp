@@ -66,7 +66,7 @@ align_pad_for_load_b64_1d(memref_t<__ubuf__ T, 1> *dst, int64_t pad_value,
 ///   Promote to 2D for unified handling of contiguous scenarios: `offset2D =
 ///   offset1D, size2D = [size1D[0], 1], stride2D = [stride2D[0], 1]`
 ///   `load_gm_to_ubuf_2d_core_with_contiguous_last_dim`
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
     memref_t<__gm__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst, PadMode pad_mode,
     typename PadValueType<T>::type pad_value, int64_t left_padding_num,
@@ -88,7 +88,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
 
   auto dst_ptr = dst->aligned + dst->offset;
   if (!isAddress32ByteAligned(dst_ptr)) {
-    load_gm_to_ubuf_1d_by_scalar<T>(src, dst);
+    load_gm_to_ubuf_1d_by_scalar<T, DisableDCache>(src, dst);
     return;
   }
 
@@ -117,7 +117,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
 
   // last dimension of UB is contiguous but GM is not
   if ((stride0_ub == 1) && (stride0_gm != 1)) {
-    load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim<T>(
+    load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim<T, DisableDCache>(
         src, dst, left_padding_num, l2_cache_ctl);
     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
       // No need to fix zero padding, it is correct by default for b64 types
@@ -137,7 +137,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
 
   // last dimension is not contiguous,
   if (stride0_ub != 1 && !isStrideAligned<T>(stride0_ub)) {
-    load_gm_to_ubuf_1d_by_scalar<T>(src, dst);
+    load_gm_to_ubuf_1d_by_scalar<T, DisableDCache>(src, dst);
     return;
   }
   // view the src (size) with stride [stride] as viewed_src (size, 1) with
@@ -148,7 +148,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
   memref_t<__ubuf__ T, 2> ub_2d = {
       dst->allocated, dst->aligned, dst->offset, {size0, 1}, {stride0_ub, 1}};
 
-  load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
+  load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
       &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
 }
 #else
@@ -156,7 +156,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
 /// m300 arch
 ///========================================
 // core func of load gm <-> ub, 1d
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
     memref_t<__gm__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst, PadMode pad_mode,
     typename PadValueType<T>::type pad_value, int64_t left_padding_num,
@@ -203,7 +203,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
   memref_t<__ubuf__ T, 2> ub_2d = {
       dst->allocated, dst->aligned, dst->offset, {size0, 1}, {stride0_ub, 1}};
 
-  load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
+  load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
       &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
 }
 #endif
