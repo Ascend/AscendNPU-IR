@@ -801,6 +801,20 @@ struct DropUnitDimFromMulExtendedOp : public OpRewritePattern<MulExtendedOp> {
 ///  vector<1x1x64xf32>
 /// Pattern to convert multi-dimensional create_mask operations to 1D and cast
 /// back
+/// Clamp a `create_mask` bound into `[0, extent]`.
+///
+/// `create_mask` clamps its own bound when it builds the mask, but a bound
+/// that feeds arithmetic has to be clamped before it is used, or an
+/// out-of-range value changes the result of that arithmetic rather than being
+/// capped at the end.
+static Value clampBoundToExtent(PatternRewriter &rewriter, Location loc,
+                                Value bound, int64_t extent) {
+  Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value cap = rewriter.create<arith::ConstantIndexOp>(loc, extent);
+  bound = rewriter.create<arith::MaxSIOp>(loc, bound, zero);
+  return rewriter.create<arith::MinSIOp>(loc, bound, cap);
+}
+
 /// Decide whether a mask with per-dim `bounds` over a vector of `shape` has an
 /// active region that is a prefix of the row-major lane order, and if so which
 /// dim decides the prefix length.
@@ -819,9 +833,11 @@ struct DropUnitDimFromMulExtendedOp : public OpRewritePattern<MulExtendedOp> {
 /// describes it: bounds [2, 16] over <2x32> activate lanes 0..15 and 32..47.
 ///
 /// `bounds[d] == std::nullopt` marks a bound that is not a compile-time
-/// constant; such a dim can only be the pivot.  A leading dim needs a constant
-/// 1 rather than merely a dynamic value, because a dynamic bound could be 0 and
-/// empty the whole mask instead of pinning the coordinate.
+/// constant.  A leading dim of extent 1 may still have such a bound: that dim
+/// holds a single slice, so a non-empty mask pins its coordinate to 0 no matter
+/// what the bound turns out to be, and an empty one is covered by the factor
+/// the caller multiplies in.  A leading dim of larger extent needs a constant
+/// 1, because only that proves its coordinate cannot advance.
 ///
 /// Returns the pivot index, or nullopt when the region is not a prefix.
 /// `ConvertConstantMaskTo1D` below checks the same condition directly on its
@@ -829,14 +845,16 @@ struct DropUnitDimFromMulExtendedOp : public OpRewritePattern<MulExtendedOp> {
 static std::optional<unsigned>
 maskPrefixPivotDim(ArrayRef<std::optional<int64_t>> bounds,
                    ArrayRef<int64_t> shape) {
-  // A zero bound anywhere empties the mask, which is the empty prefix.  Report
-  // it as the pivot so the length computed from it works out to zero.
+  // A bound that activates nothing empties the mask, which is the empty
+  // prefix.  Report it as the pivot so the length computed from it works out
+  // to zero.
   for (unsigned d = 0; d < bounds.size(); ++d)
-    if (bounds[d] && *bounds[d] == 0)
+    if (bounds[d] && *bounds[d] <= 0)
       return d;
 
   unsigned pivot = 0;
-  while (pivot < bounds.size() && bounds[pivot] && *bounds[pivot] == 1)
+  while (pivot < bounds.size() &&
+         (shape[pivot] == 1 || (bounds[pivot] && *bounds[pivot] == 1)))
     ++pivot;
   // Every bound is 1: a single active lane, the prefix of length 1.
   if (pivot == bounds.size())
@@ -867,9 +885,10 @@ struct ConvertCreateMaskTo1D : public OpRewritePattern<vector::CreateMaskOp> {
     // when the active region is a row-major prefix; `maskPrefixPivotDim`
     // decides that and names the dim whose bound sets the prefix length.
     //
-    // TODO: a mask with two dynamic bounds, or a constant inner bound that
-    // does not cover its dim, stays multi-dimensional.  Proving those a prefix
-    // needs a runtime comparison rather than a static check.
+    // TODO: a mask with two dynamic bounds on dims of extent > 1, or a
+    // constant inner bound that does not cover its dim, stays
+    // multi-dimensional.  Proving those a prefix needs a runtime comparison
+    // rather than a static check.
     SmallVector<std::optional<int64_t>> bounds;
     bounds.reserve(shape.size());
     for (Value bound : op->getOperands()) {
@@ -895,13 +914,24 @@ struct ConvertCreateMaskTo1D : public OpRewritePattern<vector::CreateMaskOp> {
       // happens before that, so clamp first: an out-of-range bound would
       // otherwise be scaled into a different range (and a very large one could
       // overflow into a negative length, turning an all-true mask empty).
-      Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-      Value extent =
-          rewriter.create<arith::ConstantIndexOp>(loc, shape[*pivot]);
-      totalSize = rewriter.create<arith::MaxSIOp>(loc, totalSize, zero);
-      totalSize = rewriter.create<arith::MinSIOp>(loc, totalSize, extent);
+      totalSize = clampBoundToExtent(rewriter, loc, totalSize, shape[*pivot]);
       Value scale = rewriter.create<arith::ConstantIndexOp>(loc, innerExtent);
       totalSize = rewriter.create<arith::MulIOp>(loc, totalSize, scale);
+    }
+
+    // A leading dim of extent 1 contributes a factor of 1 once its bound
+    // activates that single slice, and 0 when it does not.  Only a dynamic
+    // bound needs the factor emitted: a constant one is known to activate the
+    // slice, since the pivot walk above already returned for every bound that
+    // activates nothing.  Clamping to the extent first is what keeps a bound
+    // of, say, 5 on a unit dim from scaling the length instead of contributing
+    // a plain 1.
+    for (unsigned d = 0; d < *pivot; ++d) {
+      if (bounds[d])
+        continue;
+      Value factor =
+          clampBoundToExtent(rewriter, loc, op->getOperand(d), shape[d]);
+      totalSize = rewriter.create<arith::MulIOp>(loc, totalSize, factor);
     }
 
     int64_t returnTotalElements = maskType.getNumElements();
