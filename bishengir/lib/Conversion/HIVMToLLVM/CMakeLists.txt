@@ -32,4 +32,6 @@ add_bishengir_conversion_library(MLIRHIVMToLLVM
   MLIRMathToLLVM
   MLIRMemRefToLLVM
   MLIRSCFDialect
+  MLIRUBDialect
+  MLIRUBToLLVM
   )
