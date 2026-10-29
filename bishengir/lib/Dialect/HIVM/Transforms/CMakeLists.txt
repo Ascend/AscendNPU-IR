@@ -134,6 +134,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   NormalizeBitwiseSelect.cpp
   NormalizeConvOps.cpp
   NormalizeMatmul.cpp
+  NormalizeTmpBufferInVf.cpp
   OptMemPlanForPipeline.cpp
   OutlineAllocInVF.cpp
   OutlineCopyInVF.cpp

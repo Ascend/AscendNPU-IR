@@ -34,6 +34,15 @@ namespace mlir {
 namespace hivm {
 
 void bufferizationPipelineBase(OpPassManager &pm, bool isRegBased) {
+  if (isRegBased) {
+    // Promote temporary tensors that are read-modify-written inside a nested
+    // scf.for into the enclosing loop's iter_args, so that FoldSliceIntoScfFor
+    // can handle it, helping one-shot-bufferize bufferize them in place without
+    // inserting memref.copy.
+    pm.nest<func::FuncOp>().addPass(
+        tensor::createMergeConsecutiveInsertExtractSlicePass());
+    pm.nest<func::FuncOp>().addPass(hivm::createNormalizeTmpBufferInVfPass());
+  }
   // Fold extract_slice/insert_slice pairs around scf.for loops into the loop
   // body, merge the consecutive slice chains this creates and CSE away the
   // duplicated slices, so fold-extract-insert-pair can fold the redundant
