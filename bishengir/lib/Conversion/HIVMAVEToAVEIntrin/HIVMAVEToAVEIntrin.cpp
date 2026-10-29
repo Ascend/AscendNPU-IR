@@ -3535,8 +3535,7 @@ struct HIVMVCIOpLowering : public ConvertOpToLLVMPattern<VFVCIOp> {
 template <typename OpTy, typename IntrV128F16OpTy, typename IntrV128S16OpTy,
           typename IntrV128U16OpTy, typename IntrV256S8OpTy,
           typename IntrV256U8OpTy, typename IntrV64F32OpTy,
-          typename IntrV64S32OpTy, typename IntrV64U32OpTy,
-          typename IntrV128BF16OpTy>
+          typename IntrV64S32OpTy, typename IntrV64U32OpTy>
 struct BinaryVectorScalarLowerToIntrinsic : public OpConversionPattern<OpTy> {
   explicit BinaryVectorScalarLowerToIntrinsic(LLVMTypeConverter &converter)
       : OpConversionPattern<OpTy>(converter, &converter.getContext()) {}
@@ -3568,8 +3567,8 @@ struct BinaryVectorScalarLowerToIntrinsic : public OpConversionPattern<OpTy> {
         createCorrespondingIntr<IntrV128F16OpTy, IntrV128S16OpTy,
                                 IntrV128U16OpTy, IntrV256S8OpTy, IntrV256U8OpTy,
                                 IntrV64F32OpTy, IntrV64S32OpTy, IntrV64U32OpTy,
-                                IntrV128BF16OpTy>(rewriter, loc, elementType,
-                                                  vecType, lhs, rhs, mask);
+                                /*BF16*/ VunsupportedBinaryInstrOp>(
+            rewriter, loc, elementType, vecType, lhs, rhs, mask);
     if (!res) {
       return rewriter.notifyMatchFailure(op, "cannot legalize op");
     }
@@ -3588,8 +3587,7 @@ struct BinaryVectorScalarLowerToIntrinsic : public OpConversionPattern<OpTy> {
 template <typename OpTy, typename IntrV128F16OpTy, typename IntrV128S16OpTy,
           typename IntrV128U16OpTy, typename IntrV256S8OpTy,
           typename IntrV256U8OpTy, typename IntrV64F32OpTy,
-          typename IntrV64S32OpTy, typename IntrV64U32OpTy,
-          typename IntrV128BF16OpTy>
+          typename IntrV64S32OpTy, typename IntrV64U32OpTy>
 struct BinaryVectorScalarRegEntry {
   using MainOp = OpTy;
   using IntrV128F16Op = IntrV128F16OpTy;
@@ -3600,7 +3598,6 @@ struct BinaryVectorScalarRegEntry {
   using IntrV64F32Op = IntrV64F32OpTy;
   using IntrV64S32Op = IntrV64S32OpTy;
   using IntrV64U32Op = IntrV64U32OpTy;
-  using IntrV128BF16Op = IntrV128BF16OpTy;
 };
 /// A container for op association entries facilitating the configuration of
 /// dialect conversion.
@@ -3612,8 +3609,7 @@ template <typename... Args> struct BinaryVectorScalarRegistryImpl {
         typename Args::IntrV128S16Op, typename Args::IntrV128U16Op,
         typename Args::IntrV256S8Op, typename Args::IntrV256U8Op,
         typename Args::IntrV64F32Op, typename Args::IntrV64S32Op,
-        typename Args::IntrV64U32Op, typename Args::IntrV128BF16Op>...>(
-        Converter);
+        typename Args::IntrV64U32Op>...>(Converter);
   }
 };
 
@@ -3623,58 +3619,55 @@ using BinaryVectorScalarRegistry = BinaryVectorScalarRegistryImpl<
         /*S16*/ VaddsSXInstrOp, /*U16*/ VaddsUXInstrOp,
         /*S8*/ VaddsSXInstrOp, /*U8*/ VaddsUXInstrOp,
         /*F32*/ VaddsSXInstrOp, /*S32*/ VaddsSXInstrOp,
-        /*U32*/ VaddsUXInstrOp, /*BF16*/ VaddsSXInstrOp>,
+        /*U32*/ VaddsUXInstrOp>,
     BinaryVectorScalarRegEntry<
         /*OpTy*/ VFMulsOp, /*F16*/ VmulsSXInstrOp,
         /*S16*/ VmulsSXInstrOp, /*U16*/ VmulsUXInstrOp,
         /*S8*/ VmulsSXInstrOp, /*U8*/ VmulsUXInstrOp,
         /*F32*/ VmulsSXInstrOp, /*S32*/ VmulsSXInstrOp,
-        /*U32*/ VmulsUXInstrOp, /*BF16*/ VunsupportedBinaryInstrOp>,
+        /*U32*/ VmulsUXInstrOp>,
     BinaryVectorScalarRegEntry<
         /*OpTy*/ VFMaxsOp, /*F16*/ VmaxsSXInstrOp,
         /*S16*/ VmaxsSXInstrOp, /*U16*/ VmaxsUXInstrOp,
         /*S8*/ VmaxsSXInstrOp, /*U8*/ VmaxsUXInstrOp,
         /*F32*/ VmaxsSXInstrOp, /*S32*/ VmaxsSXInstrOp,
-        /*U32*/ VmaxsUXInstrOp, /*BF16*/ VunsupportedBinaryInstrOp>,
+        /*U32*/ VmaxsUXInstrOp>,
     BinaryVectorScalarRegEntry<
         /*OpTy*/ VFMinsOp, /*F16*/ VminsSXInstrOp,
         /*S16*/ VminsSXInstrOp, /*U16*/ VminsUXInstrOp,
         /*S8*/ VminsSXInstrOp, /*U8*/ VminsUXInstrOp,
         /*F32*/ VminsSXInstrOp, /*S32*/ VminsSXInstrOp,
-        /*U32*/ VminsUXInstrOp, /*BF16*/ VunsupportedBinaryInstrOp>,
+        /*U32*/ VminsUXInstrOp>,
     BinaryVectorScalarRegEntry<
         /*OpTy*/ VMaxsSIOp, /*F16*/ VunsupportedBinaryInstrOp,
         /*S16*/ VmaxsSXInstrOp, /*U16*/ VunsupportedBinaryInstrOp,
         /*S8*/ VmaxsSXInstrOp, /*U8*/ VunsupportedBinaryInstrOp,
         /*F32*/ VunsupportedBinaryInstrOp, /*S32*/ VmaxsSXInstrOp,
-        /*U32*/ VunsupportedBinaryInstrOp,
-        /*BF16*/ VunsupportedBinaryInstrOp>,
+        /*U32*/ VunsupportedBinaryInstrOp>,
     BinaryVectorScalarRegEntry<
         /*OpTy*/ VMinsSIOp, /*F16*/ VunsupportedBinaryInstrOp,
         /*S16*/ VminsSXInstrOp, /*U16*/ VunsupportedBinaryInstrOp,
         /*S8*/ VminsSXInstrOp, /*U8*/ VunsupportedBinaryInstrOp,
         /*F32*/ VunsupportedBinaryInstrOp, /*S32*/ VminsSXInstrOp,
-        /*U32*/ VunsupportedBinaryInstrOp,
-        /*BF16*/ VunsupportedBinaryInstrOp>,
+        /*U32*/ VunsupportedBinaryInstrOp>,
     BinaryVectorScalarRegEntry<
         /*OpTy*/ VMaxsUIOp, /*F16*/ VunsupportedBinaryInstrOp,
         /*S16*/ VunsupportedBinaryInstrOp, /*U16*/ VmaxsUXInstrOp,
         /*S8*/ VunsupportedBinaryInstrOp, /*U8*/ VmaxsUXInstrOp,
         /*F32*/ VunsupportedBinaryInstrOp, /*S32*/ VunsupportedBinaryInstrOp,
-        /*U32*/ VmaxsUXInstrOp, /*BF16*/ VunsupportedBinaryInstrOp>,
+        /*U32*/ VmaxsUXInstrOp>,
     BinaryVectorScalarRegEntry<
         /*OpTy*/ VMinsUIOp, /*F16*/ VunsupportedBinaryInstrOp,
         /*S16*/ VunsupportedBinaryInstrOp, /*U16*/ VminsUXInstrOp,
         /*S8*/ VunsupportedBinaryInstrOp, /*U8*/ VminsUXInstrOp,
         /*F32*/ VunsupportedBinaryInstrOp, /*S32*/ VunsupportedBinaryInstrOp,
-        /*U32*/ VminsUXInstrOp, /*BF16*/ VunsupportedBinaryInstrOp>,
+        /*U32*/ VminsUXInstrOp>,
     BinaryVectorScalarRegEntry<
         /*OpTy*/ VFLRelusOp, /*F16*/ VlreluXInstrOp,
         /*S16*/ VunsupportedBinaryInstrOp, /*U16*/ VunsupportedBinaryInstrOp,
         /*S8*/ VunsupportedBinaryInstrOp, /*U8*/ VunsupportedBinaryInstrOp,
         /*F32*/ VlreluXInstrOp, /*S32*/ VunsupportedBinaryInstrOp,
-        /*U32*/ VunsupportedBinaryInstrOp,
-        /*BF16*/ VunsupportedBinaryInstrOp>>;
+        /*U32*/ VunsupportedBinaryInstrOp>>;
 
 /// Populate the given list with patterns that convert from HIVM to LLVM.
 void populateHIVMAVEToAVEIntrinPatterns(LLVMTypeConverter &converter,
