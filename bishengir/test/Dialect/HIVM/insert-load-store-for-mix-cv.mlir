@@ -1342,3 +1342,59 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     return
   }
 }
+
+// -----
+
+// Simplified from a mix countdown loop whose mmad accumulator stays in L0C
+// (hivm.remain_in_l0c / normalized_in_L0C) and is later consumed by a vector
+// store. Mem-based targets have no direct L0C->UB DMA, so the exit is staged
+// through GM: fixpipe L0C->GM, then load GM->UB. The loop-carried value stays
+// in L0C.
+// CHECK-LABEL: func.func @countdown_while_l0c_to_ub
+// CHECK: %[[WHILE:.*]]:2 = scf.while
+// CHECK: hivm.hir.mmadL1 {{.*}}normalized_in_L0C
+// CHECK: scf.yield
+// CHECK: %[[GM:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<gm>, "hivm.inserted-tensor"} : tensor<16x32xf32>
+// CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, "hivm.inserted-fixpipe"} ins(%[[WHILE]]#0 : tensor<16x32xf32>) outs(%[[GM]] : tensor<16x32xf32>) -> tensor<16x32xf32>
+// CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%[[FIX]] : tensor<16x32xf32>) outs(%{{.*}} : tensor<16x32xf32>) {"hivm.inserted-load"} core_type = <VECTOR> -> tensor<16x32xf32>
+// CHECK: scf.if
+// CHECK: hivm.hir.vbrc
+// CHECK: } else {
+// CHECK: scf.yield %[[LOAD]]
+// CHECK: hivm.hir.store ins(%{{.*}} : tensor<16x32xf32>) outs(%{{.*}} : memref<16x32xf32>)
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
+  func.func @countdown_while_l0c_to_ub(
+      %lhs: tensor<16x32xf32>, %rhs: tensor<32x32xf32>, %count: i32,
+      %out: memref<16x32xf32>)
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>,
+                  mix_mode = "mix"} {
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %true = arith.constant true
+    %init = tensor.empty() : tensor<16x32xf32>
+    %while:2 = scf.while (%acc = %init, %n = %count) : (tensor<16x32xf32>, i32) -> (tensor<16x32xf32>, i32) {
+      %cond = arith.cmpi sgt, %n, %c0_i32 : i32
+      scf.condition(%cond) %acc, %n : tensor<16x32xf32>, i32
+    } do {
+    ^bb0(%acc: tensor<16x32xf32>, %n: i32):
+      %next = arith.subi %n, %c1_i32 : i32
+      %mm = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, hivm.remain_in_l0c, normalized_in_L0C}
+          ins(%lhs, %rhs, %true, %c16, %c32, %c32 : tensor<16x32xf32>, tensor<32x32xf32>, i1, index, index, index)
+          outs(%acc : tensor<16x32xf32>) -> tensor<16x32xf32>
+      scf.yield %mm, %next : tensor<16x32xf32>, i32
+    } attributes {may_not_exec, normalized_in_L0C = [0 : i32]}
+    %no_mm = arith.cmpi eq, %count, %c0_i32 : i32
+    %merged = scf.if %no_mm -> (tensor<16x32xf32>) {
+      %empty = tensor.empty() : tensor<16x32xf32>
+      %zero = hivm.hir.vbrc ins(%cst : f32) outs(%empty : tensor<16x32xf32>) -> tensor<16x32xf32>
+      scf.yield %zero : tensor<16x32xf32>
+    } else {
+      scf.yield %while#0 : tensor<16x32xf32>
+    } {fallback_not_exec}
+    hivm.hir.store ins(%merged : tensor<16x32xf32>) outs(%out : memref<16x32xf32>)
+    return
+  }
+}

@@ -170,6 +170,36 @@ struct ScalarMathUnaryPromotion : public OpRewritePattern<MathOpTy> {
   }
 };
 
+/// Register scalar math promotion patterns for mem-based architectures.
+void populateScalarMathPromotionPatternsMemBased(RewritePatternSet &patterns) {
+  patterns.add<
+      ScalarMathUnaryPromotion<math::CeilOp>,
+      ScalarMathUnaryPromotion<math::FloorOp>,
+      ScalarMathUnaryPromotion<math::ExpOp>,
+      ScalarMathUnaryPromotion<math::Exp2Op>,
+      ScalarMathUnaryPromotion<math::ExpM1Op>,
+      ScalarMathUnaryPromotion<math::Log2Op>,
+      ScalarMathUnaryPromotion<math::Log10Op>,
+      ScalarMathUnaryPromotion<math::Log1pOp>,
+      ScalarMathUnaryPromotion<math::SinOp>,
+      ScalarMathUnaryPromotion<math::CosOp>,
+      ScalarMathUnaryPromotion<math::TanOp>,
+      ScalarMathUnaryPromotion<math::TanhOp>,
+      ScalarMathUnaryPromotion<math::ErfOp>,
+      ScalarMathUnaryPromotion<math::RoundEvenOp>,
+      // These ops have partial native scalar support on mem-based targets.
+      // Keep the listed native types scalar and promote the remaining types;
+      // ScalarBf16Fallback lowers bf16 to an f32 scalar op when available.
+      ScalarMathUnaryPromotion<math::LogOp, /*ScalarBf16Fallback=*/false,
+                               Float32Type, Float16Type>,
+      ScalarMathUnaryPromotion<math::SqrtOp, /*ScalarBf16Fallback=*/false,
+                               Float32Type>,
+      ScalarMathUnaryPromotion<math::RsqrtOp, /*ScalarBf16Fallback=*/true,
+                               Float32Type>,
+      ScalarMathUnaryPromotion<math::AbsFOp, /*ScalarBf16Fallback=*/true,
+                               Float32Type>>(patterns.getContext());
+}
+
 void populateScalarMathPromotionPatterns(RewritePatternSet &patterns) {
   patterns.add<ScalarMathFmaPromotion,
                ScalarMathUnaryPromotion<math::AbsFOp, true, Float16Type,

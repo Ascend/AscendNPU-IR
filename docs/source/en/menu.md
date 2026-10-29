@@ -18,7 +18,9 @@
     - [TileLang Integration](developer_guide/conversion/tile_lang_interface.md)
     - [Framework Integration](developer_guide/conversion/framework_interface.md)
   - [Key Features]()
+    <!-- npu="950" id1 -->
     - [Vector Layout Analysis](developer_guide/features/analyze_vector_layout.md)
+    <!-- end id1 -->
     - [Auto Blockify](developer_guide/features/auto_blockify.md)
     - [Auto Flatten](developer_guide/features/auto_flatten.md)
     - [Automatic Fusion and Scheduling](developer_guide/features/hfusion_auto_schedule.md)
@@ -31,8 +33,10 @@
     - [Debugging Module DFX](developer_guide/features/dfx.md)
     - [Stride Alignment](developer_guide/features/stride_align.md)
     - [Memory Management](developer_guide/features/plan_memory.md)
-    - [Multi-Buffer](developer_guide/features/multi_buffer.md)
+    - [Multi-buffer](developer_guide/features/multi_buffer.md)
+    <!-- npu="950" id2 -->
     - [Reduction Decomposition Optimization](developer_guide/features/layout_optimizations.md)
+    <!-- end id2 -->
 - [FAQ](faq/faq.md)
 - [Contribution and Support]()
   - [Contribution Guide](contributing_guide/contribute.md)

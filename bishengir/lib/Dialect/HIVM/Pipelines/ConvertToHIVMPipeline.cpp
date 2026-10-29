@@ -17,9 +17,11 @@
 
 #include "bishengir/Dialect/HIVM/Pipelines/ConvertToHIVMPipeline.h"
 #include "bishengir/Conversion/Passes.h"
+#include "bishengir/Conversion/ProtonToHIVM/ProtonToHIVM.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
 
@@ -28,13 +30,16 @@ namespace hivm {
 
 void buildConvertToHIVMPipeline(OpPassManager &pm,
                                 const ConvertToHIVMPipelineOptions &options) {
+  if (options.enableRegBaseHIVMPipe)
+    pm.addPass(bishengir::triton::proton::a5::createConvertProtonToHIVMPass());
   ConvertHFusionToHIVMOptions hfs2hivmOptions;
   hfs2hivmOptions.mmMapMode = options.enableTritonKernelCompile
                                   ? hfusion::MmMapMode::MacroInstr
                                   : hfusion::MmMapMode::CoreOp;
   hfs2hivmOptions.isEnableUbufSaving = options.enableUbufSaving;
-  hfs2hivmOptions.isDisableSizeAlignForCast =
-      options.disableSizeAlignForCast;
+  hfs2hivmOptions.isDisableSizeAlignForCast = options.disableSizeAlignForCast;
+  if (options.enableRegBaseHIVMPipe)
+    pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
   pm.addPass(createHFusionToHIVMConversionPass(hfs2hivmOptions));
   if (options.enableTritonKernelCompile) {
     pm.addPass(createTritonGlobalKernelArgsToHIVMOpPass());

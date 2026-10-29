@@ -45,6 +45,122 @@ pip install -r docs/requirements.txt
 
 > **Note**: install `cmake` and `ninja` via pip (or another up-to-date channel) — building the doc generator tools requires CMake ≥ 3.28 and Ninja ≥ 1.12, while the Ubuntu 22.04 default repositories only ship CMake 3.22 / Ninja 1.10, which fail at configure time.
 
+## How to Build
+
+Run the following command in the **repository root directory**:
+
+```bash
+make -C docs html      # English only → docs/_build/en
+make -C docs html-zh   # Chinese only → docs/_build/zh_cn
+make -C docs html-all  # Build both English and Chinese
+```
+
+Or run the following command in the `docs/` directory:
+
+```bash
+make html
+make html-zh
+make html-all
+```
+
+## Local Preview
+
+```bash
+# English
+open docs/_build/en/index.html
+
+# Chinese
+open docs/_build/zh_cn/index.html
+
+# Or use an HTTP service (for example, port 8080 for English and port 8081 for Chinese).
+cd docs/_build/en && python3 -m http.server 8080
+cd docs/_build/zh_cn && python3 -m http.server 8081
+```
+
+## Deploying on Read the Docs
+
+1. Import this repository on [Read the Docs](https://readthedocs.org/).
+2. **Main project (English)**  
+   - In **Admin → Environment variables**, add `READTHEDOCS_LANGUAGE` = `en`.  
+   - The build uses `index.rst` and `.md`; the URL takes the form `https://<slug>.readthedocs.io/en/latest/`.
+3. **Translation project (Chinese)**  
+   - **Create** a new RTD project for the same repository.  
+   - Set **Language** to Chinese (Simplified).  
+   - Add `READTHEDOCS_LANGUAGE` = `zh_CN` (or leave it unset, in which case it defaults to zh_CN).  
+   - In the **main project**, go to **Admin → Translations** and add this translation project.  
+   - The URL is in the form of `https://<slug>.readthedocs.io/zh_CN/latest/`.
+4. The Translations drop-down in the RTD theme allows readers to switch between English and Chinese.
+
+## Adding a New Document
+
+1. Add the **English** file, for example, `source/en/introduction/new_doc.md`.
+2. Add the **Chinese** file, for example, `source/zh_cn/introduction/new_doc.md`.
+3. Add the document to the corresponding toctree:
+   - **English**: Add `new_doc` (or a path such as `section/new_doc`) to `docs/source/en/index.rst` or to the `index.rst` in the corresponding subdirectory (for example, `source/en/introduction/quick_start/index.rst`).
+   - **Chinese**: Add `new_doc` (or `section/new_doc`) to `docs/source/zh_cn/index.rst` or to the `index.rst` in the subdirectory (for example, `source/zh_cn/introduction/quick_start/index.rst`).
+4. If the document needs to participate in ordering or tool processing, append its path to `_main_doc_order` in `conf.py`.
+
+## Document Structure
+
+| Path | Description |
+|------|-------------|
+| conf.py| Sphinx configuration; `language` and `root_doc` are determined by `READTHEDOCS_LANGUAGE`; `_main_doc_order` is used to standardize the order |
+| source/en/index.rst | English home page and toctree |
+| source/zh_cn/index.rst | Chinese home page and toctree |
+| source/en/**/\*.md | English body text |
+| source/zh_cn/**/\*.md | Chinese body text |
+| source/en/**/index.rst | English toctree for each chapter |
+| source/zh_cn/**/index.rst | Chinese toctree for each chapter |
+| Makefile | `html` (English), `html-zh` (Chinese), `html-all` |
+| requirements.txt | Sphinx, myst-parser, furo |
+=======
+# AscendNPU IR Documentation
+
+This directory is the Sphinx documentation project for AscendNPU IR. It supports **English and Chinese** via dual source files.
+
+**Language:** [English](README.md) · [Chinese](README_zh.md)
+
+## Documentation scheme
+
+| Item | Convention |
+|------|------------|
+| **English** | The entry page is `docs/source/en/index.rst`; content under `docs/source/en` directory |
+| **Chinese** | The entry page is `docs/source/zh_cn/index.rst`; content under `docs/source/zh_cn` directory. |
+| **Read the Docs** | Main project (en) + Translation project (zh); link in Admin → Translations for language switcher. |
+
+### Naming convention (snake_case)
+
+Directory names and document file names under `docs/` (including `docs/source/`) adopt a unified lowercase **snake_case** style, for example: `quick_start/`, `installing_guide.md`, `user_guide/`，to keep consistent paths and URLs.
+
+## Prerequisites
+
+Example for a clean Ubuntu 22.04 environment (install the equivalents on other systems):
+
+### System packages
+
+```bash
+apt-get update && apt-get install -y \
+    clang lld git make ccache \
+    python3 python3-pip python3-venv
+```
+
+- `git`: used to auto-fetch the `third-party/llvm-project` submodule on first build (not needed if the submodule is already present).
+- `clang`, `ccache`: required to build the doc generator tools (mlir-tblgen etc.) once when no project build exists locally.
+- `lld`: optional, speeds up linking.
+
+### Python dependencies
+
+From the **repository root**:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install cmake ninja
+pip install -r docs/requirements.txt
+```
+
+> **Note**: install `cmake` and `ninja` via pip (or another up-to-date channel) — building the doc generator tools requires CMake ≥ 3.28 and Ninja ≥ 1.12, while the Ubuntu 22.04 default repositories only ship CMake 3.22 / Ninja 1.10, which fail at configure time.
+
 ## How to build
 
 From the **repository root**:

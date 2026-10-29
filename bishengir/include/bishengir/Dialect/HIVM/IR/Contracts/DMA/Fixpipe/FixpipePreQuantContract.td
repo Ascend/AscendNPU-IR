@@ -15,8 +15,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef BISHENGIR_DIALECT_HIVM_IR_CONTRACTS_FIXPIPEPREQUANTCONTRACT_TD
-#define BISHENGIR_DIALECT_HIVM_IR_CONTRACTS_FIXPIPEPREQUANTCONTRACT_TD
+#ifndef BISHENGIR_DIALECT_HIVM_IR_CONTRACTS_DMA_FIXPIPE_FIXPIPEPREQUANTCONTRACT_TD
+#define BISHENGIR_DIALECT_HIVM_IR_CONTRACTS_DMA_FIXPIPE_FIXPIPEPREQUANTCONTRACT_TD
 
 include "mlir/IR/EnumAttr.td"
 include "mlir/IR/OpBase.td"
@@ -40,10 +40,10 @@ def Sig_F32_BF16 : ElemTypeSignature<F32, BF16>;
 // src/dst element-type contract. The enum/attr generation keeps consuming the
 // plain I32EnumAttrCase fields; the schema generator consumes
 // TypeSignatures.
-class HIVM_FixpipePreQuantCase<
-    string symbol, int value, list<ElemTypeSignature> signatures>
+class HIVM_FixpipePreQuantCase<string symbol, int value,
+                               list<ElemTypeSignature> signatures>
     : I32EnumAttrCase<symbol, value> {
   list<ElemTypeSignature> TypeSignatures = signatures;
 }
 
-#endif // BISHENGIR_DIALECT_HIVM_IR_CONTRACTS_FIXPIPEPREQUANTCONTRACT_TD
+#endif // BISHENGIR_DIALECT_HIVM_IR_CONTRACTS_DMA_FIXPIPE_FIXPIPEPREQUANTCONTRACT_TD

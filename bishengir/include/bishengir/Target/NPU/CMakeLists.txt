@@ -11,3 +11,5 @@ add_public_tablegen_target(BiShengIRNPUArchitectureFeaturesIncGen)
 add_dependencies(BiShengIRNPUArchitectureFeaturesIncGen
   BiShengIRNPUArchitectureIncGen)
 add_dependencies(mlir-headers BiShengIRNPUArchitectureFeaturesIncGen)
+
+add_subdirectory(DMA)

@@ -40,6 +40,7 @@
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Conversion/TritonAscendGPUToLLVM/Passes.h"
 #include "bishengir/Dialect/Annotation/Transforms/BufferizableOpInterfaceImpl.h"
+#include "bishengir/Dialect/Arith/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/AscendDPX/IR/AscendDPX.h"
 #include "bishengir/Dialect/Bufferization/Transforms/FuncBufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Bufferization/Transforms/TilingInterfaceImpl.h"
@@ -118,6 +119,7 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
   mlir::hfusion::registerDecomposeInterfaceExternalModels(registry);
   mlir::hivm::registerTilingInterfaceExternalModels(registry);
   mlir::scf_ext::registerBufferizableOpInterfaceExternalModels(registry);
+  bishengir::arith::registerBufferizableOpInterfaceExternalModels(registry);
   bishengir::bufferization::registerFuncBufferizableOpInterfaceExternalModels(
       registry);
   mlir::scope::registerBufferizableOpInterfaceExternalModels(registry);

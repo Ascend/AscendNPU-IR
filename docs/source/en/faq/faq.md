@@ -59,7 +59,7 @@ For the complete workflow and hands-on examples, see [Compilation and Execution 
   bishengir-compile your.mlir --bishengir-print-ir-before=hivm-inject-block-sync --bishengir-print-ir-after=hivm-inject-block-sync
   ```
 
-  The Pass name in the parameter can be replaced as needed. For the complete parameter description, see [Compilation Options](../user_guide/compile_option.md) and [Debugging and Tuning](../user_guide/debug_option.md).
+The Pass name in the parameter can be replaced as needed. For the complete parameter description, see [Compilation Options](../user_guide/compile_option.md) and [Debugging and Tuning](../user_guide/debug_option.md).
 
 **Q: How do I use bishengir-compile to compile MLIR into a device-side binary?**
 
@@ -87,8 +87,8 @@ For debugging options, see [Debugging and Tunning](../user_guide/debug_option.md
 
 2. `torch_npu.profiler.profile`: A core API for performance analysis of PyTorch training/inference tasks on Ascend AI processors. Its main function is to collect and parse performance data during model runtime, helping developers locate bottlenecks and optimize them. Through code injection, this API comprehensively collects CPU and NPU (Ascend AI processor) performance data during model execution. It can collect multi-dimensional data, mainly including:
 
-   - PyTorch layer information: framework-side operator invocation, memory usage, call stacks, and so on.
-   - CANN layer information: scheduling and execution of the Ascend Computing Language interface layer.
+   - PyTorch layer information: framework-side operator invocation, memory usage, call stack, and so on.
+   - CANN layer information: scheduling and execution of the Ascend computing language interface layer.
    - Hardware layer information: operator execution time on the NPU, AI Core performance metrics (such as pipeline utilization), cache hit rate, and so on.
 
    It serves as a bridge between your PyTorch training script and tools used for visual analysis (such as MindStudio Insight or the TensorBoard plugin).
@@ -115,7 +115,7 @@ For debugging options, see [Debugging and Tunning](../user_guide/debug_option.md
    with torch_npu.profiler.profile(
        activities=[  # torch_npu.profiler.ProfilerActivity.CPU,
            torch_npu.profiler.ProfilerActivity.NPU],
-       with_stack=False, # Switch for collecting the function call stack of torch operators. This parameter is optional and disabled by default.
+       with_stack=False, #Switch for collecting the function call stack of torch operators. This parameter is optional and disabled by default.
        record_shapes=False,  # Switch for collecting the input shape and input type of torch operators. This parameter is optional and disabled by default.
        profile_memory=False,  # Switch for collecting memory-related data. This parameter is optional and disabled by default.
        schedule=torch_npu.profiler.schedule(wait=1,
@@ -128,7 +128,7 @@ For debugging options, see [Debugging and Tunning](../user_guide/debug_option.md
        experimental_config=experimental_config,  # This parameter is optional and defaults to Level0.
        # Location of the generated profiling files.
        on_trace_ready=torch_npu.profiler.tensorboard_trace_handler("./result_dir")
-       # Export data in a format that TensorBoard can present. You can specify worker_name, which defaults to {host name}_{process ID}.
+       # Export data in a form that TensorBoard can present. You can specify worker_name, which defaults to: {host name}_{process id}.
    ) as prof:
        for i in range(20):
            triton_example[6,1,1](input0, input1, output, 86, 64, XBLOCK=16, XBLOCK_SUB=16)
@@ -142,7 +142,7 @@ For debugging options, see [Debugging and Tunning](../user_guide/debug_option.md
 When debugging precision issues in a Triton kernel, `tl.device_print` is an indispensable tool. It allows you to directly print intermediate values of tensors or scalars at NPU runtime, thereby locating the exact position where the error occurs. The usage guide is as follows.
 
 ```python
-# Enable the TRITON_DEVICE_PRINT=1 environment variable before use.
+# Set the environment variable TRITON_DEVICE_PRINT=1 before use.
 tl.device_print("prefix string",  value)
 ```
 
@@ -219,20 +219,20 @@ module {
 
 Common precision deviation scenarios include numerical loss caused by BF16/FP16 low-precision computation, and error accumulation caused by different tensor accumulation orders.
 
-**Principle of Floating-Point Precision Loss**:
+**Principle of floating-point precision loss**:
 
 Computers use binary to represent decimals. Most decimal fractions (such as 0.1) cannot be represented exactly by a finite-length binary number and can only be approximated. Different floating-point bit widths differ significantly in their numerical representation capability:
 
 - float32 (single precision): approximately 7 significant digits, occupying 4 bytes of storage.
 - float64 (double precision): approximately 15 to 16 significant digits, occupying 8 bytes of storage.
 
-**Precision Verification Scheme**:
+**Precision verification scheme**:
 
 A verification scheme that compares the results from CPU, GPU, and NPU is adopted to verify precision deviation. This process is a standard mandatory verification when migrating an algorithm from CPU to NPU/GPU, and it ensures that hardware acceleration does not introduce unacceptable precision loss.
 
 Baseline rule for verification: the high-precision float64 computation result on CPU is used as the ground-truth baseline, and the float32 outputs of the three types of hardware are compared against it to quantify the overall precision error.
 
-**Purpose of the Three-Way Comparison**:
+**Purpose of the three-way comparison**:
 
 1. CPU (float64): serves as the reference baseline, providing the highest-precision computation result.
 2. CPU (float32): Used to isolate the source of "Precision Loss". By comparing the float32 CPU result with the float64 result, the theoretical loss caused purely by "single precision" can be observed.
@@ -282,4 +282,4 @@ For detailed solutions, see [Contribution Guide - Gate Exception Handling](../co
 - Rebase the branch onto the latest upstream master before creating the PR.
 - For bug-fix PRs, associate the relevant Issue and PR in the description.
 
-For details, see [Contribution Guide - Notes](../contributing_guide/contribute.md#notes).
+For details, see [Contribution Guide - Precautions](../contributing_guide/contribute.md#precautions).

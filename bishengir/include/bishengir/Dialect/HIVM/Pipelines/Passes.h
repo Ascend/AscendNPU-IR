@@ -21,20 +21,11 @@
 #ifndef BISHENGIR_DIALECT_HIVM_PIPELINES_PASSES_H
 #define BISHENGIR_DIALECT_HIVM_PIPELINES_PASSES_H
 
-#include "bishengir/Dialect/HACC/IR/HACCInterfaces.h"
-#include "bishengir/Dialect/HACC/Targets/NPUTargetSpec.h.inc"
+#include "bishengir/Dialect/HIVM/Pipelines/HIVMPipelineBase.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
-#include "llvm/ADT/StringRef.h"
-#include "mlir/Pass/PassOptions.h"
 
 namespace mlir {
 namespace hivm {
-
-struct HIVMPipelineOptions
-    : public mlir::PassPipelineOptions<HIVMPipelineOptions> {
-#define GEN_HIVM_OPTION_REGISTRATION
-#include "bishengir/Tools/bishengir-compile/PassPipelineOptions.cpp.inc"
-};
 
 //===----------------------------------------------------------------------===//
 // Building and Registering.
@@ -47,9 +38,6 @@ void buildOptimizeHIVMPipeline(OpPassManager &pm,
 
 /// Register the "LowerHIVM" pipeline.
 void registerLowerHIVMPipelines();
-
-/// A canonicalization pipeline for HIVM pipeline.
-void canonicalizationHIVMPipeline(OpPassManager &pm);
 
 } // namespace hivm
 } // namespace mlir

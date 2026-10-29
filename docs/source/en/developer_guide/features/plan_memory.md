@@ -11,15 +11,15 @@ Taking Atlas A2 training products/Atlas A2 inference products as an example, the
 
 The alignment requirements and functions of each type of Buffer are as follows:
 
-| Buffer | Alignment | Function |
+| Buffer | Alignment Requirement | Function |
 |-----|-----|-----|
 | Unified Buffer (UB) | 32-byte alignment | General-purpose cache space, mainly used for vector and scalar operations |
-| L1 Buffer | 32-byte alignment | Temporarily stores data used by convolution, such as feature maps |
-| L0A Buffer | 512-byte alignment | Temporarily stores the left matrix (feature map) of matrix operations |
-| L0B Buffer | 512-byte alignment | Temporarily stores the right matrix (weight) of matrix operations |
-| L0C Buffer | 512-byte alignment | Temporarily stores the intermediate results and output matrix of matrix operations |
-| BT Buffer | 64-byte alignment | BiasTable Buffer, stores the bias in matrix operations |
-| FP Buffer | 64-byte alignment | Fixpipe Buffer, stores quantization parameters, ReLU parameters, and so on |
+| L1 Buffer | 32-byte alignment | Scratchpad for data used by convolution, such as feature maps |
+| L0A Buffer | 512-byte alignment | Scratchpad for the left matrix (feature map) of matrix operations |
+| L0B Buffer | 512-byte alignment | Scratchpad for the right matrix (weight) of matrix operations |
+| L0C Buffer | 512-byte alignment | Scratchpad for intermediate results and output matrices of matrix operations |
+| BT Buffer | 64-byte alignment | BiasTable Buffer, stores the bias used in matrix operations |
+| FP Buffer | 64-byte alignment | Fixpipe Buffer, stores quantization parameters, ReLU parameters, etc. |
 
 ## Algorithm Principles
 
@@ -36,7 +36,7 @@ On-chip memory allocation covers the storage resources corresponding to the Cube
 
 In addition to on-chip memory, PlanMemory also allocates a small amount of Workspace memory (`memref_ext.alloc_workspace`), which is mainly used in CV scenarios. If the Cube computation result needs to be further processed by the Vector unit, the Cube computation result must first be moved out of L0C, temporarily stored in the Workspace space, and then moved into UB for Vector computation. The off-chip space is applied for and managed by the framework Runtime, so the operator needs to report the required Workspace space size.
 
-### Related Terms
+### Related Terminology
 
 - **BufferLife**: The lifetime interval of a buffer, referring to the execution interval from the first write (generation point, gen) to the last read (destruction point, kill) of a single buffer. If the lifetime intervals of two buffers do not overlap, they can share the same memory. PlanMemory computes the address offset of each `alloc` buffer based on its lifetime interval to implement memory sharing among non-overlapping buffers.
 - **Alias**: When two pieces of data essentially originate from the same data, they are in an alias relationship, for example, the data before and after executing `subview`.
@@ -58,7 +58,7 @@ The main process includes:
 The main execution flow of lifetime interval analysis is as follows:
 
 1. Analyze the liveness of each node using the community `Liveness` class.
-2. Traverse the IR (including `scf.for`, `scf.if`, and `scf.while`) to collect the gen (generated Buffer) and kill (last-read Buffer) information of each op, which is used to compute the lifetime interval of each Buffer.
+2. Traverse the IR (including `scf.for`, `scf.if`, and `scf.while`) to collect the gen (generated Buffer) and kill (last-read Buffer) information of each op, which is used to compute the live range of each Buffer.
 3. Compute the lifetime of each Buffer based on gen and kill, that is, the interval from the first write to the last read. If the lifetimes of two Buffers do not overlap, they can share memory.
 4. Based on the Alias relationship, identify Buffers that can perform inplace reuse and assign them the same memory start address.
 
@@ -109,15 +109,15 @@ The three-level allocation strategy is attempted in descending order of priority
   ![image](../../../images/developer_guide/plan_memory_level2.png)
 
     - Advantage: Reuse within the same pipeline does not introduce additional dependencies between PIPEs, resulting in better overall operator performance.
-    - Disadvantage: The reusable solution space is smaller, so the probability of successful memory reuse is relatively lower.
+    - Disadvantage: The reusable solution space is small, and the probability of successful memory reuse is relatively lower.
 
 - **Level 1: Double Buffer protection strategy**
 
-DoubleBuffer significantly improves computational performance and reduces waiting time by parallelizing data loading and computation, making it a core means of operator performance optimization. In complex scenarios where memory resources are tight, if a Single Buffer reuses a Double Buffer, the Double Buffer cannot be parallelized, the operator pipeline is interrupted, and operator performance degrades.
+  DoubleBuffer significantly improves computational performance and reduces waiting time by parallelizing data loading and computation, making it a core means of operator performance optimization. In complex scenarios where memory resources are tight, if a Single Buffer reuses a Double Buffer, the Double Buffer cannot be parallelized, the operator pipeline is interrupted, and operator performance degrades.
 
-The Level1 strategy specifies that, within the same loop, if a SingleBuffer reuses a DoubleBuffer, the SingleBuffer is automatically converted to a DoubleBuffer.
+  The Level1 strategy specifies that, within the same loop, if a SingleBuffer reuses a DoubleBuffer, the SingleBuffer is automatically converted to a DoubleBuffer.
 
-For example:
+  Example:
 
   ```text
   Shared A [A0, A1]
@@ -132,25 +132,25 @@ For example:
     op4(D0, D1) // DMA OP, Double Buffer
   ```
 
-With Double Buffer enabled, the memory involved in A/D as DMA PIPE is allocated two buffer spaces each. When shared memory resources are limited, if C's Single Buffer aliases one of A's buffers, `op1` must wait for `op3` to release the C(A0) memory before it can use the A0 memory. This interrupts the pipeline and ultimately degrades operator performance.
+  With Double Buffer enabled, the memory involved in A/D as DMA PIPE is allocated two buffer spaces each. When shared memory resources are limited, if C's Single Buffer aliases one of A's buffers, `op1` must wait for `op3` to release the C(A0) memory before it can use the A0 memory. This interrupts the pipeline and ultimately degrades operator performance.
 
-After the Level1 strategy is adopted, Double Buffer is automatically enabled when C reuses the Double Buffer space. When `op1` uses the A0 memory, `op3` uses the C1 (that is, A1) memory. Therefore, `op1` does not need to wait for `op3`, and the pipeline can still run in parallel.
+  After the Level1 strategy is adopted, Double Buffer is automatically enabled when C reuses the Double Buffer space. When `op1` uses the A0 memory, `op3` uses the C1 (that is, A1) memory. Therefore, `op1` does not need to wait for `op3`, and the pipeline can still run in parallel.
 
-Pipeline effect comparison of the Level1 strategy:
+  Pipeline effect comparison of the Level1 strategy:
   ![image](../../../images/developer_guide/plan_memory_level1.png)
 
-    - Advantage: It avoids pipeline interruption in Double Buffer scenarios and ensures pipeline performance.
-    - Disadvantage: Enabling an additional Double Buffer requires occupying an additional memory space, which reduces the overall success rate of memory reuse.
+    - Advantage: Avoids pipeline interruption in Double Buffer scenarios, ensuring pipeline performance.
+    - Disadvantage: Enabling an additional Double Buffer requires occupying an extra memory region, which reduces the overall success rate of memory reuse.
 
 - **Level 0: Full lifetime reuse strategy**
 
-The Level0 strategy does not consider pipeline parallelism constraints. As long as the lifetime intervals of two Buffers do not overlap, their memory can be directly reused.
+  The Level0 strategy does not consider pipeline parallelism constraints. As long as the live ranges of two Buffers do not overlap, their memory can be directly reused.
 
   Memory usage comparison of the Level0 strategy:
   ![image](../../../images/developer_guide/plan_memory_level0.png)
 
-    - Advantage: It reuses memory as much as possible, achieving the highest memory reuse success rate.
-    - Disadvantage: It does not consider hardware pipeline parallelism constraints at all, and unreasonable reuse may degrade operator performance.
+    - Advantage: Reuses memory as much as possible, achieving the highest reuse success rate.
+    - Disadvantage: Completely disregards hardware pipeline parallelism constraints; unreasonable reuse may degrade operator performance.
 
 #### OP Transformation
 
@@ -172,9 +172,9 @@ Typical CHECK:
 
 | Option | Default Value | Description |
 |--------|--------|--------|
-| `-mem-plan-mode=global-work-space-plan` | false | Uses `GLOBAL_WORKSPACE_PLAN` in the CV pipeline. |
-| `enable-global-workspace-reuse` | false | Enables Buffer reuse within the Workspace. |
-| `restrict-inplace-as-isa` | false | Restricts the inplace rules to match ISA behavior. |
+| `-mem-plan-mode=global-work-space-plan` | false | Use `GLOBAL_WORKSPACE_PLAN` in the CV pipeline |
+| `enable-global-workspace-reuse` | false | Enable Buffer reuse within the Workspace |
+| `restrict-inplace-as-isa` | false | Restrict the inplace rule to match ISA behavior |
 
 ## Usage Constraints
 

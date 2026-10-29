@@ -19,7 +19,7 @@
 
 - **Ecosystem Integration and Openness**
 
-Through layered interfaces, it supports integration with PyTorch (Torch-MLIR), TileLang, Triton, and various frameworks, flexibly balancing high performance and ease of use to efficiently enable the Ascend AI Processor.
+  Through layered interfaces, it supports integration with PyTorch (Torch-MLIR), TileLang, Triton, and various frameworks, flexibly balancing high performance and ease of use to efficiently enable the Ascend AI Processor.
 
 ## Next Steps
 

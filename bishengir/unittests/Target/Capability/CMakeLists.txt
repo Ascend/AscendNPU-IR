@@ -63,3 +63,18 @@ add_dependencies(BiShengIRTargetCapabilityTypeFreeTests
   BiShengIRTargetCapabilityTypeFreeTestIncGen
 )
 target_link_libraries(BiShengIRTargetCapabilityTypeFreeTests PRIVATE MLIRIR)
+
+# Production Fixpipe profiles. This target links the generated catalogue and
+# the existing pre-quant contract. It does not replace the synthetic tests.
+add_bishengir_unittest(BiShengIRFixpipeCapabilityTests
+  PARTIAL_SOURCES_INTENDED
+  FixpipeCapabilityTest.cpp
+)
+add_dependencies(BiShengIRFixpipeCapabilityTests
+  BiShengIRFixpipeCapabilityIncGen
+)
+target_link_libraries(BiShengIRFixpipeCapabilityTests PRIVATE
+  BiShengIRHIVMDialect
+  BiShengIRNPUFixpipeCapability
+  MLIRIR
+)

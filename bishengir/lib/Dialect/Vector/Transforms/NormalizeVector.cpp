@@ -20,6 +20,7 @@
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -800,6 +801,55 @@ struct DropUnitDimFromMulExtendedOp : public OpRewritePattern<MulExtendedOp> {
 ///  vector<1x1x64xf32>
 /// Pattern to convert multi-dimensional create_mask operations to 1D and cast
 /// back
+/// Decide whether a mask with per-dim `bounds` over a vector of `shape` has an
+/// active region that is a prefix of the row-major lane order, and if so which
+/// dim decides the prefix length.
+///
+/// A lane at coordinate (c0, ..., cn-1) is active iff `cd < bounds[d]` for
+/// every d.  That set is a row-major prefix exactly when the bounds look like
+///
+///     [1, ..., 1, b_k, extent_k+1, ..., extent_n-1]
+///      ~~~~~~~~~   |   ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+///       pinned     |        fully covered
+///                  `-- the only dim that may be partial or dynamic
+///
+/// because the active lanes are then exactly the first
+/// `b_k * extent_k+1 * ... * extent_n-1` of them.  Any other shape *moves*
+/// active lanes instead of truncating them, so no single prefix length
+/// describes it: bounds [2, 16] over <2x32> activate lanes 0..15 and 32..47.
+///
+/// `bounds[d] == std::nullopt` marks a bound that is not a compile-time
+/// constant; such a dim can only be the pivot.  A leading dim needs a constant
+/// 1 rather than merely a dynamic value, because a dynamic bound could be 0 and
+/// empty the whole mask instead of pinning the coordinate.
+///
+/// Returns the pivot index, or nullopt when the region is not a prefix.
+/// `ConvertConstantMaskTo1D` below checks the same condition directly on its
+/// constant bounds; keep the two in step.
+static std::optional<unsigned>
+maskPrefixPivotDim(ArrayRef<std::optional<int64_t>> bounds,
+                   ArrayRef<int64_t> shape) {
+  // A zero bound anywhere empties the mask, which is the empty prefix.  Report
+  // it as the pivot so the length computed from it works out to zero.
+  for (unsigned d = 0; d < bounds.size(); ++d)
+    if (bounds[d] && *bounds[d] == 0)
+      return d;
+
+  unsigned pivot = 0;
+  while (pivot < bounds.size() && bounds[pivot] && *bounds[pivot] == 1)
+    ++pivot;
+  // Every bound is 1: a single active lane, the prefix of length 1.
+  if (pivot == bounds.size())
+    return bounds.size() - 1;
+
+  // Everything inside the pivot must be covered in full, or the pivot's
+  // coordinate would not advance the lane index contiguously.
+  for (unsigned d = pivot + 1; d < bounds.size(); ++d)
+    if (!bounds[d] || *bounds[d] < shape[d])
+      return std::nullopt;
+  return pivot;
+}
+
 struct ConvertCreateMaskTo1D : public OpRewritePattern<vector::CreateMaskOp> {
   using OpRewritePattern<vector::CreateMaskOp>::OpRewritePattern;
 
@@ -809,21 +859,52 @@ struct ConvertCreateMaskTo1D : public OpRewritePattern<vector::CreateMaskOp> {
     if (!maskType || maskType.getRank() <= 1)
       return failure();
     Location loc = op.getLoc();
-    // calculate the product of all dimensions for the 1D mask size
-    Value totalSize = nullptr;
-    for (unsigned i = 0; i < op->getNumOperands(); i++) {
-      Value dimSize = op->getOperand(i);
-      if (!totalSize) {
-        totalSize = dimSize;
-      } else {
-        totalSize = rewriter.create<arith::MulIOp>(loc, totalSize, dimSize);
-      }
+    auto shape = maskType.getShape();
+    if (op->getNumOperands() != shape.size())
+      return failure();
+
+    // Flattening to a 1-D `create_mask` only keeps the active lanes in place
+    // when the active region is a row-major prefix; `maskPrefixPivotDim`
+    // decides that and names the dim whose bound sets the prefix length.
+    //
+    // TODO: a mask with two dynamic bounds, or a constant inner bound that
+    // does not cover its dim, stays multi-dimensional.  Proving those a prefix
+    // needs a runtime comparison rather than a static check.
+    SmallVector<std::optional<int64_t>> bounds;
+    bounds.reserve(shape.size());
+    for (Value bound : op->getOperands()) {
+      APInt constBound;
+      bounds.push_back(matchPattern(bound, m_ConstantInt(&constBound))
+                           ? std::optional<int64_t>(constBound.getSExtValue())
+                           : std::nullopt);
     }
-    // create 1D mask type
-    int64_t returnTotalElements = 1;
-    for (int64_t dim : maskType.getShape()) {
-      returnTotalElements *= dim;
+    std::optional<unsigned> pivot = maskPrefixPivotDim(bounds, shape);
+    if (!pivot)
+      return rewriter.notifyMatchFailure(
+          op, "multi-dim mask active region is not a row-major prefix");
+
+    // The dims inside the pivot are fully covered, so each step of the pivot's
+    // coordinate advances the lane index by their combined extent.
+    int64_t innerExtent = 1;
+    for (unsigned d = *pivot + 1; d < shape.size(); ++d)
+      innerExtent *= shape[d];
+
+    Value totalSize = op->getOperand(*pivot);
+    if (innerExtent != 1) {
+      // `create_mask` already clamps its own bound, but the multiply below
+      // happens before that, so clamp first: an out-of-range bound would
+      // otherwise be scaled into a different range (and a very large one could
+      // overflow into a negative length, turning an all-true mask empty).
+      Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+      Value extent =
+          rewriter.create<arith::ConstantIndexOp>(loc, shape[*pivot]);
+      totalSize = rewriter.create<arith::MaxSIOp>(loc, totalSize, zero);
+      totalSize = rewriter.create<arith::MinSIOp>(loc, totalSize, extent);
+      Value scale = rewriter.create<arith::ConstantIndexOp>(loc, innerExtent);
+      totalSize = rewriter.create<arith::MulIOp>(loc, totalSize, scale);
     }
+
+    int64_t returnTotalElements = maskType.getNumElements();
     VectorType flatMaskType =
         VectorType::get({returnTotalElements}, rewriter.getI1Type());
     // create the 1D mask with a single operand
@@ -851,26 +932,61 @@ struct ConvertConstantMaskTo1D
     auto maskDimSizesAttr = op.getMaskDimSizes();
     if (!maskDimSizesAttr)
       return failure();
-    // calculate return shape
-    int64_t returnTotalElements = 1;
-    for (int64_t dim : maskType.getShape())
-      returnTotalElements *= dim;
-    // calculate the product of all dimensions for the 1D mask size active
-    int64_t totalActiveElements = 1;
+    auto shape = maskType.getShape();
+    if (maskDimSizesAttr.size() != shape.size())
+      return failure();
+
+    SmallVector<int64_t> maskBounds;
     for (Attribute attr : maskDimSizesAttr.getValue()) {
       auto intAttr = mlir::dyn_cast<IntegerAttr>(attr);
       if (!intAttr)
         return failure();
-      int64_t numElements = static_cast<int64_t>(intAttr.getValue().getZExtValue());
-      totalActiveElements *= numElements;
+      maskBounds.push_back(
+          static_cast<int64_t>(intAttr.getValue().getZExtValue()));
     }
+
+    // Flattening a multi-dim mask to `constant_mask [N]` (a prefix of N true
+    // lanes) is only valid when the active region really is a prefix of the
+    // row-major lane order.  That holds iff every dim that keeps more than
+    // one active slice has all of its inner dims fully active:
+    //
+    //   mask [2, 32] on <2x32>  -> lanes 0..63   true   (prefix, OK)
+    //   mask [1, 16] on <2x32>  -> lanes 0..15   true   (prefix, OK)
+    //   mask [2, 16] on <2x32>  -> [T16, F16, T16, F16] (NOT a prefix)
+    //
+    // Multiplying the bounds of a non-prefix mask (2 * 16 = 32 ->
+    // `constant_mask [32]`) keeps the active lane *count* but moves the
+    // active lane *positions*: lanes 16..31 flipped to true and 32..47 to
+    // false.  Bail out instead of silently changing semantics; the mask then
+    // stays multi-dimensional for the consumer to handle.
+    //
+    // This is the same condition `maskPrefixPivotDim` above states for
+    // `create_mask`, phrased directly on the constant bounds; keep the two in
+    // step.  It is deliberately not routed through that helper: the helper
+    // also accepts a zero bound behind a partial one (bounds [2, 0]), which
+    // this check rejects, and widening the constant path is out of scope here.
+    for (int64_t d = 0; d < static_cast<int64_t>(shape.size()); ++d) {
+      if (maskBounds[d] <= 1)
+        continue;
+      for (int64_t inner = d + 1; inner < static_cast<int64_t>(shape.size());
+           ++inner) {
+        if (maskBounds[inner] != shape[inner])
+          return rewriter.notifyMatchFailure(
+              op, "multi-dim mask active region is not a row-major prefix");
+      }
+    }
+
+    // The active region is a prefix, so its length is simply the product of
+    // the per-dim bounds.
+    int64_t returnTotalElements = maskType.getNumElements();
+    int64_t activeLanes = 1;
+    for (int64_t d = 0; d < static_cast<int64_t>(shape.size()); ++d)
+      activeLanes *= maskBounds[d];
+
     // create 1D mask type (flat)
     VectorType flatMaskType =
         VectorType::get({returnTotalElements}, rewriter.getI1Type());
-    // new 1D mask_dim_sizes attribute
-    SmallVector<int64_t, 1> flatMaskDims;
-    flatMaskDims.push_back(totalActiveElements);
-    auto flatMaskDimSizesAttr = rewriter.getI64ArrayAttr(flatMaskDims);
+    auto flatMaskDimSizesAttr = rewriter.getI64ArrayAttr({activeLanes});
     // create the 1D constant_mask and cast back to original shape
     Value flatMask = rewriter.create<vector::ConstantMaskOp>(
         loc, flatMaskType, flatMaskDimSizesAttr);
@@ -901,7 +1017,7 @@ struct FixBitTypeBroadcastTransferReadPattern
   //   %r      = arith.cmpf une %bcast, %zero : vector<...xf16> -> vector<...xi1>
   LogicalResult matchAndRewrite(vector::TransferReadOp op,
                                 PatternRewriter &rewriter) const override {
-    // Skip transfer_reads inside vector.mask — replacing a single op with
+    // Skip transfer_reads inside vector.mask 鈥?replacing a single op with
     // a chain would break the mask (which requires exactly one body op).
     if (isa<vector::MaskOp>(op->getParentOp()))
       return failure();
@@ -982,6 +1098,13 @@ class TransferReadToGatheringLoadPattern
     : public OpRewritePattern<vector::TransferReadOp> {
   using OpRewritePattern::OpRewritePattern;
 
+  /// Decide whether `readop` can be rewritten as a gather and, if so, collect
+  /// what the rewrite needs: the source and destination types, the physical
+  /// `strides`, and the mask description (`isFullMask`, `constantMaskBounds`).
+  ///
+  /// None of the `analyze*` helpers creates IR, so each one is free to bail
+  /// out -- see `matchAndRewrite` for why every rejecting check has to run
+  /// before the first `rewriter.create`.
   LogicalResult analyzeTransferRead(vector::TransferReadOp readop,
                                     PatternRewriter &rewriter,
                                     AffineMap &permMap, MemRefType &memrefType,
@@ -1004,33 +1127,129 @@ class TransferReadToGatheringLoadPattern
       return failure();
 
     if (permMap.isIdentity()) {
-      // Limit identity reads to 1-D: unmasked offsets form an arithmetic
-      // sequence even for dynamic extents, and the mask can be reused directly.
-      // Higher-rank reads may produce non-arithmetic index constants that AVE
-      // cannot lower; their masks also need correct flattening.
-      // TODO: Support higher-rank identity reads by extending index lowering
-      // and preserving mask semantics when flattening.
-      if (memrefType.getRank() != 1 || memrefType.getDimSize(0) == 1 ||
-          readop.hasOutOfBoundsDim())
+      if (failed(analyzeIdentityLayout(readop, memrefType, destType, strides)))
         return failure();
-      int64_t offset;
-      // For a 1-D view, unit stride is contiguous even with a dynamic extent.
-      if (failed(getStridesAndOffset(memrefType, strides, offset)) ||
-          strides.front() <= 1)
+      return analyzeIdentityMask(readop, memrefType, isFullMask,
+                                 constantMaskBounds);
+    }
+
+    return analyzePermutedRead(readop, permMap, memrefType, isFullMask,
+                               constantMaskBounds, strides);
+  }
+
+  /// Identity path, layout half: accept only a read whose tile is laid out
+  /// with a gap, which is what makes a contiguous load wrong, and fill in
+  /// `strides`.
+  LogicalResult analyzeIdentityLayout(vector::TransferReadOp readop,
+                                      MemRefType memrefType,
+                                      VectorType destType,
+                                      SmallVector<int64_t, 4> &strides) const {
+    // Out-of-bounds reads need the transfer_read padding semantics, which
+    // the gather path does not reproduce for partially in-bounds dims.
+    if (readop.hasOutOfBoundsDim())
+      return failure();
+    int64_t offset;
+    if (failed(getStridesAndOffset(memrefType, strides, offset)))
+      return failure();
+    // A negative or dynamic stride cannot be turned into a static index
+    // vector.
+    if (llvm::any_of(strides, [](int64_t stride) {
+          return ShapedType::isDynamic(stride) || stride < 1;
+        }))
+      return failure();
+
+    int64_t rank = memrefType.getRank();
+    if (rank == 1) {
+      // For a 1-D view, unit stride is contiguous even with a dynamic
+      // extent, so only a real stride needs the gather path.
+      if (memrefType.getDimSize(0) == 1 || strides.front() <= 1)
         return failure();
-      isFullMask = true;
-      if (auto mask = readop.getMask()) {
-        if (auto constantMask = mask.getDefiningOp<vector::ConstantMaskOp>()) {
-          // Keep inactive indices zero, as on the existing constant-mask path,
-          // so that a large stride does not overflow unused gather indices.
-          constantMaskBounds.push_back(
-              cast<IntegerAttr>(constantMask.getMaskDimSizes()[0]).getInt());
-          isFullMask = false;
-        }
-      }
       return success();
     }
 
+    // For rank > 1 the index vector is materialized from the static
+    // extents, so every dim must be static.
+    if (!memrefType.hasStaticShape())
+      return failure();
+    if (memrefType.getNumElements() == 1)
+      return failure();
+    // Detect whether the *tile being read* is densely packed.  Contiguity
+    // follows the tile extents, not the source extents: reading
+    // vector<2x32> out of memref<2x64, strided<[32, 1]>> touches lanes
+    // 0..63 and is contiguous, while the same tile out of a packed
+    // memref<2x64> (strides [64, 1]) touches 0..31 and 64..95 and is not.
+    // Note: identity permutation alone does not imply contiguity, and
+    // checking only the innermost stride is not enough either.
+    //
+    // A dim whose tile extent is 1 is never stepped through, so its source
+    // stride cannot separate anything and must not be compared: reading
+    // vector<1x32> out of memref<2x64> touches 0..31 and is contiguous even
+    // though the row stride 64 does not match. Its extent still multiplies
+    // into `expectedStride` (by one), keeping the accumulated inner size right.
+    auto tileShape = destType.getShape();
+    bool isPacked = true;
+    int64_t expectedStride = 1;
+    for (int64_t d = rank - 1; d >= 0; --d) {
+      if (tileShape[d] != 1 && strides[d] != expectedStride) {
+        isPacked = false;
+        break;
+      }
+      expectedStride *= tileShape[d];
+    }
+    if (isPacked)
+      return failure();
+
+    return success();
+  }
+
+  /// Identity path, mask half: classify the mask as full, or record its
+  /// per-dim bounds in `constantMaskBounds`.
+  LogicalResult
+  analyzeIdentityMask(vector::TransferReadOp readop, MemRefType memrefType,
+                      bool &isFullMask,
+                      SmallVector<int64_t, 4> &constantMaskBounds) const {
+    isFullMask = true;
+    if (auto mask = readop.getMask()) {
+      auto constantMask = mask.getDefiningOp<vector::ConstantMaskOp>();
+      if (!constantMask) {
+        // A non-constant mask cannot be flattened per lane at compile time.
+        // A rank-1 mask, however, already matches the flattened gather lane
+        // order and is reused as-is by the rewrite, so it needs no
+        // flattening (dynamic tail masks from loop peeling hit this path).
+        //
+        // FIXME: a multi-dim runtime mask on a strided source is not
+        // supported.  Rejecting it here falls back to the contiguous
+        // VFLoad, which loses the stride semantics -- a match failure is
+        // not a correctness guarantee.  A stride-aware runtime mask path is
+        // needed; this is a pre-existing gap, not a regression.
+        if (cast<VectorType>(mask.getType()).getRank() != 1)
+          return failure();
+      } else if (!constantMask.isAllOnesMask()) {
+        // Keep inactive indices zero, as on the existing constant-mask path,
+        // so that a large stride does not overflow unused gather indices.
+        for (auto v : constantMask.getMaskDimSizes())
+          constantMaskBounds.push_back(
+              cast<IntegerAttr>(v).getValue().getSExtValue());
+        // `computeGatherIndicesAndMasks` indexes `constantMaskBounds` with
+        // the source dim, so a mask that does not cover every dim would read
+        // out of bounds.
+        if (constantMaskBounds.size() !=
+            static_cast<size_t>(memrefType.getRank()))
+          return failure();
+        isFullMask = false;
+      }
+    }
+    return success();
+  }
+
+  /// Permuted (transposing) path: check the shape and the mask, fill in
+  /// `strides`, and decline a transpose whose permuted dims are masked down
+  /// to a single element, which needs no gather.
+  LogicalResult analyzePermutedRead(vector::TransferReadOp readop,
+                                    AffineMap permMap, MemRefType memrefType,
+                                    bool &isFullMask,
+                                    SmallVector<int64_t, 4> &constantMaskBounds,
+                                    SmallVector<int64_t, 4> &strides) const {
     // must have static shape
     // dynamic shape size is represented by a large negative number
     auto shape = memrefType.getShape();
@@ -1069,18 +1288,19 @@ class TransferReadToGatheringLoadPattern
     // no need to change transfer_read to gather
     bool permDimWithOneMask = true;
     if (!constantMaskBounds.empty()) {
-    for(unsigned int i = 0; i < permMap.getNumResults(); i++) {
-      unsigned int targetDim = permMap.getDimPosition(i);
-      if (i != targetDim) {
-        if (constantMaskBounds[i] != 1 || constantMaskBounds[targetDim] != 1) {
-          permDimWithOneMask = false;
-          break;
+      for (unsigned int i = 0; i < permMap.getNumResults(); i++) {
+        unsigned int targetDim = permMap.getDimPosition(i);
+        if (i != targetDim) {
+          if (constantMaskBounds[i] != 1 ||
+              constantMaskBounds[targetDim] != 1) {
+            permDimWithOneMask = false;
+            break;
+          }
         }
       }
+      if (permDimWithOneMask)
+        return failure();
     }
-    if (permDimWithOneMask)
-      return failure();
-  }
 
     return success();
   }
@@ -1152,6 +1372,18 @@ class TransferReadToGatheringLoadPattern
       // compute the gather index
       // we only compute it when the mask enables this element
       // because large strides can make the index overflow
+      //
+      // The zeroed tail must stay: a masked-off lane often maps to a
+      // coordinate outside the source (that is what the mask is for -- see
+      // @transpose_2d_outlined_vf_0 in normalize_vector.mlir, where 112 of 128
+      // lanes are out of a 16x1 source), so computing its "real" index would
+      // address past the end of the memref.
+      //
+      // The flat tail this leaves is not a staircase, which used to make the
+      // index constant unlowerable.  `ConstantOpToHivmSegmentedVCILowering`
+      // now fits its closed form to the active prefix and writes the tail back
+      // with a prefix predicate, so the convention is honoured on the consumer
+      // side (see `emitActivePrefixSelect` in ArithToHIVMAVE.cpp).
       int64_t index = 0;
       if (isFullMask || isEnabled) {
         for (unsigned dim = 0; dim < strides.size(); ++dim)
@@ -1331,32 +1563,37 @@ class TransferReadToGatheringLoadPattern
              << ": expected <= " << hivm::util::VL;
     }
 
+    // A rank-1 identity mask already matches the flattened gather lane order,
+    // so it can be reused as is.
+    bool reuseOriginalMask =
+        permMap.isIdentity() && readop.getMask() &&
+        cast<VectorType>(readop.getMask().getType()).getRank() == 1;
+    // Currently the only partial mask that can be rebuilt on the flattened
+    // lane order is a prefix: gatherMasks[0..N-1] true, gatherMasks[N..] false.
+    // This must be decided before any IR is created -- a `return failure()`
+    // after `createIndexVector` leaves a dead index constant behind, and the
+    // greedy driver then re-matches this op until it hits the iteration limit.
+    // TODO: handle non-prefix masks instead of falling back to the contiguous
+    // load, which silently ignores the stride.
+    if (!reuseOriginalMask && !isFullMask &&
+        !(firstEnabledBit < lastEnabledBit &&
+          lastEnabledBit + 1 == firstDisabledBit &&
+          firstDisabledBit <= lastDisabledBit))
+      return failure();
+
     auto indexVecValues = createIndexVector(readop, rewriter, memrefType,
                                             gatherIndices, totalDestSize);
     Value finalResult;
     decltype(readop.getMask()) newMask;
     VectorType maskType =
         VectorType::get({totalDestSize}, rewriter.getI1Type());
-    if (permMap.isIdentity() && readop.getMask()) {
+    if (reuseOriginalMask) {
       newMask = readop.getMask();
-    } else if (!isFullMask) {
-      // check if we can convert the constant mask to something simple
-      // currently we only try to create another constant mask
-      // if there are more patterns we can support, update them here
-      // for 1D vector.constant_mask, check if there exists N
-      // such that gatherMasks[0...N-1]==true && gatherMasks[N...]==false
-      if (firstEnabledBit < lastEnabledBit &&
-          lastEnabledBit + 1 == firstDisabledBit &&
-          firstDisabledBit <= lastDisabledBit) {
-        ArrayAttr maskDimSizes = rewriter.getI64ArrayAttr({firstDisabledBit});
-        auto newConstMask = rewriter.create<vector::ConstantMaskOp>(
-            readop.getLoc(), maskType, maskDimSizes);
-        newMask = newConstMask;
-      } else
-        return failure();
     } else {
-      // create a mask for full vector size
-      ArrayAttr maskDimSizes = rewriter.getI64ArrayAttr({totalDestSize});
+      // Checked above: a partial mask covers the first `firstDisabledBit`
+      // lanes, a full mask covers all of them.
+      ArrayAttr maskDimSizes = rewriter.getI64ArrayAttr(
+          {isFullMask ? totalDestSize : firstDisabledBit});
       auto newConstMask = rewriter.create<vector::ConstantMaskOp>(
           readop.getLoc(), maskType, maskDimSizes);
       newMask = newConstMask;
