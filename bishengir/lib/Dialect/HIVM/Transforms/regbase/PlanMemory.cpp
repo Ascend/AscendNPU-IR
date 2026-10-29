@@ -1491,7 +1491,8 @@ void MemPlanRegBase::GenerateStorageEntry() {
       std::unique_ptr<StorageEntry> entry =
           std::make_unique<StorageEntry>(nextEntryMemoId++);
       entry->bufInfo = &iter->second;
-      entry->bufferLifeVec.emplace_back(bufLife);
+      entry->bufferLifeVec.append(bufLife->buffer, bufLife->allocTime,
+                                  bufLife->freeTime);
       entry->inplaceBuffers.emplace_back(iter->first);
       auto multiBuffer = buffer2MultiNum.find(genBuffer);
       if (multiBuffer != buffer2MultiNum.end()) {
@@ -1573,13 +1574,10 @@ void MemPlanRegBase::MergeInplaceSE() {
     assert(genSE != nullptr && killSE != nullptr &&
            " genSE and killSE should be valid");
     BufferLifeVec mergedBufferLifeVec;
-    mergedBufferLifeVec.insert(mergedBufferLifeVec.end(),
-                               genSE->bufferLifeVec.begin(),
-                               genSE->bufferLifeVec.end());
-    mergedBufferLifeVec.insert(mergedBufferLifeVec.end(),
-                               killSE->bufferLifeVec.begin(),
-                               killSE->bufferLifeVec.end());
-    MergeBufferVec(mergedBufferLifeVec);
+    mergedBufferLifeVec.append(genSE->bufferLifeVec);
+    mergedBufferLifeVec.append(killSE->bufferLifeVec);
+    // append merges touching intervals. Endpoint buffers stay visible to
+    // inplace checks; an interior buffer is dropped.
     killSE->bufferLifeVec.swap(mergedBufferLifeVec);
     //  merge allocs of two storage entry and update inplaceBuffers.
     killSE->inplaceBuffers.insert(killSE->inplaceBuffers.begin(),
@@ -1908,10 +1906,10 @@ void MemPlanRegBase::MemLifeDebugInfo(const StorageEntry *storageEntry) const {
     }
   }
 #ifndef NDEBUG
-  for (auto &bufferLife : storageEntry->bufferLifeVec) {
-    LDBG("bufferLife : " << "allocTime : " << bufferLife->allocTime
-                         << " , freeTime : " << bufferLife->freeTime << "\n");
-  }
+  storageEntry->bufferLifeVec.forEach([](BufferLifeView bufferLife) {
+    LDBG("bufferLife : " << "allocTime : " << bufferLife.allocTime
+                         << " , freeTime : " << bufferLife.freeTime << "\n");
+  });
   LDBG("\n");
 #endif
 }
@@ -2349,8 +2347,7 @@ bool MemPlanRegBase::IsBufferLifeVecConflict(PlanRecord &r, uint64_t offset,
       (r.firstMemBound->offset >= offset + e->alignedConstBits)) {
     return false;
   }
-  return !GetOverlapBufferLife(r.entry->bufferLifeVec, e->bufferLifeVec)
-              .empty();
+  return BufferLivesConflict(r.entry->bufferLifeVec, e->bufferLifeVec);
 }
 
 void MemPlanRegBase::PlanRelationOtherBufferEntryAddress(
@@ -2517,7 +2514,7 @@ void MemPlanRegBase::UpdateOutline(MemBoundList &outline, PlanRecHis &his,
     AddMemBoundInSectionalWay(e, start, end, splitBound);
   } else {
     // origin outline
-    BufferLifeVec life(e->bufferLifeVec.begin(), e->bufferLifeVec.end());
+    BufferLifeVec life = e->bufferLifeVec;
     MergeBufferLife(start, end, life);
     splitBound.emplace_back(std::make_shared<MemoryBound>(
         life, e->bitsOffset, e->alignedConstBits, e, nextBoundMemoId++));
@@ -2557,11 +2554,8 @@ void MemPlanRegBase::AddMemBoundInSectionalWay(
   // |---------e------------ |
   // |--split e1 -|-split e2-|
   for (auto iter = start; iter != end; ++iter) {
-    BufferLifeVec life(e->bufferLifeVec.begin(), e->bufferLifeVec.end());
-    life.insert(life.end(), (*iter)->bufferLifeVec.begin(),
-                (*iter)->bufferLifeVec.end());
-    // merge the buffer life
-    MergeBufferVec(life);
+    BufferLifeVec life = e->bufferLifeVec;
+    life.append((*iter)->bufferLifeVec);
     // get the extent
     uint64_t size = 0;
     if (std::distance(start, iter) == std::distance(start, end) - 1) {
@@ -2578,55 +2572,8 @@ void MemPlanRegBase::AddMemBoundInSectionalWay(
 inline void MemPlanRegBase::MergeBufferLife(MemBoundList::const_iterator start,
                                             MemBoundList::const_iterator end,
                                             BufferLifeVec &newLife) const {
-  size_t size = 0;
-  for (auto it = start; it != end; ++it) {
-    size += (*it)->bufferLifeVec.size();
-  }
-  newLife.reserve(size);
-  for (auto it = start; it != end; ++it) {
-    newLife.insert(newLife.end(), (*it)->bufferLifeVec.begin(),
-                   (*it)->bufferLifeVec.end());
-  }
-  MergeBufferVec(newLife);
-}
-
-void MemPlanRegBase::MergeBufferVec(BufferLifeVec &bufferLife) const {
-  if (bufferLife.size() <= 1) {
-    return;
-  }
-  BufferLifeVec mergedLife;
-  mergedLife.reserve(bufferLife.size());
-  // sort life by alloc and free time
-  std::sort(bufferLife.begin(), bufferLife.end(), CompareBufferLife());
-  int start = bufferLife[0]->allocTime;
-  int end = bufferLife[0]->freeTime;
-  auto buffer = bufferLife[0]->buffer;
-  size_t runStart = 0;
-  // merge life; segments that merge with nothing are reused as-is (BufferLife
-  // objects are immutable once planning starts) instead of being copied.
-  for (size_t i = 1; i < bufferLife.size(); i++) {
-    auto &life = bufferLife[i];
-    if (life->allocTime <= end + 1) {
-      end = end < life->freeTime ? life->freeTime : end;
-    } else {
-      if (i - runStart == 1) {
-        mergedLife.emplace_back(bufferLife[runStart]);
-      } else {
-        mergedLife.emplace_back(
-            std::make_unique<BufferLife>(buffer, start, end));
-      }
-      buffer = life->buffer;
-      start = life->allocTime;
-      end = life->freeTime;
-      runStart = i;
-    }
-  }
-  if (bufferLife.size() - runStart == 1) {
-    mergedLife.emplace_back(bufferLife[runStart]);
-  } else {
-    mergedLife.emplace_back(std::make_unique<BufferLife>(buffer, start, end));
-  }
-  bufferLife.swap(mergedLife);
+  for (auto it = start; it != end; ++it)
+    newLife.append((*it)->bufferLifeVec);
 }
 
 bool MemPlanRegBase::IsSamePlanAsLastRollBack(uint64_t allocOffset,
@@ -2640,38 +2587,16 @@ inline bool
 MemPlanRegBase::VerifyConflictStage0(StorageEntry *e,
                                      const std::shared_ptr<MemoryBound> &last) {
   // level_0: offset = 0, offset means life distance
-  return !GetOverlapBufferLife(e->bufferLifeVec, last->bufferLifeVec).empty();
+  return BufferLivesConflict(e->bufferLifeVec, last->bufferLifeVec);
 }
 
-// verify two buffer life vectors is conflict or not
-// The key pair looks like the following diagram
-// indicate that var1 is generated later than var2.
-//                                     buffer2
-//                               --- PLAN_time
-//   buffer1       intersected   | |
-//                 buffer_life   | |
-// PLAN_time ---    lo ---      ---
-//            | |       ---      | |
-//            | |       ---      | |
-//            ---    hi ---      --- free_time
-//            | |
-//            | |
-// free_time  ---
-// Meantime, the overlap is the intersected buffer_life.
-llvm::SmallDenseMap<ValuePair, BufferLife, 32>
-MemPlanRegBase::GetOverlapBufferLife(const BufferLifeVec &b1,
-                                     const BufferLifeVec &b2) const {
-  llvm::SmallDenseMap<ValuePair, BufferLife, 32> intersection;
-  size_t i = 0;
-  size_t j = 0;
-  size_t b1Len = b1.size();
-  size_t b2Len = b2.size();
-  if (b1Len == 0 || b2Len == 0) {
-    return intersection;
-  }
+bool MemPlanRegBase::BufferLivesConflict(const BufferLifeVec &b1,
+                                         const BufferLifeVec &b2) const {
+  if (b1.empty() || b2.empty())
+    return false;
   // if buffer in b1 has mem_unique, b1 will have only one element.
-  auto bufferInfoIt1 = bufferInfos.find(b1[0]->buffer);
-  auto bufferInfoIt2 = bufferInfos.find(b2[0]->buffer);
+  const auto *bufferInfoIt1 = bufferInfos.find(b1.frontBuffer());
+  const auto *bufferInfoIt2 = bufferInfos.find(b2.frontBuffer());
   if (bufferInfoIt1->second.memoryUnique ||
       bufferInfoIt2->second.memoryUnique) {
     // Allow lifetime-based reuse between two tightly-coupled CV buffers
@@ -2696,37 +2621,10 @@ MemPlanRegBase::GetOverlapBufferLife(const BufferLifeVec &b1,
     bool crossScopeSafe =
         cvA >= 0 && cvB >= 0 && cvA != cvB &&
         cvMixIdReuseAllowedPairs.count(std::make_pair(cvA, cvB));
-    if (!crossScopeSafe) {
-      intersection.try_emplace(std::make_pair(b1[0]->buffer, b2[0]->buffer),
-                               BufferLife(nullptr));
-      return intersection;
-    }
+    if (!crossScopeSafe)
+      return true;
   }
-  // Merge-normalized (disjoint, allocTime-sorted) life vectors whose time
-  // ranges do not overlap cannot intersect.
-  if (b1.back()->freeTime < b2.front()->allocTime ||
-      b2.back()->freeTime < b1.front()->allocTime) {
-    return intersection;
-  }
-  while (i < b1Len && j < b2Len) {
-    auto lo = std::max(b1[i]->allocTime, b2[j]->allocTime);
-    auto hi = std::min(b1[i]->freeTime, b2[j]->freeTime);
-    if (lo <= hi) {
-      BufferLife bufferLife(nullptr, lo, hi);
-      ValuePair key =
-          lo == b1[i]->allocTime && hi == b2[j]->freeTime
-              ? std::make_pair(b1[i]->buffer,
-                               b2[j]->buffer) // case in the diagram
-              : std::make_pair(b2[j]->buffer, b1[i]->buffer); // opposing case
-      intersection.try_emplace(key, bufferLife);
-    }
-    if (b1[i]->freeTime < b2[j]->freeTime) {
-      i += 1;
-    } else {
-      j += 1;
-    }
-  }
-  return intersection;
+  return b1.intersects(b2);
 }
 
 PlanStatus MemPlanRegBase::ApplyFailStrategy(StatusWrapper &statusWrapper,
@@ -2758,10 +2656,9 @@ void MemPlanRegBase::ReportAllocatedEntryDebugInfo(
     LDBG(", offset: " << offsetByte);
     LDBG(", extent: " << needByte);
     LDBG(", buffer life: ");
-    for (auto &bufferLife : entry->bufferLifeVec) {
-      LDBG("[" << bufferLife->allocTime << "-" << bufferLife->freeTime
-               << "], ");
-    }
+    entry->bufferLifeVec.forEach([](BufferLifeView bufferLife) {
+      LDBG("[" << bufferLife.allocTime << "-" << bufferLife.freeTime << "], ");
+    });
   };
   LDBG("--------------------------BUFFER ALLOCATE "
        "START-------------------------- "
@@ -3109,7 +3006,7 @@ PlanMemoryPass::PlanMemoryForFuncOp(
         }
       });
       LDBG("Disabled MultiBuffer in AIV function by remove all multiBuffer "
-           << "attrs on attempt " << attempt + 1<< "\n");
+           << "attrs on attempt " << attempt + 1 << "\n");
     }
     // Disable VF reachable check after the first two attempts, to allow more
     // aggressive reuse of VF buffers in case the first two attempts fail.
