@@ -380,3 +380,85 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     return
   }
 }
+
+// -----
+
+// [a, b] -> [c]. The inner axis b is not a tiling dimension, so the store
+// tiles axis 0. Axis 1 would otherwise be a legal even size.
+// CHECK: 1 succeedFunc - Function analyzed count
+// CHECK: Tiling dim for {{.*}} is 0
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @hivm_dimension_collapse_inner(%arg0: tensor<8x16xf16>, %arg1: memref<8x16xf16>) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, false]> : vector<2xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %collapsed = tensor.collapse_shape %arg0 [[0, 1]] : tensor<8x16xf16> into tensor<128xf16>
+    hivm.hir.store ins(%arg0 : tensor<8x16xf16>) outs(%arg1 : memref<8x16xf16>)
+    return
+  }
+}
+
+// -----
+
+// [3, 1, 16] -> [48]. The second index is unit, so the inner axis is 16, the
+// second non-unit axis. It is the only even axis and must not be selected.
+// CHECK: 1 succeedFunc - Function analyzed count
+// CHECK: Tiling dim for {{.*}} is -1
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @hivm_dimension_collapse_inner_only(%arg0: tensor<3x1x16xf16>, %arg1: memref<3x1x16xf16>) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, false]> : vector<2xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %collapsed = tensor.collapse_shape %arg0 [[0, 1, 2]] : tensor<3x1x16xf16> into tensor<48xf16>
+    hivm.hir.store ins(%arg0 : tensor<3x1x16xf16>) outs(%arg1 : memref<3x1x16xf16>)
+    return
+  }
+}
+
+// -----
+
+// [c] -> [a, b]. The expanded inner axis is not a tiling dimension.
+// CHECK: 1 succeedFunc - Function analyzed count
+// CHECK: Tiling dim for {{.*}} is 0
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @hivm_dimension_expand_inner(%arg0: tensor<128xf16>, %arg1: memref<8x16xf16>) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, false]> : vector<2xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %expanded = tensor.expand_shape %arg0 [[0, 1]] output_shape [8, 16] : tensor<128xf16> into tensor<8x16xf16>
+    hivm.hir.store ins(%expanded : tensor<8x16xf16>) outs(%arg1 : memref<8x16xf16>)
+    return
+  }
+}
+
+// -----
+
+// [48] -> [3, 1, 16]. The unit axis is skipped, so 16 is the inner axis and
+// must not be selected.
+// CHECK: 1 succeedFunc - Function analyzed count
+// CHECK: Tiling dim for {{.*}} is -1
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @hivm_dimension_expand_inner_only(%arg0: tensor<48xf16>, %arg1: memref<3x1x16xf16>) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, false]> : vector<2xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %expanded = tensor.expand_shape %arg0 [[0, 1, 2]] output_shape [3, 1, 16] : tensor<48xf16> into tensor<3x1x16xf16>
+    hivm.hir.store ins(%expanded : tensor<3x1x16xf16>) outs(%arg1 : memref<3x1x16xf16>)
+    return
+  }
+}
+
+// -----
+
+// [8, 16, 32] -> [4096]. Every non-unit axis after the first is marked, so
+// both 16 and 32 are rejected and the store tiles axis 0.
+// CHECK: 1 succeedFunc - Function analyzed count
+// CHECK: Tiling dim for {{.*}} is 0
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @hivm_dimension_collapse_all_inner(%arg0: tensor<8x16x32xf16>, %arg1: memref<8x16x32xf16>) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, false]> : vector<2xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %collapsed = tensor.collapse_shape %arg0 [[0, 1, 2]] : tensor<8x16x32xf16> into tensor<4096xf16>
+    hivm.hir.store ins(%arg0 : tensor<8x16x32xf16>) outs(%arg1 : memref<8x16x32xf16>)
+    return
+  }
+}
+
+// -----
+
+// [4096] -> [8, 16, 32]. Both axes after the first non-unit axis are rejected.
+// CHECK: 1 succeedFunc - Function analyzed count
+// CHECK: Tiling dim for {{.*}} is 0
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @hivm_dimension_expand_all_inner(%arg0: tensor<4096xf16>, %arg1: memref<8x16x32xf16>) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, false]> : vector<2xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %expanded = tensor.expand_shape %arg0 [[0, 1, 2]] output_shape [8, 16, 32] : tensor<4096xf16> into tensor<8x16x32xf16>
+    hivm.hir.store ins(%expanded : tensor<8x16x32xf16>) outs(%arg1 : memref<8x16x32xf16>)
+    return
+  }
+}
