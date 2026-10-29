@@ -261,6 +261,7 @@ function(compile_shmem_to_bc_single cpp_with_path core_type platform_type opt_le
     list(APPEND bisheng_args -std=c++17)
     list(APPEND bisheng_args -I ${INCLUDE_PATH})
     list(APPEND bisheng_args -I ${PROJECT_SOURCE_DIR}/third-party/shmem/include/)
+    list(APPEND bisheng_args -I ${PROJECT_SOURCE_DIR}/third-party/shmem/src/)
     list(APPEND bisheng_args -I ${PROJECT_SOURCE_DIR}/third-party/shmem/src/device/)
     if (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
         list(APPEND bisheng_args -I $ENV{ASCEND_HOME_PATH}/aarch64-linux/include/)
