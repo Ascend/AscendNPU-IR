@@ -11,7 +11,6 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -37,6 +36,30 @@ std::optional<TCoreType> queryConcreteCoreType(Operation *op) {
   if (ct && (*ct == TCoreType::CUBE || *ct == TCoreType::VECTOR))
     return *ct;
   return std::nullopt;
+}
+
+std::optional<TCoreType> getScopeCoreType(ScopeOp scope) {
+  if (!scope)
+    return std::nullopt;
+  if (auto attr =
+          scope->getAttrOfType<TCoreTypeAttr>(kPipelinedLoopCoreTypeAttrName))
+    return attr.getTcoretype();
+  return std::nullopt;
+}
+
+bool areCompatibleCoreTypes(TCoreType ct1, TCoreType ct2) {
+  return !((ct1 == TCoreType::CUBE && ct2 == TCoreType::VECTOR) ||
+           (ct1 == TCoreType::VECTOR && ct2 == TCoreType::CUBE));
+}
+
+FailureOr<TCoreType> resolveMergedCoreType(TCoreType ct1, TCoreType ct2) {
+  if (!areCompatibleCoreTypes(ct1, ct2))
+    return failure();
+  if (ct1 == TCoreType::CUBE || ct2 == TCoreType::CUBE)
+    return TCoreType::CUBE;
+  if (ct1 == TCoreType::VECTOR || ct2 == TCoreType::VECTOR)
+    return TCoreType::VECTOR;
+  return ct1;
 }
 
 std::pair<Value, Value> getIfYieldedValues(scf::IfOp ifOp, unsigned resIdx) {
@@ -218,30 +241,25 @@ void moveOpToScope(Operation *op, ScopeOp target, bool insertAtEnd) {
 
 ScopeOp mergeScopes(ScopeOp scope1, ScopeOp scope2, Operation *at) {
   if (!scope1 || !scope2)
-    return scope1 ? scope1 : scope2;
+    return ScopeOp();
   if (scope1 == scope2)
     return scope1;
+  if (!scope1->getBlock() || scope1->getBlock() != scope2->getBlock())
+    return ScopeOp();
+  if (at && at->getBlock() != scope1->getBlock())
+    return ScopeOp();
 
-  auto coreAttr1 =
-      scope1->getAttrOfType<TCoreTypeAttr>(kPipelinedLoopCoreTypeAttrName);
-  auto coreAttr2 =
-      scope2->getAttrOfType<TCoreTypeAttr>(kPipelinedLoopCoreTypeAttrName);
-  assert(coreAttr1 && coreAttr2 && "expected scopes to have core type attr");
-  TCoreType ct1 = coreAttr1.getTcoretype();
-  TCoreType ct2 = coreAttr2.getTcoretype();
-  assert(!((ct1 == TCoreType::CUBE && ct2 == TCoreType::VECTOR) ||
-           (ct1 == TCoreType::VECTOR && ct2 == TCoreType::CUBE)) &&
-         "cannot merge CUBE and VECTOR scopes");
-  TCoreType mergedCoreType = ct1;
-  if (ct1 == TCoreType::CUBE || ct2 == TCoreType::CUBE)
-    mergedCoreType = TCoreType::CUBE;
-  else if (ct1 == TCoreType::VECTOR || ct2 == TCoreType::VECTOR)
-    mergedCoreType = TCoreType::VECTOR;
+  auto ct1 = getScopeCoreType(scope1);
+  auto ct2 = getScopeCoreType(scope2);
+  if (!ct1 || !ct2)
+    return ScopeOp();
+  FailureOr<TCoreType> mergedCoreType = resolveMergedCoreType(*ct1, *ct2);
+  if (failed(mergedCoreType))
+    return ScopeOp();
 
-  DominanceInfo domInfo(scope1->getParentOp());
   ScopeOp firstScope = scope1;
   ScopeOp secondScope = scope2;
-  if (domInfo.properlyDominates(scope2.getOperation(), scope1.getOperation()))
+  if (scope2->isBeforeInBlock(scope1))
     std::swap(firstScope, secondScope);
 
   Block &firstBlock = firstScope.getRegion().front();
@@ -408,7 +426,7 @@ ScopeOp mergeScopes(ScopeOp scope1, ScopeOp scope2, Operation *at) {
   auto mergedScope = recreateScope(firstScope, mergedReturnOperands, at);
   mergedScope->setAttr(
       kPipelinedLoopCoreTypeAttrName,
-      TCoreTypeAttr::get(mergedScope.getContext(), mergedCoreType));
+      TCoreTypeAttr::get(mergedScope.getContext(), *mergedCoreType));
 
   for (auto [oldRes, newRes] :
        llvm::zip(oldScopeResultsToReplace, mergedScope.getResults()))
@@ -629,13 +647,16 @@ struct DOTGraphTraits<DOTScopeDepGraphInfo *> : public DefaultDOTGraphTraits {
 namespace mlir {
 namespace hivm {
 
-void writeScopeDependenceGraphToDotFile(scf::ForOp forOp, StringRef filename,
-                                        bool shortNames) {
+void writeScopeDependenceGraphToDotFile(scf::ForOp forOp, StringRef prefix,
+                                        StringRef filename, bool shortNames) {
   if (!forOp)
     return;
   DOTScopeDepGraphInfo graphInfo(forOp);
-  std::string outFilename = filename.str();
-  if (outFilename.empty()) {
+  std::string outFilename;
+  if (!filename.empty()) {
+    outFilename =
+        prefix.empty() ? filename.str() : (prefix + "." + filename).str();
+  } else {
     Operation *rootOp = forOp->getParentOfType<func::FuncOp>();
     if (!rootOp)
       rootOp = forOp->getParentOp();
@@ -646,15 +667,17 @@ void writeScopeDependenceGraphToDotFile(scf::ForOp forOp, StringRef filename,
           scopedLoops.push_back(loop);
       });
     }
+    std::string baseName = prefix.empty()
+                               ? graphInfo.funcName
+                               : (prefix + "." + graphInfo.funcName).str();
     if (scopedLoops.size() > 1) {
       auto it = llvm::find(scopedLoops, forOp);
       unsigned idx = (it != scopedLoops.end())
                          ? std::distance(scopedLoops.begin(), it)
                          : 0;
-      outFilename =
-          llvm::formatv("scope-dep.{0}.{1}.dot", graphInfo.funcName, idx).str();
+      outFilename = llvm::formatv("{0}.{1}.dot", baseName, idx).str();
     } else {
-      outFilename = "scope-dep." + graphInfo.funcName + ".dot";
+      outFilename = baseName + ".dot";
     }
   }
   llvm::errs() << "Writing '" << outFilename << "'...";
