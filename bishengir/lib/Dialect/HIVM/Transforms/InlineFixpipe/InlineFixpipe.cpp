@@ -166,12 +166,7 @@ private:
       inlineFixpipeWithRelu(rewriter, loc, op, reluOp);
     } else if (auto storeOp = llvm::dyn_cast_if_present<hivm::StoreOp>(curOp)) {
       //   3. store or layout
-      auto storeAttr = storeOp.getAtomicKindAttr();
-      hivm::AtomicKind atomicKind = hivm::AtomicKind::NONE;
-      if (storeAttr)
-        atomicKind = storeAttr.getValue();
-      if (atomicKind == AtomicKind::NONE || atomicKind == AtomicKind::ADD ||
-          atomicKind == AtomicKind::MAX || atomicKind == AtomicKind::MIN) {
+      if (isFixpipeStoreInlinable(storeOp)) {
         matched = true;
         inlineFixpipeWithStore(rewriter, loc, op, storeOp,
                                op.getDpsInputOperand(0)->get());
