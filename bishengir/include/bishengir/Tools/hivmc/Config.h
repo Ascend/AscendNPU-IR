@@ -538,6 +538,13 @@ public:
     return enableHIVMInjectBarrierAllSyncFlag;
   }
 
+  /// Control bisheng's automatic synchronization inside SIMD VFs.
+  HIVMCMainConfig &enableVFAutoSync(bool enable) {
+    enableVFAutoSyncFlag = enable;
+    return *this;
+  }
+  bool shouldEnableVFAutoSync() const { return enableVFAutoSyncFlag; }
+
   HIVMCMainConfig &unitFlagSync(bool enable) {
     enableUnitFlagSyncFlag = enable;
     return *this;
@@ -1009,6 +1016,9 @@ protected:
 
   /// Enable barrier all mode for HIVM inject sync.
   bool enableHIVMInjectBarrierAllSyncFlag{false};
+
+  /// Enable bisheng SIMD VF auto-sync independently of HIVM PIPE sync.
+  bool enableVFAutoSyncFlag{true};
 
   /// Enable inject all block sync for HIVM inject block sync
   bool enableInjectBlockAllSyncFlag{false};
