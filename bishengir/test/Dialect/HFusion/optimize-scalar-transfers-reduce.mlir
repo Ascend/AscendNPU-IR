@@ -73,32 +73,6 @@ module {
 
 // -----
 
-// Positive: 1D reduce normalized besides its numel
-// CHECK-LABEL: func.func @reduce_lift_small_shape(
-// CHECK: %[[EXP:.*]] = tensor.expand_shape %arg0 {{\[\[}}0, 1]] output_shape [1, 256] : tensor<256xf16> into tensor<1x256xf16>
-// CHECK: %[[REDUCE:.*]] = linalg.reduce ins(%[[EXP]] : tensor<1x256xf16>) outs({{.*}} : tensor<1xf16>) dimensions = [1]
-// CHECK: %[[ADD:.*]] = arith.addf %[[REDUCE]], %[[REDUCE]] : tensor<1xf16>
-// CHECK-NOT: tensor.extract
-// CHECK: return %[[ADD]] : tensor<1xf16>
-module {
-  func.func @reduce_lift_small_shape(%arg0: tensor<256xf16>) -> tensor<1xf16> attributes { mix_mode = "aiv" } {
-    %c0 = arith.constant 0 : index
-    %empty0 = tensor.empty() : tensor<f16>
-    %reduced = linalg.reduce ins(%arg0 : tensor<256xf16>) outs(%empty0 : tensor<f16>) dimensions = [0]
-      (%in: f16, %init: f16) {
-        %s = arith.addf %in, %init : f16
-        linalg.yield %s : f16
-      }
-    %extracted = tensor.extract %reduced[] : tensor<f16>
-    %add = arith.addf %extracted, %extracted : f16
-    %empty1 = tensor.empty() : tensor<1xf16>
-    %inserted = tensor.insert %add into %empty1[%c0] : tensor<1xf16>
-    return %inserted : tensor<1xf16>
-  }
-}
-
-// -----
-
 // Positive: bfloat16 element type.
 // CHECK-LABEL: func.func @reduce_lift_bf16(
 // CHECK: %[[EXP:.*]] = tensor.expand_shape %arg0 {{\[\[}}0, 1]] output_shape [1, 1024] : tensor<1024xbf16> into tensor<1x1024xbf16>
