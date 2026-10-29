@@ -1577,6 +1577,16 @@ def OutlineCVScopes
                            "memref::MemRefDialect"];
 }
 
+def MergeCVScopes
+    : HIVMPass<"merge-cv-scopes", "func::FuncOp", [MixKernel, PureAicKernel]> {
+  let summary = "Merge compatible CV scopes according to pipelining v2 rules";
+  let constructor = "mlir::hivm::createMergeCVScopesPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
+                           "mlir::scope::ScopeDialect",
+                           "arith::ArithDialect",
+                           "tensor::TensorDialect"];
+}
+
 def AutoBlockifyParallelLoop
     : HIVMPass<"auto-blockify-parallel-loop", "func::FuncOp"> {
   let summary = "Enable auto loop on blocks when logical blocknum is larger "

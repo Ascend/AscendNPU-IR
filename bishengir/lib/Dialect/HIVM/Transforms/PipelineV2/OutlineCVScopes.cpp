@@ -9,6 +9,7 @@
 #include "Util.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 
@@ -19,6 +20,7 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/DenseMap.h"
@@ -52,6 +54,7 @@ struct WorkItem {
   unsigned id = 0;
   TCoreType coreType = TCoreType::CUBE_OR_VECTOR;
   Value output = nullptr;
+  Operation *outputOp = nullptr;
   SmallPtrSet<Value, 8> inputs;
   SmallPtrSet<Value, 8> outputs;
   SmallPtrSet<Operation *, 32> ops;
@@ -71,13 +74,16 @@ private:
   // Core classification & predicates
   static bool isViewLikeMemRefOp(Operation *op);
   static Operation *getRootAlloc(Value memref);
+  static bool isGMTarget(Value dst);
   static bool isStoreFixpipeCopyWriter(Operation *usr, Value memrefVal);
   static bool walkAllocUsers(Operation *rootAlloc,
                              llvm::function_ref<bool(OpOperand &)> visitUse);
   static bool isAllocTargetOfStoreFixpipeCopy(Operation *rootAlloc);
 
+  bool hasLoopLocalToTensor(Value memref);
   bool isStoppingToTensor(Operation *tracedOp, Value startOutput);
   TCoreType determineCoreType(Value output);
+  TCoreType determineCoreType(Operation *seedOp);
   bool canCloneOpInWorkItem(Operation *op, WorkItem *item) const;
   bool isIfResultOwnedByItem(scf::IfOp ifOp, unsigned resIdx,
                              WorkItem *item) const;
@@ -89,9 +95,11 @@ private:
   bool hasMultipleNestedIf();
   bool hasIllegalRegionedOp();
   void addLocalOutput(Value val);
+  void addGMOutputOp(Operation *op);
   void collectLocalOutputs();
   LogicalResult buildWorkItems();
-  LogicalResult traceWorkItem(Value output, WorkItem &item, bool &failedLoop);
+  LogicalResult traceWorkItem(Value output, Operation *seedOp, WorkItem &item,
+                              bool &failedLoop);
   LogicalResult sortWorkItems();
   void mapOpsToWorkItems();
   void collectUnmappedOps();
@@ -108,6 +116,7 @@ private:
   DenseMap<Operation *, unsigned> ifOpToId;
   DenseMap<Value, Value> valToOutputAlias;
   SetVector<Value> localOutputs;
+  SetVector<Operation *> gmOutputOps;
   SmallVector<std::unique_ptr<WorkItem>> workItems;
   SmallVector<WorkItem *> sortedWorkItems;
   DenseMap<Operation *, WorkItem *> opToWorkItemMap;
@@ -146,6 +155,45 @@ Operation *CVScopeOutliner::getRootAlloc(Value memref) {
     curr = def->getOperand(0);
   }
   return nullptr;
+}
+
+bool CVScopeOutliner::isGMTarget(Value dst) {
+  for (Value curr = dst; curr;) {
+    if (auto space = GetBufferSpaceAttr(curr))
+      return space->getAddressSpace() == AddressSpace::GM;
+
+    if (auto blkArg = dyn_cast<BlockArgument>(curr)) {
+      Operation *parentOp = blkArg.getOwner()->getParentOp();
+      if (auto loop = dyn_cast_or_null<LoopLikeOpInterface>(parentOp)) {
+        if (OpOperand *init = loop.getTiedLoopInit(blkArg)) {
+          curr = init->get();
+          continue;
+        }
+      }
+      return isa_and_nonnull<func::FuncOp>(parentOp);
+    }
+
+    Operation *def = curr.getDefiningOp();
+    if (!def)
+      return false;
+    if (isa<AllocWorkspaceOp>(def))
+      return true;
+    if (auto insertSlice = dyn_cast<tensor::InsertSliceOp>(def)) {
+      curr = insertSlice.getDest();
+      continue;
+    }
+    if (isViewLikeMemRefOp(def) ||
+        isa<bufferization::ToTensorOp, tensor::ExtractSliceOp,
+            tensor::CollapseShapeOp, tensor::ExpandShapeOp, tensor::ReshapeOp>(
+            def)) {
+      if (def->getNumOperands() == 0)
+        return false;
+      curr = def->getOperand(0);
+      continue;
+    }
+    return false;
+  }
+  return false;
 }
 
 bool CVScopeOutliner::isStoreFixpipeCopyWriter(Operation *usr,
@@ -188,6 +236,16 @@ bool CVScopeOutliner::isAllocTargetOfStoreFixpipeCopy(Operation *rootAlloc) {
   });
 }
 
+bool CVScopeOutliner::hasLoopLocalToTensor(Value memref) {
+  Operation *rootAlloc = getRootAlloc(memref);
+  if (!rootAlloc)
+    return false;
+  return walkAllocUsers(rootAlloc, [&](OpOperand &use) {
+    Operation *usr = use.getOwner();
+    return isa<bufferization::ToTensorOp>(usr) && loopOp->isProperAncestor(usr);
+  });
+}
+
 bool CVScopeOutliner::isStoppingToTensor(Operation *tracedOp,
                                          Value startOutput) {
   auto toTensor = dyn_cast_or_null<bufferization::ToTensorOp>(tracedOp);
@@ -197,12 +255,9 @@ bool CVScopeOutliner::isStoppingToTensor(Operation *tracedOp,
 }
 
 TCoreType CVScopeOutliner::determineCoreType(Value output) {
-  Operation *defOp = output.getDefiningOp();
+  Operation *defOp = output ? output.getDefiningOp() : nullptr;
   if (!defOp)
     return TCoreType::CUBE_AND_VECTOR;
-
-  if (auto ct = queryConcreteCoreType(defOp))
-    return *ct;
 
   if (auto ifOp = dyn_cast<scf::IfOp>(defOp)) {
     auto [tVal, eVal] =
@@ -213,6 +268,15 @@ TCoreType CVScopeOutliner::determineCoreType(Value output) {
         return determineCoreType(branchVal);
     }
   }
+  return determineCoreType(defOp);
+}
+
+TCoreType CVScopeOutliner::determineCoreType(Operation *defOp) {
+  if (!defOp)
+    return TCoreType::CUBE_AND_VECTOR;
+
+  if (auto ct = queryConcreteCoreType(defOp))
+    return *ct;
 
   SmallVector<Operation *> stack = {defOp};
   SmallPtrSet<Operation *, 16> visited = {defOp};
@@ -353,6 +417,17 @@ void CVScopeOutliner::addLocalOutput(Value val) {
   }
 }
 
+void CVScopeOutliner::addGMOutputOp(Operation *op) {
+  if (!op || !loopOp->isProperAncestor(op))
+    return;
+  if (op->getNumResults() > 0) {
+    for (Value res : op->getResults())
+      addLocalOutput(res);
+    return;
+  }
+  gmOutputOps.insert(op);
+}
+
 void CVScopeOutliner::collectLocalOutputs() {
   unsigned nextOrder = 0;
   loopOp->walk<WalkOrder::PostOrder>([&](Operation *op) {
@@ -362,9 +437,23 @@ void CVScopeOutliner::collectLocalOutputs() {
       getOrAssignIfId(ifOp);
   });
 
-  loopOp->walk([&](bufferization::ToTensorOp toTensor) {
-    if (isAllocTargetOfStoreFixpipeCopy(getRootAlloc(toTensor.getOperand())))
-      addLocalOutput(toTensor.getResult());
+  loopOp->walk([&](Operation *op) {
+    if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op)) {
+      if (isAllocTargetOfStoreFixpipeCopy(getRootAlloc(toTensor.getOperand())))
+        addLocalOutput(toTensor.getResult());
+      return;
+    }
+    if (auto storeOp = dyn_cast<StoreOp>(op)) {
+      if (isGMTarget(storeOp.getDst()) &&
+          !hasLoopLocalToTensor(storeOp.getDst()))
+        addGMOutputOp(storeOp);
+      return;
+    }
+    if (auto fixpipeOp = dyn_cast<FixpipeOp>(op)) {
+      if (isGMTarget(fixpipeOp.getDst()) &&
+          !hasLoopLocalToTensor(fixpipeOp.getDst()))
+        addGMOutputOp(fixpipeOp);
+    }
   });
   for (Region &reg : loopOp->getRegions()) {
     for (Block &block : reg) {
@@ -378,10 +467,12 @@ void CVScopeOutliner::collectLocalOutputs() {
   }
 }
 
-LogicalResult CVScopeOutliner::traceWorkItem(Value output, WorkItem &item,
-                                             bool &failedLoop) {
+LogicalResult CVScopeOutliner::traceWorkItem(Value output, Operation *seedOp,
+                                             WorkItem &item, bool &failedLoop) {
   item.output = output;
-  item.coreType = determineCoreType(output);
+  item.outputOp = output ? output.getDefiningOp() : seedOp;
+  item.coreType =
+      output ? determineCoreType(output) : determineCoreType(seedOp);
 
   SmallVector<Operation *> opStack;
   SmallPtrSet<Operation *, 32> visited;
@@ -490,10 +581,9 @@ LogicalResult CVScopeOutliner::traceWorkItem(Value output, WorkItem &item,
   };
 
   auto expandAllocSubnet = [&](Operation *allocOp) -> bool {
-    if (!allocOp || !loopOp->isProperAncestor(allocOp) ||
-        !expandedAllocs.insert(allocOp).second)
+    if (!allocOp || !expandedAllocs.insert(allocOp).second)
       return true;
-    if (!addOpAndTraceOperands(allocOp))
+    if (loopOp->isProperAncestor(allocOp) && !addOpAndTraceOperands(allocOp))
       return false;
     walkAllocUsers(allocOp, [&](OpOperand &use) {
       Operation *usr = use.getOwner();
@@ -512,7 +602,10 @@ LogicalResult CVScopeOutliner::traceWorkItem(Value output, WorkItem &item,
     addLocalOutput(canonOut);
   };
 
-  traceValue(output);
+  if (output)
+    traceValue(output);
+  else
+    queueOp(seedOp);
   if (failedLoop)
     return failure();
 
@@ -598,40 +691,50 @@ LogicalResult CVScopeOutliner::traceWorkItem(Value output, WorkItem &item,
 
 LogicalResult CVScopeOutliner::buildWorkItems() {
   bool failedLoop = false;
-  for (size_t idx = 0; idx < localOutputs.size(); ++idx) {
+  auto addItem = [&](Value outVal, Operation *seedOp) -> LogicalResult {
     auto item = std::make_unique<WorkItem>();
     item->id = nextWorkItemId++;
-    if (failed(traceWorkItem(localOutputs[idx], *item, failedLoop))) {
-      if (failedLoop)
-        return failure();
-      continue;
-    }
+    if (failed(traceWorkItem(outVal, seedOp, *item, failedLoop)))
+      return failedLoop ? failure() : success();
     if (!item->ops.empty() || !item->condOps.empty())
       workItems.push_back(std::move(item));
+    return success();
+  };
+
+  for (Operation *seedOp : gmOutputOps) {
+    if (failed(addItem(/*outVal=*/nullptr, seedOp)))
+      return failure();
+  }
+  for (size_t idx = 0; idx < localOutputs.size(); ++idx) {
+    if (failed(addItem(localOutputs[idx], /*seedOp=*/nullptr)))
+      return failure();
   }
   return failedLoop ? failure() : success();
 }
 
 LogicalResult CVScopeOutliner::sortWorkItems() {
-  auto getOutputOrder = [&](Value out) -> unsigned {
-    Operation *def = out ? out.getDefiningOp() : nullptr;
-    if (!def)
-      return 0;
-    if (auto ifOp = dyn_cast<scf::IfOp>(def)) {
-      auto [tVal, eVal] =
-          getIfYieldedValues(ifOp, cast<OpResult>(out).getResultNumber());
-      for (Value branchVal : {tVal, eVal}) {
-        if (Operation *bDef = branchVal ? branchVal.getDefiningOp() : nullptr;
-            bDef && ifOp->isProperAncestor(bDef))
-          return opOrder.lookup(bDef);
+  auto getOutputOrder = [&](const WorkItem &w) -> unsigned {
+    if (Value out = w.output) {
+      Operation *def = out.getDefiningOp();
+      if (!def)
+        return 0;
+      if (auto ifOp = dyn_cast<scf::IfOp>(def)) {
+        auto [tVal, eVal] =
+            getIfYieldedValues(ifOp, cast<OpResult>(out).getResultNumber());
+        for (Value branchVal : {tVal, eVal}) {
+          if (Operation *bDef = branchVal ? branchVal.getDefiningOp() : nullptr;
+              bDef && ifOp->isProperAncestor(bDef))
+            return opOrder.lookup(bDef);
+        }
       }
+      return opOrder.lookup(def);
     }
-    return opOrder.lookup(def);
+    return w.outputOp ? opOrder.lookup(w.outputOp) : 0;
   };
 
   llvm::stable_sort(workItems, [&](const std::unique_ptr<WorkItem> &a,
                                    const std::unique_ptr<WorkItem> &b) {
-    return getOutputOrder(a->output) < getOutputOrder(b->output);
+    return getOutputOrder(*a) < getOutputOrder(*b);
   });
 
   unsigned n = workItems.size();
@@ -1171,7 +1274,14 @@ LogicalResult CVScopeOutliner::run() {
     for (WorkItem *item : sortedWorkItems) {
       llvm::dbgs() << "  Item " << item->id
                    << ": coreType=" << stringifyTCoreType(item->coreType)
-                   << ", output=" << item->output << "\n";
+                   << ", output=";
+      if (item->output)
+        llvm::dbgs() << item->output;
+      else if (item->outputOp)
+        llvm::dbgs() << *item->outputOp;
+      else
+        llvm::dbgs() << "<unmapped>";
+      llvm::dbgs() << "\n";
       for (Value inp : item->inputs)
         llvm::dbgs() << "    input: " << inp << "\n";
     }
@@ -1207,7 +1317,7 @@ void OutlineCVScopesPass::runOnOperation() {
   LLVM_DEBUG({
     getOperation().walk([&](scf::ForOp forOp) {
       if (forOp->hasAttr(CVPipelinedLoopAttr::name))
-        writeScopeDependenceGraphToDotFile(forOp);
+        writeScopeDependenceGraphToDotFile(forOp, "outlined");
     });
   });
 }

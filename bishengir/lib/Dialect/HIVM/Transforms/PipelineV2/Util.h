@@ -27,6 +27,18 @@ bool isCoreOp(Operation *op);
 /// type, or `std::nullopt` otherwise.
 std::optional<TCoreType> queryConcreteCoreType(Operation *op);
 
+/// Return the `hivm.loop_core_type` attribute value of `scope` if present.
+std::optional<TCoreType> getScopeCoreType(ScopeOp scope);
+
+/// Return true if `ct1` and `ct2` can be merged into a single core scope
+/// (`CUBE` and `VECTOR` cannot be merged together; `CUBE_AND_VECTOR` and
+/// `CUBE_OR_VECTOR` are compatible with any core type).
+bool areCompatibleCoreTypes(TCoreType ct1, TCoreType ct2);
+
+/// Resolve the resulting core type when merging compatible `ct1` and `ct2`,
+/// or return `failure()` if they are incompatible.
+FailureOr<TCoreType> resolveMergedCoreType(TCoreType ct1, TCoreType ct2);
+
 /// Return the `{thenVal, elseVal}` yielded for `resIdx` of `ifOp`.
 std::pair<Value, Value> getIfYieldedValues(scf::IfOp ifOp, unsigned resIdx);
 
@@ -49,16 +61,17 @@ ScopeOp recreateScope(ScopeOp srcScope, ValueRange returnOperands,
 /// merging scopes whenever possible.
 void moveOpToScope(Operation *op, ScopeOp target, bool insertAtEnd = false);
 
-/// Merge `scope1` and `scope2` into a new `ScopeOp` inserted before `at`,
-/// ordering operations by dominance, merging `scf.if` operations that share the
-/// same `pipeline.if.cond` ID, and pruning scope results that become unused.
+/// Merge `scope1` and `scope2` (which must reside in the same parent block)
+/// into a new `ScopeOp` inserted before `at`, ordering operations by
+/// dominance, merging `scf.if` operations that share the same
+/// `pipeline.if.cond` ID, and pruning scope results that become unused.
 ScopeOp mergeScopes(ScopeOp scope1, ScopeOp scope2, Operation *at);
 
 /// Write a Graphviz DOT file depicting the dependence graph between scopes in
 /// `forOp` (including loop-carried dependencies), modeled after LLVM's
 /// `writeCFGToDotFile` (`-dot-cfg`). If `filename` is empty, defaults to
-/// `scope-dep.<func>.dot`.
-void writeScopeDependenceGraphToDotFile(scf::ForOp forOp,
+/// `[<prefix>.]<func>[.<idx>].dot`.
+void writeScopeDependenceGraphToDotFile(scf::ForOp forOp, StringRef prefix = "",
                                         StringRef filename = "",
                                         bool shortNames = false);
 
