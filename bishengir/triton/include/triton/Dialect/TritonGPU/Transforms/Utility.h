@@ -36,8 +36,11 @@ SmallVector<unsigned, 3> mmaVersionToInstrShape(int version,
 bool isLoadFromTensorPtr(triton::LoadOp op);
 
 // Return an array of indices enumerating the elements of 'arr' in descending
-// order (so that result[i] is the index of the i-th largest element of 'arr')
-SmallVector<unsigned, 4> argSort(const SmallVector<int64_t> &arr);
+// order (so that result[i] is the index of the i-th largest element of 'arr').
+// When 'stableSort' is true (SIMD/SIMT mixed compilation mode), ties are broken
+// deterministically towards row-major order (higher index first).
+SmallVector<unsigned, 4> argSort(const SmallVector<int64_t> &arr,
+                                 bool stableSort = false);
 
 // Return the operand used to access the memory in the operation
 Value getMemAccessPtr(Operation *op);
