@@ -2258,28 +2258,20 @@ LogicalResult CVPipelineImpl::privatizeSharedCounterIterArgs() {
   if (pending.empty())
     return success();
 
-  unsigned origNumIterArgs = pipelineLoop.getNumRegionIterArgs();
-  IRRewriter rewriter(pipelineLoop.getContext());
-  FailureOr<LoopLikeOpInterface> newLoopLike =
-      pipelineLoop.replaceWithAdditionalYields(
-          rewriter, newInits, /*replaceInitOperandUsesInLoop=*/false,
-          [](OpBuilder &, Location, ArrayRef<BlockArgument> newArgs) {
-            // Placeholder pass-through; each private counter's yield slot is
-            // rewritten to its scope result in
-            // createNewLoopsForPreloadWithScopes.
-            return SmallVector<Value>(newArgs.begin(), newArgs.end());
-          });
-  if (failed(newLoopLike))
+  // Each private counter's yield slot is a placeholder pass-through until
+  // createNewLoopsForPreloadWithScopes rewrites it to its scope result. The
+  // old loop is replaced, but its body block is moved rather than cloned, so
+  // every Operation * collected so far (worklist, toErase, atomic effects,
+  // workspace allocs) stays valid. globalIRMap is still empty at this point.
+  FailureOr<unsigned> privateBase =
+      hivm::appendPassThroughIterArgs(pipelineLoop, newInits);
+  if (failed(privateBase))
     return pipelineLoop->emitWarning(
         "[cv-pipelining] failed to append private counter iter_args");
-  // The old loop is replaced, but its body block was moved rather than cloned,
-  // so every Operation * collected so far (worklist, toErase, atomic effects,
-  // workspace allocs) stays valid. globalIRMap is still empty at this point.
-  pipelineLoop = cast<scf::ForOp>(newLoopLike->getOperation());
   builder.setInsertionPoint(pipelineLoop);
 
   for (auto [idx, p] : llvm::enumerate(pending)) {
-    unsigned privateIdx = origNumIterArgs + static_cast<unsigned>(idx);
+    unsigned privateIdx = *privateBase + static_cast<unsigned>(idx);
     p.item->privateCounters.push_back(
         {p.advanceVal, p.sharedArgIdx,
          pipelineLoop.getRegionIterArg(p.sharedArgIdx),
