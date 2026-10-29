@@ -209,6 +209,13 @@ compileDeviceKernel(StringRef bishengPath, const std::string &llvmirFilepath,
   // kernel during device compilation.
   arguments.push_back("-mllvm");
   arguments.push_back("-enable-module-inliner");
+  // IndVarSimplify can rewrite an i64 loop accumulator into a closed form
+  // that needs an i65 multiply. ccec lowers it to
+  // unsupported __multi3 helper, so keep Triton loops iterative.
+  if (config.shouldCompileTriton()) {
+    arguments.push_back("-mllvm");
+    arguments.push_back("-replexitval=unusedindvarinloop");
+  }
   if (hacc::utils::isAscend950(config.getTargetBackend()) ||
       hacc::utils::isAscend960(config.getTargetBackend())) {
     arguments.push_back("-mllvm");
