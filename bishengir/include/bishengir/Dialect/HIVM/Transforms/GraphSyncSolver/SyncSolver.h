@@ -297,8 +297,15 @@ protected:
                               hivm::TCoreType coreTypeDst);
   bool checkSkipCrossCorePair(Occurrence *occ1, Occurrence *occ2);
 
+  // The LCA loop of a backward pair, or nullptr if the pair is not backward.
+  Loop *getBackwardLCALoop(Occurrence *occ1, Occurrence *occ2);
+
   // Whether the pair is inside a parallel loop that needs no sync operation.
   bool checkSkipParallelLoop(Occurrence *occ1, Occurrence *occ2);
+
+  // Whether the pair is a cross-iteration conflict of an auto-blockify marked
+  // op with itself, made unnecessary by the disjoint logical blocks.
+  bool checkSkipAutoBlockifyDMAPair(Occurrence *occ1, Occurrence *occ2);
 
   // Whether (occ1, occ2) cannot form a valid sync-operation candidate.
   bool checkImpossibleOccPair(Occurrence *occ1, Occurrence *occ2);

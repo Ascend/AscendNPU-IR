@@ -237,6 +237,8 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
       rewriter.replaceOp(scopeOp, ifOp.getResults());
     } else {
       func::CallOp callOp = rewriter.create<func::CallOp>(loc, funcOp, inputs);
+      if (Attribute attr = scopeOp->getAttr(hivm::VectorFunctionAttr::name))
+        callOp->setAttr(hivm::VectorFunctionAttr::name, attr);
       LDBG("created callOp: " << callOp);
       rewriter.replaceOp(scopeOp, callOp);
     }

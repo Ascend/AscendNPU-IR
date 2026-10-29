@@ -382,9 +382,9 @@ private:
 /// kind. No cast-up / cast-back is inserted on this path.
 ///
 /// Example:
-///   reduce(add i1) -> reduce(or)
+///   reduce(add i1) -> reduce(xor)
 ///   reduce(mul i1) -> reduce(and)
-enum class ReduceBoolLogicalKind { Or, And };
+enum class ReduceBoolLogicalKind { Or, And, Xor };
 
 template <typename ReduceOpType, typename Traits>
 struct NormalizeReduceBoolToLogicalTemplate
@@ -399,7 +399,7 @@ public:
     if (!Traits::shouldNormalize(op))
       return failure();
 
-    // Step 2: map the source reduction semantics to `or` / `and`.
+    // Step 2: map the source reduction semantics to `or` / `and` / `xor`.
     std::optional<ReduceBoolLogicalKind> kind =
         Traits::getLogicalReduceKind(op);
     if (!kind)
@@ -412,13 +412,13 @@ public:
 
 /// Normalizes the special bool-reduce-add case into:
 /// 1. select `{1, 0}` in i16,
-/// 2. reduce with `max`,
+/// 2. reduce with the trait-provided combiner,
 /// 3. compare the reduced value against zero.
 ///
 /// Example:
-///   reduce(add i1) -> select(i16 1, i16 0) -> reduce(max i16) -> cmp ne 0
+/// reduce(add i1) -> select(i16 1, i16 0) -> reduce(<combiner> i16) -> cmp ne 0
 template <typename ReduceOpType, typename Traits>
-struct ReduceI1AddToSelectMaxCompareTemplate
+struct ReduceI1AddToSelectCompareTemplate
     : public OpRewritePattern<ReduceOpType> {
 public:
   using OpRewritePattern<ReduceOpType>::OpRewritePattern;
@@ -430,7 +430,7 @@ public:
       return failure();
 
     // Step 2: materialize the bool input as an i16 {1, 0} select and reduce
-    // the selected values with `max`.
+    // the selected values with the trait-provided combiner.
     Location loc = op.getLoc();
     Type i16Type = rewriter.getI16Type();
     Value input = Traits::getInput(op);
@@ -444,7 +444,7 @@ public:
                                             zeroTensor, selectDst);
     Value reduceInit = Traits::createReduceInit(rewriter, loc, op, i16Type);
     Value reduced =
-        Traits::createMaxReduce(rewriter, loc, op, selected, reduceInit);
+        Traits::createWidenedReduce(rewriter, loc, op, selected, reduceInit);
 
     // Step 3: recover the bool result by comparing the reduced i16 value
     // against zero.

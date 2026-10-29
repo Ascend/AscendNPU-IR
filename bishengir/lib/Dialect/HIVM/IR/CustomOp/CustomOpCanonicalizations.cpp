@@ -44,6 +44,10 @@ struct CustomOpCanonicalizer : public OpRewritePattern<CustomOpT> {
         customOp.setPipe(builtinInfo.pipe);
         return success();
       }
+      if (!customOp.getInlineMode() && builtinInfo.inlineMode) {
+        customOp.setInlineMode(*builtinInfo.inlineMode);
+        return success();
+      }
     } else if constexpr (std::is_same_v<CustomOpT, CustomMacroOp>) {
       if (customOp.getInPipe() != builtinInfo.inPipe) {
         customOp.setInPipe(builtinInfo.inPipe);

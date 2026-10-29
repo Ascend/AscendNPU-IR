@@ -922,6 +922,7 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       static constexpr StringLiteral kBuiltinGatherLoadName = "__builtin_gather_load";
       static constexpr StringLiteral kBuiltinIndexSelectName = "__builtin_index_select";
       static constexpr StringLiteral kBuiltinIndirectAtomicName = "__builtin_indirect_atomic";
+      static constexpr StringLiteral kBuiltinOnlineSoftmaxNZName = "__builtin_online_softmax_nz";
       static constexpr StringLiteral kBuiltinHistogramName = "__builtin_histogram";
       static constexpr StringLiteral kBuiltinProtonGetSysCntName =
           "__builtin_proton_get_sys_cnt";
@@ -994,6 +995,7 @@ def CustomOp : HIVM_CustomOp<"custom", [SinglePipeOpTrait]> {
       PIPE pipe;
       VFMode vfMode;
       const SmallVector<size_t> gmAddrArgsIndices;
+      std::optional<InlineMode> inlineMode = std::nullopt;
     };
 
     // Map <builtin in name> <-> {CORE_TYPE, PIPE, VF_MODE, gmAddrArgsIndices}
@@ -1411,6 +1413,100 @@ def MultiBufferCounterOp : HIVM_Op<"multi_buffer_counter"> {
   }];
   let results = (outs I64:$counter);
   let assemblyFormat = "attr-dict `->` type($counter)";
+}
+
+// Shared Scalar state is externally updated. Conservatively model read/write
+// effects even on get so CSE/LICM cannot merge or speculate volatile queries.
+class TcbPoolOp<string mnemonic, list<Trait> traits = []>
+    : HIVM_Op<mnemonic, !listconcat([
+        MemoryEffects<[MemRead, MemWrite]>, HIVMCoreTypeInterface,
+        OpPipeInterface, SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_S">
+      ], traits)> {
+  let hasVerifier = 1;
+}
+
+def TcbPoolInitOp : TcbPoolOp<"tcb_pool_init", [CubeCoreTypeTrait]> {
+  let summary = "Initialize TCB pool metadata on Cube";
+  let description = [{
+    Initialize the occupied-slot bitmap in metadata word zero. Start-slot
+    entries need no initialization: allocation writes them before publication.
+    Queue entry ranges and depths are supplied by the caller. Cube is the sole writer.
+    Initialize once per pool lifetime, after all prior users have completed.
+    The caller orders initialization and metadata publication before AIV get.
+    This op reserves no memory and performs no synchronization.
+  }];
+  let arguments = (ins MemRefRankOf<[I32], [1]>:$metadata);
+  let assemblyFormat = "$metadata attr-dict `:` type($metadata)";
+}
+
+def TcbPoolAllocOp : TcbPoolOp<"tcb_pool_alloc", [CubeCoreTypeTrait]> {
+  let summary = "Try to allocate a FIFO entry and contiguous UB slots once";
+  let description = [{
+    Attempt allocation once without reclaiming or modifying completed entries.
+    Return the absolute UB byte address on success, or UINT64_MAX on failure.
+    Address zero is valid. Failure leaves metadata unchanged.
+    The caller must check success before issuing the associated FIX output.
+    pool is a single-address pointer_cast of a static contiguous i8 UB buffer
+    containing 1..32 whole slots. entry_offset and queue_depth select the start-slot words; slots specifies this
+    queue's fixed slot demand. seq is the cumulative allocation sequence.
+    The caller must check allocated - released < queue_depth before allocation, advance
+    its allocation count only on success, and provision sufficient event credits.
+    This op stores the slot start at metadata[entry_offset + seq % queue_depth]; it stores no counters.
+    Configuration must remain identical throughout the pool lifetime.
+    Publication of the FIFO entry does not imply FIX completion. The caller
+    provides visibility ordering and guarantees u32 counters do not wrap.
+    This op contains no spinning wait or pipe synchronization.
+  }];
+  let arguments = (ins MemRefRankOf<[I32], [1]>:$metadata,
+                       MemRefRankOf<[I8], [1]>:$pool, I32:$seq,
+                       I32Attr:$entry_offset, I32Attr:$queue_depth,
+                       I32Attr:$slot_bytes,
+                       I32Attr:$slots);
+  let results = (outs I64:$address);
+  let assemblyFormat = [{
+    $metadata `,` $pool `seq` `(` $seq `)` attr-dict `:` type($metadata) `,` type($pool) `->` type($address)
+  }];
+}
+
+def TcbPoolGetOp : TcbPoolOp<"tcb_pool_get", [VectorCoreTypeTrait]> {
+  let summary = "Read the address of an explicitly numbered FIFO entry";
+  let description = [{
+    Read metadata[entry_offset + seq % queue_depth] without modifying metadata. seq is this AIV's
+    zero-based cumulative issue sequence for the queue over the pool lifetime,
+    not the polling-loop iteration. Each AIV gets entries once in FIFO order.
+    The caller guarantees released[queue] <= seq < allocated[queue], metadata
+    visibility and readiness of the corresponding FIX result. This op does
+    not wait for readiness and does not advance any shared cursor.
+    pool has the same constraints as tcb_pool_alloc.
+  }];
+  let arguments = (ins MemRefRankOf<[I32], [1]>:$metadata,
+                       MemRefRankOf<[I8], [1]>:$pool, I32:$seq,
+                       I32Attr:$entry_offset, I32Attr:$queue_depth,
+                       I32Attr:$slot_bytes);
+  let results = (outs I64:$address);
+  let assemblyFormat = [{
+    $metadata `,` $pool `seq` `(` $seq `)` attr-dict
+    `:` type($metadata) `,` type($pool) `->` type($address)
+  }];
+}
+
+def TcbPoolReleaseOp : TcbPoolOp<"tcb_pool_release", [CubeCoreTypeTrait]> {
+  let summary = "Free the explicitly numbered FIFO head slots on Cube";
+  let description = [{
+    Free metadata[entry_offset + seq % queue_depth] for the next FIFO entry. seq is the
+    cumulative release sequence, maintained by the caller. The caller
+    must first consume completion notifications from BOTH AIVs for that entry,
+    ordered after their last buffer accesses. This op always succeeds under
+    that precondition. Clear the entry's occupied bits immediately; the caller
+    then increments its release count. No counters are stored in metadata.
+    slots is in [1, 32] and must match this queue's allocation demand.
+    Alloc and release execute on the same Cube Scalar stream. This op does not
+    wait; the caller drains completion notifications before pool reset/teardown.
+  }];
+  let arguments = (ins MemRefRankOf<[I32], [1]>:$metadata, I32:$seq, I32Attr:$entry_offset,
+                       I32Attr:$queue_depth,
+                       I32Attr:$slots);
+  let assemblyFormat = "$metadata `seq` `(` $seq `)` attr-dict `:` type($metadata)";
 }
 
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMOPS_TD

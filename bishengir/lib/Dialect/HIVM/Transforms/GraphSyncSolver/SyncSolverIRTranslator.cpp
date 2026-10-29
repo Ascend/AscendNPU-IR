@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/SCF/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
@@ -681,6 +682,8 @@ IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
          pipeWrite != hivm::PIPE::PIPE_UNASSIGNED);
   auto rwOp = std::make_unique<RWOperation>(op, parentOp, coreTypeVal, pipeRead,
                                             pipeWrite, readMemOps, writeMemOps);
+  rwOp->isAutoBlockifyDMA =
+      op->hasAttrOfType<UnitAttr>(hivm::AutoBlockifyDMAAttr::name);
   if (isa<UnitFlagEnabledInterface>(op)) {
     // A dual-dst fixpipe may fall back to a software split (two
     // copy_matrix_cc_to_ubuf intrinsics) in the template library; the
@@ -842,6 +845,18 @@ IRTranslator::getCallOp(func::CallOp callOp, OperationBase *parentOp) {
 #endif
     } else if (auto gatherOp = dyn_cast<vector::GatherOp>(op)) {
       handleRWValue(gatherOp.getBase(), MemoryEffect::READ);
+    } else if (auto loadOp = dyn_cast<hivmave::VFLoadOp>(op)) {
+      handleRWValue(loadOp.getBase(), MemoryEffect::READ);
+    } else if (auto gatherOp = dyn_cast<hivmave::VFGatherOp>(op)) {
+      handleRWValue(gatherOp.getBase(), MemoryEffect::READ);
+    } else if (auto storeOp = dyn_cast<hivmave::VFMaskedStoreOp>(op)) {
+      handleRWValue(storeOp.getBase(), MemoryEffect::WRITE);
+    } else if (auto storeOp = dyn_cast<hivmave::VFUnalignedMaskedStoreOp>(op)) {
+      handleRWValue(storeOp.getBase(), MemoryEffect::WRITE);
+    } else if (auto storeOp = dyn_cast<hivmave::VFStoreWithStrideOp>(op)) {
+      handleRWValue(storeOp.getBase(), MemoryEffect::WRITE);
+    } else if (auto scatterOp = dyn_cast<hivmave::VFScatterOp>(op)) {
+      handleRWValue(scatterOp.getBase(), MemoryEffect::WRITE);
     }
   });
 
@@ -869,6 +884,15 @@ bool IRTranslator::isParallelLoop(Loop *loopOp) {
   assert(loopOp != nullptr);
   if (loopOp->op != nullptr) {
     return loopOp->op->hasAttrOfType<UnitAttr>(hivm::ParallelLoopAttr::name);
+  }
+  return false;
+}
+
+bool IRTranslator::isAutoBlockifyLoop(Loop *loopOp) {
+  assert(loopOp != nullptr);
+  if (loopOp->op != nullptr) {
+    return loopOp->op->hasAttrOfType<UnitAttr>(
+        hivm::AutoBlockifySubloopAttr::name);
   }
   return false;
 }
@@ -1000,6 +1024,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
       if (auto loopLikeOp = dyn_cast<LoopLikeOpInterface>(op)) {
         auto loopOp = std::make_unique<Loop>(&op, parScope);
         loopOp->isParallel = isParallelLoop(loopOp.get());
+        loopOp->isAutoBlockifyLoop = isAutoBlockifyLoop(loopOp.get());
         loopOp->isCVUnrolledLoop = isCVUnrolledLoop(loopOp.get());
         loopOp->multibufferUnrollNum =
             getLoopMultibufferUnrollNum(loopOp.get());

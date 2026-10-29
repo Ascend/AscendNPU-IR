@@ -1423,6 +1423,26 @@ def HIVM_SyncBlockLockOrderingAttr
   }];
 }
 
+def HIVM_AutoBlockifySubloopAttr
+    : HIVM_Attr<"AutoBlockifySubloop", "autoblockify_subloop"> {
+  // Keep the pre-existing attribute name instead of the `hivm.` prefixed one.
+  let attrName = "autoblockify.subloop";
+  let description = [{
+    Marks the loop over the logical blocks that auto-blockify created.
+  }];
+}
+
+def HIVM_AutoBlockifyDMAAttr
+    : HIVM_Attr<"AutoBlockifyDMA", "autoblockify_dma"> {
+  let attrName = "autoblockify.dma";
+  let description = [{
+    Marks a non-atomic store or fixpipe of the auto-blockify loop that writes a
+    kernel argument at a block-indexed offset. Different iterations handle
+    different logical blocks, so such an op never overlaps itself across
+    iterations.
+  }];
+}
+
 def HIVM_TileMixCubeNumAttr
     : HIVM_Attr<"TileMixCubeNum", "tile_mix_cube_num"> {
   let description = [{

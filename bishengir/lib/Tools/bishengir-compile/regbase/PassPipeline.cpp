@@ -28,6 +28,7 @@
 #include "bishengir/Dialect/HIVM/Pipelines/regbase/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVMAVE/Pipelines/Passes.h"
+#include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h"
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Triton/Pipelines/Passes.h"
@@ -44,7 +45,6 @@
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
 #include "mlir/Dialect/Linalg/Passes.h"
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"
-#include "mlir/Dialect/SCF/Transforms/Passes.h"
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Target/LLVMIR/ModuleTranslation.h"
 #include "mlir/Transforms/Passes.h"
@@ -84,6 +84,7 @@ getProtonGPUCompileConfig();
 #endif
 
 namespace regbase {
+
 // Helper function to set up HFusionPipelineOptions
 void setupHFusionPipelineOptions(
     hfusion::HFusionPipelineOptions &hfusionPipelineOptions,
@@ -158,6 +159,76 @@ void setupHIVMPipelineOptions(
            "--set-workspace-multibuffer=0.\n";
     options.setWorkspaceMultibuffer = 0;
   }
+}
+
+void buildAffinityPipeline(OpPassManager &pm,
+                           const BiShengIRCompileMainConfig &config) {
+  // Prepare and normalize the input IR for subsequent affinity passes.
+  pm.addPass(
+      hacc::createAppendDeviceSpecPass(hacc::AppendTargetDeviceSpecOptions{
+          config.getTarget(), config.getCustomAICNumber(),
+          config.getCustomAIVNumber(), config.getHIVMCVersion()}));
+  pm.addPass(hfusion::createAdaptTritonKernelPass());
+  pm.addPass(hivm::createTritonGlobalKernelArgsToHIVMOpPass());
+  pm.addPass(createCanonicalizeModulePass());
+
+  pm.nest<func::FuncOp>().addPass(hivm::createMarkTightlyCoupledBufferPass());
+  pm.addPass(hivm::createSplitMixKernelPass());
+  pm.addPass(createCanonicalizerPass());
+
+  OutlineScopeOptions outlineScopeOptions;
+  outlineScopeOptions.outlineMarkedScopesOnly = true;
+  pm.addPass(scope::createOutlineScopePass(outlineScopeOptions));
+  // Expose C/V core operations to memory inference and planning.
+  pm.addPass(scope::createInlineScopePass());
+
+  // The input AVE specifies predicates, layouts and instruction modes.
+  // Materialize those choices before memory planning without running the
+  // shared AVE optimization pipeline or its layout solver.
+  pm.nest<func::FuncOp>().addPass(hivmave::createProcessMembarPass());
+  pm.nest<func::FuncOp>().addPass(hivmave::createAVENormalizeOpsPass());
+  pm.nest<func::FuncOp>().addPass(hivmave::createRemoveVectorLayoutAttrPass());
+
+  // Frontend ttadapter codegen does not yet mark kernel memref arguments as GM.
+  // TODO: Remove scope inference once the frontend guarantees explicit address
+  // spaces for all memref values.
+  pm.addPass(hivm::createInferHIVMMemScopePass());
+
+  PlanMemoryRegBaseOptions planMemoryOptions;
+  planMemoryOptions.enablePrintMemoryAllocatedSize =
+      config.getEnablePrintMemoryAllocatedSize();
+  // Explicit synchronization cannot cover new aliases introduced by planning.
+  // Independent local allocations carry mem_unique; views express sharing.
+  planMemoryOptions.disableTightlyCoupledBufferReuse = true;
+  planMemoryOptions.disableVFReachableCheck =
+      config.getDisableVFReachableCheck();
+  planMemoryOptions.planMemoryStrategy = config.getPlanMemoryStrategy();
+  pm.addPass(hivm::createPlanMemoryRegBasePass(planMemoryOptions));
+
+  // Fold addresses and views while preserving input instruction choices.
+  pm.addPass(createCanonicalizerPass());
+  pm.nest<func::FuncOp>().addPass(createCSEPass());
+
+  // Affinity auto-sync is enabled by default and always uses GraphSyncSolver.
+  // Algorithm selection and barrier-all options do not select InjectSync.
+  if (!config.getDisableHIVMAutoInjectSync()) {
+    GraphSyncSolverOptions syncOptions;
+    syncOptions.enableUnitFlag = config.getEnableHIVMUnitFlagSync();
+    syncOptions.solverVersion = config.getHIVMSyncSolverVersion();
+    pm.nest<func::FuncOp>().addPass(
+        hivm::createGraphSyncSolverPass(syncOptions));
+
+    // Materialize declared slots after GSS so synchronization and buffer
+    // selection share the same loop counter. Frontends must reject multibuffer
+    // hints when auto-sync is disabled; users then manage slots explicitly.
+    pm.nest<func::FuncOp>().addPass(hivm::createEnableMultiBufferPass());
+    pm.nest<func::FuncOp>().addPass(hivm::createLowerMultiBufferCounterPass());
+    pm.addPass(createCanonicalizerPass());
+    pm.nest<func::FuncOp>().addPass(createCSEPass());
+  }
+
+  // Lower the prepared AVE directly, without the shared AVE optimizations.
+  buildLowerToLLVMPipeline(pm, config);
 }
 
 void setupHIVMAVEPipelineOptions(
@@ -272,13 +343,17 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
     hivmToStdOptions.markLibCallNoInline = false;
   }
   pm.addPass(hivm::createMarkDisableLoadPass());
-  mlir::hivm::regbase::addSyncBlockLockFinalizePasses(pm);
+  // Affinity inputs provide lock storage, views and control flow explicitly.
+  if (!config.getEnableTlaMode())
+    mlir::hivm::regbase::addSyncBlockLockFinalizePasses(pm);
   pm.addPass(createConvertHIVMToStandardPass(hivmToStdOptions));
   pm.addPass(createConvertHIVMAVEToStandardPass());
   pm.nest<func::FuncOp>().addPass(createFixCallUnknownLocPass());
   pm.addPass(memref::createExpandStridedMetadataPass());
   pm.addPass(createConvertHIVMAVEToAVEIntrinPass());
-  pm.addPass(hivmave::createHoistVstasPass());
+  // Store hoisting chooses a cross-iteration schedule and loop-carried state.
+  if (!config.getEnableTlaMode())
+    pm.addPass(hivmave::createHoistVstasPass());
   if (config.getPureSimt() && config.getUseDPX()) {
     auto tritonGridDim = config.getSimtTritonGrid();
     bishengir::AdaptGPUKernelOptions options;

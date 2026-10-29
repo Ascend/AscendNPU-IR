@@ -573,14 +573,14 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
 
 // -----
 
-// CHECK-LABEL: func.func @test_ReduceI1AddToSelectMaxCompare_hivm_vreduce_sum_i1
+// CHECK-LABEL: func.func @test_ReduceI1AddToSelectXorCompare_hivm_vreduce_sum_i1
 // CHECK: %[[ONES:.*]] = linalg.fill
 // CHECK: %[[ZEROS:.*]] = linalg.fill
 // CHECK: %[[SEL:.*]] = hivm.hir.vsel ins(%arg0, %[[ONES]], %[[ZEROS]] : tensor<8xi1>, tensor<8xi16>, tensor<8xi16>) outs(%{{.*}} : tensor<8xi16>) -> tensor<8xi16>
-// CHECK: %[[RED:.*]] = hivm.hir.vreduce <max> ins(%[[SEL]] : tensor<8xi16>) outs(%{{.*}} : tensor<1xi16>) reduce_dims = [0] -> tensor<1xi16>
+// CHECK: %[[RED:.*]] = hivm.hir.vreduce <xori> ins(%[[SEL]] : tensor<8xi16>) outs(%{{.*}} : tensor<1xi16>) reduce_dims = [0] -> tensor<1xi16>
 // CHECK: hivm.hir.vcmp ins(%[[RED]], {{.*}} : tensor<1xi16>, i16) outs(%{{.*}} : tensor<1xi1>) compare_mode = <ne> -> tensor<1xi1>
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
-  func.func @test_ReduceI1AddToSelectMaxCompare_hivm_vreduce_sum_i1(%arg0: tensor<8xi1>) -> tensor<1xi1> {
+  func.func @test_ReduceI1AddToSelectXorCompare_hivm_vreduce_sum_i1(%arg0: tensor<8xi1>) -> tensor<1xi1> {
     %dst = tensor.empty() : tensor<1xi1>
     %0 = hivm.hir.vreduce <sum> ins(%arg0 : tensor<8xi1>) outs(%dst : tensor<1xi1>) reduce_dims = [0] -> tensor<1xi1>
     return %0 : tensor<1xi1>

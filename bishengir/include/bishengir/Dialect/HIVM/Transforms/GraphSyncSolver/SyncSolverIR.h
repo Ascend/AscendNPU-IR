@@ -225,6 +225,7 @@ class Loop : public Scope {
 private:
 public:
   bool isParallel{false};
+  bool isAutoBlockifyLoop{false};
   bool isCVUnrolledLoop{false};
   bool isCVPreloadingLoop{false};
   std::optional<int64_t> loopPreloadNum;
@@ -327,6 +328,8 @@ public:
   llvm::SmallVector<MemInfo, 0> readMemInfo;
   llvm::SmallVector<MemInfo, 0> writeMemInfo;
   bool hasUnitFlagFeat{false};
+  // Marked by auto-blockify as writing a block-indexed kernel argument.
+  bool isAutoBlockifyDMA{false};
   UnitFlagInfoBase mergedUnitFlagInfo;
 
 public:
