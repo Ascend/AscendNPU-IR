@@ -1,3 +1,5 @@
+// Closed-recurrence coalescing does not apply the tensor iter-arg refusal,
+// so a tensor state update still moves to the later vector scope.
 // RUN: bishengir-opt %s -hivm-sink-exclusive-preload-work="enable-preload=true set-workspace-multibuffer=4" | FileCheck %s --check-prefixes=AFTER,COMMON
 // RUN: bishengir-opt %s -hivm-sink-exclusive-preload-work="enable-preload=true set-workspace-multibuffer=4" | bishengir-opt -hivm-sink-exclusive-preload-work="enable-preload=true set-workspace-multibuffer=4" | FileCheck %s --check-prefixes=AFTER,COMMON
 // RUN: bishengir-opt %s -hivm-sink-exclusive-preload-work | FileCheck %s --check-prefixes=BEFORE,COMMON
