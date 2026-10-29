@@ -22,10 +22,13 @@
 #include "bishengir/Tools/RetriablePassManager/RetriablePassManager.h"
 #include "bishengir/Tools/RetriablePassManager/TuningRetryPolicy.h"
 #include "bishengir/Tools/RetriablePassManager/UbOverflowRetryPolicy.h"
+#include "bishengir/Tools/Utils/AuxBitcodePaths.h"
 #include "bishengir/Tools/Utils/Utils.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/bishengir-compile/PassPipeline.h"
+#include "bishengir/Tools/hivmc/BishengAsyncRuntime.h"
 #include "bishengir/Tools/hivmc/Config.h"
+#include "bishengir/Tools/hivmc/Utility.h"
 #include "bishengir/Version/Version.h"
 #include "bishengir/Tools/hivmc/HIVMC.h"
 #include "bishengir/Tools/hivmc/HIVMCA3.h"
@@ -130,6 +133,69 @@ void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
               });
 }
 
+//===--------------------------------------------------------------------===//
+// Pure-path base aux resolver (A3, fixed c220)
+//===--------------------------------------------------------------------===//
+//
+// These helpers run *before* the first HIR PassManager, so they must not read
+// Module Attrs (which `addBitcodeAttrsToModule` writes only after the first
+// HIR Pass).  They depend solely on `config` (CLI), `executablePath`, and the
+// filesystem.  SHA cross-check against the Attr paths happens after
+// `addBitcodeAttrsToModule` runs (see verifyEarlyAuxSha call site below).
+
+/// Resolve base aux paths via the pure path calculator (A3 always uses c220,
+/// matching `addBitcodeAttrsToModule` above).  Returns a SubCoreTarget-keyed
+/// map of existing canonical paths; missing files are omitted.
+static std::map<SubCoreTarget, std::string>
+resolveEarlyAuxBitcodePaths(const BiShengIRCompileMainConfig &config) {
+  return bishengir::toSubCoreTargetPaths(
+      bishengir::auxbitcode::resolveAuxBitcodePaths(
+          config.getExecutablePath(), /*subcoreTag=*/"c220",
+          resolveTemplateBitcodeOptLevel(config)));
+}
+
+/// Per-lane distinct base aux path list.  Base aux is the set of aux files
+/// needed by EVERY scenario (PureVV / PureCube / MixCV) on that lane, so it
+/// can be preloaded BEFORE the topology is known.  Conditionally-needed aux
+/// (mix BC, which only MixCV uses) is deferred to Final Delta, submitted
+/// after the topology is known — this prevents a PureVV compile from failing
+/// PreloadBase on a corrupt/missing mix BC it never actually consumes.
+///   AIC base: aic + extraDeviceBCPaths
+///   AIV base: aiv + extraDeviceBCPaths
+///   mixAic/mixAiv: deferred to Final Delta (MixCV-only)
+/// Host BC is *not* preloaded (it never enters the device worker auxPaths;
+/// `host.<opt>.bc` is only consumed by host tiling func handling).
+struct BaseAuxByLane {
+  std::vector<std::string> aic;
+  std::vector<std::string> aiv;
+};
+
+static BaseAuxByLane
+splitBaseAuxByLane(const std::map<SubCoreTarget, std::string> &paths,
+                   const BiShengIRCompileMainConfig &config) {
+  BaseAuxByLane out;
+  auto addIf = [&](SubCoreTarget t, std::vector<std::string> &dst) {
+    auto it = paths.find(t);
+    if (it != paths.end() && !it->second.empty())
+      dst.push_back(it->second);
+  };
+  // Base aux: only the per-lane metaOp (aic/aiv).  Mix BC (mixAic/mixAiv) is
+  // deferred to Final Delta so PureVV/PureCube never preload (and never fail
+  // on) a mix BC they do not consume.
+  addIf(SubCoreTarget::AIC, out.aic);
+  addIf(SubCoreTarget::AIV, out.aiv);
+  // A3 does not consult appendBishengOptions for device aux (HIVMCMainA3.cpp
+  // auxPaths never reads appendBishengOptions).  Extra device BC paths from
+  // --cce-link-aicore-ll-module are shared by both lanes.
+  for (const auto &bc : config.getLinkAicoreBitcode()) {
+    out.aic.push_back(bc);
+    out.aiv.push_back(bc);
+  }
+  // HOST intentionally excluded: not preloaded to device workers.
+  // MIX_AIC / MIX_AIV intentionally excluded: deferred to Final Delta.
+  return out;
+}
+
 LogicalResult handleSaveTemps(ModuleOp& module, BiShengIRCompileMainConfig& config) {
   TempDirectoriesStore tempDirsStore;
   std::string inputFile = "module.hivm.opt.mlir";
@@ -172,7 +238,8 @@ LogicalResult handleSaveTemps(ModuleOp& module, BiShengIRCompileMainConfig& conf
   return success();
 }
 
-HIVMCMainConfig HIVMCFromBiShengIRConfig(BiShengIRCompileMainConfig& config) {
+HIVMCMainConfig HIVMCFromBiShengIRConfig(BiShengIRCompileMainConfig& config,
+                                        BishengAsyncRuntime *runtime) {
     HIVMCMainConfig hivmcConfig;
     /// A3-specific
     hivmcConfig.targetBackend(hacc::TargetDevice::Unknown);
@@ -219,12 +286,14 @@ HIVMCMainConfig HIVMCFromBiShengIRConfig(BiShengIRCompileMainConfig& config) {
     // TODO: investigate if this check is redundant
     llvm::cantFail(llvm::errorCodeToError(hivmcCanonicalizePath(path)));
     hivmcConfig.setOutputFile(path.str().str());
+    hivmcConfig.setRuntime(runtime);
     return hivmcConfig;
 }
 } // namespace
 FailureOr<OwningModuleRef>
 bishengir::runBiShengIRPipeline(ModuleOp mod,
-                                BiShengIRCompileMainConfig config) {
+                                BiShengIRCompileMainConfig config,
+                                BishengAsyncRuntime *runtime) {
   MLIRContext *ctx = mod->getContext();
   mlir::DiagnosticEngine &diagEngine = ctx->getDiagEngine();
   std::vector<std::unique_ptr<Diagnostic>> collectedDiagnostics;
@@ -235,6 +304,36 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
     collectedDiagnostics.push_back(
         std::make_unique<Diagnostic>(std::move(diag)));
   });
+
+  // ---- LoadInit submission (before the first HIR Pass, no wait) ----
+  // submitLoadInit submits the LoadInit command (dlmopen + dlsym +
+  // bishengLlcInit) only; it does NOT preload any aux path.  LoadInit is
+  // independent of aux paths (the SO path is frozen by the runtime at
+  // construction from BISHENG_LLC_LIBRARY env).  Submit returns immediately
+  // (does not block); the main thread proceeds into the first HIR
+  // PassManager below so LoadInit overlaps with HIR lowering.
+  // Base aux paths are resolved and PreloadBase is submitted after this;
+  // PreloadFinalDelta is submitted once the final topology is known.
+  if (runtime) {
+    runtime->initTrace();
+    runtime->emitEvent("MAIN", "compile_scope", "begin");
+    runtime->emitEvent("MAIN", "early_start_submit", "point");
+    // mask = Both (conservative; lane usage is inferred later from a pure
+    // path calculator).  LoadInit only loads SO + init, no aux preload.
+    runtime->submitLoadInit(LaneMask::Both);
+    // Resolve base aux paths via the pure path calculator (no MLIR Attr
+    // read; `addBitcodeAttrsToModule` has NOT run yet at this point) and
+    // submit PreloadBase so base aux preload overlaps HIR lowering.
+    // LaneMask::Both is conservative: lane usage is unknown before HIR.
+    //     `compileDeviceKernel` only drains the actually-used lane ticket, so
+    //     a preload failure on an unused lane does not kill the Compile.
+    //     Base aux unavailability (empty paths) submits a no-op PreloadBase
+    //     and does NOT block LoadInit; handleCompile delta preload covers it.
+    auto earlyAuxPaths = resolveEarlyAuxBitcodePaths(config);
+    auto baseByLane = splitBaseAuxByLane(earlyAuxPaths, config);
+    runtime->submitPreloadBase(LaneMask::Both, baseByLane.aic, baseByLane.aiv);
+    runtime->emitEvent("MAIN", "hir_lowering", "begin");
+  }
 
   RetriablePassManager retriablePm(config, ctx);
   if (config.getEnableTritonKernelCompile()) {
@@ -254,6 +353,10 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
       mod, buildPipeline, "BiShengHIR", collectedDiagnostics,
       retriablePipelineFallbacks));
 
+  // ---- HIR lowering block end ----
+  if (runtime)
+    runtime->emitEvent("MAIN", "hir_lowering", "end");
+
   // Restore to the default handler.
   diagEngine.eraseHandler(handlerID);
   for (auto &diag : llvm::reverse(collectedDiagnostics)) {
@@ -266,6 +369,8 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
     for (auto &diag : llvm::reverse(collectedDiagnostics)) {
       diagEngine.emit(std::move(*diag));
     }
+    if (runtime)
+      runtime->emitEvent("MAIN", "compile_scope", "end", "fail");
     return failure();
   }
 
@@ -287,22 +392,40 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
                   config.getEnableSanitizer() || config.getEnableDebugInfo()));
     fileHandle->keep();
 
+    if (runtime)
+      runtime->emitEvent("MAIN", "compile_scope", "end");
     return OwningModuleRef(mod);
   }
   // Add bitcode path attributes from ../lib/*.bc to ModuleOp before hivmc.
   addBitcodeAttrsToModule(mod, config.getExecutablePath(), config);
+  // Cross-check the early-resolved paths against the Attr paths just
+  // written by `addBitcodeAttrsToModule`.  Mismatch is warning-only
+  // (perf diagnostic): handleCompile delta preload will still cover the
+  // authoritative Attr paths, so correctness is preserved.
+  if (runtime) {
+    auto earlyAuxPaths = resolveEarlyAuxBitcodePaths(config);
+    verifyEarlyAuxSha(mod, earlyAuxPaths);
+  }
   auto savedTemp = handleSaveTemps(mod, config);
   if (failed(savedTemp)) {
+    if (runtime)
+      runtime->emitEvent("MAIN", "compile_scope", "end", "fail");
     return failure();
   }
 
-  auto hivmcConfig = HIVMCFromBiShengIRConfig(config);
+  auto hivmcConfig = HIVMCFromBiShengIRConfig(config, runtime);
   auto res = runHIVMCCompileA3(mod, hivmcConfig);
   if (res.failed()) {
     mod.emitError("External hivmc run fails, returning module before running "
                   "external compiler");
+    if (runtime)
+      runtime->emitEvent("MAIN", "compile_scope", "end", "fail");
     return failure();
   }
 
+  // Runtime drains warmup tickets + joins workers in ~CompileScope at main()
+  // scope exit.  Emit the compile_scope end marker here for trace clarity.
+  if (runtime)
+    runtime->emitEvent("MAIN", "compile_scope", "end");
   return OwningModuleRef(mod);
 }

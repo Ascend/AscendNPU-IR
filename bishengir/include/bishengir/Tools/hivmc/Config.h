@@ -27,6 +27,7 @@ using namespace mlir;
 
 namespace bishengir {
 
+class BishengAsyncRuntime;
 
 /// Configuration options for the hivmc tool.
 /// This is intended to help building tools like hivmc by collecting
@@ -747,6 +748,18 @@ public:
   }
   std::vector<std::string> getClArgs() const { return clArgsFlag; }
 
+  /// Non-owning pointer to the compile-scope true-async runtime.
+  /// nullptr in Process / CPU-Runner mode; downstream compileDeviceKernel
+  /// falls back to the synchronous bridge.  Lifetime is bound to the
+  /// CompileScope at CLI main(), which outlives every HIVMCMainConfig copy.
+  /// Set by HIVMCFromBiShengIRConfig so the HIVMC layer reads runtime off
+  /// the config instead of receiving it as a separate parameter.
+  HIVMCMainConfig &setRuntime(BishengAsyncRuntime *runtime) {
+    runtime_ = runtime;
+    return *this;
+  }
+  BishengAsyncRuntime *getRuntime() const { return runtime_; }
+
   void readCLArgs(int argc, char **argv) {
     std::vector<std::string> clArgs;
     for (int i = 1; i < argc; i++) {
@@ -1083,6 +1096,10 @@ protected:
 
   std::string debugLLVMActions{""};
   std::string debugLLVMCacheFilePath{""};
+
+  /// Non-owning compile-scope true-async runtime (nullptr in Process/CPU mode).
+  /// See setRuntime() for lifetime contract.
+  BishengAsyncRuntime *runtime_{nullptr};
 };
 
 } // namespace bishengir

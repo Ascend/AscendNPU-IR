@@ -31,6 +31,8 @@
 #include "bishengir/Tools/Utils/Utils.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/bishengir-compile/regbase/Driver.h"
+#include "bishengir/Tools/hivmc/BishengLlcBridge.h" // resolveBishengBackendMode, resolveBishengLlcLibrary
+#include "bishengir/Tools/hivmc/CompileScope.h"     // CompileScope RAII owner
 #include "bishengir/Version/Version.h"
 
 
@@ -41,6 +43,7 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Target/LLVMIR/Dialect/All.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/SourceMgr.h"
 
@@ -179,13 +182,41 @@ int main(int argc, char **argv) {
   }
   mlir::ModuleOp module = moduleRef.release();
 
+  // ---- CompileScope: RAII owner of the true-async runtime ----
+  // Native mode (default) requires libbisheng-llc.so.  Resolve the SO path
+  // (BISHENG_LLC_LIBRARY env, else <bisheng-install>/bin/../lib/libbisheng-llc.so
+  // located via getBiShengCompilerInstallPath); if it cannot be found, fall
+  // back to the external `bisheng` process so the baseline invocation keeps
+  // working without the SO installed.
+  bishengir::CompileScope compileScope;
+  {
+    bool isNative = (bishengir::resolveBishengBackendMode() ==
+                     bishengir::BishengBackendMode::Native);
+    bool isCpuRunner = config.shouldEnableCPURunner();
+    std::string soPath;
+    if (isNative && !isCpuRunner) {
+      soPath = bishengir::resolveBishengLlcLibrary();
+      if (soPath.empty() ||
+          !llvm::sys::fs::exists(soPath)) {
+        llvm::errs() << "[INFO] libbisheng-llc.so not found"
+                     << (soPath.empty() ? "" : (" at " + soPath))
+                     << "; falling back to external `bisheng` process.\n";
+        isNative = false;
+      }
+    }
+    (void)compileScope.maybeCreateRuntime(/*isNative=*/isNative,
+                                          /*isCpuRunner=*/isCpuRunner,
+                                          soPath);
+  }
+  bishengir::BishengAsyncRuntime *runtime = compileScope.runtime();
+
   bishengir::CompileTiming timing; // shared between reg- and membased pipeline
   // regbase pipeline entry
   if (regbase)
     return bishengir::regbase::runRegBaseCompile(module, config,
-                                                 originalCLArgs);
+                                                 originalCLArgs, runtime);
 
-  auto res = runBiShengIRPipeline(module, config);
+  auto res = runBiShengIRPipeline(module, config, runtime);
   if (failed(res)) {
     llvm::errs() << "[ERROR] Failed to run BiShengIR pipeline\n";
     return EXIT_FAILURE;

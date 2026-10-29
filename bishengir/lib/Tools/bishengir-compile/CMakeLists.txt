@@ -60,3 +60,11 @@ add_bishengir_library(BiShengIRCompileLib
   BiShengIRTransform
   BiShengIRToolUtils
 )
+
+# BiShengIRCompileMain.cpp includes BishengAsyncRuntime.h (for the
+# LoadInit submission at runBiShengIRPipeline entry) which in turn includes
+# BishengLlcBridge.h -> bisheng-llc.h.  The vendor header is needed at compile
+# time of this target.
+if(BISHENG_LLC_INCLUDE_DIR)
+  target_include_directories(BiShengIRCompileLib PRIVATE ${BISHENG_LLC_INCLUDE_DIR})
+endif()

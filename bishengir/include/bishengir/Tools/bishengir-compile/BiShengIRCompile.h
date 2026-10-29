@@ -38,6 +38,8 @@ namespace bishengir {
 
 using OwningModuleRef = mlir::OwningOpRef<mlir::ModuleOp>;
 
+class BishengAsyncRuntime;
+
 /// Detect the CANN version (major.minor.patch) by reading
 /// {ASCEND_HOME_PATH}/<arch>-linux/ascend_toolkit_install.info, mirroring
 /// triton-ascend's backend/utils.py. The first line containing "version" is
@@ -102,8 +104,11 @@ resolveTemplateBitcodeOptLevel(const BiShengIRCompileMainConfig &config) {
 }
 
 /// Main entry point to run BiShengIR pipeline to compile module into binary.
+/// \p runtime  compile-scope true-async runtime (nullptr in Process/CPU-Runner
+///             mode; downstream compileDeviceKernel falls back to sync).
 llvm::FailureOr<OwningModuleRef>
-runBiShengIRPipeline(mlir::ModuleOp mod, BiShengIRCompileMainConfig config);
+runBiShengIRPipeline(mlir::ModuleOp mod, BiShengIRCompileMainConfig config,
+                     BishengAsyncRuntime *runtime = nullptr);
 
 } // namespace bishengir
 

@@ -34,4 +34,12 @@ add_bishengir_publish_tool(bishengir-compile
 
 target_include_directories(bishengir-compile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(bishengir-compile PRIVATE ${LIBS})
+
+# bishengir-compile.cpp includes BishengLlcBridge.h (for
+# resolveBishengBackendMode) and CompileScope.h (RAII runtime owner), both of
+# which need the vendor v2 header bisheng-llc.h at compile time.
+if(BISHENG_LLC_INCLUDE_DIR)
+  target_include_directories(bishengir-compile PRIVATE ${BISHENG_LLC_INCLUDE_DIR})
+endif()
+
 mlir_check_all_link_libraries(bishengir-compile)

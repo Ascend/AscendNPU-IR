@@ -14,14 +14,17 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Pass/PassManager.h"
+#include "bishengir/Tools/Utils/AuxBitcodePaths.h"
 #include "bishengir/Tools/Utils/Utils.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/bishengir-compile/regbase/PassPipeline.h"
 #include "bishengir/Tools/bishengir-compile/regbase/Utility.h"
 #include "bishengir/Tools/bishengir-compile/regbase/VectorizationFailure.h"
+#include "bishengir/Tools/hivmc/BishengAsyncRuntime.h"
 #include "bishengir/Tools/hivmc/Config.h"
 #include "bishengir/Tools/hivmc/HIVMC.h"
 #include "bishengir/Tools/hivmc/HIVMCA5.h"
+#include "bishengir/Tools/hivmc/Utility.h"
 #include "bishengir/Version/Version.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -365,6 +368,96 @@ static void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
               });
 }
 
+//===--------------------------------------------------------------------===//
+// Pure-path base aux resolver (A5, target-dependent subcoreTag)
+//===--------------------------------------------------------------------===//
+//
+// These helpers run *before* the first RegBase PassManager (in the for-loop
+// below), so they must not read Module Attrs.  They depend solely on `config`
+// (CLI), `executablePath`, and the filesystem.
+
+/// Sub-core bitcode tag for the regbase target.  Three branches matching
+/// `addBitcodeAttrsToModule` above (c310 / 920r1 / c220).  Dev's original
+/// helper only distinguished c310 vs c220; this corrects that gap so the
+/// early pure-path calculator stays byte-consistent with the Attr writes for
+/// Ascend960 targets.
+static StringRef
+auxSubcoreTagForTarget(const BiShengIRCompileMainConfig &config) {
+  if (mlir::hacc::utils::isAscend950(config.getTarget()))
+    return "c310";
+  if (mlir::hacc::utils::isAscend960(config.getTarget()))
+    return "920r1";
+  return "c220";
+}
+
+/// Resolve base aux paths via the pure path calculator (no MLIR Attr read).
+static std::map<SubCoreTarget, std::string>
+resolveAuxBitcodePathsForConfig(const BiShengIRCompileMainConfig &config) {
+  return bishengir::toSubCoreTargetPaths(
+      bishengir::auxbitcode::resolveAuxBitcodePaths(
+          config.getExecutablePath(), auxSubcoreTagForTarget(config),
+          resolveTemplateBitcodeOptLevel(config)));
+}
+
+/// Per-lane distinct base aux path list for A5.  Base aux is the set of aux
+/// files needed by EVERY scenario (PureVV / PureCube / MixCV) on that lane,
+/// so it can be preloaded BEFORE the topology is known.  Conditionally-
+/// needed aux (mix BC, which only MixCV uses) is deferred to Final Delta,
+/// submitted after the topology is known — this prevents a PureVV compile
+/// from failing PreloadBase on a corrupt/missing mix BC it never actually
+/// consumes.  A5 `compileDeviceKernel` builds `auxPaths` as:
+/// appendBishengOptions aux -> extraDeviceBCPaths -> metaOp -> mixAux.
+/// The distinct BASE preload set per lane is:
+///   AIC: aic + extraDeviceBCPaths + appendBishengOptions aux
+///   AIV: aiv + extraDeviceBCPaths + appendBishengOptions aux
+/// mixAic/mixAiv are deferred to Final Delta (MixCV-only).
+/// Host BC is *not* preloaded (host never enters device worker auxPaths).
+struct BaseAuxByLane {
+  std::vector<std::string> aic;
+  std::vector<std::string> aiv;
+};
+
+static BaseAuxByLane
+splitBaseAuxByLane(const std::map<SubCoreTarget, std::string> &paths,
+                   const BiShengIRCompileMainConfig &config) {
+  BaseAuxByLane out;
+  auto addIf = [&](SubCoreTarget t, std::vector<std::string> &dst) {
+    auto it = paths.find(t);
+    if (it != paths.end() && !it->second.empty())
+      dst.push_back(it->second);
+  };
+  // Base aux: only the per-lane metaOp (aic/aiv).  Mix BC (mixAic/mixAiv) is
+  // deferred to Final Delta so PureVV/PureCube never preload (and never fail
+  // on) a mix BC they do not consume.
+  addIf(SubCoreTarget::AIC, out.aic);
+  addIf(SubCoreTarget::AIV, out.aiv);
+  // Extra device BC paths (--cce-link-aicore-ll-module) shared by both lanes.
+  for (const auto &bc : config.getLinkAicoreBitcode()) {
+    out.aic.push_back(bc);
+    out.aiv.push_back(bc);
+  }
+  // A5-only: appendBishengOptions aux.  Apply the same parsing rule as
+  // `parseAppendBishengOptionsAuxFromTokens` in HIVMCMainA5.cpp (scan tokens
+  // for `-cce-link-aicore-ll-module`, take the following token as a path).
+  // This runs in the regbase translation unit and does not share tokens with
+  // the A5 file, so the scan is duplicated here; the rule must stay in sync.
+  // These aux paths apply to both lanes (they appear in auxPaths for both
+  // AIC and AIV compiles).
+  const std::string appendOpts = config.getAppendBishengOptions();
+  if (!appendOpts.empty()) {
+    std::vector<std::string> tokens;
+    splitString(appendOpts, " ", tokens);
+    for (size_t i = 0; i + 1 < tokens.size(); ++i) {
+      if (tokens[i] == "-cce-link-aicore-ll-module") {
+        out.aic.push_back(tokens[i + 1]);
+        out.aiv.push_back(tokens[i + 1]);
+      }
+    }
+  }
+  // HOST intentionally excluded: not preloaded to device workers.
+  return out;
+}
+
 using MixedModules = std::pair<ModuleOp, SmallVector<ModuleOp, 2>>;
 
 /// Run a pipeline on a module using the regbase builder and A3's runPipeline
@@ -497,7 +590,8 @@ LogicalResult handleSaveTemps(ModuleOp module,
   return success();
 }
 
-HIVMCMainConfig HIVMCFromBiShengIRConfig(BiShengIRCompileMainConfig &config) {
+HIVMCMainConfig HIVMCFromBiShengIRConfig(BiShengIRCompileMainConfig &config,
+                                        BishengAsyncRuntime *runtime) {
   HIVMCMainConfig hivmcConfig;
 
   /// TODO: add flag difference logic for hivmc and bishengir flags in
@@ -555,6 +649,7 @@ HIVMCMainConfig HIVMCFromBiShengIRConfig(BiShengIRCompileMainConfig &config) {
   // TODO: investigate if this check is redundant
   llvm::cantFail(llvm::errorCodeToError(hivmcCanonicalizePath(path)));
   hivmcConfig.setOutputFile(path.str().str());
+  hivmcConfig.setRuntime(runtime);
   return hivmcConfig;
 }
 
@@ -562,7 +657,8 @@ HIVMCMainConfig HIVMCFromBiShengIRConfig(BiShengIRCompileMainConfig &config) {
 
 LogicalResult
 bishengir::regbase::runRegBasePipeline(ModuleOp mod,
-                                       BiShengIRCompileMainConfig config) {
+                                       BiShengIRCompileMainConfig config,
+                                       BishengAsyncRuntime *runtime) {
   if (failed(checkInOutOptionsValidity(config))) {
     return failure();
   }
@@ -573,6 +669,45 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     config.setEnableTreeReduceV2(true);
     config.setEnableTreeReduceMode(hfusion::TreeReduceMode::All);
     config.setUseAscendStyleRA(true);
+  }
+
+  // ---- LoadInit submission (before the first RegBase Pass, no wait) ----
+  // submitLoadInit submits the LoadInit command (dlmopen + dlsym +
+  // bishengLlcInit) only; it does NOT preload any aux path.  LoadInit is
+  // independent of aux paths (the SO path is frozen by the runtime at
+  // construction from BISHENG_LLC_LIBRARY env).  Submitted once before the
+  // for-loop so all retry attempts share the same SO load.  Submit returns
+  // immediately (does not block); the main thread proceeds into the first
+  // RegBase Pass so LoadInit overlaps with RegBase lowering.
+  // Base aux paths are resolved and PreloadBase is submitted after this;
+  // PreloadFinalDelta is submitted once the final topology is known.
+  // Compute the early pure-path base aux ONCE before the for-loop so both
+  // the PreloadBase submit (below) and the per-attempt SHA cross-check
+  // (inside the loop) reference the same resolved paths.  When runtime is
+  // null (Process/CPU-Runner) this is left empty and unused.  The
+  // reduce-only config tweak above runs first so the pure-path base aux
+  // resolution sees the finalized config.
+  std::map<SubCoreTarget, std::string> earlyAuxPaths;
+  if (runtime) {
+    runtime->initTrace();
+    runtime->emitEvent("MAIN", "compile_scope", "begin");
+    runtime->emitEvent("MAIN", "early_start_submit", "point");
+    // mask = Both (conservative; lane usage is inferred later from a pure
+    // path calculator).  LoadInit only loads SO + init, no aux preload.
+    runtime->submitLoadInit(LaneMask::Both);
+    // Resolve base aux paths via the pure path calculator (no MLIR Attr
+    // read; `addBitcodeAttrsToModule` has NOT run yet at this point) and
+    // submit PreloadBase ONCE before the retry for-loop so all attempts
+    //     share the same preload.  Paths are stable across attempts
+    //     (executablePath/target/optLevel don't change), and
+    //     `preloadedPaths_` in the worker dedups across attempts.
+    //     LaneMask::Both is conservative; `compileDeviceKernel` only drains
+    //     the actually-used lane ticket, so an unused-lane preload failure
+    //     does not kill the Compile.  Base aux unavailability (empty paths)
+    //     submits a no-op PreloadBase and does NOT block LoadInit.
+    earlyAuxPaths = resolveAuxBitcodePathsForConfig(config);
+    auto baseByLane = splitBaseAuxByLane(earlyAuxPaths, config);
+    runtime->submitPreloadBase(LaneMask::Both, baseByLane.aic, baseByLane.aiv);
   }
 
   // Overflow tracking: UB gets a Vector-only multi-buffer fallback; L1/L0C
@@ -758,13 +893,20 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     }
 
     addBitcodeAttrsToModule(hirCompileMode, config.getExecutablePath(), config);
+    // Cross-check the early-resolved paths against the Attr paths just
+    // written by `addBitcodeAttrsToModule`.  Mismatch is warning-only
+    // (perf diagnostic): handleCompile delta preload will still cover the
+    // authoritative Attr paths.  Computed once before the for-loop; each
+    // attempt cross-checks against its own cloned hirCompileMode Attrs.
+    if (runtime)
+      verifyEarlyAuxSha(hirCompileMode, earlyAuxPaths);
 
     auto savedTemp = handleSaveTemps(hirCompileMode, config);
     if (failed(savedTemp)) {
       return failure();
     }
 
-    auto hivmcConfig = HIVMCFromBiShengIRConfig(config);
+    auto hivmcConfig = HIVMCFromBiShengIRConfig(config, runtime);
     // Only a VF stack overflow is worth retrying with the stack limit; the
     // error is otherwise unused since every stage reports its own failure on
     // stderr.
@@ -796,6 +938,8 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     for (auto &diag : llvm::reverse(collectedDiagnostics)) {
       diagEngine.emit(std::move(diag));
     }
+    if (runtime)
+      runtime->emitEvent("MAIN", "compile_scope", "end", "fail");
     return failure();
   }
 
@@ -804,8 +948,15 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     assert(fileHandle != nullptr);
     fileHandle->os() << mod << '\n';
     fileHandle->keep();
+    if (runtime)
+      runtime->emitEvent("MAIN", "compile_scope", "end");
     return success();
   }
 
+  // Runtime drains warmup tickets + joins workers in ~CompileScope at main()
+  // scope exit.  Emit the compile_scope end marker here for trace clarity;
+  // the runtime object itself outlives this function.
+  if (runtime)
+    runtime->emitEvent("MAIN", "compile_scope", "end");
   return success();
 }

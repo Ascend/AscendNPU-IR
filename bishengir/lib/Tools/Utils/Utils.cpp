@@ -357,6 +357,34 @@ std::string bishengir::getBiShengInstallPath() {
   return path.str().str();
 }
 
+std::string bishengir::getBiShengCompilerInstallPath() {
+  // 1. find bisheng from BISHENG_INSTALL_PATH (already the install root).
+  std::string maybeBiShengInstallPath = getBiShengInstallPath();
+  if (!maybeBiShengInstallPath.empty())
+    return maybeBiShengInstallPath;
+
+  // 2. find bisheng from PATH: parent dir of the resolved binary is its `bin`.
+  if (llvm::ErrorOr<std::string> P = llvm::sys::findProgramByName("bisheng")) {
+    llvm::StringRef bishengFullPath = llvm::StringRef(P.get());
+    if (!bishengFullPath.empty())
+      return llvm::sys::path::parent_path(bishengFullPath).str();
+  }
+
+  // 3. find bisheng from ASCEND_HOME_PATH.
+  const char *kAscendHomePathEnv = "ASCEND_HOME_PATH";
+  if (const char *ascendHomePath = getenv(kAscendHomePathEnv)) {
+    llvm::SmallString<128> bishengInstallPathStr(ascendHomePath);
+    llvm::sys::path::append(bishengInstallPathStr, "bin");
+    llvm::SmallString<128> bishengPathStr(bishengInstallPathStr);
+    llvm::sys::path::append(bishengPathStr, "bisheng");
+    if (llvm::sys::fs::exists(bishengPathStr))
+      return std::string(bishengInstallPathStr);
+  }
+
+  llvm::errs() << "[ERROR] Cannot find the binary path of the BiSheng compiler.\n";
+  return "";
+}
+
 std::string bishengir::getExecutablePath(const char *argv0, void *mainAddr) {
   std::string path = llvm::sys::fs::getMainExecutable(argv0, mainAddr);
   if (!path.empty()) {
