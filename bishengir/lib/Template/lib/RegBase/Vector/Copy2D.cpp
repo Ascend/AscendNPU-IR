@@ -113,11 +113,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     INTRINSIC(set_mov_pad_val, 0);
   }
 
-  // The MTE starts writing at the pulled-back DMA start when left padding is
-  // present, so the alignment gate must check that address, not the logical
-  // destination. left_padding_num = offset % num_per_block by IR construction,
-  // so dst->offset - left_padding_num is the 32B aligned DMA start.
-  auto dst_ptr = dst->aligned + dst->offset - left_padding_num;
+  auto dst_ptr = dst->aligned + dst->offset;
   if (!isAddress32ByteAligned(dst_ptr)) {
     load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst);
     return;
