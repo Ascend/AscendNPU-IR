@@ -1583,8 +1583,10 @@ def MergeCVScopes
   let constructor = "mlir::hivm::createMergeCVScopesPass()";
   let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
                            "mlir::scope::ScopeDialect",
-                           "arith::ArithDialect",
-                           "tensor::TensorDialect"];
+                           "bishengir::memref_ext::MemRefExtDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect", "tensor::TensorDialect",
+                           "arith::ArithDialect"];
 }
 
 def PipelineStaging
