@@ -93,6 +93,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   BiShengIRDialectUtils
   BiShengIRSchedule
   BiShengIRSCFTransformOps
+  BiShengIRSCFUtils
   BiShengIRTensorTransforms
   BiShengIRTransform
   BiShengIRHACCDialect
