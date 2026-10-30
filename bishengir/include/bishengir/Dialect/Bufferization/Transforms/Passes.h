@@ -35,6 +35,9 @@ namespace bufferization {
 /// analysis.
 std::unique_ptr<mlir::Pass> createNormalizeToTensorOpPass();
 
+/// Flip eligible state branches before analysis, or restore them afterward.
+std::unique_ptr<mlir::Pass> createFlipIfPass(const FlipIfOptions &options = {});
+
 /// Create a pass that runs One-Shot analysis and inserts tensor copies to
 /// resolve bufferization conflicts, without performing the bufferization.
 std::unique_ptr<mlir::Pass> createTensorCopyInsertionPass();

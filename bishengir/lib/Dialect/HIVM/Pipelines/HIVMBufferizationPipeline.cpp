@@ -59,6 +59,7 @@ void bufferizationPipelineBase(OpPassManager &pm, bool isRegBased) {
   // by inserting an `alloc_tensor(copy...)` for each writable to_tensor.
   pm.nest<func::FuncOp>().addPass(
       bishengir::bufferization::createNormalizeToTensorOpPass());
+  pm.nest<func::FuncOp>().addPass(bishengir::bufferization::createFlipIfPass());
   OneShotBufferizationOptions oneShotOptions;
   oneShotOptions.bufferizeFunctionBoundaries = true;
   oneShotOptions.setFunctionBoundaryTypeConversion(
@@ -85,6 +86,10 @@ void bufferizationPipelineBase(OpPassManager &pm, bool isRegBased) {
       bishengir::bufferization::createTensorCopyInsertionPass(oneShotOptions));
   pm.addPass(createDecomposeAllocTensorCopyPass());
   pm.addPass(createOneShotBufferizePass(oneShotOptions));
+  bishengir::bufferization::FlipIfOptions restoreIfOptions;
+  restoreIfOptions.restoreOnly = true;
+  pm.nest<func::FuncOp>().addPass(
+      bishengir::bufferization::createFlipIfPass(restoreIfOptions));
 }
 
 void bufferizationPipeline(OpPassManager &pm,

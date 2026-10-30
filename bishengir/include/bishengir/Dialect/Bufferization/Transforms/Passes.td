@@ -41,6 +41,14 @@ def NormalizeToTensorOp : Pass<"normalize-to-tensor", "mlir::func::FuncOp"> {
                            "mlir::memref::MemRefDialect"];
 }
 
+def FlipIf : Pass<"bufferization-flip-if", "mlir::func::FuncOp"> {
+  let summary = "Temporarily flip tensor state updates around bufferization";
+  let constructor = "bishengir::bufferization::createFlipIfPass()";
+  let dependentDialects = ["mlir::arith::ArithDialect", "mlir::scf::SCFDialect"];
+  let options = [Option<"restoreOnly", "restore-only", "bool", "false",
+      "Restore marked branches instead of finding new tensor state updates">];
+}
+
 def TensorCopyInsertion : Pass<"tensor-copy-insertion", "mlir::ModuleOp"> {
   let summary = "Run One-Shot analysis and insert tensor copies to resolve "
                 "bufferization conflicts";
