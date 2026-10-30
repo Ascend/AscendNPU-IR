@@ -1,5 +1,6 @@
 // RUN: bishengir-opt %s -hacc-append-device-spec -convert-vector-to-hivmave \
-// RUN: -convert-hivmave-to-ave-intrin -split-input-file | FileCheck %s
+// RUN: -convert-hivmave-to-ave-intrin -split-input-file \
+// RUN: | FileCheck %s --implicit-check-not="ave.hir."
 
 // Review finding 10-23 [P2]: the rank>1 mask padding select is reachable for a
 // mask with no defining op -- a `vector<...xi1>` block argument -- because no
@@ -14,6 +15,14 @@
 //
 // These cases run through to the intrinsic layer on purpose: checking only the
 // vector-to-ave output is what let the un-lowered ops slip through.
+//
+// The "no `ave.hir.` survives" assertion lives in `--implicit-check-not` on the
+// RUN line rather than in a NOT directive.  A NOT directive only covers the
+// span between the surrounding positive matches, and the residue this file
+// hunts for appears *after* the first intrinsic (the order is
+// `broadcast` -> `vload` -> `vsel`), so a NOT placed before the positive
+// intrinsic match would never reach it -- the test would pass with the select
+// left un-lowered.  Do not turn this back into a NOT directive.
 
 // -----
 
@@ -21,7 +30,6 @@
 // become intrinsics and no `ave.hir.*` op is left behind.
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: func.func @f32_blockarg_mask_lowers
-  // CHECK-NOT: ave.hir.
   // CHECK: hivm_regbaseintrins.intr.hivm.
   func.func @f32_blockarg_mask_lowers(
       %src: memref<2x16xf32, #hivm.address_space<ub>>,
@@ -47,7 +55,6 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // range is not accidentally narrowed to the 16/32-bit `vsel` widths.
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: func.func @i8_blockarg_mask_lowers
-  // CHECK-NOT: ave.hir.
   // CHECK: hivm_regbaseintrins.intr.hivm.
   func.func @i8_blockarg_mask_lowers(
       %src: memref<2x128xi8, #hivm.address_space<ub>>,
