@@ -36,6 +36,27 @@ enum class PadMode : uint32_t {
   Value = 2
 };
 
+// The following padValueType is used to convert the FP8 PadValue to the float
+// type. The reason for doing so is that if the PadValue is of FP8 type, an FP8
+// constant will be automatically generated, which is not allowed in the LLVM IR
+// received by bisheng. Thus, the conversion here is only to avoid generating
+// FP8 constants.
+template <typename T> struct PadValueType {
+  using type = T;
+};
+
+#if BISHENG_TPL_REGBASE
+template <> struct PadValueType<float8_e4m3_t> {
+  using type = float;
+};
+
+template <> struct PadValueType<float8_e5m2_t> {
+  using type = float;
+};
+#endif
+
+template <typename T> using PadValueT = typename PadValueType<T>::type;
+
 enum class EvictionPolicy : uint32_t { EvictFirst = 0, EvictLast = 1 };
 
 enum class AtomicKind : uint32_t { None = 0, Add = 1, Max = 2, Min = 3 };
@@ -2020,7 +2041,9 @@ copy_ubuf_to_cbuf_3d_core_with_contiguous_last_dim(
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
-                            memref_t<__ubuf__ T, 2> *dst) {
+                            memref_t<__ubuf__ T, 2> *dst, PadMode pad_mode,
+                            typename PadValueType<T>::type pad_value,
+                            int64_t left_padding_num, uint8_t l2_cache_ctl) {
   static_assert(
       sizeof(T) <= 8,
       "DMA only supports types up to 64-bit. "
@@ -2032,21 +2055,71 @@ load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
                                          std::is_same_v<T, float8_e5m2_t>,
                                      uint8_t, T>;
 
+  // NDDMA expresses padding natively in the descriptor: every loop_desc
+  // level carries 8-bit element-granular lp/rp counts, and the pad_val
+  // operand (written to the PAD_VAL_NDDMA SPR, a register separate from the
+  // MTE set_mov_pad_val SPR) supplies the CONSTANT_PADDING fill. Alignment
+  // padding lives on the innermost (loop0) axis: lp is the tile's left
+  // padding and rp rounds (lp + size) up to a whole 32B block, mirroring the
+  // MTE rightPaddingNum. FirstElem keeps zero counts and NEAREST_PADDING:
+  // the exact replication element of the hardware mode is not yet confirmed
+  // against the hardware spec, so padded FirstElem loads stay on the scalar
+  // path at the call site and this branch preserves the old descriptor.
+  //
+  // The per-loop placement of the fill (whole-transfer vs per-iteration) is
+  // also unconfirmed, so a padded call is sound only when each row's padded
+  // span stays inside the row itself. The caller must guarantee:
+  //   1) dst->strides[0] * sizeof(T) is 32B aligned, and
+  //   2) CEIL_FACTOR(lp + sizes[1], 32B/sizeof(T)) <= dst->strides[0].
+  // Under both, either fill placement yields identical UB contents (the
+  // per-row overlap regions are gaps written with the same pad constant);
+  // load_gm_to_ubuf_2d_core enforces exactly these gates.
+  constexpr int64_t npb = UB_ALIGN_BYTES / sizeof(T);
+  int64_t lp = 0;
+  int64_t rp = 0;
+  if (left_padding_num != 0 &&
+      (pad_mode == PadMode::Null || pad_mode == PadMode::Value)) {
+    lp = left_padding_num;
+    int64_t span = lp + dst->sizes[1];
+    rp = CEIL_FACTOR(span, npb) - span;
+  }
+  uint32_t nddma_pad_val = 0;
+  if (pad_mode == PadMode::Value) {
+    using PadValueT = typename PadValueType<T>::type;
+    if constexpr (sizeof(PadValueT) == 1) {
+      nddma_pad_val = *((uint8_t *)(&pad_value));
+    } else if constexpr (sizeof(PadValueT) == 2) {
+      nddma_pad_val = *((uint16_t *)(&pad_value));
+    } else {
+      // 32-bit element types, and the low half of a 64-bit pattern: the
+      // padded b64 transpose path is diverted to scalar at the call site,
+      // so the high half never matters here.
+      nddma_pad_val = *((uint32_t *)(&pad_value));
+    }
+  }
+  // The fill precedes the data at the DMA start, so the DMA start is the
+  // pulled-back address dst->offset - lp, the same address whose 32B
+  // alignment the caller verified (mirroring the MTE pull-back).
   __gm__ DmaType *src_ptr =
       reinterpret_cast<__gm__ DmaType *>(src->aligned + src->offset);
   __ubuf__ DmaType *dst_ptr =
-      reinterpret_cast<__ubuf__ DmaType *>(dst->aligned + dst->offset);
+      reinterpret_cast<__ubuf__ DmaType *>(dst->aligned + dst->offset - lp);
 
   if constexpr (sizeof(T) <= 4) {
     // 32-bit and below version
-    nddma_desc::loop_desc loop0(dst->sizes[1], dst->strides[1],
-                                src->strides[1]);
+    nddma_desc::loop_desc loop0(dst->sizes[1], dst->strides[1], src->strides[1],
+                                lp, rp);
     nddma_desc::loop_desc loop1(dst->sizes[0], dst->strides[0],
                                 src->strides[0]);
     nddma_desc desc(loop1, loop0);
 
-    INTRINSIC(nddma_out_to_ub, dst_ptr, src_ptr, 0, desc, 0, NEAREST_PADDING,
-              0);
+    if (pad_mode == PadMode::FirstElem) {
+      INTRINSIC(nddma_out_to_ub, dst_ptr, src_ptr, 0, desc, 0, NEAREST_PADDING,
+                l2_cache_ctl);
+    } else {
+      INTRINSIC(nddma_out_to_ub, dst_ptr, src_ptr, 0, desc, nddma_pad_val,
+                CONSTANT_PADDING, l2_cache_ctl);
+    }
 
   } else if constexpr (sizeof(T) == 8) {
     // 64-bit version
@@ -2057,12 +2130,18 @@ load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
     __ubuf__ T32 *dst_32 = reinterpret_cast<__ubuf__ T32 *>(dst_ptr);
 
     nddma_desc::loop_desc loop0(dst->sizes[1] * 2, dst->strides[1] * 2,
-                                src->strides[1] * 2);
+                                src->strides[1] * 2, lp * 2, rp * 2);
     nddma_desc::loop_desc loop1(dst->sizes[0] * 2, dst->strides[0] * 2,
                                 src->strides[0] * 2);
     nddma_desc desc(loop1, loop0);
 
-    INTRINSIC(nddma_out_to_ub, dst_32, src_32, 0, desc, 0, NEAREST_PADDING, 0);
+    if (pad_mode == PadMode::FirstElem) {
+      INTRINSIC(nddma_out_to_ub, dst_32, src_32, 0, desc, 0, NEAREST_PADDING,
+                l2_cache_ctl);
+    } else {
+      INTRINSIC(nddma_out_to_ub, dst_32, src_32, 0, desc, nddma_pad_val,
+                CONSTANT_PADDING, l2_cache_ctl);
+    }
   }
 }
 
@@ -2120,7 +2199,9 @@ load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
-                            memref_t<__ubuf__ T, 2> *dst);
+                            memref_t<__ubuf__ T, 2> *dst, PadMode pad_mode,
+                            typename PadValueType<T>::type pad_value,
+                            int64_t left_padding_num, uint8_t l2_cache_ctl);
 
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
@@ -2307,27 +2388,6 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
   // sync with the C310 variant so shared callers compile on both arches.
 }
 #endif
-
-// The following padValueType is used to convert the FP8 PadValue to the float
-// type. The reason for doing so is that if the PadValue is of FP8 type, an FP8
-// constant will be automatically generated, which is not allowed in the LLVM IR
-// received by bisheng. Thus, the conversion here is only to avoid generating
-// FP8 constants.
-template <typename T> struct PadValueType {
-  using type = T;
-};
-
-#if BISHENG_TPL_REGBASE
-template <> struct PadValueType<float8_e4m3_t> {
-  using type = float;
-};
-
-template <> struct PadValueType<float8_e5m2_t> {
-  using type = float;
-};
-#endif
-
-template <typename T> using PadValueT = typename PadValueType<T>::type;
 
 #if defined(__DAV_C310__)
 #define REGISTE_DMA_LOAD_NOCACHE(dim, type)                                    \

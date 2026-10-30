@@ -139,21 +139,65 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
   // bursts. With a non-unit innermost stride the copy is decomposed into
   // per-element bursts (transpose/collapse/per-row paths), where a non-zero
   // left padding corrupts the descriptor (padding count exceeds the burst
-  // length and the pulled-back dst start leaves the row's span). These loads
-  // used to be rejected by the logical-address alignment check; keep them on
-  // the scalar path, which ignores the padding and copies the valid window
-  // element by element.
+  // length and the pulled-back dst start leaves the row's span). Exception:
+  // an implicit-transpose layout can instead carry the padding on the NDDMA
+  // descriptor (per-loop lp/rp counts + CONSTANT_PADDING fill), so those
+  // loads fall through to the NDDMA transpose path below.
+  //
+  // The NDDMA fill rides on loop0 and is laid out as one contiguous span per
+  // row around the row's data, starting at the row's pulled-back DMA start.
+  // That placement is provably safe only when the row's data itself is
+  // contiguous (stride1_ub == 1): only then does the row span
+  // [offset + i*stride0, offset + i*stride0 + sizes[1]) delimit the addresses
+  // the fill may touch, and CEIL(lp + sizes[1], npb) <= stride0_ub keeps every
+  // row's padded span inside the row itself. With a strided row
+  // (stride1_ub != 1) the valid elements fan out across stride1_ub-sized
+  // gaps and (lp + sizes[1]) counts elements, not addresses, so the fill can
+  // land on another row's valid element. A 32B-aligned row stride keeps every
+  // row's pulled-back start aligned as well. A transposed UB layout
+  // (stride0_ub == 1, the common implicit-transpose shape) fails the
+  // alignment check and stays on the scalar path.
+  // NDDMA has no 64-bit instantiation, and NEAREST_PADDING (boundary
+  // replication) is not the confirmed FirstElem semantics, so padded b64
+  // and FirstElem loads stay on the scalar path, which ignores the padding
+  // and copies the valid window element by element. FP8 is excluded too:
+  // its pad value arrives as an fp32 pattern (PadValueType), while the
+  // descriptor fills at u8 granularity, so the pattern is not directly
+  // reusable.
+  const bool nddma_transpose_allows_padding =
+      left_padding_num == 0 ||
+      (stride1_ub == 1 && pad_mode != PadMode::FirstElem &&
+       !std::is_same_v<T, int64_t> && !std::is_same_v<T, uint64_t> &&
+       !std::is_same_v<T, float8_e4m3_t> && !std::is_same_v<T, float8_e5m2_t> &&
+       isStrideAligned<T>(stride0_ub) &&
+       CEIL_FACTOR(left_padding_num + dst->sizes[1],
+                   INTR_BYTES_PER_BLOCK / sizeof(T)) <= stride0_ub);
+
   if (left_padding_num != 0 && (stride1_gm != 1 || stride1_ub != 1)) {
-    load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst);
-    return;
+    const bool implicit_transpose =
+        (stride0_gm < stride1_gm || stride0_ub < stride1_ub);
+    if (!implicit_transpose || !nddma_transpose_allows_padding) {
+      load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst);
+      return;
+    }
+    // fall through: padded implicit transpose with a contiguous, 32B-aligned,
+    // span-contained UB row -> NDDMA
   }
 
   if ((stride0_gm < stride1_gm || stride0_ub < stride1_ub)) {
     // Implicit transposition scenarios need to be moved through scalar
     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
       load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst);
+    } else if (!nddma_transpose_allows_padding) {
+      // Padded loads with a unit-stride innermost axis only reach the
+      // transpose branch as broadcast shapes (stride0 == 0), which slip past
+      // the gate above; their fill placement is just as unprovable, so they
+      // stay on the scalar path too.
+      load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst);
     } else {
-      load_gm_to_ubuf_2d_by_nddma<T>(src, dst);
+      load_gm_to_ubuf_2d_by_nddma<T>(src, dst, pad_mode, pad_value,
+                                     left_padding_num,
+                                     static_cast<uint8_t>(eviction_policy));
     }
     return;
   }
