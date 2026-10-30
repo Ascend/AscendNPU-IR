@@ -195,13 +195,28 @@ int main(int argc, char **argv) {
     bool isCpuRunner = config.shouldEnableCPURunner();
     std::string soPath;
     if (isNative && !isCpuRunner) {
-      soPath = bishengir::resolveBishengLlcLibrary();
-      if (soPath.empty() ||
-          !llvm::sys::fs::exists(soPath)) {
-        llvm::errs() << "[INFO] libbisheng-llc.so not found"
-                     << (soPath.empty() ? "" : (" at " + soPath))
-                     << "; falling back to external `bisheng` process.\n";
+      // The Native path (vendor SO, pure LLVM backend) cannot reproduce the
+      // full driver translation of `--cce-enable-sanitizer`/`-g`/
+      // `--enable-debug-variables`: those reach the vendor only via cc1
+      // front-end flags and -mllvm options that the SO does not accept.
+      // Force the external `bisheng` process so the user-visible behavior of
+      // these options stays identical across backends.
+      if (config.getEnableSanitizer() ||
+          config.getEnableDebugInfo() ||
+          config.getEnableDebugVariables()) {
+        llvm::errs() << "[INFO] debug/sanitizer options enabled; using the"
+                        " external `bisheng` process (Native path does not"
+                        " reproduce the driver translation).\n";
         isNative = false;
+      } else {
+        soPath = bishengir::resolveBishengLlcLibrary();
+        if (soPath.empty() ||
+            !llvm::sys::fs::exists(soPath)) {
+          llvm::errs() << "[INFO] libbisheng-llc.so not found"
+                       << (soPath.empty() ? "" : (" at " + soPath))
+                       << "; falling back to external `bisheng` process.\n";
+          isNative = false;
+        }
       }
     }
     (void)compileScope.maybeCreateRuntime(/*isNative=*/isNative,
