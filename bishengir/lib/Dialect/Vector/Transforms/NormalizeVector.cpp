@@ -908,13 +908,24 @@ struct ConvertCreateMaskTo1D : public OpRewritePattern<vector::CreateMaskOp> {
     for (unsigned d = *pivot + 1; d < shape.size(); ++d)
       innerExtent *= shape[d];
 
+    // The pivot's bound has to be capped at the pivot dim's own extent.
+    // `create_mask` does cap the bound it is handed, but only against the
+    // length of the vector it builds, and after flattening that length is the
+    // product of every extent rather than the pivot dim's extent.  A bound
+    // between the two -- say 100 on the pivot dim of a <2x64xi1> mask, whose
+    // flat length is 128 -- would activate lanes that the multi-dim mask
+    // leaves inactive.  Capping also keeps the multiply below from scaling an
+    // out-of-range bound into a different range.
     Value totalSize = op->getOperand(*pivot);
-    if (innerExtent != 1) {
-      // `create_mask` already clamps its own bound, but the multiply below
-      // happens before that, so clamp first: an out-of-range bound would
-      // otherwise be scaled into a different range (and a very large one could
-      // overflow into a negative length, turning an all-true mask empty).
+    if (std::optional<int64_t> constBound = bounds[*pivot]) {
+      // Capping a constant needs no arithmetic, so an in-range bound (the
+      // common case) reuses the operand and leaves the IR as it was.
+      if (*constBound > shape[*pivot])
+        totalSize = rewriter.create<arith::ConstantIndexOp>(loc, shape[*pivot]);
+    } else {
       totalSize = clampBoundToExtent(rewriter, loc, totalSize, shape[*pivot]);
+    }
+    if (innerExtent != 1) {
       Value scale = rewriter.create<arith::ConstantIndexOp>(loc, innerExtent);
       totalSize = rewriter.create<arith::MulIOp>(loc, totalSize, scale);
     }
