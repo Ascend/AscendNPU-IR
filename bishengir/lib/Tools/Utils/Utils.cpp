@@ -42,6 +42,10 @@ using namespace bishengir;
 
 namespace {
 thread_local CompileTiming *currentCompileTiming = nullptr;
+
+// When true, `execute` echoes each external command line it runs (e.g. the
+// bisheng/ccec invocations) to stderr.
+bool EchoCommandLines = false;
 } // namespace
 
 mlir::TimingScope *bishengir::getCurrentCompileTimingScope() {
@@ -201,6 +205,14 @@ static LogicalResult runResolvedBinary(StringRef binPath,
                                        std::optional<StringRef> outputFile) {
   arguments[0] = binPath;
 
+  if (EchoCommandLines) {
+    llvm::errs() << "[save-temps] Executing: ";
+    llvm::interleave(
+        arguments, llvm::errs(),
+        [](const StringRef &arg) { llvm::errs() << arg; }, " ");
+    llvm::errs() << "\n";
+  }
+
   LLVM_DEBUG({
     llvm::dbgs() << "[DEBUG] Executing: ";
     llvm::interleave(
@@ -227,6 +239,8 @@ static LogicalResult runResolvedBinary(StringRef binPath,
   }
   return success();
 }
+
+void bishengir::setEchoCommandLines(bool echo) { EchoCommandLines = echo; }
 
 LogicalResult bishengir::execute(StringRef binName, StringRef installPath,
                                  SmallVectorImpl<StringRef> &arguments,
