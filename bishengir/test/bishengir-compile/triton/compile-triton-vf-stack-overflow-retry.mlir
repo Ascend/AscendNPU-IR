@@ -16,8 +16,8 @@
 // crashes, or starts rescuing the kernel someday.
 //
 // no-dma: the left-padding DMA path is closed on this branch, so the DMA
-// codegen-dependent VF stack retry expectations below no longer hold.
-// UNSUPPORTED: true
+// codegen-dependent VF stack retry expectations do not hold on aarch64.
+// UNSUPPORTED: host-aarch64
 // REQUIRES: enable-lir-compile
 // RUN: bishengir-compile %s --target=Ascend950PR_9579 --enable-hfusion-compile=true --enable-triton-kernel-compile --enable-auto-multi-buffer=True --enable-vf-stack-limit=false --enable-vf-merge-level=1 -o %t.out 2> %t.log ; FileCheck --input-file=%t.log %s
 // RUN: bishengir-compile %s --target=Ascend950PR_9579 --enable-hfusion-compile=true --enable-triton-kernel-compile --enable-auto-multi-buffer=True --enable-vf-stack-limit=false --enable-vf-merge-level=1 --enable-vf-stack-overflow-retry=false -o %t.off.out 2> %t.off.log ; FileCheck --check-prefix=OFF --input-file=%t.off.log %s
