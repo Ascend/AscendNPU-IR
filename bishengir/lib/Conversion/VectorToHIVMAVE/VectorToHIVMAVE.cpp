@@ -376,8 +376,34 @@ static bool transferReadNeedsPaddingSelect(vector::TransferReadOp readOp) {
   auto maskVecType = dyn_cast<VectorType>(mask.getType());
   if (!maskVecType || maskVecType.getRank() == 1)
     return false;
-  if (auto shapeCast = mask.getDefiningOp<vector::ShapeCastOp>())
-    if (cast<VectorType>(shapeCast.getSource().getType()).getRank() == 1)
+  // Walk the whole definition chain rather than probing a single level.  The
+  // `vector::ShapeCastOp` that flattening leaves behind is itself illegal in
+  // this conversion, so `ShapeCastOpPattern` may already have replaced it with
+  // an `UnrealizedConversionCastOp` by the time this runs.  Looking only for a
+  // `ShapeCastOp` would then miss the rank-1 source and flip the answer, which
+  // would also split it from the pass's up-front check -- that one runs before
+  // the conversion, while this runs during it.  `annotation.mark` sits on the
+  // mask in real input and has to be transparent here too.
+  Value unwrapped = mask;
+  while (Operation *def = unwrapped.getDefiningOp()) {
+    if (auto sc = dyn_cast<vector::ShapeCastOp>(def)) {
+      unwrapped = sc.getSource();
+      continue;
+    }
+    if (auto uc = dyn_cast<UnrealizedConversionCastOp>(def);
+        uc && uc->getNumOperands() == 1) {
+      unwrapped = uc->getOperand(0);
+      continue;
+    }
+    if (def->getName().getStringRef() == "annotation.mark" &&
+        def->getNumOperands() == 1) {
+      unwrapped = def->getOperand(0);
+      continue;
+    }
+    break;
+  }
+  if (auto srcVecType = dyn_cast<VectorType>(unwrapped.getType()))
+    if (srcVecType.getRank() == 1)
       return false;
   return true;
 }
