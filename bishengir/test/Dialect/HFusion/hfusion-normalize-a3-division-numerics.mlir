@@ -21,6 +21,15 @@
 
 module {
 // CPU: llvm.func @constant_one_divisions
+  func.func @constant_zero_divisions(%a: tensor<16xi32>) -> (tensor<16xi32>, tensor<16xi32>, tensor<16xi32>) {
+    %b = arith.constant 0 : i32
+    %out = tensor.empty() : tensor<16xi32>
+    %trunc = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%a, %b : tensor<16xi32>, i32) outs(%out : tensor<16xi32>) -> tensor<16xi32>
+    %floor = hfusion.elemwise_binary {fun = #hfusion.binary_fn<floordivsi>} ins(%a, %b : tensor<16xi32>, i32) outs(%out : tensor<16xi32>) -> tensor<16xi32>
+    %ceil = hfusion.elemwise_binary {fun = #hfusion.binary_fn<ceildivsi>} ins(%a, %b : tensor<16xi32>, i32) outs(%out : tensor<16xi32>) -> tensor<16xi32>
+    return %trunc, %floor, %ceil : tensor<16xi32>, tensor<16xi32>, tensor<16xi32>
+  }
+
   func.func @constant_one_divisions(%a: tensor<16xi32>) -> (tensor<16xi32>, tensor<16xi32>, tensor<16xi32>) {
     %b = arith.constant 1 : i32
     %out = tensor.empty() : tensor<16xi32>
@@ -94,6 +103,10 @@ module {
   func.func @main() {
     %a = arith.constant dense<[-2147483648, -2147483647, 2147483647, 2147483646, 16777217, -16777217, 16777219, -16777219, 7, 7, -7, -7, 0, 1, -1, 2147483647]> : tensor<16xi32>
     %b = arith.constant dense<[-1, 1, 3, -3, 2, -2, 7, -7, 4, -4, 4, -4, 3, -2147483648, -2147483648, 1]> : tensor<16xi32>
+    %constant_zero_divisions:3 = func.call @constant_zero_divisions(%a) : (tensor<16xi32>) -> (tensor<16xi32>, tensor<16xi32>, tensor<16xi32>)
+    func.call @print_result(%constant_zero_divisions#0) : (tensor<16xi32>) -> ()
+    func.call @print_result(%constant_zero_divisions#1) : (tensor<16xi32>) -> ()
+    func.call @print_result(%constant_zero_divisions#2) : (tensor<16xi32>) -> ()
     %constant_one_divisions:3 = func.call @constant_one_divisions(%a) : (tensor<16xi32>) -> (tensor<16xi32>, tensor<16xi32>, tensor<16xi32>)
     func.call @print_result(%constant_one_divisions#0) : (tensor<16xi32>) -> ()
     func.call @print_result(%constant_one_divisions#1) : (tensor<16xi32>) -> ()
@@ -126,6 +139,12 @@ module {
   }
 }
 
+// constant_zero_divisions: trunc
+// CHECK: [-2147483648, -2147483648, 2147483647, 2147483647, 2147483647, -2147483648, 2147483647, -2147483648, 2147483647, 2147483647, -2147483648, -2147483648, 0, 2147483647, -2147483648, 2147483647]
+// constant_zero_divisions: floor
+// CHECK: [-2147483648, -2147483648, 2147483647, 2147483647, 2147483647, -2147483648, 2147483647, -2147483648, 2147483647, 2147483647, -2147483648, -2147483648, 0, 2147483647, -2147483648, 2147483647]
+// constant_zero_divisions: ceil
+// CHECK: [-2147483648, -2147483648, 2147483647, 2147483647, 2147483647, -2147483648, 2147483647, -2147483648, 2147483647, 2147483647, -2147483648, -2147483648, 0, 2147483647, -2147483648, 2147483647]
 // constant_one_divisions: trunc
 // CHECK: [-2147483648, -2147483647, 2147483647, 2147483646, 16777217, -16777217, 16777219, -16777219, 7, 7, -7, -7, 0, 1, -1, 2147483647]
 // constant_one_divisions: floor
