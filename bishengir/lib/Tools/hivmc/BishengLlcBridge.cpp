@@ -24,6 +24,7 @@
 namespace bishengir {
 
 BishengBackendMode resolveBishengBackendMode() {
+#if BISHENGIR_HAVE_BISHENG_LLC
   const char *env = getenv("BISHENG_BACKEND");
   if (!env || env[0] == '\0')
     return BishengBackendMode::Native;
@@ -35,6 +36,9 @@ BishengBackendMode resolveBishengBackendMode() {
   llvm::errs() << BRIDGE_LOG "Unknown BISHENG_BACKEND='" << v
                << "'; using Native.\n";
   return BishengBackendMode::Native;
+#else
+  return BishengBackendMode::Process;
+#endif
 }
 
 std::string defaultBishengLlcLibraryPath() {
@@ -92,6 +96,7 @@ std::string bishengLlcDumpDir() {
 }
 
 llvm::StringRef bishengLlcStatusName(int status) {
+#if BISHENGIR_HAVE_BISHENG_LLC
   switch (status) {
   case BISHENG_LLC_OK:
     return "OK";
@@ -108,6 +113,9 @@ llvm::StringRef bishengLlcStatusName(int status) {
   default:
     return "UNKNOWN";
   }
+#else
+  return "UNAVAILABLE";
+#endif
 }
 
 BishengLlcBridge::BishengLlcBridge() = default;
@@ -125,6 +133,7 @@ BishengLlcBridge::~BishengLlcBridge() {
 }
 
 bool BishengLlcBridge::load(llvm::StringRef soPath) {
+#if BISHENGIR_HAVE_BISHENG_LLC
   std::string path = soPath.str();
   if (path.empty()) {
     const char *env = getenv("BISHENG_LLC_LIBRARY");
@@ -173,9 +182,13 @@ bool BishengLlcBridge::load(llvm::StringRef soPath) {
 #undef RESOLVE
 
   return true;
+#else
+  return false;
+#endif
 }
 
 bool BishengLlcBridge::init() {
+#if BISHENGIR_HAVE_BISHENG_LLC
   if (!handle_ || !fnInit_) {
     llvm::errs() << BRIDGE_LOG "init() called before successful load().\n";
     return false;
@@ -193,18 +206,24 @@ bool BishengLlcBridge::init() {
   }
   initCount_.fetch_add(1, std::memory_order_relaxed);
   return true;
+#else
+  return false;
+#endif
 }
 
 void BishengLlcBridge::destroyCtx_() {
+#if BISHENGIR_HAVE_BISHENG_LLC
   if (!ctx_)
     return;
   if (fnDestroy_)
     fnDestroy_(ctx_);
   ctx_ = nullptr;
   destroyCount_.fetch_add(1, std::memory_order_relaxed);
+#endif
 }
 
 bool BishengLlcBridge::preloadAux(llvm::StringRef path) {
+#if BISHENGIR_HAVE_BISHENG_LLC
   if (!ctx_ || !fnPreload_) {
     llvm::errs() << BRIDGE_LOG "preloadAux() before init().\n";
     return false;
@@ -216,6 +235,9 @@ bool BishengLlcBridge::preloadAux(llvm::StringRef path) {
     return false;
   }
   return true;
+#else
+  return false;
+#endif
 }
 
 BishengLlcCompileResult
@@ -224,6 +246,7 @@ BishengLlcBridge::compile(llvm::StringRef irBytes,
                           llvm::StringRef targetCpu, uint32_t optLevel,
                           const std::vector<std::string> &extraLlvmOpts,
                           llvm::StringRef outputPath) {
+#if BISHENGIR_HAVE_BISHENG_LLC
   BishengLlcCompileResult result;
   if (compiled_) {
     result.diagnostic = "compile() called more than once on one bridge";
@@ -297,6 +320,11 @@ BishengLlcBridge::compile(llvm::StringRef irBytes,
   result.success = true;
   result.outputPath = outPath;
   return result;
+#else
+  BishengLlcCompileResult result;
+  result.diagnostic = "Native BiSheng backend was disabled at build time";
+  return result;
+#endif
 }
 
 void BishengLlcBridge::destroy() {
@@ -318,10 +346,12 @@ void BishengLlcBridge::reset() {
     dlclose(handle_);
     handle_ = nullptr;
   }
+#if BISHENGIR_HAVE_BISHENG_LLC
   fnInit_ = nullptr;
   fnPreload_ = nullptr;
   fnCompile_ = nullptr;
   fnDestroy_ = nullptr;
+#endif
   lmid_ = 0;
   compiled_ = false;
 }
