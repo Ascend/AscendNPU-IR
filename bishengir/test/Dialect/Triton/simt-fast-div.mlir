@@ -140,14 +140,12 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.thr
 
 // -----
 
-// Test 7: division by a constant — arith.constant divisors are transformed
-// just like function-argument divisors.
+// Test 7: constant division is preserved for backend constant lowering.
 
 // CHECK-LABEL: @divisor_is_constant
-// CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_shift_uint32_t
-// CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_mul_uint32_t
-// CHECK:       ascend_dpx.umulhi
-// CHECK-NOT:   arith.divsi
+// CHECK-NEXT:  [[C7:%[^ ]+]] = arith.constant 7 : i32
+// CHECK-NEXT:  [[Q:%[^ ]+]] = arith.divsi {{%[^ ]+}}, [[C7]] : i32
+// CHECK-NEXT:  tt.return [[Q]] : i32
 module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.threads-per-warp" = 32 : i32} {
   tt.func public @divisor_is_constant(%dividend: i32) -> i32 {
     %c7 = arith.constant 7 : i32
@@ -173,22 +171,30 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.thr
 // -----
 
 // Test 9: mixed — one divisor is a function argument, the other is a constant.
-// Both divisions are now transformed; two independent magic computations are
-// emitted (one per unique divisor value / argument).
+// Runtime division and remainder share one magic computation; constant division
+// is preserved.
 
 // CHECK-LABEL: @mixed
 // CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_shift_uint32_t
 // CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_mul_uint32_t
-// CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_shift_uint32_t
-// CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_mul_uint32_t
-// CHECK-NOT:   arith.divsi
+// CHECK-NOT:   tt.call_scalar
+// CHECK:       arith.constant 3 : i32
+// CHECK:       ascend_dpx.umulhi
+// CHECK:       ascend_dpx.umulhi
+// CHECK:       arith.subi
+// CHECK:       arith.divsi {{%[^ ]+}}, {{%[^ ]+}} : i32
+// CHECK-NEXT:  arith.addi
+// CHECK-NEXT:  arith.addi
+// CHECK-NEXT:  tt.return
 module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.threads-per-warp" = 32 : i32} {
   tt.func public @mixed(%a: i32, %b: i32, %divisor: i32) -> i32 {
     %c3 = arith.constant 3 : i32
     %0 = arith.divsi %a, %divisor : i32
+    %rem = arith.remsi %b, %divisor : i32
     %1 = arith.divsi %b, %c3 : i32
     %2 = arith.addi %0, %1 : i32
-    tt.return %2 : i32
+    %3 = arith.addi %2, %rem : i32
+    tt.return %3 : i32
   }
 }
 
@@ -219,13 +225,15 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.thr
 // -----
 
 // Test 11: two divisions sharing the same constant divisor value.
-// Even though the two arith.constant ops are distinct SSA values, the pass
-// deduplicates by integer value — magic is computed only once.
+// Distinct constant SSA values both remain available for backend lowering.
 
 // CHECK-LABEL: @same_constant_twice
-// CHECK-COUNT-1: @_mlir_ciface_simt_div_magic_shift_uint32_t
-// CHECK-COUNT-1: @_mlir_ciface_simt_div_magic_mul_uint32_t
-// CHECK-NOT:     arith.divsi
+// CHECK-NEXT:  arith.constant 7 : i32
+// CHECK-NEXT:  arith.constant 7 : i32
+// CHECK-NEXT:  arith.divsi
+// CHECK-NEXT:  arith.divsi
+// CHECK-NEXT:  arith.addi
+// CHECK-NEXT:  tt.return
 module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.threads-per-warp" = 32 : i32} {
   tt.func public @same_constant_twice(%a: i32, %b: i32) -> i32 {
     %c7_1 = arith.constant 7 : i32
@@ -239,15 +247,14 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.thr
 
 // -----
 
-// Test 12: two divisions with different constant divisors — two independent
-// magic computations are emitted.
+// Test 12: unsigned division by different constants is also preserved.
 
 // CHECK-LABEL: @two_constants
-// CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_shift_uint32_t
-// CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_mul_uint32_t
-// CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_shift_uint32_t
-// CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_mul_uint32_t
-// CHECK-NOT:   arith.divui
+// CHECK-NEXT:  arith.constant 3 : i32
+// CHECK-NEXT:  arith.constant 7 : i32
+// CHECK-NEXT:  arith.divui
+// CHECK-NEXT:  arith.divui
+// CHECK-NEXT:  tt.return
 module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.threads-per-warp" = 32 : i32} {
   tt.func public @two_constants(%a: i32) -> i32 {
     %c3 = arith.constant 3 : i32
@@ -292,34 +299,17 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.thr
 // Test 14: 3-D tensor divsi and remsi sharing the same constant divisor (128).
 // Derived from triton_poi_fused_mul_1 where dense<128> is used by both
 //   arith.divsi %33, %cst_4  and  arith.remsi %33, %cst_4.
-// The magic computation must be emitted only once (dedup by constant value),
-// memdesc and local_load must have rank 3, and results feed into multi-dim ops.
+// Neither operation needs runtime magic computation or shared-memory traffic.
 #blocked3d = #ttg.blocked<{sizePerThread = [1, 1, 1], threadsPerWarp = [1, 1, 32], warpsPerCTA = [1, 1, 1], order = [2, 1, 0]}>
 
 // CHECK-LABEL: @tensor_3d_div_rem_same_const
-// CHECK-COUNT-1: @_mlir_ciface_simt_div_magic_shift_uint32_t
-// CHECK-COUNT-1: @_mlir_ciface_simt_div_magic_mul_uint32_t
-//   div replacement:
-// CHECK:       ttg.local_load {{.*}} -> tensor<1x1x1xi32, #{{.*}}>
-// CHECK:       ttg.local_load {{.*}} -> tensor<1x1x1xi32, #{{.*}}>
-// CHECK:       tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x4x16xi32,
-// CHECK:       tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x4x16xi32,
-// CHECK:       tt.mulhiui
-// CHECK:       arith.shrui
-//   rem replacement (same magic, fresh loads):
-// CHECK:       ttg.local_load {{.*}} -> tensor<1x1x1xi32, #{{.*}}>
-// CHECK:       ttg.local_load {{.*}} -> tensor<1x1x1xi32, #{{.*}}>
-// CHECK:       tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x4x16xi32,
-// CHECK:       tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x4x16xi32,
-// CHECK:       tt.mulhiui
-// CHECK:       arith.shrui
-// CHECK:       arith.muli
-// CHECK:       arith.subi
-//   user code:
-// CHECK:       arith.muli
-// CHECK:       arith.addi
-// CHECK-NOT:   arith.divsi
-// CHECK-NOT:   arith.remsi
+// CHECK-NEXT:  arith.constant 128 : i32
+// CHECK-NEXT:  tt.splat
+// CHECK-NEXT:  arith.divsi
+// CHECK-NEXT:  arith.remsi
+// CHECK-NEXT:  arith.muli
+// CHECK-NEXT:  arith.addi
+// CHECK-NEXT:  tt.return
 module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.threads-per-warp" = 32 : i32} {
   tt.func public @tensor_3d_div_rem_same_const(%a: tensor<2x4x16xi32, #blocked3d>) -> tensor<2x4x16xi32, #blocked3d> {
     %c128 = arith.constant 128 : i32
@@ -367,27 +357,19 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.thr
 // Test 16: 3-D tensor with two different constant divisors (128 and 384).
 // Derived from triton_poi_fused_mul_1 which divides by both dense<128> and
 // dense<38400>, with the results chained through arith.muli and arith.addi.
-// Two independent magic computations are required.
+// Both constant divisions remain available for backend lowering.
 #blocked3d = #ttg.blocked<{sizePerThread = [1, 1, 1], threadsPerWarp = [1, 1, 32], warpsPerCTA = [1, 1, 1], order = [2, 1, 0]}>
 
 // CHECK-LABEL: @tensor_3d_two_constants
-// CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_shift_uint32_t
-// CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_mul_uint32_t
-// CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_shift_uint32_t
-// CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_mul_uint32_t
-// CHECK:       ttg.local_load {{.*}} -> tensor<1x1x1xi32, #{{.*}}>
-// CHECK:       ttg.local_load {{.*}} -> tensor<1x1x1xi32, #{{.*}}>
-// CHECK:       tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x4x16xi32,
-// CHECK:       tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x4x16xi32,
-// CHECK:       tt.mulhiui
-// CHECK:       arith.muli
-// CHECK:       ttg.local_load {{.*}} -> tensor<1x1x1xi32, #{{.*}}>
-// CHECK:       ttg.local_load {{.*}} -> tensor<1x1x1xi32, #{{.*}}>
-// CHECK:       tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x4x16xi32,
-// CHECK:       tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x4x16xi32,
-// CHECK:       tt.mulhiui
-// CHECK:       arith.addi
-// CHECK-NOT:   arith.divsi
+// CHECK-NEXT:  arith.constant 128 : i32
+// CHECK-NEXT:  arith.constant 384 : i32
+// CHECK-NEXT:  tt.splat
+// CHECK-NEXT:  tt.splat
+// CHECK-NEXT:  arith.divsi
+// CHECK-NEXT:  arith.muli
+// CHECK-NEXT:  arith.divsi
+// CHECK-NEXT:  arith.addi
+// CHECK-NEXT:  tt.return
 module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.threads-per-warp" = 32 : i32} {
   tt.func public @tensor_3d_two_constants(%a: tensor<2x4x16xi32, #blocked3d>, %b: tensor<2x4x16xi32, #blocked3d>) -> tensor<2x4x16xi32, #blocked3d> {
     %c128 = arith.constant 128 : i32
@@ -474,22 +456,17 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.thr
 #blocked3d_4w = #ttg.blocked<{sizePerThread = [1, 4, 2], threadsPerWarp = [2, 2, 8], warpsPerCTA = [1, 2, 2], order = [2, 0, 1]}>
 
 // CHECK-LABEL: @nested_loop_3d_mixed
-//   two magic computations at entry:
+//   one runtime magic computation at entry:
 // CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_shift_uint32_t
 // CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_mul_uint32_t
-// CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_shift_uint32_t
-// CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_mul_uint32_t
+// CHECK-NOT:   tt.call_scalar
 //   outer loop:
 // CHECK:       scf.for
+// CHECK-NOT:   tt.call_scalar
 //   inner loop:
 // CHECK:         scf.for
-//   div replacement:
-// CHECK:           ttg.local_load {{.*}} -> tensor<1x1x1xi32, #{{.*}}>
-// CHECK:           ttg.local_load {{.*}} -> tensor<1x1x1xi32, #{{.*}}>
-// CHECK:           tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x16x32xi32,
-// CHECK:           tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x16x32xi32,
-// CHECK:           tt.mulhiui
-// CHECK:           arith.shrui
+//   constant division is preserved:
+// CHECK-NEXT:      arith.divsi
 //   rem replacement:
 // CHECK:           ttg.local_load {{.*}} -> tensor<1x1x1xi32, #{{.*}}>
 // CHECK:           ttg.local_load {{.*}} -> tensor<1x1x1xi32, #{{.*}}>
@@ -501,7 +478,6 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.thr
 // CHECK:           arith.subi
 //   user code:
 // CHECK:           arith.addi
-// CHECK-NOT:   arith.divsi
 // CHECK-NOT:   arith.remsi
 module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, "ttg.threads-per-warp" = 32 : i32} {
   tt.func public @nested_loop_3d_mixed(%a: tensor<2x16x32xi32, #blocked3d_4w>, %divisor: i32, %n: index, %m: index) -> tensor<2x16x32xi32, #blocked3d_4w> {
