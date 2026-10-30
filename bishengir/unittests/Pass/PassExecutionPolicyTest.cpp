@@ -737,6 +737,7 @@ TEST_F(PassExecutionPolicyTest, ProductionRegbaseKernelKindsRegistered) {
                          "hivm-merge-same-preload-scopes",
                          "hivm-normalize-convops",
                          "hivm-normalize-matmul",
+                         "hivm-optimize-transpose-placement",
                          "hivm-partition-and-bind-sub-block",
                          "hivm-propagate-convert-layout",
                          "hivm-sink-exclusive-preload-work",
