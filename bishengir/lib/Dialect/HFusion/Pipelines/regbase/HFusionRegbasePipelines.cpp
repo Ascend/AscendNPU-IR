@@ -447,6 +447,14 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(
       createPreVectorizationFusionPass(preVecOptions));
   pm.nest<func::FuncOp>().addPass(createPrepareI1Nx1ForVectorizationPass());
+  if (hfusionOptions.enableAutoVectorizeV2 &&
+      enableSIMDVFFusion(hfusionOptions) && !hfusionOptions.enableMixedCV &&
+      hacc::utils::isRegBasedArch(hfusionOptions.target) &&
+      hfusionOptions.enableFlatten) {
+    // Keep broadcast and scalar reduction payloads fused before introducing
+    // reshape boundaries around compatible reduction regions.
+    pm.nest<func::FuncOp>().addPass(createFlattenReductionRegionsPass());
+  }
   canonicalizationPipeline(pm, hfusionOptions);
   if (hfusionOptions.enableAutoVectorizeV2) {
     AutoVectorizeV2Options vecOptions;

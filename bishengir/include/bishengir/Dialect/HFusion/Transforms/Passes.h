@@ -153,6 +153,9 @@ std::unique_ptr<Pass> createConvertGenericToNamedOpPass();
 std::unique_ptr<Pass>
 createFlattenOpsPass(const FlattenOpsOptions &options = {});
 
+/// Collapse local tensor regions using compatible reduction dimensions.
+std::unique_ptr<Pass> createFlattenReductionRegionsPass();
+
 /// Create a pass to move output tensor results' tied init operand to function
 /// parameters.
 std::unique_ptr<Pass>

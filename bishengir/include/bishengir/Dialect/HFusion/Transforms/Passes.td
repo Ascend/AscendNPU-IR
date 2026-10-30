@@ -259,6 +259,21 @@ def FlattenOps : Pass<"hfusion-flatten-ops", "func::FuncOp"> {
              "Whether to skip the current pass when scope exists">];
 }
 
+def FlattenReductionRegions
+    : Pass<"hfusion-flatten-reduction-regions", "func::FuncOp"> {
+  let constructor = "mlir::hfusion::createFlattenReductionRegionsPass()";
+  let summary = "Flatten compatible local tensor reduction regions before V2";
+  let description = [{
+    Collapse adjacent reduction dimensions in linalg.generic operations and
+    their compatible elementwise producers. Keep parallel dimensions, projected
+    input maps, and producers with outside users at region boundaries. Run after
+    PreVectorizationFusion so broadcast and reduction payload fusion is retained,
+    and canonicalize the resulting tensor reshapes before AutoVectorizeV2.
+  }];
+  let dependentDialects = ["arith::ArithDialect", "linalg::LinalgDialect",
+                           "tensor::TensorDialect"];
+}
+
 def TensorResToOutParams
     : Pass<"hfusion-tensor-results-to-out-params", "ModuleOp"> {
   let summary = "Move tensor results to function output parameters";

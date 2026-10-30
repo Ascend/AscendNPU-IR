@@ -36,6 +36,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   DropSymbols.cpp
   EliminateDuplicateFuncs.cpp
   FlattenOps.cpp
+  FlattenReductionRegions.cpp
   FoldUnitDims.cpp
   FoldSymbolicDim.cpp
   GenericUnroller.cpp
