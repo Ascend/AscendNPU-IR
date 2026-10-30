@@ -1,8 +1,10 @@
 // RUN: bishengir-opt %s --hfusion-normalize-ops -split-input-file -verify-diagnostics | FileCheck %s --enable-var-scope
 
 // CHECK-LABEL: func.func @zero_constant_trunc(
-// CHECK-COUNT-2: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
-// CHECK: round_mode = #hfusion.round_mode<rint>
+// CHECK-DAG: arith.constant 2147483647 : i32
+// CHECK-DAG: arith.constant -2147483648 : i32
+// CHECK-NOT: #linalg.binary_fn<div>
+// CHECK: hfusion.select
 // CHECK: return
 func.func @zero_constant_trunc(%a: tensor<16xi32>) -> tensor<16xi32> {
   %b = arith.constant 0 : i32
@@ -14,8 +16,10 @@ func.func @zero_constant_trunc(%a: tensor<16xi32>) -> tensor<16xi32> {
 // -----
 
 // CHECK-LABEL: func.func @zero_constant_floor(
-// CHECK-COUNT-2: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
-// CHECK: round_mode = #hfusion.round_mode<rint>
+// CHECK-DAG: arith.constant 2147483647 : i32
+// CHECK-DAG: arith.constant -2147483648 : i32
+// CHECK-NOT: #linalg.binary_fn<div>
+// CHECK: hfusion.select
 // CHECK: return
 func.func @zero_constant_floor(%a: tensor<16xi32>) -> tensor<16xi32> {
   %b = arith.constant 0 : i32
@@ -27,8 +31,10 @@ func.func @zero_constant_floor(%a: tensor<16xi32>) -> tensor<16xi32> {
 // -----
 
 // CHECK-LABEL: func.func @zero_constant_ceil(
-// CHECK-COUNT-2: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
-// CHECK: round_mode = #hfusion.round_mode<rint>
+// CHECK-DAG: arith.constant 2147483647 : i32
+// CHECK-DAG: arith.constant -2147483648 : i32
+// CHECK-NOT: #linalg.binary_fn<div>
+// CHECK: hfusion.select
 // CHECK: return
 func.func @zero_constant_ceil(%a: tensor<16xi32>) -> tensor<16xi32> {
   %b = arith.constant 0 : i32

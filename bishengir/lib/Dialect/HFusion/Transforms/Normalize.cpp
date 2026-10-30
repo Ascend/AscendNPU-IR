@@ -3618,7 +3618,11 @@ public:
     // f32, outside the range of fptosi. Replacing b by 2 keeps the estimate
     // safely in i32 even without clearing a. The final modulo-i32 multiply
     // also preserves INT_MIN / -1 as INT_MIN.
-    Value safeB = select(special, intConstant(2), b);
+    // Zero divisors must be sanitized before either floating division.
+    // Use 2 rather than 1 to keep INT_MAX's f32 estimate inside i32.
+    Value isZero = compare(CompareFn::veq, b, intConstant(0));
+    Value needsSafeDivisor = bitwise(BinaryFn::vor, special, isZero);
+    Value safeB = select(needsSafeDivisor, intConstant(2), b);
     Value floatA = castTo(rewriter, a, rewriter.getF32Type());
     Value floatB = castTo(rewriter, safeB, rewriter.getF32Type());
     // Compute signs while the floating inputs are live. Conversion preserves
@@ -3641,7 +3645,9 @@ public:
 
     Value q = roundQuotient(m1, r1, mode, negativeA, negativeB);
     // Restore +/-1 after rounding: the surrogate a/2 can have a remainder.
-    return select(special, binary(linalg::BinaryFn::mul, a, b), q);
+    Value nonzeroQuotient =
+        select(special, binary(linalg::BinaryFn::mul, a, b), q);
+    return select(isZero, buildZeroDivisor(a), nonzeroQuotient);
   }
 
 private:
@@ -3705,10 +3711,24 @@ private:
         .getResult(0);
   }
 
+  // Match the A5 signed i32 result for all rounding modes: positive/0
+  // saturates to INT_MAX, negative/0 to INT_MIN, and 0/0 is zero.
+  Value buildZeroDivisor(Value a) {
+    Value zero = intConstant(0);
+    Value positive = compare(CompareFn::vgt, a, zero);
+    Value negative = compare(CompareFn::vlt, a, zero);
+    Value nonpositive = select(
+        negative, intConstant(std::numeric_limits<int32_t>::min()), zero);
+    return select(positive, intConstant(std::numeric_limits<int32_t>::max()),
+                  nonpositive);
+  }
+
   Value buildConstantDivisor(Value a, Value b, RoundMode mode) {
     auto divisor = getConstantDivisor(b);
-    if (!divisor || divisor->getBitWidth() != 32 || divisor->isZero())
+    if (!divisor || divisor->getBitWidth() != 32)
       return {};
+    if (divisor->isZero())
+      return buildZeroDivisor(a);
     bool negativeDivisor = divisor->isNegative();
     APInt magnitude = negativeDivisor ? -*divisor : *divisor;
     if (!magnitude.isPowerOf2())
