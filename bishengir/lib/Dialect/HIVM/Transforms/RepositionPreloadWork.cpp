@@ -958,7 +958,8 @@ static bool recurrenceCanCross(Operation *op, ArrayRef<Value> inputs,
     });
   if (op->getNumRegions() ||
       isa<hivm::SetFlagOp, hivm::WaitFlagOp, hivm::PipeBarrierOp,
-          hivm::SyncBlockOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp>(op))
+          hivm::SyncBlockOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
+          hivm::SyncIntraBlockSetOp, hivm::SyncIntraBlockWaitOp>(op))
     return false;
   auto effects = getEffectsRecursively(op);
   return effects && llvm::all_of(*effects, [&](const auto &effect) {

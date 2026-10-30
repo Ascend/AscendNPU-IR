@@ -176,6 +176,58 @@ struct HIVMTryWaitOpLowering : public ConvertOpToLLVMPattern<TryWaitOp> {
   }
 };
 
+template <typename Op>
+struct HIVMBufferSyncOpLowering : public ConvertOpToLLVMPattern<Op> {
+  using ConvertOpToLLVMPattern<Op>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(Op op, typename Op::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto module = op->template getParentOfType<ModuleOp>();
+    if (!hacc::utils::isAscend950(module))
+      return op.emitOpError("requires an Ascend950 target");
+    std::optional<int64_t> constantId;
+    if (auto id = op.getStaticBufId())
+      constantId = id->getInt();
+    else if (auto constant =
+                 op.getDynamicBufId()
+                     .template getDefiningOp<arith::ConstantIntOp>())
+      constantId = constant.value();
+    bool immediate = constantId.has_value();
+    StringRef name = isa<GetBufOp>(op) ? (immediate ? "llvm.hivm.GET.BUFI.mode"
+                                                    : "llvm.hivm.GET.BUF.mode")
+                                       : (immediate ? "llvm.hivm.RLS.BUFI.mode"
+                                                    : "llvm.hivm.RLS.BUF.mode");
+    auto i64 = rewriter.getI64Type();
+    auto type = LLVM::LLVMFunctionType::get(
+        LLVM::LLVMVoidType::get(rewriter.getContext()), {i64, i64, i64});
+    auto callee = module.template lookupSymbol<LLVM::LLVMFuncOp>(name);
+    if (callee && callee.getFunctionType() != type)
+      return op.emitOpError("incompatible declaration of ") << name;
+    if (!callee) {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(module.getBody());
+      callee = rewriter.create<LLVM::LLVMFuncOp>(op.getLoc(), name, type);
+      callee->setAttr(TFuncCoreTypeAttr::name,
+                      TFuncCoreTypeAttr::get(rewriter.getContext(),
+                                             TFuncCoreType::AIC_OR_AIV));
+    }
+    auto constant = [&](int64_t value) -> Value {
+      return rewriter.create<LLVM::ConstantOp>(
+          op.getLoc(), i64, rewriter.getI64IntegerAttr(value));
+    };
+    Value id = adaptor.getDynamicBufId();
+    if (constantId)
+      id = constant(*constantId);
+    Value pipe = constant(static_cast<int64_t>(op.getPipe().getPipe()));
+    Value mode = constant(op.getMode() ? 1 : 0);
+    rewriter.create<LLVM::CallOp>(op.getLoc(), callee,
+                                  ValueRange{pipe, id, mode});
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 struct HIVMPipeBarrierOpLowering
     : public ConvertOpToLLVMPattern<PipeBarrierOp> {
   explicit HIVMPipeBarrierOpLowering(LLVMTypeConverter &converter)
@@ -312,6 +364,40 @@ template <typename SyncOp> static bool needsFFTSIntraBlockSync(SyncOp op) {
            : TCoreRatioAttr{};
   return ratio && ratio.getCube() == 1 && ratio.getVector() == 1;
 }
+
+template <typename Op, typename ImmOp, typename RegOp>
+struct HIVMIntraBlockSyncOpLowering : public ConvertOpToLLVMPattern<Op> {
+  using ConvertOpToLLVMPattern<Op>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(Op op, typename Op::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (!hacc::utils::isAscend950(op->template getParentOfType<ModuleOp>()))
+      return op.emitOpError("requires an Ascend950 target");
+    auto pipe = static_cast<uint64_t>(op.getPipe().getPipe());
+    std::optional<int64_t> constantId;
+    if (auto id = op.getStaticSyncId())
+      constantId = id->getInt();
+    else if (auto constant =
+                 op.getDynamicSyncId()
+                     .template getDefiningOp<arith::ConstantIntOp>())
+      constantId = constant.value();
+    if (constantId) {
+      rewriter.template replaceOpWithNewOp<ImmOp>(op, pipe, *constantId);
+    } else {
+      rewriter.template replaceOpWithNewOp<RegOp>(op, pipe,
+                                                  adaptor.getDynamicSyncId());
+    }
+    return success();
+  }
+};
+
+using HIVMIntraBlockSetOpLowering =
+    HIVMIntraBlockSyncOpLowering<SyncIntraBlockSetOp, SetIntraBlockImmInstrOp,
+                                 SetIntraBlockRegInstrOp>;
+using HIVMIntraBlockWaitOpLowering =
+    HIVMIntraBlockSyncOpLowering<SyncIntraBlockWaitOp, WaitIntraBlockImmInstrOp,
+                                 WaitIntraBlockRegInstrOp>;
 
 struct HIVMSetBlockSyncOpLowering
     : public ConvertOpToLLVMPattern<SyncBlockSetOp> {
@@ -625,6 +711,10 @@ void mlir::populateHIVMLegalizeForLLVMExportPatterns(
                HIVMWaitFlagOpLowering,
                HIVMPipeBarrierOpLowering,
                HIVMTryWaitOpLowering,
+               HIVMBufferSyncOpLowering<GetBufOp>,
+               HIVMBufferSyncOpLowering<RlsBufOp>,
+               HIVMIntraBlockSetOpLowering,
+               HIVMIntraBlockWaitOpLowering,
                HIVMSetFFTSBaseAddrOpLowering,
                HIVMSetMaskNormOpLowering,
                HIVMSetCtrlOpLowering,

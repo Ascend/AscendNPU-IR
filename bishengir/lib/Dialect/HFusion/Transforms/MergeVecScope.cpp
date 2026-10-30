@@ -290,6 +290,7 @@ bool isIgnoredBetweenOp(Operation *op) { return isa<hivm::AnchorOp>(op); }
 bool containsVFMergeBarrier(Operation *op) {
   WalkResult result = op->walk([](Operation *nestedOp) {
     if (isa<hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp, hivm::SyncBlockOp,
+            hivm::SyncIntraBlockSetOp, hivm::SyncIntraBlockWaitOp,
             hivm::CreateSyncBlockLockOp, hivm::SyncBlockLockOp,
             hivm::SyncBlockUnlockOp, hivm::PipeBarrierOp>(nestedOp))
       return WalkResult::interrupt();
