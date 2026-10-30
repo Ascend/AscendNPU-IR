@@ -7,7 +7,9 @@
 // HF: %[[ONE:.*]] = arith.cmpi eq, %arg1,
 // HF: %[[NEGONE:.*]] = arith.cmpi eq, %arg1,
 // HF: %[[SPECIAL:.*]] = arith.ori %[[ONE]], %[[NEGONE]]
-// HF: %[[SAFE:.*]] = arith.select %[[SPECIAL]],
+// HF: %[[ISZERO:.*]] = arith.cmpi eq, %arg1,
+// HF: %[[GUARD:.*]] = arith.ori %[[SPECIAL]], %[[ISZERO]]
+// HF: %[[SAFE:.*]] = arith.select %[[GUARD]],
 // HF: %[[BF:.*]] = arith.sitofp %[[SAFE]] : i32 to f32
 // HF: arith.cmpf olt, %[[BF]],
 // HF: linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins({{.*}}, %[[BF]] : tensor<16xf32>, f32)

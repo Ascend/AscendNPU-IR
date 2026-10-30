@@ -7,7 +7,9 @@
 // CHECK-DAG: %[[TWO:.*]] = arith.constant 2 : i32
 // CHECK: %[[SPECIAL:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>}
 // CHECK-NOT: hfusion.select
-// CHECK: %[[B:.*]] = hfusion.select ins(%[[SPECIAL]], %[[TWO]], %arg1
+// CHECK: %[[ISZERO:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%arg1, %[[ZERO]]
+// CHECK: %[[GUARD:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%[[SPECIAL]], %[[ISZERO]]
+// CHECK: %[[B:.*]] = hfusion.select ins(%[[GUARD]], %[[TWO]], %arg1
 // CHECK: %[[AF:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<16xi32>) {{.*}} -> tensor<16xf32>
 // CHECK: %[[BF:.*]] = hfusion.cast {{.*}} ins(%[[B]] : tensor<16xi32>) {{.*}} -> tensor<16xf32>
 // CHECK: %[[EST:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%[[AF]], %[[BF]]
@@ -28,7 +30,8 @@
 // CHECK: %[[Q:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[M1]],
 // CHECK: %[[SPECIAL_Q:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %arg1
 // CHECK: %[[RESULT:.*]] = hfusion.select ins(%[[SPECIAL]], %[[SPECIAL_Q]], %[[Q]] :
-// CHECK-NEXT: return %[[RESULT]] : tensor<16xi32>
+// CHECK: %[[FINAL:.*]] = hfusion.select ins(%[[ISZERO]], {{.*}}, %[[RESULT]] :
+// CHECK-NEXT: return %[[FINAL]] : tensor<16xi32>
 func.func @signed_div(%arg0: tensor<16xi32>, %arg1: tensor<16xi32>) -> tensor<16xi32> {
   %out = tensor.empty() : tensor<16xi32>
   %r = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%arg0, %arg1 : tensor<16xi32>, tensor<16xi32>) outs(%out : tensor<16xi32>) -> tensor<16xi32>
@@ -50,7 +53,8 @@ func.func @signed_div(%arg0: tensor<16xi32>, %arg1: tensor<16xi32>) -> tensor<16
 // CHECK: %[[ROUNDED:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[Q]], %[[DELTA]]
 // CHECK: %[[SPECIAL_Q:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %arg1
 // CHECK: %[[RESULT:.*]] = hfusion.select {{.*}}, %[[SPECIAL_Q]], %[[ROUNDED]] :
-// CHECK-NEXT: return %[[RESULT]]
+// CHECK: %[[FINAL:.*]] = hfusion.select {{.*}}, %[[RESULT]] :
+// CHECK-NEXT: return %[[FINAL]]
 func.func @signed_floor(%arg0: tensor<16xi32>, %arg1: tensor<16xi32>) -> tensor<16xi32> {
   %out = tensor.empty() : tensor<16xi32>
   %r = hfusion.elemwise_binary {fun = #hfusion.binary_fn<floordivsi>} ins(%arg0, %arg1 : tensor<16xi32>, tensor<16xi32>) outs(%out : tensor<16xi32>) -> tensor<16xi32>
@@ -73,7 +77,8 @@ func.func @signed_floor(%arg0: tensor<16xi32>, %arg1: tensor<16xi32>) -> tensor<
 // CHECK: %[[ROUNDED:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[Q]], %[[DELTA]]
 // CHECK: %[[SPECIAL_Q:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %arg1
 // CHECK: %[[RESULT:.*]] = hfusion.select {{.*}}, %[[SPECIAL_Q]], %[[ROUNDED]] :
-// CHECK-NEXT: return %[[RESULT]]
+// CHECK: %[[FINAL:.*]] = hfusion.select {{.*}}, %[[RESULT]] :
+// CHECK-NEXT: return %[[FINAL]]
 func.func @signed_ceil(%arg0: tensor<16xi32>, %arg1: tensor<16xi32>) -> tensor<16xi32> {
   %out = tensor.empty() : tensor<16xi32>
   %r = hfusion.elemwise_binary {fun = #hfusion.binary_fn<ceildivsi>} ins(%arg0, %arg1 : tensor<16xi32>, tensor<16xi32>) outs(%out : tensor<16xi32>) -> tensor<16xi32>
@@ -86,7 +91,8 @@ func.func @signed_ceil(%arg0: tensor<16xi32>, %arg1: tensor<16xi32>) -> tensor<1
 // CHECK: arith.cmpi eq, %arg1,
 // CHECK: arith.cmpi eq, %arg1,
 // CHECK: %[[SPECIAL:.*]] = arith.ori
-// CHECK: %[[B:.*]] = arith.select %[[SPECIAL]],
+// CHECK: %[[GUARD:.*]] = arith.ori %[[SPECIAL]],
+// CHECK: %[[B:.*]] = arith.select %[[GUARD]],
 // CHECK: arith.sitofp %[[B]] : i32 to f32
 // CHECK-COUNT-2: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
 // CHECK: hfusion.select ins(%[[SPECIAL]],

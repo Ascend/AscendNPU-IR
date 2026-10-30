@@ -4429,7 +4429,8 @@ func.func @test_normalize_shift_left_i32(%arg0: tensor<16x32xi32>, %arg1: tensor
 // CHECK:         linalg.elemwise_binary {fun = #{{.*}}<div>} ins(%[[LHS_F]], %[[POW_F]] : tensor<16x32xf32>, tensor<16x32xf32>)
 // CHECK:         linalg.elemwise_binary {fun = #{{.*}}<div>}
 // CHECK:         %[[SPECIAL_Q:.*]] = linalg.elemwise_binary {fun = #{{.*}}<mul>} ins(%[[LHS]], %[[POW]] :
-// CHECK:         %[[FLOOR:.*]] = hfusion.select ins(%{{.*}}, %[[SPECIAL_Q]], %{{.*}} :
+// CHECK:         %[[NONZERO_FLOOR:.*]] = hfusion.select ins(%{{.*}}, %[[SPECIAL_Q]], %{{.*}} :
+// CHECK:         %[[FLOOR:.*]] = hfusion.select ins(%{{.*}}, %{{.*}}, %[[NONZERO_FLOOR]] :
 // CHECK:         %[[POS:.*]] = hfusion.compare {compare_fn = #{{.*}}<veq>} ins(%{{.*}}, %[[LHS]] : tensor<16x32xi32>, tensor<16x32xi32>) {{.*}} -> tensor<16x32xi1>
 // CHECK:         %[[OOB:.*]] = hfusion.select ins(%[[POS]], %[[ZERO]], %[[NEG1]] : tensor<16x32xi1>, i32, i32) {{.*}} -> tensor<16x32xi32>
 // CHECK:         %[[SEL:.*]] = hfusion.select ins(%[[MASK]], %[[FLOOR]], %[[OOB]] : tensor<16x32xi1>, tensor<16x32xi32>, tensor<16x32xi32>) {{.*}} -> tensor<16x32xi32>
@@ -4462,7 +4463,8 @@ func.func @test_normalize_shift_right_i8(%arg0: tensor<16x32xi8>, %arg1: tensor<
 // CHECK:         linalg.elemwise_binary {fun = #{{.*}}<div>} ins(%[[LHS_F]], %[[POW_F]] : tensor<16x32xf32>, tensor<16x32xf32>)
 // CHECK:         linalg.elemwise_binary {fun = #{{.*}}<div>}
 // CHECK:         %[[SPECIAL_Q:.*]] = linalg.elemwise_binary {fun = #{{.*}}<mul>} ins(%[[LHS]], %[[POW]] :
-// CHECK:         %[[FLOOR:.*]] = hfusion.select ins(%{{.*}}, %[[SPECIAL_Q]], %{{.*}} :
+// CHECK:         %[[NONZERO_FLOOR:.*]] = hfusion.select ins(%{{.*}}, %[[SPECIAL_Q]], %{{.*}} :
+// CHECK:         %[[FLOOR:.*]] = hfusion.select ins(%{{.*}}, %{{.*}}, %[[NONZERO_FLOOR]] :
 // CHECK:         %[[POS:.*]] = hfusion.compare {compare_fn = #{{.*}}<veq>} ins(%{{.*}}, %[[LHS]] : tensor<16x32xi32>, tensor<16x32xi32>) {{.*}} -> tensor<16x32xi1>
 // CHECK:         %[[OOB:.*]] = hfusion.select ins(%[[POS]], %[[ZERO]], %[[NEG1]] : tensor<16x32xi1>, i32, i32) {{.*}} -> tensor<16x32xi32>
 // CHECK:         %[[SEL:.*]] = hfusion.select ins(%[[MASK]], %[[FLOOR]], %[[OOB]] : tensor<16x32xi1>, tensor<16x32xi32>, tensor<16x32xi32>) {{.*}} -> tensor<16x32xi32>
