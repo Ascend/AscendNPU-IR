@@ -22,6 +22,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/Utils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -189,25 +190,6 @@ static FailureOr<uint64_t> getBlockElemsFor32BAlign(Type elemType) {
   if (kAlignBytes % elemBytes != 0)
     return failure();
   return kAlignBytes / elemBytes;
-}
-
-static void ensureAllocInUbAddressSpaceIfNeeded(PatternRewriter &rewriter,
-                                                memref::AllocOp allocOp) {
-  auto oldType = dyn_cast<MemRefType>(allocOp.getMemref().getType());
-  if (!oldType)
-    return;
-  auto maybeSpace = mlir::hivm::getOptionalHIVMAddressSpace(oldType);
-  if (maybeSpace.has_value())
-    return;
-
-  MLIRContext *ctx = rewriter.getContext();
-  auto ubSpaceAttr = hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::UB);
-  auto newType =
-      mlir::MemRefType::get(oldType.getShape(), oldType.getElementType(),
-                            oldType.getLayout(), ubSpaceAttr);
-
-  rewriter.modifyOpInPlace(allocOp,
-                           [&]() { allocOp.getMemref().setType(newType); });
 }
 
 /// pattern2
