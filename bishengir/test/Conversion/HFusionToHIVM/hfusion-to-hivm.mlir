@@ -1194,3 +1194,28 @@ func.func @bind_sub_block_ratio_1_1(%arg0: tensor<64x64xf32> {hacc.arg_type = #h
   // CHECK-NOT: hfusion.bind_sub_block
   return
 }
+
+// -----
+// The one-dimensional RegBase cumsum template contains SIMT VFs. Keep its
+// mode even for short scans, and anticipate unit-dimension folding.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  // CHECK-LABEL: func.func @cumsum_simt_short
+  // CHECK: hivm.hir.vcumsum {{.*}}hivm.vf_mode = #hivm.vf_mode<SIMT>
+  func.func @cumsum_simt_short(%src: tensor<16xf32>) -> tensor<16xf32> {
+    %0 = hfusion.cumsum %src : tensor<16xf32> cum_dims = [0] reverse = false -> tensor<16xf32>
+    return %0 : tensor<16xf32>
+  }
+  // CHECK-LABEL: func.func @cumsum_simt_unit_outer
+  // CHECK: hivm.hir.vcumsum {{.*}}hivm.vf_mode = #hivm.vf_mode<SIMT>
+  func.func @cumsum_simt_unit_outer(%src: tensor<1x16xf32>) -> tensor<1x16xf32> {
+    %0 = hfusion.cumsum %src : tensor<1x16xf32> cum_dims = [1] reverse = false -> tensor<1x16xf32>
+    return %0 : tensor<1x16xf32>
+  }
+  // CHECK-LABEL: func.func @cumsum_static_nonunit_outer
+  // CHECK-NOT: hivm.vf_mode
+  // CHECK: hivm.hir.vcumsum ins(
+  func.func @cumsum_static_nonunit_outer(%src: tensor<8x16xf32>) -> tensor<8x16xf32> {
+    %0 = hfusion.cumsum %src : tensor<8x16xf32> cum_dims = [1] reverse = false -> tensor<8x16xf32>
+    return %0 : tensor<8x16xf32>
+  }
+}

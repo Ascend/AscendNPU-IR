@@ -1226,6 +1226,19 @@ struct HFusionToHIVMFlipOp : public OpRewritePattern<hfusion::FlipOp> {
 //===----------------------------------------------------------------------===//
 // HFusionToHIVMCumOp
 //===----------------------------------------------------------------------===//
+
+static bool mayUseSimtCumsumTemplate(hfusion::CumsumOp op) {
+  auto srcType = cast<ShapedType>(op.getInput().getType());
+  auto cumDims = op.getCumDims();
+  if (cumDims.size() != 1)
+    return false;
+  for (auto [dim, size] : llvm::enumerate(srcType.getShape())) {
+    if (static_cast<int64_t>(dim) != cumDims[0] && size != 1)
+      return false;
+  }
+  return true;
+}
+
 template <typename HFUSIONOP, typename HIVMOP>
 struct HFusionToHIVMCumOp : public OpRewritePattern<HFUSIONOP> {
   using OpRewritePattern<HFUSIONOP>::OpRewritePattern;
@@ -1241,6 +1254,11 @@ struct HFusionToHIVMCumOp : public OpRewritePattern<HFUSIONOP> {
       auto newOp = rewriter.create<HIVMOP>(op.getLoc(), op->getResultTypes(),
                                            op.getInput(), dsts[0],
                                            op.getCumDims(), op.getReverse());
+      if constexpr (std::is_same_v<HFUSIONOP, hfusion::CumsumOp>) {
+        if (mayUseSimtCumsumTemplate(op))
+          newOp->setAttr(VFModeAttr::name,
+                         VFModeAttr::get(op->getContext(), VFMode::SIMT));
+      }
       // cummax/cummin carry a NaN-propagation flag (max/minimum vs max/minnum).
       // Forward it; cumsum/cumprod have no such attribute.
       if constexpr (std::is_same_v<HFUSIONOP, hfusion::CummaxOp> ||
