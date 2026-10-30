@@ -24,6 +24,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallSet.h"
@@ -41,6 +42,14 @@ using bishengir::memref_ext::AllocWorkspaceOp;
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
 
 namespace {
+
+// Classified region operations are cloned as a unit, including their implicit
+// captures. Those captures must participate in tracing and scope exports too.
+static SetVector<Value> getWorkItemOperands(Operation *op) {
+  SetVector<Value> operands(op->operand_begin(), op->operand_end());
+  getUsedValuesDefinedAbove(op->getRegions(), operands);
+  return operands;
+}
 
 struct ConditionalOps {
   unsigned id = 0;
@@ -105,6 +114,8 @@ private:
   void mapOpsToWorkItems();
   LogicalResult collectScalarState();
   void collectUnmappedOps();
+  void collectConditionalMerges();
+  LogicalResult sortPopulatedWorkItems();
   void computeHoistedOps(WorkItem *item);
   void populateWorkItemIO(Operation *origLoopTerminator);
 
@@ -122,6 +133,8 @@ private:
   SmallVector<std::unique_ptr<WorkItem>> workItems;
   SmallVector<WorkItem *> sortedWorkItems;
   DenseMap<Operation *, WorkItem *> opToWorkItemMap;
+  DenseMap<Value, WorkItem *> conditionalMergeOwners;
+  SmallVector<Value> nestedCounters;
   unsigned nextWorkItemId = 0;
   unsigned nextIfId = 0;
 };
@@ -341,6 +354,8 @@ bool CVScopeOutliner::canCloneOpInWorkItem(Operation *op,
 
 bool CVScopeOutliner::isIfResultOwnedByItem(scf::IfOp ifOp, unsigned resIdx,
                                             WorkItem *item) const {
+  if (auto *merge = conditionalMergeOwners.lookup(ifOp.getResult(resIdx)))
+    return merge == item;
   auto [tVal, eVal] = getIfYieldedValues(ifOp, resIdx);
   Operation *tDef = tVal ? tVal.getDefiningOp() : nullptr;
   Operation *eDef = eVal ? eVal.getDefiningOp() : nullptr;
@@ -576,7 +591,7 @@ LogicalResult CVScopeOutliner::traceWorkItem(Value output, Operation *seedOp,
       return false;
     item.ops.insert(op);
     item.orderedOps.insert(op);
-    for (Value opnd : op->getOperands()) {
+    for (Value opnd : getWorkItemOperands(op)) {
       traceValue(opnd);
       if (failedLoop)
         return false;
@@ -782,8 +797,13 @@ LogicalResult CVScopeOutliner::collectScalarState() {
   SmallVector<Operation *> pending;
   for (auto alloca :
        cast<scf::ForOp>(loopOp).getBody()->getOps<memref::AllocaOp>())
-    if (alloca->hasAttr(kNormalizeMatmulCounterAttr))
+    if (alloca->hasAttr(kNormalizeMatmulCounterAttr)) {
       llvm::append_range(pending, alloca->getUsers());
+      if (llvm::any_of(alloca->getUsers(), [&](Operation *user) {
+            return user->getParentOfType<scf::ForOp>() != loopOp;
+          }))
+        nestedCounters.push_back(alloca.getResult());
+    }
   SmallPtrSet<Operation *, 16> stateOps;
   while (!pending.empty()) {
     Operation *op = pending.pop_back_val();
@@ -802,6 +822,33 @@ LogicalResult CVScopeOutliner::collectScalarState() {
   }
   if (stateOps.empty())
     return success();
+  if (!nestedCounters.empty()) {
+    // A nested loop updates the counter between its initialization and final
+    // read. Keep top-level state operations separate; the nested loop retains
+    // its own updates, and scheduling preserves the memory access order.
+    SmallVector<WorkItem *> states;
+    for (Operation &op : *cast<scf::ForOp>(loopOp).getBody()) {
+      bool updatesCounter =
+          isa<scf::ForOp>(op) &&
+          llvm::any_of(getWorkItemOperands(&op), [&](Value v) {
+            return llvm::is_contained(nestedCounters, v);
+          });
+      if (!stateOps.contains(&op) && !updatesCounter)
+        continue;
+      auto state = std::make_unique<WorkItem>();
+      state->id = nextWorkItemId++;
+      state->coreType = TCoreType::CUBE_AND_VECTOR;
+      if (auto core =
+              op.getAttrOfType<TCoreTypeAttr>(kPipelinedLoopCoreTypeAttrName))
+        state->coreType = core.getTcoretype();
+      state->orderedOps.insert(&op);
+      states.push_back(state.get());
+      workItems.push_back(std::move(state));
+    }
+    sortedWorkItems.insert(sortedWorkItems.begin(), states.begin(),
+                           states.end());
+    return success();
+  }
   auto state = std::make_unique<WorkItem>();
   state->id = nextWorkItemId++;
   state->coreType = TCoreType::CUBE_AND_VECTOR;
@@ -867,6 +914,104 @@ void CVScopeOutliner::collectUnmappedOps() {
     sortedWorkItems.push_back(finalWorkItem.get());
     workItems.push_back(std::move(finalWorkItem));
   }
+}
+
+// A conditional result cannot belong to either producer when its branches
+// belong to different work items. Give the selection its own shared scope;
+// populateWorkItemIO will export both branch values from their producers.
+void CVScopeOutliner::collectConditionalMerges() {
+  for (auto ifOp : cast<scf::ForOp>(loopOp).getBody()->getOps<scf::IfOp>()) {
+    WorkItem *merge = nullptr;
+    SmallPtrSet<WorkItem *, 4> branchItems;
+    for (auto result : ifOp.getResults()) {
+      auto [thenValue, elseValue] =
+          getIfYieldedValues(ifOp, result.getResultNumber());
+      Operation *thenDef = thenValue ? thenValue.getDefiningOp() : nullptr;
+      Operation *elseDef = elseValue ? elseValue.getDefiningOp() : nullptr;
+      if (!thenDef || !elseDef || !ifOp->isProperAncestor(thenDef) ||
+          !ifOp->isProperAncestor(elseDef))
+        continue;
+      WorkItem *thenOwner = opToWorkItemMap.lookup(thenDef);
+      WorkItem *elseOwner = opToWorkItemMap.lookup(elseDef);
+      if (!thenOwner || !elseOwner || thenOwner == elseOwner)
+        continue;
+      // The catch-all item may contain both a branch producer and consumers
+      // of the selected result. Separate the branch operations so scheduling
+      // the merge between producers and consumers does not create a cycle.
+      for (auto [value, owner] : {std::make_pair(thenValue, thenOwner),
+                                  std::make_pair(elseValue, elseOwner)}) {
+        if (branchItems.contains(owner))
+          continue;
+        Operation *def = value.getDefiningOp();
+        auto branch = std::make_unique<WorkItem>();
+        branch->id = nextWorkItemId++;
+        branch->coreType = determineCoreType(value);
+        for (Operation *op : owner->orderedOps) {
+          if (op->getBlock() != def->getBlock() ||
+              opToWorkItemMap.lookup(op) != owner)
+            continue;
+          branch->orderedOps.insert(op);
+          getOrCreateCondOps(*branch, ifOp, op);
+          opToWorkItemMap[op] = branch.get();
+        }
+        branchItems.insert(branch.get());
+        sortedWorkItems.push_back(branch.get());
+        workItems.push_back(std::move(branch));
+      }
+      if (!merge) {
+        auto item = std::make_unique<WorkItem>();
+        item->id = nextWorkItemId++;
+        item->coreType = TCoreType::CUBE_AND_VECTOR;
+        merge = item.get();
+        getOrCreateCondOps(*merge, ifOp);
+        sortedWorkItems.push_back(merge);
+        workItems.push_back(std::move(item));
+      }
+      conditionalMergeOwners[result] = merge;
+    }
+  }
+}
+
+// Ownership and branch exports are only final after populateWorkItemIO.
+// Schedule using all exported values, including those of the catch-all item
+// and the shared conditional merges, rather than just WorkItem::output.
+LogicalResult CVScopeOutliner::sortPopulatedWorkItems() {
+  DenseMap<WorkItem *, SmallPtrSet<WorkItem *, 4>> predecessors;
+  for (Value counter : nestedCounters) {
+    WorkItem *previous = nullptr;
+    for (Operation &op : *cast<scf::ForOp>(loopOp).getBody()) {
+      bool accessesCounter = false;
+      op.walk([&](Operation *nested) {
+        accessesCounter |= llvm::is_contained(nested->getOperands(), counter);
+      });
+      if (!accessesCounter)
+        continue;
+      WorkItem *owner = opToWorkItemMap.lookup(&op);
+      if (!owner)
+        return failure();
+      if (previous && previous != owner)
+        predecessors[owner].insert(previous);
+      previous = owner;
+    }
+  }
+  SmallVector<WorkItem *> pending(sortedWorkItems);
+  sortedWorkItems.clear();
+  while (!pending.empty()) {
+    auto ready = llvm::find_if(pending, [&](WorkItem *consumer) {
+      return llvm::none_of(pending, [&](WorkItem *producer) {
+        return producer != consumer &&
+               (predecessors[consumer].contains(producer) ||
+                llvm::any_of(consumer->inputs, [&](Value input) {
+                  return producer->outputs.contains(input);
+                }));
+      });
+    });
+    if (ready == pending.end())
+      return failure();
+    sortedWorkItems.push_back(*ready);
+    pending.erase(ready);
+  }
+  return success();
 }
 
 void CVScopeOutliner::computeHoistedOps(WorkItem *item) {
@@ -990,7 +1135,7 @@ void CVScopeOutliner::populateWorkItemIO(Operation *origLoopTerminator) {
         } else {
           defIf = nullptr;
         }
-        for (Value opnd : defOp->getOperands())
+        for (Value opnd : getWorkItemOperands(defOp))
           worklist.push_back({opnd, consumer, defIf});
       }
       return;
@@ -1019,7 +1164,7 @@ void CVScopeOutliner::populateWorkItemIO(Operation *origLoopTerminator) {
         enclosingIf = nullptr;
       if (enclosingIf)
         recordValueUse(enclosingIf.getCondition(), item, nullptr);
-      for (Value opnd : op->getOperands())
+      for (Value opnd : getWorkItemOperands(op))
         recordValueUse(opnd, item, enclosingIf);
     }
   }
@@ -1053,6 +1198,13 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
 
   Operation *origLoopTerminator = origBody->getTerminator();
   populateWorkItemIO(origLoopTerminator);
+  if ((!conditionalMergeOwners.empty() || !nestedCounters.empty()) &&
+      failed(sortPopulatedWorkItems())) {
+    origForOp.emitWarning(
+        "[OutlineCVScopes] cyclic conditional merge; skipping loop");
+    newForOp.erase();
+    return failure();
+  }
 
   for (WorkItem *item : sortedWorkItems) {
     bool hasIfOutputs = llvm::any_of(item->condOps, [](const auto &pair) {
@@ -1318,6 +1470,28 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
   builder.setInsertionPointToEnd(newBody);
   builder.create<scf::YieldOp>(origYield.getLoc(), yieldOperands);
 
+  // lookupOrDefault is valid for values outside the original loop, but must
+  // never leave a reference into the loop that we are about to delete.
+  WalkResult unmappedUse = newForOp->walk([&](Operation *op) {
+    for (Value operand : op->getOperands()) {
+      Operation *owner = operand.getDefiningOp();
+      if (auto arg = dyn_cast<BlockArgument>(operand))
+        owner = arg.getOwner()->getParentOp();
+      if (owner && origForOp->isAncestor(owner)) {
+        LLVM_DEBUG(llvm::dbgs() << "Unmapped operand: " << operand
+                                << "\nUser: " << *op << "\n");
+        return WalkResult::interrupt();
+      }
+    }
+    return WalkResult::advance();
+  });
+  if (unmappedUse.wasInterrupted()) {
+    origForOp.emitWarning(
+        "[OutlineCVScopes] unmapped loop-local value; skipping loop");
+    newForOp.erase();
+    return failure();
+  }
+
   newForOp->setAttr(CVPipelinedLoopAttr::name, builder.getUnitAttr());
   origForOp.replaceAllUsesWith(newForOp.getResults());
   origForOp.erase();
@@ -1404,6 +1578,7 @@ LogicalResult CVScopeOutliner::run() {
 
   // Step 5: Final iteration for unmapped ops
   collectUnmappedOps();
+  collectConditionalMerges();
 
   // Step 6: Create new loop with encapsulating scope.scope
   if (auto forOp = dyn_cast<scf::ForOp>(loopOp))
