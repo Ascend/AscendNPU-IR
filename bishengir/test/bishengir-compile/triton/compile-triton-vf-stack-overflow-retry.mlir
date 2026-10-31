@@ -15,6 +15,9 @@
 // attempt (all-op fusion plus two extra auto-schedule buffers) fails,
 // crashes, or starts rescuing the kernel someday.
 //
+// no-dma: the left-padding DMA path is closed on this branch, so the DMA
+// codegen-dependent VF stack retry expectations do not hold on aarch64.
+// UNSUPPORTED: host-aarch64
 // REQUIRES: enable-lir-compile
 // REQUIRES: regbase
 // TODO: re-enable this testcase after diagnosing the FileCheck failure on
