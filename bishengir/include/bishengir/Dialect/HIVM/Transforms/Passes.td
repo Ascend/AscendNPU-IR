@@ -1177,6 +1177,20 @@ def InitEntryKernel : HIVMPass<"hivm-init-entry-kernel", "func::FuncOp"> {
   let dependentDialects = ["hivm::HIVMDialect", ];
 }
 
+def OptimizeTransposePlacement
+    : HIVMPass<"hivm-optimize-transpose-placement", AnyOp,
+               [MixKernel, PureAicKernel]> {
+  let summary = "Sink vtranspose to an absorbable fixpipe (regbase)";
+  let constructor = "mlir::hivm::createOptimizeTransposePlacementPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "arith::ArithDialect",
+                           "tensor::TensorDialect"];
+  let options = [Option<
+      "dumpDir", "dump-dir", "std::string",
+      /*default=*/"\"\"",
+      "Write one Mermaid .mmd graph per analyzed candidate into this "
+      "directory. Empty disables dumping.">];
+}
+
 def InlineFixpipe
     : HIVMPass<"hivm-inline-fixpipe", AnyOp, [MixKernel, PureAicKernel], true> {
   // Inlining can drop vector ops that made an earlier classification MIX.

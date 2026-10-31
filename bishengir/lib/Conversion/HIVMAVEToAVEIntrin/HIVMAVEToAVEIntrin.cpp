@@ -1549,29 +1549,14 @@ struct HIVMSelectOpLowering : public ConvertOpToLLVMPattern<VFSelectOp> {
     trueValue = getVLRegValueOrSelf(trueValue, rewriter);
     falseValue = getVLRegValueOrSelf(falseValue, rewriter);
     Value result;
-    if (elementType.isInteger(1)) {
-      // Predicate select: vsel(mask, t, f) = por(pand(mask, t),
-      // pand(pnot(mask), f))
-      Value allTrue = createMaskByPGE(rewriter, loc);
-      Value notMask =
-          rewriter.create<PnotB8InstrOp>(loc, vlType, mask, allTrue);
-      Value andTrue =
-          rewriter.create<PandB8InstrOp>(loc, vlType, mask, trueValue, allTrue);
-      Value andFalse = rewriter.create<PandB8InstrOp>(loc, vlType, notMask,
-                                                      falseValue, allTrue);
-      result = rewriter.create<PorB8InstrOp>(loc, vlType, andTrue, andFalse,
-                                             allTrue);
-    } else if (elementType.isUnsignedInteger(8) ||
-               elementType.isSignedInteger(8) ||
-               elementType.isSignlessInteger(8) ||
-               elementType.isUnsignedInteger(16) ||
-               elementType.isSignedInteger(16) ||
-               elementType.isSignlessInteger(16) || elementType.isBF16() ||
-               elementType.isF16() || elementType.isUnsignedInteger(32) ||
-               elementType.isSignedInteger(32) ||
-               elementType.isSignlessInteger(32) || elementType.isF32() ||
-               isa<Float8E4M3FNType>(elementType) ||
-               isa<Float8E5M2Type>(elementType)) {
+    if (elementType.isUnsignedInteger(8) || elementType.isSignedInteger(8) ||
+        elementType.isSignlessInteger(8) || elementType.isUnsignedInteger(16) ||
+        elementType.isSignedInteger(16) || elementType.isSignlessInteger(16) ||
+        elementType.isBF16() || elementType.isF16() ||
+        elementType.isUnsignedInteger(32) || elementType.isSignedInteger(32) ||
+        elementType.isSignlessInteger(32) || elementType.isF32() ||
+        isa<Float8E4M3FNType>(elementType) ||
+        isa<Float8E5M2Type>(elementType)) {
       result = rewriter.create<VselInstrOp>(loc, vlType, trueValue, falseValue,
                                             mask);
     } else {

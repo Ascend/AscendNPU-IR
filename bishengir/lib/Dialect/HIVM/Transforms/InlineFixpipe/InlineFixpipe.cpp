@@ -21,6 +21,7 @@
 
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Conversion/Passes.h"
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
@@ -121,6 +122,10 @@ private:
         hivm::DebugOp debugOp = cast<hivm::DebugOp>(maybeDebugOp);
         rewriter.modifyOpInPlace(
             debugOp, [&]() { debugOp.getArgMutable().assign(clonedResult); });
+      } else if (isa<annotation::MarkOp>(maybeDebugOp)) {
+        // A mark does not consume the tensor. The real user (the transpose
+        // OptimizeTransposePlacement just parked here) stays eligible.
+        continue;
       } else {
         curOp = maybeDebugOp;
       }

@@ -291,6 +291,9 @@ std::unique_ptr<Pass> createInitEntryKernelPass();
 // Create a pass to insert fixpipe ops.
 std::unique_ptr<Pass> createInsertFixpipePass();
 
+// Create a pass to sink a vtranspose onto an absorbable fixpipe.
+std::unique_ptr<Pass> createOptimizeTransposePlacementPass();
+
 // Create a pass to inline ops into fixpipe.
 std::unique_ptr<Pass>
 createInlineFixpipePass(const InlineFixpipeOptions &options = {});
