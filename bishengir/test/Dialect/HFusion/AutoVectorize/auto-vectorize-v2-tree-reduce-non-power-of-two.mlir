@@ -105,16 +105,15 @@ module {
 
 // -----
 
-// A 64-row reduction uses the established TreeReduceV2 fallback.  Keeping it
-// out of the direct register tree avoids the beta.3 CCEC stack overflow.
+// A standalone 64-row reduction uses the materialized tree, avoiding the
+// direct register tree stack pressure. Legacy scopes remain handled separately.
 
 // CHECK-LABEL: func.func @tree_reduce_64
 // CHECK-NOT: "hfusion.register_tree_reduction"
 // CHECK-LABEL: transform.sequence {{.*}}auto_vectorize_v2.transform.tree_reduce_64
 // CHECK: transform.structured.tile_using_for
 // CHECK-NOT: "hfusion.register_tree_reduction"
-// CHECK-NOT: transform.structured.tile_reduction_using_for
-// CHECK-NOT: transform.structured.split_reduction
+// CHECK: transform.structured.split_reduction
 
 module {
   func.func @tree_reduce_64(%arg0: tensor<64x8xf32>) -> tensor<8xf32>
@@ -141,14 +140,13 @@ module {
 
 // -----
 
-// Larger reductions also use regular tiling.  The radix hierarchy in the new
-// tree materializes every pairwise level and is not profitable.
+// Larger reductions use the materialized radix hierarchy. A non-power-of-two
+// extent is padded before building the tree.
 
 // CHECK-LABEL: func.func @tree_reduce_65
 // CHECK-LABEL: transform.sequence {{.*}}auto_vectorize_v2.transform.tree_reduce_65
 // CHECK: transform.structured.tile_using_for
-// CHECK-NOT: transform.structured.tile_reduction_using_for
-// CHECK-NOT: transform.structured.split_reduction
+// CHECK: transform.structured.split_reduction
 
 module {
   func.func @tree_reduce_65(%arg0: tensor<65x8xf32>) -> tensor<8xf32>
@@ -178,7 +176,7 @@ module {
 // CHECK-LABEL: func.func @tree_reduce_128
 // CHECK-LABEL: transform.sequence {{.*}}auto_vectorize_v2.transform.tree_reduce_128
 // CHECK: transform.structured.tile_using_for
-// CHECK-NOT: transform.structured.split_reduction
+// CHECK: transform.structured.split_reduction
 
 module {
   func.func @tree_reduce_128(%arg0: tensor<128x8xf32>) -> tensor<8xf32>

@@ -679,6 +679,7 @@ static void hivmPostBufferizationOptimizationPipeline(
   // the memref type to find the dynamic allocs.
   ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
   pm.nest<func::FuncOp>().addPass(createAutoInferBufferSizePass());
+  pm.addPass(createArithToAffineConversionPass());
   pm.nest<func::FuncOp>().addPass(createConstantizeBufferSizePass(
       constantizeBufferSizeOpts(hivmPipelineOptions)));
   pm.nest<func::FuncOp>().addPass(createSetBufferSizePass());

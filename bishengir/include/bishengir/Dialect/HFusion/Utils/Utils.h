@@ -317,14 +317,14 @@ bool isSupportedTreeReductionCandidate(Operation *op);
 bool isRegisterTreeReductionCandidate(Operation *op);
 /// Select the direct register-tree strategy using a scope-level code-size
 /// budget.  The budget prevents large groups of reductions from being
-/// unrolled independently when the regular fused reduction is cheaper.
+/// unrolled independently instead of using reshape-based trees.
 bool shouldUseRegisterTreeReduction(Operation *op);
 /// Return true when a small canonical RA reduction shares its vector function
 /// with other reduction directions.  Such mixed scopes keep the established
 /// TreeReduceV2 lowering, which preserves their proven code generation.
 bool shouldUseLegacyTreeReductionScope(Operation *op);
-/// Select the reshape-based tree for reductions which cannot use the direct
-/// register lowering but still require the deterministic tree order.
+/// Select the reshape-based tree for supported reductions which do not use
+/// the direct register lowering.
 bool shouldUseMaterializedTreeReduction(Operation *op);
 bool shouldUseTreeReduction(Operation *op);
 
@@ -332,12 +332,8 @@ inline constexpr llvm::StringLiteral kRegisterTreeReductionLoopAttr =
     "hfusion.register_tree_reduction";
 inline constexpr llvm::StringLiteral kRegisterTreeReductionSelectedAttr =
     "hfusion.register_tree_reduction_selected";
-inline constexpr llvm::StringLiteral kRegularTreeReductionSelectedAttr =
-    "hfusion.regular_tree_reduction_selected";
 inline constexpr llvm::StringLiteral kTreeReductionSelectionFrozenAttr =
     "hfusion.tree_reduction_selection_frozen";
-inline constexpr llvm::StringLiteral kRegularTreeReductionScopeAttr =
-    "hfusion.regular_tree_reduction_scope";
 inline constexpr llvm::StringLiteral kLegacyTreeReductionScopeAttr =
     "hfusion.legacy_tree_reduction_scope";
 

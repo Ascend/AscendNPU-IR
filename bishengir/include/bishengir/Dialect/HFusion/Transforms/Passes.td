@@ -142,6 +142,8 @@ def PreVectorizationFusion : Pass<"hfusion-pre-vectorization-fusion", "func::Fun
   let dependentDialects = ["linalg::LinalgDialect", "annotation::AnnotationDialect",
                            "hfusion::HFusionDialect"];
   let options = [
+    Option<"enableNewTreeReducePolicy", "enable-new-tree-reduce-policy", "bool", "false",
+           "Protect index producers from fusion into new-tree reductions.">,
     Option<"enableTritonCompile", "enable-triton-compile",
            "bool", "false", "Enable Triton compile.">,
     Option<"maxFusedElementwiseOps", "max-fused-elementwise-ops", "int", "-1",

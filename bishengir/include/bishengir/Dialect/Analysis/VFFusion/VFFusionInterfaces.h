@@ -17,6 +17,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Support/LogicalResult.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include <cstdint>
 
 namespace mlir::analysis {
@@ -53,6 +54,13 @@ public:
     FailureOr<VFFusionBlockList> maybeFusionBlocks = analyzeBlockImpl(block);
     if (failed(maybeFusionBlocks))
       return failure();
+
+    // Analyze which function will be outlined as a separate function.
+    llvm::SmallPtrSet<Operation *, 8> skipFusionOps;
+    for (Operation &op : block)
+      if (shouldSkipFusion(&op, option))
+        skipFusionOps.insert(&op);
+
     VFFusionBlockList &fusionBlocks = maybeFusionBlocks.value();
     for (auto &fusionBlock : fusionBlocks) {
       SmallVector<VFFusionBlock> candidateFusionBlocks;
@@ -82,8 +90,7 @@ public:
         //                     but keep the op isolated for later handling)
         //   - returns false → skip entirely (no outline, no fusion)
         if (computeOps.size() <= 1) {
-          if (computeOps.empty() ||
-              !shouldSkipFusion(computeOps.front(), option))
+          if (computeOps.empty() || !skipFusionOps.contains(computeOps.front()))
             continue;
         }
 

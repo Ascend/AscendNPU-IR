@@ -178,17 +178,12 @@ struct HFusionGeneralizationPatterns
     }
     Attribute registerTreeSelection =
         op->getAttr(hfusion::kRegisterTreeReductionSelectedAttr);
-    Attribute regularTreeSelection =
-        op->getAttr(hfusion::kRegularTreeReductionSelectedAttr);
     FailureOr<linalg::GenericOp> generic = generalizeNamedOp(rewriter, op);
     if (failed(generic))
       return failure();
     if (registerTreeSelection)
       (*generic)->setAttr(hfusion::kRegisterTreeReductionSelectedAttr,
                           registerTreeSelection);
-    if (regularTreeSelection)
-      (*generic)->setAttr(hfusion::kRegularTreeReductionSelectedAttr,
-                          regularTreeSelection);
     return success();
   }
 };
@@ -302,6 +297,7 @@ static bool flowsToCubeCopy(mlir::Operation *startOp, int maxDepth = 6) {
 }
 
 bool ElemwiseOpFuseControlFn(OpOperand *operand, int maxFusedElementwiseOps,
+                             bool enableNewTreeReducePolicy,
                              const VFStackInfoBuilder &stackInfoBuilder) {
   // Scenerio 1: Add folding with reshape by expansion patterns.
   auto producerOp = operand->get().getDefiningOp();
@@ -338,6 +334,17 @@ bool ElemwiseOpFuseControlFn(OpOperand *operand, int maxFusedElementwiseOps,
   auto consumerGen = llvm::dyn_cast_or_null<linalg::GenericOp>(consumerOp);
   if (consumerGen == nullptr)
     return true;
+
+  // The new tree-reduction implementation does not support linalg.index in
+  // the fused reduction body. Preserve the existing fusion policy otherwise.
+  if (enableNewTreeReducePolicy) {
+    bool hasLinalgIndexPayload =
+        producerGen
+            ->walk([](linalg::IndexOp) { return WalkResult::interrupt(); })
+            .wasInterrupted();
+    if (hasLinalgIndexPayload && hfusion::shouldUseTreeReduction(consumerOp))
+      return false;
+  }
   if (maxFusedElementwiseOps > 0) {
     // TODO: maybe we not needed after we have the VF stack limit check.
     unsigned fusedSize = getElementwiseFusionSize(producerGen) +
@@ -397,12 +404,14 @@ bool ElemwiseOpFuseControlFn(OpOperand *operand, int maxFusedElementwiseOps,
 
 static void populateFusionPatterns(RewritePatternSet &patterns,
                                    int maxFusedElementwiseOps,
-                                   bool enableVFStackLimit) {
+                                   bool enableVFStackLimit,
+                                   bool enableNewTreeReducePolicy) {
   VFStackInfoBuilder stackInfoBuilder(enableVFStackLimit);
   linalg::ControlFusionFn controlFn = [maxFusedElementwiseOps,
+                                       enableNewTreeReducePolicy,
                                        stackInfoBuilder](OpOperand *operand) {
     return ElemwiseOpFuseControlFn(operand, maxFusedElementwiseOps,
-                                   stackInfoBuilder);
+                                   enableNewTreeReducePolicy, stackInfoBuilder);
   };
   // Add elementwise op fusion patterns.
   linalg::populateElementwiseOpsFusionPatterns(patterns, controlFn);
@@ -828,9 +837,9 @@ struct ZeroDimToOneDimGenericPattern
   }
 };
 
-static void populatePreVectorizationFusionPatterns(RewritePatternSet &patterns,
-                                                   int maxFusedElementwiseOps,
-                                                   bool enableVFStackLimit) {
+static void populatePreVectorizationFusionPatterns(
+    RewritePatternSet &patterns, int maxFusedElementwiseOps,
+    bool enableVFStackLimit, bool enableNewTreeReducePolicy) {
   patterns.add<
       GeneralizeMulextPattern<hfusion::MulExtOp, arith::MulSIExtendedOp>,
       GeneralizeMulextPattern<hfusion::MulExtUiOp, arith::MulUIExtendedOp>>(
@@ -840,7 +849,8 @@ static void populatePreVectorizationFusionPatterns(RewritePatternSet &patterns,
   patterns.add<ExpandShapeToImplicitBrcInGenericPattern>(patterns.getContext());
   patterns.add<ZeroDimToOneDimGenericPattern>(patterns.getContext());
   populateMatmulPatterns(patterns);
-  populateFusionPatterns(patterns, maxFusedElementwiseOps, enableVFStackLimit);
+  populateFusionPatterns(patterns, maxFusedElementwiseOps, enableVFStackLimit,
+                         enableNewTreeReducePolicy);
   annotation::MarkOp::getCanonicalizationPatterns(patterns,
                                                   patterns.getContext());
   if (auto *linalgDialect = patterns.getContext()
@@ -939,7 +949,8 @@ void PreVectorizationFusionPass::runOnOperation() {
   }
 
   populatePreVectorizationFusionPatterns(patterns, maxFusedElementwiseOps,
-                                         enableVFStackLimit);
+                                         enableVFStackLimit,
+                                         enableNewTreeReducePolicy);
   // Use TopDownTraversal for compile time reasons
   GreedyRewriteConfig grc;
   grc.useTopDownTraversal = true;
