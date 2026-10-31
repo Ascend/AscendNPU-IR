@@ -129,23 +129,35 @@ public:
     }
   }
 
-  /// True when `fn` returns true for every stored buffer. Stops at the first
-  /// false result. Same buffer order as `forEach`.
-  template <typename Fn> bool allOf(Fn &&fn) const {
+  /// Same walk as `allOf`. `atHead` is true when the buffer's alloc time is
+  /// the merged interval start. `atTail` is true when its free time is the
+  /// merged interval end. A buffer that fills the interval is both.
+  template <typename Fn> bool allOfEndpoints(Fn &&fn) const {
     for (const auto &entry : byStart) {
       const Interval &interval = entry.second;
       for (const Endpoint &ep : interval.buffersTouchingStart) {
-        if (!fn(BufferLifeView{ep.buffer, interval.start, ep.otherTime}))
+        bool atTail = ep.otherTime == interval.end;
+        if (!fn(BufferLifeView{ep.buffer, interval.start, ep.otherTime},
+                /*atHead=*/true, atTail))
           return false;
       }
       for (const Endpoint &ep : interval.buffersTouchingEnd) {
+        // Already reported from `started` when the buffer fills the interval.
         if (ep.otherTime == interval.start)
           continue;
-        if (!fn(BufferLifeView{ep.buffer, ep.otherTime, interval.end}))
+        if (!fn(BufferLifeView{ep.buffer, ep.otherTime, interval.end},
+                /*atHead=*/false, /*atTail=*/true))
           return false;
       }
     }
     return true;
+  }
+
+  /// True when `fn` returns true for every stored buffer. Stops at the first
+  /// false result. Same buffer order as `forEach`.
+  template <typename Fn> bool allOf(Fn &&fn) const {
+    return allOfEndpoints([&](BufferLifeView life, bool /*atHead*/,
+                              bool /*atTail*/) { return fn(life); });
   }
 
   /// The stored life of `buffer`, or an empty result when this buffer is not

@@ -2803,6 +2803,87 @@ module {
 
 // -----
 
+module {
+  // 160x128: two preload banks plus a separate f32 head exceed Ascend910B1
+  // UB, so spec level 0 cannot place this without the after-kill fold.
+  func.func @vf_preload_chain_head(
+      %arg0: memref<160x128xf32, #hivm.address_space<ub>>,
+      %arg1: memref<160x128xf32, #hivm.address_space<ub>>)
+      attributes {hivm.func_core_type = #hivm.func_core_type<AIV>,
+                  hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = vector.transfer_read %arg0[%c0, %c0], %cst {in_bounds = [true, true]}
+        : memref<160x128xf32, #hivm.address_space<ub>>, vector<1x64xf32>
+    vector.transfer_write %0, %arg1[%c0, %c0] {in_bounds = [true, true]}
+        : vector<1x64xf32>, memref<160x128xf32, #hivm.address_space<ub>>
+    return
+  }
+
+  func.func @vf_preload_chain_tail(
+      %arg0: memref<160x128xf32, #hivm.address_space<ub>>,
+      %arg1: memref<160x128xbf16, #hivm.address_space<ub>>)
+      attributes {hivm.func_core_type = #hivm.func_core_type<AIV>,
+                  hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = vector.transfer_read %arg0[%c0, %c0], %cst {in_bounds = [true, true]}
+        : memref<160x128xf32, #hivm.address_space<ub>>, vector<1x64xf32>
+    %1 = arith.truncf %0 : vector<1x64xf32> to vector<1x64xbf16>
+    vector.transfer_write %1, %arg1[%c0, %c0] {in_bounds = [true, true]}
+        : vector<1x64xbf16>, memref<160x128xbf16, #hivm.address_space<ub>>
+    return
+  }
+
+  // Head is born where the preload buffer dies, then inplace-merged with a
+  // bf16 tail that dies later in the same scope. The tail is not an operand of
+  // the kill op. After-kill still folds both onto the preload buffer: exact
+  // alloc time and VF inplace are required only for the buffer born at the
+  // merged start. The tail only has to end inside the after-kill window.
+  // CHECK-LABEL: func.func @test_preload_after_kill_reuses_touching_tail
+  func.func @test_preload_after_kill_reuses_touching_tail(
+      %arg0: memref<160x128xf32, #hivm.address_space<gm>>,
+      %arg1: memref<160x128xbf16, #hivm.address_space<gm>>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    scf.for %i = %c0 to %c4 step %c1 {
+      // CHECK: %[[TCB:.*]] = hivm.hir.pointer_cast(%[[A0:.*]], %[[A1:.*]]) : memref<160x128xf32
+      // CHECK: annotation.mark %[[TCB]] {{.*}}hivm.multi_buffer = 2 : i32{{.*}}hivm.preload_local_buffer = 1 : i32
+      %tcb = memref.alloc() : memref<160x128xf32, #hivm.address_space<ub>>
+      annotation.mark %tcb {
+        hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32
+      } : memref<160x128xf32, #hivm.address_space<ub>>
+      scope.scope : () -> () {
+        hivm.hir.load ins(%arg0 : memref<160x128xf32, #hivm.address_space<gm>>)
+                      outs(%tcb : memref<160x128xf32, #hivm.address_space<ub>>)
+        scope.return
+      } {hivm.preload_num = 1 : i32}
+      scope.scope : () -> () {
+        %head = memref.alloc() : memref<160x128xf32, #hivm.address_space<ub>>
+        func.call @vf_preload_chain_head(%tcb, %head)
+            {hivm.vector_function, no_inline}
+            : (memref<160x128xf32, #hivm.address_space<ub>>,
+               memref<160x128xf32, #hivm.address_space<ub>>) -> ()
+        // CHECK: %[[TAIL:.*]] = hivm.hir.pointer_cast(%[[A0]], %[[A1]]) : memref<160x128xbf16
+        // CHECK: annotation.mark %[[TAIL]] {{.*}}hivm.preload_local_buffer = 1 : i32
+        // CHECK: func.call @vf_preload_chain_tail(%[[TCB]], %[[TAIL]])
+        %tail = memref.alloc() : memref<160x128xbf16, #hivm.address_space<ub>>
+        func.call @vf_preload_chain_tail(%head, %tail)
+            {hivm.vector_function, no_inline}
+            : (memref<160x128xf32, #hivm.address_space<ub>>,
+               memref<160x128xbf16, #hivm.address_space<ub>>) -> ()
+        hivm.hir.store ins(%tail : memref<160x128xbf16, #hivm.address_space<ub>>)
+                       outs(%arg1 : memref<160x128xbf16, #hivm.address_space<gm>>)
+        scope.return
+      } {hivm.preload_num = 0 : i32}
+    }
+    return
+  }
+}
+
+// -----
+
 func.func @test_reuse_l0C(%arg0: memref<128x128xf16, #hivm.address_space<gm>>, %arg1: memref<128x128xf16, #hivm.address_space<gm>>, %arg2: i1) {
   %c1 = arith.constant 1 : index
   %c64 = arith.constant 64 : index
