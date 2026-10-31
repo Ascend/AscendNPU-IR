@@ -1326,15 +1326,9 @@ mlir::SetVector<Value> MemLivenessAnalysis::currentlyLiveValuesOrdered(
   return liveSet;
 }
 
-std::shared_ptr<BufferLife>
-StorageEntry::GetBufferLifeByValue(const Value v) const {
-  auto *find = std::find_if(
-      bufferLifeVec.begin(), bufferLifeVec.end(),
-      [v](std::shared_ptr<BufferLife> life) { return life->buffer == v; });
-  if (find != bufferLifeVec.end()) {
-    return *find;
-  }
-  return nullptr;
+std::optional<BufferLifeView>
+StorageEntry::GetBufferLifeByValue(Value v) const {
+  return bufferLifeVec.find(v);
 }
 
 bool MemPlan::IsInplaceMultiBuffer(
@@ -1697,7 +1691,8 @@ void MemPlan::GenerateStorageEntry() {
       std::unique_ptr<StorageEntry> entry =
           std::make_unique<StorageEntry>(nextEntryMemoId++);
       entry->bufInfo = &iter->second;
-      entry->bufferLifeVec.emplace_back(bufLife);
+      entry->bufferLifeVec.append(bufLife->buffer, bufLife->allocTime,
+                                  bufLife->freeTime);
       entry->inplaceBuffers.emplace_back(iter->first);
       auto multiBuffer = buffer2MultiNum.find(genBuffer);
       if (multiBuffer != buffer2MultiNum.end()) {
@@ -1769,13 +1764,10 @@ void MemPlan::MergeInplaceSE() {
     assert(genSE != nullptr && killSE != nullptr &&
            " genSE and killSE should be valid");
     BufferLifeVec mergedBufferLifeVec;
-    mergedBufferLifeVec.insert(mergedBufferLifeVec.end(),
-                               genSE->bufferLifeVec.begin(),
-                               genSE->bufferLifeVec.end());
-    mergedBufferLifeVec.insert(mergedBufferLifeVec.end(),
-                               killSE->bufferLifeVec.begin(),
-                               killSE->bufferLifeVec.end());
-    MergeBufferVec(mergedBufferLifeVec);
+    mergedBufferLifeVec.append(genSE->bufferLifeVec);
+    mergedBufferLifeVec.append(killSE->bufferLifeVec);
+    // append merges touching intervals. Endpoint buffers stay visible to
+    // inplace checks; an interior buffer is dropped.
     killSE->bufferLifeVec.swap(mergedBufferLifeVec);
     //  merge allocs of two storage entry and update inplaceBuffers.
     killSE->inplaceBuffers.insert(killSE->inplaceBuffers.begin(),
@@ -1806,9 +1798,9 @@ bool MemPlan::IsPreloadStorageEntry(const StorageEntry *storageEntry) {
 }
 
 bool MemPlan::IsPreloadBufferReuseable(PreloadBufferReuseableInfo &info,
-                                       std::shared_ptr<BufferLife> &lifeSE) {
+                                       const BufferLifeView &lifeSE) {
   auto preloadBuffer = info.preloadBuffer;
-  auto buffer = lifeSE->buffer;
+  auto buffer = lifeSE.buffer;
   // TODO: support reuse hivmOp
   auto isInplaceReuseable = [this](Operation *op, Value gen, Value kill) {
     auto genType = cast<ShapedType>(gen.getType());
@@ -1818,22 +1810,22 @@ bool MemPlan::IsPreloadBufferReuseable(PreloadBufferReuseableInfo &info,
   };
 
   auto &beforeGenLife = info.reuseableBufferLifeBeforeGen;
-  if (beforeGenLife && beforeGenLife->allocTime <= lifeSE->allocTime) {
+  if (beforeGenLife && beforeGenLife->allocTime <= lifeSE.allocTime) {
     // Check if the freeTime of beforeGenLife is equal to the freeTime of
     // lifeSE.
     // TODO: support freeTime not equal reuse
-    if (beforeGenLife->freeTime == lifeSE->freeTime &&
+    if (beforeGenLife->freeTime == lifeSE.freeTime &&
         isInplaceReuseable(info.genInfo->operation, preloadBuffer, buffer)) {
       return true;
     }
   }
 
   auto &afterKillLife = info.reuseableBufferLifeAfterKill;
-  if (afterKillLife && afterKillLife->freeTime >= lifeSE->freeTime) {
+  if (afterKillLife && afterKillLife->freeTime >= lifeSE.freeTime) {
     // Check if the allocTime of afterKillLife is equal to the allocTime of
     // lifeSE.
     // TODO: support freeTime not equal reuse
-    if (afterKillLife->allocTime == lifeSE->allocTime &&
+    if (afterKillLife->allocTime == lifeSE.allocTime &&
         isInplaceReuseable(info.killInfo->operation, buffer, preloadBuffer)) {
       return true;
     }
@@ -1843,15 +1835,20 @@ bool MemPlan::IsPreloadBufferReuseable(PreloadBufferReuseableInfo &info,
 
 void MemPlan::GeneratePreloadReuseableSE() {
   LDBG("\n-------localSE2ReuseablePreloadSE info--------\n\n");
-  for (auto &pair : preloadBufferReuseableInfo) {
-    auto preloadBuffer = pair.first;
+  auto isAllEntryLifeReuseable = [this](const BufferLifeVec &bufferLifeVec,
+                                        PreloadBufferReuseableInfo &info) {
+    return bufferLifeVec.allOf([this, &info](const BufferLifeView &life) {
+      return IsPreloadBufferReuseable(info, life);
+    });
+  };
+  for (auto &[preloadBuffer, reusableInfo] : preloadBufferReuseableInfo) {
     auto *preloadBufferSE = buffer2storageEntry[preloadBuffer];
-    pair.second.preloadBuffer = preloadBuffer;
+    reusableInfo.preloadBuffer = preloadBuffer;
     // A preload buffer's genOp and killOp cannot reside in the same scope
     // (otherwise it would not be a preload buffer). Thus equal preload_num
     // here must come from two distinct scopes that happen to share the same
     // preload_num; in this case the buffer cannot be reused, so skip it.
-    if (pair.second.killScopePreloadNum == pair.second.genScopePreloadNum) {
+    if (reusableInfo.killScopePreloadNum == reusableInfo.genScopePreloadNum) {
       continue;
     }
     for (auto &e : StorageEntryVec) {
@@ -1860,9 +1857,7 @@ void MemPlan::GeneratePreloadReuseableSE() {
           preloadBufferSE->bufInfo->constBits < e->bufInfo->constBits) {
         continue;
       }
-      if (llvm::all_of(e->bufferLifeVec, [&](std::shared_ptr<BufferLife> life) {
-            return IsPreloadBufferReuseable(pair.second, life);
-          })) {
+      if (isAllEntryLifeReuseable(e->bufferLifeVec, reusableInfo)) {
         MemLifeDebugInfo(e.get());
         MemLifeDebugInfo(preloadBufferSE);
 
@@ -2178,13 +2173,12 @@ void MemPlan::MemLifeDebugInfo(const StorageEntry *storageEntry) const {
       }
     }
   }
-#ifndef NDEBUG
-  for (auto &bufferLife : storageEntry->bufferLifeVec) {
-    LDBG("bufferLife : " << "allocTime : " << bufferLife->allocTime
-                         << " , freeTime : " << bufferLife->freeTime << "\n");
-  }
-  LDBG("\n");
-#endif
+  LLVM_DEBUG({
+    storageEntry->bufferLifeVec.forEach([](BufferLifeView bufferLife) {
+      llvm::dbgs() << "bufferLife : " << "allocTime : " << bufferLife.allocTime
+                   << " , freeTime : " << bufferLife.freeTime << "\n";
+    });
+  });
 }
 
 void MemPlan::ReportCurEntryDebugInfo(const StorageEntry *curEntry) const {
@@ -2659,8 +2653,7 @@ bool MemPlan::IsBufferLifeVecConflict(PlanRecord &r, uint64_t offset,
       (r.firstMemBound->offset >= offset + e->alignedConstBits)) {
     return false;
   }
-  return !GetOverlapBufferLife(r.entry->bufferLifeVec, e->bufferLifeVec)
-              .empty();
+  return r.entry->bufferLifeVec.intersects(e->bufferLifeVec);
 }
 
 void MemPlan::PlanRelationOtherBufferEntryAddress(
@@ -2824,7 +2817,7 @@ void MemPlan::UpdateOutline(MemBoundList &outline, PlanRecHis &his,
     AddMemBoundInSectionalWay(e, start, end, splitBound);
   } else {
     // origin outline
-    BufferLifeVec life(e->bufferLifeVec.begin(), e->bufferLifeVec.end());
+    BufferLifeVec life = e->bufferLifeVec;
     MergeBufferLife(start, end, life);
     splitBound.emplace_back(std::make_shared<MemoryBound>(
         life, e->bitsOffset, e->alignedConstBits, e, nextBoundMemoId++));
@@ -2864,11 +2857,8 @@ void MemPlan::AddMemBoundInSectionalWay(
   // |---------e------------ |
   // |--split e1 -|-split e2-|
   for (auto iter = start; iter != end; ++iter) {
-    BufferLifeVec life(e->bufferLifeVec.begin(), e->bufferLifeVec.end());
-    life.insert(life.end(), (*iter)->bufferLifeVec.begin(),
-                (*iter)->bufferLifeVec.end());
-    // merge the buffer life
-    MergeBufferVec(life);
+    BufferLifeVec life = e->bufferLifeVec;
+    life.append((*iter)->bufferLifeVec);
     // get the extent
     uint64_t size = 0;
     if (std::distance(start, iter) == std::distance(start, end) - 1) {
@@ -2885,55 +2875,8 @@ void MemPlan::AddMemBoundInSectionalWay(
 inline void MemPlan::MergeBufferLife(MemBoundList::const_iterator start,
                                      MemBoundList::const_iterator end,
                                      BufferLifeVec &newLife) const {
-  size_t size = 0;
-  for (auto it = start; it != end; ++it) {
-    size += (*it)->bufferLifeVec.size();
-  }
-  newLife.reserve(size);
-  for (auto it = start; it != end; ++it) {
-    newLife.insert(newLife.end(), (*it)->bufferLifeVec.begin(),
-                   (*it)->bufferLifeVec.end());
-  }
-  MergeBufferVec(newLife);
-}
-
-void MemPlan::MergeBufferVec(BufferLifeVec &bufferLife) const {
-  if (bufferLife.size() <= 1) {
-    return;
-  }
-  BufferLifeVec mergedLife;
-  mergedLife.reserve(bufferLife.size());
-  // sort life by alloc and free time
-  std::sort(bufferLife.begin(), bufferLife.end(), CompareBufferLife());
-  int start = bufferLife[0]->allocTime;
-  int end = bufferLife[0]->freeTime;
-  auto buffer = bufferLife[0]->buffer;
-  size_t runStart = 0;
-  // merge life; segments that merge with nothing are reused as-is (BufferLife
-  // objects are immutable once planning starts) instead of being copied.
-  for (size_t i = 1; i < bufferLife.size(); i++) {
-    auto &life = bufferLife[i];
-    if (life->allocTime <= end + 1) {
-      end = end < life->freeTime ? life->freeTime : end;
-    } else {
-      if (i - runStart == 1) {
-        mergedLife.emplace_back(bufferLife[runStart]);
-      } else {
-        mergedLife.emplace_back(
-            std::make_unique<BufferLife>(buffer, start, end));
-      }
-      buffer = life->buffer;
-      start = life->allocTime;
-      end = life->freeTime;
-      runStart = i;
-    }
-  }
-  if (bufferLife.size() - runStart == 1) {
-    mergedLife.emplace_back(bufferLife[runStart]);
-  } else {
-    mergedLife.emplace_back(std::make_unique<BufferLife>(buffer, start, end));
-  }
-  bufferLife.swap(mergedLife);
+  for (auto it = start; it != end; ++it)
+    newLife.append((*it)->bufferLifeVec);
 }
 
 bool MemPlan::IsSamePlanAsLastRollBack(uint64_t allocOffset, int curChildIdx,
@@ -2948,33 +2891,31 @@ inline bool MemPlan::VerifyConflictStage0(
   if (e->bufferLifeVec.empty() || last->bufferLifeVec.empty()) {
     return false;
   }
-  auto *bufferInfoIt1 = bufferInfos.find(e->bufferLifeVec[0]->buffer);
-  auto *bufferInfoIt2 = bufferInfos.find(last->bufferLifeVec[0]->buffer);
+  // if buffer in b1 has mem_unique, b1 will have only one element.
+  auto *bufferInfoIt1 = bufferInfos.find(e->bufferLifeVec.frontBuffer());
+  auto *bufferInfoIt2 = bufferInfos.find(last->bufferLifeVec.frontBuffer());
   if (bufferInfoIt1->second.memoryUnique ||
       bufferInfoIt2->second.memoryUnique) {
     return true;
   }
-  // level_0: offset = 0, offset means life distance
-  llvm::SmallDenseMap<ValuePair, BufferLife, 32> intersection =
-      GetOverlapBufferLife(e->bufferLifeVec, last->bufferLifeVec);
-  if (intersection.empty()) {
-    return false;
-  }
-  // If any value in intersection has allocTime != freeTime, which means not
-  // match inplace rule, then return conflict. Otherwise, reuse can cause
-  // accuracy problem instead of pipeline stalls.
-  for (const auto &entry : intersection) {
-    if (entry.second.allocTime != entry.second.freeTime) {
+  // Wider than a point is a real overlap. A point touch, including a [t, t]
+  // interval sitting inside a longer one, is inplace only when the buffers
+  // alive at that time are an inplacable pair.
+  for (auto [lo, hi] : e->bufferLifeVec.timeOverlaps(last->bufferLifeVec)) {
+    if (lo != hi)
       return true;
-    }
-    // If any pair formed by inplaceBuffers from buffer and conflictBuffer
-    // doesn't match any pair in inplacableBufferPairs(e.g. store buffer inplace
-    // load buffer when multi-buffer scenario), return conflict.
-    auto buffer = entry.first.first;
-    auto conflictBuffer = entry.first.second;
-    if (!IsInplacableBufferPairMatched(buffer, conflictBuffer,
-                                       stallPipelineInplacePairs)) {
+    SmallVector<BufferLifeView> left = e->bufferLifeVec.buffersAt(lo);
+    SmallVector<BufferLifeView> right = last->bufferLifeVec.buffersAt(lo);
+    // Empty -> Intersection point is not at the edge of interval -> it is a
+    // real overlap.
+    if (left.empty() || right.empty())
       return true;
+    for (const BufferLifeView &life1 : left) {
+      for (const BufferLifeView &life2 : right) {
+        if (!IsInplacableBufferPairMatched(life1.buffer, life2.buffer,
+                                           stallPipelineInplacePairs))
+          return true;
+      }
     }
   }
   // Conflict pairs are all in inplacableBufferPairs, which means can reuse
@@ -3009,59 +2950,6 @@ bool MemPlan::IsInplacableBufferPairMatched(
   return false;
 }
 
-// verify two buffer life vectors is conflict or not
-// The key pair looks like the following diagram
-// indicate that var1 is generated later than var2.
-//                                     buffer2
-//                               --- PLAN_time
-//   buffer1       intersected   | |
-//                 buffer_life   | |
-// PLAN_time ---    lo ---      ---
-//            | |       ---      | |
-//            | |       ---      | |
-//            ---    hi ---      --- free_time
-//            | |
-//            | |
-// free_time  ---
-// Meantime, the overlap is the intersected buffer_life.
-llvm::SmallDenseMap<ValuePair, BufferLife, 32>
-MemPlan::GetOverlapBufferLife(const BufferLifeVec &b1,
-                              const BufferLifeVec &b2) const {
-  llvm::SmallDenseMap<ValuePair, BufferLife, 32> intersection;
-  size_t i = 0;
-  size_t j = 0;
-  size_t b1Len = b1.size();
-  size_t b2Len = b2.size();
-  if (b1Len == 0 || b2Len == 0) {
-    return intersection;
-  }
-  // Merge-normalized (disjoint, allocTime-sorted) life vectors whose time
-  // ranges do not overlap cannot intersect.
-  if (b1.back()->freeTime < b2.front()->allocTime ||
-      b2.back()->freeTime < b1.front()->allocTime) {
-    return intersection;
-  }
-  while (i < b1Len && j < b2Len) {
-    auto lo = std::max(b1[i]->allocTime, b2[j]->allocTime);
-    auto hi = std::min(b1[i]->freeTime, b2[j]->freeTime);
-    if (lo <= hi) {
-      BufferLife bufferLife(nullptr, lo, hi);
-      ValuePair key =
-          lo == b1[i]->allocTime && hi == b2[j]->freeTime
-              ? std::make_pair(b1[i]->buffer,
-                               b2[j]->buffer) // case in the diagram
-              : std::make_pair(b2[j]->buffer, b1[i]->buffer); // opposing case
-      intersection.try_emplace(key, bufferLife);
-    }
-    if (b1[i]->freeTime < b2[j]->freeTime) {
-      i += 1;
-    } else {
-      j += 1;
-    }
-  }
-  return intersection;
-}
-
 PlanStatus MemPlan::ApplyFailStrategy(StatusWrapper &statusWrapper,
                                       const size_t maxBits) {
   RollBackForAllocFail(statusWrapper, maxBits);
@@ -3091,10 +2979,9 @@ void MemPlan::ReportAllocatedEntryDebugInfo(
     LDBG(", offset: " << offsetByte);
     LDBG(", extent: " << needByte);
     LDBG(", buffer life: ");
-    for (auto &bufferLife : entry->bufferLifeVec) {
-      LDBG("[" << bufferLife->allocTime << "-" << bufferLife->freeTime
-               << "], ");
-    }
+    entry->bufferLifeVec.forEach([](BufferLifeView bufferLife) {
+      LDBG("[" << bufferLife.allocTime << "-" << bufferLife.freeTime << "], ");
+    });
   };
   LDBG("--------------------------BUFFER ALLOCATE "
        "START-------------------------- "
