@@ -21,7 +21,6 @@
 #include "bishengir/Dialect/HACC/IR/HACCInterfaces.h"
 #include "bishengir/Dialect/HIVM/Analysis/VFInplaceReuseAnalyzer.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/Transforms/BufferLifeVec.h"
 #include "bishengir/Dialect/HIVM/Transforms/InplaceReuseReachableMap.h"
 #include "bishengir/Dialect/HIVM/Transforms/OptMemPlanForPipeline.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -135,6 +134,9 @@ struct BufferLife {
   int64_t freeTime{-1};
 };
 
+/// a list of buffer life for a given storage entry
+using BufferLifeVec = SmallVector<std::shared_ptr<BufferLife>>;
+
 /// Conflict-memo id types. Ids are unique per MemPlanRegBase instance;
 /// the two names distinguish entry ids from bound ids at memo-key sites.
 using EntryMemoId = uint32_t;
@@ -193,10 +195,8 @@ struct StorageEntry {
   /// MemPlanRegBase's id counter; unique per instance, never reused.
   const EntryMemoId memoId;
 
-  /// The buffer's own life, if this entry still stores it as an endpoint.
-  std::optional<BufferLifeView> GetBufferLifeByValue(Value v) const {
-    return bufferLifeVec.find(v);
-  }
+  /// Get Bufferlife by vaule
+  std::shared_ptr<BufferLife> GetBufferLifeByValue(const Value v) const;
 };
 
 struct MemoryBound {
@@ -277,6 +277,17 @@ struct OutlineSectionInfo {
   /// When the current PlanRecord is rolled back, it must be rolled back
   /// directly.
   bool isDirectlyRollback;
+};
+
+/// comparator of buffer life
+struct CompareBufferLife {
+  bool operator()(const std::shared_ptr<BufferLife> &lhs,
+                  const std::shared_ptr<BufferLife> &rhs) const {
+    if (lhs->allocTime == rhs->allocTime) {
+      return lhs->freeTime < rhs->freeTime;
+    }
+    return lhs->allocTime < rhs->allocTime;
+  }
 };
 
 struct StatusWrapper {
@@ -768,10 +779,13 @@ protected:
       StorageEntry *e, MemBoundListConstIter start, MemBoundListConstIter end,
       SmallVector<std::shared_ptr<MemoryBound>> &splitBound) const;
 
-  /// Append buffer lives of bounds in [start, end) onto newLife, then merge.
+  /// merge the buffer life between start and end.
   inline void MergeBufferLife(MemBoundList::const_iterator start,
                               MemBoundList::const_iterator end,
                               BufferLifeVec &newLife) const;
+
+  /// merge buffers in a vector.
+  void MergeBufferVec(BufferLifeVec &bufferLife) const;
 
   /// Judge if need to restart plan memory with other strategy after
   /// plan failed.
@@ -820,11 +834,13 @@ protected:
   /// operation with pipe type `Pipe`.
   template <PIPE Pipe> bool IsInplaceReuseReachable(Value allocValue);
 
-  /// True when the two life sets conflict. Memory-unique buffers conflict
-  /// unless the cross-scope CV exception applies, in which case the check
-  /// falls through to the interval intersection.
-  bool BufferLivesConflict(const BufferLifeVec &b1,
-                           const BufferLifeVec &b2) const;
+  /// Get overlap buffer life. Keeps at most one intersection window per
+  /// buffer pair (first window wins, via DenseMap::try_emplace). Both
+  /// vectors must be merge-normalized (disjoint and sorted by allocTime),
+  /// which is the same invariant the two-pointer sweep relies on. The
+  /// inline capacity avoids per-call heap allocation in the common case.
+  llvm::SmallDenseMap<ValuePair, BufferLife, 32>
+  GetOverlapBufferLife(const BufferLifeVec &b1, const BufferLifeVec &b2) const;
 
   /// Reorder and make the storage entries of firstbuffer and otherbuffer
   /// continuous.
