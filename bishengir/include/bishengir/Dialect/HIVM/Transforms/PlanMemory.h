@@ -972,9 +972,13 @@ private:
   void ReportAllocatedEntryDebugInfo(const StorageEntry *rootStorageEntry,
                                      bool isFail) const;
 
-  /// Check if preload buffer can be reused.
+  /// Check if every life in `lives` can reuse this preload buffer.
+  /// Before-gen requires an exact free time and VF inplace only on buffers
+  /// that end at the merged interval. After-kill requires an exact alloc time
+  /// and VF inplace only on buffers that start at the merged interval. Every
+  /// other endpoint only has to sit inside that same window.
   bool IsPreloadBufferReuseable(PreloadBufferReuseableInfo &info,
-                                const BufferLifeView &life);
+                                const BufferLifeVec &lives);
 
   /// collect all the preload buffer reuseable info and generate the map from
   /// local storage entry to its reuseable preload storage entry.
