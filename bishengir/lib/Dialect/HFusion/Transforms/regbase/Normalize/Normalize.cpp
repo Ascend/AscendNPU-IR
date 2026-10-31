@@ -75,7 +75,13 @@ LogicalResult runNormalizeRegBase(Operation *op, bool enableHighPrecision,
   populateNormalizeHFusionRegBasePatterns(
       patterns, enableHighPrecision, enableFastDiv, enableDivRemPow2,
       hacc::utils::supportsRegBaseVectorLowering(moduleOp));
-  return applyPatternsGreedily(op, std::move(patterns));
+  if (failed(applyPatternsGreedily(op, std::move(patterns))))
+    return failure();
+  // Software-atomic ops must be fully decomposed here; anything that survives
+  // would fall into the late HIVM path and fail far from the root cause.
+  if (archisAscend950 && failed(checkIsLegalAtomicOp(op)))
+    return failure();
+  return success();
 }
 
 } // namespace mlir::hfusion
