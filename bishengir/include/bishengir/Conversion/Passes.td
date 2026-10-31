@@ -430,6 +430,19 @@ def FixCallUnknownLoc : Pass<"fix-call-unknown-loc", "func::FuncOp"> {
   let summary = "Fix UnknownLoc on call ops by inheriting location from users or parent ops";
   let constructor = "mlir::createFixCallUnknownLocPass()";
   let dependentDialects = ["func::FuncDialect", "LLVM::LLVMDialect"];
+
+  let options = [
+      Option<"assumeDebugInfo", "assume-debug-info", "bool",
+             /*default*/"false",
+             "Assume a DISubprogram will be attached to every function "
+             "regardless of whether any op carries a location. Set this "
+             "whenever DIScopeForLLVMFuncOpPass runs, i.e. when any of "
+             "--enable-sanitizer, --enable-debug-info or "
+             "--enable-debug-variables is on: that pass attaches a subprogram "
+             "unconditionally, so a function whose ops are all unknown-loc "
+             "still needs its calls fixed, and a synthetic location is used "
+             "when no location can be inherited.">
+  ];
 }
 
 //===----------------------------------------------------------------------===//
