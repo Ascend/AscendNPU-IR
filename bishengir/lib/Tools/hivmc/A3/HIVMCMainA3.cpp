@@ -20,6 +20,8 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Pass/PassManager.h"
 #include "bishengir/Tools/hivmc/AdapterSanitizer.h"
+#include "bishengir/Tools/hivmc/BishengAsyncRuntime.h"
+#include "bishengir/Tools/hivmc/BishengLlcBridge.h"
 #include "bishengir/Tools/hivmc/Config.h"
 #include "bishengir/Tools/hivmc/HIVMCA3.h"
 #include "bishengir/Tools/hivmc/PassPipelineA3.h"
@@ -35,6 +37,7 @@
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/Program.h"
@@ -111,43 +114,6 @@ findDirectoryInPath(StringRef targetDir) {
   }
 
   return nullptr;
-}
-
-/// Get the path to BiSheng Compiler.
-/// 1. First locate the BiSheng Compiler's binary via the `BISHENG_INSTALL_PATH`
-///    environment variable.
-/// 2. If the compiler path is not present, search bisheng in PATH environment
-///    variable
-/// 3. If still cant find, connect path from ASCEND_HOME_PATH environment
-///    variable
-/// this function will return the full patch with `bin` directory
-std::string getBiShengCompilerInstallPath() {
-  // 1. find bisheng from BISHENG_INSTALL_PATH
-  std::string maybeBiShengInstallPath = getBiShengInstallPath();
-  if (!maybeBiShengInstallPath.empty())
-    return maybeBiShengInstallPath;
-
-  // 2. find bisheng from PATH
-  if (llvm::ErrorOr<std::string> P = llvm::sys::findProgramByName("bisheng")) {
-    StringRef bishengFullPath = StringRef(P.get());
-    if (!bishengFullPath.empty()) {
-      return llvm::sys::path::parent_path(bishengFullPath).str();
-    }
-  }
-
-  // 3. find bisheng from ASCEND_HOME_PATH
-  const char *kAscendHomePathEnv = "ASCEND_HOME_PATH";
-  const char *AscendHomePath = getenv(kAscendHomePathEnv);
-  SmallString<128> bishengInstallPathStr(AscendHomePath);
-  sys::path::append(bishengInstallPathStr, "bin");
-  SmallString<128> bishengPathStr(bishengInstallPathStr);
-  sys::path::append(bishengPathStr, "bisheng");
-  if (llvm::sys::fs::exists(bishengPathStr))
-    return std::string(bishengInstallPathStr);
-
-  llvm::errs()
-      << "[ERROR] Cannot find the binary path of the BiSheng compiler.\n";
-  return "";
 }
 
 /// Get the BiSheng Compiler binary name.
@@ -443,12 +409,70 @@ void attachMetadataToLLVMIR(llvm::Module &llMod) {
   }
 }
 
+//===--------------------------------------------------------------------===//
+// Per-lane Final Delta aux resolver (distinct, cache-warming subset).
+//===--------------------------------------------------------------------===//
+//
+// `computeFinalDeltaAuxA3` rebuilds the same ordered `auxPaths` list that
+// `compileDeviceKernel` constructs for the Native path
+// (metaOp -> extraDeviceBCPaths -> mixAux), then takes the distinct subset
+// per lane.  This is submitted via `submitPreloadFinalDelta` AFTER the final
+// topology is known (split mix done, `isMixKernel`/`mixKernelBothDebugOrShmem`
+// set) and BEFORE `translateDeviceKernelToLLVM`, so the Final Delta preload
+// overlaps LLVM19 translate on the Worker thread.
+//
+// The `fullAux` passed to `submitCompile` later is STILL built by
+// `compileDeviceKernel`'s own `auxPaths` construction (unchanged): the delta
+// is a cache-warming subset and does NOT affect link order.  `handleCompile`'s
+// delta-preload loop is the fallback for any path this helper missed.
+static std::map<LaneKind, std::vector<std::string>>
+computeFinalDeltaAuxA3(const SmallVector<ModuleOp, 2> &modules,
+                       const HIVMCMainConfig &config,
+                       const std::map<SubCoreTarget, std::string> &bitcodePaths,
+                       bool isMixKernel, bool mixKernelBothDebugOrShmem) {
+  std::map<LaneKind, std::vector<std::string>> result;
+  for (ModuleOp m : modules) {
+    SubCoreTarget arch =
+        hivm::isAICModule(m) ? SubCoreTarget::AIC : SubCoreTarget::AIV;
+    LaneKind lane =
+        (arch == SubCoreTarget::AIC) ? LaneKind::AIC : LaneKind::AIV;
+    // Mirror compileDeviceKernel's auxPaths construction (HIVMCMainA3.cpp:545).
+    SmallVector<std::string, 4> auxPaths;
+    auto itMeta = bitcodePaths.find(arch);
+    if (itMeta != bitcodePaths.end() && !itMeta->second.empty())
+      auxPaths.push_back(itMeta->second);
+    for (const std::string &bc : config.getExtraDeviceBCPaths())
+      auxPaths.push_back(bc);
+    if (isMixKernel && mixKernelBothDebugOrShmem) {
+      SubCoreTarget mixCoreType = arch == SubCoreTarget::AIC
+                                      ? SubCoreTarget::MIX_AIC
+                                      : SubCoreTarget::MIX_AIV;
+      auto itMix = bitcodePaths.find(mixCoreType);
+      if (itMix != bitcodePaths.end() && !itMix->second.empty())
+        auxPaths.push_back(itMix->second);
+    }
+    // Distinct (first-occurrence order preserved).  The Worker's
+    // preloadedPaths_ dedup handles re-preload idempotency; we dedup here
+    // to minimize preload work.
+    std::vector<std::string> &delta = result[lane];
+    for (const std::string &p : auxPaths) {
+      if (p.empty())
+        continue;
+      if (std::find(delta.begin(), delta.end(), p) == delta.end())
+        delta.push_back(p);
+    }
+  }
+  return result;
+}
+
 std::optional<std::string>
-compileDeviceKernel(StringRef bishengPath, const std::string &llvmirFilepath,
+compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
+                    const std::string &llvmirFilepath,
                     const std::string &outputBinFilepath, SubCoreTarget arch,
                     const HIVMCMainConfig &config, bool isMixKernel,
                     bool mixKernelBothDebugOrShmem,
                     std::map<SubCoreTarget, std::string> bitcodePaths) {
+  BishengAsyncRuntime *runtime = config.getRuntime();
   if (!bitcodePaths.count(arch))
     return std::nullopt;
   std::string metaOpFilePath = bitcodePaths[arch];
@@ -513,6 +537,152 @@ compileDeviceKernel(StringRef bishengPath, const std::string &llvmirFilepath,
       "--cce-aicore-input-parameter-size=" +
       std::to_string(config.deviceMaxInputParamSizeInBytes());
   arguments.push_back(paramSizeArg);
+
+  // ---- Native (libbisheng-llc.so) backend path --------------------------
+  // Active iff a runtime was created (BISHENG_BACKEND=native && !CPURunner).
+  // Never falls back to Process.
+  if (runtime) {
+    // Serialize the in-memory LLVM Module to the IR string the vendor SO
+    // consumes (Module::print + modifyForVersionMismatch — the same bytes
+    // `saveToFiles` writes to disk), so Native and Process receive identical
+    // IR without the disk round-trip.
+    std::string irBytes = moduleToIrString(*llvmModule);
+
+    // Build the complete ordered aux path list (same order as the process
+    // argv -cce-link-aicore-ll-module sequence).
+    llvm::SmallVector<std::string, 4> auxPaths;
+    auxPaths.push_back(metaOpFilePath);
+    for (const std::string &bc : config.getExtraDeviceBCPaths())
+      auxPaths.push_back(bc);
+    if (isMixKernel && mixKernelBothDebugOrShmem) {
+      SubCoreTarget mixCoreType = arch == SubCoreTarget::AIC
+                                      ? SubCoreTarget::MIX_AIC
+                                      : SubCoreTarget::MIX_AIV;
+      auto it = bitcodePaths.find(mixCoreType);
+      if (it != bitcodePaths.end())
+        auxPaths.push_back(it->second);
+    }
+
+    // Map the process argv to v2 ExtraLlvmOpts (option VALUES only, no
+    // "-mllvm" prefix; vendor applies them after the CPU default table,
+    // last-wins).  Process mode routes several driver flags (--cce-auto-sync,
+    // --cce-enable-sanitizer) through the bisheng driver, which translates
+    // each into a sequence of cc1 -mllvm values before the manual -mllvm
+    // values are appended.  Native mode skips the driver, so extraOpts must
+    // reproduce that translation in the same argv order: the translated
+    // -mllvm values first, then the manual -mllvm values, so that the manual
+    // ones override (last-wins) where they conflict.
+    //
+    // A3 runs on dav-c220 only.  Driver-translation tables are CPU/lane
+    // specific (measured via `bisheng -v`).
+    bool isCube = (arch == SubCoreTarget::AIC);
+    std::vector<std::string> extraOpts;
+    // 1. -enable-mix=true (manual -mllvm, first in argv)
+    if (isMixKernel)
+      extraOpts.push_back("-enable-mix=true");
+    // 2. --cce-enable-sanitizer -g translation (dav-c220 only; dav-c310 driver
+    //    does not translate sanitizer to -mllvm).
+    if (config.shouldEnableSanitizer()) {
+      extraOpts.push_back("-cce-aicore-enable-sanitizer=true");
+      extraOpts.push_back("-cce-aicore-relax=false");
+      extraOpts.push_back("-hoist-common-insts=false");
+    }
+    // 3. --cce-auto-sync=bar-all translation (dav-c220 vec lane; cube driver
+    //    on dav-c310 does not translate bar-all, but A3 is dav-c220 so both
+    //    lanes translate it).  -cce-aicore-disable-argmem-alias-check=true
+    //    overrides the baseline table's trailing =false.
+    if (config.shouldInjectBarrierAllSync() && !isCube) {
+      extraOpts.push_back("-cce-sync-inst=bar-all");
+      extraOpts.push_back("-cce-aicore-disable-argmem-alias-check=true");
+      extraOpts.push_back("-enable-deps-filter=on");
+      extraOpts.push_back("-enable-sync-event-coloring");
+      extraOpts.push_back("-cce-aicore-enable-sync=true");
+    }
+    // 4. bar-all manual -mllvm (override driver's -enable-deps-filter=on).
+    if (config.shouldInjectBarrierAllSync()) {
+      extraOpts.push_back("-cce-remove-auto-sync=true");
+      extraOpts.push_back("-enable-deps-filter=off");
+    }
+    // 5. -cce-aicore-dcci-insert-for-scalar=false (manual -mllvm)
+    extraOpts.push_back("-cce-aicore-dcci-insert-for-scalar=false");
+    // 6. -enable-module-inliner (manual -mllvm)
+    extraOpts.push_back("-enable-module-inliner");
+    // 7. -O0 translation: dav-c220 driver injects -cce-dyn-kernel-stack-size
+    //    at -O0 (dav-c310 -O0 has no extra -mllvm).
+    if (config.shouldEnableDebugVariables())
+      extraOpts.push_back("-cce-dyn-kernel-stack-size=true");
+
+    // Target CPU: A3 uses dav-c220 only.
+    std::string cpu = laneTargetCpu("dav-c220", isCube);
+    uint32_t optLevel = config.shouldEnableDebugVariables() ? 0u : 2u;
+
+    // Debug: dump native compile inputs if requested.
+    if (const char *dump = getenv("BISHENG_NATIVE_DUMP")) {
+      llvm::errs() << "[BishengLlcBridge dump] cpu=" << cpu
+                   << " optLevel=" << optLevel << " irBytes=" << irBytes.size()
+                   << " auxPaths=";
+      for (const auto &a : auxPaths)
+        llvm::errs() << a << ";";
+      llvm::errs() << " extraOpts=";
+      for (const auto &o : extraOpts)
+        llvm::errs() << o << ";";
+      llvm::errs() << " outputBin=" << outputBin << "\n";
+      // Save the IR for offline replay.
+      std::string dumpIr = outputBin + ".native.ir.ll";
+      std::error_code ec;
+      llvm::raw_fd_ostream os(dumpIr, ec);
+      if (!ec)
+        os << irBytes;
+    }
+
+    // ---- Dispatch to the lane Worker (runtime is non-null here) ----------
+    // fail-closed: an inactive Worker means the lane never completed init;
+    // surface the error and abort instead of producing a stale artifact.
+    if (!runtime->isActive()) {
+      llvm::errs() << "[ERROR] Native: runtime not active for lane\n";
+      return std::nullopt;
+    }
+    // Drain this lane's LoadInit ticket (ensures SO load + init done),
+    // then PreloadBase / PreloadFinalDelta (no-op until those preloads are
+    // submitted upstream), then submit compile to the lane Worker and wait.
+    // fail-closed: any drain returning false means the lane failed.
+    LaneKind lane =
+        (arch == SubCoreTarget::AIC) ? LaneKind::AIC : LaneKind::AIV;
+    if (!runtime->drainLoadInitTicket(lane)) {
+      llvm::errs() << "[ERROR] Native: LoadInit failed for lane "
+                   << (lane == LaneKind::AIC ? "AIC" : "AIV") << "\n";
+      return std::nullopt;
+    }
+    if (!runtime->drainBaseAuxTicket(lane)) {
+      llvm::errs() << "[ERROR] Native: PreloadBase failed for lane "
+                   << (lane == LaneKind::AIC ? "AIC" : "AIV") << "\n";
+      return std::nullopt;
+    }
+    if (!runtime->drainFinalDeltaTicket(lane)) {
+      llvm::errs() << "[ERROR] Native: PreloadFinalDelta failed for lane "
+                   << (lane == LaneKind::AIC ? "AIC" : "AIV") << "\n";
+      return std::nullopt;
+    }
+    BishengLlcWorker &worker = runtime->getWorkerForCore(arch);
+    runtime->emitEvent(lane == LaneKind::AIC ? "AIC" : "AIV", "compile",
+                       "point");
+    // `backend_wait` wraps the main-thread drain + waitCompile window
+    // (the main thread blocks here until the Worker finishes llc_compile).
+    runtime->emitEvent("MAIN", "backend_wait", "begin");
+    CommandTicket ticket = worker.submitCompile(irBytes, auxPaths, cpu,
+                                                optLevel, extraOpts, outputBin);
+    auto res = worker.waitCompile(ticket);
+    runtime->emitEvent("MAIN", "backend_wait", "end",
+                       res.success ? "ok" : "fail");
+    runtime->emitEvent(lane == LaneKind::AIC ? "AIC" : "AIV", "compile", "end",
+                       res.success ? "ok" : "fail");
+    if (!res.success) {
+      llvm::errs() << "[ERROR] Native: " << res.diagnostic << "\n";
+      return std::nullopt;
+    }
+    return outputBin;
+  }
+  // ---- End Native path --------------------------------------------------
 
   StringRef bishengBin = getBiShengCompilerName();
   if ((!isMixKernel) || (!mixKernelBothDebugOrShmem)) {
@@ -610,53 +780,97 @@ LogicalResult relocBinary(const std::string &unrelocFile,
   return success();
 }
 
-bool lowerDeviceToBinary(const SmallVector<IRFilePair> &outputLLVMIRs,
+bool lowerDeviceToBinary(const SmallVector<IRModulePair> &llvmModules,
+                         const SmallVector<IRFilePair> &outputLLVMIRs,
                          const std::string &outputFile,
                          const HIVMCMainConfig &config, bool isMixKernel,
                          bool mixKernelBothDebugOrShmem,
                          std::map<SubCoreTarget, std::string> bitcodePaths) {
+  BishengAsyncRuntime *runtime = config.getRuntime();
   LDBG("Lowering device module from BiShengLIR to binary");
-  SmallVector<std::optional<std::string>> outputObjects(outputLLVMIRs.size());
+  SmallVector<std::optional<std::string>> outputObjects(llvmModules.size());
+
+  // Derive the per-lane .o output path.  When saveToFiles was called (Process
+  // mode, or --save-temps), the .ll filename carries the mangle suffix and
+  // we reuse it.  When saveToFiles was skipped (Native mode without
+  // --save-temps), derive from outputFile + the same suffix logic.
+  auto outputObjectPath = [&](size_t i) -> std::string {
+    if (llvmModules.size() == 1)
+      return outputFile;
+    if (i < outputLLVMIRs.size() && outputLLVMIRs[i].first)
+      return tryReplaceExtension(outputLLVMIRs[i].first->getFilename().str(),
+                                 "o");
+    SubCoreTarget t = llvmModules[i].second;
+    std::string append =
+        (t == SubCoreTarget::AIC || t == SubCoreTarget::MIX_AIC) ? "_mix_aic"
+                                                                 : "_mix_aiv";
+    return tryAppendFileName(tryReplaceExtension(outputFile, "o"), append);
+  };
+
+  // The .ll filepath is only needed by the Process backend (external bisheng
+  // reads the file).  In Native mode the IR is passed in-memory; pass an
+  // empty string so any accidental use surfaces immediately.
+  auto llFilePath = [&](size_t i) -> std::string {
+    if (i < outputLLVMIRs.size() && outputLLVMIRs[i].first)
+      return outputLLVMIRs[i].first->getFilename().str();
+    return "";
+  };
 
   auto compileDeviceModule = [&](size_t i) {
-    const IRFilePair &pair = outputLLVMIRs[i];
-
-    // For mix kernels, derive .o path from the .ll file's path (which already
-    // has mangle suffix). For non-mix, use outputFile directly.
-    std::string kernelOutputPath =
-        (outputLLVMIRs.size() > 1)
-            ? tryReplaceExtension(pair.first->getFilename().str(), "o")
-            : outputFile;
-
+    std::string kernelOutputPath = outputObjectPath(i);
     outputObjects[i] = compileDeviceKernel(
-        getBiShengCompilerInstallPath(), pair.first->getFilename().str(),
-        kernelOutputPath, pair.second, config, isMixKernel,
-        mixKernelBothDebugOrShmem, bitcodePaths);
+        getBiShengCompilerInstallPath(), llvmModules[i].first.get(),
+        llFilePath(i), kernelOutputPath, llvmModules[i].second, config,
+        isMixKernel, mixKernelBothDebugOrShmem, bitcodePaths);
   };
 
   // The AIC and AIV device modules are independent: they read disjoint .ll
   // files, write disjoint .o files and link disjoint bitcode modules.
   // Everything else reachable from here is either local or read-only.
   // Compile them concurrently; the linker below still waits for all of them.
-  if (outputLLVMIRs.size() > 1) {
+  //
+  // Thread-safety of the shared `runtime` across these threads: each thread
+  // operates on a distinct lane (AIC vs AIV), so it touches a distinct
+  // `workers_[idx]` and a distinct `BishengLlcBridge` / context / LMID. The
+  // only shared mutable state accessed is the trace sink, which is guarded
+  // by `BishengAsyncRuntime::traceMtx_`. Hence the two threads never race on
+  // vendor state or on the trace stream.
+  if (llvmModules.size() > 1) {
     std::vector<std::thread> workers;
-    workers.reserve(outputLLVMIRs.size());
-    for (size_t i = 0, e = outputLLVMIRs.size(); i != e; ++i)
+    workers.reserve(llvmModules.size());
+    for (size_t i = 0, e = llvmModules.size(); i != e; ++i)
       workers.emplace_back(compileDeviceModule, i);
     for (std::thread &worker : workers)
       worker.join();
   } else {
-    for (size_t i = 0, e = outputLLVMIRs.size(); i != e; ++i)
+    for (size_t i = 0, e = llvmModules.size(); i != e; ++i)
       compileDeviceModule(i);
   }
 
+  // One-lane-failure cleanup.  All Writer threads are joined above
+  // (join-before-remove), so any in-flight Compile has finished writing its
+  // `.o`.  If any Lane failed (outputObjects[i] is nullopt), drain + join
+  // the async Workers for the lanes used in this compile and unlink every
+  // planned output `.o` so a re-run does not see a stale `.o`.  No sync
+  // fallback.
   if (std::any_of(
           outputObjects.begin(), outputObjects.end(),
           [](const std::optional<std::string> &o) { return !o.has_value(); })) {
+    if (runtime && runtime->isActive()) {
+      std::vector<std::string> plannedOutputs;
+      for (size_t i = 0, e = llvmModules.size(); i != e; ++i)
+        plannedOutputs.push_back(outputObjectPath(i));
+      LaneMask mask =
+          llvmModules.size() > 1
+              ? LaneMask::Both
+              : (llvmModules[0].second == SubCoreTarget::AIC ? LaneMask::AIC
+                                                             : LaneMask::AIV);
+      runtime->cleanupAfterLaneFailure(mask, plannedOutputs);
+    }
     return false;
   }
 
-  if (outputLLVMIRs.size() > 1) {
+  if (llvmModules.size() > 1) {
     SmallVector<StringRef> linkerInputs(outputObjects.size());
     std::transform(outputObjects.begin(), outputObjects.end(),
                    linkerInputs.begin(),
@@ -762,6 +976,7 @@ runDeviceBiShengLIRCompile(ModuleOp mod, const HIVMCMainConfig &config,
                            const std::string &outputFile,
                            const std::string &tempFilesPath,
                            std::map<SubCoreTarget, std::string> bitcodePaths) {
+  BishengAsyncRuntime *runtime = config.getRuntime();
   LDBG("Lowering device module from BiShengLIR to binary");
   // split the input mix module to 2 separate modules
   SmallVector<ModuleOp, 2> modulesAfterSplit;
@@ -788,11 +1003,60 @@ runDeviceBiShengLIRCompile(ModuleOp mod, const HIVMCMainConfig &config,
     modulesAfterSplit.push_back(mod);
   }
 
+  // Final Delta aux preload.  Submit AFTER the final topology is known
+  // (split mix done, isMixKernel/mixKernelBothDebugOrShmem set) and BEFORE
+  // `translateDeviceKernelToLLVM`, so the Final Delta preload overlaps LLVM19
+  // translate on the Worker thread.  Do NOT wait here; `compileDeviceKernel`
+  // drains the retained ticket before its `submitCompile` (FIFO guarantees
+  // PreloadFinalDelta is processed before Compile on each Worker).
+  // MixCV: each lane's PreloadFinalDelta is enqueued to its own Worker.
+  // Single-lane (PureVV/PureCube): only one lane's ticket is submitted.
+  // `topology` trace event marks the scenario for the Trace Gate.
+  //
+  // A3's HIR retry (runWithRetry) happens BEFORE runHIVMCCompileA3 is called,
+  // so runDeviceBiShengLIRCompile is entered at most once per
+  // BishengAsyncRuntime -- no finalDeltaTickets_ overwrite risk here.
+  // However, the safe supplementary start (ensureLaneLoadInit) is still
+  // applied so the early-topology-unknown case (initial mask narrower than
+  // the final topology) never causes a Wait-forever on a never-started lane.
+  if (runtime && runtime->isActive()) {
+    for (ModuleOp m : modulesAfterSplit) {
+      SubCoreTarget arch =
+          hivm::isAICModule(m) ? SubCoreTarget::AIC : SubCoreTarget::AIV;
+      LaneKind lane =
+          (arch == SubCoreTarget::AIC) ? LaneKind::AIC : LaneKind::AIV;
+      runtime->ensureLaneLoadInit(lane);
+    }
+    auto finalDeltaByLane =
+        computeFinalDeltaAuxA3(modulesAfterSplit, config, bitcodePaths,
+                               isMixKernel, mixKernelBothDebugOrShmem);
+    // `final_aux_submit` is a single MAIN point marking the moment the Final
+    // Delta preload is submitted (before LLVM19 translate).  The Trace Gate
+    // requires exactly one MAIN/final_aux_submit/point whose timestamp
+    // precedes llvm19_translate begin.  Per-lane submit markers are emitted
+    // by submitPreloadFinalDelta (lane/final_aux/point).
+    runtime->emitEvent("MAIN", "final_aux_submit", "point");
+    for (ModuleOp m : modulesAfterSplit) {
+      SubCoreTarget arch =
+          hivm::isAICModule(m) ? SubCoreTarget::AIC : SubCoreTarget::AIV;
+      LaneKind lane =
+          (arch == SubCoreTarget::AIC) ? LaneKind::AIC : LaneKind::AIV;
+      auto it = finalDeltaByLane.find(lane);
+      if (it != finalDeltaByLane.end())
+        runtime->submitPreloadFinalDelta(lane, it->second);
+    }
+    runtime->emitEvent("MAIN", "topology", "point",
+                       modulesAfterSplit.size() > 1 ? "mix" : "single");
+    runtime->emitEvent("MAIN", "llvm19_translate", "begin");
+  }
+
   llvm::LLVMContext llvmContext;
   LDBG("Translating device from LLVM Dialect IR to BiShengLIR");
   // translate all mlir modules to llvmir modules
   SmallVector<IRModulePair> llvmModules =
       translateDeviceKernelToLLVM(modulesAfterSplit, config, llvmContext);
+  if (runtime && runtime->isActive())
+    runtime->emitEvent("MAIN", "llvm19_translate", "end");
   if (std::any_of(llvmModules.begin(), llvmModules.end(),
                   [](const IRModulePair &pair) { return !pair.first; })) {
     return mod.emitError("Failed to convert BiShengHIR to BiShengLIR");
@@ -806,9 +1070,11 @@ runDeviceBiShengLIRCompile(ModuleOp mod, const HIVMCMainConfig &config,
     }
   }
 
-  // save llvm ir modules temporarily.
-  //
-  // NOTICE: in future, this saving may not be necessary.
+  // Save the LLVM IR to disk when the external `bisheng` process needs it
+  // (Process mode), or when the user explicitly asked to keep temps
+  // (--save-temps / --save-linked-ir / !shouldCompileLIR).  The Native
+  // backend feeds the in-memory Module directly to the vendor SO and does
+  // NOT require the .ll on disk.
   bool setKeepFlag = !config.shouldCompileLIR();
 #if (!BISHENGIR_PUBLISH)
   // For security reasons, we want to honor saving of .ll files with
@@ -816,11 +1082,20 @@ runDeviceBiShengLIRCompile(ModuleOp mod, const HIVMCMainConfig &config,
   if (!config.shouldSaveTemps().empty())
     setKeepFlag = true;
 #endif
-  SmallVector<IRFilePair> llvmTempFiles =
-      saveToFiles(llvmModules, tempFilesPath, setKeepFlag);
-  if (std::any_of(llvmTempFiles.begin(), llvmTempFiles.end(),
-                  [](const IRFilePair &pair) { return !pair.first; })) {
-    return mod.emitError("Failed to save BiShengLIR to files");
+
+  bool nativeMode = (runtime != nullptr);
+  bool needSaveFiles =
+      !nativeMode ||                     // Process backend reads .ll file
+      !config.shouldCompileLIR() ||      // user wants .ll output only
+      config.shouldSaveLinkedIR() ||     // user wants linked .ll kept
+      !config.shouldSaveTemps().empty(); // --save-temps
+  SmallVector<IRFilePair> llvmTempFiles;
+  if (needSaveFiles) {
+    llvmTempFiles = saveToFiles(llvmModules, tempFilesPath, setKeepFlag);
+    if (std::any_of(llvmTempFiles.begin(), llvmTempFiles.end(),
+                    [](const IRFilePair &pair) { return !pair.first; })) {
+      return mod.emitError("Failed to save BiShengLIR to files");
+    }
   }
 
   if (!config.shouldCompileLIR()) {
@@ -836,8 +1111,9 @@ runDeviceBiShengLIRCompile(ModuleOp mod, const HIVMCMainConfig &config,
 
   // NEXT: remove isMixKernel and mixKernelBothDebugOrShmem after refactoring to
   // enable bisheng link two bc files compile llvm ir files to the final binary
-  if (!lowerDeviceToBinary(llvmTempFiles, outputFile, config, isMixKernel,
-                           mixKernelBothDebugOrShmem, bitcodePaths)) {
+  if (!lowerDeviceToBinary(llvmModules, llvmTempFiles, outputFile, config,
+                           isMixKernel, mixKernelBothDebugOrShmem,
+                           bitcodePaths)) {
     return mod.emitError("Failed to compile BiShengLIR to binary");
   }
 
@@ -1023,12 +1299,29 @@ FailureOr<PipelineModuleResult> bishengir::runBiShengLIRCompileA3(
 
 mlir::LogicalResult bishengir::runHIVMCCompileA3(ModuleOp module,
                                                  HIVMCMainConfig config) {
+  BishengAsyncRuntime *runtime = config.getRuntime();
+  // The runtime is created at CLI main() and the LoadInit command
+  // (submitLoadInit) is submitted at runBiShengIRPipeline entry (before the
+  // first HIR Pass).  This function reads the runtime off the config:
+  // emit lir_lowering begin/end trace events for the post-HIR HIVM lowering,
+  // then runBiShengLIRCompileA3 (which also reads config.getRuntime()) lets
+  // compileDeviceKernel drain LoadInit / PreloadBase / PreloadFinalDelta
+  // tickets and submit compile on the lane Worker.
+  if (runtime && runtime->isActive())
+    runtime->emitEvent("MAIN", "lir_lowering", "begin");
+
   auto buildPipeline = std::bind(buildBiShengHIRHIVMToLLVMPipeline,
                                  std::placeholders::_1, config);
   if (failed(runPipeline(module, buildPipeline, config,
                          "BiShengHIR HIVM To LLVM"))) {
+    if (runtime)
+      runtime->emitEvent("MAIN", "lir_lowering", "end", "fail");
     return failure();
   }
+  if (runtime)
+    runtime->emitEvent("MAIN", "lir_lowering", "end");
   auto bitcodePaths = getBitcodePathsBySubCoreTarget(module);
-  return runBiShengLIRCompileA3(module, config, bitcodePaths);
+  auto result = runBiShengLIRCompileA3(module, config, bitcodePaths);
+  // Runtime is drained + joined by ~CompileScope at main() scope exit.
+  return result;
 }

@@ -90,7 +90,8 @@ constexpr llvm::StringLiteral kSimtVFTileLoopAttrName =
     "hivm.simt_vf_tile_loop";
 
 // Attribute names used by the hivm-mark-disable-load pass and consumed by the
-// MemRef-to-LLVM lowering to emit non-cached (ld_dev) load instructions.
+// MemRef-to-LLVM lowering and GM-to-UB templates to emit non-cached
+// (ld_dev) scalar load instructions.
 static constexpr llvm::StringLiteral kDisableDCacheAttr = "disableDCache";
 static constexpr llvm::StringLiteral kMarkDCacheVisitedAttr =
     "markDCacheInvalidatePatternVisited";

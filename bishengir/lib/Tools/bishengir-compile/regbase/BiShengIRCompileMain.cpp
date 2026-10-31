@@ -14,17 +14,26 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Pass/PassManager.h"
+#include "bishengir/Tools/Utils/AuxBitcodePaths.h"
 #include "bishengir/Tools/Utils/Utils.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/bishengir-compile/regbase/PassPipeline.h"
 #include "bishengir/Tools/bishengir-compile/regbase/Utility.h"
 #include "bishengir/Tools/bishengir-compile/regbase/VectorizationFailure.h"
+#include "bishengir/Tools/hivmc/BishengAsyncRuntime.h"
 #include "bishengir/Tools/hivmc/Config.h"
 #include "bishengir/Tools/hivmc/HIVMC.h"
 #include "bishengir/Tools/hivmc/HIVMCA5.h"
+#include "bishengir/Tools/hivmc/Utility.h"
 #include "bishengir/Version/Version.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/AsmState.h"
+#include "mlir/Interfaces/CastInterfaces.h"
 #include "mlir/Support/FileUtilities.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/FileSystem.h"
@@ -62,68 +71,172 @@ static bool isShapedElementwise(Operation *op) {
          llvm::any_of(op->getResultTypes(), isShaped);
 }
 
-static bool hasPayloadProducer(mlir::Value value,
-                               llvm::DenseSet<Operation *> &visited) {
+static bool isDataValue(mlir::Value value) {
+  return !isa<IndexType>(value.getType());
+}
+
+/// Return true if an external output has a data source other than a reduction
+/// or an initializer. Compute operations have already been checked globally,
+/// so this traversal only needs to follow structural and control-flow values.
+static bool hasNonReductionSource(mlir::Value value,
+                                  llvm::DenseSet<mlir::Value> &visiting) {
+  if (!isDataValue(value))
+    return false;
+  if (!visiting.insert(value).second)
+    return false;
+
+  auto finish = [&](bool result) {
+    visiting.erase(value);
+    return result;
+  };
+
+  if (auto blockArg = dyn_cast<BlockArgument>(value)) {
+    Block *owner = blockArg.getOwner();
+    if (auto forOp = dyn_cast_or_null<scf::ForOp>(owner->getParentOp())) {
+      unsigned argNumber = blockArg.getArgNumber();
+      if (argNumber > 0 && argNumber <= forOp.getInitArgs().size())
+        return finish(hasNonReductionSource(forOp.getInitArgs()[argNumber - 1],
+                                            visiting));
+    }
+    return finish(true);
+  }
+
   Operation *producer = value.getDefiningOp();
-  if (!producer || !visited.insert(producer).second)
+  if (!producer)
+    return finish(true);
+  if (isa<linalg::ReduceOp>(producer))
+    return finish(false);
+  if (isa<linalg::FillOp, tensor::EmptyOp>(producer) ||
+      producer->hasTrait<OpTrait::ConstantLike>())
+    return finish(false);
+
+  if (auto forOp = dyn_cast<scf::ForOp>(producer)) {
+    unsigned resultNumber = cast<OpResult>(value).getResultNumber();
+    bool hasInvalidInit =
+        hasNonReductionSource(forOp.getInitArgs()[resultNumber], visiting);
+    auto yield = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
+    bool hasInvalidYield =
+        hasNonReductionSource(yield.getOperand(resultNumber), visiting);
+    return finish(hasInvalidInit || hasInvalidYield);
+  }
+  if (auto ifOp = dyn_cast<scf::IfOp>(producer)) {
+    unsigned resultNumber = cast<OpResult>(value).getResultNumber();
+    for (Region *region : {&ifOp.getThenRegion(), &ifOp.getElseRegion()}) {
+      if (region->empty())
+        continue;
+      auto yield = cast<scf::YieldOp>(region->front().getTerminator());
+      if (hasNonReductionSource(yield.getOperand(resultNumber), visiting))
+        return finish(true);
+    }
+    return finish(false);
+  }
+
+  bool hasDataOperand = false;
+  for (mlir::Value operand : producer->getOperands()) {
+    if (!isDataValue(operand))
+      continue;
+    hasDataOperand = true;
+    if (hasNonReductionSource(operand, visiting))
+      return finish(true);
+  }
+  return finish(!hasDataOperand);
+}
+
+/// Return true if a memref is a function argument or a view derived from one.
+/// Such a value is externally visible and a copy into it is an output sink.
+static bool isFunctionArgumentBacked(mlir::Value value,
+                                     llvm::DenseSet<mlir::Value> &visited) {
+  if (!visited.insert(value).second)
     return false;
-  if (isa<linalg::ReduceOp, linalg::FillOp>(producer))
+  if (auto blockArg = dyn_cast<BlockArgument>(value))
+    return isa<func::FuncOp>(blockArg.getOwner()->getParentOp());
+
+  Operation *producer = value.getDefiningOp();
+  if (!producer || producer->getDialect()->getNamespace() !=
+                       memref::MemRefDialect::getDialectNamespace())
     return false;
-  if (isa<linalg::LinalgOp>(producer) || isShapedElementwise(producer))
-    return true;
   return llvm::any_of(producer->getOperands(), [&](mlir::Value operand) {
-    return hasPayloadProducer(operand, visited);
+    return isa<MemRefType>(operand.getType()) &&
+           isFunctionArgumentBacked(operand, visited);
   });
 }
 
-static bool hasPayloadConsumer(mlir::Value value,
-                               llvm::DenseSet<Operation *> &visited) {
-  for (Operation *consumer : value.getUsers()) {
-    if (!visited.insert(consumer).second)
-      continue;
-    if (isa<linalg::ReduceOp>(consumer))
-      continue;
-    if (isa<linalg::LinalgOp>(consumer) || isShapedElementwise(consumer))
-      return true;
-    if (llvm::any_of(consumer->getResults(), [&](mlir::Value result) {
-          return hasPayloadConsumer(result, visited);
-        }))
-      return true;
-  }
-  return false;
-}
-
-/// Return true when every reduction is fed and consumed only through
-/// structural or data-movement operations. Scalar address calculation,
-/// control flow and reduction combiners are intentionally ignored.
-static bool isReduceOnlyModule(ModuleOp module) {
-  SmallVector<linalg::ReduceOp> reductions;
-  bool hasOtherLinalgOp = false;
+/// Check the module-wide compute-op whitelist. Structural, control-flow,
+/// initialization and cast operations are auxiliary; the only payload compute
+/// operation allowed outside a reduction region is linalg.reduce itself.
+static bool hasOnlyReductionComputeOps(ModuleOp module) {
+  bool hasReduction = false;
+  Operation *unsupportedComputeOp = nullptr;
   module.walk([&](Operation *op) {
-    if (auto reduceOp = dyn_cast<linalg::ReduceOp>(op)) {
-      reductions.push_back(reduceOp);
-      return;
+    if (unsupportedComputeOp)
+      return WalkResult::interrupt();
+    if (isa<linalg::ReduceOp>(op)) {
+      hasReduction = true;
+      return WalkResult::advance();
     }
-    if (isa<linalg::LinalgOp>(op) && !isa<linalg::FillOp>(op))
-      hasOtherLinalgOp = true;
+    // The scalar combiner is part of the reduction itself, not an independent
+    // module-level payload computation.
+    if (op->getParentOfType<linalg::ReduceOp>())
+      return WalkResult::advance();
+    if (isa<linalg::FillOp>(op) || op->hasTrait<OpTrait::ConstantLike>() ||
+        isa<CastOpInterface>(op))
+      return WalkResult::advance();
+    if ((isa<linalg::LinalgOp>(op) || isShapedElementwise(op))) {
+      unsupportedComputeOp = op;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
   });
-  if (reductions.empty() || hasOtherLinalgOp)
+  if (unsupportedComputeOp) {
+    LDBG("Not reduce-only: module contains a non-reduction compute op: "
+         << *unsupportedComputeOp);
     return false;
-
-  for (linalg::ReduceOp reduceOp : reductions) {
-    llvm::DenseSet<Operation *> visitedProducers;
-    for (mlir::Value input : reduceOp.getInputs()) {
-      if (hasPayloadProducer(input, visitedProducers))
-        return false;
-    }
-
-    llvm::DenseSet<Operation *> visitedConsumers;
-    for (mlir::Value result : reduceOp->getResults()) {
-      if (hasPayloadConsumer(result, visitedConsumers))
-        return false;
-    }
   }
-  return true;
+  return hasReduction;
+}
+
+/// Check that no externally visible output bypasses the allowed reductions.
+static bool hasOnlyReductionOutputs(ModuleOp module) {
+  bool hasInvalidOutput = false;
+  module.walk([&](Operation *op) {
+    if (hasInvalidOutput)
+      return WalkResult::interrupt();
+
+    SmallVector<mlir::Value> outputValues;
+    if (auto returnOp = dyn_cast<func::ReturnOp>(op))
+      llvm::append_range(outputValues, returnOp.getOperands());
+    if (auto materialize =
+            dyn_cast<bufferization::MaterializeInDestinationOp>(op)) {
+      llvm::DenseSet<mlir::Value> visited;
+      if (isa<MemRefType>(materialize.getDest().getType()) &&
+          isFunctionArgumentBacked(materialize.getDest(), visited))
+        outputValues.push_back(materialize.getSource());
+    }
+    if (auto copy = dyn_cast<memref::CopyOp>(op)) {
+      llvm::DenseSet<mlir::Value> visited;
+      if (isFunctionArgumentBacked(copy.getTarget(), visited))
+        outputValues.push_back(copy.getSource());
+    }
+
+    for (mlir::Value output : outputValues) {
+      if (!isDataValue(output))
+        continue;
+      llvm::DenseSet<mlir::Value> visiting;
+      if (hasNonReductionSource(output, visiting)) {
+        LDBG("Not reduce-only: external output has a non-reduction data "
+             "contributor: "
+             << *op);
+        hasInvalidOutput = true;
+        return WalkResult::interrupt();
+      }
+    }
+    return WalkResult::advance();
+  });
+  return !hasInvalidOutput;
+}
+
+static bool isReduceOnlyModule(ModuleOp module) {
+  return hasOnlyReductionComputeOps(module) && hasOnlyReductionOutputs(module);
 }
 
 CompileFlow getCompileFlow(const BiShengIRCompileMainConfig &config) {
@@ -253,6 +366,96 @@ static void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
               [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                 return mlir::hivm::HOST_BITCODEAttr::get(c, s);
               });
+}
+
+//===--------------------------------------------------------------------===//
+// Pure-path base aux resolver (A5, target-dependent subcoreTag)
+//===--------------------------------------------------------------------===//
+//
+// These helpers run *before* the first RegBase PassManager (in the for-loop
+// below), so they must not read Module Attrs.  They depend solely on `config`
+// (CLI), `executablePath`, and the filesystem.
+
+/// Sub-core bitcode tag for the regbase target.  Three branches matching
+/// `addBitcodeAttrsToModule` above (c310 / 920r1 / c220).  Dev's original
+/// helper only distinguished c310 vs c220; this corrects that gap so the
+/// early pure-path calculator stays byte-consistent with the Attr writes for
+/// Ascend960 targets.
+static StringRef
+auxSubcoreTagForTarget(const BiShengIRCompileMainConfig &config) {
+  if (mlir::hacc::utils::isAscend950(config.getTarget()))
+    return "c310";
+  if (mlir::hacc::utils::isAscend960(config.getTarget()))
+    return "920r1";
+  return "c220";
+}
+
+/// Resolve base aux paths via the pure path calculator (no MLIR Attr read).
+static std::map<SubCoreTarget, std::string>
+resolveAuxBitcodePathsForConfig(const BiShengIRCompileMainConfig &config) {
+  return bishengir::toSubCoreTargetPaths(
+      bishengir::auxbitcode::resolveAuxBitcodePaths(
+          config.getExecutablePath(), auxSubcoreTagForTarget(config),
+          resolveTemplateBitcodeOptLevel(config)));
+}
+
+/// Per-lane distinct base aux path list for A5.  Base aux is the set of aux
+/// files needed by EVERY scenario (PureVV / PureCube / MixCV) on that lane,
+/// so it can be preloaded BEFORE the topology is known.  Conditionally-
+/// needed aux (mix BC, which only MixCV uses) is deferred to Final Delta,
+/// submitted after the topology is known — this prevents a PureVV compile
+/// from failing PreloadBase on a corrupt/missing mix BC it never actually
+/// consumes.  A5 `compileDeviceKernel` builds `auxPaths` as:
+/// appendBishengOptions aux -> extraDeviceBCPaths -> metaOp -> mixAux.
+/// The distinct BASE preload set per lane is:
+///   AIC: aic + extraDeviceBCPaths + appendBishengOptions aux
+///   AIV: aiv + extraDeviceBCPaths + appendBishengOptions aux
+/// mixAic/mixAiv are deferred to Final Delta (MixCV-only).
+/// Host BC is *not* preloaded (host never enters device worker auxPaths).
+struct BaseAuxByLane {
+  std::vector<std::string> aic;
+  std::vector<std::string> aiv;
+};
+
+static BaseAuxByLane
+splitBaseAuxByLane(const std::map<SubCoreTarget, std::string> &paths,
+                   const BiShengIRCompileMainConfig &config) {
+  BaseAuxByLane out;
+  auto addIf = [&](SubCoreTarget t, std::vector<std::string> &dst) {
+    auto it = paths.find(t);
+    if (it != paths.end() && !it->second.empty())
+      dst.push_back(it->second);
+  };
+  // Base aux: only the per-lane metaOp (aic/aiv).  Mix BC (mixAic/mixAiv) is
+  // deferred to Final Delta so PureVV/PureCube never preload (and never fail
+  // on) a mix BC they do not consume.
+  addIf(SubCoreTarget::AIC, out.aic);
+  addIf(SubCoreTarget::AIV, out.aiv);
+  // Extra device BC paths (--cce-link-aicore-ll-module) shared by both lanes.
+  for (const auto &bc : config.getLinkAicoreBitcode()) {
+    out.aic.push_back(bc);
+    out.aiv.push_back(bc);
+  }
+  // A5-only: appendBishengOptions aux.  Apply the same parsing rule as
+  // `parseAppendBishengOptionsAuxFromTokens` in HIVMCMainA5.cpp (scan tokens
+  // for `-cce-link-aicore-ll-module`, take the following token as a path).
+  // This runs in the regbase translation unit and does not share tokens with
+  // the A5 file, so the scan is duplicated here; the rule must stay in sync.
+  // These aux paths apply to both lanes (they appear in auxPaths for both
+  // AIC and AIV compiles).
+  const std::string appendOpts = config.getAppendBishengOptions();
+  if (!appendOpts.empty()) {
+    std::vector<std::string> tokens;
+    splitString(appendOpts, " ", tokens);
+    for (size_t i = 0; i + 1 < tokens.size(); ++i) {
+      if (tokens[i] == "-cce-link-aicore-ll-module") {
+        out.aic.push_back(tokens[i + 1]);
+        out.aiv.push_back(tokens[i + 1]);
+      }
+    }
+  }
+  // HOST intentionally excluded: not preloaded to device workers.
+  return out;
 }
 
 using MixedModules = std::pair<ModuleOp, SmallVector<ModuleOp, 2>>;
@@ -387,7 +590,8 @@ LogicalResult handleSaveTemps(ModuleOp module,
   return success();
 }
 
-HIVMCMainConfig HIVMCFromBiShengIRConfig(BiShengIRCompileMainConfig &config) {
+HIVMCMainConfig HIVMCFromBiShengIRConfig(BiShengIRCompileMainConfig &config,
+                                        BishengAsyncRuntime *runtime) {
   HIVMCMainConfig hivmcConfig;
 
   /// TODO: add flag difference logic for hivmc and bishengir flags in
@@ -445,6 +649,7 @@ HIVMCMainConfig HIVMCFromBiShengIRConfig(BiShengIRCompileMainConfig &config) {
   // TODO: investigate if this check is redundant
   llvm::cantFail(llvm::errorCodeToError(hivmcCanonicalizePath(path)));
   hivmcConfig.setOutputFile(path.str().str());
+  hivmcConfig.setRuntime(runtime);
   return hivmcConfig;
 }
 
@@ -452,7 +657,8 @@ HIVMCMainConfig HIVMCFromBiShengIRConfig(BiShengIRCompileMainConfig &config) {
 
 LogicalResult
 bishengir::regbase::runRegBasePipeline(ModuleOp mod,
-                                       BiShengIRCompileMainConfig config) {
+                                       BiShengIRCompileMainConfig config,
+                                       BishengAsyncRuntime *runtime) {
   if (failed(checkInOutOptionsValidity(config))) {
     return failure();
   }
@@ -463,6 +669,45 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     config.setEnableTreeReduceV2(true);
     config.setEnableTreeReduceMode(hfusion::TreeReduceMode::All);
     config.setUseAscendStyleRA(true);
+  }
+
+  // ---- LoadInit submission (before the first RegBase Pass, no wait) ----
+  // submitLoadInit submits the LoadInit command (dlmopen + dlsym +
+  // bishengLlcInit) only; it does NOT preload any aux path.  LoadInit is
+  // independent of aux paths (the SO path is frozen by the runtime at
+  // construction from BISHENG_LLC_LIBRARY env).  Submitted once before the
+  // for-loop so all retry attempts share the same SO load.  Submit returns
+  // immediately (does not block); the main thread proceeds into the first
+  // RegBase Pass so LoadInit overlaps with RegBase lowering.
+  // Base aux paths are resolved and PreloadBase is submitted after this;
+  // PreloadFinalDelta is submitted once the final topology is known.
+  // Compute the early pure-path base aux ONCE before the for-loop so both
+  // the PreloadBase submit (below) and the per-attempt SHA cross-check
+  // (inside the loop) reference the same resolved paths.  When runtime is
+  // null (Process/CPU-Runner) this is left empty and unused.  The
+  // reduce-only config tweak above runs first so the pure-path base aux
+  // resolution sees the finalized config.
+  std::map<SubCoreTarget, std::string> earlyAuxPaths;
+  if (runtime) {
+    runtime->initTrace();
+    runtime->emitEvent("MAIN", "compile_scope", "begin");
+    runtime->emitEvent("MAIN", "early_start_submit", "point");
+    // mask = Both (conservative; lane usage is inferred later from a pure
+    // path calculator).  LoadInit only loads SO + init, no aux preload.
+    runtime->submitLoadInit(LaneMask::Both);
+    // Resolve base aux paths via the pure path calculator (no MLIR Attr
+    // read; `addBitcodeAttrsToModule` has NOT run yet at this point) and
+    // submit PreloadBase ONCE before the retry for-loop so all attempts
+    //     share the same preload.  Paths are stable across attempts
+    //     (executablePath/target/optLevel don't change), and
+    //     `preloadedPaths_` in the worker dedups across attempts.
+    //     LaneMask::Both is conservative; `compileDeviceKernel` only drains
+    //     the actually-used lane ticket, so an unused-lane preload failure
+    //     does not kill the Compile.  Base aux unavailability (empty paths)
+    //     submits a no-op PreloadBase and does NOT block LoadInit.
+    earlyAuxPaths = resolveAuxBitcodePathsForConfig(config);
+    auto baseByLane = splitBaseAuxByLane(earlyAuxPaths, config);
+    runtime->submitPreloadBase(LaneMask::Both, baseByLane.aic, baseByLane.aiv);
   }
 
   // Overflow tracking: UB gets a Vector-only multi-buffer fallback; L1/L0C
@@ -648,13 +893,20 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     }
 
     addBitcodeAttrsToModule(hirCompileMode, config.getExecutablePath(), config);
+    // Cross-check the early-resolved paths against the Attr paths just
+    // written by `addBitcodeAttrsToModule`.  Mismatch is warning-only
+    // (perf diagnostic): handleCompile delta preload will still cover the
+    // authoritative Attr paths.  Computed once before the for-loop; each
+    // attempt cross-checks against its own cloned hirCompileMode Attrs.
+    if (runtime)
+      verifyEarlyAuxSha(hirCompileMode, earlyAuxPaths);
 
     auto savedTemp = handleSaveTemps(hirCompileMode, config);
     if (failed(savedTemp)) {
       return failure();
     }
 
-    auto hivmcConfig = HIVMCFromBiShengIRConfig(config);
+    auto hivmcConfig = HIVMCFromBiShengIRConfig(config, runtime);
     // Only a VF stack overflow is worth retrying with the stack limit; the
     // error is otherwise unused since every stage reports its own failure on
     // stderr.
@@ -686,6 +938,8 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     for (auto &diag : llvm::reverse(collectedDiagnostics)) {
       diagEngine.emit(std::move(diag));
     }
+    if (runtime)
+      runtime->emitEvent("MAIN", "compile_scope", "end", "fail");
     return failure();
   }
 
@@ -694,8 +948,15 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     assert(fileHandle != nullptr);
     fileHandle->os() << mod << '\n';
     fileHandle->keep();
+    if (runtime)
+      runtime->emitEvent("MAIN", "compile_scope", "end");
     return success();
   }
 
+  // Runtime drains warmup tickets + joins workers in ~CompileScope at main()
+  // scope exit.  Emit the compile_scope end marker here for trace clarity;
+  // the runtime object itself outlives this function.
+  if (runtime)
+    runtime->emitEvent("MAIN", "compile_scope", "end");
   return success();
 }

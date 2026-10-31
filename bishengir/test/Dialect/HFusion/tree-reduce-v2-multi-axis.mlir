@@ -1,7 +1,8 @@
-// RUN: bishengir-opt %s --tree-reduce-v2="enable-ar=true enable-ra=true" | FileCheck %s
-// RUN: bishengir-opt %s --tree-reduce-v2="enable-ra=true enable-ar=true only-marked=true direct-register-ra=true" | FileCheck %s --check-prefixes=CHECK,MARKED
-// RUN: bishengir-opt %s --tree-reduce-v2="enable-ar=true enable-ra=true" --one-shot-bufferize="bufferize-function-boundaries allow-return-allocs-from-loops allow-unknown-ops" -o %t
-// RUN: bishengir-opt %s --tree-reduce-v2="enable-ar=false enable-ra=true" | FileCheck %s --check-prefix=NOAR
+// RUN: bishengir-opt %s --tree-reduce-v2="enable-ar=true enable-ra=true ascend-style-ra=true" | FileCheck %s
+// RUN: bishengir-opt %s --tree-reduce-v2="enable-ra=true enable-ar=true ascend-style-ra=true only-marked=true direct-register-ra=true" | FileCheck %s --check-prefixes=CHECK,MARKED
+// RUN: bishengir-opt %s --tree-reduce-v2="enable-ar=true enable-ra=true ascend-style-ra=true" --one-shot-bufferize="bufferize-function-boundaries allow-return-allocs-from-loops allow-unknown-ops" -o %t
+// RUN: bishengir-opt %s --tree-reduce-v2="enable-ar=false enable-ra=true only-marked=true direct-register-ra=true" | FileCheck %s --check-prefix=REGISTER-TREE
+// RUN: bishengir-opt %s --tree-reduce-v2="enable-ar=true enable-ra=true" | FileCheck %s --check-prefix=LEGACY-RA
 
 // CHECK-LABEL: func.func @separated_axes(
 // CHECK: tensor.collapse_shape %arg0 {{.*}} tensor<17x3x6xf32> into tensor<51x6xf32>
@@ -424,6 +425,10 @@ func.func @multi_ra_preserve_live_input(%input: tensor<17x2x4xf32>,
 // A rank-3 reduction with one reduction axis still needs staged lowering: its
 // physical view is [outer, R, inner], not either of the legacy rank-2 forms.
 
+// LEGACY-RA-LABEL: func.func @single_axis_batched_ra(
+// LEGACY-RA: vector.multi_reduction <add>
+// LEGACY-RA: return
+
 // CHECK-LABEL: func.func @single_axis_batched_ra(
 // CHECK: tensor.collapse_shape {{.*}} tensor<2x68xf32> into tensor<136xf32>
 // CHECK-NOT: vector.multi_reduction
@@ -570,9 +575,9 @@ func.func @computed_add_source(%input: tensor<2048xf32>,
 // CHECK-NOT: vector.multi_reduction
 // CHECK: vector.reduction <add>
 // CHECK: return
-// NOAR-LABEL: func.func @rank1_suffix_direction_gate(
-// NOAR: vector.multi_reduction <add>
-// NOAR: return
+// REGISTER-TREE-LABEL: func.func @rank1_suffix_direction_gate(
+// REGISTER-TREE: vector.multi_reduction <add>
+// REGISTER-TREE: return
 func.func @rank1_suffix_direction_gate(%input: tensor<2048xf32>,
                                        %init: tensor<f32>) -> tensor<f32> {
   %c0 = arith.constant 0 : index
@@ -583,6 +588,35 @@ func.func @rank1_suffix_direction_gate(%input: tensor<2048xf32>,
       iter_args(%acc = %init) -> tensor<f32> {
     %source = vector.transfer_read %input[%i], %zero
         : tensor<2048xf32>, vector<64xf32>
+    %oldVec = vector.transfer_read %acc[], %zero
+        : tensor<f32>, vector<f32>
+    %old = vector.extractelement %oldVec[] : vector<f32>
+    %reduced = vector.multi_reduction <add>, %source, %old [0]
+        : vector<64xf32> to f32
+    %nextVec = vector.broadcast %reduced : f32 to vector<f32>
+    %next = vector.transfer_write %nextVec, %acc[]
+        : vector<f32>, tensor<f32>
+    scf.yield %next : tensor<f32>
+  }
+  return %result : tensor<f32>
+}
+
+// The register-tree RA configuration also enables the specific 4096-element
+// case even though its staged direction is AR.
+// REGISTER-TREE-LABEL: func.func @rank1_4096_register_tree(
+// REGISTER-TREE-NOT: vector.multi_reduction
+// REGISTER-TREE: vector.reduction <add>
+// REGISTER-TREE: return
+func.func @rank1_4096_register_tree(%input: tensor<4096xf32>,
+                                   %init: tensor<f32>) -> tensor<f32> {
+  %c0 = arith.constant 0 : index
+  %c64 = arith.constant 64 : index
+  %c4096 = arith.constant 4096 : index
+  %zero = arith.constant 0.0 : f32
+  %result = scf.for %i = %c0 to %c4096 step %c64
+      iter_args(%acc = %init) -> tensor<f32> {
+    %source = vector.transfer_read %input[%i], %zero
+        : tensor<4096xf32>, vector<64xf32>
     %oldVec = vector.transfer_read %acc[], %zero
         : tensor<f32>, vector<f32>
     %old = vector.extractelement %oldVec[] : vector<f32>

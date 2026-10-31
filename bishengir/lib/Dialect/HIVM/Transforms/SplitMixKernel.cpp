@@ -204,6 +204,9 @@ static Value createZeroOrEmptyStub(OpBuilder &builder, Location loc,
         return builder.create<arith::ConstantOp>(loc, t,
                                                  builder.getIntegerAttr(t, 0));
       })
+      .Case<IndexType>([&](IndexType t) {
+        return builder.create<arith::ConstantIndexOp>(loc, 0);
+      })
       .Case<FloatType>([&](FloatType t) {
         return builder.create<arith::ConstantOp>(loc, t,
                                                  builder.getFloatAttr(t, 0.0));
@@ -630,7 +633,8 @@ static bool isLoopOfCoreType(scf::ForOp forOp, TCoreType coreType) {
 
 static bool isPreloadScope(scope::ScopeOp scopeOp) {
   return scopeOp->hasAttr(hivm::PreloadNumAttr::name) ||
-         scopeOp->hasAttr(hivm::MaxPreloadNumAttr::name);
+         scopeOp->hasAttr(hivm::MaxPreloadNumAttr::name) ||
+         scopeOp->hasAttr(hivm::kPipelinedLoopCoreTypeAttrName);
 }
 
 static bool shouldPreserveForSplit(Operation *op) {

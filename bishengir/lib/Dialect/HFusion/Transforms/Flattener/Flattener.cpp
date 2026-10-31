@@ -260,8 +260,26 @@ void Flattener::breakDynamicShapes() {
     // Trying to flatten more than one dynamic dimension
     if (dynamicPosition.size() > 1) {
       LDBG("Trying to flatten more than one dynamic dimension");
+      auto groupHasUnitDim = [this](int idx) -> bool {
+        int root = structuralDsu_->find(idx);
+        for (int j = 0; j < argumentTotalLength_; ++j) {
+          if (structuralDsu_->find(j) != root)
+            continue;
+          auto [_, shape] = equivalentDsu_->getMinParentAndShapePair(j);
+          if (shape == 1)
+            return true;
+        }
+        return false;
+      };
       for (size_t i = 1; i < dynamicPosition.size(); ++i) {
-        disconnect(dynamicPosition[i] - 1, dynamicPosition[i]);
+        int boundaryLeft = dynamicPosition[i] - 1;
+        int boundaryRight = dynamicPosition[i];
+        if (groupHasUnitDim(boundaryLeft) || groupHasUnitDim(boundaryRight)) {
+          LDBG("Keep dynamic collapse between "
+               << boundaryLeft << " and " << boundaryRight << " (unit bridge)");
+          continue;
+        }
+        disconnect(boundaryLeft, boundaryRight);
       }
     }
   }

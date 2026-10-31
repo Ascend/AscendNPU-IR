@@ -31,10 +31,6 @@ struct V2PipelineOptions : public mlir::PassPipelineOptions<V2PipelineOptions> {
       llvm::cl::desc("Append the target device spec from --target"),
       llvm::cl::init(true)};
 
-  PassOptions::Option<bool> enableCVDataMovement{
-      *this, "enable-cv-data-movement",
-      llvm::cl::desc("Run the CV data movement stage"), llvm::cl::init(true)};
-
   PassOptions::Option<bool> enableVectorize{
       *this, "enable-vectorize",
       llvm::cl::desc("Run vectorization on the unsplit MIX"),

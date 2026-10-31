@@ -21,6 +21,9 @@
 #include "mlir/Pass/PassOptions.h"
 
 namespace bishengir {
+
+class BishengAsyncRuntime;
+
 namespace regbase {
 
 /// Build the pipeline dedicated to affinity compilation.
@@ -50,8 +53,11 @@ void registerBiShengIRCompilePass();
 
 /// Main entry point for the regbase pipeline.
 /// This orchestrates the full A5 compile flow including retry/fallback logic.
+/// \p runtime  compile-scope true-async runtime (nullptr in Process/CPU-Runner
+///             mode; downstream compileDeviceKernel falls back to sync).
 mlir::LogicalResult runRegBasePipeline(mlir::ModuleOp mod,
-                                       BiShengIRCompileMainConfig config);
+                                       BiShengIRCompileMainConfig config,
+                                       BishengAsyncRuntime *runtime = nullptr);
 
 } // namespace regbase
 } // namespace bishengir

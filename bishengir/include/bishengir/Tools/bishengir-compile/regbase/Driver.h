@@ -26,10 +26,14 @@
 #include <string>
 
 namespace bishengir {
+
+class BishengAsyncRuntime;
+
 namespace regbase {
 
 int runRegBaseCompile(mlir::ModuleOp module, BiShengIRCompileMainConfig config,
-                      llvm::ArrayRef<std::string> originalCLArgs);
+                      llvm::ArrayRef<std::string> originalCLArgs,
+                      BishengAsyncRuntime *runtime = nullptr);
 
 } // namespace regbase
 } // namespace bishengir

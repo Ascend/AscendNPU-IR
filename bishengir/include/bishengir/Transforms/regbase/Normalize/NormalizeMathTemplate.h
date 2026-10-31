@@ -493,12 +493,9 @@ public:
 
     Value truncDiv = Traits::createDivOpForMod(rewriter, loc, xForDiv, yForDiv,
                                                elemType);
-    Value mul = Traits::createBinaryOp(
-        rewriter, loc, truncDiv, y, utils::createEmptyOp(rewriter, loc, x),
-        BinaryKind::Mul);
-    Value rem = Traits::createBinaryOp(
-        rewriter, loc, x, mul, utils::createEmptyOp(rewriter, loc, x),
-        BinaryKind::Sub);
+    bool preserveLowPrecision = Traits::shouldPreserveLowPrecision(op);
+    Value rem = Traits::createModResidual(rewriter, loc, x, y, truncDiv,
+                                          elemType, preserveLowPrecision);
 
     rewriter.replaceOp(op, handleInfinityModulus(rewriter, loc, y, rem));
     return success();

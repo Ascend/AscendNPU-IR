@@ -835,7 +835,18 @@ struct StaticMaxRankExternalModel
       }
       Type elemType =
           getElementTypeOrSelf(concreteOp.getDpsInits().front().getType());
-      std::string elemTypeName = getTypeName(concreteOp.getLoc(), elemType);
+      std::string elemTypeName;
+      if constexpr (std::is_same_v<ConcreteOp, VShROp>) {
+        // The signless element type alone cannot distinguish logical from
+        // arithmetic right shift; select the unsigned/signed template from
+        // VShROp::is_signed for the A3 template call.
+        hivm::TypeFn casting = concreteOp.getIsSigned()
+                                   ? hivm::TypeFn::cast_signed
+                                   : hivm::TypeFn::cast_unsigned;
+        elemTypeName = getTypeName(concreteOp.getLoc(), elemType, casting);
+      } else {
+        elemTypeName = getTypeName(concreteOp.getLoc(), elemType);
+      }
       int rank = static_cast<int>(concreteOp.getNumLoops());
       return concatVectorOpLibraryCallName(
           baseCallName + suffix, getOpLibraryCallRank(op, rank), elemTypeName);

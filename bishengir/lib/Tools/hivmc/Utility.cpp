@@ -298,6 +298,14 @@ std::optional<std::pair<ModuleOp, ModuleOp>> splitMixModule(ModuleOp mod) {
   return std::make_pair(aicModule, aivModule);
 }
 
+std::string moduleToIrString(const llvm::Module &module) {
+  std::string moduleStr;
+  llvm::raw_string_ostream rso(moduleStr);
+  module.print(rso, nullptr);
+  rso << "\n";
+  return modifyForVersionMismatch(moduleStr);
+}
+
 SmallVector<IRFilePair>
 saveToFiles(const SmallVector<IRModulePair> &llvmModules,
             const std::string &outputFile, bool setKeepFlag,
@@ -560,4 +568,78 @@ bishengir::getBitcodePathsBySubCoreTarget(mlir::ModuleOp mod) {
   addIfSet(SubCoreTarget::HOST,
            mod->getAttr(mlir::hivm::HOST_BITCODEAttr::name));
   return result;
+}
+
+//===--------------------------------------------------------------------===//
+// toSubCoreTargetPaths + verifyEarlyAuxSha
+//===--------------------------------------------------------------------===//
+
+std::map<SubCoreTarget, std::string> bishengir::toSubCoreTargetPaths(
+    const auxbitcode::ResolvedAuxBitcodePaths &paths) {
+  std::map<SubCoreTarget, std::string> result;
+  auto addIfSet = [&](SubCoreTarget target, const std::string &path) {
+    if (!path.empty())
+      result[target] = path;
+  };
+  addIfSet(SubCoreTarget::AIC, paths.aic);
+  addIfSet(SubCoreTarget::AIV, paths.aiv);
+  addIfSet(SubCoreTarget::MIX_AIC, paths.mixAic);
+  addIfSet(SubCoreTarget::MIX_AIV, paths.mixAiv);
+  addIfSet(SubCoreTarget::HOST, paths.host);
+  return result;
+}
+
+namespace {
+
+// Stable string key for a SubCoreTarget, used to build a canonical SHA input
+// that is independent of enum numeric values.
+const char *subCoreTargetKey(SubCoreTarget t) {
+  switch (t) {
+  case SubCoreTarget::AIC:
+    return "AIC";
+  case SubCoreTarget::AIV:
+    return "AIV";
+  case SubCoreTarget::HOST:
+    return "HOST";
+  case SubCoreTarget::MIX_AIC:
+    return "MIX_AIC";
+  case SubCoreTarget::MIX_AIV:
+    return "MIX_AIV";
+  }
+  return "UNKNOWN";
+}
+
+// Compute a deterministic digest string (sorted "key=path" lines) for a path
+// map.  This is intentionally a simple string fold rather than a cryptographic
+// hash: the goal is to detect drift between the early pure-path calculator
+// and the authoritative `addBitcodeAttrsToModule` writes, not to defend
+// against adversarial input.  Keeping it dependency-free avoids pulling
+// llvm/Support/SHA256 into the path-only Utils layer.
+std::string pathMapDigest(const std::map<SubCoreTarget, std::string> &m) {
+  std::string out;
+  // std::map iterates in key (enum) order; emit subCoreTargetKey for clarity.
+  for (const auto &[target, path] : m) {
+    out += subCoreTargetKey(target);
+    out += '=';
+    out += path;
+    out += '\n';
+  }
+  return out;
+}
+
+} // namespace
+
+bool bishengir::verifyEarlyAuxSha(
+    mlir::ModuleOp module,
+    const std::map<SubCoreTarget, std::string> &earlyPaths) {
+  auto attrPaths = getBitcodePathsBySubCoreTarget(module);
+  std::string earlyDigest = pathMapDigest(earlyPaths);
+  std::string attrDigest = pathMapDigest(attrPaths);
+  if (earlyDigest == attrDigest)
+    return true;
+  llvm::errs() << "[WARN] early aux path SHA mismatch; PreloadBase may "
+                  "have preloaded stale paths.\n";
+  llvm::errs() << "[WARN] early paths digest:\n" << earlyDigest;
+  llvm::errs() << "[WARN] attr  paths digest:\n" << attrDigest;
+  return false;
 }

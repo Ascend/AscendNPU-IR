@@ -685,6 +685,21 @@ def OutlineCopyInVF : HIVMPass<"hivm-outline-copy-in-VF", "ModuleOp"> {
                            "memref::MemRefDialect", "vector::VectorDialect"];
 }
 
+def NormalizeTmpBufferInVf
+    : HIVMPass<"hivm-normalize-tmp-buffer-in-vf", "func::FuncOp"> {
+  let summary = "Normalize temporary tensor buffers in vector functions.";
+  let description = [{
+    For `hivm.vector_function` functions, promote a temporary tensor that is
+    read-modify-written inside a nested `scf.for` into an iter_arg of the
+    enclosing loop. This keeps the buffer in the loop-carried SSA chain so
+    one-shot-bufferize can reuse it in place instead of inserting a
+    `memref.copy`.
+  }];
+  let constructor = "mlir::hivm::createNormalizeTmpBufferInVfPass()";
+  let dependentDialects = ["func::FuncDialect", "scf::SCFDialect",
+                           "tensor::TensorDialect"];
+}
+
 def ConstantizeBufferSize
     : HIVMPass<"hivm-constantize-buffer-size", "func::FuncOp"> {
   let summary = "Constantize dynamic shape buffers from index bounds";
@@ -1474,7 +1489,7 @@ def InsertInitAndFinishForDebug
 }
 
 def MarkDisableLoad : HIVMPass<"hivm-mark-disable-load", "ModuleOp"> {
-  let summary = "mark the memref.loads that need to disable dcache";
+  let summary = "mark scalar and structured loads that need to disable dcache";
   let constructor = "mlir::hivm::createMarkDisableLoadPass()";
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
 }
@@ -1546,6 +1561,17 @@ def CVPipelining
        Option<"enablePreload", "enable-preload", "bool",
               /*default=*/"false",
               "Enable registered-kernel CV-pipelining heuristics">];
+}
+
+def OutlineCVScopes
+    : HIVMPass<"outline-cv-scopes", "func::FuncOp", [MixKernel, PureAicKernel]> {
+  let summary = "Partition mixed-core loops into scoped work items for CV pipelining v2";
+  let constructor = "mlir::hivm::createOutlineCVScopesPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
+                           "mlir::scope::ScopeDialect",
+                           "bishengir::memref_ext::MemRefExtDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect"];
 }
 
 def AutoBlockifyParallelLoop

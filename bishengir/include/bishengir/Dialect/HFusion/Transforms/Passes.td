@@ -193,7 +193,8 @@ def TreeReduceV2 : Pass<"tree-reduce-v2", "ModuleOp"> {
     Option<"ascendStyleAR", "ascend-style-ar", "bool", "true",
            "Use the AscendC-style multi-pass in-place folding AR lowering.">,
     Option<"ascendStyleRA", "ascend-style-ra", "bool", "false",
-           "Use the AscendC-style multi-stage tree-folding RA lowering.">,
+           "Use the AscendC-style multi-stage tree-folding RA lowering and "
+           "enable generalized staged RA reductions.">,
     Option<"onlyLegacyScope", "only-legacy-scope", "bool", "false",
            "Rewrite only modules selected for the legacy tree strategy.">,
   ];
@@ -315,7 +316,10 @@ def Normalize : Pass<"hfusion-normalize-ops", "func::FuncOp"> {
               "Enable strength reduction of integer div/div_unsigned/mod/modui "
               "with "
               "a power-of-two constant divisor into shift/and ops (regbased "
-              "Ascend950 only)">];
+              "Ascend950 only)">,
+       Option<"enableFma", "enable-fma", "bool", /*default=*/"false",
+              "Enable fused multiply-add for the floating-point mod residual "
+              "(requires the vectorization path)">];
 }
 
 def NormalizeSliceOps : Pass<"hfusion-normalize-slice-ops", "func::FuncOp"> {

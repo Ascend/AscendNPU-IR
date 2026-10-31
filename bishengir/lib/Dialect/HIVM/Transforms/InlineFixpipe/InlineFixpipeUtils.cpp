@@ -41,6 +41,13 @@ bool isInsideVectorScope(Operation *op) {
   return coreTypeAttr && coreTypeAttr.getTcoretype() == hivm::TCoreType::VECTOR;
 }
 
+bool isFixpipeStoreInlinable(hivm::StoreOp storeOp) {
+  auto attr = storeOp.getAtomicKindAttr();
+  auto kind = attr ? attr.getValue() : hivm::AtomicKind::NONE;
+  return kind == AtomicKind::NONE || kind == AtomicKind::ADD ||
+         kind == AtomicKind::MAX || kind == AtomicKind::MIN;
+}
+
 Operation *getSingleSiftedUser(Value v) {
   Operation *singleUser = nullptr;
   for (Operation *user : v.getUsers()) {

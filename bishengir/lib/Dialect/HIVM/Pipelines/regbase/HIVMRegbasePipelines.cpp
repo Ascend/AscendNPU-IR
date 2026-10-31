@@ -341,6 +341,11 @@ static void convertTensorToTightCoupledBuffer(OpPassManager &pm) {
       createInsertCVTightCoupledBufferPass(options));
 }
 
+static void buildCVPipelineV2(OpPassManager &pm,
+                              const HIVMPipelineOptions &hivmPipelineOptions) {
+  pm.nest<func::FuncOp>().addPass(createOutlineCVScopesPass());
+}
+
 static void hivmPreBufferizationOptimizationPipeline(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
   if (!hacc::utils::isRegBasedArch(hivmPipelineOptions.target)) {
@@ -444,7 +449,10 @@ static void hivmPreBufferizationOptimizationPipeline(
   // broadcasts.
   canonicalizationHIVMPipeline(pm);
   pm.nest<func::FuncOp>().addPass(createInlineOTFBroadcastPass());
-  if (hivmPipelineOptions.enableMixedCV) {
+  if (hivmPipelineOptions.usePipelinev2) {
+    pm.nest<func::FuncOp>().addPass(createSetBufferSizePass());
+    buildCVPipelineV2(pm, hivmPipelineOptions);
+  } else if (hivmPipelineOptions.enableMixedCV) {
     // Software pipelining Cube and Vector operations
     if (hivmPipelineOptions.setCVPipelineMode != CVPipelineMode::Off) {
       CVPipeliningOptions pipelineOptions;

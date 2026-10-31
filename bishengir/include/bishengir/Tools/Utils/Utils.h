@@ -111,6 +111,16 @@ std::optional<llvm::VersionTuple> detectHIVMCVersion(llvm::StringRef hivmcName);
 /// Get the path set by environment variable `BISHENG_INSTALL_PATH`.
 std::string getBiShengInstallPath();
 
+/// Locate the BiSheng compiler's `bin` directory via a three-step fallback:
+///   1. `BISHENG_INSTALL_PATH` env (already points at the install root, so it
+///      is returned verbatim — callers treat it as the `bin` directory).
+///   2. `bisheng` executable found on `PATH` — return its parent directory.
+///   3. `ASCEND_HOME_PATH` env — return `$ASCEND_HOME_PATH/bin`.
+/// Returns an empty string if none of the three resolve.  The result always
+/// denotes the `bin` directory of the BiSheng (ccec) installation; the
+/// companion `libbisheng-llc.so` lives at `<result>/../lib/libbisheng-llc.so`.
+std::string getBiShengCompilerInstallPath();
+
 /// Get the absolute path of the current executable. Resolves symlinks and
 /// handles invocation via PATH. \p argv0 is argv[0] from main, \p mainAddr
 /// is reinterpret_cast<void*>(main). Returns empty string on failure.

@@ -3844,12 +3844,29 @@ TreeReduceV2Pass::createRewritePlan(const ReductionMatch &match,
         llvm::any_of(*stages, [](const ReductionStagePlan &stage) {
           return stage.inner > 1;
         });
-    if (requiresAR && !enableAR) {
+    // The register-tree pipeline is enabled through the RA mode, but a rank-1
+    // scalar reduction has a suffix (AR) stage. Route the specific 4096-element
+    // f32 case through staged lowering while keeping every other AR reduction
+    // subject to enableAR.
+    bool enableRegisterTreeRank1Reduce4096 =
+        enableRA && onlyMarked && directRegisterRA &&
+        inputElementType.isF32() && match.logicalShape.inputShape.size() == 1 &&
+        match.logicalShape.inputShape.front() == 4096 &&
+        match.logicalShape.reductionDims.size() == 1 &&
+        match.logicalShape.reductionDims.front() == 0;
+    if (requiresAR && !enableAR && !enableRegisterTreeRank1Reduce4096) {
       LDBG("Skipping staged tree rewrite - AR stage disabled");
       return std::nullopt;
     }
+    if (requiresAR && !enableAR && enableRegisterTreeRank1Reduce4096)
+      LDBG("Enabling staged AR for register-tree rank-1 4096-element f32 "
+           "reduction");
     if (requiresRA && !enableRA) {
       LDBG("Skipping staged tree rewrite - RA stage disabled");
+      return std::nullopt;
+    }
+    if (requiresRA && !ascendStyleRA) {
+      LDBG("Skipping staged tree rewrite - Ascend-style RA disabled");
       return std::nullopt;
     }
     plan.loweringKind = ReductionLoweringKind::Staged;

@@ -49,8 +49,8 @@
 /bishengir/**/Template/**/DMA/Cbuf/ @Alae-eddine @ZhaoWentengZWT @zhufang_hw @jqran @hid90099092 @tanshengshun
 
 # Inline Fixpipe.
-/bishengir/**/InlineFixpipe/ @Alae-eddine @jin-qian7 @jqran @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
-/bishengir/test/**/*inline-fixpipe* @Alae-eddine @jin-qian7 @jqran @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/**/InlineFixpipe/ @Alae-eddine @jin-qian7 @jqran @hid90099092 @tanshengshun
+/bishengir/test/**/*inline-fixpipe* @Alae-eddine @jin-qian7 @jqran @hid90099092 @tanshengshun
 /bishengir/test/**/*insert-fixpipe* @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
 /bishengir/test/**/*move-fixpipe* @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
 
@@ -82,6 +82,8 @@
 /bishengir/test/Dialect/HIVM/hivm-create-preload.mlir @gaofangfrank @li-yangguang525 @huangyujun123 @wangtao489 @hid90099092 @tanshengshun
 /bishengir/test/Dialect/HIVM/RegBase/CVPipelining/ @gaofangfrank @li-yangguang525 @huangyujun123 @wangtao489 @hid90099092 @tanshengshun
 /bishengir/test/bishengir-compile/hivm/compile-cv-pipeline-lazy-loading.mlir @gaofangfrank @li-yangguang525 @huangyujun123 @wangtao489 @hid90099092 @tanshengshun
+/bishengir/lib/Dialect/HIVM/Transforms/PipelineV2/ @gaofangfrank @li-yangguang525 @huangyujun123 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/PipelineV2/ @gaofangfrank @li-yangguang525 @huangyujun123 @hid90099092 @tanshengshun
 
 # Split mix kernel.
 /bishengir/**/SplitMixKernel.* @danielcm585 @devoperator @cathychan0027 @hid90099092 @tanshengshun

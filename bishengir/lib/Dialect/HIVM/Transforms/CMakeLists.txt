@@ -15,6 +15,8 @@ set(TILE_AND_BIND_SUB_BLOCK
     ${CMAKE_CURRENT_SOURCE_DIR}/TileAndBindSubBlock/TileUtils.cpp)
 file(GLOB PARTITION_AND_BIND_SUB_BLOCK CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/PartitionAndBindSubBlock/*.cpp)
+file(GLOB PIPELINE_V2 CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/PipelineV2/*.cpp)
 
 add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ${Mix_PASSES}
@@ -27,6 +29,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ${TILING}
   ${TILE_AND_BIND_SUB_BLOCK}
   ${PARTITION_AND_BIND_SUB_BLOCK}
+  ${PIPELINE_V2}
   ${NORMALIZE}
   AddFFTSToSyncBlockSetOp.cpp
   AllocExtraBuffer.cpp
@@ -131,6 +134,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   NormalizeBitwiseSelect.cpp
   NormalizeConvOps.cpp
   NormalizeMatmul.cpp
+  NormalizeTmpBufferInVf.cpp
   OptMemPlanForPipeline.cpp
   OutlineAllocInVF.cpp
   OutlineCopyInVF.cpp

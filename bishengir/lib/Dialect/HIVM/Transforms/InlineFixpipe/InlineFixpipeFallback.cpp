@@ -63,14 +63,7 @@ collectFallbackStoreChain(PatternRewriter &rewriter, Operation *notifyOp,
           user, "fallback_not_exec consumer chain is nested in another region");
 
     if (auto storeOp = dyn_cast<hivm::StoreOp>(user)) {
-      // TODO: share this atomic-kind whitelist with the greedy store-fusion
-      // path in inlineFixpipeOp (NONE/ADD/MAX/MIN). No helper exists yet.
-      auto storeAttr = storeOp.getAtomicKindAttr();
-      hivm::AtomicKind atomicKind = hivm::AtomicKind::NONE;
-      if (storeAttr)
-        atomicKind = storeAttr.getValue();
-      if (atomicKind != AtomicKind::NONE && atomicKind != AtomicKind::ADD &&
-          atomicKind != AtomicKind::MAX && atomicKind != AtomicKind::MIN)
+      if (!isFixpipeStoreInlinable(storeOp))
         return rewriter.notifyMatchFailure(
             storeOp, "fallback_not_exec store has unsupported atomic kind");
       if (isInsideVectorScope(storeOp))

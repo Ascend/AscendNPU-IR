@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HACC/IR/HACCInterfaces.h"
 #include "bishengir/Dialect/HIVM/Analysis/VFInplaceReuseAnalyzer.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/BufferLifeVec.h"
 #include "bishengir/Dialect/HIVM/Transforms/InplaceReuseReachableMap.h"
 #include "bishengir/Dialect/HIVM/Transforms/OptMemPlanForPipeline.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -135,9 +136,6 @@ struct BufferLife {
   int64_t freeTime{-1};
 };
 
-/// a list of buffer life for a given storage entry
-using BufferLifeVec = SmallVector<std::shared_ptr<BufferLife>>;
-
 /// Conflict-memo id types. Ids are unique per MemPlan instance; the two
 /// names distinguish entry ids from bound ids at memo-key sites.
 using EntryMemoId = uint32_t;
@@ -196,8 +194,8 @@ struct StorageEntry {
   /// id counter; unique per MemPlan instance, never reused.
   const EntryMemoId memoId;
 
-  /// Get Bufferlife by vaule
-  std::shared_ptr<BufferLife> GetBufferLifeByValue(const Value v) const;
+  /// The buffer's own life, if this entry still stores it as an endpoint.
+  std::optional<BufferLifeView> GetBufferLifeByValue(Value v) const;
 };
 
 struct MemoryBound {
@@ -281,17 +279,6 @@ struct OutlineSectionInfo {
   /// When the current PlanRecord is rolled back, it must be rolled back
   /// directly.
   bool isDirectlyRollback;
-};
-
-/// comparator of buffer life
-struct CompareBufferLife {
-  bool operator()(const std::shared_ptr<BufferLife> &lhs,
-                  const std::shared_ptr<BufferLife> &rhs) const {
-    if (lhs->allocTime == rhs->allocTime) {
-      return lhs->freeTime < rhs->freeTime;
-    }
-    return lhs->allocTime < rhs->allocTime;
-  }
 };
 
 struct StatusWrapper {
@@ -869,13 +856,10 @@ private:
       StorageEntry *e, MemBoundListConstIter start, MemBoundListConstIter end,
       SmallVector<std::shared_ptr<MemoryBound>> &splitBound) const;
 
-  /// merge the buffer life between start and end.
+  /// Append buffer lives of bounds in [start, end) onto newLife, then merge.
   inline void MergeBufferLife(MemBoundList::const_iterator start,
                               MemBoundList::const_iterator end,
                               BufferLifeVec &newLife) const;
-
-  /// merge buffers in a vector.
-  void MergeBufferVec(BufferLifeVec &bufferLife) const;
 
   /// Judge if need to restart plan memory with other strategy after
   /// plan failed.
@@ -944,14 +928,6 @@ private:
   /// operation with pipe type `Pipe`.
   template <PIPE Pipe> bool IsInplaceReuseReachable(Value allocValue);
 
-  /// Get overlap buffer life. Keeps at most one intersection window per
-  /// buffer pair (first window wins, via DenseMap::try_emplace). Both
-  /// vectors must be merge-normalized (disjoint and sorted by allocTime),
-  /// which is the same invariant the two-pointer sweep relies on. The
-  /// inline capacity avoids per-call heap allocation in the common case.
-  llvm::SmallDenseMap<ValuePair, BufferLife, 32>
-  GetOverlapBufferLife(const BufferLifeVec &b1, const BufferLifeVec &b2) const;
-
   /// Reorder and make the storage entries of firstbuffer and otherbuffer
   /// continuous.
   void ReorderContinuousFirstBufferOtherBufferEntry(
@@ -996,9 +972,13 @@ private:
   void ReportAllocatedEntryDebugInfo(const StorageEntry *rootStorageEntry,
                                      bool isFail) const;
 
-  /// Check if preload buffer can be reused.
+  /// Check if every life in `lives` can reuse this preload buffer.
+  /// Before-gen requires an exact free time and VF inplace only on buffers
+  /// that end at the merged interval. After-kill requires an exact alloc time
+  /// and VF inplace only on buffers that start at the merged interval. Every
+  /// other endpoint only has to sit inside that same window.
   bool IsPreloadBufferReuseable(PreloadBufferReuseableInfo &info,
-                                std::shared_ptr<BufferLife> &life2);
+                                const BufferLifeVec &lives);
 
   /// collect all the preload buffer reuseable info and generate the map from
   /// local storage entry to its reuseable preload storage entry.
