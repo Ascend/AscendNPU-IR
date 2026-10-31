@@ -1798,9 +1798,8 @@ bool MemPlan::IsPreloadStorageEntry(const StorageEntry *storageEntry) {
 }
 
 bool MemPlan::IsPreloadBufferReuseable(PreloadBufferReuseableInfo &info,
-                                       const BufferLifeView &lifeSE) {
+                                       const BufferLifeVec &lives) {
   auto preloadBuffer = info.preloadBuffer;
-  auto buffer = lifeSE.buffer;
   // TODO: support reuse hivmOp
   auto isInplaceReuseable = [this](Operation *op, Value gen, Value kill) {
     auto genType = cast<ShapedType>(gen.getType());
@@ -1808,39 +1807,50 @@ bool MemPlan::IsPreloadBufferReuseable(PreloadBufferReuseableInfo &info,
     return genType.getShape() == killType.getShape() && hivm::isVFCall(op) &&
            vfInplaceReuseInfo->isInplaceReusable(op, gen, kill);
   };
+  // A life sits in the window when it starts at or after the window start and
+  // ends at or before the window end.
+  auto coveredBy = [](const BufferLife &window, const BufferLifeView &life) {
+    return window.allocTime <= life.allocTime &&
+           window.freeTime >= life.freeTime;
+  };
 
+  // Before-gen: the buffers that die at the merged end must die on the preload
+  // gen and be inplace with it. An earlier endpoint only has to be covered.
   auto &beforeGenLife = info.reuseableBufferLifeBeforeGen;
-  if (beforeGenLife && beforeGenLife->allocTime <= lifeSE.allocTime) {
-    // Check if the freeTime of beforeGenLife is equal to the freeTime of
-    // lifeSE.
-    // TODO: support freeTime not equal reuse
-    if (beforeGenLife->freeTime == lifeSE.freeTime &&
-        isInplaceReuseable(info.genInfo->operation, preloadBuffer, buffer)) {
-      return true;
-    }
-  }
+  bool beforeGenOk =
+      beforeGenLife && lives.allOfEndpoints([&](const BufferLifeView &life,
+                                                bool /*atHead*/, bool atTail) {
+        if (!coveredBy(*beforeGenLife, life))
+          return false;
+        if (!atTail)
+          return true;
+        return beforeGenLife->freeTime == life.freeTime &&
+               isInplaceReuseable(info.genInfo->operation, preloadBuffer,
+                                  life.buffer);
+      });
+  if (beforeGenOk)
+    return true;
 
+  // After-kill: the buffers born at the merged start must be born on the
+  // preload kill and be inplace with it. A later endpoint only has to be
+  // covered. One window has to accept every endpoint; the two windows are not
+  // mixed across endpoints.
   auto &afterKillLife = info.reuseableBufferLifeAfterKill;
-  if (afterKillLife && afterKillLife->freeTime >= lifeSE.freeTime) {
-    // Check if the allocTime of afterKillLife is equal to the allocTime of
-    // lifeSE.
-    // TODO: support freeTime not equal reuse
-    if (afterKillLife->allocTime == lifeSE.allocTime &&
-        isInplaceReuseable(info.killInfo->operation, buffer, preloadBuffer)) {
-      return true;
-    }
-  }
-  return false;
+  return afterKillLife &&
+         lives.allOfEndpoints(
+             [&](const BufferLifeView &life, bool atHead, bool /*atTail*/) {
+               if (!coveredBy(*afterKillLife, life))
+                 return false;
+               if (!atHead)
+                 return true;
+               return afterKillLife->allocTime == life.allocTime &&
+                      isInplaceReuseable(info.killInfo->operation, life.buffer,
+                                         preloadBuffer);
+             });
 }
 
 void MemPlan::GeneratePreloadReuseableSE() {
   LDBG("\n-------localSE2ReuseablePreloadSE info--------\n\n");
-  auto isAllEntryLifeReuseable = [this](const BufferLifeVec &bufferLifeVec,
-                                        PreloadBufferReuseableInfo &info) {
-    return bufferLifeVec.allOf([this, &info](const BufferLifeView &life) {
-      return IsPreloadBufferReuseable(info, life);
-    });
-  };
   for (auto &[preloadBuffer, reusableInfo] : preloadBufferReuseableInfo) {
     auto *preloadBufferSE = buffer2storageEntry[preloadBuffer];
     reusableInfo.preloadBuffer = preloadBuffer;
@@ -1857,7 +1867,7 @@ void MemPlan::GeneratePreloadReuseableSE() {
           preloadBufferSE->bufInfo->constBits < e->bufInfo->constBits) {
         continue;
       }
-      if (isAllEntryLifeReuseable(e->bufferLifeVec, reusableInfo)) {
+      if (IsPreloadBufferReuseable(reusableInfo, e->bufferLifeVec)) {
         MemLifeDebugInfo(e.get());
         MemLifeDebugInfo(preloadBufferSE);
 
