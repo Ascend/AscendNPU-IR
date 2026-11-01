@@ -1346,6 +1346,13 @@ def EnableOptimizeScalarTransfers : HFusionOptimizationControlOptions<
   "true"
 >;
 
+def EnableLegalizeScalarFP8 : HFusionOptimizationControlOptions<
+  "Work around backend FP8 phi limitations after HFusion Normalize. "
+  "Disable to test native backend support.",
+  "bool",
+  "true"
+>;
+
 //===----------------------------------------------------------------------===//
 // HIVM Optimization Control Options
 //===----------------------------------------------------------------------===//

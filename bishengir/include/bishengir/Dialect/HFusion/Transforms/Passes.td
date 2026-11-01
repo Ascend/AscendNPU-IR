@@ -553,6 +553,12 @@ def LegalizeFP8Pass : Pass<"hfusion-legalize-fp8", "func::FuncOp"> {
   let dependentDialects = ["linalg::LinalgDialect", "hfusion::HFusionDialect"];
 }
 
+def LegalizeScalarFP8Pass : Pass<"hfusion-legalize-scalar-fp8", "func::FuncOp"> {
+  let summary = "Carry scalar f8 conditional results as i8 bit patterns";
+  let constructor = "mlir::hfusion::createLegalizeScalarFP8Pass()";
+  let dependentDialects = ["arith::ArithDialect", "scf::SCFDialect"];
+}
+
 def LegalizeBoolPass : Pass<"hfusion-legalize-bool", "ModuleOp"> {
   let summary = "cast int8 to int1 for input and int1 to int8 for output.";
   let constructor = "mlir::hfusion::createLegalizeBoolPass()";

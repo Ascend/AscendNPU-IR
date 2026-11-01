@@ -201,21 +201,23 @@ std::string getPrettyOpName(Operation *op);
 } // namespace debugger
 
 // Currently dtype cast rules:
-// (1-RINT ) f32 -> f16/bf16/f32
-// (2-RINT ) f16/bf16 -> f32
+// (1-RINT ) f32 -> f16/bf16/f32/fp8
+// (2-RINT ) f16/bf16/fp8 -> f32
 // (3-RINT ) i8 -> f16
 // (4-TRUNC) float -> int
 // (5-RINT ) int -> float
 // (6-RINT ) int -> int
 template <typename T> T selectRoundMode(Type inType, Type outType) {
   if (inType.isF32()) {
-    if (outType.isF16() || outType.isBF16() || outType.isF32()) {
+    if (outType.isF16() || outType.isBF16() || outType.isF32() ||
+        isa<Float8E4M3FNType>(outType) || isa<Float8E5M2Type>(outType)) {
       return T::RINT;
     }
   }
 
   if (outType.isF32()) {
-    if (inType.isF16() || inType.isBF16()) {
+    if (inType.isF16() || inType.isBF16() || isa<Float8E4M3FNType>(inType) ||
+        isa<Float8E5M2Type>(inType)) {
       return T::RINT;
     }
   }
