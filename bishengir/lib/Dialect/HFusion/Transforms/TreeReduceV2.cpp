@@ -14,6 +14,7 @@
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
@@ -28,6 +29,7 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
@@ -948,6 +950,7 @@ struct ReductionRewritePlan {
   int64_t dimR = 0;
   int64_t dimA = 0;
   bool isAR = false;
+  bool moduleInputMayBeReused = false;
 };
 
 class TreeReductionBuilder {
@@ -1292,7 +1295,8 @@ private:
                                      scf::ForOp rewriteLoop,
                                      ArrayRef<ReductionStagePlan> stages,
                                      Type computeElementType,
-                                     int64_t vectorLength) const;
+                                     int64_t vectorLength,
+                                     bool moduleInputMayBeReused) const;
 
   // Reduction lowering entry points. `runOnOperation` only validates options,
   // walks the module and reports errors; matching, planning, dispatch and
@@ -1314,6 +1318,11 @@ private:
                                const ReductionRewritePlan &plan);
   LogicalResult processReduction(vector::MultiDimReductionOp reduceOp);
   void cleanupLegacyScope(ModuleOp module);
+  bool mayBeReusedAcrossModule(Value input, Operation *localScope);
+  bool mayFunctionArgumentBeReused(BlockArgument argument);
+
+  DenseMap<Value, bool> moduleInputReuseCache;
+  DenseSet<Value> moduleInputReuseActive;
 };
 
 static Value collapseToFlatTensor(IRRewriter &rewriter, Location loc,
@@ -2439,7 +2448,8 @@ Value TreeReduceV2Pass::buildStagedReductionStage(
 LogicalResult TreeReduceV2Pass::buildStagedReduction(
     IRRewriter &rewriter, Location loc, const ReductionMatch &match,
     scf::ForOp rewriteLoop, ArrayRef<ReductionStagePlan> stages,
-    Type computeElemTy, int64_t vectorLength) const {
+    Type computeElemTy, int64_t vectorLength,
+    bool moduleInputMayBeReused) const {
   assert(!stages.empty() && "validated staged shape must have a stage plan");
   LDBG("Building staged reduction: stages="
        << stages.size() << " computeElemTy=" << computeElemTy
@@ -2471,10 +2481,14 @@ LogicalResult TreeReduceV2Pass::buildStagedReduction(
     // reduction; later stages own their fresh predecessor output. Check the
     // original value before creating the stage view, otherwise the new
     // collapse/expand operation itself looks like an out-of-scope use.
-    bool canReuseInput = stageIndex == 0
-                             ? (currentElemTy == computeElemTy &&
-                                !hasUseOutsideScope(inputTensor, rewriteLoop))
-                             : currentElemTy == computeElemTy;
+    bool canReuseInput =
+        stageIndex == 0
+            ? (currentElemTy == computeElemTy && !moduleInputMayBeReused &&
+               !hasUseOutsideScope(inputTensor, rewriteLoop))
+            : currentElemTy == computeElemTy;
+    if (stageIndex == 0 && moduleInputMayBeReused)
+      LDBG("Allocating a private staged-reduction working tensor because the "
+           "rank-1 4096 input may be reused across the module");
     ReductionStageView view =
         getReductionStageView(rewriter, loc, current, stage);
     Value finalAccumulator =
@@ -2620,6 +2634,66 @@ static bool hasUseOutsideScope(Value value, Operation *scope) {
     Operation *owner = use.getOwner();
     return owner != scope && !scope->isAncestor(owner);
   });
+}
+
+bool TreeReduceV2Pass::mayFunctionArgumentBeReused(BlockArgument argument) {
+  auto cached = moduleInputReuseCache.find(argument);
+  if (cached != moduleInputReuseCache.end())
+    return cached->second;
+
+  // A recursive call graph does not provide an ownership boundary that this
+  // local analysis can prove safe. Treat it conservatively as shared.
+  if (!moduleInputReuseActive.insert(argument).second)
+    return true;
+
+  bool mayBeReused = true;
+  auto function = dyn_cast<func::FuncOp>(argument.getOwner()->getParentOp());
+  if (!function || function.empty() ||
+      argument.getOwner() != &function.getBody().front()) {
+    moduleInputReuseActive.erase(argument);
+    moduleInputReuseCache[argument] = true;
+    return true;
+  }
+
+  if (auto uses = function.getSymbolUses(getOperation())) {
+    bool sawDirectCall = false;
+    mayBeReused = false;
+    for (SymbolTable::SymbolUse symbolUse : *uses) {
+      auto call = dyn_cast<func::CallOp>(symbolUse.getUser());
+      if (!call || argument.getArgNumber() >= call.getNumOperands()) {
+        mayBeReused = true;
+        break;
+      }
+      sawDirectCall = true;
+      Value actual = call.getOperand(argument.getArgNumber());
+      if (llvm::any_of(actual.getUses(), [&](OpOperand &use) {
+            return use.getOwner() != call;
+          })) {
+        mayBeReused = true;
+        break;
+      }
+      if (auto callerArgument = dyn_cast<BlockArgument>(actual);
+          callerArgument && mayFunctionArgumentBeReused(callerArgument)) {
+        mayBeReused = true;
+        break;
+      }
+    }
+    if (!sawDirectCall)
+      mayBeReused = true;
+  }
+
+  moduleInputReuseActive.erase(argument);
+  moduleInputReuseCache[argument] = mayBeReused;
+  return mayBeReused;
+}
+
+bool TreeReduceV2Pass::mayBeReusedAcrossModule(Value input,
+                                               Operation *localScope) {
+  if (hasUseOutsideScope(input, localScope))
+    return true;
+  if (auto argument = dyn_cast<BlockArgument>(input))
+    return mayFunctionArgumentBeReused(argument);
+  return false;
 }
 
 void TreeReduceV2Pass::rewriteSingleAxisRA(
@@ -3869,6 +3943,14 @@ TreeReduceV2Pass::createRewritePlan(const ReductionMatch &match,
       LDBG("Skipping staged tree rewrite - Ascend-style RA disabled");
       return std::nullopt;
     }
+    if (enableRegisterTreeRank1Reduce4096) {
+      // TODO: Extend module-level input reuse analysis to all reductions that
+      // may fold in place, rather than limiting it to the rank-1 4096 case.
+      plan.moduleInputMayBeReused =
+          mayBeReusedAcrossModule(match.input, rewriteLoop);
+      LDBG("Register-tree rank-1 4096 moduleInputReuse="
+           << plan.moduleInputMayBeReused);
+    }
     plan.loweringKind = ReductionLoweringKind::Staged;
     plan.stages = std::move(*stages);
     return plan;
@@ -3912,7 +3994,7 @@ TreeReduceV2Pass::executeRewrite(IRRewriter &rewriter,
   case ReductionLoweringKind::Staged:
     return buildStagedReduction(rewriter, loc, plan.match, plan.rewriteLoop,
                                 plan.stages, plan.computeElementType,
-                                plan.vectorLength);
+                                plan.vectorLength, plan.moduleInputMayBeReused);
   default:
     break;
   }
@@ -3982,7 +4064,8 @@ TreeReduceV2Pass::processReduction(vector::MultiDimReductionOp reduceOp) {
     llvm::dbgs() << "] inElemTy=" << p.inputElementType
                  << " computeElemTy=" << p.computeElementType
                  << " vectorLength=" << p.vectorLength
-                 << " blockDataLen=" << p.blockDataLength << "\n";
+                 << " blockDataLen=" << p.blockDataLength
+                 << " moduleInputReuse=" << p.moduleInputMayBeReused << "\n";
     if (p.loweringKind != ReductionLoweringKind::Staged)
       DBGS() << "  legacy 2D view: " << (p.isAR ? "AR" : "RA")
              << " dimR=" << p.dimR << " dimA=" << p.dimA << "\n";
@@ -4008,6 +4091,8 @@ void TreeReduceV2Pass::cleanupLegacyScope(ModuleOp module) {
 
 void TreeReduceV2Pass::runOnOperation() {
   ModuleOp module = getOperation();
+  moduleInputReuseCache.clear();
+  moduleInputReuseActive.clear();
   LDBG("=== Processing func: " << module.getSymName()
                                << " enableRA=" << enableRA
                                << " enableAR=" << enableAR << " ===");
