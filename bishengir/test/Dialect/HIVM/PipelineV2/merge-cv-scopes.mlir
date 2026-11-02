@@ -3,14 +3,11 @@
 // CHECK-LABEL: func.func @merge_carried_pair
 // CHECK:         scf.for
 // CHECK:           %[[MERGED:.*]] = scope.scope : () -> f32 {
-// CHECK:             %{{.*}} = scope.scope : () -> f32 {
-// CHECK:               arith.addf
-// CHECK:             } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
-// CHECK:             %[[INNER:.*]] = scope.scope : () -> f32 {
-// CHECK:               arith.mulf
-// CHECK:             } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
-// CHECK:             scope.return %[[INNER]]
-// CHECK:           } {cv_merged_scope}
+// CHECK:             %[[ADD:.*]] = arith.addf
+// CHECK:             %[[MUL:.*]] = arith.mulf %[[ADD]], %[[ADD]]
+// CHECK:             scope.return %[[MUL]]
+// CHECK:           } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NOT:       cv_merged_scope
 // CHECK:           scf.yield %[[MERGED]]
 func.func @merge_carried_pair(%init: f32) -> f32 {
   %c0 = arith.constant 0 : index
@@ -69,14 +66,11 @@ func.func @merge_mixed_cores(%init: f32) -> f32 {
 
 // CHECK-LABEL: func.func @merge_escaping_results
 // CHECK:         %[[MERGED:.*]]:2 = scope.scope : () -> (f32, f32) {
-// CHECK:           %[[A:.*]] = scope.scope : () -> f32 {
-// CHECK:             arith.addf
-// CHECK:           } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
-// CHECK:           %[[B:.*]] = scope.scope : () -> f32 {
-// CHECK:             arith.mulf
-// CHECK:           } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK:           %[[A:.*]] = arith.addf
+// CHECK:           %[[B:.*]] = arith.mulf %[[A]], %[[A]]
 // CHECK:           scope.return %[[A]], %[[B]]
-// CHECK:         } {cv_merged_scope}
+// CHECK:         } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NOT:     cv_merged_scope
 // CHECK:         scf.yield %[[MERGED]]#1, %[[MERGED]]#0
 func.func @merge_escaping_results(%init: f32) -> (f32, f32) {
   %c0 = arith.constant 0 : index
@@ -101,13 +95,16 @@ func.func @merge_escaping_results(%init: f32) -> (f32, f32) {
 
 // CHECK-LABEL: func.func @merge_consumer_moved_after
 // CHECK:         %[[MERGED:.*]]:2 = scope.scope : () -> (f32, f32) {
-// CHECK:           scope.return
-// CHECK:         } {cv_merged_scope}
+// CHECK:           %[[A:.*]] = arith.addf
+// CHECK:           %[[B:.*]] = arith.mulf %[[A]], %[[A]]
+// CHECK:           scope.return %[[A]], %[[B]]
+// CHECK:         } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NOT:     cv_merged_scope
 // CHECK:         scope.scope : () -> () {
-// CHECK:           arith.negf
+// CHECK:           arith.negf %[[MERGED]]#0
 // CHECK:           scope.return
 // CHECK:         } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
-// CHECK:         scf.yield
+// CHECK:         scf.yield %[[MERGED]]#1
 func.func @merge_consumer_moved_after(%init: f32) -> f32 {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
@@ -295,8 +292,9 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // (cross-core transfer backward merging):
 // - Rule 1 wraps `S3..S7` (connected via `%acc` recurrence) into `{cv_merged_scope}`,
 //   leaving `S0`, `S1`, `S2` outside in the `scf.for` body.
-// - Rule 2 merges `S3` and `S5` (`VECTOR`, `copy -> cbuf`) across `S4` INSIDE
-//   `{cv_merged_scope}`, without pulling `S1` or `S2` from outside `{cv_merged_scope}`.
+// - Rule 2 merges `S3`, `S4`, and `S5` (`VECTOR`) INSIDE `{cv_merged_scope}`,
+//   without pulling `S1` or `S2` from outside `{cv_merged_scope}`, while keeping
+//   `S6` (`CUBE`) and `S7` (`VECTOR`, depends on `S6`) separate.
 //
 // CHECK-LABEL: func.func @lcd_grouping_then_cross_core_backward_merge
 // CHECK: scf.for {{.*}} iter_args(%[[ACC:.*]] = {{.*}}, %[[CNT:.*]] = {{.*}}) -> (tensor<16x16xf32>, i32) : i32 {
@@ -317,13 +315,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK-NEXT:     %[[INNER_MERGED:.*]]:2 = scope.scope : () -> (tensor<16x16xf32>, tensor<1x1x16x16xf16>) {
 // CHECK:            arith.addi %[[S1]]
 // CHECK:            %[[VADD:.*]] = hivm.hir.vadd ins(%[[S2]], %[[ACC]] : tensor<16x16xf32>, tensor<16x16xf32>)
+// CHECK:            %[[RELU:.*]] = hivm.hir.vrelu ins(%[[VADD]] : tensor<16x16xf32>)
 // CHECK:            hivm.hir.vcast ins(%[[VADD]] : tensor<16x16xf32>)
 // CHECK:            hivm.hir.copy
-// CHECK-NEXT:       scope.return %[[VADD]], {{.*}} : tensor<16x16xf32>, tensor<1x1x16x16xf16>
-// CHECK-NEXT:     } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
-// CHECK-NEXT:     %[[S4:.*]] = scope.scope : () -> tensor<16x16xf32> {
-// CHECK:            %[[RELU:.*]] = hivm.hir.vrelu ins(%[[INNER_MERGED]]#0 : tensor<16x16xf32>)
-// CHECK-NEXT:       scope.return %[[RELU]] : tensor<16x16xf32>
+// CHECK-NEXT:       scope.return %[[RELU]], {{.*}} : tensor<16x16xf32>, tensor<1x1x16x16xf16>
 // CHECK-NEXT:     } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NEXT:     %[[S6:.*]] = scope.scope : () -> tensor<16x16xf32> {
 // CHECK:            hivm.hir.mmadL1 ins(%[[INNER_MERGED]]#1, {{.*}})
@@ -331,7 +326,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK-NEXT:       scope.return {{.*}} : tensor<16x16xf32>
 // CHECK-NEXT:     } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
 // CHECK-NEXT:     %[[S7:.*]] = scope.scope : () -> tensor<16x16xf32> {
-// CHECK:            %[[OUT:.*]] = hivm.hir.vadd ins(%[[S4]], %[[S6]] : tensor<16x16xf32>, tensor<16x16xf32>)
+// CHECK:            %[[OUT:.*]] = hivm.hir.vadd ins(%[[INNER_MERGED]]#0, %[[S6]] : tensor<16x16xf32>, tensor<16x16xf32>)
 // CHECK-NEXT:       scope.return %[[OUT]] : tensor<16x16xf32>
 // CHECK-NEXT:     } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NEXT:     scope.return %[[S7]] : tensor<16x16xf32>
@@ -746,5 +741,112 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       scf.yield %if_res : tensor<1x1x16x16xf16>
     } {hivm.cv_pipelined_loop}
     return %res : tensor<1x1x16x16xf16>
+  }
+}
+
+// -----
+
+// Verify that when Rule 1 wraps same-core LCD scopes (`%m_new` and `%alpha`)
+// into `{cv_merged_scope}`, Rule 2 merges them and collapses `{cv_merged_scope}`
+// into a single VECTOR scope, allowing Rule 3 (`copy -> cbuf` backward merge)
+// to merge the downstream `copy -> cbuf` scope (`%p_copy`) with the collapsed
+// LCD scope (`%m_new` + `%alpha`) and its upstream VECTOR dependency (`%s_mask`).
+//
+// CHECK-LABEL: func.func @lcd_collapse_then_cross_core_backward_merge
+// CHECK: scf.for {{.*}} iter_args(%[[M_PREV:.*]] = {{.*}}) -> (tensor<16x16xf32>) : i32 {
+// CHECK-NEXT:   %[[CUBE_S:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK:          hivm.hir.mmadL1
+// CHECK:          hivm.hir.fixpipe
+// CHECK-NEXT:     scope.return {{.*}} : tensor<16x16xf32>
+// CHECK-NEXT:   } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT:   %[[VEC_MERGED:.*]]:3 = scope.scope : () -> (tensor<16x16xf32>, tensor<16x16xf32>, tensor<1x1x16x16xf16>) {
+// CHECK:          %[[MASK:.*]] = hivm.hir.vexp ins(%[[CUBE_S]] : tensor<16x16xf32>)
+// CHECK:          %[[M_NEW:.*]] = hivm.hir.vmax ins(%[[M_PREV]], %[[MASK]] : tensor<16x16xf32>, tensor<16x16xf32>)
+// CHECK:          %[[ALPHA:.*]] = hivm.hir.vsub ins(%[[M_PREV]], %[[M_NEW]] : tensor<16x16xf32>, tensor<16x16xf32>)
+// CHECK:          hivm.hir.vcast ins(%[[M_NEW]] : tensor<16x16xf32>)
+// CHECK:          hivm.hir.copy
+// CHECK-NEXT:     scope.return %[[M_NEW]], %[[ALPHA]], {{.*}} : tensor<16x16xf32>, tensor<16x16xf32>, tensor<1x1x16x16xf16>
+// CHECK-NEXT:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NOT:    cv_merged_scope
+// CHECK-NEXT:   %[[OUT_SCOPE:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK:          hivm.hir.mmadL1 ins(%[[VEC_MERGED]]#2, {{.*}})
+// CHECK:          hivm.hir.fixpipe
+// CHECK-NEXT:     scope.return {{.*}} : tensor<16x16xf32>
+// CHECK-NEXT:   } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT:   %[[FINAL_VEC:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK:          hivm.hir.vadd ins(%[[VEC_MERGED]]#1, %[[OUT_SCOPE]] : tensor<16x16xf32>, tensor<16x16xf32>)
+// CHECK-NEXT:     scope.return {{.*}} : tensor<16x16xf32>
+// CHECK-NEXT:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT:   scf.yield %[[VEC_MERGED]]#0 : tensor<16x16xf32>
+// CHECK-NEXT: } {hivm.cv_pipelined_loop}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @lcd_collapse_then_cross_core_backward_merge(
+      %a: tensor<1x1x16x16xf16>,
+      %b: tensor<1x1x16x16xf16>,
+      %ub: i32) -> tensor<16x16xf32>
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %init = tensor.empty() : tensor<16x16xf32>
+    %res = scf.for %i = %c0 to %ub step %c1 iter_args(%m_prev = %init) -> (tensor<16x16xf32>) : i32 {
+      %cube_s = scope.scope : () -> tensor<16x16xf32> {
+        %dot0_init = tensor.empty() : tensor<1x1x16x16xf32>
+        %dot0 = hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : tensor<1x1x16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%dot0_init : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
+        %ub0 = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
+        %ub0_cast = memref.memory_space_cast %ub0 : memref<16x16xf32, #hivm.address_space<ub>> to memref<16x16xf32>
+        %t0 = bufferization.to_tensor %ub0_cast restrict writable : memref<16x16xf32>
+        hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%dot0 : tensor<1x1x16x16xf32>) outs(%ub0 : memref<16x16xf32, #hivm.address_space<ub>>)
+        scope.return %t0 : tensor<16x16xf32>
+      } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+
+      %s_mask = scope.scope : () -> tensor<16x16xf32> {
+        %e_init = tensor.empty() : tensor<16x16xf32>
+        %e = hivm.hir.vexp ins(%cube_s : tensor<16x16xf32>) outs(%e_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+        scope.return %e : tensor<16x16xf32>
+      } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+
+      %m_new = scope.scope : () -> tensor<16x16xf32> {
+        %m_init = tensor.empty() : tensor<16x16xf32>
+        %m = hivm.hir.vmax ins(%m_prev, %s_mask : tensor<16x16xf32>, tensor<16x16xf32>) outs(%m_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+        scope.return %m : tensor<16x16xf32>
+      } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+
+      %alpha = scope.scope : () -> tensor<16x16xf32> {
+        %a_init = tensor.empty() : tensor<16x16xf32>
+        %al = hivm.hir.vsub ins(%m_prev, %m_new : tensor<16x16xf32>, tensor<16x16xf32>) outs(%a_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+        scope.return %al : tensor<16x16xf32>
+      } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+
+      %p_copy = scope.scope : () -> tensor<1x1x16x16xf16> {
+        %f16_init = tensor.empty() : tensor<16x16xf16>
+        %f16 = hivm.hir.vcast ins(%m_new : tensor<16x16xf32>) outs(%f16_init : tensor<16x16xf16>) -> tensor<16x16xf16>
+        %f16_4d = tensor.expand_shape %f16 [[0, 1, 2], [3]] output_shape [1, 1, 16, 16] : tensor<16x16xf16> into tensor<1x1x16x16xf16>
+        %cbuf = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+        %t_cbuf = bufferization.to_tensor %cbuf restrict writable : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+        hivm.hir.copy ins(%f16_4d : tensor<1x1x16x16xf16>) outs(%cbuf : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>)
+        scope.return %t_cbuf : tensor<1x1x16x16xf16>
+      } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+
+      %cube_pv = scope.scope : () -> tensor<16x16xf32> {
+        %dot1_init = tensor.empty() : tensor<1x1x16x16xf32>
+        %dot1 = hivm.hir.mmadL1 ins(%p_copy, %b, %true, %c16, %c16, %c16 : tensor<1x1x16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%dot1_init : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
+        %ub1 = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
+        %ub1_cast = memref.memory_space_cast %ub1 : memref<16x16xf32, #hivm.address_space<ub>> to memref<16x16xf32>
+        %t1 = bufferization.to_tensor %ub1_cast restrict writable : memref<16x16xf32>
+        hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%dot1 : tensor<1x1x16x16xf32>) outs(%ub1 : memref<16x16xf32, #hivm.address_space<ub>>)
+        scope.return %t1 : tensor<16x16xf32>
+      } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+
+      %final_vec = scope.scope : () -> tensor<16x16xf32> {
+        %out_init = tensor.empty() : tensor<16x16xf32>
+        %out = hivm.hir.vadd ins(%alpha, %cube_pv : tensor<16x16xf32>, tensor<16x16xf32>) outs(%out_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+        scope.return %out : tensor<16x16xf32>
+      } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+
+      scf.yield %m_new : tensor<16x16xf32>
+    } {hivm.cv_pipelined_loop}
+    return %res : tensor<16x16xf32>
   }
 }

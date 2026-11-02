@@ -383,16 +383,16 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // separate shared scope. The loop must still be outlined in either branch.
 // CHECK-LABEL: func.func @outline_conditional_merge_then
 // CHECK: scf.for {{.*}} iter_args(%[[ACC:.*]] = {{.*}})
-// CHECK: %[[CUBE:.*]]:2 = scope.scope : () -> (tensor<16x16xf32>, i1) {
+// CHECK: %[[CUBE:.*]] = scope.scope : () -> tensor<16x16xf32> {
 // CHECK: %[[BUFFER:.*]] = bufferization.to_tensor
 // CHECK: scf.if
 // CHECK: hivm.hir.mmadL1
 // CHECK: hivm.hir.fixpipe
 // CHECK-NOT: scf.yield %[[ACC]]
-// CHECK: scope.return %[[BUFFER]], {{.*}} : tensor<16x16xf32>, i1
+// CHECK: scope.return %[[BUFFER]] : tensor<16x16xf32>
 // CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
 // CHECK: %[[MERGE:.*]] = scope.scope
-// CHECK: %[[SELECT:.*]] = arith.select %[[CUBE]]#1, %[[CUBE]]#0, %[[ACC]]
+// CHECK: %[[SELECT:.*]] = arith.select %{{.*}}, %[[CUBE]], %[[ACC]]
 // CHECK-NEXT: scope.return %[[SELECT]]
 // CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>}
 // CHECK: %[[VECTOR:.*]] = scope.scope
@@ -436,16 +436,16 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // separate shared scope. The loop must still be outlined in either branch.
 // CHECK-LABEL: func.func @outline_conditional_merge_else
 // CHECK: scf.for {{.*}} iter_args(%[[ACC:.*]] = {{.*}})
-// CHECK: %[[CUBE:.*]]:2 = scope.scope : () -> (tensor<16x16xf32>, i1) {
+// CHECK: %[[CUBE:.*]] = scope.scope : () -> tensor<16x16xf32> {
 // CHECK: %[[BUFFER:.*]] = bufferization.to_tensor
 // CHECK: scf.if
 // CHECK: hivm.hir.mmadL1
 // CHECK: hivm.hir.fixpipe
 // CHECK-NOT: scf.yield %[[ACC]]
-// CHECK: scope.return %[[BUFFER]], {{.*}} : tensor<16x16xf32>, i1
+// CHECK: scope.return %[[BUFFER]] : tensor<16x16xf32>
 // CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
 // CHECK: %[[MERGE:.*]] = scope.scope
-// CHECK: %[[SELECT:.*]] = arith.select %[[CUBE]]#1, %[[ACC]], %[[CUBE]]#0
+// CHECK: %[[SELECT:.*]] = arith.select %{{.*}}, %[[ACC]], %[[CUBE]]
 // CHECK-NEXT: scope.return %[[SELECT]]
 // CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>}
 // CHECK: %[[VECTOR:.*]] = scope.scope
@@ -483,26 +483,35 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
-// Counter storage must not be cloned without its initialization. Both core
-// consumers read scalar results from one shared state scope.
+// Counter storage must not be cloned without its initialization. Each counter
+// state scope outputs at most one result.
 // CHECK-LABEL: func.func @outline_conditional_counter
 // CHECK: scf.for
-// CHECK-NEXT: %[[STATE:.*]]:2 = scope.scope : () -> (i32, i32) {
-// CHECK: %[[COUNTER:.*]] = memref.alloca()
-// CHECK-NEXT: memref.store {{.*}}, %[[COUNTER]]
+// CHECK-NEXT: %[[COUNTER_SCOPE:.*]] = scope.scope : () -> memref<i32> {
+// CHECK-NEXT: %[[COUNTER:.*]] = memref.alloca()
+// CHECK-NEXT: scope.return %[[COUNTER]] : memref<i32>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>}
+// CHECK-NEXT: scope.scope : () -> () {
+// CHECK-NEXT: memref.store {{.*}}, %[[COUNTER_SCOPE]][]
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>}
+// CHECK-NEXT: %[[BEFORE_SCOPE:.*]] = scope.scope : () -> i32 {
 // CHECK: %[[BEFORE:.*]] = scf.if
-// CHECK: %[[READ:.*]] = memref.load %[[COUNTER]]
+// CHECK: %[[READ:.*]] = memref.load %[[COUNTER_SCOPE]][]
 // CHECK: %[[INC:.*]] = arith.addi %[[READ]]
-// CHECK-NEXT: memref.store %[[INC]], %[[COUNTER]]
+// CHECK-NEXT: memref.store %[[INC]], %[[COUNTER_SCOPE]][]
 // CHECK-NEXT: scf.yield %[[READ]]
-// CHECK: %[[AFTER:.*]] = memref.load %[[COUNTER]]
-// CHECK-NEXT: scope.return %[[BEFORE]], %[[AFTER]]
+// CHECK: scope.return %[[BEFORE]] : i32
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>}
+// CHECK-NEXT: %[[AFTER_SCOPE:.*]] = scope.scope : () -> i32 {
+// CHECK-NEXT: %[[AFTER:.*]] = memref.load %[[COUNTER_SCOPE]][]
+// CHECK-NEXT: scope.return %[[AFTER]] : i32
 // CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>}
 // CHECK-NOT: memref.alloca
-// CHECK: arith.cmpi eq, %[[STATE]]#0
+// CHECK: arith.cmpi eq, %[[BEFORE_SCOPE]]
 // CHECK: hivm.hir.mmadL1
 // CHECK-NOT: memref.alloca
-// CHECK: arith.cmpi eq, %[[STATE]]#1
+// CHECK: arith.cmpi eq, %[[AFTER_SCOPE]]
 // CHECK: hivm.hir.vadd
 // CHECK-NOT: memref.alloca
 // CHECK: return
@@ -714,6 +723,46 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
         scf.yield %value : tensor<32x32xf32>
       }
       hivm.hir.store ins(%selected : tensor<32x32xf32>) outs(%dst : memref<32x32xf32>)
+    }
+    return
+  }
+}
+
+// -----
+
+// Scalar values loaded via memref.load from a loop-invariant memref are cloned
+// into each consuming scope instead of being returned as scope results.
+// CHECK-LABEL: func.func @outline_distribute_memref_load
+// CHECK: scf.for
+// CHECK-NEXT: %[[CUBE:.*]] = scope.scope : () -> tensor<32x32xf32> {
+// CHECK: memref.reinterpret_cast
+// CHECK: memref.load
+// CHECK: hivm.hir.fixpipe
+// CHECK: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT: scope.scope : () -> () {
+// CHECK: memref.reinterpret_cast
+// CHECK: memref.load
+// CHECK: hivm.hir.store ins(%[[CUBE]]
+// CHECK: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK: hivm.cv_pipelined_loop
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @outline_distribute_memref_load(
+      %idx_buf: memref<16xi64>, %dot: tensor<2x2x16x16xf32>, %dst: memref<32x32xf32>, %n: index)
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %n step %c1 {
+      %view = memref.reinterpret_cast %idx_buf to offset: [%i], sizes: [1], strides: [1] : memref<16xi64> to memref<1xi64, strided<[1], offset: ?>>
+      %idx_i64 = memref.load %view[%c0] : memref<1xi64, strided<[1], offset: ?>>
+      %idx = arith.index_cast %idx_i64 : i64 to index
+      %buf = memref.alloc() : memref<32x32xf32, #hivm.address_space<ub>>
+      %sub = memref.subview %buf[%idx, 0] [32, 32] [1, 1] : memref<32x32xf32, #hivm.address_space<ub>> to memref<32x32xf32, strided<[32, 1], offset: ?>, #hivm.address_space<ub>>
+      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%dot : tensor<2x2x16x16xf32>) outs(%sub : memref<32x32xf32, strided<[32, 1], offset: ?>, #hivm.address_space<ub>>)
+      %t = bufferization.to_tensor %buf restrict writable : memref<32x32xf32, #hivm.address_space<ub>>
+      %dst_sub = memref.subview %dst[%idx, 0] [32, 32] [1, 1] : memref<32x32xf32> to memref<32x32xf32, strided<[32, 1], offset: ?>>
+      hivm.hir.store ins(%t : tensor<32x32xf32>) outs(%dst_sub : memref<32x32xf32, strided<[32, 1], offset: ?>>)
     }
     return
   }
