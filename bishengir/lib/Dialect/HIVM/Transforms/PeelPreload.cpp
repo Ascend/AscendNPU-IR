@@ -350,9 +350,35 @@ static void expandMultiBufferCastsInBlock(RewriterBase &rewriter, Block *block,
   }
 }
 
+/// True when `block` yields a multi-addr pointer_cast. That view is consumed
+/// by the parent iteration, so it must use the parent counter.
+static bool yieldsMultiBufferCast(Block *block) {
+  auto loop = dyn_cast<LoopLikeOpInterface>(block->getParentOp());
+  if (!loop)
+    return false;
+  return llvm::any_of(loop.getYieldedValues(), [&](Value yielded) {
+    auto pc = dyn_cast_or_null<PointerCastOp>(yielded.getDefiningOp());
+    return pc && pc->getBlock() == block && needsMultiBufferExpansion(pc);
+  });
+}
+
+/// Share `parentAlloca` with a nested loop that only yields a parent buffer.
+/// A loop with its own counter keeps a private alloca.
+static Value sharedNestedAlloca(Block *body, Value parentAlloca) {
+  if (!parentAlloca)
+    return {};
+  bool hasCounter = llvm::any_of(body->without_terminator(), [](Operation &op) {
+    return isa<MultiBufferCounterOp>(op);
+  });
+  if (hasCounter || !yieldsMultiBufferCast(body))
+    return {};
+  return parentAlloca;
+}
+
 /// Lower counters, expand multi-addr casts via the same counter, and strip
-/// multi_buffer marks in `block`. Nested loop bodies get their own allocas (as
-/// LowerMultiBufferCounter would). Nested if reuses `sharedAlloca`.
+/// multi_buffer marks in `block`. Nested loops with their own counter get a
+/// private alloca. A nested loop that yields a parent buffer reuses
+/// `sharedAlloca` and does not increment it. Nested if reuses `sharedAlloca`.
 static void processMultiBufferInBlock(RewriterBase &rewriter, Block *block,
                                       Value sharedAlloca, func::FuncOp funcOp) {
   Value alloca = sharedAlloca;
@@ -364,6 +390,10 @@ static void processMultiBufferInBlock(RewriterBase &rewriter, Block *block,
         auto pc = dyn_cast<PointerCastOp>(op);
         return pc && needsMultiBufferExpansion(pc);
       });
+  // Borrowed parent buffer: read the parent counter, do not bump it per
+  // inner trip and do not allocate a second counter.
+  bool borrowParent =
+      sharedAlloca && !hasTopLevelCounter && yieldsMultiBufferCast(block);
   if ((hasTopLevelCounter || hasTopLevelMultiCast) && !alloca)
     alloca = createCounterAlloca(rewriter, block->front().getLoc(), funcOp);
 
@@ -372,8 +402,10 @@ static void processMultiBufferInBlock(RewriterBase &rewriter, Block *block,
     OpBuilder::InsertionGuard bodyGuard(rewriter);
     rewriter.setInsertionPointToStart(block);
     iterCounter = loadCounter(rewriter, block->front().getLoc(), alloca);
-    rewriter.setInsertionPoint(block->getTerminator());
-    incrementCounter(rewriter, block->front().getLoc(), alloca, iterCounter);
+    if (!borrowParent) {
+      rewriter.setInsertionPoint(block->getTerminator());
+      incrementCounter(rewriter, block->front().getLoc(), alloca, iterCounter);
+    }
   }
   expandMultiBufferCastsInBlock(rewriter, block, iterCounter);
 
@@ -387,16 +419,18 @@ static void processMultiBufferInBlock(RewriterBase &rewriter, Block *block,
   for (annotation::MarkOp mark : marks)
     stripMultiBufferMarks(rewriter, mark.getSrc());
 
-  // Nested regions: each loop body owns an independent counter alloca.
   for (Operation &op : block->without_terminator()) {
     if (auto nestFor = dyn_cast<scf::ForOp>(&op)) {
       processMultiBufferInBlock(rewriter, nestFor.getBody(),
-                                /*sharedAlloca=*/{}, funcOp);
+                                sharedNestedAlloca(nestFor.getBody(), alloca),
+                                funcOp);
     } else if (auto nestWhile = dyn_cast<scf::WhileOp>(&op)) {
-      processMultiBufferInBlock(rewriter, &nestWhile.getBefore().front(),
-                                /*sharedAlloca=*/{}, funcOp);
-      processMultiBufferInBlock(rewriter, &nestWhile.getAfter().front(),
-                                /*sharedAlloca=*/{}, funcOp);
+      processMultiBufferInBlock(
+          rewriter, &nestWhile.getBefore().front(),
+          sharedNestedAlloca(&nestWhile.getBefore().front(), alloca), funcOp);
+      processMultiBufferInBlock(
+          rewriter, &nestWhile.getAfter().front(),
+          sharedNestedAlloca(&nestWhile.getAfter().front(), alloca), funcOp);
     } else if (auto nestIf = dyn_cast<scf::IfOp>(&op)) {
       if (!nestIf.getThenRegion().empty())
         processMultiBufferInBlock(rewriter, &nestIf.getThenRegion().front(),
@@ -495,13 +529,18 @@ static void clonePeeledIteration(RewriterBase &rewriter, scf::ForOp forOp,
     if (counterAlloca && (isa<scf::ForOp, scf::WhileOp, scf::IfOp>(op))) {
       Operation *cloned = rewriter.clone(op, mapping);
       if (auto nestFor = dyn_cast<scf::ForOp>(cloned))
-        processMultiBufferInBlock(rewriter, nestFor.getBody(),
-                                  /*sharedAlloca=*/{}, funcOp);
+        processMultiBufferInBlock(
+            rewriter, nestFor.getBody(),
+            sharedNestedAlloca(nestFor.getBody(), counterAlloca), funcOp);
       else if (auto nestWhile = dyn_cast<scf::WhileOp>(cloned)) {
-        processMultiBufferInBlock(rewriter, &nestWhile.getBefore().front(),
-                                  /*sharedAlloca=*/{}, funcOp);
-        processMultiBufferInBlock(rewriter, &nestWhile.getAfter().front(),
-                                  /*sharedAlloca=*/{}, funcOp);
+        processMultiBufferInBlock(
+            rewriter, &nestWhile.getBefore().front(),
+            sharedNestedAlloca(&nestWhile.getBefore().front(), counterAlloca),
+            funcOp);
+        processMultiBufferInBlock(
+            rewriter, &nestWhile.getAfter().front(),
+            sharedNestedAlloca(&nestWhile.getAfter().front(), counterAlloca),
+            funcOp);
       } else if (auto nestIf = dyn_cast<scf::IfOp>(cloned)) {
         if (!nestIf.getThenRegion().empty())
           processMultiBufferInBlock(rewriter, &nestIf.getThenRegion().front(),
