@@ -158,7 +158,8 @@ inline bool hasPtr11CompareSyncForPattern(ModuleOp moduleOp) {
         }
         break;
       case kLookingForSync:
-        if (isa<hivm::SyncBlockSetOp, hivm::SyncIntraBlockSetOp>(blockOp)) {
+        if (isa<hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
+                hivm::SyncIntraBlockSetOp, hivm::SyncIntraBlockWaitOp>(blockOp)) {
           if (++syncCount >= 6)
             state = kLookingForFor;
         }

@@ -450,9 +450,7 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
 }
 
 static bool isSynchronizationOp(Operation *op) {
-  return isa<hivm::SetFlagOp, hivm::WaitFlagOp, hivm::PipeBarrierOp,
-             hivm::SyncBlockOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
-             hivm::SyncIntraBlockSetOp, hivm::SyncIntraBlockWaitOp>(op);
+  return op->hasTrait<OpTrait::HIVMSyncOpTrait>();
 }
 
 // A single stage needs no fill/drain iteration. Retain the guarded expansion

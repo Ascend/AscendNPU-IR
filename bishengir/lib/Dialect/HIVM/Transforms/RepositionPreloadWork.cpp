@@ -956,10 +956,7 @@ static bool recurrenceCanCross(Operation *op, ArrayRef<Value> inputs,
     return llvm::all_of(scope.getRegion().front(), [&](Operation &nested) {
       return recurrenceCanCross(&nested, inputs, aliases);
     });
-  if (op->getNumRegions() ||
-      isa<hivm::SetFlagOp, hivm::WaitFlagOp, hivm::PipeBarrierOp,
-          hivm::SyncBlockOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
-          hivm::SyncIntraBlockSetOp, hivm::SyncIntraBlockWaitOp>(op))
+  if (op->getNumRegions() || op->hasTrait<OpTrait::HIVMSyncOpTrait>())
     return false;
   auto effects = getEffectsRecursively(op);
   return effects && llvm::all_of(*effects, [&](const auto &effect) {

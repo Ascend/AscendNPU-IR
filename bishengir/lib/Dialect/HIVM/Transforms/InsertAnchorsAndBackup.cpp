@@ -100,9 +100,7 @@ private:
   void eraseBackupFuncOps(ModuleOp mod);
 
   bool ignoreOp(Operation *op) const {
-    return isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
-               hivm::SyncIntraBlockSetOp, hivm::SyncIntraBlockWaitOp,
-               hivm::SetFlagOp, hivm::WaitFlagOp, hivm::PipeBarrierOp>(op);
+    return op->hasTrait<OpTrait::HIVMSyncOpTrait>();
   }
 
   bool isBlockFrontOp(Operation *op) const {
