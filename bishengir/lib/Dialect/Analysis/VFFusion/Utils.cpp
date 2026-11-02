@@ -21,7 +21,6 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
-#include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -320,44 +319,6 @@ std::optional<size_t> getReductionDim(Operation *op) {
   return std::nullopt;
 }
 
-// Estimate whether fusing elementwise producers into the reduction would create
-// a generic with more than 12 elementwise operations and more than 6 inputs.
-// Outline such reductions into separate functions to avoid performance
-// degradations.
-bool isExpensiveReductionFusion(linalg::LinalgOp op) {
-  SmallPtrSet<Operation *, 16> seen;
-  SmallPtrSet<Value, 8> inputs;
-  SmallVector<linalg::LinalgOp> worklist{op};
-  unsigned numFusedOps = 0;
-  while (!worklist.empty()) {
-    linalg::LinalgOp current = worklist.pop_back_val();
-    if (!seen.insert(current.getOperation()).second)
-      continue;
-    if (current != op && !isa<linalg::BroadcastOp>(current.getOperation()))
-      ++numFusedOps;
-    for (Value input : current.getDpsInputs()) {
-      Operation *def = input.getDefiningOp();
-      if (def && def->hasTrait<OpTrait::ConstantLike>())
-        continue;
-
-      auto producer = dyn_cast_or_null<linalg::LinalgOp>(def);
-      if (producer && producer->getBlock() == op->getBlock() &&
-          linalg::isElementwise(producer) &&
-          llvm::all_of(producer->getUsers(), [&](Operation *user) {
-            return user == current.getOperation() ||
-                   isa<annotation::MarkOp>(user);
-          }))
-        worklist.push_back(producer);
-      else
-        inputs.insert(input);
-    }
-  }
-
-  constexpr unsigned maxNumFusedOps = 12;
-  constexpr unsigned maxNumInputs = 6;
-  return numFusedOps > maxNumFusedOps && inputs.size() > maxNumInputs;
-}
-
 static bool shouldSkipSumReduction(Operation *op,
                                    const VFFusionKindOption &option) {
   auto linalgOp = dyn_cast<linalg::LinalgOp>(op);
@@ -398,16 +359,11 @@ static bool shouldSkipSumReduction(Operation *op,
         if (auto module = op->getParentOfType<ModuleOp>();
             module && module->hasAttr(hfusion::kLegacyTreeReductionScopeAttr))
           return true;
-
-        // Skip reductions whose producer fusion would exceed the budget.
-        if (isExpensiveReductionFusion(linalgOp))
-          return true;
-
-        // Keep direct register trees isolated. Other supported RA reductions
-        // can fuse with their producers before AutoVectorizeV2 builds the
-        // reshape-based tree. Unsupported reductions retain RA isolation.
+        // Only structurally supported reductions beyond the size cutoff take
+        // the regular fusion path. Keep reductions rejected by the selector
+        // on the established isolated 2-D RA path.
         return !hfusion::isSupportedTreeReductionCandidate(op) ||
-               hfusion::shouldUseRegisterTreeReduction(op);
+               hfusion::shouldUseTreeReduction(op);
       }
       LLVM_DEBUG(llvm::dbgs()
                  << " -> skip fusion (2D RA)\n");

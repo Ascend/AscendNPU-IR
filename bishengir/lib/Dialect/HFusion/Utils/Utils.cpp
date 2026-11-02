@@ -1940,12 +1940,15 @@ bool hfusion::shouldUseRegisterTreeReduction(Operation *op) {
     return false;
 
   if (auto module = op->getParentOfType<ModuleOp>();
-      module && module->hasAttr(kLegacyTreeReductionScopeAttr))
+      module && (module->hasAttr(kRegularTreeReductionScopeAttr) ||
+                 module->hasAttr(kLegacyTreeReductionScopeAttr)))
     return false;
 
   // VFFusion freezes this decision on the original kernel graph before it
   // starts outlining.  Honor that stable decision after cloning instead of
   // recomputing a scope budget on a partially rewritten call graph.
+  if (op->hasAttr(kRegularTreeReductionSelectedAttr))
+    return false;
   if (op->hasAttr(kRegisterTreeReductionSelectedAttr))
     return true;
 
@@ -1965,7 +1968,7 @@ bool hfusion::shouldUseRegisterTreeReduction(Operation *op) {
 
   // A single register tree of at most 64 leaves maps to one vector load per
   // row and one balanced add tree.  Larger trees need a hierarchical
-  // implementation and use the reshape-based tree instead.
+  // implementation and are left to the regular fused lowering.
   constexpr int64_t maxRegisterTreeReductionSize = 64;
   if (reductionSize > maxRegisterTreeReductionSize)
     return false;
@@ -1973,9 +1976,9 @@ bool hfusion::shouldUseRegisterTreeReduction(Operation *op) {
   // Replacing a marked loop is intentionally a single-reduction transform.
   // Keeping more than one direct tree in the same vector function would
   // require either separate loops (losing horizontal fusion) or a multi-result
-  // rewrite. Such regions use separate reshape-based trees instead.  This is
-  // also the conservative register-pressure bound: one direct tree per outlined
-  // function.
+  // rewrite.  Leave such regions on the compact regular fused lowering until
+  // that rewrite exists.  This is also the conservative register-pressure
+  // bound: one direct tree per outlined function.
   constexpr int64_t maxRegisterTreeReductionCost = 128;
   unsigned candidateCount = 0;
   unsigned totalReductionCount = 0;
@@ -2099,8 +2102,8 @@ bool hfusion::shouldUseLegacyTreeReductionScope(Operation *op) {
   // single-loop direct rewrite safely. Preserve the established TreeReduceV2
   // route when every reduction in the scope is such a candidate (the
   // prepare_wy shape), rather than changing its summation order through
-  // regular fusion. A scope which also contains other reductions must use
-  // AutoVectorizeV2 trees: TreeReduceV2 rewrites the surrounding loop and is
+  // regular fusion. A scope which also contains other reductions must remain
+  // on the regular path: TreeReduceV2 rewrites the surrounding loop and is
   // not safe for that mixed graph. Retain the original one-candidate mixed
   // scope behavior for compatibility.
   bool allReductionsAreRegisterCandidates =
@@ -2147,14 +2150,25 @@ bool hfusion::shouldUseLegacyTreeReductionScope(Operation *op) {
 
 bool hfusion::shouldUseMaterializedTreeReduction(Operation *op) {
   if (auto module = op->getParentOfType<ModuleOp>();
-      module && module->hasAttr(kLegacyTreeReductionScopeAttr))
+      module && (module->hasAttr(kRegularTreeReductionScopeAttr) ||
+                 module->hasAttr(kLegacyTreeReductionScopeAttr)))
     return false;
 
-  // Canonical reductions rejected by the direct-register budget, as well as
-  // computed/projected payloads, use the reshape-based tree. Large reductions
-  // are handled by its bounded radix-16 hierarchy.
-  return isSupportedTreeReductionCandidate(op) &&
-         !shouldUseRegisterTreeReduction(op);
+  if (!isSupportedTreeReductionCandidate(op) ||
+      isRegisterTreeReductionCandidate(op))
+    return false;
+
+  auto linalgOp = cast<linalg::LinalgOp>(op);
+  SmallVector<unsigned> reductionDims;
+  linalgOp.getReductionDims(reductionDims);
+  int64_t reductionSize = linalgOp.getStaticLoopRanges()[reductionDims.front()];
+
+  // Retain the general reshape-based implementation only for the small,
+  // non-canonical reductions that the direct register builder cannot express.
+  // Its temporary levels are bounded here and preserve the feature's support
+  // for computed/projected reduction payloads.
+  constexpr int64_t maxMaterializedTreeReductionSize = 16;
+  return reductionSize <= maxMaterializedTreeReductionSize;
 }
 
 bool hfusion::shouldUseTreeReduction(Operation *op) {

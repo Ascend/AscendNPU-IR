@@ -18,6 +18,7 @@
 // NEW-LABEL: func.func private @ra64_fused_0(
 // NEW-SAME: %{{.*}}: tensor<64x8xf32>, %{{.*}}: tensor<8xf32>)
 // NEW-NEXT: %{{.*}} = linalg.reduce
+// NEW-SAME: hfusion.regular_tree_reduction_selected
 // NEW-LABEL: func.func private @ra65_fused_0(
 // NEW: linalg.elemwise_binary
 // NEW: linalg.fill

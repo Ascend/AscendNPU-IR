@@ -441,9 +441,6 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   preVecOptions.maxFusedElementwiseOps =
       hfusionOptions.hfusionMaxFusedElementwiseOps;
   preVecOptions.enableVFStackLimit = hfusionOptions.enableVFStackLimit;
-  preVecOptions.enableNewTreeReducePolicy =
-      hfusionOptions.enableAutoVectorizeV2 && hfusionOptions.enableTreeReduce &&
-      !hfusionOptions.enableTreeReduceV2 && treeReduceFlags.enableRA;
   pm.nest<func::FuncOp>().addPass(
       createPreVectorizationFusionPass(preVecOptions));
   pm.nest<func::FuncOp>().addPass(createPrepareI1Nx1ForVectorizationPass());
