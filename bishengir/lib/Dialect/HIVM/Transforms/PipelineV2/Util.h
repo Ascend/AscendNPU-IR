@@ -30,6 +30,16 @@ std::optional<TCoreType> queryConcreteCoreType(Operation *op);
 /// Return the `hivm.loop_core_type` attribute value of `scope` if present.
 std::optional<TCoreType> getScopeCoreType(ScopeOp scope);
 
+/// Trace `v` backward through view-like, reshape, cast, bufferization, and loop
+/// iter_arg operations to its underlying defining value.
+Value traceValueDef(Value v);
+
+/// Trace `v` backward to its underlying `memref.alloc` operation if present.
+memref::AllocOp traceAlloc(Value v);
+
+/// Return true if `copy` is an `hivm.hir.copy` writing to an L1 (`cbuf`) alloc.
+bool isCrossCoreCopy(Operation *copy);
+
 /// Return true if `ct1` and `ct2` can be merged into a single core scope
 /// (`CUBE` and `VECTOR` cannot be merged together; `CUBE_AND_VECTOR` and
 /// `CUBE_OR_VECTOR` are compatible with any core type).

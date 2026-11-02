@@ -204,6 +204,9 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %res : tensor<16x16xf32>
   }
 }
+
+// -----
+
 // Nested mixed loops remain inside the original conditional. Outlining the
 // inner loop must not make its internal scope results escape into an
 // enclosing loop that the outliner does not support.
