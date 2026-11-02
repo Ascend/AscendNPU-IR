@@ -1772,8 +1772,10 @@ void AutoVectorizeV2::runOnOperation() {
   // Cost-selection attributes are internal communication between VFFusion
   // and AutoVectorizeV2.  Do not leak them into the lowered module.
   op->removeAttr(hfusion::kTreeReductionSelectionFrozenAttr);
+  op->removeAttr(hfusion::kRegularTreeReductionScopeAttr);
   op.walk([](Operation *nestedOp) {
     nestedOp->removeAttr(hfusion::kRegisterTreeReductionSelectedAttr);
+    nestedOp->removeAttr(hfusion::kRegularTreeReductionSelectedAttr);
   });
 }
 
