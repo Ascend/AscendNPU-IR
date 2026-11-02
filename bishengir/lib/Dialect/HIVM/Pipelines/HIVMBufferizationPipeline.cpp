@@ -102,6 +102,8 @@ void bufferizationPipelineBase(OpPassManager &pm, bool isRegBased) {
     OutlineScopeOptions outlineScopeOptions;
     outlineScopeOptions.outlineMarkedScopesOnly = true;
     pm.addPass(scope::createOutlineScopePass(outlineScopeOptions));
+    pm.nest<func::FuncOp>().addPass(
+        createVerifyVectorFunctionTopLevelCopyPass());
   }
 }
 

@@ -179,6 +179,10 @@ std::unique_ptr<Pass> createOutlineAllocInVFPass();
 /// functions into enclosing loop iter_args.
 std::unique_ptr<Pass> createNormalizeTmpBufferInVfPass();
 
+/// Create a post-bufferization checkpoint that fails when a vector function
+/// holds a memref.copy in its top-level block.
+std::unique_ptr<Pass> createVerifyVectorFunctionTopLevelCopyPass();
+
 /// Create a pass to rewrite bufferization.alloc_tensor(copy...) into a
 /// bufferization.alloc_tensor + hivm.hir.copy pair.
 std::unique_ptr<Pass> createDecomposeAllocTensorCopyPass();

@@ -645,6 +645,20 @@ def NormalizeTmpBufferInVf
                            "tensor::TensorDialect"];
 }
 
+def VerifyVectorFunctionTopLevelCopy
+    : HIVMPass<"hivm-verify-vector-function-top-level-copy", "func::FuncOp"> {
+  let summary = "Verify that vector functions have no top-level memref.copy";
+  let description = [{
+    Post-bufferization IR checkpoint for `hivm.vector_function` functions: a
+    `memref.copy` placed directly in the function's top-level block is not
+    supported by the downstream lowering pipeline. The pass emits an error and
+    fails when such a copy is found, instead of leaving it to fail later with
+    a less actionable error. The IR is never modified.
+  }];
+  let constructor = "mlir::hivm::createVerifyVectorFunctionTopLevelCopyPass()";
+  let dependentDialects = ["memref::MemRefDialect"];
+}
+
 def ConstantizeBufferSize
     : HIVMPass<"hivm-constantize-buffer-size", "func::FuncOp"> {
   let summary = "Constantize dynamic shape buffers from index bounds";
