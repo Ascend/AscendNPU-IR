@@ -106,7 +106,12 @@ public:
   // cross-core boundaries remain visible.
   void applyLoopCarriedDepGroupingRule();
 
-  // Rule 2: Starting from cross-core transfers (fixpipe -> UB or copy -> CBUF),
+  // Rule 2: Within each `{cv_merged_scope}`, merge compatible scopes along
+  // intra-iteration dependencies, and if the `{cv_merged_scope}` reduces to a
+  // single inner scope, collapse it into a single work item.
+  void applyMergedScopeSameCoreRule();
+
+  // Rule 3: Starting from cross-core transfers (fixpipe -> UB or copy -> CBUF),
   // traverse backward along intra-iteration scope dependencies within the same
   // parent block and merge compatible scopes, stopping traversal at any scope
   // that has an incompatible dependency.
@@ -116,9 +121,11 @@ private:
   static bool isCrossCoreTransferOp(Operation *op);
   static bool hasCrossCoreTransfer(ScopeOp scope);
   static bool isEligibleForCoreMerge(ScopeOp scope);
+  static void collapseSingleChildMergedScope(ScopeOp outerScope);
 
   SetVector<ScopeOp> getIntraIterScopeDeps(ScopeOp scope);
   ScopeOp mergeScopeGroup(SmallPtrSetImpl<Operation *> &group);
+  ScopeOp tryMergeBackwardFromSeed(ScopeOp seed);
 
   scf::ForOp loopOp;
 };
@@ -554,6 +561,36 @@ bool LoopScopeMerger::isEligibleForCoreMerge(ScopeOp scope) {
          getScopeCoreType(scope).has_value();
 }
 
+void LoopScopeMerger::collapseSingleChildMergedScope(ScopeOp outerScope) {
+  if (!outerScope || !outerScope->hasAttr(kCVMergedScopeAttrName))
+    return;
+  Block &outerBody = outerScope.getRegion().front();
+  if (!llvm::hasSingleElement(outerBody.without_terminator()))
+    return;
+  auto innerScope = dyn_cast<ScopeOp>(&outerBody.front());
+  if (!innerScope || !isEligibleForCoreMerge(innerScope))
+    return;
+
+  auto outerReturn = cast<scope::ReturnOp>(outerBody.getTerminator());
+  Block &innerBody = innerScope.getRegion().front();
+  auto innerReturn = cast<scope::ReturnOp>(innerBody.getTerminator());
+
+  if (auto coreType = getScopeCoreType(innerScope)) {
+    outerScope->setAttr(kPipelinedLoopCoreTypeAttrName,
+                        TCoreTypeAttr::get(outerScope.getContext(), *coreType));
+  }
+  outerScope->removeAttr(kCVMergedScopeAttrName);
+
+  for (auto [res, retVal] :
+       llvm::zip(innerScope.getResults(), innerReturn.getOperands()))
+    res.replaceAllUsesWith(retVal);
+
+  outerBody.getOperations().splice(outerReturn->getIterator(),
+                                   innerBody.getOperations(), innerBody.begin(),
+                                   innerReturn->getIterator());
+  innerScope.erase();
+}
+
 SetVector<ScopeOp> LoopScopeMerger::getIntraIterScopeDeps(ScopeOp scope) {
   SetVector<ScopeOp> deps;
   Block *parentBlock = scope->getBlock();
@@ -718,6 +755,84 @@ ScopeOp LoopScopeMerger::mergeScopeGroup(SmallPtrSetImpl<Operation *> &group) {
   return merged;
 }
 
+ScopeOp LoopScopeMerger::tryMergeBackwardFromSeed(ScopeOp seed) {
+  Block *seedBlock = seed->getBlock();
+  auto seedCore = getScopeCoreType(seed);
+  if (!seedBlock || !seedCore)
+    return ScopeOp();
+  TCoreType targetCore = *seedCore;
+  SmallPtrSet<Operation *, 16> mergeSet = {seed.getOperation()};
+  SmallVector<ScopeOp> worklist = {seed};
+
+  while (!worklist.empty()) {
+    ScopeOp curr = worklist.pop_back_val();
+    SetVector<ScopeOp> deps = getIntraIterScopeDeps(curr);
+
+    bool hasIncompatibleDep = llvm::any_of(deps, [&](ScopeOp dep) {
+      if (dep->getBlock() != seedBlock || !isEligibleForCoreMerge(dep))
+        return false;
+      auto depCore = getScopeCoreType(dep);
+      return depCore && !areCompatibleCoreTypes(targetCore, *depCore);
+    });
+    if (hasIncompatibleDep)
+      continue;
+
+    for (ScopeOp dep : deps) {
+      if (dep->getBlock() != seedBlock || !isEligibleForCoreMerge(dep))
+        continue;
+      auto depCore = getScopeCoreType(dep);
+      if (!depCore)
+        continue;
+      FailureOr<TCoreType> newTarget =
+          resolveMergedCoreType(targetCore, *depCore);
+      if (failed(newTarget))
+        continue;
+      targetCore = *newTarget;
+      if (mergeSet.insert(dep.getOperation()).second)
+        worklist.push_back(dep);
+    }
+  }
+
+  if (mergeSet.size() <= 1)
+    return ScopeOp();
+  return mergeScopeGroup(mergeSet);
+}
+
+void LoopScopeMerger::applyMergedScopeSameCoreRule() {
+  SmallVector<ScopeOp> mergedScopes;
+  for (ScopeOp scope : loopOp.getBody()->getOps<ScopeOp>()) {
+    if (scope->hasAttr(kCVMergedScopeAttrName))
+      mergedScopes.push_back(scope);
+  }
+
+  for (ScopeOp outerScope : mergedScopes) {
+    DenseSet<Operation *> processedSeeds;
+    while (true) {
+      ScopeOp seed;
+      outerScope->walk<WalkOrder::PreOrder>([&](Operation *op) {
+        if (op != outerScope.getOperation() && isa<scf::ForOp>(op))
+          return WalkResult::skip();
+        if (auto scope = dyn_cast<ScopeOp>(op)) {
+          if (scope != outerScope &&
+              !processedSeeds.contains(scope.getOperation()) &&
+              isEligibleForCoreMerge(scope)) {
+            seed = scope;
+            return WalkResult::interrupt();
+          }
+        }
+        return WalkResult::advance();
+      });
+      if (!seed)
+        break;
+
+      processedSeeds.insert(seed.getOperation());
+      if (ScopeOp merged = tryMergeBackwardFromSeed(seed))
+        processedSeeds.insert(merged.getOperation());
+    }
+    collapseSingleChildMergedScope(outerScope);
+  }
+}
+
 void LoopScopeMerger::applyCrossCoreTransferBackwardRule() {
   DenseSet<Operation *> processedSeeds;
   while (true) {
@@ -738,47 +853,8 @@ void LoopScopeMerger::applyCrossCoreTransferBackwardRule() {
       break;
 
     processedSeeds.insert(seed.getOperation());
-    Block *seedBlock = seed->getBlock();
-    auto seedCore = getScopeCoreType(seed);
-    if (!seedBlock || !seedCore)
-      continue;
-    TCoreType targetCore = *seedCore;
-    SmallPtrSet<Operation *, 16> mergeSet = {seed.getOperation()};
-    SmallVector<ScopeOp> worklist = {seed};
-
-    while (!worklist.empty()) {
-      ScopeOp curr = worklist.pop_back_val();
-      SetVector<ScopeOp> deps = getIntraIterScopeDeps(curr);
-
-      bool hasIncompatibleDep = llvm::any_of(deps, [&](ScopeOp dep) {
-        if (dep->getBlock() != seedBlock || !isEligibleForCoreMerge(dep))
-          return false;
-        auto depCore = getScopeCoreType(dep);
-        return depCore && !areCompatibleCoreTypes(targetCore, *depCore);
-      });
-      if (hasIncompatibleDep)
-        continue;
-
-      for (ScopeOp dep : deps) {
-        if (dep->getBlock() != seedBlock || !isEligibleForCoreMerge(dep))
-          continue;
-        auto depCore = getScopeCoreType(dep);
-        if (!depCore)
-          continue;
-        FailureOr<TCoreType> newTarget =
-            resolveMergedCoreType(targetCore, *depCore);
-        if (failed(newTarget))
-          continue;
-        targetCore = *newTarget;
-        if (mergeSet.insert(dep.getOperation()).second)
-          worklist.push_back(dep);
-      }
-    }
-
-    if (mergeSet.size() > 1) {
-      if (ScopeOp merged = mergeScopeGroup(mergeSet))
-        processedSeeds.insert(merged.getOperation());
-    }
+    if (ScopeOp merged = tryMergeBackwardFromSeed(seed))
+      processedSeeds.insert(merged.getOperation());
   }
 }
 
@@ -794,6 +870,7 @@ void LoopScopeMerger::run(ArrayRef<MergeRuleFn> rules) {
 void MergeCVScopesPass::runOnOperation() {
   static constexpr LoopScopeMerger::MergeRuleFn kDefaultRuleOrder[] = {
       &LoopScopeMerger::applyLoopCarriedDepGroupingRule,
+      &LoopScopeMerger::applyMergedScopeSameCoreRule,
       &LoopScopeMerger::applyCrossCoreTransferBackwardRule,
   };
 

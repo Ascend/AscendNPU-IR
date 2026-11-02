@@ -121,6 +121,7 @@ private:
 
   // IR rewriting steps
   LogicalResult rewriteForOp(scf::ForOp origForOp);
+  LogicalResult verifyOutlinedScopes(scf::ForOp outlinedForOp) const;
 
   Operation *loopOp;
   MLIRContext *ctx;
@@ -343,6 +344,11 @@ bool CVScopeOutliner::canCloneOpInWorkItem(Operation *op,
   if (isCoreOp(op) || isa<memref::AllocOp, AllocWorkspaceOp,
                           bufferization::ToTensorOp, annotation::MarkOp>(op))
     return false;
+  if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
+    Operation *memrefDef = loadOp.getMemRef().getDefiningOp();
+    return !(memrefDef && memrefDef->hasAttr(kNormalizeMatmulCounterAttr)) &&
+           !getRootAlloc(loadOp.getMemRef());
+  }
   if (!isMemoryEffectFree(op))
     return false;
   if (isViewLikeMemRefOp(op) && op->getNumOperands() > 0 &&
@@ -792,17 +798,14 @@ LogicalResult CVScopeOutliner::sortWorkItems() {
 }
 
 LogicalResult CVScopeOutliner::collectScalarState() {
-  // Keep a counter's initialization, updates and reads together. Export the
+  // Keep a counter's initialization, updates and reads ordered. Export the
   // scalar reads to consumers instead of cloning uninitialized allocations.
   SmallVector<Operation *> pending;
   for (auto alloca :
        cast<scf::ForOp>(loopOp).getBody()->getOps<memref::AllocaOp>())
     if (alloca->hasAttr(kNormalizeMatmulCounterAttr)) {
       llvm::append_range(pending, alloca->getUsers());
-      if (llvm::any_of(alloca->getUsers(), [&](Operation *user) {
-            return user->getParentOfType<scf::ForOp>() != loopOp;
-          }))
-        nestedCounters.push_back(alloca.getResult());
+      nestedCounters.push_back(alloca.getResult());
     }
   SmallPtrSet<Operation *, 16> stateOps;
   while (!pending.empty()) {
@@ -822,45 +825,47 @@ LogicalResult CVScopeOutliner::collectScalarState() {
   }
   if (stateOps.empty())
     return success();
-  if (!nestedCounters.empty()) {
-    // A nested loop updates the counter between its initialization and final
-    // read. Keep top-level state operations separate; the nested loop retains
-    // its own updates, and scheduling preserves the memory access order.
-    SmallVector<WorkItem *> states;
-    for (Operation &op : *cast<scf::ForOp>(loopOp).getBody()) {
-      bool updatesCounter =
-          isa<scf::ForOp>(op) &&
-          llvm::any_of(getWorkItemOperands(&op), [&](Value v) {
-            return llvm::is_contained(nestedCounters, v);
-          });
-      if (!stateOps.contains(&op) && !updatesCounter)
+
+  // Keep top-level state operations separate so each state scope outputs at
+  // most one result and scheduling preserves the memory access order.
+  SmallVector<WorkItem *> states;
+  for (Operation &op : *cast<scf::ForOp>(loopOp).getBody()) {
+    if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
+      SmallVector<Operation *> branchStateOps;
+      ifOp.walk([&](Operation *nested) {
+        if (nested != ifOp.getOperation() && stateOps.contains(nested))
+          branchStateOps.push_back(nested);
+      });
+      if (branchStateOps.empty())
         continue;
       auto state = std::make_unique<WorkItem>();
       state->id = nextWorkItemId++;
       state->coreType = TCoreType::CUBE_AND_VECTOR;
-      if (auto core =
-              op.getAttrOfType<TCoreTypeAttr>(kPipelinedLoopCoreTypeAttrName))
-        state->coreType = core.getTcoretype();
-      state->orderedOps.insert(&op);
+      for (Operation *nested : branchStateOps) {
+        state->orderedOps.insert(nested);
+        getOrCreateCondOps(*state, ifOp, nested);
+      }
       states.push_back(state.get());
       workItems.push_back(std::move(state));
+      continue;
     }
-    sortedWorkItems.insert(sortedWorkItems.begin(), states.begin(),
-                           states.end());
-    return success();
+    bool updatesCounter = isa<scf::ForOp>(op) &&
+                          llvm::any_of(getWorkItemOperands(&op), [&](Value v) {
+                            return llvm::is_contained(nestedCounters, v);
+                          });
+    if (!stateOps.contains(&op) && !updatesCounter)
+      continue;
+    auto state = std::make_unique<WorkItem>();
+    state->id = nextWorkItemId++;
+    state->coreType = TCoreType::CUBE_AND_VECTOR;
+    if (auto core =
+            op.getAttrOfType<TCoreTypeAttr>(kPipelinedLoopCoreTypeAttrName))
+      state->coreType = core.getTcoretype();
+    state->orderedOps.insert(&op);
+    states.push_back(state.get());
+    workItems.push_back(std::move(state));
   }
-  auto state = std::make_unique<WorkItem>();
-  state->id = nextWorkItemId++;
-  state->coreType = TCoreType::CUBE_AND_VECTOR;
-  loopOp->walk([&](Operation *op) {
-    if (!stateOps.contains(op))
-      return;
-    state->orderedOps.insert(op);
-    if (auto ifOp = dyn_cast<scf::IfOp>(op->getParentOp()))
-      getOrCreateCondOps(*state, ifOp, op);
-  });
-  sortedWorkItems.insert(sortedWorkItems.begin(), state.get());
-  workItems.push_back(std::move(state));
+  sortedWorkItems.insert(sortedWorkItems.begin(), states.begin(), states.end());
   return success();
 }
 
@@ -921,7 +926,6 @@ void CVScopeOutliner::collectUnmappedOps() {
 // populateWorkItemIO will export both branch values from their producers.
 void CVScopeOutliner::collectConditionalMerges() {
   for (auto ifOp : cast<scf::ForOp>(loopOp).getBody()->getOps<scf::IfOp>()) {
-    WorkItem *merge = nullptr;
     SmallPtrSet<WorkItem *, 4> branchItems;
     for (auto result : ifOp.getResults()) {
       auto [thenValue, elseValue] =
@@ -958,15 +962,13 @@ void CVScopeOutliner::collectConditionalMerges() {
         sortedWorkItems.push_back(branch.get());
         workItems.push_back(std::move(branch));
       }
-      if (!merge) {
-        auto item = std::make_unique<WorkItem>();
-        item->id = nextWorkItemId++;
-        item->coreType = TCoreType::CUBE_AND_VECTOR;
-        merge = item.get();
-        getOrCreateCondOps(*merge, ifOp);
-        sortedWorkItems.push_back(merge);
-        workItems.push_back(std::move(item));
-      }
+      auto item = std::make_unique<WorkItem>();
+      item->id = nextWorkItemId++;
+      item->coreType = TCoreType::CUBE_AND_VECTOR;
+      WorkItem *merge = item.get();
+      getOrCreateCondOps(*merge, ifOp);
+      sortedWorkItems.push_back(merge);
+      workItems.push_back(std::move(item));
       conditionalMergeOwners[result] = merge;
     }
   }
@@ -980,18 +982,27 @@ LogicalResult CVScopeOutliner::sortPopulatedWorkItems() {
   for (Value counter : nestedCounters) {
     WorkItem *previous = nullptr;
     for (Operation &op : *cast<scf::ForOp>(loopOp).getBody()) {
-      bool accessesCounter = false;
-      op.walk([&](Operation *nested) {
-        accessesCounter |= llvm::is_contained(nested->getOperands(), counter);
-      });
-      if (!accessesCounter)
+      if (op.getResults() == ValueRange{counter}) {
+        previous = opToWorkItemMap.lookup(&op);
         continue;
-      WorkItem *owner = opToWorkItemMap.lookup(&op);
-      if (!owner)
-        return failure();
-      if (previous && previous != owner)
-        predecessors[owner].insert(previous);
-      previous = owner;
+      }
+      SmallVector<WorkItem *, 2> owners;
+      op.walk([&](Operation *nested) {
+        if (!llvm::is_contained(nested->getOperands(), counter))
+          return;
+        WorkItem *owner = opToWorkItemMap.lookup(nested);
+        if (!owner)
+          owner = opToWorkItemMap.lookup(&op);
+        if (owner && !llvm::is_contained(owners, owner))
+          owners.push_back(owner);
+      });
+      if (owners.empty())
+        continue;
+      for (WorkItem *owner : owners) {
+        if (previous && previous != owner)
+          predecessors[owner].insert(previous);
+        previous = owner;
+      }
     }
   }
   SmallVector<WorkItem *> pending(sortedWorkItems);
@@ -1316,7 +1327,6 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
                 return item->ops.contains(user);
               })) {
             scopeMap.map(ifRes, scopeMap.lookup(updated));
-            scopeReturnVals.push_back(enclosingIf.getCondition());
             deferredMerges.push_back({ifRes, carried, updated == thenVal});
             continue;
           }
@@ -1442,10 +1452,35 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
       auto merge = builder.create<scope::ScopeOp>(origIf.getLoc(), TypeRange{});
       merge->setAttr(kPipelinedLoopCoreTypeAttrName,
                      TCoreTypeAttr::get(ctx, TCoreType::CUBE_AND_VECTOR));
-      builder.createBlock(&merge.getRegion());
+      Block *mergeBlock = builder.createBlock(&merge.getRegion());
+      builder.setInsertionPointToStart(mergeBlock);
+      IRMapping mergeMap(globalIRMap);
+      Value origCond = origIf.getCondition();
+      if (!mergeMap.contains(origCond)) {
+        SmallVector<Operation *> condOps;
+        SmallVector<Value> stack = {origCond};
+        SmallPtrSet<Operation *, 8> visited;
+        while (!stack.empty()) {
+          Value v = stack.pop_back_val();
+          if (mergeMap.contains(v))
+            continue;
+          Operation *def = v.getDefiningOp();
+          if (!def || !origForOp->isProperAncestor(def) ||
+              !visited.insert(def).second)
+            continue;
+          condOps.push_back(def);
+          for (Value opnd : def->getOperands())
+            stack.push_back(opnd);
+        }
+        llvm::sort(condOps, [&](Operation *a, Operation *b) {
+          return opOrder.lookup(a) < opOrder.lookup(b);
+        });
+        for (Operation *op : condOps)
+          builder.clone(*op, mergeMap);
+      }
       auto select = builder.create<scf::IfOp>(
           origIf.getLoc(), TypeRange{result.getType()},
-          globalIRMap.lookupOrDefault(origIf.getCondition()), true);
+          mergeMap.lookupOrDefault(origCond), true);
       select->setAttr(kPipelineIfCondAttrName,
                       builder.getI64IntegerAttr(getOrAssignIfId(origIf)));
       Value updated = globalIRMap.lookup(result);
@@ -1471,7 +1506,7 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
   builder.create<scf::YieldOp>(origYield.getLoc(), yieldOperands);
 
   // lookupOrDefault is valid for values outside the original loop, but must
-  // never leave a reference into the loop that we are about to delete.
+  // never leave a reference into the original loop that we are about to delete.
   WalkResult unmappedUse = newForOp->walk([&](Operation *op) {
     for (Value operand : op->getOperands()) {
       Operation *owner = operand.getDefiningOp();
@@ -1492,9 +1527,26 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
     return failure();
   }
 
+  if (failed(verifyOutlinedScopes(newForOp))) {
+    newForOp.erase();
+    return failure();
+  }
+
   newForOp->setAttr(CVPipelinedLoopAttr::name, builder.getUnitAttr());
   origForOp.replaceAllUsesWith(newForOp.getResults());
   origForOp.erase();
+  return success();
+}
+
+LogicalResult
+CVScopeOutliner::verifyOutlinedScopes(scf::ForOp outlinedForOp) const {
+  for (auto scopeOp : outlinedForOp.getBody()->getOps<scope::ScopeOp>()) {
+    if (scopeOp.getNumResults() > 1) {
+      outlinedForOp.emitWarning(
+          "[OutlineCVScopes] outlined scope must have at most 1 result");
+      return failure();
+    }
+  }
   return success();
 }
 
