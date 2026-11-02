@@ -139,6 +139,8 @@ struct HFusionGeneralizationPatterns
       mlir::linalg::LinalgOp>::OpInterfaceRewritePattern;
   LogicalResult matchAndRewrite(linalg::LinalgOp op,
                                 PatternRewriter &rewriter) const override {
+    if (op->hasAttr("hivm.defer_vectorize"))
+      return failure();
     // TODO: Skip AIC temporary. Move VF to HIVM
     if (scope::utils::isInCubeScope(op)) {
       return failure();

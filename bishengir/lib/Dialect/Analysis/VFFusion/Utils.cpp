@@ -54,19 +54,6 @@ bool isSafeToExcludeOps(Operation *const op) {
   return isInitialOp(op) && op->getNumOperands() == 0;
 }
 
-bool isCubeFunc(func::FuncOp funcOp) {
-  auto fusionKind = mlir::hfusion::tryGetFusionKind(funcOp);
-  if (fusionKind.has_value() &&
-      (fusionKind.value() == mlir::hfusion::FusionKind::ShallowCV ||
-       fusionKind.value() == mlir::hfusion::FusionKind::SingleCube)) {
-    return true;
-  }
-  std::optional<mlir::hivm::TFuncCoreType> funcCoreType =
-      mlir::hivm::queryFuncCoreType(funcOp);
-  return (funcCoreType.has_value() &&
-          funcCoreType.value() != hivm::TFuncCoreType::AIV);
-}
-
 bool isVsstbPatternTransposeOp(Operation *op) {
   auto transpose = dyn_cast<linalg::TransposeOp>(op);
   if (!transpose) {

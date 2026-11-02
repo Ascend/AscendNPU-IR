@@ -33,9 +33,7 @@ include "bishengir/Dialect/HIVM/IR/HIVMTraits.td"
 class HIVM_VectorOp<string mnemonic, list<Trait> traits = [],
   list<Trait> vecSpecialTraits=[OpPipeTrait<"PIPE::PIPE_V">, VectorCoreTypeTrait]> :
   HIVM_StructuredOp<mnemonic, !listconcat(!listconcat(
-    [AlwaysSpeculatable, SinglePipeOpTrait,
-     DeclareOpInterfaceMethods<VectorizableOpInterface>
-    ], vecSpecialTraits), traits)> {
+    [AlwaysSpeculatable, SinglePipeOpTrait], vecSpecialTraits), traits)> {
   code vectorOpBaseDecls = [{
     ::mlir::LogicalResult fold(FoldAdaptor adaptor,
         SmallVectorImpl<OpFoldResult> &results) {
@@ -117,7 +115,6 @@ class HIVM_ElementwiseUnaryOp<string mnemonic, list<Trait> traits = [], Type src
 
 def VExpOp : HIVM_ElementwiseUnaryOp<"vexp",
     [SameOperandsElementType,
-     VectorizableTrait,
      VectorOnlyTrait<0>,
      OperElemTypeConstraints<[0, 1], [F16, F32]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
@@ -151,7 +148,6 @@ def VExpOp : HIVM_ElementwiseUnaryOp<"vexp",
 
 def VExp2Op : HIVM_ElementwiseUnaryOp<"vexp2",
     [SameOperandsElementType,
-     NotVectorizableTrait,
      OperElemTypeConstraints<[0], [F16, F32]>,
      VectorOnlyTrait<0>, NoLibraryFunctionTrait
     ]> {
@@ -168,7 +164,6 @@ def VExp2Op : HIVM_ElementwiseUnaryOp<"vexp2",
 
 def VAbsOp : HIVM_ElementwiseUnaryOp<"vabs",
     [SameOperandsElementType,
-     VectorizableTrait,
      VectorOnlyTrait<0>,
      OperElemTypeConstraints<[0], [F16, F32, I8, I16, I32, I64]>,
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
@@ -203,7 +198,6 @@ def VAbsOp : HIVM_ElementwiseUnaryOp<"vabs",
 
 def VLnOp : HIVM_ElementwiseUnaryOp<"vln",
     [SameOperandsElementType,
-     VectorizableTrait,
      VectorOnlyTrait<0>,
      OperElemTypeConstraints<[0], [F16, F32]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
@@ -237,7 +231,6 @@ def VLnOp : HIVM_ElementwiseUnaryOp<"vln",
 
 def VLog2Op : HIVM_ElementwiseUnaryOp<"vlog2",
     [SameOperandsElementType,
-     NotVectorizableTrait,
      VectorOnlyTrait<0>,
      OperElemTypeConstraints<[0], [F16, F32]>,
      NoLibraryFunctionTrait
@@ -252,7 +245,6 @@ def VLog2Op : HIVM_ElementwiseUnaryOp<"vlog2",
 
 def VLog10Op : HIVM_ElementwiseUnaryOp<"vlog10",
     [SameOperandsElementType,
-     NotVectorizableTrait,
      VectorOnlyTrait<0>,
      OperElemTypeConstraints<[0], [F16, F32]>,
      NoLibraryFunctionTrait
@@ -267,7 +259,6 @@ def VLog10Op : HIVM_ElementwiseUnaryOp<"vlog10",
 
 def VLog1pOp : HIVM_ElementwiseUnaryOp<"vlog1p",
     [SameOperandsElementType,
-     NotVectorizableTrait,
      VectorOnlyTrait<0>,
      OperElemTypeConstraints<[0], [F16, F32]>,
      NoLibraryFunctionTrait
@@ -282,7 +273,6 @@ def VLog1pOp : HIVM_ElementwiseUnaryOp<"vlog1p",
 
 def VExpM1Op : HIVM_ElementwiseUnaryOp<"vexpm1",
     [SameOperandsElementType,
-     NotVectorizableTrait,
      VectorOnlyTrait<0>,
      OperElemTypeConstraints<[0], [F16, F32]>,
      NoLibraryFunctionTrait
@@ -297,7 +287,6 @@ def VExpM1Op : HIVM_ElementwiseUnaryOp<"vexpm1",
 
 def VIlogbOp : HIVM_ElementwiseUnaryOp<"vilogb",
     [SameOperandsElementType,
-     NotVectorizableTrait,
      VectorOnlyTrait<0>,
      OperElemTypeConstraints<[0], [F16, F32]>,
      NoLibraryFunctionTrait
@@ -312,7 +301,6 @@ def VIlogbOp : HIVM_ElementwiseUnaryOp<"vilogb",
 
 def VReluOp : HIVM_ElementwiseUnaryOp<"vrelu",
     [SameOperandsElementType,
-     VectorizableTrait,
      VectorOnlyTrait<0>,
      OperElemTypeConstraints<[0], [F16, F32, I32]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
@@ -346,7 +334,6 @@ def VReluOp : HIVM_ElementwiseUnaryOp<"vrelu",
 
 def VRsqrtOp : HIVM_ElementwiseUnaryOp<"vrsqrt",
     [SameOperandsElementType,
-     VectorizableTrait,
      VectorOnlyTrait<0>,
      OperElemTypeConstraints<[0], [F16, F32]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
@@ -380,7 +367,6 @@ def VRsqrtOp : HIVM_ElementwiseUnaryOp<"vrsqrt",
 
 def VSqrtOp : HIVM_ElementwiseUnaryOp<"vsqrt",
     [SameOperandsElementType,
-     VectorizableTrait,
      VectorOnlyTrait<0>,
      OperElemTypeConstraints<[0], [F16, F32]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
@@ -414,7 +400,6 @@ def VSqrtOp : HIVM_ElementwiseUnaryOp<"vsqrt",
 
 def VTanhOp : HIVM_ElementwiseUnaryOp<"vtanh",
     [SameOperandsElementType,
-     VectorizableTrait,
      VectorOnlyTrait<0>, NoLibraryFunctionTrait
     ]> {
   let summary = "Elementwise Vector Hyperbolic Tangent Op";
@@ -427,7 +412,6 @@ def VTanhOp : HIVM_ElementwiseUnaryOp<"vtanh",
 
 def VSinOp : HIVM_ElementwiseUnaryOp<"vsin",
     [SameOperandsElementType,
-     VectorizableTrait,
      VectorOnlyTrait<0>, NoLibraryFunctionTrait
     ]> {
   let summary = "Elementwise Vector Sine Op";
@@ -440,7 +424,6 @@ def VSinOp : HIVM_ElementwiseUnaryOp<"vsin",
 
 def VCosOp : HIVM_ElementwiseUnaryOp<"vcos",
     [SameOperandsElementType,
-     VectorizableTrait,
      VectorOnlyTrait<0>, NoLibraryFunctionTrait
     ]> {
   let summary = "Elementwise Vector Cosine Op";
@@ -453,7 +436,6 @@ def VCosOp : HIVM_ElementwiseUnaryOp<"vcos",
 
 def VAtanOp : HIVM_ElementwiseUnaryOp<"vatan",
     [SameOperandsElementType,
-     NotVectorizableTrait,
      VectorOnlyTrait<0>, NoLibraryFunctionTrait
     ]> {
   let summary = "Elementwise Vector Arctangent Op";
@@ -466,7 +448,6 @@ def VAtanOp : HIVM_ElementwiseUnaryOp<"vatan",
 
 def VTanOp : HIVM_ElementwiseUnaryOp<"vtan",
     [SameOperandsElementType,
-     NotVectorizableTrait,
      VectorOnlyTrait<0>, NoLibraryFunctionTrait
     ]> {
   let summary = "Elementwise Vector Tangent Op";
@@ -479,7 +460,6 @@ def VTanOp : HIVM_ElementwiseUnaryOp<"vtan",
 
 def VErfOp : HIVM_ElementwiseUnaryOp<"verf",
     [SameOperandsElementType,
-     VectorizableTrait,
      VectorOnlyTrait<0>, NoLibraryFunctionTrait
     ]> {
   let summary = "Elementwise Vector Error function Op";
@@ -492,7 +472,6 @@ def VErfOp : HIVM_ElementwiseUnaryOp<"verf",
 
 def VRecOp : HIVM_ElementwiseUnaryOp<"vrec",
     [SameOperandsElementType,
-     VectorizableTrait,
      VectorOnlyTrait<0>,
      OperElemTypeConstraints<[0], [F16, F32]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
@@ -526,7 +505,6 @@ def VRecOp : HIVM_ElementwiseUnaryOp<"vrec",
 
 def VNotOp : HIVM_ElementwiseUnaryOp<"vnot",
     [SameOperandsElementType,
-     VectorizableTrait,
      VectorOnlyTrait<0>,
      OperElemTypeConstraints<[0],
        [I1, I8, UI8, I16, UI16, I32, UI32, I64, UI64, F16, BF16, F32]>,
@@ -561,7 +539,6 @@ def VNotOp : HIVM_ElementwiseUnaryOp<"vnot",
 
 def VCastOp : HIVM_ElementwiseUnaryOp<"vcast",
     [VectorOnlyTrait<0>, HIVMOpSameOperandsAndResultRank,
-     VectorizableTrait,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface>,
      BroadcastableOTF
     ]> {
@@ -666,7 +643,7 @@ class HIVM_ElementwiseBinaryOp<string mnemonic, list<Trait> traits = [], Type sr
 
 def VAddOp
     : HIVM_ElementwiseBinaryOp<
-          "vadd", [SameOperandsElementType, VectorizableTrait,
+          "vadd", [SameOperandsElementType,
                    OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32,
                                                     I64]>,
                    CommutativeOpTrait, VectorOnlyTrait<0>,
@@ -703,7 +680,7 @@ def VAddOp
 
 def VMulOp
     : HIVM_ElementwiseBinaryOp<
-          "vmul", [SameOperandsElementType, VectorizableTrait,
+          "vmul", [SameOperandsElementType,
                    OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32,
                                                     I64]>,
                    CommutativeOpTrait, VectorOnlyTrait<0>,
@@ -740,7 +717,6 @@ def VMulOp
 
 def VMulExtOp : HIVM_ElementwiseBinaryOp<"vmulext",
     [SameOperandsElementType,
-     NotVectorizableTrait,
      OperElemTypeConstraints<[0, 1], [I32]>,
      VectorOnlyTrait<0>,
     DeclareOpInterfaceMethods<ImplByScalarOpInterface>
@@ -759,7 +735,6 @@ def VMulExtOp : HIVM_ElementwiseBinaryOp<"vmulext",
 
 def VMulExtUiOp : HIVM_ElementwiseBinaryOp<"vmulextui",
     [SameOperandsElementType,
-     NotVectorizableTrait,
      OperElemTypeConstraints<[0, 1], [I32]>,
      VectorOnlyTrait<0>,
     DeclareOpInterfaceMethods<ImplByScalarOpInterface>
@@ -778,7 +753,7 @@ def VMulExtUiOp : HIVM_ElementwiseBinaryOp<"vmulextui",
 
 def VSubOp
     : HIVM_ElementwiseBinaryOp<
-          "vsub", [SameOperandsElementType, VectorizableTrait,
+          "vsub", [SameOperandsElementType,
                    OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32,
                                                     I64]>,
                    DeclareOpInterfaceMethods<
@@ -810,7 +785,6 @@ def VSubOp
 
 def VDivOp : HIVM_ElementwiseBinaryOp<
                  "vdiv", [SameOperandsElementType,
-                          VectorizableTrait,
                           OperElemTypeConstraints<[0, 1], [F16, F32, I8, I16, I32, I64]>,
                           DeclareOpInterfaceMethods<ExtraBufferOpInterface,
                             ["getExtraBufferSize"]>,
@@ -848,7 +822,6 @@ def VDivOp : HIVM_ElementwiseBinaryOp<
 
 def VMaxOp : HIVM_ElementwiseBinaryOp<"vmax",
     [SameOperandsElementType,
-     VectorizableTrait,
      OperElemTypeConstraints<[0, 1], [I8, UI8, I16, F16, UI16, I32,
                                       F8E4M3FN, F8E5M2, F32,
                                       UI32, BF16, I64, UI64, I1]>,
@@ -889,7 +862,6 @@ def VMaxOp : HIVM_ElementwiseBinaryOp<"vmax",
 
 def VMinOp : HIVM_ElementwiseBinaryOp<"vmin",
     [SameOperandsElementType,
-     VectorizableTrait,
      OperElemTypeConstraints<[0, 1], [I8, UI8, I16, F16, UI16, I32,
                                       F8E4M3FN, F8E5M2, F32,
                                       UI32, BF16, I64, UI64, I1]>,
@@ -930,7 +902,6 @@ def VMinOp : HIVM_ElementwiseBinaryOp<"vmin",
 
 def VOrOp : HIVM_ElementwiseBinaryOp<"vor",
     [SameOperandsElementType,
-     VectorizableTrait,
      OperElemTypeConstraints<[0, 1],
        [I1, I8, UI8, I16, UI16, I32, UI32, I64, UI64, F16, BF16, F32]>,
      VectorOnlyTrait<0>, VectorOnlyTrait<1>, CommutativeOpTrait,
@@ -966,7 +937,6 @@ def VOrOp : HIVM_ElementwiseBinaryOp<"vor",
 
 def VAndOp : HIVM_ElementwiseBinaryOp<"vand",
     [SameOperandsElementType,
-     VectorizableTrait,
      OperElemTypeConstraints<[0, 1],
        [I1, I8, UI8, I16, UI16, I32, UI32, I64, UI64, F16, BF16, F32]>,
      VectorOnlyTrait<0>, VectorOnlyTrait<1>, CommutativeOpTrait,
@@ -1002,7 +972,6 @@ def VAndOp : HIVM_ElementwiseBinaryOp<"vand",
 
 def VXorOp : HIVM_ElementwiseBinaryOp<"vxor",
     [SameOperandsElementType,
-     VectorizableTrait,
      OperElemTypeConstraints<[0, 1],
        [I1, I8, UI8, I16, UI16, I32, UI32, I64, UI64]>,
      VectorOnlyTrait<0>, VectorOnlyTrait<1>,
@@ -1030,7 +999,6 @@ def VXorOp : HIVM_ElementwiseBinaryOp<"vxor",
 
 def VModOp : HIVM_ElementwiseBinaryOp<"vmod",
     [SameOperandsElementType,
-     NotVectorizableTrait,
      VectorOnlyTrait<0>,
      OperElemTypeConstraints<[0, 1],
        [I1, I8, I16, I32, I64, F16, F32]>,
@@ -1056,7 +1024,6 @@ def VModOp : HIVM_ElementwiseBinaryOp<"vmod",
 
 def VModUIOp : HIVM_ElementwiseBinaryOp<"vmodui",
     [SameOperandsElementType, StaticMaxRankTrait<1>,
-     NotVectorizableTrait,
      VectorOnlyTrait<0>,
      OperElemTypeConstraints<[0, 1],
        [I1, I8, I16, I32, I64]>
@@ -1074,7 +1041,6 @@ def VModUIOp : HIVM_ElementwiseBinaryOp<"vmodui",
 
 def VShLOp : HIVM_ElementwiseBinaryOp<"vshl",
    [SameOperandsElementType,
-    VectorizableTrait,
     OperElemTypeConstraints<[0, 1], [I16, I32, I64]>,
     VectorOnlyTrait<0>, ScalarOnlyHWTrait<1>,
     DeclareOpInterfaceMethods<ExtraBufferOpInterface,
@@ -1108,7 +1074,6 @@ def VShLOp : HIVM_ElementwiseBinaryOp<"vshl",
 
 def VShROp : HIVM_ElementwiseBinaryOp<"vshr",
     [SameOperandsElementType,
-     VectorizableTrait,
      OperElemTypeConstraints<[0, 1], [I8, I16, I32, I64]>,
      VectorOnlyTrait<0>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
@@ -1153,7 +1118,6 @@ def VCmpOp : HIVM_ElementwiseBinaryOp<"vcmp",
     [OperElemTypeConstraints<[0, 1],
        [I1, F16, BF16, F32, I8, UI8, I16, UI16, I32, UI32,
        I64, UI64, F8E4M3FN, F8E5M2]>,
-     VectorizableTrait,
      OperElemTypeConstraints<[/*dstIdx=*/2], [I1, I8]>,
      VectorOnlyTrait<0>,
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>
@@ -1202,7 +1166,6 @@ def VCmpOp : HIVM_ElementwiseBinaryOp<"vcmp",
 
 def VPowOp : HIVM_ElementwiseBinaryOp<"vpow",
     [SameOperandsElementType,
-    VectorizableTrait,
     // I8/I16/F16/F32 VPowOp depends on hivm-normalize-pass; only I32 is
     // expected to remain valid without that normalization.
     OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32]>,
@@ -1228,7 +1191,6 @@ def VPowOp : HIVM_ElementwiseBinaryOp<"vpow",
 
 def VLdexpOp : HIVM_ElementwiseNaryOp<"vldexp",
     [ElementwiseNaryOpTrait<2>, SameOperandsElementType,
-     NotVectorizableTrait,
      OperElemTypeConstraints<[0, 1], [F16, F32]>,
      VectorOnlyTrait<0>, VectorOnlyTrait<1>, NoLibraryFunctionTrait
     ]> {
@@ -1252,7 +1214,6 @@ class HIVM_ElementwiseTernaryOp<string mnemonic, list<Trait> traits = []> :
 
 def VSelOp : HIVM_ElementwiseTernaryOp<"vsel",
     [OperElemTypeConstraints<[/*condition=*/0], [I1,I8]>,
-     VectorizableTrait,
      OperElemTypeConstraints<[/*src0=*/1, /*src1=*/2],
                              [I1, AnyI8, AnyI16, F16, BF16, F8E4M3FN,
                               F8E5M2, AnyI32, F32, I64, UI64]>,
@@ -1288,9 +1249,6 @@ def VBrcOp : HIVM_VectorOp<"vbrc",
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
                                ["getIteratorTypesArray", "getIndexingMaps"]>,
      DeclareOpInterfaceMethods<HIVMInferCoreTypeInterface, ["inferCoreType"]>,
-     // VBrcOp lowers through its own vectorize() override, for shaped and
-     // scalar sources alike, so the default isVectorizable() serves it.
-     VectorizableTrait,
      // Will automatically use the default uniform reassociation impl
      UniformReassociationFlattenTrait,
      CollapsibleConsecutiveTargetDimsTrait,
@@ -1365,7 +1323,6 @@ def VReduceOp : HIVM_VectorOp<"vreduce",
      DeclareOpInterfaceMethods<FlattenInterface,
        ["getLimitedAxes", "adjustTargetDimensions"]>,
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
-     VectorizableTrait,
      DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
        ["decomposeOperation", "getDecomposePhase"]>
     ]> {
@@ -1478,9 +1435,6 @@ def VReduceOp : HIVM_VectorOp<"vreduce",
 
 def VTransposeOp : HIVM_VectorOp<"vtranspose",
     [OperElemTypeConstraints<[0], [I1, AnyI8, AnyI16, AnyI32, F16, BF16, F32, I64, UI64, F8E4M3FN, F8E5M2]>,
-     // VTransposeOp lowers through its own vectorize() override, so the
-     // default isVectorizable() serves it.
-     VectorizableTrait,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray", "setIteratorTypesArray", "getIndexingMaps"]>,
      DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
@@ -1545,7 +1499,7 @@ def VTransposeOp : HIVM_VectorOp<"vtranspose",
 
 def VArangeOp
     : HIVM_VectorOp<
-          "varange", [AttrSizedOperandSegments, NotVectorizableTrait,
+          "varange", [AttrSizedOperandSegments,
                       OperElemTypeConstraints<[0], [I16, I32, F16, F32, I64]>,
                       DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
                                                 ["getIteratorTypesArray",
@@ -1605,7 +1559,6 @@ def VArangeOp
 def VInterleaveOp : HIVM_VectorOp<"vinterleave",
     [SameOperandsElementType, AttrSizedOperandSegments,
      HIVMOpSameOperandsAndResultRank,
-     NotVectorizableTrait,
      OperElemTypeConstraints<[0],
        [I8, UI8, I16, F16, UI16, I32, F8E4M3FN, F8E5M2, F32, UI32, BF16, I64, UI64, I1]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface>,
@@ -1652,7 +1605,6 @@ def VInterleaveOp : HIVM_VectorOp<"vinterleave",
 
 def VDeinterleaveOp : HIVM_VectorOp<"vdeinterleave",
     [SameOperandsElementType, HIVMOpSameOperandsAndResultRank,
-     NotVectorizableTrait,
      OperElemTypeConstraints<[0],
        [I8, UI8, I16, F16, UI16, I32, F8E4M3FN, F8E5M2, F32, UI32, BF16, I64, UI64]>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
@@ -1698,7 +1650,6 @@ def VDeinterleaveOp : HIVM_VectorOp<"vdeinterleave",
 def VFlipOp : HIVM_VectorOp<"vflip",
     [SameOperandsElementType,
      OperElemTypeConstraints<[0, 1], [I8, UI8, I16, I32, UI16, UI32, I64, UI64, F16, F32, BF16]>,
-     NotVectorizableTrait,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
      // Will automatically use the default uniform reassociation impl
@@ -1732,7 +1683,6 @@ def VFlipOp : HIVM_VectorOp<"vflip",
 
 def VMulextendedOp : HIVM_VectorOp<"vmulextended",
     [AttrSizedOperandSegments, HIVMOpSameOperandsAndResultRank,
-     NotVectorizableTrait,
      OperElemTypeConstraints<[0], [I16]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
@@ -1773,7 +1723,6 @@ def VMulextendedOp : HIVM_VectorOp<"vmulextended",
 def VPadOp : HIVM_VectorOp<"vpad",
     [HIVMOpSameOperandsAndResultRank,
      AttrSizedOperandSegments, NoLibraryFunctionTrait,
-     NotVectorizableTrait,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
      // Will automatically use the default uniform reassociation impl
@@ -1836,7 +1785,6 @@ def VPadOp : HIVM_VectorOp<"vpad",
 
 def VConcatOp : HIVM_VectorOp<"vconcat",
     [SameOperandsElementType, NoLibraryFunctionTrait,
-     NotVectorizableTrait,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
      DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
@@ -1884,7 +1832,6 @@ def VGatherOp : HIVM_VectorOp<"vgather",
     [HIVMOpSameOperandsAndResultRank,
      OperElemTypeConstraints<[0], [I1, I8, I16, UI16, I32, UI32, F16, BF16, F32, F8E4M3FN, F8E5M2]>,
      OperElemTypeConstraints<[1], [I16, I32]>,
-     NotVectorizableTrait,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
@@ -1940,7 +1887,6 @@ def VGatherMaskOp : HIVM_VectorOp<"vgathermask",
     [HIVMOpSameOperandsAndResultRank,
      OperElemTypeConstraints<[0], [I16, UI16, I32, UI32, F16, BF16, F32]>,
      OperElemTypeConstraints<[1], [I1]>,
-     NotVectorizableTrait,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
      UniformReassociationFlattenTrait,
@@ -1988,7 +1934,6 @@ def VGatherMaskOp : HIVM_VectorOp<"vgathermask",
 def VCumprodOp : HIVM_VectorOp<"vcumprod",
     [SameOperandsElementType,
      OperElemTypeConstraints<[0], [I1, I8, I16, I32, I64, F16, F32, BF16]>,
-     NotVectorizableTrait,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
      UniformReassociationFlattenTrait,
@@ -2059,7 +2004,6 @@ def VCumprodOp : HIVM_VectorOp<"vcumprod",
 
 def VCumsumOp : HIVM_VectorOp<"vcumsum",
     [OperElemTypeConstraints<[0], [I1, I8, I16, I32, I64, F16, F32, BF16]>,
-     NotVectorizableTrait,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
      UniformReassociationFlattenTrait,
@@ -2132,7 +2076,6 @@ def VCummaxOp : HIVM_VectorOp<"vcummax",
     [SameOperandsElementType,
      StaticMaxRankTrait<2>,
      OperElemTypeConstraints<[0], [I1, I8, I16, I32, I64, F16, F32, BF16]>,
-     NotVectorizableTrait,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
      UniformReassociationFlattenTrait,
@@ -2205,7 +2148,6 @@ def VCumminOp : HIVM_VectorOp<"vcummin",
     [SameOperandsElementType,
      StaticMaxRankTrait<2>,
      OperElemTypeConstraints<[0], [I1, I8, I16, I32, I64, F16, F32, BF16]>,
-     NotVectorizableTrait,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
      UniformReassociationFlattenTrait,
@@ -2278,7 +2220,6 @@ def VSortOp : HIVM_VectorOp<"vsort",
     [AttrSizedOperandSegments,
      // Expanded element types via hivm sort normalize pattern
      OperElemTypeConstraints<[0, 1], [F16, F32, I8, I16, I32, I64]>,
-     NotVectorizableTrait,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
        ["getExtraBufferSize", "shouldAllocExtraBufferForScalarOrOTFBrc"]>,
      // Will automatically use the default uniform reassociation impl
@@ -2351,7 +2292,6 @@ def VSortOp : HIVM_VectorOp<"vsort",
 // The normalization uses VAbsOp after bitcast, which requires F16 or F32.
 def VIsInfOp : HIVM_ElementwiseUnaryOp<"visinf",
     [VectorOnlyTrait<0>,
-     NotVectorizableTrait,
      NoLibraryFunctionTrait,
      OperElemTypeConstraints<[0], [F16, F32]>,
      BroadcastableOTF
@@ -2385,7 +2325,6 @@ def VIsInfOp : HIVM_ElementwiseUnaryOp<"visinf",
 // The normalization uses VAbsOp after bitcast, which requires F16 or F32.
 def VIsNanOp : HIVM_ElementwiseUnaryOp<"visnan",
     [VectorOnlyTrait<0>,
-     NotVectorizableTrait,
      NoLibraryFunctionTrait,
      OperElemTypeConstraints<[0], [F16, F32]>,
      BroadcastableOTF

@@ -16,6 +16,7 @@
 
 #include "bishengir/Conversion/LowerMemRefExt/LowerMemRefExt.h"
 #include "bishengir/Dialect/HACC/Transforms/Passes.h"
+#include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Pipelines/HIVMBufferizationPipeline.h"
 #include "bishengir/Dialect/HIVM/Pipelines/regbase/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -130,9 +131,8 @@ void buildV2TensorPhase(OpPassManager &pm, const V2PipelineOptions &options) {
   if (needsCV12(hacc::symbolizeTargetDeviceEnum(options.target)))
     pm.addPass(createPartitionAndBindSubBlockPass());
 
-  // Vectorize the unsplit MIX without the HFusion round trip.
   if (options.enableVectorize)
-    addFuncPass(pm, createHIVMVectorizeOpsPass());
+    pm.addPass(createHIVMVectorizePass());
 
   addStageVerifier(pm, options, Stage::Tensor);
 }
@@ -140,6 +140,8 @@ void buildV2TensorPhase(OpPassManager &pm, const V2PipelineOptions &options) {
 /// The tensor -> memref anchor.
 void buildV2BufferizationPhase(OpPassManager &pm,
                                const V2PipelineOptions &options) {
+  pm.addPass(hfusion::createSimplifyVFArgsPass());
+
   // The v2 pipeline only supports reg-based targets.
   bufferizationPipelineBase(pm, /*isRegBased=*/true);
   buildCanonicalization(pm);

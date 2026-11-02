@@ -22,6 +22,7 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -574,6 +575,22 @@ std::optional<FusionKind> hfusion::tryGetFusionKind(func::FuncOp func) {
   if (!fusionKindAttr)
     return std::nullopt;
   return fusionKindAttr.getFusionKind();
+}
+
+bool hfusion::isAICFunc(func::FuncOp func) {
+  auto fusionKind = tryGetFusionKind(func);
+  if (fusionKind && (*fusionKind == FusionKind::ShallowCV ||
+                     *fusionKind == FusionKind::SingleCube))
+    return true;
+
+  auto funcCoreType = hivm::queryFuncCoreType(func);
+  return funcCoreType && *funcCoreType != hivm::TFuncCoreType::AIV;
+}
+
+bool hfusion::isVF(func::FuncOp func) { return hivm::isVF(func); }
+
+bool hfusion::isAIVFunc(func::FuncOp func) {
+  return !isAICFunc(func) && !isVF(func) && !hacc::utils::isHost(func);
 }
 
 void hfusion::trySetFusionKind(func::FuncOp func,

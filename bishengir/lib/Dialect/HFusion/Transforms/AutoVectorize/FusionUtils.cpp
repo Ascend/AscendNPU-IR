@@ -126,6 +126,8 @@ bool isNonVectorizableOp(Operation *op) {
 bool isFusableOp(Operation *op) {
   if (!op)
     return false;
+  if (op->hasAttr("hivm.defer_vectorize"))
+    return false;
   if (analysis::isExpandShapeOpCanFuseIntoVsstbPatternTranspose(op))
     return true;
   return !isNonVectorizableOp(op) &&

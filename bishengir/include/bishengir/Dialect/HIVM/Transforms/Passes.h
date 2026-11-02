@@ -381,8 +381,8 @@ std::unique_ptr<Pass> createSubBlockGuardCleanupPass();
 std::unique_ptr<Pass> createHIVMBubbleUpExtractSlicePass(
     const HIVMBubbleUpExtractSliceOptions &options = {});
 
-/// Create a pass to vectorize hivm ops.
-std::unique_ptr<Pass> createHIVMVectorizeOpsPass();
+/// Create the tensor-level HIVM vectorization pass.
+std::unique_ptr<Pass> createHIVMVectorizePass();
 
 // Create a pass to insert init and finish for debug.
 std::unique_ptr<Pass> createInsertInitAndFinishForDebugPass();

@@ -206,6 +206,10 @@ template <typename SrcOp> bool isSVOp(SrcOp op) {
 void trySetFusionKind(func::FuncOp func, const FusionKind &fusionKind);
 std::optional<FusionKind> tryGetFusionKind(func::FuncOp func);
 
+bool isAICFunc(func::FuncOp func);
+bool isVF(func::FuncOp func);
+bool isAIVFunc(func::FuncOp func);
+
 namespace reshape_utils {
 
 bool isInitOp(Operation *op);

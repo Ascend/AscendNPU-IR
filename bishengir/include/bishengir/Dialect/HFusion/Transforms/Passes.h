@@ -109,6 +109,8 @@ createHFusionAutoSchedulePass(const AutoScheduleOptions &options = {});
 std::unique_ptr<Pass>
 createHFusionAutoVectorizePass(const AutoVectorizeOptions &options = {});
 
+std::unique_ptr<Pass> createSelectHIVMVectorizePass();
+
 /// Create a pass to handle non-vectorizeable linalg.generic cases
 std::unique_ptr<Pass> createGenericUnrollerPass();
 

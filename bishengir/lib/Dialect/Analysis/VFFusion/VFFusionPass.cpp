@@ -259,7 +259,7 @@ void VFFusionPass::runOnOperation() {
     // Cube/MixCV function requires special fusion strategy (refer to
     // SplitMixKernel).
     // Currectly, only support VFFusion for AIV kernel.
-    if (!enableOutlineCube && isCubeFunc(funcOp)) {
+    if (!enableOutlineCube && hfusion::isAICFunc(funcOp)) {
       return WalkResult::advance();
     }
 
