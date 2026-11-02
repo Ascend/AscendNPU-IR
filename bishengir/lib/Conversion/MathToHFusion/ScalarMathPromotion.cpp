@@ -24,6 +24,8 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
 
+#include <type_traits>
+
 using namespace mlir;
 
 namespace mlir::hfusion {
@@ -87,6 +89,14 @@ struct ScalarMathFmaPromotion : public OpRewritePattern<math::FmaOp> {
   }
 };
 
+/// Ceil and floor lower to a cast that rounds through an integer
+/// intermediate, which maps -0.0 to +0.0. Their promoted scalar form needs
+/// the sign bit restored from the original input (see the copysign emission
+/// in ScalarMathUnaryPromotion below).
+template <typename MathOpTy> struct NeedsSignedZeroRestore : std::false_type {};
+template <> struct NeedsSignedZeroRestore<math::CeilOp> : std::true_type {};
+template <> struct NeedsSignedZeroRestore<math::FloorOp> : std::true_type {};
+
 /// Promote scalar math unary operations to tensor form so that the
 /// MathToHFusion conversion pass can convert it to linalg/hfusion ops. This
 /// pattern is used for ops that are NOT natively supported by the hardware in
@@ -128,8 +138,7 @@ struct ScalarMathUnaryPromotion : public OpRewritePattern<MathOpTy> {
         auto f32Type = rewriter.getF32Type();
         Value extF32 =
             rewriter.create<arith::ExtFOp>(loc, f32Type, op.getOperand());
-        Value scalarResult =
-            rewriter.create<MathOpTy>(loc, f32Type, extF32);
+        Value scalarResult = rewriter.create<MathOpTy>(loc, f32Type, extF32);
         Value truncBf16 =
             rewriter.create<arith::TruncFOp>(loc, resultType, scalarResult);
         rewriter.replaceOp(op, truncBf16);
@@ -157,9 +166,24 @@ struct ScalarMathUnaryPromotion : public OpRewritePattern<MathOpTy> {
     Value tensorMathOp =
         rewriter.create<MathOpTy>(loc, tensorType, tensorOperand);
 
+    // ceil/floor lower to a cast that rounds through an integer
+    // intermediate, which maps -0.0 to +0.0. Restore the sign bit from the
+    // promoted input so the scalar op keeps IEEE signed zeros. The
+    // copysign only applies to types with an HFusion copysign lowering,
+    // and it operates on a 1-element tensor, so it does not increase the
+    // UB footprint of large tensor ceil/floor, which stay on the plain
+    // cast lowering.
+    Value tensorResult = tensorMathOp;
+    if constexpr (NeedsSignedZeroRestore<MathOpTy>::value) {
+      if (isa<Float32Type, Float16Type, BFloat16Type>(computeType)) {
+        tensorResult = rewriter.create<math::CopySignOp>(
+            loc, tensorType, tensorMathOp, tensorOperand);
+      }
+    }
+
     auto c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
     Value extractOp =
-        rewriter.create<tensor::ExtractOp>(loc, tensorMathOp, ValueRange{c0});
+        rewriter.create<tensor::ExtractOp>(loc, tensorResult, ValueRange{c0});
 
     if (isBf16) {
       extractOp = rewriter.create<arith::TruncFOp>(loc, resultType, extractOp);
@@ -201,19 +225,19 @@ void populateScalarMathPromotionPatternsMemBased(RewritePatternSet &patterns) {
 }
 
 void populateScalarMathPromotionPatterns(RewritePatternSet &patterns) {
-  patterns.add<ScalarMathFmaPromotion,
-               ScalarMathUnaryPromotion<math::AbsFOp, true, Float16Type,
-                                        Float32Type>,
-               ScalarMathUnaryPromotion<math::RsqrtOp, true, Float32Type>,
-               ScalarMathUnaryPromotion<math::CeilOp>,
-               ScalarMathUnaryPromotion<math::FloorOp>,
-               ScalarMathUnaryPromotion<math::CosOp>,
-               ScalarMathUnaryPromotion<math::SinOp>,
-               ScalarMathUnaryPromotion<math::ErfOp>,
-               ScalarMathUnaryPromotion<math::ExpOp>,
-               ScalarMathUnaryPromotion<math::Exp2Op>,
-               ScalarMathUnaryPromotion<math::LogOp>,
-               ScalarMathUnaryPromotion<math::Log2Op>>(patterns.getContext());
+  patterns.add<
+      ScalarMathFmaPromotion,
+      ScalarMathUnaryPromotion<math::AbsFOp, true, Float16Type, Float32Type>,
+      ScalarMathUnaryPromotion<math::RsqrtOp, true, Float32Type>,
+      ScalarMathUnaryPromotion<math::CeilOp>,
+      ScalarMathUnaryPromotion<math::FloorOp>,
+      ScalarMathUnaryPromotion<math::CosOp>,
+      ScalarMathUnaryPromotion<math::SinOp>,
+      ScalarMathUnaryPromotion<math::ErfOp>,
+      ScalarMathUnaryPromotion<math::ExpOp>,
+      ScalarMathUnaryPromotion<math::Exp2Op>,
+      ScalarMathUnaryPromotion<math::LogOp>,
+      ScalarMathUnaryPromotion<math::Log2Op>>(patterns.getContext());
 }
 
 } // namespace mlir::hfusion
