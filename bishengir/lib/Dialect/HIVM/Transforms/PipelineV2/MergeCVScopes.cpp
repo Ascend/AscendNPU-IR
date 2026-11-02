@@ -117,6 +117,10 @@ public:
   // that has an incompatible dependency.
   void applyCrossCoreTransferBackwardRule();
 
+  // Rule 4: Concatenate adjacent scopes of the same concrete core type in the
+  // loop body, preserving operation order and fusing compatible conditionals.
+  void applyAdjacentSameCoreRule();
+
 private:
   static bool isCrossCoreTransferOp(Operation *op);
   static bool hasCrossCoreTransfer(ScopeOp scope);
@@ -858,6 +862,28 @@ void LoopScopeMerger::applyCrossCoreTransferBackwardRule() {
   }
 }
 
+void LoopScopeMerger::applyAdjacentSameCoreRule() {
+  ScopeOp previous;
+  for (Operation &op : llvm::make_early_inc_range(*loopOp.getBody())) {
+    auto current = dyn_cast<ScopeOp>(&op);
+    auto core = current ? getScopeCoreType(current) : std::nullopt;
+    if (!current || current->hasAttr(kCVMergedScopeAttrName) || !core ||
+        (*core != TCoreType::CUBE && *core != TCoreType::VECTOR)) {
+      previous = ScopeOp();
+      continue;
+    }
+
+    if (previous && getScopeCoreType(previous) == core) {
+      // The shared helper also reconstructs conditionals split by outlining.
+      if (ScopeOp merged = mergeScopes(previous, current, current)) {
+        previous = merged;
+        continue;
+      }
+    }
+    previous = current;
+  }
+}
+
 void LoopScopeMerger::run(ArrayRef<MergeRuleFn> rules) {
   for (MergeRuleFn rule : rules)
     (this->*rule)();
@@ -872,6 +898,7 @@ void MergeCVScopesPass::runOnOperation() {
       &LoopScopeMerger::applyLoopCarriedDepGroupingRule,
       &LoopScopeMerger::applyMergedScopeSameCoreRule,
       &LoopScopeMerger::applyCrossCoreTransferBackwardRule,
+      &LoopScopeMerger::applyAdjacentSameCoreRule,
   };
 
   SmallVector<scf::ForOp> targetLoops;
