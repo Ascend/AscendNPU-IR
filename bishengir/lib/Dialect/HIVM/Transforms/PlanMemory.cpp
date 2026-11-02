@@ -2252,12 +2252,9 @@ MemPlan::GetReorderRootStorageEntry(StorageEntry *rootStorageEntry) {
     auto storageEntryVecOrderCmp = [](StorageEntry *a, StorageEntry *b) {
       return a->bufInfo->constBits > b->bufInfo->constBits;
     };
-    llvm::sort(touchDmaStorageEntryVec.begin(), touchDmaStorageEntryVec.end(),
-               storageEntryVecOrderCmp);
-    llvm::sort(touchPipeScalarStorageEntryVec.begin(),
-               touchPipeScalarStorageEntryVec.end(), storageEntryVecOrderCmp);
-    llvm::sort(otherStorageEntryVec.begin(), otherStorageEntryVec.end(),
-               storageEntryVecOrderCmp);
+    llvm::stable_sort(touchDmaStorageEntryVec, storageEntryVecOrderCmp);
+    llvm::stable_sort(touchPipeScalarStorageEntryVec, storageEntryVecOrderCmp);
+    llvm::stable_sort(otherStorageEntryVec, storageEntryVecOrderCmp);
   }
   auto reorderedStorageEntryVec = memUniqueStorageEntryVec;
   reorderedStorageEntryVec.insert(reorderedStorageEntryVec.end(),
