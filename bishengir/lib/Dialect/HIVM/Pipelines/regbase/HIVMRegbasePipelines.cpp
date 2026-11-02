@@ -166,6 +166,9 @@ hivmCVCommunicationPipeline(OpPassManager &pm,
     hivmAutoInsertLdStForMixCVPipeline(pm, hivmPipelineOptions);
   } else if (hacc::utils::isAscend950(hivmPipelineOptions.target)) {
     // New A5 convert layout pipeline
+    // TODO: move the infer&set buffer size passes right before plan-memory
+    // after cv-pipelining can handle dynamic shape
+    pm.nest<func::FuncOp>().addPass(createInferBufferSizeFromSlicePass());
     pm.nest<func::FuncOp>().addPass(createInsertCVTightCoupledBufferPass());
     pm.nest<func::FuncOp>().addPass(
         mlir::hivm::createInsertLoadStoreForScalarPass());
@@ -335,6 +338,9 @@ hivmWorkspacePipeline(OpPassManager &pm,
 }
 
 static void convertTensorToTightCoupledBuffer(OpPassManager &pm) {
+  // TODO: move the infer&set buffer size passes right before plan-memory
+  // after cv-pipelining can handle dynamic shape
+  pm.nest<func::FuncOp>().addPass(createInferBufferSizeFromSlicePass());
   InsertCVTightCoupledBufferOptions options;
   options.onlyInsertTightlyCoupledBuffer = true;
   pm.nest<func::FuncOp>().addPass(

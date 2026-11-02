@@ -69,7 +69,7 @@ struct BufferSizeUpperBoundPattern
     // clone below cannot re-trigger this pattern forever.
     if (utils::getAnnotateOpWithAttr(dst, utils::kBufferSizeInByteAttr))
       return failure();
-    // Only direct results of memref.alloc are sized; other dsts (e.g. block
+    // Only direct results of alloc-like ops are sized; other dsts (e.g. block
     // args, views) are left to their defining allocation.
     if (!isa_and_nonnull<memref::AllocOp, bufferization::ToTensorOp>(
             dst.getDefiningOp()))

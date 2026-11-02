@@ -599,6 +599,49 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
 }
 
 // -----
+// A3: scf.while accumulation with a zero-init vbrc carried across the loop.
+// The while body is treated as a CCF, so the accumulation stays in L0C and no
+// vadd is materialized (mirrors the scf.for may-not-exec case above). The while
+// always runs its body at least zero times, so a counter plus a trailing
+// zero-fill guard is emitted.
+// CHECK-LABEL: func.func @test_a3_while_zero_init_for_l0c
+// CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
+// CHECK: scf.while ({{.*}}) : (tensor<16x16xf32>, i32) -> (tensor<16x16xf32>, i32) {
+// CHECK: scf.condition
+// CHECK: } do {
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+// CHECK: } attributes {may_not_exec, normalized_in_L0C = [0 : i32]}
+// CHECK: %[[N:.*]] = memref.load
+// CHECK: %[[GUARD:.*]] = arith.cmpi eq, %[[N]], %{{.*}} : i32
+// CHECK: scf.if %[[GUARD]]
+// CHECK: hivm.hir.vbrc
+// CHECK-NOT: hivm.hir.vadd
+// CHECK: return
+module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
+  func.func @test_a3_while_zero_init_for_l0c(%n: i32) -> tensor<16x16xf32> {
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %false = arith.constant false
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %init = hivm.hir.vbrc ins(%cst : f32) outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %a = tensor.empty() : tensor<16x16xf16>
+    %b = tensor.empty() : tensor<16x16xf16>
+    %0:2 = scf.while (%arg0 = %init, %arg1 = %n) : (tensor<16x16xf32>, i32) -> (tensor<16x16xf32>, i32) {
+      %cond = arith.cmpi sgt, %arg1, %c0_i32 : i32
+      scf.condition(%cond) %arg0, %arg1 : tensor<16x16xf32>, i32
+    } do {
+    ^bb0(%arg0: tensor<16x16xf32>, %arg1: i32):
+      %mmad = hivm.hir.mmadL1 ins(%a, %b, %false, %c0, %c0, %c0 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%arg0 : tensor<16x16xf32>) -> tensor<16x16xf32>
+      %dec = arith.subi %arg1, %c1_i32 : i32
+      scf.yield %mmad, %dec : tensor<16x16xf32>, i32
+    }
+    return %0#0 : tensor<16x16xf32>
+  }
+}
+
+// -----
 // A3: mem-based BatchMmadL1 is skipped by the CCF pattern (the pass only
 // sets real MKN here): no L0C reuse, no normalize_matmul_counter, no vadd.
 // CHECK-LABEL: func.func @test_a3_batchMmadL1_reuse_l0c

@@ -21,7 +21,6 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 
-#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -32,9 +31,7 @@
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Support/LLVM.h"
 
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/Debug.h"
 
 #include <array>
 #include <cassert>
@@ -421,18 +418,6 @@ void getOpUsers(Operation *op, SmallVector<Operation *, 8> &userOps);
 SmallVector<Value> getTensorDynamicValues(OpBuilder &builder, Location loc,
                                           Value src);
 
-Value createAllocWithMark(PatternRewriter &rewriter, Location loc,
-                          MemRefType memrefType, ValueRange dynamicDims,
-                          ArrayRef<int64_t> staticAllocSize, Type elemType);
-
-/// Mark dynamically shaped `dst` with a static buffer_size_in_byte upper
-/// bound derived from `src`'s defining chain. The bound is computed purely
-/// from `src` (`dst`'s shape and element type are not consulted), so callers
-/// must guarantee `src` and `dst` describe the same buffer. No-op when `dst`
-/// is statically shaped or already carries a buffer_size_in_byte mark.
-void markBufferSizeUpperBound(PatternRewriter &rewriter, Location loc,
-                              Value src, Value dst);
-
 // Create local workspace of current block (static shape only).
 Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
                                 ArrayRef<int64_t> shape, Type elementType);
@@ -446,13 +431,11 @@ Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
 Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
                               ArrayRef<int64_t> targetShapes, Type elementType);
 
-// Create local workspace and to_tensor ops. When staticAllocShape is provided,
-// add annotation::MarkOp to mark the static buffer size in byte (for dynamic
-// tensor case). When std::nullopt, skip the mark (for static tensor case).
-Value getLocalWorkSpaceTensor(
-    PatternRewriter &rewriter, Location loc, ArrayRef<int64_t> targetShape,
-    ArrayRef<Value> dynamicShape, Type elementType,
-    std::optional<ArrayRef<int64_t>> staticAllocShape = std::nullopt);
+// Create local workspace and to_tensor ops. The buffer_size_in_byte mark for
+// the dynamic tensor case is produced later by hivm-infer-buffer-size.
+Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
+                              ArrayRef<int64_t> targetShape,
+                              ArrayRef<Value> dynamicShape, Type elementType);
 
 // Create local lock var
 hivm::CreateSyncBlockLockOp createSyncBlockLockVar(OpBuilder &builder,

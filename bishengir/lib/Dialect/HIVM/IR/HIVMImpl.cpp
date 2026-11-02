@@ -239,7 +239,15 @@ bool traceSingleChainUser(
         llvm::to_vector(loopLikeOp.getYieldedValues());
     auto idx = findIdx(yieldValues, v);
     if (idx.has_value()) {
-      auto forResult = loopLikeOp.getLoopResults().value()[idx.value()];
+      auto loopResults = loopLikeOp.getLoopResults();
+      if (!loopResults) {
+        // getLoopResults() returns nullopt for scf.while
+        if (auto whileOp = dyn_cast<scf::WhileOp>(curOperation->getParentOp()))
+          return traceSingleChainUser(whileOp.getResult(idx.value()),
+                                      isMatchedOp);
+        return false;
+      }
+      auto forResult = loopResults.value()[idx.value()];
       return traceSingleChainUser(forResult, isMatchedOp);
     }
   }
