@@ -292,9 +292,9 @@ func.func @test_NormalizeMulExt_hivm_vmulext_i32_high_bits(%arg0: tensor<4x2xi32
 
 // CHECK-LABEL: func.func @test_NormalizeDivSI_hivm
 // CHECK: %[[LHS_EMPTY:.*]] = tensor.empty() : tensor<48xf32>
-// CHECK: %[[LHS:.*]] = hivm.hir.vcast ins(%arg0 : tensor<48xi32>) outs(%[[LHS_EMPTY]] : tensor<48xf32>) round_mode = <trunc> -> tensor<48xf32>
+// CHECK: %[[LHS:.*]] = hivm.hir.vcast ins(%arg0 : tensor<48xi32>) outs(%[[LHS_EMPTY]] : tensor<48xf32>) -> tensor<48xf32>
 // CHECK: %[[RHS_EMPTY:.*]] = tensor.empty() : tensor<48xf32>
-// CHECK: %[[RHS:.*]] = hivm.hir.vcast ins(%arg1 : tensor<48xi32>) outs(%[[RHS_EMPTY]] : tensor<48xf32>) round_mode = <trunc> -> tensor<48xf32>
+// CHECK: %[[RHS:.*]] = hivm.hir.vcast ins(%arg1 : tensor<48xi32>) outs(%[[RHS_EMPTY]] : tensor<48xf32>) -> tensor<48xf32>
 // CHECK: %[[DIV_EMPTY:.*]] = tensor.empty() : tensor<48xf32>
 // CHECK: %[[DIV:.*]] = hivm.hir.vdiv ins(%[[LHS]], %[[RHS]] : tensor<48xf32>, tensor<48xf32>) outs(%[[DIV_EMPTY]] : tensor<48xf32>) -> tensor<48xf32>
 // CHECK: %[[RES_EMPTY:.*]] = tensor.empty() : tensor<48xi32>
@@ -337,7 +337,7 @@ func.func @test_NormalizeMulExt_hivm_vmulext_i32_low_bits(%arg0: tensor<4x2xi32>
 
 // CHECK-LABEL: func.func @test_NormalizeDivSI_vs_hivm
 // CHECK: %[[LHS_EMPTY:.*]] = tensor.empty() : tensor<48xf32>
-// CHECK: %[[LHS:.*]] = hivm.hir.vcast ins(%arg0 : tensor<48xi32>) outs(%[[LHS_EMPTY]] : tensor<48xf32>) round_mode = <trunc> -> tensor<48xf32>
+// CHECK: %[[LHS:.*]] = hivm.hir.vcast ins(%arg0 : tensor<48xi32>) outs(%[[LHS_EMPTY]] : tensor<48xf32>) -> tensor<48xf32>
 // CHECK: %[[RHS:.*]] = arith.sitofp %arg1 : i32 to f32
 // CHECK: %[[DIV_EMPTY:.*]] = tensor.empty() : tensor<48xf32>
 // CHECK: %[[DIV:.*]] = hivm.hir.vdiv ins(%[[LHS]], %[[RHS]] : tensor<48xf32>, f32) outs(%[[DIV_EMPTY]] : tensor<48xf32>) -> tensor<48xf32>
@@ -357,12 +357,12 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
 // CHECK-LABEL: func.func @test_NormalizeDivSI_sv_hivm
 // CHECK: %[[FROM:.*]] = tensor.from_elements %arg0 : tensor<1xi32>
 // CHECK: %[[CAST0_EMPTY:.*]] = tensor.empty() : tensor<1xf32>
-// CHECK: %[[CAST0:.*]] = hivm.hir.vcast ins(%[[FROM]] : tensor<1xi32>) outs(%[[CAST0_EMPTY]] : tensor<1xf32>) round_mode = <trunc> -> tensor<1xf32>
+// CHECK: %[[CAST0:.*]] = hivm.hir.vcast ins(%[[FROM]] : tensor<1xi32>) outs(%[[CAST0_EMPTY]] : tensor<1xf32>) -> tensor<1xf32>
 // CHECK: %[[EXTRACT:.*]] = tensor.extract %[[CAST0]][%{{.*}}] : tensor<1xf32>
 // CHECK: %[[BRC_EMPTY:.*]] = tensor.empty() : tensor<48xf32>
 // CHECK: %[[BRC:.*]] = hivm.hir.vbrc ins(%[[EXTRACT]] : f32) outs(%[[BRC_EMPTY]] : tensor<48xf32>) -> tensor<48xf32>
 // CHECK: %[[RHS_EMPTY:.*]] = tensor.empty() : tensor<48xf32>
-// CHECK: %[[RHS:.*]] = hivm.hir.vcast ins(%arg1 : tensor<48xi32>) outs(%[[RHS_EMPTY]] : tensor<48xf32>) round_mode = <trunc> -> tensor<48xf32>
+// CHECK: %[[RHS:.*]] = hivm.hir.vcast ins(%arg1 : tensor<48xi32>) outs(%[[RHS_EMPTY]] : tensor<48xf32>) -> tensor<48xf32>
 // CHECK: %[[DIV_EMPTY:.*]] = tensor.empty() : tensor<48xf32>
 // CHECK: %[[DIV:.*]] = hivm.hir.vdiv ins(%[[BRC]], %[[RHS]] : tensor<48xf32>, tensor<48xf32>) outs(%[[DIV_EMPTY]] : tensor<48xf32>) -> tensor<48xf32>
 // CHECK: %[[RES_EMPTY:.*]] = tensor.empty() : tensor<48xi32>
@@ -436,9 +436,9 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
 
 // CHECK-LABEL: func.func @test_NormalizeDivUI_hivm
 // CHECK: %[[LHS_EMPTY:.*]] = tensor.empty() : tensor<48xf32>
-// CHECK: %[[LHS:.*]] = hivm.hir.vcast ins(%arg0 : tensor<48xi32>) outs(%[[LHS_EMPTY]] : tensor<48xf32>) round_mode = <trunc> -> tensor<48xf32>
+// CHECK: %[[LHS:.*]] = hivm.hir.vcast ins(%arg0 : tensor<48xi32>) outs(%[[LHS_EMPTY]] : tensor<48xf32>) -> tensor<48xf32>
 // CHECK: %[[RHS_EMPTY:.*]] = tensor.empty() : tensor<48xf32>
-// CHECK: %[[RHS:.*]] = hivm.hir.vcast ins(%arg1 : tensor<48xi32>) outs(%[[RHS_EMPTY]] : tensor<48xf32>) round_mode = <trunc> -> tensor<48xf32>
+// CHECK: %[[RHS:.*]] = hivm.hir.vcast ins(%arg1 : tensor<48xi32>) outs(%[[RHS_EMPTY]] : tensor<48xf32>) -> tensor<48xf32>
 // CHECK: %[[DIV_EMPTY:.*]] = tensor.empty() : tensor<48xf32>
 // CHECK: %[[DIV:.*]] = hivm.hir.vdiv ins(%[[LHS]], %[[RHS]] : tensor<48xf32>, tensor<48xf32>) outs(%[[DIV_EMPTY]] : tensor<48xf32>) -> tensor<48xf32>
 // CHECK: %[[RES_EMPTY:.*]] = tensor.empty() : tensor<48xi32>
@@ -502,7 +502,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 
 // CHECK-LABEL: func.func @test_NormalizeDivUI_vs_hivm
 // CHECK: %[[LHS_EMPTY:.*]] = tensor.empty() : tensor<48xf32>
-// CHECK: %[[LHS:.*]] = hivm.hir.vcast ins(%arg0 : tensor<48xi32>) outs(%[[LHS_EMPTY]] : tensor<48xf32>) round_mode = <trunc> -> tensor<48xf32>
+// CHECK: %[[LHS:.*]] = hivm.hir.vcast ins(%arg0 : tensor<48xi32>) outs(%[[LHS_EMPTY]] : tensor<48xf32>) -> tensor<48xf32>
 // CHECK: %[[RHS:.*]] = arith.sitofp %arg1 : i32 to f32
 // CHECK: %[[DIV_EMPTY:.*]] = tensor.empty() : tensor<48xf32>
 // CHECK: %[[DIV:.*]] = hivm.hir.vdiv ins(%[[LHS]], %[[RHS]] : tensor<48xf32>, f32) outs(%[[DIV_EMPTY]] : tensor<48xf32>) -> tensor<48xf32>
@@ -522,12 +522,12 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
 // CHECK-LABEL: func.func @test_NormalizeDivUI_sv_hivm
 // CHECK: %[[FROM:.*]] = tensor.from_elements %arg0 : tensor<1xi32>
 // CHECK: %[[CAST0_EMPTY:.*]] = tensor.empty() : tensor<1xf32>
-// CHECK: %[[CAST0:.*]] = hivm.hir.vcast ins(%[[FROM]] : tensor<1xi32>) outs(%[[CAST0_EMPTY]] : tensor<1xf32>) round_mode = <trunc> -> tensor<1xf32>
+// CHECK: %[[CAST0:.*]] = hivm.hir.vcast ins(%[[FROM]] : tensor<1xi32>) outs(%[[CAST0_EMPTY]] : tensor<1xf32>) -> tensor<1xf32>
 // CHECK: %[[EXTRACT:.*]] = tensor.extract %[[CAST0]][%{{.*}}] : tensor<1xf32>
 // CHECK: %[[BRC_EMPTY:.*]] = tensor.empty() : tensor<48xf32>
 // CHECK: %[[BRC:.*]] = hivm.hir.vbrc ins(%[[EXTRACT]] : f32) outs(%[[BRC_EMPTY]] : tensor<48xf32>) -> tensor<48xf32>
 // CHECK: %[[RHS_EMPTY:.*]] = tensor.empty() : tensor<48xf32>
-// CHECK: %[[RHS:.*]] = hivm.hir.vcast ins(%arg1 : tensor<48xi32>) outs(%[[RHS_EMPTY]] : tensor<48xf32>) round_mode = <trunc> -> tensor<48xf32>
+// CHECK: %[[RHS:.*]] = hivm.hir.vcast ins(%arg1 : tensor<48xi32>) outs(%[[RHS_EMPTY]] : tensor<48xf32>) -> tensor<48xf32>
 // CHECK: %[[DIV_EMPTY:.*]] = tensor.empty() : tensor<48xf32>
 // CHECK: %[[DIV:.*]] = hivm.hir.vdiv ins(%[[BRC]], %[[RHS]] : tensor<48xf32>, tensor<48xf32>) outs(%[[DIV_EMPTY]] : tensor<48xf32>) -> tensor<48xf32>
 // CHECK: %[[RES_EMPTY:.*]] = tensor.empty() : tensor<48xi32>

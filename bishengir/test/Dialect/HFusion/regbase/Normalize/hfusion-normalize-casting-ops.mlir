@@ -421,7 +421,9 @@ func.func @test_NormalizeCastLowering_triton_cast_f32_to_int8(%arg0: memref<?xi8
 
 // CHECK-LABEL: func.func @test_NormalizeCastLowering_cast_u32_to_f32
 // CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<16xi32>) outs({{.*}} : tensor<16xi64>) -> tensor<16xi64>
-// CHECK: hfusion.cast {{.*}} ins({{.*}} : tensor<16xi64>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// The i64 -> f32 half of the legalization chain must keep round-to-nearest;
+// trunc here made u32 -> f32 end up 1 ULP low on device.
+// CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins({{.*}} : tensor<16xi64>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
 func.func @test_NormalizeCastLowering_cast_u32_to_f32(%arg0: tensor<16xi32>) -> tensor<16xf32> {
   %0 = tensor.empty() : tensor<16xf32>
   %1 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<16xi32>) outs(%0 : tensor<16xf32>) -> tensor<16xf32>
@@ -545,7 +547,7 @@ func.func @test_NormalizefillCastToTensorBrc_opt_cast_IToF_fill() -> tensor<24x3
   %0 = tensor.empty() : tensor<24x32xf32>
   %1 = tensor.empty() : tensor<24x32xi32>
   %2 = linalg.fill ins(%c1_i32 : i32) outs(%1 : tensor<24x32xi32>) -> tensor<24x32xi32>
-  %3 = hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<trunc>} ins(%2 : tensor<24x32xi32>) outs(%0 : tensor<24x32xf32>) -> tensor<24x32xf32>
+  %3 = hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%2 : tensor<24x32xi32>) outs(%0 : tensor<24x32xf32>) -> tensor<24x32xf32>
   return %3 : tensor<24x32xf32>
 }
 
