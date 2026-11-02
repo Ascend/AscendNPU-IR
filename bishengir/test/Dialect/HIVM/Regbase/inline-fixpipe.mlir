@@ -1444,3 +1444,44 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %res : tensor<16x16xf32>
   }
 }
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+// A memref destination makes the transpose result-less. The fixpipe absorbs
+// it and writes the buffer directly.
+// CHECK-LABEL: func.func @transpose_buffer_dst
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2dn>} ins({{.*}} : tensor<16x16xf32>) outs({{.*}} : memref<16x16xf32>)
+// CHECK-NOT: hivm.hir.vtranspose
+func.func @transpose_buffer_dst(%src: tensor<16x16xf32>,
+                                %dst: memref<16x16xf32>) {
+  %init = tensor.empty() : tensor<16x16xf32>
+  %fp = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+      ins(%src : tensor<16x16xf32>) outs(%init : tensor<16x16xf32>)
+      -> tensor<16x16xf32>
+  hivm.hir.vtranspose ins(%fp : tensor<16x16xf32>)
+      outs(%dst : memref<16x16xf32>) permutation = [1, 0]
+  return
+}
+}
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+// The fixpipe is rebuilt by the transpose inlining; the clone keeps every
+// field, quant_scale included.
+// CHECK-LABEL: func.func @transpose_keeps_quant_scale
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2dn>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>} ins({{.*}} : tensor<16x16xf32>) outs({{.*}} : memref<16x16xf32>) quant_scale = {{.*}} : f32
+// CHECK-NOT: hivm.hir.vtranspose
+func.func @transpose_keeps_quant_scale(%src: tensor<16x16xf32>,
+                                       %dst: memref<16x16xf32>, %scale: f32) {
+  %init = tensor.empty() : tensor<16x16xf32>
+  %fp = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>}
+      ins(%src : tensor<16x16xf32>) outs(%init : tensor<16x16xf32>)
+      quant_scale = %scale : f32
+      -> tensor<16x16xf32>
+  hivm.hir.vtranspose ins(%fp : tensor<16x16xf32>)
+      outs(%dst : memref<16x16xf32>) permutation = [1, 0]
+  return
+}
+}

@@ -40,12 +40,14 @@ void inlineFixpipeWithStore(PatternRewriter &rewriter, Location loc,
                             Value fixpipeSrcTensor);
 void inlineFixpipeWithQuantScale(PatternRewriter &rewriter, FixpipeOp op,
                                  VMulOp vMulOp);
-void inlineFixpipeWithTranspose(PatternRewriter &rewriter, FixpipeOp op,
+bool inlineFixpipeWithTranspose(PatternRewriter &rewriter, FixpipeOp op,
                                 VTransposeOp transpose);
 void swapFixpipeWithExtractSlice(PatternRewriter &rewriter, Location loc,
                                  FixpipeOp op,
                                  tensor::ExtractSliceOp extractSliceOp);
-void moveFixpipeOutOfScfFor(PatternRewriter &rewriter, Location loc,
+/// Hoist \p fixPipeOp out of \p scfForOp. Returns false when an operand is
+/// defined inside the loop and would not dominate the hoisted position.
+bool moveFixpipeOutOfScfFor(PatternRewriter &rewriter, Location loc,
                             FixpipeOp fixPipeOp, scf::ForOp scfForOp,
                             Value fixpipeResTensor);
 

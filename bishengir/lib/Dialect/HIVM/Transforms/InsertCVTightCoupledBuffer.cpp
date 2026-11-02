@@ -152,11 +152,8 @@ struct InsertOpImpl<InsertMode::MoveToUb, EnableND2NZ> {
         } else {
           alloc = rewriter.create<memref::AllocOp>(fixLoc, ubMemrefType);
         }
-        SmallVector<Value> oprs({fixpipeOp.getSrc(), alloc});
-        if (auto quantScale = fixpipeOp.getQuantScale())
-          oprs.push_back(quantScale);
-        auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
-            fixLoc, TypeRange{}, oprs, fixpipeOp->getAttrs());
+        auto newFixpipeOp =
+            FixpipeOp::clone(rewriter, fixpipeOp, fixpipeOp.getSrc(), alloc);
         rewriter.setInsertionPointAfter(newFixpipeOp);
         auto toTensor = rewriter.create<bufferization::ToTensorOp>(
             fixLoc, resultTensorType, alloc,

@@ -911,17 +911,11 @@ struct FoldFixpipeNz2NzToFractalConvertLayoutPattern
 
     auto mixedFractalShape = op.getMixedOutputShape();
     auto emptyOp = rewriter.create<tensor::EmptyOp>(
-        op.getLoc(), mixedFractalShape, resultTensorType.getElementType());
+        op.getLoc(), mixedFractalShape, resultTensorType.getElementType(),
+        resultTensorType.getEncoding());
 
-    auto newFixpipe = rewriter.create<FixpipeOp>(
-        fixpipeOp.getLoc(), resultTensorType, fixpipeOp.getSrc(),
-        emptyOp.getResult(), fixpipeOp.getDmaModeAttr(),
-        fixpipeOp.getDualDstModeAttr(), fixpipeOp.getSubBlockIdxAttr(),
-        fixpipeOp.getPreQuantAttr(), fixpipeOp.getPreReluAttr(),
-        fixpipeOp.getChannelSplitAttr(), fixpipeOp.getC0PadEnAttr(),
-        fixpipeOp.getQuantScale());
-    if (fixpipeOp.getUnitFlagMode())
-      newFixpipe.setUnitFlagModeAttr(fixpipeOp.getUnitFlagModeAttr());
+    auto newFixpipe = FixpipeOp::clone(rewriter, fixpipeOp, fixpipeOp.getSrc(),
+                                       emptyOp.getResult());
 
     rewriter.replaceOp(op, newFixpipe.getResultTensor());
     rewriter.eraseOp(fixpipeOp);
@@ -977,22 +971,16 @@ struct FoldFixpipeConvertLayoutPattern
     // Create an empty tensor for the new fixpipe output (ND shape)
     // This is required because fixpipe requires outs type == result type
     auto emptyOp = rewriter.create<tensor::EmptyOp>(
-        op.getLoc(), mixedFractalShape, resultTensorType.getElementType());
+        op.getLoc(), mixedFractalShape, resultTensorType.getElementType(),
+        resultTensorType.getEncoding());
 
-    // Create new fixpipe with enhanced DMA mode
-    auto newFixpipe = rewriter.create<FixpipeOp>(
-        fixpipeOp.getLoc(),
-        resultTensorType,    // Result type: ND shape
-        fixpipeOp.getSrc(),  // Same source
-        emptyOp.getResult(), // New dst with ND shape (must match result)
-        FixpipeDMAModeAttr::get(rewriter.getContext(), dmaMode),
-        fixpipeOp.getDualDstModeAttr(), fixpipeOp.getSubBlockIdxAttr(),
-        fixpipeOp.getPreQuantAttr(), fixpipeOp.getPreReluAttr(),
-        fixpipeOp.getChannelSplitAttr(), fixpipeOp.getC0PadEnAttr());
+    auto newFixpipe = FixpipeOp::clone(
+        rewriter, fixpipeOp, fixpipeOp.getSrc(), emptyOp.getResult(),
+        {rewriter.getNamedAttr(
+            fixpipeOp.getDmaModeAttrName(),
+            FixpipeDMAModeAttr::get(rewriter.getContext(), dmaMode))});
 
-    if (fixpipeOp.getUnitFlagMode())
-      newFixpipe.setUnitFlagModeAttr(fixpipeOp.getUnitFlagModeAttr());
-    rewriter.replaceOp(op, newFixpipe.getResults());
+    rewriter.replaceOp(op, newFixpipe.getResultTensor());
     rewriter.eraseOp(fixpipeOp);
     return success();
   }

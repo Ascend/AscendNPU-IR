@@ -184,13 +184,9 @@ static LogicalResult ensureFixpipeToUB(UnrealizedConversionCastOp downPropOp,
       PropagatorUtil::insertTightCoupledBufferToUB(
           fixpipeOp.getDst(), downPropOp.getLoc(), rewriter);
   Value bufferizedValue = toTensorOp.getResult();
-  // Create new fixpipe writing to UB memref (returns void)
-  SmallVector<Value> oprs({fixpipeOp.getSrc(), coupledBuffer.spacedMemref});
-  if (auto quantScale = fixpipeOp.getQuantScale())
-    oprs.push_back(quantScale);
   rewriter.setInsertionPointAfter(fixpipeOp);
-  rewriter.create<FixpipeOp>(downPropOp.getLoc(), TypeRange{}, oprs,
-                             fixpipeOp->getAttrs());
+  FixpipeOp::clone(rewriter, fixpipeOp, fixpipeOp.getSrc(),
+                   coupledBuffer.spacedMemref);
   rewriter.replaceOp(fixpipeOp, toTensorOp.getResult());
 
   rewriter.modifyOpInPlace(
