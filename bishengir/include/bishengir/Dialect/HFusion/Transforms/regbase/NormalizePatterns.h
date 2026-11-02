@@ -105,6 +105,7 @@ void populateNormalizeShiftI8ToI16(RewritePatternSet &patterns);
 void populateNormalizeFinalReductionPatterns(RewritePatternSet &patterns);
 void populateNormalizeAtomicPatterns(RewritePatternSet &patterns,
                                      bool supportsRegBaseAtomic);
+LogicalResult checkIsLegalAtomicOp(Operation *op);
 void populateNormalizeSortPatterns(RewritePatternSet &patterns);
 
 } // namespace mlir::hfusion

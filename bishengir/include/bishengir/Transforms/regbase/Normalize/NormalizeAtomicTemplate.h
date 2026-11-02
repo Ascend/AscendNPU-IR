@@ -24,6 +24,7 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/Support/LogicalResult.h"
@@ -53,7 +54,7 @@ struct SyncBlockLockGuard {
 };
 
 /// Static backing allocation for a GM destination that may be a dynamic
-/// subview.
+/// subview or expand_shape.
 ///
 /// `sBuffer` is used for tensor conversion, while `dBuffer` has the same
 /// logical shape as the original GM memref:
@@ -67,25 +68,27 @@ struct StaticSizedBuffer {
                     TypedValue<MemRefType> gmMemrefSource)
       : builder(builder), loc(loc), gmMemrefSource(gmMemrefSource) {
     const Type elemType = gmMemrefSource.getType().getElementType();
-    const MemRefType rawMemref =
-        MemRefType::get(gmMemrefSource.getType().getShape(), elemType);
+
     if (gmMemrefSource.getType().hasStaticShape()) {
+      const MemRefType rawMemref =
+          MemRefType::get(gmMemrefSource.getType().getShape(), elemType);
       dBuffer = sBuffer = builder.create<memref::AllocOp>(loc, rawMemref);
       return;
     }
 
-    definingOp = gmMemrefSource.getDefiningOp<memref::SubViewOp>();
-    if (!definingOp || !definingOp.getSourceType().hasStaticShape()) {
+    MemRefType baseType;
+    if (!resolveStaticBase(baseType)) {
       valid = false;
       return;
     }
     sBuffer = builder.create<memref::AllocOp>(
-        loc, rawMemref.clone(definingOp.getSourceType().getShape()));
-    SmallVector<OpFoldResult> zeroOffsets(gmMemrefSource.getType().getRank(),
-                                          builder.getI64IntegerAttr(0));
-    dBuffer = builder.create<memref::SubViewOp>(loc, sBuffer, zeroOffsets,
-                                                definingOp.getMixedSizes(),
-                                                definingOp.getMixedStrides());
+        loc, MemRefType::get(baseType.getShape(), elemType));
+    FailureOr<TypedValue<MemRefType>> maybeDBuffer = buildMemrefView(sBuffer);
+    if (failed(maybeDBuffer)) {
+      valid = false;
+      return;
+    }
+    dBuffer = *maybeDBuffer;
   }
 
   bool isValid() const { return valid; }
@@ -130,28 +133,137 @@ struct StaticSizedBuffer {
   }
 
   void storeBack(TypedValue<TensorType> tensorSrc) {
-    if (dBuffer.getType().hasStaticShape()) {
+    if (memrefViewChain.empty()) {
       builder.create<bufferization::MaterializeInDestinationOp>(
           loc, Type(), tensorSrc, gmMemrefSource, /*restrict=*/false,
           /*writable=*/true);
       return;
     }
-    SmallVector<OpFoldResult> zeroOffsets(gmMemrefSource.getType().getRank(),
-                                          builder.getI64IntegerAttr(0));
-    Value dtensor = builder.create<tensor::ExtractSliceOp>(
-        loc, tensorSrc, zeroOffsets, definingOp.getMixedSizes(),
-        definingOp.getMixedStrides());
+    FailureOr<TypedValue<TensorType>> maybeView = buildTensorView(tensorSrc);
+    if (failed(maybeView))
+      return;
     builder.create<bufferization::MaterializeInDestinationOp>(
-        loc, Type(), dtensor, gmMemrefSource, /*restrict=*/false,
+        loc, Type(), *maybeView, gmMemrefSource, /*restrict=*/false,
         /*writable=*/true);
   }
 
 private:
+  /// Walks up static base -> GM destination chain of memref.subview,
+  /// memref.expand_shape, memref.collapse_shape (whether static or dynamic),
+  /// until it reaches a static memref, recording in memrefViewChain for later
+  /// replay.
+  bool resolveStaticBase(MemRefType &baseType) {
+    Value current = gmMemrefSource;
+    SmallVector<Operation *, 4> topDown;
+    while (true) {
+      Operation *defOp = current.getDefiningOp();
+      if (auto mt = dyn_cast<MemRefType>(current.getType()))
+        if (mt.hasStaticShape()) {
+          baseType = mt;
+          break;
+        }
+      if (defOp && isa<memref::SubViewOp, memref::ExpandShapeOp,
+                       memref::CollapseShapeOp>(defOp)) {
+        topDown.push_back(defOp);
+        current = defOp->getOperand(0);
+        continue;
+      }
+      return false;
+    }
+    memrefViewChain.assign(topDown.rbegin(), topDown.rend());
+    return true;
+  }
+
+  /// Replays the recorded memrefViewChain on a given memref source -
+  /// re-creating each step as a memref op, using recorded size/stride with rezo
+  /// offset for subview, and reassociation indices for expand shape.
+  ///
+  /// It returns dBuffer, a view of sBuffer with the same logical shape of GM
+  /// destination.
+  FailureOr<TypedValue<MemRefType>> buildMemrefView(Value source) {
+    Value current = source;
+    for (Operation *step : memrefViewChain) {
+      if (auto subview = dyn_cast<memref::SubViewOp>(step)) {
+        SmallVector<OpFoldResult> zeroOffsets(
+            current.getType().cast<MemRefType>().getRank(),
+            builder.getI64IntegerAttr(0));
+        current = builder.create<memref::SubViewOp>(
+            loc, cast<TypedValue<MemRefType>>(current), zeroOffsets,
+            subview.getMixedSizes(), subview.getMixedStrides());
+        continue;
+      }
+      if (auto expand = dyn_cast<memref::ExpandShapeOp>(step)) {
+        auto outputShape = getMixedValues(expand.getStaticOutputShape(),
+                                          expand.getOutputShape(), builder);
+        auto maybeType = memref::ExpandShapeOp::computeExpandedType(
+            current.getType().cast<MemRefType>(),
+            expand.getResultType().getShape(),
+            expand.getReassociationIndices());
+        if (failed(maybeType))
+          return failure();
+        current = builder.create<memref::ExpandShapeOp>(
+            loc, *maybeType, cast<TypedValue<MemRefType>>(current),
+            expand.getReassociationIndices(), outputShape);
+        continue;
+      }
+      if (auto collapse = dyn_cast<memref::CollapseShapeOp>(step)) {
+        current = builder.create<memref::CollapseShapeOp>(
+            loc, cast<TypedValue<MemRefType>>(current),
+            collapse.getReassociationIndices());
+        continue;
+      }
+      return failure();
+    }
+    return cast<TypedValue<MemRefType>>(current);
+  }
+
+  /// Replays the recorded memrefViewChain on a given tensor source - mapping
+  /// each memref step to its tensor uquivalent, using the memref's result
+  /// shapes at each step.
+  ///
+  /// It returns tensor view with the same logical shape of GM destination.
+  FailureOr<TypedValue<TensorType>> buildTensorView(Value source) {
+    Value current = source;
+    for (Operation *step : memrefViewChain) {
+      if (auto subview = dyn_cast<memref::SubViewOp>(step)) {
+        SmallVector<OpFoldResult> zeroOffsets(
+            current.getType().cast<RankedTensorType>().getRank(),
+            builder.getI64IntegerAttr(0));
+        current = builder.create<tensor::ExtractSliceOp>(
+            loc, cast<TypedValue<TensorType>>(current), zeroOffsets,
+            subview.getMixedSizes(), subview.getMixedStrides());
+        continue;
+      }
+      if (auto expand = dyn_cast<memref::ExpandShapeOp>(step)) {
+        auto outputShape = getMixedValues(expand.getStaticOutputShape(),
+                                          expand.getOutputShape(), builder);
+        auto resultType =
+            RankedTensorType::get(expand.getResultType().getShape(),
+                                  expand.getResultType().getElementType());
+        current = builder.create<tensor::ExpandShapeOp>(
+            loc, resultType, cast<TypedValue<TensorType>>(current),
+            expand.getReassociationIndices(), outputShape);
+        continue;
+      }
+      if (auto collapse = dyn_cast<memref::CollapseShapeOp>(step)) {
+        auto resultType =
+            RankedTensorType::get(collapse.getResultType().getShape(),
+                                  collapse.getResultType().getElementType());
+        current = builder.create<tensor::CollapseShapeOp>(
+            loc, resultType, cast<TypedValue<TensorType>>(current),
+            collapse.getReassociationIndices());
+        continue;
+      }
+      return failure();
+    }
+    return cast<TypedValue<TensorType>>(current);
+  }
+
   OpBuilder &builder;
   const Location loc;
 
   const TypedValue<MemRefType> gmMemrefSource;
-  memref::SubViewOp definingOp;
+  SmallVector<Operation *, 4> memrefViewChain;
   bool valid = true;
 };
 
@@ -440,7 +552,9 @@ struct NormalizeAtomicXCHGTemplate : public OpRewritePattern<AtomicXchgOpTy> {
         rewriter.create<memref::CopyOp>(loc, ubMemref, gmMemref);
         rewriter.create<memref::CopyOp>(loc, tmpBuffer.dBuffer, ubMemref);
       } else {
-        gmBuffer.storeBack(ubTensor);
+        rewriter.create<bufferization::MaterializeInDestinationOp>(
+            loc, Type(), ubTensor, gmMemref, /*restrict=*/false,
+            /*writable=*/true);
       }
     }
     if (hasReturn)
