@@ -324,13 +324,14 @@ hivmWorkspacePipeline(OpPassManager &pm,
   BindWorkSpaceArgOptions options;
   options.enableSubWorkspace = true;
   pm.nest<func::FuncOp>().addPass(createBindWorkSpaceArgPass(options));
-  PlanMemoryRegBaseOptions planMemoryOption;
+  PlanMemoryOptions planMemoryOption;
   planMemoryOption.memMode = MemPlanMode::GLOBAL_WORKSPACE_PLAN;
   planMemoryOption.enableGlobalReuse =
       hivmPipelineOptions.enableHIVMGlobalWorkspaceReuse;
-  planMemoryOption.enablePrintMemoryAllocatedSize =
+  planMemoryOption.enableMemoryDisplay =
+      hivmPipelineOptions.enableMemoryDisplay ||
       hivmPipelineOptions.enablePrintMemoryAllocatedSize;
-  pm.addPass(createPlanMemoryRegBasePass(planMemoryOption));
+  pm.addPass(createPlanMemoryPass(planMemoryOption));
   if (hivmPipelineOptions.enableTritonKernelCompile)
     // Must place after plan-workspace-memory
     pm.addPass(createInsertInferWorkSpaceSizeFuncPass());
@@ -495,13 +496,11 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.addPass(createPartitionAndBindSubBlockPass());
   pm.nest<func::FuncOp>().addPass(createInferVFModePass());
 
-  PlanMemoryRegBaseOptions planMemoryOption;
+  PlanMemoryOptions planMemoryOption;
   planMemoryOption.memMode = MemPlanMode::GLOBAL_WORKSPACE_PLAN;
   planMemoryOption.enableGlobalReuse =
       hivmPipelineOptions.enableHIVMGlobalWorkspaceReuse;
-  planMemoryOption.enablePrintMemoryAllocatedSize =
-      hivmPipelineOptions.enablePrintMemoryAllocatedSize;
-  pm.addPass(createPlanMemoryRegBasePass(planMemoryOption));
+  pm.addPass(createPlanMemoryPass(planMemoryOption));
 
   // Tag L1/UB allocs with tightly-coupled-buffer ids on the single MIX
   // function, then hoist any tightly-coupled alloc that is yielded out of an
@@ -724,34 +723,20 @@ static void hivmPostBufferizationOptimizationPipeline(
   multiBufferOptions.gmMultiBufferNum = 1;
   pm.nest<func::FuncOp>().addPass(
       createMarkMultiBufferPass(multiBufferOptions));
-  if (hivmPipelineOptions.setWorkspaceMultibuffer == 0) {
-    if (hivmPipelineOptions.enableVFOperandSubstitution) {
-      pm.addPass(createVFOperandSubstitutionPass());
-    }
-    PlanMemoryRegBaseOptions planMemoryOption;
-    planMemoryOption.enablePrintMemoryAllocatedSize =
-        hivmPipelineOptions.enablePrintMemoryAllocatedSize;
-    planMemoryOption.simtVFDynamicSize = hivmPipelineOptions.simtVFDynamicSize;
-    planMemoryOption.disableTightlyCoupledBufferReuse =
-        hivmPipelineOptions.disableTightlyCoupledBufferReuse;
-    planMemoryOption.disableVFReachableCheck =
-        hivmPipelineOptions.disableVFReachableCheck;
-    planMemoryOption.planMemoryStrategy =
-        hivmPipelineOptions.planMemoryStrategy;
-    pm.addPass(createPlanMemoryRegBasePass(planMemoryOption));
-  } else {
-    PlanMemoryOptions planMemoryOption;
-    planMemoryOption.enableMemoryDisplay =
-        hivmPipelineOptions.enableMemoryDisplay;
-    planMemoryOption.simtVFDynamicSize = hivmPipelineOptions.simtVFDynamicSize;
-    planMemoryOption.disableTightlyCoupledBufferReuse =
-        hivmPipelineOptions.disableTightlyCoupledBufferReuse;
-    planMemoryOption.disableVFReachableCheck =
-        hivmPipelineOptions.disableVFReachableCheck;
-    planMemoryOption.planMemoryStrategy =
-        hivmPipelineOptions.planMemoryStrategy;
-    pm.addPass(createPlanMemoryPass(planMemoryOption));
+  if (hivmPipelineOptions.enableVFOperandSubstitution) {
+    pm.addPass(createVFOperandSubstitutionPass());
   }
+  PlanMemoryOptions planMemoryOption;
+  planMemoryOption.enableMemoryDisplay =
+      hivmPipelineOptions.enableMemoryDisplay ||
+      hivmPipelineOptions.enablePrintMemoryAllocatedSize;
+  planMemoryOption.simtVFDynamicSize = hivmPipelineOptions.simtVFDynamicSize;
+  planMemoryOption.disableTightlyCoupledBufferReuse =
+      hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+  planMemoryOption.disableVFReachableCheck =
+      hivmPipelineOptions.disableVFReachableCheck;
+  planMemoryOption.planMemoryStrategy = hivmPipelineOptions.planMemoryStrategy;
+  pm.addPass(createPlanMemoryPass(planMemoryOption));
 
   // Cross-Core Auto-Sync passes STEP=2
   hivmCrossCoreAutoSyncPipeline(pm, hivmPipelineOptions,

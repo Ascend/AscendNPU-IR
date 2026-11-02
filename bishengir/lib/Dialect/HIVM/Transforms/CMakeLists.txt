@@ -142,7 +142,6 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   OutlineAllocInVF.cpp
   OutlineCopyInVF.cpp
   PlanMemory.cpp
-  regbase/PlanMemory.cpp
   RecognizeDeinterleaveOp.cpp
   RecognizeDiscontiguousStore.cpp
   ReduceRankSubview.cpp
