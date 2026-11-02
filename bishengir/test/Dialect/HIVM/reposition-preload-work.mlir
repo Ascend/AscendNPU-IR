@@ -1,6 +1,11 @@
 // RUN: bishengir-opt %s -hivm-reposition-preload-work="bypass-shape-registry=true" | FileCheck %s
 // RUN: sed -E 's/hivm.preload_num = [0-9]+/hivm.preload_num = 0/g; s/hivm.max_preload_num = [0-9]+/hivm.max_preload_num = 1/g' %s > %t
 // RUN: bishengir-opt %t -hivm-reposition-preload-work="bypass-shape-registry=true" | FileCheck %s --check-prefix=ZERO --implicit-check-not=hivm.independent_preload_prefix
+// RUN: bishengir-opt %s -hivm-reposition-preload-work="enable-preload=true set-workspace-multibuffer=4" | FileCheck %s --check-prefix=PURE
+// RUN: bishengir-opt %s -hivm-reposition-preload-work="enable-preload=false set-workspace-multibuffer=4" | FileCheck %s --check-prefix=KEEP
+// RUN: bishengir-opt %s -hivm-reposition-preload-work="enable-preload=true set-workspace-multibuffer=0" | FileCheck %s --check-prefix=KEEP
+// RUN: bishengir-opt %t -hivm-reposition-preload-work="enable-preload=true set-workspace-multibuffer=4" | FileCheck %s --check-prefix=KEEP
+// RUN: sed 's/memref.copy %other, %%scratch/memref.copy %other, %input/' %s | bishengir-opt -hivm-reposition-preload-work="enable-preload=true set-workspace-multibuffer=4" | FileCheck %s --check-prefix=KEEP
 
 func.func @cube_touch(%arg0: memref<32x128xf32, #hivm.address_space<ub>>)
     attributes {hivm.func_core_type = #hivm.func_core_type<AIC>,
@@ -312,4 +317,47 @@ func.func @keep_affine_index_with_consumer(
        hivm.max_preload_num = 4 : i32, hivm.preload_num = 1 : i32, no_inline}
   }
   return
+}
+
+// Sink an unregistered pure mask across an unrelated CUBE scope. Retain it
+// when preload is disabled, every stage is zero, or an input is overwritten.
+// PURE-LABEL: func.func @sink_pure_tensor_mask
+// PURE: scope.scope
+// PURE-NOT: hivm.hir.vcmp
+// PURE: memref.copy
+// PURE: scope.scope
+// PURE: %[[MASK:.*]] = hivm.hir.vcmp
+// PURE-NEXT: %{{.*}} = hivm.hir.vsel ins(%[[MASK]],
+// KEEP-LABEL: func.func @sink_pure_tensor_mask
+// KEEP: %[[SCOPE:.*]] = scope.scope
+// KEEP: hivm.hir.vcmp
+// KEEP: scope.return
+// KEEP: memref.copy
+// KEEP-NOT: hivm.hir.vcmp
+// KEEP: hivm.hir.vsel ins(%[[SCOPE]],
+func.func @sink_pure_tensor_mask(%input: memref<16x16xf32>, %other: memref<16x16xf32>, %scores: tensor<16x16xf32>) -> tensor<16x16xf32> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  %zero = arith.constant 0.0 : f32
+  %scratch = memref.alloc() : memref<16x16xf32>
+  %input_tensor = bufferization.to_tensor %input restrict writable : memref<16x16xf32>
+  %out = scf.for %i = %c0 to %c4 step %c1 iter_args(%acc = %scores) -> tensor<16x16xf32> {
+    %mask = scope.scope : () -> tensor<16x16xi1> {
+      %empty = tensor.empty() : tensor<16x16xi1>
+      %cmp = hivm.hir.vcmp ins(%input_tensor, %zero : tensor<16x16xf32>, f32) outs(%empty : tensor<16x16xi1>) -> tensor<16x16xi1>
+      scope.return %cmp : tensor<16x16xi1>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 2 : i32, no_inline}
+    scope.scope : () -> () {
+      memref.copy %other, %scratch : memref<16x16xf32> to memref<16x16xf32>
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 1 : i32, no_inline}
+    %next = scope.scope : () -> tensor<16x16xf32> {
+      %empty = tensor.empty() : tensor<16x16xf32>
+      %selected = hivm.hir.vsel ins(%mask, %acc, %zero : tensor<16x16xi1>, tensor<16x16xf32>, f32) outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scope.return %selected : tensor<16x16xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 0 : i32, no_inline}
+    scf.yield %next : tensor<16x16xf32>
+  }
+  return %out : tensor<16x16xf32>
 }

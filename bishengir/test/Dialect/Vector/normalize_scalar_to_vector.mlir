@@ -137,3 +137,27 @@ func.func @test_scalar_bitcast_chain_via_select(%arg0: f32, %arg1: i32, %arg2: i
   vector.transfer_write %7, %arg6[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
   return
 }
+
+// -----
+
+// CHECK-LABEL: @test_scalar_nan_select_broadcast
+// CHECK: %[[NAN:.*]] = arith.cmpf une, {{.*}} : vector<64xf32>
+// CHECK: arith.select %[[NAN]], {{.*}} : vector<64xi1>, vector<64xf32>
+func.func @test_scalar_nan_select_broadcast(%x: f32, %replacement: f32) -> vector<64xf32> attributes {hivm.vector_function} {
+  %nan = arith.cmpf une, %x, %x : f32
+  %selected = arith.select %nan, %replacement, %x : f32
+  %result = vector.broadcast %selected : f32 to vector<64xf32>
+  return %result : vector<64xf32>
+}
+
+// -----
+
+// CHECK-LABEL: @test_scalar_cmp_select_broadcast
+// CHECK: %[[CMP:.*]] = arith.cmpf ogt, {{.*}} fastmath<contract> : vector<64xf32>
+// CHECK: arith.select %[[CMP]], {{.*}} : vector<64xi1>, vector<64xf32>
+func.func @test_scalar_cmp_select_broadcast(%x: f32, %y: f32, %replacement: f32) -> vector<64xf32> attributes {hivm.vector_function} {
+  %cmp = arith.cmpf ogt, %x, %y fastmath<contract> : f32
+  %selected = arith.select %cmp, %replacement, %x : f32
+  %result = vector.broadcast %selected : f32 to vector<64xf32>
+  return %result : vector<64xf32>
+}
