@@ -188,6 +188,9 @@ void buildAffinityPipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(hivmave::createAVENormalizeOpsPass());
   pm.nest<func::FuncOp>().addPass(hivmave::createRemoveVectorLayoutAttrPass());
 
+  // Decompose explicit HIVM operations, including set_atomic into set_ctrl.
+  pm.nest<func::FuncOp>().addPass(hivm::createHIVMDecomposeOpPass());
+
   // Frontend ttadapter codegen does not yet mark kernel memref arguments as GM.
   // TODO: Remove scope inference once the frontend guarantees explicit address
   // spaces for all memref values.
