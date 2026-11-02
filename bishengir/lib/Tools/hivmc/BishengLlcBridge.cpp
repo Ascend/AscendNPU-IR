@@ -98,18 +98,18 @@ std::string bishengLlcDumpDir() {
 llvm::StringRef bishengLlcStatusName(int status) {
 #if BISHENGIR_HAVE_BISHENG_LLC
   switch (status) {
-  case BISHENG_LLC_OK:
-    return "OK";
+  case BISHENG_LLC_SUCCESS:
+    return "SUCCESS";
   case BISHENG_LLC_BAD_ARGUMENT:
     return "BAD_ARGUMENT";
-  case BISHENG_LLC_BAD_STATE:
-    return "BAD_STATE";
-  case BISHENG_LLC_AUX_ERROR:
-    return "AUX_ERROR";
+  case BISHENG_LLC_LIB_ERROR:
+    return "LIB_ERROR";
   case BISHENG_LLC_BACKEND_ERROR:
     return "BACKEND_ERROR";
-  case BISHENG_LLC_IO_ERROR:
-    return "IO_ERROR";
+  case BISHENG_LLC_OUTPUT_ERROR:
+    return "OUTPUT_ERROR";
+  case BISHENG_LLC_VF_STACK_OVERFLOW:
+    return "VF_STACK_OVERFLOW";
   default:
     return "UNKNOWN";
   }
@@ -198,7 +198,7 @@ bool BishengLlcBridge::init() {
     return false;
   }
   int st = fnInit_(&ctx_);
-  if (st != BISHENG_LLC_OK || !ctx_) {
+  if (st != BISHENG_LLC_SUCCESS || !ctx_) {
     llvm::errs() << BRIDGE_LOG "bishengLlcInit failed: "
                  << bishengLlcStatusName(st) << " (" << st << ")\n";
     ctx_ = nullptr;
@@ -229,7 +229,7 @@ bool BishengLlcBridge::preloadAux(llvm::StringRef path) {
     return false;
   }
   int st = fnPreload_(ctx_, path.str().c_str());
-  if (st != BISHENG_LLC_OK) {
+  if (st != BISHENG_LLC_SUCCESS) {
     llvm::errs() << BRIDGE_LOG "bishengLlcPreload('" << path
                  << "') failed: " << bishengLlcStatusName(st) << "\n";
     return false;
@@ -302,7 +302,7 @@ BishengLlcBridge::compile(llvm::StringRef irBytes,
   // Consumed state; resetForRetry must reset() + load() + init() again.
   destroyCtx_();
 
-  if (st != BISHENG_LLC_OK) {
+  if (st != BISHENG_LLC_SUCCESS) {
     result.diagnostic =
         ("bishengLlcCompile failed: " + bishengLlcStatusName(st).str() +
          " (" + std::to_string(st) + ")");

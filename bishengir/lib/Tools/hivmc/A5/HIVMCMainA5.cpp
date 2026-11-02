@@ -580,6 +580,11 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
                        res.success ? "ok" : "fail");
     if (!res.success) {
       llvm::errs() << "[ERROR] Native: " << res.diagnostic << "\n";
+      // Map the vendor's recoverable VF-stack overflow code to the same
+      // VFStackOverflowError the Process path raises, so the regbase retry
+      // loop's isVFStackOverflowError() fires under both backends.
+      if (res.vendorStatus == BISHENG_LLC_VF_STACK_OVERFLOW)
+        return llvm::make_error<VFStackOverflowError>();
       return llvm::make_error<DeviceCompileError>();
     }
     return outputBin;
@@ -610,16 +615,10 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
     }
     if (failed(execute(bishengBin, bishengPath, arguments))) {
       llvm::errs() << "[ERROR] failed to execute bisheng\n";
-      // Taken as a VF stack overflow, although nothing here actually says
-      // so. There is no precise signal for the overflow short of matching
-      // ccec's stderr against its wording, which is undocumented and not a
-      // contract this driver should depend on. What justifies the guess is
-      // that a kernel reaching ccec has already passed the whole pipeline,
-      // and the VF stack is what ccec then rejects it for in practice. The
-      // approximation is coarser than it looks: `execute` fails the same way
-      // when ccec cannot be found at all, so that lands here too. Either way
-      // the cost of guessing wrong is one extra attempt, not a wrong
-      // result. This is the place to narrow once a precise signal exists.
+      // No precise signal here (only ccec's exit status, not the
+      // BISHENG_LLC_VF_STACK_OVERFLOW code the Native path gets); treat any
+      // execute failure as a suspected VF stack overflow so the retry loop
+      // gets a chance.  The cost of guessing wrong is one extra attempt.
       return llvm::make_error<VFStackOverflowError>();
     }
     return outputBin;
