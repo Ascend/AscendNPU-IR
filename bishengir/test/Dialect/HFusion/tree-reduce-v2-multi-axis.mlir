@@ -604,6 +604,7 @@ func.func @rank1_suffix_direction_gate(%input: tensor<2048xf32>,
 // The register-tree RA configuration also enables the specific 4096-element
 // case even though its staged direction is AR.
 // REGISTER-TREE-LABEL: func.func @rank1_4096_register_tree(
+// REGISTER-TREE: tensor.empty() : tensor<1x256xf32>
 // REGISTER-TREE-NOT: vector.multi_reduction
 // REGISTER-TREE: vector.reduction <add>
 // REGISTER-TREE: return
@@ -628,4 +629,80 @@ func.func @rank1_4096_register_tree(%input: tensor<4096xf32>,
     scf.yield %next : tensor<f32>
   }
   return %result : tensor<f32>
+}
+
+// A locally created input consumed only by the reduction call is proven
+// exclusive across the module, so the staged fold may reuse it.
+// REGISTER-TREE-LABEL: func.func private @rank1_4096_exclusive_impl(
+// REGISTER-TREE-NOT: tensor.empty() : tensor<1x256xf32>
+// REGISTER-TREE: vector.reduction <add>
+// REGISTER-TREE: return
+func.func private @rank1_4096_exclusive_impl(
+    %input: tensor<4096xf32>, %init: tensor<f32>) -> tensor<f32> {
+  %c0 = arith.constant 0 : index
+  %c64 = arith.constant 64 : index
+  %c4096 = arith.constant 4096 : index
+  %zero = arith.constant 0.0 : f32
+  %result = scf.for %i = %c0 to %c4096 step %c64
+      iter_args(%acc = %init) -> tensor<f32> {
+    %source = vector.transfer_read %input[%i], %zero
+        : tensor<4096xf32>, vector<64xf32>
+    %oldVec = vector.transfer_read %acc[], %zero
+        : tensor<f32>, vector<f32>
+    %old = vector.extractelement %oldVec[] : vector<f32>
+    %reduced = vector.multi_reduction <add>, %source, %old [0]
+        : vector<64xf32> to f32
+    %nextVec = vector.broadcast %reduced : f32 to vector<f32>
+    %next = vector.transfer_write %nextVec, %acc[]
+        : vector<f32>, tensor<f32>
+    scf.yield %next : tensor<f32>
+  }
+  return %result : tensor<f32>
+}
+
+func.func @rank1_4096_exclusive_caller() -> tensor<f32> {
+  %input = tensor.empty() : tensor<4096xf32>
+  %init = tensor.empty() : tensor<f32>
+  %result = func.call @rank1_4096_exclusive_impl(%input, %init)
+      : (tensor<4096xf32>, tensor<f32>) -> tensor<f32>
+  return %result : tensor<f32>
+}
+
+// The caller uses the same input after the reduction call. The staged tree is
+// retained, but its destructive fold must target a private working tensor.
+// REGISTER-TREE-LABEL: func.func private @rank1_4096_shared_impl(
+// REGISTER-TREE: tensor.empty() : tensor<1x256xf32>
+// REGISTER-TREE: vector.reduction <add>
+// REGISTER-TREE: return
+func.func private @rank1_4096_shared_impl(
+    %input: tensor<4096xf32>, %init: tensor<f32>) -> tensor<f32> {
+  %c0 = arith.constant 0 : index
+  %c64 = arith.constant 64 : index
+  %c4096 = arith.constant 4096 : index
+  %zero = arith.constant 0.0 : f32
+  %result = scf.for %i = %c0 to %c4096 step %c64
+      iter_args(%acc = %init) -> tensor<f32> {
+    %source = vector.transfer_read %input[%i], %zero
+        : tensor<4096xf32>, vector<64xf32>
+    %oldVec = vector.transfer_read %acc[], %zero
+        : tensor<f32>, vector<f32>
+    %old = vector.extractelement %oldVec[] : vector<f32>
+    %reduced = vector.multi_reduction <add>, %source, %old [0]
+        : vector<64xf32> to f32
+    %nextVec = vector.broadcast %reduced : f32 to vector<f32>
+    %next = vector.transfer_write %nextVec, %acc[]
+        : vector<f32>, tensor<f32>
+    scf.yield %next : tensor<f32>
+  }
+  return %result : tensor<f32>
+}
+
+func.func @rank1_4096_shared_caller() -> (tensor<f32>, f32) {
+  %c0 = arith.constant 0 : index
+  %input = tensor.empty() : tensor<4096xf32>
+  %init = tensor.empty() : tensor<f32>
+  %result = func.call @rank1_4096_shared_impl(%input, %init)
+      : (tensor<4096xf32>, tensor<f32>) -> tensor<f32>
+  %later = tensor.extract %input[%c0] : tensor<4096xf32>
+  return %result, %later : tensor<f32>, f32
 }
