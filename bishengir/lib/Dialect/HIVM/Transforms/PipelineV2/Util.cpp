@@ -9,16 +9,23 @@
 #include "Util.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Analysis/CFGPrinter.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/GraphWriter.h"
+
+#define DEBUG_TYPE "pipeline-v2-util"
 
 namespace mlir {
 namespace hivm {
@@ -45,6 +52,69 @@ std::optional<TCoreType> getScopeCoreType(ScopeOp scope) {
           scope->getAttrOfType<TCoreTypeAttr>(kPipelinedLoopCoreTypeAttrName))
     return attr.getTcoretype();
   return std::nullopt;
+}
+
+Value traceValueDef(Value v) {
+  if (!v)
+    return nullptr;
+  if (auto result = dyn_cast<OpResult>(v)) {
+    Operation *defining = result.getOwner();
+    Value srcVal =
+        TypeSwitch<Operation *, Value>(defining)
+            .Case<tensor::ReshapeOp, tensor::ExtractSliceOp,
+                  tensor::CollapseShapeOp, tensor::ExpandShapeOp,
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+                  bufferization::ToTensorOp, bufferization::ToMemrefOp,
+#else
+                  bufferization::ToTensorOp, bufferization::ToBufferOp,
+#endif
+                  memref::CastOp, memref::CollapseShapeOp,
+                  memref::ExpandShapeOp, memref::MemorySpaceCastOp,
+                  memref::ReinterpretCastOp, memref::ReshapeOp, memref::ViewOp,
+                  memref::SubViewOp>([](auto op) { return op->getOperand(0); })
+            .Case([](tensor::InsertSliceOp insert) { return insert.getDest(); })
+            .Case([result](LoopLikeOpInterface loop) {
+              return loop.getTiedLoopInit(result)->get();
+            })
+            .Default([](Operation *) { return nullptr; });
+    if (srcVal)
+      return traceValueDef(srcVal);
+    return result;
+  }
+
+  auto blkArg = dyn_cast<BlockArgument>(v);
+  if (!blkArg) {
+    LLVM_DEBUG(llvm::dbgs() << "[traceValueDef] expected block argument, got: "
+                            << v << '\n');
+    return nullptr;
+  }
+  Operation *parent = blkArg.getOwner()->getParentOp();
+  auto loop = dyn_cast<LoopLikeOpInterface>(parent);
+  if (!loop)
+    return blkArg;
+  OpOperand *init = loop.getTiedLoopInit(blkArg);
+  return init ? traceValueDef(init->get()) : blkArg;
+}
+
+memref::AllocOp traceAlloc(Value v) {
+  Value maybeAlloc = traceValueDef(v);
+  return dyn_cast_if_present<memref::AllocOp>(maybeAlloc.getDefiningOp());
+}
+
+bool isCrossCoreCopy(Operation *copy) {
+  auto copyOp = dyn_cast<CopyOp>(copy);
+  if (!copyOp)
+    return false;
+  Value dst = copyOp.getDst();
+  memref::AllocOp alloc = traceAlloc(dst);
+  if (!alloc)
+    return false;
+  auto memSpaceAttr =
+      dyn_cast_or_null<AddressSpaceAttr>(alloc.getType().getMemorySpace());
+  if (!memSpaceAttr)
+    return false;
+
+  return memSpaceAttr.getAddressSpace() == AddressSpace::L1;
 }
 
 bool areCompatibleCoreTypes(TCoreType ct1, TCoreType ct2) {
