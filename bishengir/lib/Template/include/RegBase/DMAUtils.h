@@ -466,7 +466,7 @@ copy_ubuf_to_cbuf_1d_core(memref_t<__ubuf__ T, 1> *src,
 // otherwise uses ld.dev to bypass DCache.
 template <typename T, bool DisableDCache>
 __aiv__ __attribute__((always_inline)) T load_gm_scalar(__gm__ T *ptr) {
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
   if constexpr (DisableDCache) {
     static_assert(sizeof(T) == 1 || sizeof(T) == 2 || sizeof(T) == 4 ||
                   sizeof(T) == 8);
@@ -674,7 +674,7 @@ load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim(
   const int64_t stride0_gm = gm->strides[0];
   constexpr uint64_t bytes = sizeof(T);
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
   // src_stride is an unsigned forward byte step; negative or over-limit
   // strides cannot be encoded, fall back to scalar.
   const bool invalid_src_stride =
@@ -2399,7 +2399,7 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
 }
 #endif
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 #define REGISTE_DMA_LOAD_NOCACHE(dim, type)                                    \
   __aiv__ __attribute__((always_inline)) void                                  \
       _mlir_ciface_load_gm_to_ubuf_##dim##d_##type##_nocache(                  \
