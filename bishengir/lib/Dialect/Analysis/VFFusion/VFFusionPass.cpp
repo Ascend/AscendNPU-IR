@@ -146,27 +146,35 @@ void VFFusionPass::runOnOperation() {
     if (!enableRA)
       return;
     moduleOp->removeAttr(hfusion::kTreeReductionSelectionFrozenAttr);
+    moduleOp->removeAttr(hfusion::kRegularTreeReductionScopeAttr);
     moduleOp->removeAttr(hfusion::kLegacyTreeReductionScopeAttr);
     SmallVector<Operation *> registerCandidates;
     moduleOp.walk([&](Operation *op) {
       op->removeAttr(hfusion::kRegisterTreeReductionSelectedAttr);
+      op->removeAttr(hfusion::kRegularTreeReductionSelectedAttr);
       if (hfusion::isRegisterTreeReductionCandidate(op))
         registerCandidates.push_back(op);
     });
+    bool selectedAllRegisterTrees = true;
     bool selectedAnyLegacyTree = false;
     for (Operation *op : registerCandidates) {
       bool selected = hfusion::shouldUseRegisterTreeReduction(op);
+      selectedAllRegisterTrees &= selected;
       // Scope attrs are only read under enableNewTreeReducePolicy; computing
       // them off-policy just adds a module walk no consumer uses.
       if (enableNewTreeReducePolicy)
         selectedAnyLegacyTree |= hfusion::shouldUseLegacyTreeReductionScope(op);
-      if (selected)
-        op->setAttr(hfusion::kRegisterTreeReductionSelectedAttr,
-                    UnitAttr::get(&getContext()));
+      llvm::StringLiteral selectedAttr =
+          selected ? hfusion::kRegisterTreeReductionSelectedAttr
+                   : hfusion::kRegularTreeReductionSelectedAttr;
+      op->setAttr(selectedAttr, UnitAttr::get(&getContext()));
     }
     if (enableNewTreeReducePolicy) {
       if (selectedAnyLegacyTree)
         moduleOp->setAttr(hfusion::kLegacyTreeReductionScopeAttr,
+                          UnitAttr::get(&getContext()));
+      else if (!registerCandidates.empty() && !selectedAllRegisterTrees)
+        moduleOp->setAttr(hfusion::kRegularTreeReductionScopeAttr,
                           UnitAttr::get(&getContext()));
     }
     // Later nested function passes may run in parallel and may also create

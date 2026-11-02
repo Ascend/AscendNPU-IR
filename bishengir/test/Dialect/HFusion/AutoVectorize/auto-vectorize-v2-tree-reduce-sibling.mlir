@@ -14,17 +14,16 @@
 // outlined separately even though their full iteration shapes match.
 // CHECK-COUNT-2: func.func @opposite_reduction_siblings_outlined_vf_
 
-// Multiple tree candidates use separate materialized trees in the same vector
-// function, preserving horizontal fusion without linear accumulation.
+// Multiple direct-tree candidates in one vector function stay on the compact
+// regular lowering so horizontal fusion is preserved.  Both reductions share
+// one outer loop and one parallel-tile loop with two iter_args/results.
 // CHECK-LABEL: func.func @parallel_tree_reduction_siblings_outlined_vf_1
+// CHECK: %[[PAR_C1:[0-9A-Za-z_]+]] = arith.constant 1 : index
+// CHECK: %[[PAR_C16:[0-9A-Za-z_]+]] = arith.constant 16 : index
 // CHECK: %[[PAR_C64:[0-9A-Za-z_]+]] = arith.constant 64 : index
-// CHECK: %[[PAR_FIRST:[0-9A-Za-z_]+]] = scf.for {{.*}} to %[[PAR_C64]] step %[[PAR_C64]] iter_args({{.*}}) -> (tensor<64xf32>) {
-// CHECK: tensor.expand_shape {{.*}} into tensor<1x1x64xf32>
-// CHECK: vector.multi_reduction <add>, {{.*}} {withoutInitMergeOp} [0] : vector<1x64xf32> to vector<64xf32>
-// CHECK: %[[PAR_SECOND:[0-9A-Za-z_]+]] = scf.for {{.*}} to %[[PAR_C64]] step %[[PAR_C64]] iter_args({{.*}}) -> (tensor<64xf32>) {
-// CHECK: tensor.expand_shape {{.*}} into tensor<1x1x64xf32>
-// CHECK: vector.multi_reduction <add>, {{.*}} {withoutInitMergeOp} [0] : vector<1x64xf32> to vector<64xf32>
-// CHECK: return %[[PAR_FIRST]], %[[PAR_SECOND]] : tensor<64xf32>, tensor<64xf32>
+// CHECK: %[[PAR_OUTER:[0-9A-Za-z_]+]]:2 = scf.for {{.*}} to %[[PAR_C16]] step %[[PAR_C1]] iter_args({{.*}}) -> (tensor<64xf32>, tensor<64xf32>) {
+// CHECK: %{{[0-9A-Za-z_]+}}:2 = scf.for {{.*}} to %[[PAR_C64]] step %[[PAR_C64]] iter_args({{.*}}) -> (tensor<64xf32>, tensor<64xf32>) {
+// CHECK: return %[[PAR_OUTER]]#0, %[[PAR_OUTER]]#1 : tensor<64xf32>, tensor<64xf32>
 
 // The same invariant applies when a node acquires one tree through producer
 // fusion and then considers a second tree producer for the same consumer.
@@ -32,11 +31,7 @@
 // CHECK-DAG: %[[PROD_C64:[0-9A-Za-z_]+]] = arith.constant 64 : index
 // CHECK-DAG: %[[PROD_C1:[0-9A-Za-z_]+]] = arith.constant 1 : index
 // CHECK: scf.for {{.*}} to %[[PROD_C64]] step %[[PROD_C1]] iter_args({{.*}}) -> (tensor<64x64xf32>) {
-// CHECK: tensor.expand_shape {{.*}} into tensor<1x1x1x64xf32>
-// CHECK: vector.multi_reduction <add>, {{.*}} {withoutInitMergeOp} [1] : vector<1x1x64xf32> to vector<1x64xf32>
 // CHECK: %[[PROD_CONSUMER:[0-9A-Za-z_]+]] = scf.for {{.*}} to %[[PROD_C64]] step %[[PROD_C1]] iter_args({{.*}}) -> (tensor<64x64xf32>) {
-// CHECK: tensor.expand_shape {{.*}} into tensor<1x1x1x64xf32>
-// CHECK: vector.multi_reduction <add>, {{.*}} {withoutInitMergeOp} [1] : vector<1x1x64xf32> to vector<1x64xf32>
 // CHECK: return %[[PROD_CONSUMER]] : tensor<64x64xf32>
 
 // A direct add(input, accumulator) is selected for the register tree.
