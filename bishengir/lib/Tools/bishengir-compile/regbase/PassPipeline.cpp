@@ -347,7 +347,17 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
     mlir::hivm::regbase::addSyncBlockLockFinalizePasses(pm);
   pm.addPass(createConvertHIVMToStandardPass(hivmToStdOptions));
   pm.addPass(createConvertHIVMAVEToStandardPass());
-  pm.nest<func::FuncOp>().addPass(createFixCallUnknownLocPass());
+  // DIScopeForLLVMFuncOpPass attaches a DISubprogram to every function, so
+  // calls must carry a location even when the input IR has none at all. Keep
+  // this condition in sync with the pass's enabling condition in
+  // hivmc/A5/PassPipelineA5.cpp and hivmc/A3/PassPipelineA3.cpp; sanitizer
+  // belongs here because it also turns that pass on.
+  FixCallUnknownLocOptions fixCallLocOptions;
+  fixCallLocOptions.assumeDebugInfo = config.getEnableSanitizer() ||
+                                      config.getEnableDebugInfo() ||
+                                      config.getEnableDebugVariables();
+  pm.nest<func::FuncOp>().addPass(
+      createFixCallUnknownLocPass(fixCallLocOptions));
   pm.addPass(memref::createExpandStridedMetadataPass());
   pm.addPass(createConvertHIVMAVEToAVEIntrinPass());
   // Store hoisting chooses a cross-iteration schedule and loop-carried state.

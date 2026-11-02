@@ -29,6 +29,10 @@ if llvm_config is None:
 # name: The name of this test suite.
 config.name = "bishengir"
 
+# Host architecture feature for architecture-specific test gating.
+if platform.machine().lower() in ("aarch64", "arm64"):
+    config.available_features.add("host-aarch64")
+
 # use_lit_shell may be None in some lit versions; use getattr for compatibility.
 use_lit_shell = getattr(llvm_config, "use_lit_shell", False)
 config.test_format = lit.formats.ShTest(not use_lit_shell)
