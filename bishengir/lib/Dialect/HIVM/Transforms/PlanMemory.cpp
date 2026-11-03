@@ -37,6 +37,7 @@
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/WithColor.h"
 #include <algorithm>
+#include <functional>
 
 #define DEBUG_TYPE "hivm-plan-memory"
 #define LDBG(X) LLVM_DEBUG(llvm::dbgs() << X)
@@ -51,19 +52,6 @@ using namespace hivm;
 using namespace util;
 
 namespace {
-
-bool isCVModule(ModuleOp op) {
-  bool hasAIV = false;
-  bool hasAIC = false;
-  op->walk([&](func::FuncOp funcOp) {
-    if (queryFuncCoreType(funcOp) == TFuncCoreType::AIV) {
-      hasAIV = true;
-    } else if (queryFuncCoreType(funcOp) == TFuncCoreType::AIC) {
-      hasAIC = true;
-    }
-  });
-  return hasAIV && hasAIC;
-}
 
 bool isReusableCastOp(hivm::VCastOp &castOp, Value output, Value input) {
   auto rank = dyn_cast<MemRefType>(output.getType()).getRank();
@@ -3210,6 +3198,10 @@ private:
   planMemoryForFuncOp(func::FuncOp &funcOp,
                       VFInplaceReuseAnalysis &vfInplaceReuseAnalysis);
 
+  // Retry fallback: remove the multi-buffer marks of AIV functions in mix
+  // modules, but keep those of preload local buffers.
+  void disableAIVMultibuffer(func::FuncOp &funcOp);
+
   void updateId2Offsets(func::FuncOp &funcOp, Buffer2Offsets &buffer2Offsets,
                         DenseMap<int32_t, SmallVector<uint64_t>> &id2Offsets);
 
@@ -3237,6 +3229,20 @@ private:
 };
 } // namespace
 
+void PlanMemoryPass::disableAIVMultibuffer(func::FuncOp &funcOp) {
+  funcOp.walk([&](annotation::MarkOp markOp) {
+    if (markOp->hasAttr(hivm::MultiBufferAttr::name) &&
+        !markOp->hasAttr(hivm::PreloadLocalBufferAttr::name)) {
+      markOp->removeAttr(hivm::MultiBufferAttr::name);
+      if (markOp.isAttrEmpty()) {
+        markOp.erase();
+      }
+    }
+  });
+  LDBG("Disabled MultiBuffer in AIV function by removing all multiBuffer "
+       << "attrs as a retry fallback\n");
+}
+
 std::optional<std::pair<Buffer2Offsets, DenseSet<Value>>>
 PlanMemoryPass::planMemoryForFuncOp(
     func::FuncOp &funcOp, VFInplaceReuseAnalysis &vfInplaceReuseAnalysis) {
@@ -3245,92 +3251,98 @@ PlanMemoryPass::planMemoryForFuncOp(
     markTempBufForMemoryDisplay(funcOp);
   }
 
+  // Each retry stage owns one fallback, which is applied once when the stage
+  // starts and stays in effect for all later stages. Within a stage, planning
+  // is retried with different shuffle seeds.
+  SmallVector<std::function<void(func::FuncOp &)>> retryStageFallbacks = {
+      // Stage 0: no fallback, only retry with different shuffle seeds.
+      [](func::FuncOp &) {},
+  };
+  auto moduleOp = getOperation();
+  // Only AIV functions in mix (CV) modules can drop multi-buffering.
+  if (isMixModule(moduleOp) &&
+      queryFuncCoreType(funcOp) == TFuncCoreType::AIV) {
+    retryStageFallbacks.push_back(
+        [this](func::FuncOp &funcOp) { disableAIVMultibuffer(funcOp); });
+  }
+  // Disable the VF reachable check on reg-based arch AIV functions as the
+  // last resort, to allow more aggressive reuse of VF buffers.
+  if (hacc::utils::isRegBasedArch(moduleOp) &&
+      queryFuncCoreType(funcOp) == TFuncCoreType::AIV) {
+    retryStageFallbacks.push_back(
+        [this](func::FuncOp &funcOp) { this->disableVFReachableCheck = true; });
+  }
+
   constexpr int singleTrytime = 3;
-  constexpr int retryOptionsNum = 3;
-  constexpr int kPlanRetryCount = singleTrytime * retryOptionsNum;
-  auto moduleOp = funcOp->getParentOfType<ModuleOp>();
+  int retryOptionsNum = retryStageFallbacks.size();
+  int kPlanRetryCount = singleTrytime * retryOptionsNum;
   // The current plan-memory algorithm is sensitive to the order in which
   // some candidate buffers are considered. We retry planning with different
   // deterministic shuffle seeds to improve the chance of finding a valid
   // plan without making the pass behavior non-reproducible.
   // TODO: Remove the retry loop once the plan-memory algorithm is improved
   // to produce a stable valid plan in a single attempt.
-  for (int attempt = 0; attempt < kPlanRetryCount; ++attempt) {
-    LDBG("Memory planning attempt " << attempt + 1 << "/" << kPlanRetryCount
-                                    << "\n");
+  // The outer loop walks the fallback stages; the inner loop retries the
+  // current stage with different shuffle seeds.
+  for (int stage = 0; stage < retryOptionsNum; ++stage) {
+    retryStageFallbacks[stage](funcOp);
+    for (int trial = 0; trial < singleTrytime; ++trial) {
+      const int attempt = stage * singleTrytime + trial;
+      LDBG("Memory planning attempt " << attempt + 1 << "/" << kPlanRetryCount
+                                      << "\n");
 
-    if (attempt == singleTrytime && isCVModule(moduleOp) &&
-        queryFuncCoreType(funcOp).value() == TFuncCoreType::AIV) {
-      // Remove the MultiBufferAttr from all mark ops on the first attempt for
-      // AIV functions
-      funcOp.walk([&](annotation::MarkOp markOp) {
-        if (markOp->hasAttr(hivm::MultiBufferAttr::name) &&
-            !markOp->hasAttr(hivm::PreloadLocalBufferAttr::name)) {
-          markOp->removeAttr(hivm::MultiBufferAttr::name);
-          if (markOp.isAttrEmpty()) {
-            markOp.erase();
-          }
+      MemLivenessAnalysis memLiveness(funcOp, this->memMode,
+                                      this->disableTightlyCoupledBufferReuse,
+                                      /*randomSeed=*/attempt);
+      memLiveness.build();
+
+      MemPlan memPlan(this->memMode, this->enableGlobalReuse,
+                      this->enableMemoryDisplay, this->restrictInplaceAsISA,
+                      this->simtVFDynamicSize, this->disableVFReachableCheck,
+                      this->planMemoryStrategy);
+      if (failed(memPlan.InitMemSpecsFromModule(funcOp))) {
+        return std::nullopt;
+      }
+      memPlan.func_ = funcOp;
+      memPlan.SetLinearOperation(memLiveness.linearOperation);
+      memPlan.SetBufferInfos(memLiveness.bufferInfos);
+      memPlan.SetBuffer2Life(memLiveness.buffer2Life);
+      memPlan.SetGenKillMap(memLiveness.genKillMap);
+      memPlan.SetBuffer2MultiNum(memLiveness.buffer2MultiNum);
+      memPlan.SetInplacePairList(memLiveness.inplacePairList);
+      memPlan.SetVFInplaceReuseInfo(
+          vfInplaceReuseAnalysis.getVFCallInplaceReuseInfo(funcOp));
+      memPlan.SetPreloadBufferReuseableInfo(
+          memLiveness.preloadBufferReuseableInfo);
+
+      const bool isLastAttempt = attempt == kPlanRetryCount - 1;
+      if (succeeded(memPlan.plan(/*emitErrors=*/isLastAttempt))) {
+        if (memPlan.enableMemoryDisplay) {
+          SmallVector<MemoryDisplayInfo> memoryDisplayInfoList;
+          // Collect plan success memory info for memory display tools.
+          collectMemoryInfoForDebug(
+              memoryDisplayInfoList, memPlan.GetMemscope2rootStorageEntry(),
+              memPlan.GetBuffer2Offsets(), memPlan.errorInfo, false);
+          createJsonForMemoryDisplay(funcOp, memoryDisplayInfoList);
         }
-      });
-      LDBG("Disabled MultiBuffer in AIV function by remove all multiBuffer "
-           << "attrs on attempt " << attempt + 1 << "\n");
-    }
-    // Disable VF reachable check after the first two attempts, to allow more
-    // aggressive reuse of VF buffers in case the first two attempts fail.
-    if (attempt == singleTrytime * 2) {
-      this->disableVFReachableCheck = true;
-    }
+        return std::make_pair(memPlan.GetBuffer2Offsets(),
+                              memPlan.GetPreloadLocalBuffers());
+      }
 
-    MemLivenessAnalysis memLiveness(funcOp, this->memMode,
-                                    this->disableTightlyCoupledBufferReuse,
-                                    /*randomSeed=*/attempt);
-    memLiveness.build();
-
-    MemPlan memPlan(this->memMode, this->enableGlobalReuse,
-                    this->enableMemoryDisplay, this->restrictInplaceAsISA,
-                    this->simtVFDynamicSize, this->disableVFReachableCheck,
-                    this->planMemoryStrategy);
-    if (failed(memPlan.InitMemSpecsFromModule(funcOp))) {
-      return std::nullopt;
-    }
-    memPlan.func_ = funcOp;
-    memPlan.SetLinearOperation(memLiveness.linearOperation);
-    memPlan.SetBufferInfos(memLiveness.bufferInfos);
-    memPlan.SetBuffer2Life(memLiveness.buffer2Life);
-    memPlan.SetGenKillMap(memLiveness.genKillMap);
-    memPlan.SetBuffer2MultiNum(memLiveness.buffer2MultiNum);
-    memPlan.SetInplacePairList(memLiveness.inplacePairList);
-    memPlan.SetVFInplaceReuseInfo(
-        vfInplaceReuseAnalysis.getVFCallInplaceReuseInfo(funcOp));
-    memPlan.SetPreloadBufferReuseableInfo(
-        memLiveness.preloadBufferReuseableInfo);
-
-    const bool isLastAttempt = attempt == kPlanRetryCount - 1;
-    if (succeeded(memPlan.plan(/*emitErrors=*/isLastAttempt))) {
-      if (memPlan.enableMemoryDisplay) {
+      if (isLastAttempt && memPlan.enableMemoryDisplay) {
         SmallVector<MemoryDisplayInfo> memoryDisplayInfoList;
-        // Collect plan success memory info for memory display tools.
+        // Collect plan fail memory info for memory display tools.
         collectMemoryInfoForDebug(
-            memoryDisplayInfoList, memPlan.GetMemscope2rootStorageEntry(),
-            memPlan.GetBuffer2Offsets(), memPlan.errorInfo, false);
+            memoryDisplayInfoList, memPlan.GetMemscope2rootFailStorageEntry(),
+            memPlan.GetBuffer2Offsets(), memPlan.errorInfo, true);
+        memPlan.SetMemscope2rootSuccessStorageEntry();
+        // Collect plan success memory info for memory display tools.
+        collectMemoryInfoForDebug(memoryDisplayInfoList,
+                                  memPlan.GetMemscope2rootSuccessStorageEntry(),
+                                  memPlan.GetBuffer2Offsets(),
+                                  memPlan.errorInfo, false);
         createJsonForMemoryDisplay(funcOp, memoryDisplayInfoList);
       }
-      return std::make_pair(memPlan.GetBuffer2Offsets(),
-                            memPlan.GetPreloadLocalBuffers());
-    }
-
-    if (isLastAttempt && memPlan.enableMemoryDisplay) {
-      SmallVector<MemoryDisplayInfo> memoryDisplayInfoList;
-      // Collect plan fail memory info for memory display tools.
-      collectMemoryInfoForDebug(
-          memoryDisplayInfoList, memPlan.GetMemscope2rootFailStorageEntry(),
-          memPlan.GetBuffer2Offsets(), memPlan.errorInfo, true);
-      memPlan.SetMemscope2rootSuccessStorageEntry();
-      // Collect plan success memory info for memory display tools.
-      collectMemoryInfoForDebug(
-          memoryDisplayInfoList, memPlan.GetMemscope2rootSuccessStorageEntry(),
-          memPlan.GetBuffer2Offsets(), memPlan.errorInfo, false);
-      createJsonForMemoryDisplay(funcOp, memoryDisplayInfoList);
     }
   }
   return std::nullopt;
