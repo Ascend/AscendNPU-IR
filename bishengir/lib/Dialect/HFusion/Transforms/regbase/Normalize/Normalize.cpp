@@ -38,7 +38,7 @@ void populateNormalizeHFusionRegBasePatterns(RewritePatternSet &patterns,
   populateNormalizeI8I32CmpPatterns(patterns);
   populateNormalizeMulRecPatterns(patterns);
   populateNormalizeModPatterns(patterns);
-  populateNormalizePow2DivRemPatterns(patterns, enableDivRemPow2);
+  populateNormalizeConstDivRemPatterns(patterns, enableDivRemPow2);
   populateNormalizeCmpToCastPatterns(patterns);
   populateNormalizeArithmeticPatterns(patterns, enableFastDiv);
   populateNormalizePrimaryMathPatterns(patterns);

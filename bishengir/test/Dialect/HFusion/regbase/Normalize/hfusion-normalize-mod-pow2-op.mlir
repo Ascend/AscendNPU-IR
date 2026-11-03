@@ -171,9 +171,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 
 // -----
 
-// non-pow2 divisor 7: must not be rewritten
+// Non-power-of-two divisor 7 is handled by the general constant rules.
 // CHECK-LABEL: func.func @test_mod_nonpow2_i32
-// CHECK:       hfusion.elemwise_binary {fun = #hfusion.binary_fn<mod>}
+// CHECK:       hfusion.mulext
+// CHECK:       binary_fn<mul>
+// CHECK:       binary_fn<sub>
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_mod_nonpow2_i32(%arg0: tensor<16xi32>) -> tensor<16xi32> {
       %cst = arith.constant 7 : i32
@@ -240,9 +242,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 
 // -----
 
-// modui non-pow2 divisor: must not be rewritten
+// Non-power-of-two divisor 7 is handled by the general constant rules.
 // CHECK-LABEL: func.func @test_modui_nonpow2_i32
-// CHECK:       hfusion.elemwise_binary {fun = #hfusion.binary_fn<modui>}
+// CHECK:       hfusion.mulextui
+// CHECK:       binary_fn<mul>
+// CHECK:       binary_fn<sub>
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_modui_nonpow2_i32(%arg0: tensor<16xi32>) -> tensor<16xi32> {
       %cst = arith.constant 7 : i32
