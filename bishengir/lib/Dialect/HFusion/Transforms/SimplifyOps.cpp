@@ -104,6 +104,46 @@ bool isSafeToSimplifyCast(CastOp castOp) {
            (inputType.isInteger() && isa<FloatType>(outputType)));
 }
 
+// A chain of integer casts may only be removed when it is value preserving.
+// Unlike floating point, where the precision checks guard the optimization, an
+// integer narrowing cast silently drops the high bits, so a round trip such as
+// `i16 -> i8 -> i16` is *not* an identity. Such chains are semantically
+// meaningful: e.g. `remui i8` is widened to i16 for codegen and can produce
+// 0xFFFF for a zero divisor, which must be truncated back to 0xFF before the
+// value is consumed by a following operation.
+// The chain is ordered from the consumer inwards, i.e. opposite to the value
+// flow. A removable chain is one widening phase followed by a narrowing phase:
+// walking the value flow, the width may not decrease before the narrowing
+// phase starts and may not increase again once it has started. The chain must
+// end in a narrowing phase.
+bool isValuePreservingIntegerCastChain(ArrayRef<CastOp> castChain) {
+  // Leave mixed integer/float chains to the floating point precision logic.
+  for (CastOp castOp : castChain) {
+    if (!dyn_cast<IntegerType>(
+            getElementTypeOrSelf(castOp.getInputs().front().getType())) ||
+        !dyn_cast<IntegerType>(
+            getElementTypeOrSelf(castOp.getOutputs().front().getType())))
+      return true;
+  }
+
+  bool inNarrowingPhase = false;
+  for (CastOp castOp : llvm::reverse(castChain)) {
+    auto inputType = cast<IntegerType>(
+        getElementTypeOrSelf(castOp.getInputs().front().getType()));
+    auto outputType = cast<IntegerType>(
+        getElementTypeOrSelf(castOp.getOutputs().front().getType()));
+    if (outputType.getWidth() < inputType.getWidth()) {
+      inNarrowingPhase = true;
+    } else if (outputType.getWidth() > inputType.getWidth() &&
+               inNarrowingPhase) {
+      // A widening step after the narrowing phase drops high bits and then
+      // restores them, so the chain is not an identity.
+      return false;
+    }
+  }
+  return inNarrowingPhase;
+}
+
 struct CastOpPattern : public OpRewritePattern<CastOp> {
   // Return the cast op that defines all inputs of the given op, skipping
   // tensor reshape operations. The skipped operations are recorded so that the
@@ -285,6 +325,12 @@ public:
             break;
           }
         }
+
+        // Integer casts need an explicit guard: a narrowing step followed by a
+        // widening step does not reconstruct the original value and must not be
+        // folded away (see isValuePreservingIntegerCastChain).
+        if (!isValuePreservingIntegerCastChain(castChain))
+          break;
 
         if (reshapes.empty()) {
           rewriter.replaceOp(castOp, nextCast.getInputs());
