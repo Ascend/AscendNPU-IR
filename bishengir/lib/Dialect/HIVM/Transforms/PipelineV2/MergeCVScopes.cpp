@@ -833,6 +833,31 @@ void LoopScopeMerger::applyMergedScopeSameCoreRule() {
       if (ScopeOp merged = tryMergeBackwardFromSeed(seed))
         processedSeeds.insert(merged.getOperation());
     }
+
+    ScopeOp previous;
+    for (Operation &op :
+         llvm::make_early_inc_range(outerScope.getRegion().front())) {
+      if (op.hasTrait<OpTrait::IsTerminator>())
+        break;
+      auto current = dyn_cast<ScopeOp>(&op);
+      auto currCore = current ? getScopeCoreType(current) : std::nullopt;
+      if (!current || !isEligibleForCoreMerge(current) || !currCore) {
+        previous = ScopeOp();
+        continue;
+      }
+
+      if (previous) {
+        auto prevCore = getScopeCoreType(previous);
+        if (prevCore && areCompatibleCoreTypes(*prevCore, *currCore)) {
+          if (ScopeOp merged = mergeScopes(previous, current, current)) {
+            previous = merged;
+            continue;
+          }
+        }
+      }
+      previous = current;
+    }
+
     collapseSingleChildMergedScope(outerScope);
   }
 }

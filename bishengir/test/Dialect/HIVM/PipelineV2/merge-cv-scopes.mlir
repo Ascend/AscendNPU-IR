@@ -844,3 +844,82 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %res : tensor<16x16xf32>
   }
 }
+
+// -----
+
+// Verify that `applyMergedScopeSameCoreRule` merges `CUBE + CUBE_AND_VECTOR`
+// and `VECTOR + CUBE_AND_VECTOR` scopes inside `{cv_merged_scope}` (connected
+// only by loop-carried counter recurrences) and collapses each wrapper into a
+// single flat `CUBE` or `VECTOR` scope.
+//
+// CHECK-LABEL: func.func @merge_cube_and_vector_counter_in_merged_scope
+// CHECK: scf.for {{.*}} iter_args(%[[CNT_C:.*]] = {{.*}}, %[[CNT_V:.*]] = {{.*}}) -> (i32, i32) : i32 {
+// CHECK-NEXT:   %[[CUBE_MERGED:.*]]:2 = scope.scope : () -> (tensor<16x16xf32>, i32) {
+// CHECK:          arith.index_cast %[[CNT_C]] : i32 to index
+// CHECK:          hivm.hir.mmadL1
+// CHECK:          hivm.hir.fixpipe
+// CHECK:          %[[NEXT_C:.*]] = arith.addi %[[CNT_C]], {{.*}} : i32
+// CHECK-NEXT:     scope.return {{.*}}, %[[NEXT_C]] : tensor<16x16xf32>, i32
+// CHECK-NEXT:   } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT:   %[[VEC_MERGED:.*]] = scope.scope : () -> i32 {
+// CHECK:          %[[NEXT_V:.*]] = arith.addi %[[CNT_V]], {{.*}} : i32
+// CHECK:          arith.index_cast %[[CNT_V]] : i32 to index
+// CHECK:          hivm.hir.vexp ins(%[[CUBE_MERGED]]#0 : tensor<16x16xf32>)
+// CHECK:          hivm.hir.store
+// CHECK-NEXT:     scope.return %[[NEXT_V]] : i32
+// CHECK-NEXT:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NOT:    cv_merged_scope
+// CHECK-NEXT:   scf.yield %[[CUBE_MERGED]]#1, %[[VEC_MERGED]] : i32, i32
+// CHECK-NEXT: } {hivm.cv_pipelined_loop}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @merge_cube_and_vector_counter_in_merged_scope(
+      %a: tensor<1x1x16x16xf16>,
+      %k_gm: memref<?xf16>,
+      %out_gm: memref<?xf32>,
+      %ub: i32) -> (i32, i32)
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    %c16_i32 = arith.constant 16 : i32
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %res:2 = scf.for %i = %c0 to %ub step %c1 iter_args(%cnt_c = %c0, %cnt_v = %c0) -> (i32, i32) : i32 {
+      %s_cube = scope.scope : () -> tensor<16x16xf32> {
+        %off_c = arith.index_cast %cnt_c : i32 to index
+        %rc_k = memref.reinterpret_cast %k_gm to offset: [%off_c], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1], offset: ?>>
+        %k_alloc = memref.alloc() : memref<1x1x16x16xf16>
+        hivm.hir.nd2nz {dst_continuous} ins(%rc_k : memref<16x16xf16, strided<[16, 1], offset: ?>>) outs(%k_alloc : memref<1x1x16x16xf16>)
+        %k = bufferization.to_tensor %k_alloc restrict writable : memref<1x1x16x16xf16>
+        %dot_init = tensor.empty() : tensor<1x1x16x16xf32>
+        %dot = hivm.hir.mmadL1 ins(%a, %k, %true, %c16, %c16, %c16 : tensor<1x1x16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%dot_init : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
+        %ub0 = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
+        %ub0_cast = memref.memory_space_cast %ub0 : memref<16x16xf32, #hivm.address_space<ub>> to memref<16x16xf32>
+        %t0 = bufferization.to_tensor %ub0_cast restrict writable : memref<16x16xf32>
+        hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%dot : tensor<1x1x16x16xf32>) outs(%ub0 : memref<16x16xf32, #hivm.address_space<ub>>)
+        scope.return %t0 : tensor<16x16xf32>
+      } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+
+      %s_cnt_v = scope.scope : () -> i32 {
+        %next_v = arith.addi %cnt_v, %c16_i32 : i32
+        scope.return %next_v : i32
+      } {hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>}
+
+      %s_cnt_c = scope.scope : () -> i32 {
+        %next_c = arith.addi %cnt_c, %c16_i32 : i32
+        scope.return %next_c : i32
+      } {hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>}
+
+      scope.scope : () -> () {
+        %off_v = arith.index_cast %cnt_v : i32 to index
+        %rc_out = memref.reinterpret_cast %out_gm to offset: [%off_v], sizes: [16, 16], strides: [16, 1] : memref<?xf32> to memref<16x16xf32, strided<[16, 1], offset: ?>>
+        %e_init = tensor.empty() : tensor<16x16xf32>
+        %e = hivm.hir.vexp ins(%s_cube : tensor<16x16xf32>) outs(%e_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+        hivm.hir.store ins(%e : tensor<16x16xf32>) outs(%rc_out : memref<16x16xf32, strided<[16, 1], offset: ?>>)
+        scope.return
+      } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+
+      scf.yield %s_cnt_c, %s_cnt_v : i32, i32
+    } {hivm.cv_pipelined_loop}
+    return %res#0, %res#1 : i32, i32
+  }
+}

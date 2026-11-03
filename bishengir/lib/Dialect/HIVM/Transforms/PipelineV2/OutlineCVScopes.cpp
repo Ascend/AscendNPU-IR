@@ -1025,6 +1025,17 @@ LogicalResult CVScopeOutliner::sortPopulatedWorkItems() {
   return success();
 }
 
+static Value getIntermediateInitValue(Value res) {
+  if (!isa<TensorType>(res.getType()))
+    return nullptr;
+  auto dpsOp = res.getDefiningOp<DestinationStyleOpInterface>();
+  assert(dpsOp && "expected intermediate tensor value to be defined by DPS op");
+  Value initVal = dpsOp.getTiedOpOperand(cast<OpResult>(res))->get();
+  assert(initVal.getDefiningOp<tensor::EmptyOp>() &&
+         "expected outs() of intermediate tensor value to be tensor.empty");
+  return initVal;
+}
+
 void CVScopeOutliner::computeHoistedOps(WorkItem *item) {
   for (auto &[_, cOps] : item->condOps) {
     scf::IfOp enclosingIf = cOps.ifOp;
@@ -1184,6 +1195,24 @@ void CVScopeOutliner::populateWorkItemIO(Operation *origLoopTerminator) {
     auto [val, consumer, consumerIf] = worklist.pop_back_val();
     recordValueUse(val, consumer, consumerIf);
   }
+
+  for (WorkItem *item : sortedWorkItems) {
+    for (auto &[_, cOps] : item->condOps) {
+      scf::IfOp enclosingIf = cOps.ifOp;
+      for (Value outVal : cOps.outputs) {
+        Operation *defOp = outVal.getDefiningOp();
+        if (!defOp || defOp == enclosingIf ||
+            opToWorkItemMap.lookup(defOp) != item ||
+            item->hoistedOps.contains(defOp))
+          continue;
+        if (Value initVal = getIntermediateInitValue(outVal)) {
+          if (Operation *initOp = initVal.getDefiningOp();
+              initOp && enclosingIf->isProperAncestor(initOp))
+            item->hoistedOps.insert(initOp);
+        }
+      }
+    }
+  }
 }
 
 LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
@@ -1341,7 +1370,7 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
           for (Value res : tOp->getResults()) {
             if (cOps.outputs.contains(res) && ifYieldSet.insert(res).second) {
               ifThenYieldVals.push_back(res);
-              ifElseYieldVals.push_back(nullptr);
+              ifElseYieldVals.push_back(getIntermediateInitValue(res));
               ifOrigResultsToMap.push_back(res);
             }
           }
@@ -1353,7 +1382,7 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
           for (Value res : eOp->getResults()) {
             if (!cOps.outputs.contains(res) || !ifYieldSet.insert(res).second)
               continue;
-            ifThenYieldVals.push_back(nullptr);
+            ifThenYieldVals.push_back(getIntermediateInitValue(res));
             ifElseYieldVals.push_back(res);
             ifOrigResultsToMap.push_back(res);
           }
@@ -1408,7 +1437,8 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
             if (!val)
               continue;
             Operation *d = val.getDefiningOp();
-            if (!checkAncestor || (d && enclosingIf->isProperAncestor(d)))
+            if (!checkAncestor || (d && enclosingIf->isProperAncestor(d) &&
+                                   !item->hoistedOps.contains(d)))
               scopeMap.map(val, newIfOp.getResult(yieldIdx));
           }
         };
