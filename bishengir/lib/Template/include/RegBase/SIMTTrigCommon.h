@@ -17,21 +17,30 @@
 //===----------------------------------------------------------------------===//
 //
 // Shared compile-time constants between the device-side template library
-// (bishengir/lib/Template/lib/RegBase/Vector/Sin.cpp) and the host-side
+// (bishengir/lib/Template/lib/RegBase/Vector/{Sin,Cos}.cpp) and the host-side
 // conversion (bishengir/lib/Conversion/MathToHFusion/MathToHFusion.cpp).
 //
 // Both sides must agree on the highest memref rank that has a
-// template-library SIMT entry point. Changing SIN_SIMT_MAX_RANK here
-// automatically updates both the DEFINE_SIN_SIMT_ENTRY instantiations in
-// Sin.cpp and kMaxTemplateLibTrigRank in MathToHFusion.cpp.
+// template-library SIMT entry point. Changing SIMT_TRIG_MAX_RANK here
+// automatically updates both the DEFINE_{SIN,COS}_SIMT_ENTRY instantiations and
+// kMaxTemplateLibTrigRank in MathToHFusion.cpp. The per-op macros are kept so
+// either operation can be capped independently without touching the other.
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef BISHENG_TEMPLATE_SIMT_TRIG_COMMON_H
 #define BISHENG_TEMPLATE_SIMT_TRIG_COMMON_H
 
+#ifndef SIMT_TRIG_MAX_RANK
+#define SIMT_TRIG_MAX_RANK 5
+#endif
+
 #ifndef SIN_SIMT_MAX_RANK
-#define SIN_SIMT_MAX_RANK 5
+#define SIN_SIMT_MAX_RANK SIMT_TRIG_MAX_RANK
+#endif
+
+#ifndef COS_SIMT_MAX_RANK
+#define COS_SIMT_MAX_RANK SIMT_TRIG_MAX_RANK
 #endif
 
 #endif // BISHENG_TEMPLATE_SIMT_TRIG_COMMON_H
