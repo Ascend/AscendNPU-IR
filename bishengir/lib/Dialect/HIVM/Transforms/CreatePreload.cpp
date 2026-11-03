@@ -31,10 +31,16 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include <cstdint>
 
 namespace mlir {
 #define GEN_PASS_DEF_CREATEPRELOAD
@@ -1199,8 +1205,255 @@ static scf::ForOp preprocessPreloadLoop(scf::ForOp forOp) {
   return activeForOp;
 }
 
+static void getUserScopes(scope::ScopeOp source, llvm::SmallSet<scope::ScopeOp, 16> &userScopes) {
+  scope::ScopeOp useScope;
+  for (Operation *user : source->getUsers()) {
+    auto *ancestor = source->getBlock()->findAncestorOpInBlock(*user);
+    auto parentScope = dyn_cast_if_present<scope::ScopeOp>(ancestor);
+    if (parentScope)
+      userScopes.insert(parentScope);
+  }
+}
+
+static void cloneCounterOps(Block *body,
+                            const DenseSet<Operation *> &opsToClone,
+                            OpBuilder &builder, IRMapping &mapping) {
+  for (Operation &op : body->without_terminator()) {
+    if (!opsToClone.contains(&op))
+      continue;
+    auto loop = dyn_cast<scf::ForOp>(op);
+    if (!loop) {
+      builder.clone(op, mapping);
+      continue;
+    }
+
+    // Only the counter update is needed; do not carry unrelated loop results.
+    auto clonedLoop = builder.create<scf::ForOp>(
+        loop.getLoc(), mapping.lookupOrDefault(loop.getLowerBound()),
+        mapping.lookupOrDefault(loop.getUpperBound()),
+        mapping.lookupOrDefault(loop.getStep()));
+    clonedLoop->setAttrs(loop->getAttrs());
+    mapping.map(loop.getInductionVar(), clonedLoop.getInductionVar());
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(clonedLoop.getBody());
+    cloneCounterOps(loop.getBody(), opsToClone, builder, mapping);
+  }
+}
+
+static bool hasOnlyPrivateMemoryEffects(scope::ScopeOp scopeOp) {
+  auto effects = getEffectsRecursively(scopeOp);
+  if (!effects)
+    return false;
+  return llvm::all_of(
+      *effects, [&](const MemoryEffects::EffectInstance &effect) {
+        Value root = effect.getValue();
+        if (!root ||
+            !isa<MemoryEffects::Allocate, MemoryEffects::Free,
+                 MemoryEffects::Read, MemoryEffects::Write>(effect.getEffect()))
+          return false;
+        while (auto view = root.getDefiningOp<ViewLikeOpInterface>())
+          root = view.getViewSource();
+        Operation *allocation = root.getDefiningOp();
+        return isa_and_nonnull<memref::AllocOp, memref::AllocaOp>(allocation) &&
+               scopeOp->isProperAncestor(allocation);
+      });
+}
+
+static void cloneCounterLoopIntoUserScope(scf::ForOp forOp) {
+  for (scope::ScopeOp scopeOp : forOp.getOps<scope::ScopeOp>()) {
+    auto returnOp = cast<scope::ReturnOp>(scopeOp.getBody()->getTerminator());
+
+    bool isCounterLoop = false;
+    if (scopeOp->getNumResults() == 1) {
+      if (auto defOp =
+              returnOp->getOperand(0).getDefiningOp<memref::AllocaOp>()) {
+        isCounterLoop = defOp->hasAttr(kNormalizeMatmulCounterAttr);
+      }
+    }
+    if (!isCounterLoop)
+      continue;
+
+    llvm::SmallSet<scope::ScopeOp, 16> dstScopes;
+    getUserScopes(scopeOp, dstScopes);
+    if (dstScopes.empty())
+      continue;
+
+    DenseSet<Operation *> opsToClone;
+    SmallVector<Operation *> worklist;
+    auto collectOp = [&](Operation *op) {
+      if (!op || !scopeOp->isProperAncestor(op) ||
+          op == returnOp.getOperation())
+        return;
+      for (; op != scopeOp.getOperation(); op = op->getParentOp())
+        if (opsToClone.insert(op).second)
+          worklist.push_back(op);
+    };
+
+    // Start from writes to this counter, not all users of its loads. This keeps
+    // the load/addi/store increment without pulling in the matmul or other
+    // work.
+    Value counter = returnOp.getResults()[0];
+    collectOp(counter.getDefiningOp());
+    for (Operation *user : counter.getUsers())
+      if (auto store = dyn_cast<memref::StoreOp>(user);
+          store && store.getMemRef() == counter)
+        collectOp(store);
+
+    // Collect only dependencies of the selected operations and loop bounds.
+    // Rebuilding the loops without iter_args is safe only when the counter
+    // update does not depend on those arguments or on nested loop results.
+    bool canClone = true;
+    while (!worklist.empty()) {
+      Operation *op = worklist.pop_back_val();
+      auto loop = dyn_cast<scf::ForOp>(op);
+      if (op->getNumRegions() && !loop) {
+        canClone = false;
+        break;
+      }
+      ValueRange operands = loop ? ValueRange(op->getOperands().take_front(3))
+                                 : ValueRange(op->getOperands());
+      for (Value operand : operands) {
+        if (auto arg = dyn_cast<BlockArgument>(operand)) {
+          auto owner = dyn_cast<scf::ForOp>(arg.getOwner()->getParentOp());
+          if (owner && scopeOp->isProperAncestor(owner) &&
+              arg != owner.getInductionVar())
+            canClone = false;
+        }
+        Operation *def = operand.getDefiningOp();
+        if (def && scopeOp->isProperAncestor(def) && def->getNumRegions())
+          canClone = false;
+        collectOp(def);
+      }
+    }
+    if (!canClone)
+      continue;
+
+    for (scope::ScopeOp dstScope : dstScopes) {
+      Block *dstBody = dstScope.getBody();
+      OpBuilder builder(dstBody, dstBody->begin());
+      IRMapping mapping;
+      cloneCounterOps(scopeOp.getBody(), opsToClone, builder, mapping);
+
+      scopeOp->getResult(0).replaceUsesWithIf(
+          mapping.lookup(counter),
+          [&](OpOperand &use) { return dstScope->isAncestor(use.getOwner()); });
+    }
+  }
+}
+
+static void eraseDeadScopesAndReStage(scf::ForOp forOp,
+                                      DenseSet<int64_t> &erasedScopeNums) {
+  for (scope::ScopeOp scopeOp :
+       llvm::make_early_inc_range(forOp.getOps<scope::ScopeOp>())) {
+    if (scopeOp->use_empty() && hasOnlyPrivateMemoryEffects(scopeOp))
+      scopeOp.erase();
+  }
+
+  // Split MIX kernels share a schedule and already have cross-core sync.
+  // A stage that is dead on one core may still be live on the other. Keep both
+  // the original stage numbers and max_preload_num so scope guards and the
+  // number of unconditional SET/WAIT iterations remain aligned.
+  if (forOp->getParentOfType<func::FuncOp>()->hasAttr(
+          hivm::TPartOfMixAttr::name))
+    return;
+
+  for (scope::ScopeOp scopeOp : forOp.getOps<scope::ScopeOp>()) {
+    if (auto preloadNumAttr =
+            scopeOp->getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name))
+      erasedScopeNums.erase(preloadNumAttr.getInt());
+  }
+  if (erasedScopeNums.empty())
+    return;
+
+  int64_t maxPreloadNum = 0;
+  for (scope::ScopeOp scopeOp : forOp.getOps<scope::ScopeOp>()) {
+    auto preloadNumAttr =
+        scopeOp->getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name);
+    if (!preloadNumAttr)
+      continue;
+
+    // Shift past erased stages only, preserving any pre-existing gaps.
+    int64_t preloadNum = preloadNumAttr.getInt();
+    int64_t newPreloadNum =
+        preloadNum - llvm::count_if(erasedScopeNums, [&](int64_t erasedNum) {
+          return erasedNum < preloadNum;
+        });
+    scopeOp->setAttr(
+        hivm::PreloadNumAttr::name,
+        IntegerAttr::get(preloadNumAttr.getType(), newPreloadNum));
+    maxPreloadNum = std::max(maxPreloadNum, newPreloadNum + 1);
+  }
+  for (scope::ScopeOp scopeOp : forOp.getOps<scope::ScopeOp>()) {
+    if (auto maxPreloadNumAttr = scopeOp->getAttrOfType<IntegerAttr>(
+            hivm::MaxPreloadNumAttr::name))
+      scopeOp->setAttr(
+          hivm::MaxPreloadNumAttr::name,
+          IntegerAttr::get(maxPreloadNumAttr.getType(), maxPreloadNum));
+  }
+}
+
+static LogicalResult mergeCounterLoops(func::FuncOp funcOp) {
+  SmallVector<scf::ForOp> loops;
+  funcOp.walk<WalkOrder::PreOrder>([&](scf::ForOp loopOp) -> WalkResult {
+    if (loopOp->hasAttr(hivm::CVPipelinedLoopAttr::name)) {
+      loops.push_back(loopOp);
+      return WalkResult::skip();
+    }
+    return WalkResult::advance();
+  });
+
+  if (loops.empty())
+    return success();
+
+  DenseMap<scf::ForOp, DenseSet<int64_t>> originalPreloadNums;
+  for (scf::ForOp forOp : loops) {
+    cloneCounterLoopIntoUserScope(forOp);
+    auto &preloadNums = originalPreloadNums[forOp];
+    for (scope::ScopeOp scopeOp : forOp.getOps<scope::ScopeOp>()) {
+      if (auto preloadNumAttr =
+              scopeOp->getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name))
+        preloadNums.insert(preloadNumAttr.getInt());
+    }
+  }
+
+  RewritePatternSet patterns(funcOp.getContext());
+  scope::ScopeOp::getCanonicalizationPatterns(patterns, funcOp.getContext());
+  if (failed(applyPatternsGreedily(funcOp, std::move(patterns))))
+    return failure();
+
+  loops.clear();
+  funcOp.walk<WalkOrder::PreOrder>([&](scf::ForOp loopOp) -> WalkResult {
+    if (loopOp->hasAttr(hivm::CVPipelinedLoopAttr::name)) {
+      loops.push_back(loopOp);
+      return WalkResult::skip();
+    }
+    return WalkResult::advance();
+  });
+
+  for (scf::ForOp forOp : loops) {
+    auto erasedScopeNums = originalPreloadNums.lookup(forOp);
+    eraseDeadScopesAndReStage(forOp, erasedScopeNums);
+  }
+  
+  LLVM_DEBUG(
+    for (scf::ForOp forOp : loops) {
+      DBGS() << "After merge:" << forOp << "\n";
+    }
+  );
+  return success();
+}
+
 void CreatePreloadPass::runOnOperation() {
   auto moduleOp = getOperation();
+  WalkResult result = moduleOp->walk([](func::FuncOp funcOp) {
+    return failed(mergeCounterLoops(funcOp)) ? WalkResult::interrupt()
+                                             : WalkResult::advance();
+  });
+  if (result.wasInterrupted()) {
+    signalPassFailure();
+    return;
+  }
+  
   SmallVector<scf::ForOp> candidateLoops;
   DenseSet<Operation *> seenCandidateLoops;
   moduleOp->walk([&](scope::ScopeOp scopeOp) {
