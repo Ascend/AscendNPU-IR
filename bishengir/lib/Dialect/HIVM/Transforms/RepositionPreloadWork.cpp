@@ -2272,7 +2272,46 @@ hoistIndependentOpsInScope(scope::ScopeOp scope,
   prunePreloadPrefix(independent, scope);
   if (independent.empty() || dependent.empty())
     return;
-  if (!llvm::any_of(independent, isHoistableWork))
+  DenseSet<Operation *> dropped;
+  DenseSet<Operation *> visited;
+  for (Operation *root : independent) {
+    if (visited.contains(root))
+      continue;
+    SmallVector<Operation *> comp;
+    SmallVector<Operation *> stack;
+    stack.push_back(root);
+    while (!stack.empty()) {
+      Operation *op = stack.pop_back_val();
+      if (!visited.insert(op).second)
+        continue;
+      comp.push_back(op);
+      auto enqueue = [&](Operation *other) {
+        if (other && llvm::is_contained(independent, other) &&
+            !visited.contains(other))
+          stack.push_back(other);
+      };
+      op->walk([&](Operation *inner) {
+        for (Value operand : inner->getOperands())
+          enqueue(topLevelInScope(operand.getDefiningOp(), scope));
+      });
+      for (Value result : op->getResults())
+        for (Operation *user : result.getUsers())
+          enqueue(topLevelInScope(user, scope));
+    }
+    unsigned chainCount = 0;
+    for (Operation *op : comp)
+      op->walk([&](Operation *inner) {
+        if (isHoistableWork(inner))
+          ++chainCount;
+      });
+    if (chainCount < 3)
+      for (Operation *op : comp)
+        dropped.insert(op);
+  }
+  if (!dropped.empty())
+    llvm::erase_if(independent,
+                   [&](Operation *op) { return dropped.contains(op); });
+  if (independent.empty())
     return;
 
   extractPreloadPrefix(scope, independent,
