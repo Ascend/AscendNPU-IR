@@ -341,11 +341,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK: hivm.hir.copy
 // CHECK: scope.return %[[ELSE_TENSOR]]
 // CHECK: %{{.*}} = scope.scope : () -> tensor<1x1x16x16xf32> {
+// CHECK: %[[ELSE_INIT:.*]] = tensor.empty() : tensor<1x1x16x16xf32>
 // CHECK: %[[ELSE_RESULT:.*]] = scf.if {{.*}} -> (tensor<1x1x16x16xf32>) {
-// CHECK: tensor.empty
-// CHECK: scf.yield
+// CHECK: scf.yield %[[ELSE_INIT]]
 // CHECK: } else {
-// CHECK: %[[ELSE_DOT:.*]] = hivm.hir.mmadL1
+// CHECK: %[[ELSE_DOT:.*]] = hivm.hir.mmadL1 {{.*}} outs(%[[ELSE_INIT]] : tensor<1x1x16x16xf32>)
 // CHECK: scf.yield %[[ELSE_DOT]]
 // CHECK: scope.return %[[ELSE_RESULT]]
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
@@ -767,3 +767,66 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return
   }
 }
+
+// -----
+
+// Intermediate tensor values exported from an scf.if branch reuse their outs()
+// tensor.empty buffer in the opposite branch, hoisting branch-local tensor.empty
+// above the scf.if so both branches share the same buffer.
+// CHECK-LABEL: func.func @outline_if_intermediate_share_outs_buffer
+// CHECK: %[[OUTER_INIT:.*]] = tensor.empty() : tensor<16x16xf32>
+// CHECK: scf.for
+// CHECK:   %[[S1:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK-NEXT: %[[IF1:.*]] = scf.if %{{.*}} -> (tensor<16x16xf32>) {
+// CHECK-NEXT:   %[[VRELU:.*]] = hivm.hir.vrelu ins(%{{.*}} : tensor<16x16xf32>) outs(%[[OUTER_INIT]] : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK:        scf.yield %[[VRELU]] : tensor<16x16xf32>
+// CHECK-NEXT: } else {
+// CHECK-NEXT:   scf.yield %[[OUTER_INIT]] : tensor<16x16xf32>
+// CHECK-NEXT: }
+// CHECK-NEXT: scope.return %[[IF1]] : tensor<16x16xf32>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK:   %[[S0:.*]] = scope.scope : () -> tensor<16x32xf32> {
+// CHECK-NEXT: %[[HOISTED_INIT:.*]] = tensor.empty() : tensor<16x32xf32>
+// CHECK-NEXT: %[[IF0:.*]] = scf.if %{{.*}} -> (tensor<16x32xf32>) {
+// CHECK-NEXT:   %[[VEXP:.*]] = hivm.hir.vexp ins(%{{.*}} : tensor<16x32xf32>) outs(%[[HOISTED_INIT]] : tensor<16x32xf32>) -> tensor<16x32xf32>
+// CHECK-NEXT:   hivm.hir.store ins(%[[VEXP]] : tensor<16x32xf32>) outs(%{{.*}} : memref<16x32xf32>)
+// CHECK-NEXT:   scf.yield %[[VEXP]] : tensor<16x32xf32>
+// CHECK-NEXT: } else {
+// CHECK-NEXT:   scf.yield %[[HOISTED_INIT]] : tensor<16x32xf32>
+// CHECK-NEXT: }
+// CHECK-NEXT: scope.return %[[IF0]] : tensor<16x32xf32>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @outline_if_intermediate_share_outs_buffer(
+      %x: tensor<16x32xf32>, %y: tensor<16x16xf32>, %b: tensor<1x1x16x16xf16>, %dst0: memref<16x16xf32>, %dst1: memref<16x32xf32>, %dst2: memref<16x16xf32>, %n: index, %cond: i1)
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %outer_init = tensor.empty() : tensor<16x16xf32>
+    scf.for %i = %c0 to %n step %c1 {
+      scf.if %cond {
+        %inner_init = tensor.empty() : tensor<16x32xf32>
+        %exp = hivm.hir.vexp ins(%x : tensor<16x32xf32>) outs(%inner_init : tensor<16x32xf32>) -> tensor<16x32xf32>
+        %relu = hivm.hir.vrelu ins(%y : tensor<16x16xf32>) outs(%outer_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+        %f16_init = tensor.empty() : tensor<16x16xf16>
+        %f16 = hivm.hir.vcast ins(%relu : tensor<16x16xf32>) outs(%f16_init : tensor<16x16xf16>) -> tensor<16x16xf16>
+        %f16_4d = tensor.expand_shape %f16 [[0, 1, 2], [3]] output_shape [1, 1, 16, 16] : tensor<16x16xf16> into tensor<1x1x16x16xf16>
+        %cbuf = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+        hivm.hir.copy ins(%f16_4d : tensor<1x1x16x16xf16>) outs(%cbuf : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>)
+        %a = bufferization.to_tensor %cbuf restrict writable : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+        %dot_init = tensor.empty() : tensor<1x1x16x16xf32>
+        %dot = hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : tensor<1x1x16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%dot_init : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
+        hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%dot : tensor<1x1x16x16xf32>) outs(%dst0 : memref<16x16xf32>)
+        hivm.hir.store ins(%exp : tensor<16x32xf32>) outs(%dst1 : memref<16x32xf32>)
+        %sum_exp = hivm.hir.vadd ins(%exp, %x : tensor<16x32xf32>, tensor<16x32xf32>) outs(%inner_init : tensor<16x32xf32>) -> tensor<16x32xf32>
+        hivm.hir.store ins(%sum_exp : tensor<16x32xf32>) outs(%dst1 : memref<16x32xf32>)
+        %sum = hivm.hir.vadd ins(%relu, %y : tensor<16x16xf32>, tensor<16x16xf32>) outs(%outer_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+        hivm.hir.store ins(%sum : tensor<16x16xf32>) outs(%dst2 : memref<16x16xf32>)
+      }
+    }
+    return
+  }
+}
+

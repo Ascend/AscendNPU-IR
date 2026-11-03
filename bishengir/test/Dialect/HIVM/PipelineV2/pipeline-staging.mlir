@@ -130,3 +130,63 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   }
 }
 
+// -----
+
+// CHECK-LABEL: func.func @hoist_sunk_with_scf_if
+// CHECK:       scf.for
+// CHECK:         %[[L1_ALLOC:.*]] = memref.alloc() : memref<16xf32, #hivm.address_space<cbuf>>
+// CHECK-NEXT:    annotation.mark %[[L1_ALLOC]] {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>}
+// CHECK-NEXT:    scope.scope : () -> () {
+// CHECK:           scf.if
+// CHECK:             hivm.hir.copy ins(%{{.*}} : memref<16xf32>) outs(%[[L1_ALLOC]] : memref<16xf32, #hivm.address_space<cbuf>>)
+// CHECK:           scope.return
+// CHECK-NEXT:    } {{.*}}
+// CHECK-NEXT:    %[[L1_TENSOR:.*]] = bufferization.to_tensor %[[L1_ALLOC]] restrict writable : memref<16xf32, #hivm.address_space<cbuf>>
+// CHECK-NEXT:    %[[UB_ALLOC:.*]] = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+// CHECK-NEXT:    annotation.mark %[[UB_ALLOC]] {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>}
+// CHECK-NEXT:    scope.scope : () -> () {
+// CHECK:           scf.if
+// CHECK:             hivm.hir.fixpipe ins(%[[L1_TENSOR]] : tensor<16xf32>) outs(%[[UB_ALLOC]] : memref<16xf32, #hivm.address_space<ub>>)
+// CHECK:           scope.return
+// CHECK-NEXT:    } {{.*}}
+// CHECK-NEXT:    %[[CAST:.*]] = memref.memory_space_cast %[[UB_ALLOC]] : memref<16xf32, #hivm.address_space<ub>> to memref<16xf32>
+// CHECK-NEXT:    %[[UB_TENSOR:.*]] = bufferization.to_tensor %[[CAST]] restrict writable : memref<16xf32>
+// CHECK-NEXT:    scope.scope : () -> () {
+// CHECK:           tensor.dim %[[UB_TENSOR]]
+// CHECK:           scope.return
+// CHECK-NEXT:    } {{.*}}
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @hoist_sunk_with_scf_if(%src: memref<16xf32>, %cond: i1) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  scf.for %i = %c0 to %c1 step %c1 {
+    %l1_tensor = scope.scope : () -> tensor<16xf32> {
+      %alloc = memref.alloc() : memref<16xf32, #hivm.address_space<cbuf>>
+      annotation.mark %alloc {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<16xf32, #hivm.address_space<cbuf>>
+      %t = bufferization.to_tensor %alloc restrict writable : memref<16xf32, #hivm.address_space<cbuf>>
+      scf.if %cond {
+        hivm.hir.copy ins(%src : memref<16xf32>) outs(%alloc : memref<16xf32, #hivm.address_space<cbuf>>)
+      }
+      scope.return %t : tensor<16xf32>
+    }
+    %ub_tensor = scope.scope : () -> tensor<16xf32> {
+      %alloc = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+      annotation.mark %alloc {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<16xf32, #hivm.address_space<ub>>
+      %cast = memref.memory_space_cast %alloc : memref<16xf32, #hivm.address_space<ub>> to memref<16xf32>
+      %t = bufferization.to_tensor %cast restrict writable : memref<16xf32>
+      scf.if %cond {
+        hivm.hir.fixpipe ins(%l1_tensor : tensor<16xf32>) outs(%alloc : memref<16xf32, #hivm.address_space<ub>>)
+      }
+      scope.return %t : tensor<16xf32>
+    }
+    scope.scope : () -> () {
+      %dim = tensor.dim %ub_tensor, %c0 : tensor<16xf32>
+      scope.return
+    }
+  } {hivm.cv_pipelined_loop}
+  return
+}
+}
+
+

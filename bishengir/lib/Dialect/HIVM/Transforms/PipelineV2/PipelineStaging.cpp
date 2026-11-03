@@ -376,34 +376,34 @@ static void hoistAllocAndToTensor(LoopLikeOpInterface &loopOp) {
           continue;
 
         Operation *writeOp = onlyWrittenToOnceByCrossCore(allocOp);
-        if (!writeOp || writeOp->getBlock() != &body ||
-            !allocOp->isBeforeInBlock(writeOp) ||
-            !writeOp->isBeforeInBlock(toTensorOp))
+        Operation *writeInBody =
+            writeOp ? body.findAncestorOpInBlock(*writeOp) : nullptr;
+        if (!writeInBody || !allocOp->isBeforeInBlock(writeInBody))
+          continue;
+
+        bool castUsedByWrite =
+            castOp && llvm::is_contained(writeOp->getOperands(), operand);
+        if (castUsedByWrite && !castOp->isBeforeInBlock(writeInBody))
           continue;
 
         SmallVector<Operation *> moveBefore{allocOp};
         SmallVector<Operation *> moveAfter{toTensorOp};
-        auto collectUsers = [&](Value value) {
+        if (castOp)
+          (castUsedByWrite ? moveBefore : moveAfter).push_back(castOp);
+
+        auto collectUsers = [&](Value value, bool valueInMoveBefore) {
           for (Operation *user : value.getUsers()) {
             if (user == writeOp || user == toTensorOp || user == castOp)
               continue;
             if (user->getBlock() != &body || !isa<annotation::MarkOp>(user))
               return false;
-            (user->isBeforeInBlock(writeOp) ? moveBefore : moveAfter)
-                .push_back(user);
+            (valueInMoveBefore ? moveBefore : moveAfter).push_back(user);
           }
           return true;
         };
-        if (!collectUsers(allocOp) || (castOp && !collectUsers(castOp)))
+        if (!collectUsers(allocOp, /*valueInMoveBefore=*/true) ||
+            (castOp && !collectUsers(castOp, castUsedByWrite)))
           continue;
-
-        if (castOp) {
-          (castOp->isBeforeInBlock(writeOp) ? moveBefore : moveAfter)
-              .push_back(castOp);
-          if (llvm::is_contained(moveAfter, castOp.getOperation()) &&
-              llvm::is_contained(writeOp->getOperands(), operand))
-            continue;
-        }
 
         DenseSet<Operation *> movingOps;
         movingOps.insert(moveBefore.begin(), moveBefore.end());
