@@ -3327,21 +3327,18 @@ void TreeReduceV2Pass::buildAscendGroupReduce(
   if (needFoldR) {
     int64_t innerFoldNum = (dimR + blockDataLen - 1) / blockDataLen;
 
-    Value dimRVal0 = rewriter.create<arith::ConstantIndexOp>(
-        loc, std::min(dimR, blockDataLen));
-    Value foldedVec = safeRead2D(builder.c0, dimRVal0);
-
-    for (int64_t loopR = 1; loopR < innerFoldNum; ++loopR) {
-      Value offsetR =
-          rewriter.create<arith::ConstantIndexOp>(loc, loopR * blockDataLen);
+    SmallVector<Value> blockVecs;
+    blockVecs.reserve(innerFoldNum);
+    for (int64_t loopR = 0; loopR < innerFoldNum; ++loopR) {
+      Value offsetR = loopR == 0 ? builder.c0
+                                 : rewriter.create<arith::ConstantIndexOp>(
+                                       loc, loopR * blockDataLen);
       int64_t remainR = dimR - loopR * blockDataLen;
       Value remainRVal = rewriter.create<arith::ConstantIndexOp>(
           loc, std::min(remainR, blockDataLen));
-
-      Value vreg1Compute = safeRead2D(offsetR, remainRVal);
-      foldedVec = rewriter.create<arith::AddFOp>(loc, foldedVec, vreg1Compute);
+      blockVecs.push_back(safeRead2D(offsetR, remainRVal));
     }
-    finalBlockVec2D = foldedVec;
+    finalBlockVec2D = builder.buildTreeReduction(blockVecs);
   } else {
     Value dimRVal = rewriter.create<arith::ConstantIndexOp>(loc, dimR);
     finalBlockVec2D = safeRead2D(builder.c0, dimRVal);
