@@ -2287,8 +2287,8 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
 // input. The extra input user prevents strict slice bubbling, so the attempted
 // tiling must be rolled back. The CustomOp remains unguarded because it has no
 // GM address operands; the Store is restricted to sub-block 0.
-// CHECK: hivm.tile_and_bind_subblock_reverted
 // CHECK-LABEL: func.func @mix_store_and_independent_side_effect
+// CHECK-NOT: hivm.tile_and_bind_subblock_reverted
 // CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
 // CHECK-NOT: scf.for
 // CHECK: %[[INPUT:.*]] = bufferization.to_tensor
@@ -5986,9 +5986,16 @@ module attributes {
 // AIV-only: copy to 1x4x16x16 cbuf marks the last fractal axis NotAligned; a
 // later vreduce reduce_dims=[0] on 16x64 shares the structural group. Reduce
 // marking must not overwrite NotAligned (otherwise dim 3 is wrongly selected).
-// CHECK:           hivm.tile_and_bind_subblock_reverted
-// CHECK-NOT:       1x4x16x16{{.*}}tiling_dim = 3
-// CHECK-NOT:       1x4x16x8
+// CHECK-LABEL: func.func @reduce_mark_preserve_not_aligned_mix_aiv
+// CHECK-NOT: 1x4x16x16{{.*}}tiling_dim = 3
+// CHECK-NOT: 1x4x16x8
+// CHECK: %[[FULL_CBUF:.*]] = memref.alloc() : memref<1x4x16x16xf16, #hivm.address_space<cbuf>>
+// CHECK-NOT: 1x4x16x16{{.*}}tiling_dim = 3
+// CHECK-NOT: 1x4x16x8
+// CHECK: hivm.hir.copy ins(%{{.*}} : tensor<1x4x16x16xf16>) outs(%[[FULL_CBUF]] : memref<1x4x16x16xf16, #hivm.address_space<cbuf>>)
+// CHECK: } {limit_sub_block_id0}
+// CHECK-NOT: 1x4x16x16{{.*}}tiling_dim = 3
+// CHECK-NOT: 1x4x16x8
 
 #map3 = affine_map<()[s0, s1] -> (s0 - s1)>
 #map11 = affine_map<()[s0, s1, s2] -> (s0 * 8 + s1 + s2)>

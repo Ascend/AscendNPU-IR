@@ -1850,7 +1850,7 @@ def V2VerifyStage : HIVMPass<"hivm-v2-verify-stage", "ModuleOp"> {
 }
 
 def HoistSimtScalarCallsToSimd
-    : Pass<"hoist-simt-scalar-calls-to-simd", "ModuleOp"> {
+    : HIVMPass<"hoist-simt-scalar-calls-to-simd", "ModuleOp"> {
   let summary = "Hoist the SIMT wrapper's scalar calls into the SIMD caller";
   let constructor = "mlir::hivm::createHoistSimtScalarCallsToSimdPass()";
   let dependentDialects = ["arith::ArithDialect", "func::FuncDialect",
