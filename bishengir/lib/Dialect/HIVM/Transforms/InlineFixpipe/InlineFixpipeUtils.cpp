@@ -24,8 +24,10 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace mlir;
@@ -41,11 +43,68 @@ bool isInsideVectorScope(Operation *op) {
   return coreTypeAttr && coreTypeAttr.getTcoretype() == hivm::TCoreType::VECTOR;
 }
 
-bool isFixpipeStoreInlinable(hivm::StoreOp storeOp) {
+/// Prove that the destination's innermost (column) stride is one. A dynamic
+/// stride can be recovered through memref.cast; an unproven stride keeps the
+/// store on the vector-side strided-store path.
+static LogicalResult proveUnitInnermostStride(PatternRewriter &rewriter,
+                                              hivm::StoreOp storeOp) {
+  Value dst = storeOp.getDst();
+  while (true) {
+    auto dstType = dyn_cast<MemRefType>(dst.getType());
+    if (!dstType)
+      return rewriter.notifyMatchFailure(
+          storeOp, "ND fixpipe destination must be a ranked memref");
+    if (dstType.getRank() == 0)
+      return rewriter.notifyMatchFailure(
+          storeOp, "ND fixpipe destination must have rank >= 1");
+
+    SmallVector<int64_t> strides;
+    int64_t offset;
+    if (failed(getStridesAndOffset(dstType, strides, offset)))
+      return rewriter.notifyMatchFailure(
+          storeOp, "ND fixpipe destination must have a strided layout");
+
+    int64_t columnStride = strides.back();
+    if (!ShapedType::isDynamic(columnStride)) {
+      if (columnStride == 1)
+        return success();
+      return rewriter.notifyMatchFailure(
+          storeOp, llvm::Twine("ND fixpipe destination innermost stride is ") +
+                       llvm::Twine(columnStride) + ", expected 1");
+    }
+
+    // A cast may erase a known unit stride or refine a dynamic one. Check
+    // each type before looking through it for more precise stride information.
+    auto castOp = dst.getDefiningOp<memref::CastOp>();
+    if (!castOp)
+      return rewriter.notifyMatchFailure(
+          storeOp, "ND fixpipe destination innermost stride is dynamic and "
+                   "cannot be proven 1");
+    dst = castOp.getSource();
+  }
+}
+
+LogicalResult matchFixpipeStoreInlinable(PatternRewriter &rewriter,
+                                         hivm::FixpipeOp fixpipeOp,
+                                         hivm::StoreOp storeOp) {
   auto attr = storeOp.getAtomicKindAttr();
   auto kind = attr ? attr.getValue() : hivm::AtomicKind::NONE;
-  return kind == AtomicKind::NONE || kind == AtomicKind::ADD ||
-         kind == AtomicKind::MAX || kind == AtomicKind::MIN;
+  if (kind != AtomicKind::NONE && kind != AtomicKind::ADD &&
+      kind != AtomicKind::MAX && kind != AtomicKind::MIN)
+    return rewriter.notifyMatchFailure(
+        storeOp, llvm::Twine("fixpipe store fusion does not support atomic "
+                             "kind '") +
+                     stringifyAtomicKind(kind) + "'");
+
+  // ND fixpipe DMA only programs the destination row stride. NZ2NZ preserves
+  // the fractal layout, whose innermost dimension is also consumed as
+  // contiguous. Require a positively proven unit column stride for all three
+  // modes; row-strided (packed rows) remaps remain foldable.
+  FixpipeDMAMode dmaMode = fixpipeOp.getDmaMode();
+  if (dmaMode == FixpipeDMAMode::NZ2NZ || dmaMode == FixpipeDMAMode::NZ2ND ||
+      dmaMode == FixpipeDMAMode::NZ2DN)
+    return proveUnitInnermostStride(rewriter, storeOp);
+  return success();
 }
 
 Operation *getSingleSiftedUser(Value v) {

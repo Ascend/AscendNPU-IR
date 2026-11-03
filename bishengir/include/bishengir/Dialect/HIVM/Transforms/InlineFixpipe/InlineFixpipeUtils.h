@@ -18,6 +18,7 @@
 #define BISHENGIR_DIALECT_HIVM_TRANSFORMS_INLINEFIXPIPEUTILS_H
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "mlir/IR/PatternMatch.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -31,7 +32,9 @@ namespace mlir::hivm {
 inline constexpr llvm::StringLiteral kFallbackNotExec = "fallback_not_exec";
 
 bool isInsideVectorScope(Operation *op);
-bool isFixpipeStoreInlinable(hivm::StoreOp storeOp);
+LogicalResult matchFixpipeStoreInlinable(PatternRewriter &rewriter,
+                                         hivm::FixpipeOp fixpipeOp,
+                                         hivm::StoreOp storeOp);
 Operation *getSingleSiftedUser(Value v);
 SmallVector<VCastOp> collectVCastChain(VCastOp firstCast);
 std::optional<FixpipePreQuantMode>
