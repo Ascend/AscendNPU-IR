@@ -19,30 +19,23 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Conversion/Passes.h"
-#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
-#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
-#include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Operation.h"
-#include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "llvm/ADT/TypeSwitch.h"
+
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/ErrorHandling.h"
 
 #define DEBUG_TYPE "insert-cv-tight-coupled-buffer"
 
@@ -144,40 +137,23 @@ struct InsertOpImpl<InsertMode::MoveToUb, EnableND2NZ> {
         Value alloc;
         bool hasDynamicShape = llvm::any_of(
             shape, [](int64_t dim) { return dim == ShapedType::kDynamic; });
-        // dynamic shape
         if (hasDynamicShape) {
-          Value sourceVal = fixpipeOp.getSrc();
-          auto maybeMmad = traceDefOp<hivm::MmadL1Op>(sourceVal);
-
-          if (maybeMmad.has_value()) {
-            auto mmadOp = cast<hivm::MmadL1Op>(maybeMmad.value());
-            auto mmadResult = mmadOp.getResult(0);
-            auto mmadType = cast<ShapedType>(mmadResult.getType());
-            auto mmadShape = mmadType.getShape();
-            auto mmadElemType = mmadType.getElementType();
-
-            Value emptyTensor = fixpipeOp.getOperand(1);
-            auto emptyOp = emptyTensor.getDefiningOp<tensor::EmptyOp>();
-            SmallVector<Value> dynamicDims;
-
-            if (emptyOp) {
-              dynamicDims.append(emptyOp.getDynamicSizes().begin(),
-                                 emptyOp.getDynamicSizes().end());
-            }
-            alloc = createAllocWithMark(rewriter, fixLoc, ubMemrefType,
-                                        dynamicDims, mmadShape, mmadElemType);
-          } else {
-            llvm::report_fatal_error(
-                "Unable to trace to MmadL1 op for dynamic shape fixpipe\n");
+          // The alloc keeps the fixpipe dst's dynamic extents; its static
+          // buffer size upper bound is inferred later from the fixpipe src
+          // chain (mmadL1's static result) by hivm-infer-buffer-size.
+          SmallVector<Value> dynamicDims;
+          if (auto emptyOp =
+                  fixpipeOp.getOperand(1).getDefiningOp<tensor::EmptyOp>()) {
+            dynamicDims.append(emptyOp.getDynamicSizes().begin(),
+                               emptyOp.getDynamicSizes().end());
           }
+          alloc = rewriter.create<memref::AllocOp>(fixLoc, ubMemrefType,
+                                                   dynamicDims);
         } else {
           alloc = rewriter.create<memref::AllocOp>(fixLoc, ubMemrefType);
         }
-        SmallVector<Value> oprs({fixpipeOp.getSrc(), alloc});
-        if (auto quantScale = fixpipeOp.getQuantScale())
-          oprs.push_back(quantScale);
-        auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
-            fixLoc, TypeRange{}, oprs, fixpipeOp->getAttrs());
+        auto newFixpipeOp =
+            FixpipeOp::clone(rewriter, fixpipeOp, fixpipeOp.getSrc(), alloc);
         rewriter.setInsertionPointAfter(newFixpipeOp);
         auto toTensor = rewriter.create<bufferization::ToTensorOp>(
             fixLoc, resultTensorType, alloc,
@@ -730,19 +706,18 @@ struct ReplaceEmptyOpByTightlyCoupledBuffer
   }
 
 private:
-  /// Creates a memref allocation with the specified address space.
-  Value
-  createAddressSpaceAllocation(PatternRewriter &rewriter, Location loc,
-                               ArrayRef<int64_t> shape, Type elemType,
-                               ValueRange dynamicSizes, AddressSpace addrSpace,
-                               ArrayRef<int64_t> maybeStaticAllocSize) const {
+  /// Creates a memref allocation with the specified address space. Dynamic
+  /// buffer sizes are inferred later by hivm-infer-buffer-size.
+  Value createAddressSpaceAllocation(PatternRewriter &rewriter, Location loc,
+                                     ArrayRef<int64_t> shape, Type elemType,
+                                     ValueRange dynamicSizes,
+                                     AddressSpace addrSpace) const {
     MLIRContext *ctx = rewriter.getContext();
 
     auto spaceAttr = AddressSpaceAttr::get(ctx, addrSpace);
     auto spacedType = MemRefType::get(shape, elemType, nullptr, spaceAttr);
 
-    return createAllocWithMark(rewriter, loc, spacedType, dynamicSizes,
-                               maybeStaticAllocSize, elemType);
+    return rewriter.create<memref::AllocOp>(loc, spacedType, dynamicSizes);
   }
 
   Value peelTensorShapeSourceForAllocSizes(Value tensorValue) const {
@@ -764,9 +739,9 @@ private:
     Value shapeSource = peelTensorShapeSourceForAllocSizes(tensorValue);
     SmallVector<Value> dynamicSizes =
         hivm::getTensorDynamicValues(rewriter, loc, shapeSource);
-    return createAddressSpaceAllocation(
-        rewriter, loc, tensorType.getShape(), tensorType.getElementType(),
-        dynamicSizes, addressSpace, tensorValue.getType().getShape());
+    return createAddressSpaceAllocation(rewriter, loc, tensorType.getShape(),
+                                        tensorType.getElementType(),
+                                        dynamicSizes, addressSpace);
   }
 
   std::tuple<Value, bufferization::ToTensorOp>

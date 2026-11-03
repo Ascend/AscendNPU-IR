@@ -466,7 +466,7 @@ copy_ubuf_to_cbuf_1d_core(memref_t<__ubuf__ T, 1> *src,
 // otherwise uses ld.dev to bypass DCache.
 template <typename T, bool DisableDCache>
 __aiv__ __attribute__((always_inline)) T load_gm_scalar(__gm__ T *ptr) {
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
   if constexpr (DisableDCache) {
     static_assert(sizeof(T) == 1 || sizeof(T) == 2 || sizeof(T) == 4 ||
                   sizeof(T) == 8);
@@ -674,7 +674,7 @@ load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim(
   const int64_t stride0_gm = gm->strides[0];
   constexpr uint64_t bytes = sizeof(T);
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
   // src_stride is an unsigned forward byte step; negative or over-limit
   // strides cannot be encoded, fall back to scalar.
   const bool invalid_src_stride =
@@ -2284,10 +2284,13 @@ __aiv__ __attribute__((always_inline)) T set_pad_value_null() {
 /// Two regions are repaired per row (the MTE writes both with the pad value
 /// truncated to the low 32 bits, sign-extended, for b64):
 /// - left pad [0, lp) of the row's first block: only the pad lanes are
-///   touched (data starts at lane lp), so no restore step is needed;
+///   touched (data starts at lane lp), so a single masked store suffices;
 /// - tail block [CEIL(lp+size, npb) - npb, CEIL(lp+size, npb)): the valid
-///   data inside it is always a prefix, so pad is written on plt(all lanes)
-///   and the data prefix restored on plt(valid lanes).
+///   data inside it is always a prefix, so the final content (data prefix
+///   + pad tail) is composed in registers and committed with one store.
+///   Never store pad over the valid lanes and restore them afterwards:
+///   this repair is not ordered against scalar (S-pipe) readers of the
+///   buffer, and they would observe the transient pad as data.
 ///
 /// When the whole row span fits in one block (lp + size <= npb) the tail
 /// block is also the first block and its restore mask covers the left pad
@@ -2337,9 +2340,9 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
       // left_padding_num, so the masked store cannot touch it.
       // This MUST run before the tail-block snapshot below: when the whole
       // row span fits in one block (lp + size <= num_per_block) the tail
-      // block IS this block and the tail restore's mask covers [0, lp) as
+      // block IS this block and the tail overlay's mask covers [0, lp) as
       // well, so the snapshot must capture the corrected pad for the
-      // restore to write it back instead of the MTE-truncated value.
+      // overlay to write it back instead of the MTE-truncated value.
       if (left_padding_num > 0) {
         __ubuf__ T *first_block_ptr = i * stride + block_ptr;
         uint32_t vl_lp = left_padding_num; // re-init per row (plt consumes)
@@ -2365,12 +2368,19 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
       VectorReg<T> v_src;
       VectorReg<T> v_dst;
       vlds(v_src, till_block_ptr, 0);
-      // store
       vdup(v_dst, pad_value, mask_all, MODE_ZEROING);
-      // store padvalue
+      // Overlay the valid prefix onto the pad vector in registers, then
+      // commit the final content with a single store. Storing pad on all
+      // lanes first and restoring the valid prefix afterwards (the previous
+      // sequence) left a window where the valid lanes hold the pad value.
+      // This repair runs on the V pipe while a scalar (S-pipe) consumer of
+      // the buffer is not ordered against it: the caller-side event
+      // handshake on (V, S) is released by earlier V work, so it cannot
+      // cover these stores, and the consumer could read the transient pad
+      // value as data. Writing each valid lane with its own snapshot value
+      // is idempotent, which closes that window without any fence.
+      vmov(v_dst, v_src, mask_val, MODE_MERGING);
       vsts(v_dst, till_block_ptr, 0, mask_all);
-      // store valid data
-      vsts(v_src, till_block_ptr, 0, mask_val);
     }
   }
 }
@@ -2389,7 +2399,7 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
 }
 #endif
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 #define REGISTE_DMA_LOAD_NOCACHE(dim, type)                                    \
   __aiv__ __attribute__((always_inline)) void                                  \
       _mlir_ciface_load_gm_to_ubuf_##dim##d_##type##_nocache(                  \

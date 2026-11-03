@@ -868,6 +868,22 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 }
 
 // -----
+// The sliced retarget must keep the pre-quant scale operand.
+// CHECK-LABEL: func.func @bubble_up_hivm_fixpipe_keeps_quant_scale
+// CHECK:           %[[VAL_1:.*]] = tensor.empty() : tensor<64x128xf32>
+// CHECK:           %[[VAL_2:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>} ins(%{{.*}} : tensor<128x128xf32>) outs(%[[VAL_1:.*]] : tensor<64x128xf32>) quant_scale = %{{.*}} : f32 dual_dst_mode = <ROW_SPLIT> -> tensor<64x128xf32>
+// CHECK:           return %[[VAL_2:.*]] : tensor<64x128xf32>
+// CHECK:         }
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @bubble_up_hivm_fixpipe_keeps_quant_scale(%arg0 : tensor<128x128xf32>, %scale : f32) -> tensor<64x128xf32> {
+    %0 = tensor.empty() : tensor<128x128xf32>
+    %1 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>} ins(%arg0 : tensor<128x128xf32>) outs(%0 : tensor<128x128xf32>) quant_scale = %scale : f32 -> tensor<128x128xf32>
+    %extracted_slice = tensor.extract_slice %1[0, 0] [64,128] [1,1] {to_be_bubbled_slice} : tensor<128x128xf32> to tensor<64x128xf32>
+    return %extracted_slice : tensor<64x128xf32>
+  }
+}
+
+// -----
 // CHECK-LABEL:   func.func @bubble_up_hivm_bitcast_1d_static(
 // CHECK-SAME:                                                %[[VAL_0:.*]]: tensor<64xf32>) -> tensor<32xi32> {
 // CHECK:           %[[VAL_1:.*]] = tensor.extract_slice %[[VAL_0]][0] [32] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<32xf32>

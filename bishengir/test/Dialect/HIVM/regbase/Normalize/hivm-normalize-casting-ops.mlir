@@ -62,7 +62,7 @@ func.func @test_NormalizeCastLowering_cast_f32_to_i16(%arg0: tensor<4x4xf32>) ->
 // CHECK-LABEL: func.func @test_NormalizeCastLowering_cast_i64_to_f16
 // CHECK-SAME: (%[[ARG0:.*]]: tensor<23xi64>) -> tensor<23xf16>
 // CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<23xf32>
-// CHECK: %[[CAST0:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<23xi64>) outs(%[[EMPTY0]] : tensor<23xf32>) round_mode = <trunc> -> tensor<23xf32>
+// CHECK: %[[CAST0:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<23xi64>) outs(%[[EMPTY0]] : tensor<23xf32>) -> tensor<23xf32>
 // CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<23xf16>
 // CHECK: %[[CAST1:.*]] = hivm.hir.vcast ins(%[[CAST0]] : tensor<23xf32>) outs(%[[EMPTY1]] : tensor<23xf16>) -> tensor<23xf16>
 // CHECK: return %[[CAST1]]
@@ -197,13 +197,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizefillCastToTensorBrc_opt_cast_IToF_fill
-// CHECK: %[[CST:.*]] = arith.constant 1 : i32
-// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<i32>
-// CHECK: %[[FILL0:.*]] = hivm.hir.vbrc ins(%[[CST]] : i32) outs(%[[EMPTY0]] : tensor<i32>) -> tensor<i32>
-// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<f32>
-// CHECK: %[[CAST:.*]] = hivm.hir.vcast ins(%[[FILL0]] : tensor<i32>) outs(%[[EMPTY1]] : tensor<f32>) -> tensor<f32>
+// CHECK: %[[CST:.*]] = arith.constant dense<1> : tensor<1xi32>
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<1xf32>
+// CHECK: %[[CAST:.*]] = hivm.hir.vcast ins(%[[CST]] : tensor<1xi32>) outs(%[[EMPTY0]] : tensor<1xf32>) -> tensor<1xf32>
+// CHECK: %[[EXTRACT:.*]] = tensor.extract %[[CAST]][%{{.*}}] : tensor<1xf32>
 // CHECK: %[[EMPTY2:.*]] = tensor.empty() : tensor<24x32xf32>
-// CHECK: %[[EXTRACT:.*]] = tensor.extract %[[CAST]][] : tensor<f32>
 // CHECK: %[[BRC:.*]] = hivm.hir.vbrc ins(%[[EXTRACT]] : f32) outs(%[[EMPTY2]] : tensor<24x32xf32>) -> tensor<24x32xf32>
 // CHECK: return %[[BRC]] : tensor<24x32xf32>
 func.func @test_NormalizefillCastToTensorBrc_opt_cast_IToF_fill(%arg0: tensor<24x32xi32>) -> tensor<24x32xf32> {

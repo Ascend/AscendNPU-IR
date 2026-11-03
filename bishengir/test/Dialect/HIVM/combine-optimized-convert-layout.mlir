@@ -949,3 +949,20 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %va, %vb : tensor<8x4x16x16xf16>, tensor<8x4x16x16xf16>
   }
 }
+
+// -----
+
+// src and dst may be the same SSA value; both operands must be updated.
+// CHECK-LABEL: func.func @fold_same_src_dst_fixpipe
+// CHECK: %[[OUT:.*]] = tensor.empty() : tensor<2x1x16x8xf32>
+// CHECK: hivm.hir.fixpipe ins(%arg0 : tensor<16x16xf32>) outs(%[[OUT]] : tensor<2x1x16x8xf32>)
+func.func @fold_same_src_dst_fixpipe(%src: tensor<16x16xf32>) -> tensor<2x1x16x8xf32> {
+  %fix = hivm.hir.fixpipe
+    ins(%src : tensor<16x16xf32>) outs(%src : tensor<16x16xf32>)
+    -> tensor<16x16xf32>
+  %fr = hivm.hir.convert_layout %fix output_shape [2, 1, 16, 8]
+    {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>,
+     srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>}
+    : (tensor<16x16xf32>) -> tensor<2x1x16x8xf32>
+  return %fr : tensor<2x1x16x8xf32>
+}

@@ -365,3 +365,30 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %10 : tensor<37x96xf32>
   }
 }
+
+// -----
+
+// The pre-quant scale must survive the NZ2NZ retarget with its mode.
+// CHECK-LABEL: func.func @dotdot_preinserted_nz2nd_channel_split_keeps_scale
+// CHECK: %[[MMAD0:.*]] = hivm.hir.mmadL1
+// CHECK: %[[FP:.*]] = hivm.hir.fixpipe {channel_split = true, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>} ins(%[[MMAD0]] : tensor<16x16xf32>) outs(%{{.*}} : tensor<2x1x16x8xf32>) quant_scale = %{{.*}} : f32 -> tensor<2x1x16x8xf32>
+// CHECK: hivm.hir.mmadL1 {{.*}}ins(%[[FP]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @dotdot_preinserted_nz2nd_channel_split_keeps_scale(%4: tensor<16x16xf32>, %e4: tensor<16x16xf32>, %e5: tensor<16x16xf32>, %scale: f32) -> tensor<16x16xf32> {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %7 = tensor.empty() : tensor<16x16xf32>
+    %8 = hivm.hir.mmadL1 {fixpipe_for_result_already_inserted = true}
+        ins(%4, %e4, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+        outs(%7 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %fp_dst = tensor.empty() : tensor<16x16xf32>
+    %fp = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>}
+        ins(%8 : tensor<16x16xf32>) outs(%fp_dst : tensor<16x16xf32>) quant_scale = %scale : f32
+        -> tensor<16x16xf32>
+    %9 = tensor.empty() : tensor<16x16xf32>
+    %10 = hivm.hir.mmadL1 {fixpipe_for_result_already_inserted = true}
+        ins(%fp, %e5, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+        outs(%9 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %10 : tensor<16x16xf32>
+  }
+}

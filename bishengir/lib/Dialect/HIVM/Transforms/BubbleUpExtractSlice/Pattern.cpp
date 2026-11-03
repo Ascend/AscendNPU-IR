@@ -2138,13 +2138,11 @@ FixpipeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
 
   auto dualAttr =
       hivm::FixpipeDualDstModeAttr::get(rewriter.getContext(), splitMode);
-  NamedAttrList attrs(fixpipeOp->getAttrs());
-  attrs.set(fixpipeOp.getDualDstModeAttrName(), dualAttr);
+  auto newFixpipeOp = FixpipeOp::clone(
+      rewriter, fixpipeOp, fixpipeOp.getSrc(), newSliceOp.getResult(),
+      {rewriter.getNamedAttr(fixpipeOp.getDualDstModeAttrName(), dualAttr)});
   if (!hacc::utils::isRegBasedArch(fixpipeOp->getParentOfType<ModuleOp>()))
-    attrs.erase(fixpipeOp.getSubBlockIdxAttrName());
-  auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
-      sliceOp.getLoc(), TypeRange{sliceOp.getType()},
-      ValueRange{fixpipeOp.getSrc(), newSliceOp.getResult()}, attrs.getAttrs());
+    newFixpipeOp.removeSubBlockIdxAttr();
 
   rewriter.replaceOp(sliceOp, newFixpipeOp);
   if (fixpipeOp->use_empty())

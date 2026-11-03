@@ -89,20 +89,18 @@ FixpipeOp convertNz2NdFixpipeToNz2Nz(PatternRewriter &rewriter, FixpipeOp op) {
   auto dstTy = channelSplit ? computeNz2NzL1DstTypeChannelSplit(tensorType)
                             : computeNz2NzL1DstTypeChannelMerge(tensorType);
   Location loc = op.getLoc();
-  Value src = op.getSrc();
-  auto dualDstMode = op.getDualDstModeAttr();
-  auto subBlockIdx = op.getSubBlockIdxAttr();
-  auto preQuant = op.getPreQuantAttr();
-  auto preRelu = op.getPreReluAttr();
 
   rewriter.setInsertionPoint(op);
   Value fixpipeInit =
       rewriter.create<mlir::tensor::EmptyOp>(loc, dstTy, mlir::ValueRange{});
-  auto newOp = rewriter.replaceOpWithNewOp<FixpipeOp>(
-      op, /*result_tensor=*/fixpipeInit.getType(), src, fixpipeInit,
-      FixpipeDMAModeAttr::get(rewriter.getContext(), FixpipeDMAMode::NZ2NZ),
-      dualDstMode, subBlockIdx, preQuant, preRelu,
-      rewriter.getBoolAttr(channelSplit));
+  auto newOp = FixpipeOp::clone(
+      rewriter, op, op.getSrc(), fixpipeInit,
+      {rewriter.getNamedAttr(op.getDmaModeAttrName(),
+                             FixpipeDMAModeAttr::get(rewriter.getContext(),
+                                                     FixpipeDMAMode::NZ2NZ)),
+       rewriter.getNamedAttr(op.getChannelSplitAttrName(),
+                             rewriter.getBoolAttr(channelSplit))});
+  rewriter.replaceOp(op, newOp.getResultTensor());
   return newOp;
 }
 

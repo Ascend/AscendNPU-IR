@@ -502,8 +502,9 @@ public:
     // mask after the min/max pair.
     Value posOne = rewriter.create<arith::ConstantOp>(
         loc, castType, rewriter.getIntegerAttr(castType, 1));
-    Value minValue = Traits::createBinaryOp(rewriter, loc, minusInfValue, posOne,
-                                            minusInfValue, BinaryKind::MinSigned);
+    Value minValue =
+        Traits::createBinaryOp(rewriter, loc, minusInfValue, posOne,
+                               minusInfValue, BinaryKind::MinSigned);
     Value zero = rewriter.create<arith::ConstantOp>(
         loc, castType, rewriter.getIntegerAttr(castType, 0));
     Value maxValue = Traits::createBinaryOp(rewriter, loc, minValue, zero,

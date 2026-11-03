@@ -128,16 +128,11 @@ retargetFixpipeToFractalType(PatternRewriter &rewriter, FixpipeOp fixpipe,
 
   rewriter.setInsertionPoint(fixpipe);
   auto emptyOp = rewriter.create<tensor::EmptyOp>(
-      fixpipe.getLoc(), fractalType.getShape(), fractalType.getElementType());
+      fixpipe.getLoc(), fractalType.getShape(), fractalType.getElementType(),
+      fractalType.getEncoding());
 
-  auto newFixpipe = rewriter.create<FixpipeOp>(
-      fixpipe.getLoc(), fractalType, fixpipe.getSrc(), emptyOp.getResult(),
-      fixpipe.getDmaModeAttr(), fixpipe.getDualDstModeAttr(),
-      fixpipe.getSubBlockIdxAttr(), fixpipe.getPreQuantAttr(),
-      fixpipe.getPreReluAttr(), fixpipe.getChannelSplitAttr(),
-      fixpipe.getC0PadEnAttr(), fixpipe.getQuantScale());
-  if (fixpipe.getUnitFlagMode())
-    newFixpipe.setUnitFlagModeAttr(fixpipe.getUnitFlagModeAttr());
+  auto newFixpipe = FixpipeOp::clone(rewriter, fixpipe, fixpipe.getSrc(),
+                                     emptyOp.getResult());
 
   Value newResult = newFixpipe.getResultTensor();
   rewriter.replaceAllUsesWith(fixpipe.getResultTensor(), newResult);

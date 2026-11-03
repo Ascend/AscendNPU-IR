@@ -887,6 +887,43 @@ void FixpipeOp::getEffects(
   detail::getEffectsImpl(effects, cast<HIVMStructuredOp>(getOperation()));
 }
 
+FixpipeOp FixpipeOp::clone(OpBuilder &builder, FixpipeOp fixpipe, Value src,
+                           Value dst) {
+  return clone(builder, fixpipe, src, dst, {});
+}
+
+FixpipeOp FixpipeOp::clone(OpBuilder &builder, FixpipeOp fixpipe, Value src,
+                           Value dst, ArrayRef<NamedAttribute> attrOverrides) {
+  if (!src)
+    src = fixpipe.getSrc();
+  if (!dst)
+    dst = fixpipe.getDst();
+
+  if (isa<MemRefType>(dst.getType())) {
+    // A memref destination has no result tensor: rebuild through the generic
+    // ODS builder instead of enumerating fields.
+    SmallVector<Value> operands(fixpipe->getOperands());
+    operands[fixpipe.getSrcMutable().getOperandNumber()] = src;
+    operands[fixpipe.getDstMutable().getOperandNumber()] = dst;
+    auto newOp = cast<FixpipeOp>(builder.create<FixpipeOp>(
+        fixpipe.getLoc(), TypeRange{}, operands, fixpipe->getAttrs()));
+    for (NamedAttribute attr : attrOverrides)
+      newOp->setAttr(attr.getName(), attr.getValue());
+    return newOp;
+  }
+
+  // Replace operands by position: src and dst may be the same SSA value.
+  auto clone = cast<FixpipeOp>(builder.clone(*fixpipe));
+  clone.getSrcMutable().set(src);
+  clone.getDstMutable().set(dst);
+  // Keep the copied result type in sync with the new destination.
+  if (auto result = clone.getResultTensor())
+    result.setType(cast<RankedTensorType>(dst.getType()));
+  for (NamedAttribute attr : attrOverrides)
+    clone->setAttr(attr.getName(), attr.getValue());
+  return clone;
+}
+
 enum FixpipeState {
   Init = -1,
   QuantOrActivation = 0,
@@ -1306,7 +1343,6 @@ LogicalResult FixpipeOp::verify() {
   auto moduleOp = this->getOperation()->getParentOfType<mlir::ModuleOp>();
   bool isAscend950 = moduleOp && hacc::utils::isAscend950(moduleOp);
   bool isAscend960 = moduleOp && hacc::utils::isAscend960(moduleOp);
-  bool is910_95 = moduleOp && hacc::utils::isAscend910_95(moduleOp);
   auto dmaMode = getDmaMode();
   auto dstScope = getOptionalHIVMAddressSpace(getDst().getType());
 
@@ -1314,20 +1350,14 @@ LogicalResult FixpipeOp::verify() {
   if (dmaMode == FixpipeDMAMode::NZ2DN && !supportsNZ2DN) {
     return emitOpError("NZ2DN requires dav-c310 or dav-920r1 architecture");
   }
-  // dst=UB is only supported on Ascend950/Ascend960 (dav-920r1).
-  if (dstScope.has_value() && dstScope.value() == hivm::AddressSpace::UB &&
-      !(isAscend950 || isAscend960)) {
-    return emitOpError("dst=UB is only supported on Ascend950/Ascend960!");
-  }
 
   // Other modes do not imply support for channel splitting or dual
   // destinations. Ascend960 reuses the Ascend910_95 fixpipe pipeline, so the
   // same DMA modes and channel splitting are permitted there.
-  if (!is910_95 && !isAscend960) {
-    if (dmaMode != FixpipeDMAMode::NZ2ND && dmaMode != FixpipeDMAMode::NZ2NZ &&
-        !(dmaMode == FixpipeDMAMode::NZ2DN && supportsNZ2DN)) {
-      return emitOpError(
-          "The current hardware does not support dma mode is nz2nz");
+  if (!isAscend950 && !isAscend960) {
+    // dst=UB is only supported on Ascend950/Ascend960 (dav-920r1).
+    if (dstScope.has_value() && dstScope.value() == hivm::AddressSpace::UB) {
+      return emitOpError("dst=UB is only supported on Ascend950/Ascend960!");
     }
     if (getChannelSplit())
       return emitOpError("The current hardware does not support channel split");

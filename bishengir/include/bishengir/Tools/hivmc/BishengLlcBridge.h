@@ -20,12 +20,17 @@
 #ifndef BISHENGIR_TOOLS_HIVMC_BISHENG_LLC_BRIDGE_H
 #define BISHENGIR_TOOLS_HIVMC_BISHENG_LLC_BRIDGE_H
 
+#include "bishengir/Tools/hivmc/BishengLlcConfig.h"
+
+#if BISHENGIR_HAVE_BISHENG_LLC
 #include "bisheng-llc.h"
+#endif
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -39,6 +44,7 @@ enum class BishengBackendMode {
 };
 
 /// Resolve the requested backend mode from BISHENG_BACKEND env.
+/// Builds without the vendor header always select Process.
 /// Default (unset/empty) is Native.  "process" selects Process.
 /// Any other value keeps Native (with a warning).
 BishengBackendMode resolveBishengBackendMode();
@@ -150,6 +156,7 @@ public:
 private:
   void *handle_ = nullptr;          ///< dlmopen handle (RTLD_LOCAL).
   long lmid_ = 0;                   ///< link-map ID (dlinfo RTLD_DI_LMID).
+#if BISHENGIR_HAVE_BISHENG_LLC
   BishengLlcContext *ctx_ = nullptr; ///< vendor context (owned).
 
   // Resolved function pointers (exactly four).
@@ -159,6 +166,7 @@ private:
                     const void *, size_t, const char *const *, size_t,
                     const char *) = nullptr;
   void (*fnDestroy_)(BishengLlcContext *) = nullptr;
+#endif
 
   bool compiled_ = false; ///< compile() called at most once.
 

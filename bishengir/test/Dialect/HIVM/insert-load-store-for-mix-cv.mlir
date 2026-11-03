@@ -77,9 +77,10 @@ func.func @insert_load_between_fixpipe_and_vector(%arg0 : memref<?xf16>, %arg1 :
 
 // -----
 // The load dst mirrors the dynamic shape of the fixpipe result. Its static
-// upper bound is derived from the fixpipe ins chain (extract_slice source
-// tensor<2x128xf32>), i.e. 2 * 128 * 4 = 1024 bytes, and must be annotated
-// with buffer_size_in_byte so later passes can constantize the alloc.
+// upper bound (derived from the fixpipe ins chain, extract_slice source
+// tensor<2x128xf32>, i.e. 2 * 128 * 4 = 1024 bytes) is no longer marked
+// here: the marking lives in hivm-infer-buffer-size (LoadOp pattern),
+// which must run after this pass.
 // CHECK-LABEL: @insert_load_between_dynamic_fixpipe_and_vector(
 // CHECK-SAME: %[[ARG0:.*]]: memref<?xf32>, %[[ARG1:.*]]: memref<?xi8>, %[[N:.*]]: index)
 func.func @insert_load_between_dynamic_fixpipe_and_vector(%arg0 : memref<?xf32>, %arg1 : memref<?xi8>, %n : index) attributes { hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE> } {
@@ -90,7 +91,6 @@ func.func @insert_load_between_dynamic_fixpipe_and_vector(%arg0 : memref<?xf32>,
   %extracted_slice = tensor.extract_slice %1[0, 0] [2, %n] [1, 1] : tensor<2x128xf32> to tensor<2x?xf32>
   // CHECK: %[[VAL2:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<2x?xf32>) outs(%{{.*}} : tensor<2x?xf32>) -> tensor<2x?xf32>
   // CHECK: %[[VAL3:.*]] = tensor.empty(%{{.*}}) : tensor<2x?xf32>
-  // CHECK: annotation.mark %[[VAL3]] {buffer_size_in_byte = 1024 : i64} : tensor<2x?xf32>
   // CHECK: %[[VAL4:.*]] = hivm.hir.load ins(%[[VAL2]] : tensor<2x?xf32>) outs(%[[VAL3]] : tensor<2x?xf32>) {"hivm.inserted-load"} core_type = <VECTOR> -> tensor<2x?xf32>
   %3 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%extracted_slice : tensor<2x?xf32>)
                                outs(%fixpipe_tmp0_tensor : tensor<2x?xf32>) -> tensor<2x?xf32>

@@ -16,15 +16,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/ResolvePropagation.h"
-#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/Utils.h"
-#include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "bishengir/Dialect/Scope/IR/Scope.h"
+
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
+
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/LogicalResult.h"
 
@@ -180,32 +177,16 @@ static LogicalResult ensureFixpipeToUB(UnrealizedConversionCastOp downPropOp,
   auto fixpipeOp = downPropOp.getInputs()[0].getDefiningOp<FixpipeOp>();
   if (!fixpipeOp)
     return failure();
-  ArrayRef<int64_t> maybeStaticTotalSize =
-      fixpipeOp.getDstOperandType().getShape();
-  // Replicate InsertCVTightCoupledBuffer.cpp: Trace fixpipe src to Mmad and use
-  // Mmad type as static shaped type
-  if (!fixpipeOp.getDstOperandType().hasStaticShape()) {
-    if (auto mmadOps = traceDefOps<hivm::MmadL1Op>(fixpipeOp.getSrc());
-        !mmadOps.empty()) {
-      assert(mmadOps.size() == 1 && "expected single mmad op");
-      LDBG("traced to mmad op " << mmadOps[0]);
-      mlir::Type mmadType = dyn_cast<MmadL1Op>(mmadOps[0])->getResultTypes()[0];
-      if (auto shapedMmadType = dyn_cast<ShapedType>(mmadType))
-        maybeStaticTotalSize = shapedMmadType.getShape();
-    }
-  }
+  // The coupled buffer keeps the fixpipe dst's dynamic extents; its static
+  // buffer size upper bound is inferred later from the fixpipe src chain
+  // (mmadL1's static result) by hivm-infer-buffer-size.
   auto [coupledBuffer, toTensorOp] =
       PropagatorUtil::insertTightCoupledBufferToUB(
-          fixpipeOp.getDst(), downPropOp.getLoc(), rewriter,
-          maybeStaticTotalSize);
+          fixpipeOp.getDst(), downPropOp.getLoc(), rewriter);
   Value bufferizedValue = toTensorOp.getResult();
-  // Create new fixpipe writing to UB memref (returns void)
-  SmallVector<Value> oprs({fixpipeOp.getSrc(), coupledBuffer.spacedMemref});
-  if (auto quantScale = fixpipeOp.getQuantScale())
-    oprs.push_back(quantScale);
   rewriter.setInsertionPointAfter(fixpipeOp);
-  rewriter.create<FixpipeOp>(downPropOp.getLoc(), TypeRange{}, oprs,
-                             fixpipeOp->getAttrs());
+  FixpipeOp::clone(rewriter, fixpipeOp, fixpipeOp.getSrc(),
+                   coupledBuffer.spacedMemref);
   rewriter.replaceOp(fixpipeOp, toTensorOp.getResult());
 
   rewriter.modifyOpInPlace(

@@ -16,21 +16,15 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/Utils.h"
-#include "bishengir/Dialect/Annotation/IR/Annotation.h"
-#include "bishengir/Dialect/HIVM/IR/CustomOp/CustomOpUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Visitors.h"
 
-#include "llvm/ADT/APFloat.h"
-#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/TypeSwitch.h"
 
 #include <utility>
 
@@ -629,8 +623,6 @@ hivm::LoadOp insertLoad(Value value, Location loc, PatternRewriter &rewriter) {
 
   Value loadInit = mlir::utils::createEmptyOpWithTargetElemType(
       rewriter, loc, value, elemType, MemRefLayoutAttrInterface{});
-  // Mark buffer_size_in_byte annotation for dynamic shape dst.
-  markBufferSizeUpperBound(rewriter, loc, value, loadInit);
   auto loadOp = rewriter.create<hivm::LoadOp>(
       loc, isBufferized ? TypeRange() : TypeRange(type), value, loadInit);
   loadOp->setAttr(hivm::kInsertedLoadAttr::name, rewriter.getUnitAttr());
@@ -678,20 +670,19 @@ hivm::FixpipeOp insertFixpipe(Value value, Location loc,
   return fixpipeOp;
 }
 
-/// Creates a memref allocation with the specified address space.
+/// Creates a memref allocation with the specified address space. Dynamic
+/// buffer sizes are inferred later by hivm-infer-buffer-size.
 AllocationResult
 createAddressSpaceAllocation(PatternRewriter &rewriter, Location loc,
                              ArrayRef<int64_t> shape, Type elemType,
-                             ValueRange dynamicSizes, AddressSpace addrSpace,
-                             ArrayRef<int64_t> maybeStaticAllocSize) {
+                             ValueRange dynamicSizes, AddressSpace addrSpace) {
   MLIRContext *ctx = rewriter.getContext();
 
   auto spaceAttr = AddressSpaceAttr::get(ctx, addrSpace);
   auto spacedType = MemRefType::get(shape, elemType, nullptr, spaceAttr);
   auto plainType = MemRefType::get(shape, elemType);
 
-  Value alloc = createAllocWithMark(rewriter, loc, spacedType, dynamicSizes,
-                                    maybeStaticAllocSize, elemType);
+  Value alloc = rewriter.create<memref::AllocOp>(loc, spacedType, dynamicSizes);
 
   Value cast =
       rewriter.create<memref::MemorySpaceCastOp>(loc, plainType, alloc);
@@ -702,39 +693,35 @@ createAddressSpaceAllocation(PatternRewriter &rewriter, Location loc,
 /// Creates a UB (Unified Buffer) allocation matching `tensorValue`'s shape,
 /// including dynamic extents.
 AllocationResult createUBAllocation(PatternRewriter &rewriter, Location loc,
-                                    Value tensorValue,
-                                    ArrayRef<int64_t> maybeStaticTotalSize) {
+                                    Value tensorValue) {
   auto tensorType = cast<RankedTensorType>(tensorValue.getType());
   Value shapeSource = peelTensorShapeSourceForAllocSizes(tensorValue);
   SmallVector<Value> dynamicSizes =
       hivm::getTensorDynamicValues(rewriter, loc, shapeSource);
   return createAddressSpaceAllocation(rewriter, loc, tensorType.getShape(),
                                       tensorType.getElementType(), dynamicSizes,
-                                      AddressSpace::UB, maybeStaticTotalSize);
+                                      AddressSpace::UB);
 }
 
 /// Creates an L1 allocation matching `tensorValue`'s shape, including dynamic
 /// extents.
 AllocationResult createL1Allocation(PatternRewriter &rewriter, Location loc,
-                                    Value tensorValue,
-                                    ArrayRef<int64_t> maybeStaticTotalSize) {
+                                    Value tensorValue) {
   auto tensorType = cast<RankedTensorType>(tensorValue.getType());
   Value shapeSource = peelTensorShapeSourceForAllocSizes(tensorValue);
   SmallVector<Value> dynamicSizes =
       hivm::getTensorDynamicValues(rewriter, loc, shapeSource);
   return createAddressSpaceAllocation(rewriter, loc, tensorType.getShape(),
                                       tensorType.getElementType(), dynamicSizes,
-                                      AddressSpace::L1, maybeStaticTotalSize);
+                                      AddressSpace::L1);
 }
 
 std::tuple<AllocationResult, bufferization::ToTensorOp>
 insertTightCoupledBufferToL1(Value value, Location loc,
-                             PatternRewriter &rewriter,
-                             ArrayRef<int64_t> maybeStaticTotalSize) {
+                             PatternRewriter &rewriter) {
   rewriter.setInsertionPointAfterValue(value);
   auto tensorType = cast<RankedTensorType>(value.getType());
-  auto allocationResult =
-      createL1Allocation(rewriter, loc, value, maybeStaticTotalSize);
+  auto allocationResult = createL1Allocation(rewriter, loc, value);
   auto [l1Memref, plainMemref] = allocationResult;
 
   auto toTensorOp = rewriter.create<bufferization::ToTensorOp>(
@@ -745,14 +732,12 @@ insertTightCoupledBufferToL1(Value value, Location loc,
 
 std::tuple<AllocationResult, bufferization::ToTensorOp>
 insertTightCoupledBufferToUB(Value value, Location loc,
-                             PatternRewriter &rewriter,
-                             ArrayRef<int64_t> maybeStaticTotalSize) {
+                             PatternRewriter &rewriter) {
   rewriter.setInsertionPointAfterValue(value);
 
   auto resultType = cast<RankedTensorType>(value.getType());
 
-  auto coupledBuffer =
-      createUBAllocation(rewriter, loc, value, maybeStaticTotalSize);
+  auto coupledBuffer = createUBAllocation(rewriter, loc, value);
   auto [ubMemref, plainMemref] = coupledBuffer;
 
   // Convert memref back to tensor for users

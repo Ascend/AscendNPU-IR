@@ -116,7 +116,7 @@ private:
     for (Operation *maybeDebugOp : op.getResultTensor().getUsers()) {
       if (isa<hivm::DebugOp>(maybeDebugOp) && !op->getAttr(usedForDebugOp)) {
         rewriter.setInsertionPoint(maybeDebugOp);
-        FixpipeOp clonedFixpipeOp = cast<FixpipeOp>(rewriter.clone(*op));
+        FixpipeOp clonedFixpipeOp = FixpipeOp::clone(rewriter, op);
         clonedFixpipeOp->setAttr(usedForDebugOp, rewriter.getBoolAttr(true));
         Value clonedResult = clonedFixpipeOp->getResult(0);
         hivm::DebugOp debugOp = cast<hivm::DebugOp>(maybeDebugOp);
@@ -183,8 +183,8 @@ private:
       matched = true;
       inlineFixpipeWithQuantScale(rewriter, op, vMulOp);
     } else if (isUserTransposeInlinable(op, curOp)) {
-      matched = true;
-      inlineFixpipeWithTranspose(rewriter, op, cast<hivm::VTransposeOp>(curOp));
+      matched = inlineFixpipeWithTranspose(rewriter, op,
+                                           cast<hivm::VTransposeOp>(curOp));
     } else if (auto extractSliceOp =
                    dyn_cast_if_present<tensor::ExtractSliceOp>(curOp);
                isUserSliceSwappable(op, extractSliceOp)) {
@@ -209,9 +209,10 @@ private:
       if (op.getSource().getType() != op.getResultTensor().getType())
         return rewriter.notifyMatchFailure(
             op, "fixpipe converts the loop-carried value type");
-      matched = true;
       auto scfForOp = dyn_cast_if_present<scf::ForOp>(curOp->getParentOp());
-      moveFixpipeOutOfScfFor(rewriter, loc, op, scfForOp, op.getResultTensor());
+      if (moveFixpipeOutOfScfFor(rewriter, loc, op, scfForOp,
+                                 op.getResultTensor()))
+        matched = true;
     } else if (isa<scf::YieldOp>(curOp) &&
                isa<scf::IfOp>(curOp->getParentOp()) &&
                curOp->getParentOp()->hasAttr(kFallbackNotExec)) {

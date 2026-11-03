@@ -82,4 +82,30 @@ void populateNormalizeAtomicPatterns(RewritePatternSet &patterns,
     patterns.add<NormalizeAtomicOps::XCHG>(ctx);
   }
 }
+
+/// Check if a hfusion software-atomic op is legal - aborts if it is rejected by
+/// hfusion-normalize-ops pass.
+LogicalResult checkIsLegalAtomicOp(Operation *op) {
+  WalkResult result = op->walk([&](Operation *walkedOp) {
+    if (auto storeOp = dyn_cast<hfusion::StoreOp>(walkedOp)) {
+      if (NormalizeAtomicOps::HFusionAtomicTraits::shouldDecomposeStore(
+              storeOp)) {
+        storeOp->emitError("software-atomic store (kind=")
+            << stringifyAtomicKind(storeOp.getAtomicKind())
+            << ") survived hfusion-normalize-ops; it must be decomposed here "
+               "before conversion to HIVM (unsupported GM destination chain "
+               "or missing pattern)";
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    }
+    if (isa<hfusion::AtomicCasOp, hfusion::AtomicXchgOp>(walkedOp)) {
+      walkedOp->emitError("atomic op survived hfusion-normalize-ops; it must "
+                          "be decomposed here before conversion to HIVM");
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return failure(result.wasInterrupted());
+}
 } // namespace mlir::hfusion

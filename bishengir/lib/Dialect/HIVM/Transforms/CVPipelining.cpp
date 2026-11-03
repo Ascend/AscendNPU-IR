@@ -650,11 +650,7 @@ processWorkspaceOutputs(OpBuilder &builder, WorkItem *item,
     if (auto storeOp = dyn_cast<StoreOp>(store))
       builder.create<StoreOp>(loc, TypeRange{}, storeOp.getSrc(), newDst);
     else if (auto fixpipe = dyn_cast<FixpipeOp>(store))
-      builder.create<FixpipeOp>(
-          loc, TypeRange{}, fixpipe.getSrc(), newDst, fixpipe.getDmaModeAttr(),
-          fixpipe.getDualDstModeAttr(), fixpipe.getSubBlockIdxAttr(),
-          fixpipe.getPreQuantAttr(), fixpipe.getPreReluAttr(),
-          fixpipe.getChannelSplitAttr());
+      FixpipeOp::clone(builder, fixpipe, fixpipe.getSrc(), newDst);
 
     // Before forOp so to_tensor dominates in-loop and later consumers.
     builder.setInsertionPoint(forOp);
@@ -756,6 +752,8 @@ static void processWorkspaceOutputUsers(
 
 static Operation *cloneStoreLikeToWorkspace(OpBuilder &builder, Operation *op,
                                             Value newDst) {
+  if (auto fixpipe = dyn_cast<FixpipeOp>(op))
+    return FixpipeOp::clone(builder, fixpipe, fixpipe.getSrc(), newDst);
   OperationState state(op->getLoc(), op->getName().getStringRef());
   state.addOperands(op->getOperands());
   state.operands[1] = newDst;

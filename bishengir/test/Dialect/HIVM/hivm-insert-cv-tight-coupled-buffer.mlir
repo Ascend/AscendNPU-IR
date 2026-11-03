@@ -250,7 +250,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-SAME: %{{.*}}: tensor<16x32xf32>, %{{.*}}: tensor<32x16xf32>, %[[ARG2:.*]]: index, %[[ARG3:.*]]: index
   // CHECK: %[[MINSI:.*]] = arith.minsi %[[ARG2]], %{{.*}} : index
   // CHECK: %[[ALLOC:.*]] = memref.alloc(%[[MINSI]], %[[ARG3]]) : memref<?x?xf32, #hivm.address_space<ub>>
-  // CHECK: annotation.mark %[[ALLOC]] {buffer_size_in_byte = 1024 : i64} : memref<?x?xf32, #hivm.address_space<ub>>
+  // The buffer_size_in_byte mark on %[[ALLOC]] is added later by
+  // hivm-infer-buffer-size (see hivm-infer-buffer-size.mlir).
 
   func.func @test_mmad_fixpipe_vadd_dynamic(%arg0: tensor<16x32xf32>, %arg1: tensor<32x16xf32>, %arg2: index, %arg3: index, %arg4: tensor<16x16xf32>, %arg5: tensor<16x16xf32>, %arg6: tensor<16x16xf32>) -> tensor<16x16xf32> {
     %true = arith.constant true

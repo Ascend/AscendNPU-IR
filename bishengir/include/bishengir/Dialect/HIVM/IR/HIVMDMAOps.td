@@ -363,6 +363,15 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
     int getFixpipeState();
     int needFixpipePreFuse();
     bool hasStore();
+
+    /// Clone this fixpipe, replacing only the operands that are passed and
+    /// keeping every attribute. A memref destination produces the buffer form
+    /// without a result.
+    static FixpipeOp clone(OpBuilder &builder, FixpipeOp fixpipe,
+                           Value src = nullptr, Value dst = nullptr);
+    /// Same as above, additionally overriding the given attributes.
+    static FixpipeOp clone(OpBuilder &builder, FixpipeOp fixpipe, Value src,
+                           Value dst, ArrayRef<NamedAttribute> attrOverrides);
   }];
 }
 

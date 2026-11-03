@@ -608,43 +608,19 @@ hivm::TypeFn mlir::hivm::NormalizeTraitsBase::mapCastSignKind(
   return typeFn.value_or(preserveTypeFn);
 }
 
-// TODO-A5: remove when bishengir/include/bishengir/Dialect/Utils/Util.h is migrated
 hivm::RoundMode mlir::hivm::NormalizeTraitsBase::selectNormalizeRoundMode(
     Type inType, Type outType) {
-  if (inType.isF32()) {
-    if (outType.isF16() || outType.isBF16() || outType.isF32() ||
-        isa<Float8E4M3FNType>(outType) || isa<Float8E5M2Type>(outType)) {
-      return hivm::RoundMode::RINT;
-    }
-  }
-
-  if (outType.isF32()) {
-    if (inType.isF16() || inType.isBF16() || isa<Float8E4M3FNType>(inType) ||
-        isa<Float8E5M2Type>(inType)) {
-      return hivm::RoundMode::RINT;
-    }
-  }
-
-  if (inType.isInteger(8) && outType.isF16()) {
+  if (isa<Float8E5M2Type>(inType) || isa<Float8E4M3FNType>(inType) ||
+      isa<Float8E5M2Type>(outType) || isa<Float8E4M3FNType>(outType)) {
     return hivm::RoundMode::RINT;
   }
-
   if (inType.isInteger(16) && outType.isInteger(8)) {
     return hivm::RoundMode::TRUNCWITHOVERFLOW;
   }
-
-  if (isa<mlir::FloatType>(inType) && outType.isInteger()) {
-    return hivm::RoundMode::TRUNC;
-  }
-
-  if (inType.isInteger() && isa<mlir::FloatType>(outType)) {
-    return hivm::RoundMode::TRUNC;
-  }
-
-  if (inType.isInteger() && outType.isInteger()) {
-    return hivm::RoundMode::RINT;
-  }
-  llvm::report_fatal_error("unsupported type cast.");
+  // The documented dtype cast rules ("int -> float = RINT", "float -> int =
+  // TRUNC", ...) live in mlir::utils::selectRoundMode, the single source of
+  // truth for cast round-mode selection.
+  return mlir::utils::selectRoundMode<hivm::RoundMode>(inType, outType);
 }
 
 hivm::RoundMode mlir::hivm::NormalizeTraitsBase::mapCastRoundKind(

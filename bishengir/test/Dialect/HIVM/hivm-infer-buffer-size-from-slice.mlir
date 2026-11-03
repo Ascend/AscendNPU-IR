@@ -106,6 +106,59 @@ func.func @infer_copy_dst_subview(%arg0: memref<256xf16>, %arg1: index) {
 
 // -----
 
+// The dst of an `hivm.hir.fixpipe` gets the same upper-bound treatment as a
+// copy/load dst; the bound follows the src chain (extract_slice) up to the
+// statically shaped mmadL1 result (16 * 16 * 32bit = 1024 bytes). This
+// covers the UB allocs introduced by hivm-insert-cv-tight-coupled-buffer.
+// CHECK-LABEL: func.func @infer_fixpipe_dst_mmad_src(
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @infer_fixpipe_dst_mmad_src(%arg0: tensor<16x32xf32>, %arg1: tensor<32x16xf32>, %arg2: index, %arg3: index) {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %init = tensor.empty() : tensor<16x16xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn} ins(%arg0, %arg1, %true, %c16, %c16, %c16 : tensor<16x32xf32>, tensor<32x16xf32>, i1, index, index, index) outs(%init : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %m = arith.minsi %arg2, %c16 : index
+    %slice = tensor.extract_slice %mmad[0, 0] [%m, %arg3] [1, 1] : tensor<16x16xf32> to tensor<?x?xf32>
+    %dst = memref.alloc(%m, %arg3) : memref<?x?xf32, #hivm.address_space<ub>>
+    // CHECK: annotation.mark %[[DST:.*]] {buffer_size_in_byte = 1024 : i64} : memref<?x?xf32, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.fixpipe ins({{.*}} : tensor<?x?xf32>) outs(%[[DST]] : memref<?x?xf32, #hivm.address_space<ub>>)
+    // CHAIN: %[[CONST:.*]] = arith.constant 0 : index
+    // CHAIN: %[[ALLOC:.*]] = memref.alloc() : memref<1024xi8, #hivm.address_space<ub>>
+    // CHAIN: %[[VIEW:.*]] = memref.view %[[ALLOC]][%[[CONST]]][{{.*}}, %arg3] : memref<1024xi8, #hivm.address_space<ub>> to memref<?x?xf32, #hivm.address_space<ub>>
+    // CHAIN: hivm.hir.fixpipe ins({{.*}} : tensor<?x?xf32>) outs(%[[VIEW]] : memref<?x?xf32, #hivm.address_space<ub>>)
+    hivm.hir.fixpipe ins(%slice : tensor<?x?xf32>) outs(%dst : memref<?x?xf32, #hivm.address_space<ub>>)
+    return
+  }
+}
+
+// -----
+
+// The dst of an `hivm.hir.fixpipe` written into a workspace (as created by
+// hivm-insert-workspace-for-mix-cv) is sized through the to_tensor: the
+// element count comes from the src chain (16 * 16) while the byte size uses
+// the dst's element type (f16), so a quantizing fixpipe (F322F16) yields
+// 16 * 16 * 16bit = 512 bytes.
+// CHECK-LABEL: func.func @infer_fixpipe_dst_workspace(
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @infer_fixpipe_dst_workspace(%arg0: tensor<16x32xf32>, %arg1: tensor<32x16xf32>, %arg2: index, %arg3: index) {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %init = tensor.empty() : tensor<16x16xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn} ins(%arg0, %arg1, %true, %c16, %c16, %c16 : tensor<16x32xf32>, tensor<32x16xf32>, i1, index, index, index) outs(%init : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %m = arith.minsi %arg2, %c16 : index
+    %slice = tensor.extract_slice %mmad[0, 0] [%m, %arg3] [1, 1] : tensor<16x16xf32> to tensor<?x?xf32>
+    %ws = memref_ext.alloc_workspace(%m, %arg3) : memref<?x?xf16>
+    %dst = bufferization.to_tensor %ws restrict writable : memref<?x?xf16>
+    // CHECK: annotation.mark %[[DST:.*]] {buffer_size_in_byte = 512 : i64} : tensor<?x?xf16>
+    // CHECK: hivm.hir.fixpipe {{.*}} ins({{.*}} : tensor<?x?xf32>) outs(%[[DST]] : tensor<?x?xf16>)
+    %res = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%slice : tensor<?x?xf32>) outs(%dst : tensor<?x?xf16>) -> tensor<?x?xf16>
+    "some_use"(%res) : (tensor<?x?xf16>) -> ()
+    return
+  }
+}
+
+// -----
+
 // A src without a statically-shaped ancestor in its defining chain (e.g.
 // a block argument) yields no bound.
 // CHECK-LABEL: func.func @infer_copy_src_no_static_bound(

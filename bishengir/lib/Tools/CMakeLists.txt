@@ -13,12 +13,16 @@ else()
 endif()
 set(BISHENG_LLC_INCLUDE_DIR "${BISHENG_LLC_INCLUDE_DIR_DEFAULT}" CACHE PATH
     "Path to the installed bisheng-llc.h vendor header directory")
-if(NOT BISHENG_LLC_INCLUDE_DIR AND NOT BISHENG_COMPILER_PATH)
-  message(WARNING "BISHENG_LLC_INCLUDE_DIR is empty and BISHENG_COMPILER_PATH is "
-    "not set; the Native in-process backend (bisheng-llc.h) will not be found. "
-    "Pass -DBISHENG_COMPILER_PATH=<bisheng-bin-dir> or "
-    "-DBISHENG_LLC_INCLUDE_DIR=<bisheng-llc.h-dir>.")
+# Freeze availability once for every consumer of the bridge's public header.
+set(BISHENGIR_HAVE_BISHENG_LLC 0)
+if(EXISTS "${BISHENG_LLC_INCLUDE_DIR}/bisheng-llc.h")
+  set(BISHENGIR_HAVE_BISHENG_LLC 1)
+else()
+  message(STATUS "bisheng-llc.h not found; using external bisheng backend")
 endif()
+file(GENERATE
+  OUTPUT "${BISHENGIR_INCLUDE_DIR}/bishengir/Tools/hivmc/BishengLlcConfig.h"
+  CONTENT "#pragma once\n#define BISHENGIR_HAVE_BISHENG_LLC ${BISHENGIR_HAVE_BISHENG_LLC}\n")
 
 add_subdirectory(bishengir-compile)
 add_subdirectory(bishengir-compile/regbase)

@@ -1,14 +1,16 @@
-// REQUIRES: hivmc
+// REQUIRES: hivmc, shmem
 // UNSUPPORTED: bishengir_published
 //
 // Exercise distributed custom ops that lower to the SHMEM RMA C wrappers in
 // bishengir/lib/Template/lib/Shmem/Shmem.cpp (aclshmem_{getmem,putmem[_nbi]}).
+// Compile and link the device object, then check the saved pre-link LLVM IR.
 
-// RUN: bishengir-compile --mlir-disable-threading --enable-auto-multi-buffer=False --enable-auto-bind-sub-block=True --enable-triton-kernel-compile --enable-hfusion-compile --enable-hivm-compile --enable-lir-compile=false %s -o %t.ll
-// RUN: FileCheck --input-file=%t.ll %s
+// RUN: rm -rf %t.dir
+// RUN: bishengir-compile --target=Ascend910B4 --mlir-disable-threading --enable-auto-multi-buffer=False --enable-auto-bind-sub-block=True --enable-triton-kernel-compile --enable-hfusion-compile --enable-hivm-compile --enable-lir-compile=true --save-temps=%t.dir %s -o %t.o
+// RUN: cat %t.dir/*.ll | FileCheck %s
 
-// CHECK-DAG: declare {{.*}}@_mlir_ciface_aclshmem_half_getmem
-// CHECK-DAG: declare {{.*}}@_mlir_ciface_aclshmem_half_putmem_nbi
+// CHECK-DAG: declare {{.*}}@_mlir_ciface_aclshmem_getmem_half
+// CHECK-DAG: declare {{.*}}@_mlir_ciface_aclshmem_putmem_nbi_half
 // CHECK-DAG: declare {{.*}}@_mlir_ciface_aclshmem_barrier_all
 
 module attributes {hacc.target = #hacc.target<"Ascend910B4">, hivm.disable_auto_tile_and_bind_subblock} {
@@ -31,8 +33,8 @@ func.func @shmem_rma_smoke (
   {
     %c64_i32 = arith.constant 64 : i32
     %c0_i32 = arith.constant 0 : i32
-    hivm.hir.custom {hivm.is_distributed, hivm.pipe = #hivm.pipe<PIPE_S>, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMD>, libname = "libshmem_device", libpath = "", pure = false, symbol = "aclshmem_half_getmem"} "dist.aclshmem_half_getmem" ins(%arg0, %arg1, %c64_i32, %c0_i32 : memref<?xf16>, memref<?xf16>, i32, i32)
-    hivm.hir.custom {hivm.is_distributed, hivm.pipe = #hivm.pipe<PIPE_S>, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMD>, libname = "libshmem_device", libpath = "", pure = false, symbol = "aclshmem_half_putmem_nbi"} "dist.aclshmem_half_putmem_nbi" ins(%arg0, %arg1, %c64_i32, %c0_i32 : memref<?xf16>, memref<?xf16>, i32, i32)
+    hivm.hir.custom {hivm.is_distributed, hivm.pipe = #hivm.pipe<PIPE_S>, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMD>, libname = "libshmem_device", libpath = "", pure = false, symbol = "aclshmem_getmem_half"} "dist.aclshmem_getmem_half" ins(%arg0, %arg1, %c64_i32, %c0_i32 : memref<?xf16>, memref<?xf16>, i32, i32)
+    hivm.hir.custom {hivm.is_distributed, hivm.pipe = #hivm.pipe<PIPE_S>, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMD>, libname = "libshmem_device", libpath = "", pure = false, symbol = "aclshmem_putmem_nbi_half"} "dist.aclshmem_putmem_nbi_half" ins(%arg0, %arg1, %c64_i32, %c0_i32 : memref<?xf16>, memref<?xf16>, i32, i32)
     hivm.hir.custom {hivm.is_distributed, hivm.pipe = #hivm.pipe<PIPE_S>, hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMD>, libname = "libshmem_device", libpath = "", pure = false, symbol = "aclshmem_barrier_all"} "dist.aclshmem_barrier_all"
     return
   }

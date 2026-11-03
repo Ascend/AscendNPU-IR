@@ -58,6 +58,10 @@ config.substitutions.append(("%host_cc", config.host_cc))
 config.substitutions.append(("%bishengir_src_root", config.bishengir_src_root))
 config.substitutions.append(("%mlir_src_root", config.mlir_src_root))
 config.substitutions.append(("%llvm_src_root", config.llvm_src_root))
+config.substitutions.append(("%bishengir_lib_dir", config.llvm_shlib_dir))
+config.substitutions.append(("%bisheng_compiler", config.bisheng_compiler_executable))
+config.substitutions.append(("%shmem_rdma_backend", config.shmem_rdma_backend))
+config.substitutions.append(("%shmem_relay_support", config.shmem_relay_support))
 
 llvm_config.with_system_environment(["HOME", "INCLUDE", "LIB", "TMP", "TEMP"])
 
@@ -182,3 +186,8 @@ if shutil.which("hivmc"):
 
 if config.shmem_build_template:
     config.available_features.add("shmem")
+
+# Reading all linked SHMEM template variants is expensive. Run this ABI audit
+# only when requested, independently of the normal SHMEM compile tests.
+if lit_config.params.get("shmem-transport-wrappers", "0") == "1":
+    config.available_features.add("shmem-transport-wrappers")

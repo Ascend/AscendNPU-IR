@@ -89,6 +89,53 @@ constexpr StringLiteral kCounterPrevious = "counter_previous";
 // from a fractal layout indicator (nZ vs zN) in extractRealMKN.
 constexpr StringLiteral kFractalVtransposeFolded = "fractal_vtranspose_folded";
 
+enum class CCFKind { For, While, If, Other };
+
+static CCFKind getCCFKind(Operation *op) {
+  if (isa<scf::ForOp>(op))
+    return CCFKind::For;
+  if (isa<scf::WhileOp>(op))
+    return CCFKind::While;
+  if (isa<scf::IfOp>(op))
+    return CCFKind::If;
+  return CCFKind::Other;
+}
+
+static bool isCCFOp(Operation *op) { return getCCFKind(op) != CCFKind::Other; }
+
+static bool isLoopCCFOp(Operation *op) {
+  CCFKind kind = getCCFKind(op);
+  return kind == CCFKind::For || kind == CCFKind::While;
+}
+
+static ValueRange getLoopCCFInits(Operation *loopOp) {
+  switch (getCCFKind(loopOp)) {
+  case CCFKind::For:
+    return cast<scf::ForOp>(loopOp).getInitArgs();
+  case CCFKind::While:
+    return cast<scf::WhileOp>(loopOp).getInits();
+  default:
+    llvm_unreachable("unsupported loop ccf op");
+  }
+}
+
+static MutableArrayRef<OpOperand> getLoopCCFInitsMutable(Operation *loopOp) {
+  switch (getCCFKind(loopOp)) {
+  case CCFKind::For:
+    return cast<scf::ForOp>(loopOp).getInitArgsMutable();
+  case CCFKind::While:
+    return cast<scf::WhileOp>(loopOp).getInitsMutable();
+  default:
+    llvm_unreachable("unsupported loop ccf op");
+  }
+}
+
+// scf.for has a leading induction variable before its iter args; scf.while
+// does not.
+static unsigned getLoopCCFInductionVarOffset(Operation *loopOp) {
+  return isa<scf::ForOp>(loopOp) ? 1 : 0;
+}
+
 /// Resolve the architecture from the nearest enclosing ModuleOp that carries
 /// `hacc.target`; tests may wrap funcs in a nested module without the attr.
 bool isRegBasedFor(Operation *from) {
@@ -865,63 +912,94 @@ static Operation *getAncestorInBlock(Operation *inner, const Block *block) {
   return nullptr;
 }
 
+// Common handling for the loop-shaped CCFs. scf.for and scf.while carry the
+// accumulator through their loop-carried values and differ only in whether the
+// body block args start with an induction variable and how "may not execute" is
+// decided.
+static CCFInfo normalizeLoopCCF(Operation *op, CCFInfo info, Operation *loopOp,
+                                Block *bodyBlock, bool hasInductionVar,
+                                bool mayNotExec, ValueRange inits,
+                                ValueRange results) {
+  auto blockArg = dyn_cast_if_present<BlockArgument>(info.inVal);
+  if (!blockArg || blockArg.getOwner() != bodyBlock)
+    return CCFInfo::getFailure(info);
+
+  unsigned argIdx = blockArg.getArgNumber() - (hasInductionVar ? 1 : 0);
+
+  // Relax single-use: allow uses that are scf.if else pass-throughs and the
+  // op itself.
+  for (OpOperand &use : blockArg.getUses()) {
+    Operation *user = use.getOwner();
+    // Allowed: the op itself (mmad or inner for/if that chains to mmad).
+    if (getAncestorInBlock(user, op->getBlock()) == op)
+      continue;
+    // Allowed: scf.if else-yield that passes blockArg through unchanged.
+    if (auto yieldOp = dyn_cast<scf::YieldOp>(user)) {
+      if (yieldOp->getBlock() ==
+          dyn_cast<scf::IfOp>(yieldOp->getParentOp()).elseBlock())
+        continue;
+    }
+    return CCFInfo::getFailure(info);
+  }
+
+  // The accumulation result must be carried by the corresponding yield
+  // operand. Other users are allowed: they observe the same logical matmul
+  // result, but do not participate in the accumulation chain.
+  auto yieldOp = cast<scf::YieldOp>(bodyBlock->getTerminator());
+  if (yieldOp.getOperand(argIdx) != info.outVal)
+    return CCFInfo::getFailure(info);
+
+  info.mayNotExec = mayNotExec;
+  info.blockArg = blockArg;
+  info.inVal = inits[argIdx];
+  info.outVal = results[argIdx];
+  info.insertPointOp = loopOp;
+
+  // If the loop result has annotation.mark {matmul_at_least_once}, the matmul
+  // inside is guaranteed to execute at least once, so override mayNotExec to
+  // false regardless of the loop's static execution guarantee.
+  auto maybeMarkOp =
+      utils::getAnnotateOpWithAttr(info.outVal, "matmul_at_least_once");
+  if (maybeMarkOp.has_value())
+    info.mayNotExec = false;
+  return info;
+}
+
 CCFInfo getOutermostCCFInfo(Operation *op, CCFInfo info) {
   Operation *parentOp = op->getParentOp();
-  if (!parentOp || !(isa<scf::ForOp>(parentOp) || isa<scf::IfOp>(parentOp)))
+  if (!parentOp || !isCCFOp(parentOp))
     return info;
 
-  if (auto forOp = dyn_cast<scf::ForOp>(parentOp)) {
-    auto blockArg = dyn_cast_if_present<BlockArgument>(info.inVal);
-    if (!blockArg || blockArg.getOwner() != forOp.getBody())
-      return CCFInfo::getFailure(info);
-
-    unsigned argIdx = blockArg.getArgNumber() - 1;
-    // Relax single-use: allow uses that are scf.if else pass-throughs and the
-    // op itself.
-    for (OpOperand &use : blockArg.getUses()) {
-      Operation *user = use.getOwner();
-      // Allowed: the op itself (mmad or inner for/if that chains to mmad).
-      auto userInblock = getAncestorInBlock(user, op->getBlock());
-      if (userInblock == op)
-        continue;
-      // Allowed: scf.if else-yield that passes blockArg through unchanged.
-      if (auto yieldOp = dyn_cast<scf::YieldOp>(user)) {
-        if (yieldOp->getBlock() ==
-            dyn_cast<scf::IfOp>(yieldOp->getParentOp()).elseBlock())
-          continue;
-      }
-      return CCFInfo::getFailure(info);
-    }
-    // The accumulation result must be carried by the corresponding yield
-    // operand. Other users are allowed: they observe the same logical matmul
-    // result, but do not participate in the accumulation chain.
-    auto yieldOp = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
-    if (yieldOp.getOperand(argIdx) != info.outVal)
-      return CCFInfo::getFailure(info);
-
+  switch (getCCFKind(parentOp)) {
+  case CCFKind::For: {
+    auto forOp = cast<scf::ForOp>(parentOp);
+    bool mayNotExec = info.mayNotExec;
     IntegerAttr ubAttr, lbAttr;
     if (matchPattern(forOp.getUpperBound(), m_Constant(&ubAttr)) &&
         matchPattern(forOp.getLowerBound(), m_Constant(&lbAttr))) {
-      if (ubAttr.getValue().sle(lbAttr.getValue())) {
-        info.mayNotExec = true;
-      }
+      if (ubAttr.getValue().sle(lbAttr.getValue()))
+        mayNotExec = true;
     } else {
-      info.mayNotExec = true;
+      mayNotExec = true;
     }
-    info.blockArg = blockArg;
-    info.inVal = forOp.getInitArgs()[argIdx];
-    info.outVal = forOp->getResult(argIdx);
-    info.insertPointOp = forOp;
-
-    // If the forOp result has annotation.mark {matmul_at_least_once},
-    // the matmul inside is guaranteed to execute at least once, so we
-    // can override mayNotExec to false regardless of loop bounds.
-    auto maybeMarkOp =
-        utils::getAnnotateOpWithAttr(info.outVal, "matmul_at_least_once");
-    if (maybeMarkOp.has_value()) {
-      info.mayNotExec = false;
-    }
-  } else if (auto ifOp = dyn_cast<scf::IfOp>(parentOp)) {
+    return getOutermostCCFInfo(
+        parentOp, normalizeLoopCCF(op, info, forOp, forOp.getBody(),
+                                   /*hasInductionVar=*/true, mayNotExec,
+                                   forOp.getInitArgs(), forOp.getResults()));
+  }
+  case CCFKind::While: {
+    auto whileOp = cast<scf::WhileOp>(parentOp);
+    // A while loop may run zero times, so it is always conservatively
+    // may-not-exec unless the matmul_at_least_once annotation below proves
+    // otherwise.
+    return getOutermostCCFInfo(
+        parentOp, normalizeLoopCCF(op, info, whileOp, whileOp.getAfterBody(),
+                                   /*hasInductionVar=*/false,
+                                   /*mayNotExec=*/true, whileOp.getInits(),
+                                   whileOp.getResults()));
+  }
+  case CCFKind::If: {
+    auto ifOp = cast<scf::IfOp>(parentOp);
     if (!ifOp.elseBlock())
       return CCFInfo::getFailure(info);
     auto thenYieldOp = cast<scf::YieldOp>(ifOp.thenBlock()->getTerminator());
@@ -975,6 +1053,10 @@ CCFInfo getOutermostCCFInfo(Operation *op, CCFInfo info) {
     }
     info.outVal = ifOp->getResult(resultIdx);
     info.insertPointOp = ifOp;
+    break;
+  }
+  case CCFKind::Other:
+    break;
   }
 
   return getOutermostCCFInfo(parentOp, info);
@@ -1063,7 +1145,7 @@ static bool couldReuse(Value ccfInVal);
 void setNormalizedInL0CWithIndex(PatternRewriter &rewriter,
                                  Operation &insertPointOp, Value ccfOutVal) {
   // skip the case that insertPointOp is mmad
-  if (!isa<scf::ForOp, scf::IfOp>(insertPointOp))
+  if (!isCCFOp(&insertPointOp))
     return;
   unsigned resultIdx = getResultIndex(insertPointOp, ccfOutVal);
 
@@ -1115,8 +1197,8 @@ bool isCCFOpResultInL0C(Operation *defOp, Value val) {
     return true;
   }
 
-  // Handle scf.for: check normalized_in_L0C attribute
-  if (auto forOp = dyn_cast_if_present<scf::ForOp>(defOp)) {
+  // Handle scf.for and scf.while: check the normalized_in_L0C attribute.
+  if (isLoopCCFOp(defOp)) {
     unsigned resultIdx = getResultIndex(*defOp, val);
     if (auto attr = defOp->getAttrOfType<ArrayAttr>(kNormalizedInL0C)) {
       for (Attribute a : attr) {
@@ -1143,7 +1225,7 @@ Value findCounterBufFor(Operation *ccfOp, unsigned idx) {
       if (attr && attr.getInt() == static_cast<int64_t>(idx))
         return allocaOp.getResult();
     }
-    if (isa<scf::ForOp, scf::IfOp>(prev))
+    if (isCCFOp(prev))
       break;
   }
   return Value();
@@ -1156,13 +1238,10 @@ bool needsTailFallback(Value ccfOutVal) {
   if (!ccfOutVal.hasOneUse())
     return true;
   Operation *user = *ccfOutVal.getUsers().begin();
-  if (auto nextForOp = dyn_cast<scf::ForOp>(user)) {
-    // Check if the init arg corresponding to ccfOutVal is in L0C
-    // (kNormalizedInL0C records which result indices are in L0C)
-    for (unsigned i = 0; i < nextForOp.getInitArgs().size(); ++i) {
-      if (nextForOp.getInitArgs()[i] == ccfOutVal &&
-          isCCFOpResultInL0C(user, nextForOp.getResult(i))) {
-        return false; // confirmed: next CCF handles it
+  if (isLoopCCFOp(user)) {
+    for (auto [i, init] : llvm::enumerate(getLoopCCFInits(user))) {
+      if (init == ccfOutVal && isCCFOpResultInL0C(user, user->getResult(i))) {
+        return false;
       }
     }
   }
@@ -1179,15 +1258,13 @@ Value getOrCreateCounterPrevious(PatternRewriter &rewriter, Value ccfInVal,
   if (!defOp)
     return rewriter.create<arith::ConstantIntOp>(loc, 1, 1);
 
-  if (isa<scf::ForOp, scf::IfOp>(defOp)) {
-    const bool isForOp = isa<scf::ForOp>(defOp);
-
+  if (isCCFOp(defOp)) {
     // Not normalized: nothing accumulated in L0C, so treat it as dirty.
     if (!defOp->hasAttr(kNormalizedInL0C))
       return rewriter.create<arith::ConstantIntOp>(loc, 1, 1);
 
-    // A for loop without kMayNotExec always ran, so its mmad wrote L0C.
-    if (isForOp && !defOp->hasAttr(kMayNotExec))
+    // A loop without kMayNotExec always ran, so its mmad wrote L0C.
+    if (!defOp->hasAttr(kMayNotExec))
       return rewriter.create<arith::ConstantIntOp>(loc, 0, 1);
 
     // Otherwise the producer may not have run and we need its counter.
@@ -1215,7 +1292,7 @@ Value getOrCreateCounterPrevious(PatternRewriter &rewriter, Value ccfInVal,
             if (loadOp.getMemRef() == counterBuf)
               return cmpOp.getResult();
       }
-      if (isa<scf::ForOp, scf::IfOp>(next))
+      if (isCCFOp(next))
         break;
     }
 
@@ -1223,7 +1300,7 @@ Value getOrCreateCounterPrevious(PatternRewriter &rewriter, Value ccfInVal,
     // producer did not run. For an scf.if we cannot tell which block yields the
     // value, so stay conservative.
     Value counterPrevIn;
-    if (isForOp) {
+    if (getCCFKind(defOp) == CCFKind::For) {
       auto forOp = cast<scf::ForOp>(defOp);
       if (idx < forOp.getInitArgs().size())
         counterPrevIn =
@@ -1329,7 +1406,7 @@ bool couldReuse(Value ccfInVal) {
     // check the user of previous L0C is output from mmadL1 in CCF. A CCF that
     // may not have run is still reusable, because the init condition derived
     // from getOrCreateCounterPrevious clears L0C on the paths where it did not.
-    if (!isa<scf::ForOp, scf::IfOp>(defOp))
+    if (!isCCFOp(defOp))
       return false;
     return isCCFOpResultInL0C(defOp, ccfInVal);
   }
@@ -1715,14 +1792,15 @@ protected:
   virtual LogicalResult normalizeInitArg(PatternRewriter &rewriter,
                                          NormalizeCtx &ctx) {
     if (ctx.insertPointOp != ctx.op && ctx.blockArg) {
-      auto forOp = dyn_cast<scf::ForOp>(ctx.blockArg.getOwner()->getParentOp());
-      if (forOp) {
-        auto blockArgIdx = ctx.blockArg.getArgNumber() - 1;
-        forOp.getInitArgsMutable()[blockArgIdx].assign(ctx.newInit);
+      Operation *loopOp = ctx.blockArg.getOwner()->getParentOp();
+      if (isLoopCCFOp(loopOp)) {
+        auto blockArgIdx =
+            ctx.blockArg.getArgNumber() - getLoopCCFInductionVarOffset(loopOp);
+        getLoopCCFInitsMutable(loopOp)[blockArgIdx].assign(ctx.newInit);
       } else {
         return rewriter.notifyMatchFailure(
             ctx.op, "expected the outermost init arg to be a block argument "
-                    "of a for op");
+                    "of a for or while op");
       }
     } else {
       ctx.tmpNewMmad.setMatmulC(ctx.newInit);
@@ -1923,7 +2001,7 @@ struct NormalizeMmadCCFPattern
 
     if (ccfInfo.insertPointOp != mmadOp) {
       ctx.counterBuf = initCounter(rewriter, *ctx.insertPointOp);
-      if (isa<scf::ForOp, scf::IfOp>(ctx.insertPointOp)) {
+      if (isCCFOp(ctx.insertPointOp)) {
         ctx.counterBuf.getDefiningOp()->setAttr(
             kNormalizeMatmulCounterAttr,
             rewriter.getI32IntegerAttr(
@@ -2001,7 +2079,7 @@ struct ReuseL0CAddIfPattern
 
     if (!needsTailFallback(ccfOutVal))
       return success();
-    if (!isa<scf::ForOp, scf::IfOp>(insertPointOp))
+    if (!isCCFOp(insertPointOp))
       return success();
     Value counterBuf = findCounterBufFor(
         insertPointOp, getResultIndex(*insertPointOp, ccfOutVal));
