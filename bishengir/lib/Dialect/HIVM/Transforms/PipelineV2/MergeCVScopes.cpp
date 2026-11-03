@@ -20,10 +20,13 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Operation.h"
+#include "mlir/IR/Visitors.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -35,7 +38,9 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cassert>
 #include <functional>
+#include <utility>
 
 #define DEBUG_TYPE "merge-cv-scopes"
 
@@ -132,13 +137,36 @@ public:
   // Rule 4: Merge same-core scopes connected by an intra-iteration edge or
   // sharing a predecessor or successor in the loop body.
   void applyGraphSameCoreRule();
+  
+  // Rule 5: Starting from a Cube-and-Vector scope with an alloca inside,
+  // trace downward to find its users and sink the alloca, initialization, and
+  // loads into the user cube and/or vector scopes.
+  void applySinkAllocaInCAVScopeRule();
 
 private:
   static bool isScalarOnlyCubeAndVectorScope(ScopeOp scope);
+  struct AllocaAccesses {
+    std::pair<ScopeOp, Value> initialLoad;
+    std::pair<memref::StoreOp, ScopeOp> initialStore;
+  };
+
   static bool isCrossCoreTransferOp(Operation *op);
   static bool hasCrossCoreTransfer(ScopeOp scope);
   static bool isEligibleForCoreMerge(ScopeOp scope);
   static void collapseSingleChildMergedScope(ScopeOp outerScope);
+  static void collectAllocaScopes(scf::ForOp &loopOp,
+                                  SmallVector<ScopeOp> &allocaScopes);
+  static void collectAllocaAccesses(
+      scf::ForOp loopOp, ArrayRef<ScopeOp> allocaScopes,
+      DenseMap<ScopeOp, AllocaAccesses> &accessesByAllocaScope);
+  static void sinkLoadsToUserScopes(
+      ArrayRef<ScopeOp> allocaScopes,
+      DenseMap<ScopeOp, AllocaAccesses> &accessesByAllocaScope);
+  static void sinkStoresToUserScopes(
+      ArrayRef<ScopeOp> allocaScopes,
+      DenseMap<ScopeOp, AllocaAccesses> &accessesByAllocaScope);
+  static void sinkAllocasToUserScopes(
+      ArrayRef<ScopeOp> allocaScopes);
 
   SetVector<ScopeOp> getIntraIterScopeDeps(ScopeOp scope);
   ScopeOp mergeScopeGroup(SmallPtrSetImpl<Operation *> &group);
@@ -1129,6 +1157,306 @@ void LoopScopeMerger::applyGraphSameCoreRule() {
   }
 }
 
+void LoopScopeMerger::collectAllocaScopes(scf::ForOp &loopOp,
+                                          SmallVector<ScopeOp> &allocaScopes) {
+  for(ScopeOp scope : loopOp.getOps<ScopeOp>()) {
+    if (getScopeCoreType(scope) != TCoreType::CUBE_AND_VECTOR)
+      continue;
+
+    Block &body = scope.getRegion().front();
+    if (body.getOperations().size() != 2)
+      continue;
+
+    auto alloca = dyn_cast<memref::AllocaOp>(&body.front());
+    auto returnOp = dyn_cast<scope::ReturnOp>(body.getTerminator());
+    if (alloca && returnOp && returnOp.getNumOperands() == 1 &&
+        returnOp.getOperand(0) == alloca.getResult())
+      allocaScopes.push_back(scope);
+  }
+}
+
+void LoopScopeMerger::collectAllocaAccesses(
+    scf::ForOp loopOp, ArrayRef<ScopeOp> allocaScopes,
+    DenseMap<ScopeOp, AllocaAccesses> &accessesByAllocaScope) {
+  DenseMap<Value, ScopeOp> allocaScopeByMemref;
+  for (ScopeOp scope : allocaScopes) {
+    accessesByAllocaScope.try_emplace(scope);
+    allocaScopeByMemref[scope.getResult(0)] = scope;
+  }
+
+  for (ScopeOp ownerScope : loopOp.getOps<ScopeOp>()) {
+    if (getScopeCoreType(ownerScope) != TCoreType::CUBE_AND_VECTOR)
+      continue;
+
+    DenseSet<Value> seenLoads;
+    for (Operation &op : ownerScope.getOps()) {
+      if (auto store = dyn_cast<memref::StoreOp>(op)) {
+        auto it = allocaScopeByMemref.find(store.getMemRef());
+        if (it == allocaScopeByMemref.end())
+          continue;
+
+        auto &initialStore = accessesByAllocaScope[it->second].initialStore;
+        if (!initialStore.first)
+          initialStore = {store, ownerScope};
+      } else if (auto load = dyn_cast<memref::LoadOp>(op)) {
+        auto it = allocaScopeByMemref.find(load.getMemRef());
+        if (it == allocaScopeByMemref.end() ||
+            !seenLoads.insert(load.getMemRef()).second)
+          continue;
+
+        auto &initialLoad = accessesByAllocaScope[it->second].initialLoad;
+        auto returnOp = cast<scope::ReturnOp>(
+            ownerScope.getRegion().front().getTerminator());
+        if (load->hasOneUse() && *(load->getUsers().begin()) == returnOp) {
+          for (auto [index, returnedValue] :
+              llvm::enumerate(returnOp.getOperands())) {
+            if (returnedValue == load.getResult()) {
+              initialLoad = {ownerScope, ownerScope.getResult(index)};
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+static LogicalResult
+collectScopeLocalDependencies(Operation *op, ScopeOp scope,
+                              SetVector<Operation *> &dependencies) {
+  std::function<LogicalResult(Value)> collectDependency = [&](Value value) {
+    if (!scope.getRegion().isAncestor(value.getParentRegion()))
+      return success();
+    Operation *def = value.getDefiningOp();
+    if (!def || def->getBlock() != op->getBlock() || !isMemoryEffectFree(def))
+      return failure();
+    if (dependencies.contains(def))
+      return success();
+
+    SetVector<Value> operands(def->operand_begin(), def->operand_end());
+    getUsedValuesDefinedAbove(def->getRegions(), operands);
+    for (Value operand : operands)
+      if (failed(collectDependency(operand)))
+        return failure();
+    dependencies.insert(def);
+    return success();
+  };
+  return success(llvm::all_of(op->getOperands(), [&](Value operand) {
+    return succeeded(collectDependency(operand));
+  }));
+}
+
+void LoopScopeMerger::sinkLoadsToUserScopes(
+    ArrayRef<ScopeOp> allocaScopes,
+    DenseMap<ScopeOp, AllocaAccesses> &accessesByAllocaScope) {
+  for (ScopeOp scope : allocaScopes) {
+    auto it = accessesByAllocaScope.find(scope);
+    ScopeOp loadScope = it->second.initialLoad.first;
+    if (!loadScope)
+      continue;
+
+    Value retVal = it->second.initialLoad.second;
+    auto returnOp =
+        cast<scope::ReturnOp>(loadScope.getRegion().front().getTerminator());
+    auto load = returnOp.getOperand(cast<OpResult>(retVal).getResultNumber())
+                    .getDefiningOp<memref::LoadOp>();
+    SetVector<Operation *> dependencies;
+    if (failed(collectScopeLocalDependencies(load, loadScope, dependencies)))
+      continue;
+
+    SetVector<ScopeOp> userScopes;
+    for (Operation *user : retVal.getUsers()) {
+      auto userScope = user->getParentOfType<ScopeOp>();
+      if (userScope && userScope->getBlock() == loadScope->getBlock() &&
+          loadScope->isBeforeInBlock(userScope) &&
+          (getScopeCoreType(userScope) == TCoreType::CUBE ||
+           getScopeCoreType(userScope) == TCoreType::VECTOR))
+        userScopes.insert(userScope);
+    }
+
+    for (ScopeOp userScope : userScopes) {
+      OpBuilder builder =
+          OpBuilder::atBlockBegin(&userScope.getRegion().front());
+      IRMapping mapping;
+      for (Operation *dependency : dependencies)
+        builder.clone(*dependency, mapping);
+      auto clonedLoad = cast<memref::LoadOp>(builder.clone(*load, mapping));
+      retVal.replaceUsesWithIf(clonedLoad.getResult(), [&](OpOperand &use) {
+        return userScope->isProperAncestor(use.getOwner());
+      });
+    }
+
+    if (!retVal.use_empty())
+      continue;
+
+    if(loadScope.getNumResults() == 1 &&
+          loadScope.getRegion().front().getOperations().size() == dependencies.size() + 1){
+      loadScope.erase();
+      continue;
+    }
+
+    // Drop the sunk result while preserving the source scope's other results
+    // and operations, including any remaining internal uses of the load.
+    SmallVector<Value> returnOperands;
+    SmallVector<Value> keptResults;
+    for (auto [result, returnedValue] :
+         llvm::zip(loadScope.getResults(), returnOp.getOperands())) {
+      if (result == retVal)
+        continue;
+      returnOperands.push_back(returnedValue);
+      keptResults.push_back(result);
+    }
+    ScopeOp newScope = recreateScope(loadScope, returnOperands);
+    for (auto [oldResult, newResult] :
+         llvm::zip(keptResults, newScope.getResults())) {
+      oldResult.replaceAllUsesWith(newResult);
+      for (auto &entry : accessesByAllocaScope) {
+        if (entry.second.initialLoad.second == oldResult)
+          entry.second.initialLoad.second = newResult;
+      }
+    }
+    if (load->use_empty())
+      load.erase();
+    for (Operation *dependency : llvm::reverse(dependencies))
+      if (isOpTriviallyDead(dependency))
+        dependency->erase();
+    bool eraseScope = newScope.getNumResults() == 0 &&
+                      newScope.getRegion().front().getOperations().size() == 1;
+    for (auto &entry : accessesByAllocaScope) {
+      AllocaAccesses &accesses = entry.second;
+      if (accesses.initialLoad.first == loadScope) {
+        if (accesses.initialLoad.second == retVal)
+          accesses.initialLoad = {};
+        else
+          accesses.initialLoad.first = newScope;
+      }
+      if (accesses.initialStore.second == loadScope)
+        accesses.initialStore.second = newScope;
+    }
+    loadScope.erase();
+    if (eraseScope)
+      newScope.erase();
+  }
+}
+
+void LoopScopeMerger::sinkStoresToUserScopes(
+    ArrayRef<ScopeOp> allocaScopes,
+    DenseMap<ScopeOp, AllocaAccesses> &accessesByAllocaScope) {
+  for (ScopeOp scope : allocaScopes) {
+    auto it = accessesByAllocaScope.find(scope);
+    memref::StoreOp store = it->second.initialStore.first;
+    ScopeOp storeScope = it->second.initialStore.second;
+    if (!store)
+      continue;
+
+    SetVector<Operation *> dependencies;
+    if (failed(collectScopeLocalDependencies(store, storeScope, dependencies)))
+      continue;
+
+    Value retVal = scope.getResult(0);
+    ScopeOp firstCubeScope;
+    for (Operation *user : retVal.getUsers()) {
+      ScopeOp parentScope = user->getParentOfType<ScopeOp>();
+      if (getScopeCoreType(parentScope) != TCoreType::CUBE ||
+          parentScope->getBlock() != storeScope->getBlock() ||
+          !storeScope->isBeforeInBlock(parentScope))
+        continue;
+
+      // Use lists are not ordered by program position.
+      if (!firstCubeScope || parentScope->isBeforeInBlock(firstCubeScope))
+        firstCubeScope = parentScope;
+    }
+    if (!firstCubeScope)
+      continue;
+
+    OpBuilder builder =
+        OpBuilder::atBlockBegin(&firstCubeScope.getRegion().front());
+    IRMapping mapping;
+    for (Operation *dependency : dependencies)
+      builder.clone(*dependency, mapping);
+    for (OpOperand &operand : store->getOpOperands())
+      operand.set(mapping.lookupOrDefault(operand.get()));
+    store->moveBefore(builder.getInsertionBlock(), builder.getInsertionPoint());
+    it->second.initialStore.second = firstCubeScope;
+    // Keep dependencies still used by other operations in the source scope.
+    for (Operation *dependency : llvm::reverse(dependencies))
+      if (isOpTriviallyDead(dependency))
+        dependency->erase();
+    if (storeScope.getNumResults() == 0 &&
+        storeScope.getRegion().front().getOperations().size() == 1)
+      storeScope.erase();
+  }
+}
+
+void LoopScopeMerger::sinkAllocasToUserScopes(
+    ArrayRef<ScopeOp> allocaScopes) {
+  for (ScopeOp scope : allocaScopes) {
+    Value retVal = scope.getResult(0);
+    ScopeOp firstScope;
+
+    for (Operation *user : retVal.getUsers()) {
+      Operation *ancestor = scope->getBlock()->findAncestorOpInBlock(*user);
+      auto parentScope = dyn_cast_if_present<ScopeOp>(ancestor);
+      if (!parentScope)
+        continue;
+
+      // Use lists are not ordered by program position.
+      if (!firstScope || parentScope->isBeforeInBlock(firstScope))
+        firstScope = parentScope;
+    }
+    if (!firstScope)
+      continue;
+
+    auto alloca = cast<memref::AllocaOp>(&scope.getRegion().front().front());
+
+    OpBuilder builder = OpBuilder::atBlockBegin(&firstScope.getRegion().front());
+    auto clonedAlloca = cast<memref::AllocaOp>(builder.clone(*alloca));
+    retVal.replaceUsesWithIf(clonedAlloca.getResult(), [&](OpOperand &use) {
+      return firstScope->isProperAncestor(use.getOwner());
+    });
+
+    // Later scopes must share this allocation through a
+    // scope result; the local alloca value cannot escape its region directly.
+    if (llvm::none_of(retVal.getUsers(), [&](Operation *user) {
+          return user->getParentOfType<ScopeOp>() != firstScope;
+        }))
+      continue;
+
+    auto returnOp =
+        cast<scope::ReturnOp>(firstScope.getRegion().front().getTerminator());
+    SmallVector<Value> returnOperands(returnOp.getOperands());
+    returnOperands.push_back(clonedAlloca.getResult());
+    ScopeOp newScope = recreateScope(firstScope, returnOperands);
+    for (auto [oldResult, newResult] : llvm::zip(
+              firstScope.getResults(),
+              newScope.getResults().take_front(firstScope.getNumResults())))
+      oldResult.replaceAllUsesWith(newResult);
+    retVal.replaceUsesWithIf(
+        newScope.getResults().back(), [&](OpOperand &use) {
+          return use.getOwner()->getParentOfType<ScopeOp>() != firstScope;
+        });
+    firstScope.erase();
+  }
+
+  for (ScopeOp scope : allocaScopes) {
+    if (scope->use_empty())
+      scope.erase();
+  }
+}
+
+void LoopScopeMerger::applySinkAllocaInCAVScopeRule() {
+  SmallVector<ScopeOp> allocaScopes;
+  collectAllocaScopes(loopOp, allocaScopes);
+  if (allocaScopes.empty())
+    return;
+
+  DenseMap<ScopeOp, AllocaAccesses> accessesByAllocaScope;
+  collectAllocaAccesses(loopOp, allocaScopes, accessesByAllocaScope);
+  sinkLoadsToUserScopes(allocaScopes, accessesByAllocaScope);
+  sinkStoresToUserScopes(allocaScopes, accessesByAllocaScope);
+  sinkAllocasToUserScopes(allocaScopes);
+}
+
 void LoopScopeMerger::run(ArrayRef<MergeRuleFn> rules) {
   for (MergeRuleFn rule : rules)
     (this->*rule)();
@@ -1145,6 +1473,7 @@ void MergeCVScopesPass::runOnOperation() {
       &LoopScopeMerger::applyMergedScopeSameCoreRule,
       &LoopScopeMerger::applyCrossCoreTransferBackwardRule,
       &LoopScopeMerger::applyGraphSameCoreRule,
+      &LoopScopeMerger::applySinkAllocaInCAVScopeRule
   };
 
   SmallVector<scf::ForOp> targetLoops;
