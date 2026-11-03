@@ -208,6 +208,7 @@ bool checkSatisfy(ModuleOp &op, std::function<bool(Operation *op)> satisfyRule);
 bool existHost(Operation *module);
 bool existEntryHost(Operation *module);
 
+bool isEntry(Operation *func);
 bool isMixEntry(Operation *func);
 bool notExportedAsDag(Operation *func);
 
