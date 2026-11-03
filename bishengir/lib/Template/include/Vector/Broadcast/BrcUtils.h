@@ -179,6 +179,22 @@ brc_last_axis_2d_vbrcb(memref_t<__ubuf__ T, 2> *src,
 /// \param src_val src scalar value that to be broadcast
 /// \param dst_ptr dst pointer
 /// \param count num of value to be broadcast
+/// Merge an 8-bit value into the low and high halves of a 16-bit value so that
+/// broadcasting the resulting uint16 duplicates the byte pair. Used to
+/// broadcast 8-bit scalars with the 16-bit vector_dup path. \tparam T dtype
+/// (must be 1 byte) \param src_val 8-bit value to be merged \return uint16 with
+/// src_val in both the low and high byte
+///
+/// Defined inline here so elementwise templates (EltWise1D/2D) can reuse it
+/// without depending on an explicit instantiation in another TU.
+template <typename T>
+__aiv__ __attribute__((always_inline)) uint16_t merge_b8_to_u16(T src_val) {
+  static_assert((sizeof(T) == 1) &&
+                "merge_b8_to_u16 only support 1-byte data type");
+  uint16_t val_low = ((uint16_t)((uint16_t)src_val << 8ULL)) >> 8ULL;
+  return (uint16_t)((uint16_t)(val_low << 8ULL)) + val_low;
+}
+
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 brc_scalar_core_1d(T src_val, __ubuf__ T *dst_ptr, int64_t count);
@@ -189,6 +205,10 @@ __aiv__ __attribute__((always_inline)) uint64_t get_interval_mask(
 #define REGISTE_BRC_SCALAR_CORE_1D(type)                                       \
   template __aiv__ __attribute__((always_inline)) void brc_scalar_core_1d(     \
       type src_val, __ubuf__ type *dst_ptr, int64_t count)
+
+#define REGISTE_MERGE_B8_TO_U16(type)                                          \
+  template __aiv__ __attribute__((always_inline)) uint16_t merge_b8_to_u16(    \
+      type src_val)
 
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
