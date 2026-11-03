@@ -107,7 +107,9 @@ struct HFusionIsInfTraits : public HFusionIsInfNanNormalizeTraitsBase {
   static bool shouldNormalize(hfusion::IsInfOp) { return true; }
 };
 
-/// Normalizes `hfusion.is_nan(x)` to `compare(x, x, ne)`.
+/// Normalizes `hfusion.is_nan` to existing HFusion primitive ops:
+///   bitcast -> vand(sign_mask) -> add(-inf_bits) -> min_signed(1)
+///   -> max_signed(0) -> cast(i1)
 struct HFusionIsNanTraits : public HFusionIsInfNanNormalizeTraitsBase {
   static bool shouldNormalize(hfusion::IsNanOp) { return true; }
 };

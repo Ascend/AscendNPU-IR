@@ -1,4 +1,3 @@
-// RUN: bishengir-opt --hacc-append-device-spec=target=Ascend950PR_950z --hivm-normalize-ops %s -split-input-file | FileCheck %s --check-prefix=NAN-REG
 // RUN: bishengir-opt --hivm-normalize-ops %s -split-input-file -verify-diagnostics | FileCheck %s
 
 // CHECK-LABEL: func.func @test_NormalizeCmpVneOp_neq_to_Not_eq
@@ -371,15 +370,27 @@ func.func @test_NormalizeIsInf_f16(
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeIsNan_f32
-// CHECK-SAME: (%[[INPUT:.*]]: tensor<16xf32>,
-// CHECK: %[[EQ:.*]] = hivm.hir.vcmp ins(%[[INPUT]], %[[INPUT]] : tensor<16xf32>, tensor<16xf32>)
-// CHECK: %[[RESULT:.*]] = hivm.hir.vnot ins(%[[EQ]] : tensor<16xi1>)
-// CHECK: return %[[RESULT]]
-// NAN-REG-LABEL: func.func @test_NormalizeIsNan_f32
-// NAN-REG-SAME: (%[[INPUT:.*]]: tensor<16xf32>,
-// NAN-REG-NOT: hivm.hir.bitcast
-// NAN-REG: %[[RESULT:.*]] = hivm.hir.vcmp ins(%[[INPUT]], %[[INPUT]] : tensor<16xf32>, tensor<16xf32>) {{.*}} compare_mode = <ne>
-// NAN-REG: return %[[RESULT]]
+// CHECK-SAME: (%[[arg0:.*]]: tensor<16xf32>, %[[arg1:.*]]: tensor<16xi1>)
+// CHECK-DAG: %[[c0f:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK-DAG: %[[cneginf:.*]] = arith.constant -2139095040 : i32
+// CHECK-DAG: %[[c0:.*]] = arith.constant 0 : i32
+// CHECK-DAG: %[[c1:.*]] = arith.constant 1 : i32
+// CHECK-DAG: %[[cmask:.*]] = arith.constant 2147483647 : i32
+// CHECK: %[[maskempty:.*]] = tensor.empty() : tensor<16xi32>
+// CHECK: %[[mask:.*]] = hivm.hir.vbrc ins(%[[cmask]] : i32) outs(%[[maskempty]] : tensor<16xi32>) -> tensor<16xi32>
+// CHECK: %[[bits:.*]] = hivm.hir.bitcast %[[arg0]] : tensor<16xf32> -> tensor<16xi32>
+// CHECK: %[[andempty:.*]] = tensor.empty() : tensor<16xi32>
+// CHECK: %[[vand:.*]] = hivm.hir.vand ins(%[[bits]], %[[mask]] : tensor<16xi32>, tensor<16xi32>) outs(%[[andempty]] : tensor<16xi32>) -> tensor<16xi32>
+// CHECK: %[[addempty:.*]] = tensor.empty() : tensor<16xi32>
+// CHECK: %[[vadd:.*]] = hivm.hir.vadd ins(%[[vand]], %[[cneginf]] : tensor<16xi32>, i32) outs(%[[addempty]] : tensor<16xi32>) -> tensor<16xi32>
+// CHECK: %[[min:.*]] = hivm.hir.vmin ins(%[[vadd]], %[[c1]] : tensor<16xi32>, i32) outs(%[[vadd]] : tensor<16xi32>) -> tensor<16xi32>
+// CHECK: %[[max:.*]] = hivm.hir.vmax ins(%[[min]], %[[c0]] : tensor<16xi32>, i32) outs(%[[min]] : tensor<16xi32>) -> tensor<16xi32>
+// CHECK: %[[castempty:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[cast:.*]] = hivm.hir.vcast ins(%[[max]] : tensor<16xi32>) outs(%[[castempty]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[cmpempty:.*]] = tensor.empty() : tensor<16xi1>
+// CHECK: %[[cmp:.*]] = hivm.hir.vcmp ins(%[[cast]], %[[c0f]] : tensor<16xf32>, f32) outs(%[[cmpempty]] : tensor<16xi1>) -> tensor<16xi1>
+// CHECK: %[[not:.*]] = hivm.hir.vnot ins(%[[cmp]] : tensor<16xi1>) outs(%[[arg1]] : tensor<16xi1>) -> tensor<16xi1>
+// CHECK: return %[[not]]
 func.func @test_NormalizeIsNan_f32(
   %src : tensor<16xf32>, %dst : tensor<16xi1>) -> tensor<16xi1> {
   %ret = hivm.hir.visnan ins(%src : tensor<16xf32>)
@@ -390,15 +401,27 @@ func.func @test_NormalizeIsNan_f32(
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeIsNan_f16
-// CHECK-SAME: (%[[INPUT:.*]]: tensor<32xf16>,
-// CHECK: %[[EQ:.*]] = hivm.hir.vcmp ins(%[[INPUT]], %[[INPUT]] : tensor<32xf16>, tensor<32xf16>)
-// CHECK: %[[RESULT:.*]] = hivm.hir.vnot ins(%[[EQ]] : tensor<32xi1>)
-// CHECK: return %[[RESULT]]
-// NAN-REG-LABEL: func.func @test_NormalizeIsNan_f16
-// NAN-REG-SAME: (%[[INPUT:.*]]: tensor<32xf16>,
-// NAN-REG-NOT: hivm.hir.bitcast
-// NAN-REG: %[[RESULT:.*]] = hivm.hir.vcmp ins(%[[INPUT]], %[[INPUT]] : tensor<32xf16>, tensor<32xf16>) {{.*}} compare_mode = <ne>
-// NAN-REG: return %[[RESULT]]
+// CHECK-SAME: (%[[arg0:.*]]: tensor<32xf16>, %[[arg1:.*]]: tensor<32xi1>)
+// CHECK-DAG: %[[c0f:.*]] = arith.constant 0.000000e+00 : f16
+// CHECK-DAG: %[[cneginf:.*]] = arith.constant -31744 : i16
+// CHECK-DAG: %[[c0:.*]] = arith.constant 0 : i16
+// CHECK-DAG: %[[c1:.*]] = arith.constant 1 : i16
+// CHECK-DAG: %[[cmask:.*]] = arith.constant 32767 : i16
+// CHECK: %[[maskempty:.*]] = tensor.empty() : tensor<32xi16>
+// CHECK: %[[mask:.*]] = hivm.hir.vbrc ins(%[[cmask]] : i16) outs(%[[maskempty]] : tensor<32xi16>) -> tensor<32xi16>
+// CHECK: %[[bits:.*]] = hivm.hir.bitcast %[[arg0]] : tensor<32xf16> -> tensor<32xi16>
+// CHECK: %[[andempty:.*]] = tensor.empty() : tensor<32xi16>
+// CHECK: %[[vand:.*]] = hivm.hir.vand ins(%[[bits]], %[[mask]] : tensor<32xi16>, tensor<32xi16>) outs(%[[andempty]] : tensor<32xi16>) -> tensor<32xi16>
+// CHECK: %[[addempty:.*]] = tensor.empty() : tensor<32xi16>
+// CHECK: %[[vadd:.*]] = hivm.hir.vadd ins(%[[vand]], %[[cneginf]] : tensor<32xi16>, i16) outs(%[[addempty]] : tensor<32xi16>) -> tensor<32xi16>
+// CHECK: %[[min:.*]] = hivm.hir.vmin ins(%[[vadd]], %[[c1]] : tensor<32xi16>, i16) outs(%[[vadd]] : tensor<32xi16>) -> tensor<32xi16>
+// CHECK: %[[max:.*]] = hivm.hir.vmax ins(%[[min]], %[[c0]] : tensor<32xi16>, i16) outs(%[[min]] : tensor<32xi16>) -> tensor<32xi16>
+// CHECK: %[[castempty:.*]] = tensor.empty() : tensor<32xf16>
+// CHECK: %[[cast:.*]] = hivm.hir.vcast ins(%[[max]] : tensor<32xi16>) outs(%[[castempty]] : tensor<32xf16>) -> tensor<32xf16>
+// CHECK: %[[cmpempty:.*]] = tensor.empty() : tensor<32xi1>
+// CHECK: %[[cmp:.*]] = hivm.hir.vcmp ins(%[[cast]], %[[c0f]] : tensor<32xf16>, f16) outs(%[[cmpempty]] : tensor<32xi1>) -> tensor<32xi1>
+// CHECK: %[[not:.*]] = hivm.hir.vnot ins(%[[cmp]] : tensor<32xi1>) outs(%[[arg1]] : tensor<32xi1>) -> tensor<32xi1>
+// CHECK: return %[[not]]
 func.func @test_NormalizeIsNan_f16(
   %src : tensor<32xf16>, %dst : tensor<32xi1>) -> tensor<32xi1> {
   %ret = hivm.hir.visnan ins(%src : tensor<32xf16>)
