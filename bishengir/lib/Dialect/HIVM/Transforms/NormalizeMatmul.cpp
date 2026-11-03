@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
@@ -38,6 +39,7 @@
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "mlir/Transforms/RegionUtils.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
@@ -2275,6 +2277,43 @@ hivm::VTransposeOp lookThroughViewLikes(Value v) {
   }
 }
 
+/// `dot_pad_only_k` is a hint consumed only by this pass: it decides whether
+/// the L1 padding can be dropped and where the real M/N come from. Once the
+/// patterns have read it, drop the marks. A leftover mark keeps the value it
+/// annotates alive -- annotation.mark writes the marked value -- which is what
+/// used to leave the already-folded vtranspose behind.
+void removeDotPadOnlyKMarks(RewriterBase &rewriter, func::FuncOp funcOp) {
+  SmallVector<annotation::MarkOp> marks;
+  funcOp.walk([&](annotation::MarkOp markOp) {
+    if (markOp.isAnnotatedBy(kDotPadOnlyK))
+      marks.push_back(markOp);
+  });
+  for (annotation::MarkOp markOp : marks) {
+    LDBG("dropping consumed dot_pad_only_k mark");
+    rewriter.eraseOp(markOp);
+  }
+}
+
+/// The `dot_pad_only_k` hint describes an mmad operand, so when the vtranspose
+/// feeding that operand is folded into a_transpose/b_transpose the mark has to
+/// follow the transpose source: the patterns that consume the hint (pad
+/// optimization and real-M/N extraction) look it up on the mmad operand, which
+/// after the fold is the transpose source, not its result.
+void repointDotPadOnlyKMarks(PatternRewriter &rewriter, Value foldedValue,
+                             Value newOperand) {
+  SmallVector<annotation::MarkOp> marks;
+  for (Operation *user : foldedValue.getUsers()) {
+    auto markOp = dyn_cast<annotation::MarkOp>(user);
+    if (markOp && markOp.isAnnotatedBy(kDotPadOnlyK))
+      marks.push_back(markOp);
+  }
+  for (annotation::MarkOp markOp : marks) {
+    LDBG("repointing dot_pad_only_k mark to the new mmad operand");
+    rewriter.modifyOpInPlace(
+        markOp, [&]() { markOp->replaceUsesOfWith(foldedValue, newOperand); });
+  }
+}
+
 /// Absorb a vtranspose feeding A or B into the matching transpose flag, so the
 /// transpose happens while loading the operand instead of as a separate op.
 struct FoldVtransposePattern
@@ -2312,6 +2351,7 @@ public:
         newMmad.setMatmulB(src);
         newMmad.setMatmulBTranspose(rewriter.getUnitAttr());
       }
+      repointDotPadOnlyKMarks(rewriter, vtrans->getResult(0), src);
     };
 
     if (aVtrans)
@@ -2492,6 +2532,14 @@ LogicalResult runNormalizeMatmul(func::FuncOp funcOp, MLIRContext *context) {
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns), config)))
       return failure();
   }
+  // Every pattern that reads the `dot_pad_only_k` hint has run by now, so drop
+  // the marks and collect what they were keeping alive -- typically the
+  // vtranspose that FoldVtransposePattern replaced with
+  // a_transpose/b_transpose.
+  IRRewriter rewriter(context);
+  removeDotPadOnlyKMarks(rewriter, funcOp);
+  // runRegionDCE reports whether anything was erased, not success/failure.
+  (void)runRegionDCE(rewriter, funcOp->getRegions());
   return success();
 }
 
