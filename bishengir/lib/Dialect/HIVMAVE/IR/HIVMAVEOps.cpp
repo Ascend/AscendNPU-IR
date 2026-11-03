@@ -22,7 +22,6 @@
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/IR/OpImplementation.h"
@@ -40,8 +39,7 @@ static bool IsAllowedAVEBitsVector(Type type) {
     int factor = vecType.getElementType().isInteger(64) ? 2 : 1;
     return vecType.getRank() <= 1 &&
            vecType.getNumElements() *
-                   static_cast<int64_t>(
-                       vecType.getElementType().getIntOrFloatBitWidth()) <=
+                   static_cast<int64_t>(vecType.getElementType().getIntOrFloatBitWidth()) <=
                factor * mlir::hivm::util::VL_BITS;
   }
   return false;
@@ -79,7 +77,7 @@ template <typename HIVMAVEOp> hivm::TypeFn getTypeDeductionHint(HIVMAVEOp op) {
   std::string OP_NAME::getOpLibraryCallName() {                                \
     std::string baseCallName = getOpName().str();                              \
     auto elemType = getElementTypeOrSelf(getOperands()[0].getType());          \
-    std::string elemTypeName = hivm::util::getTypeName(getLoc(), elemType);    \
+    std::string elemTypeName = hivm::util::getTypeName(getLoc(), elemType);  \
     std::string libName = baseCallName + "_" + elemTypeName;                   \
     std::replace(libName.begin(), libName.end(), '.', '_');                    \
     return libName;                                                            \
@@ -89,7 +87,7 @@ template <typename HIVMAVEOp> hivm::TypeFn getTypeDeductionHint(HIVMAVEOp op) {
   std::string OP_NAME::getOpLibraryCallName() {                                \
     std::string baseCallName = getOpName().str();                              \
     auto elemType = getElementTypeOrSelf(getRes().getType());                  \
-    std::string elemTypeName = hivm::util::getTypeName(getLoc(), elemType);    \
+    std::string elemTypeName = hivm::util::getTypeName(getLoc(), elemType);  \
     std ::string libName =                                                     \
         "_mlir_ciface_" + baseCallName + "_" + elemTypeName;                   \
     std::replace(libName.begin(), libName.end(), '.', '_');                    \
@@ -113,17 +111,19 @@ template <typename HIVMAVEOp> hivm::TypeFn getTypeDeductionHint(HIVMAVEOp op) {
     std::string baseCallName = "cast";                                         \
     auto elemType0 = getElementTypeOrSelf(getOperands()[0].getType());         \
     auto elemType1 = getElementTypeOrSelf(getResult().getType());              \
-    std::string elemTypeName0 = hivm::util::getTypeName(getLoc(), elemType0);  \
-    std::string elemTypeName1 = hivm::util::getTypeName(getLoc(), elemType1);  \
+    std::string elemTypeName0 =                                                \
+        hivm::util::getTypeName(getLoc(), elemType0);                        \
+    std::string elemTypeName1 =                                                \
+        hivm::util::getTypeName(getLoc(), elemType1);                        \
     std::string libName = "_mlir_ciface_" + baseCallName + "_" +               \
                           elemTypeName0 + "_to_" + elemTypeName1;              \
     if (std::string(#OP_NAME) == "VFUIntToFpOp" or                             \
         std::string(#OP_NAME) == "VFExtUIOp")                                  \
-      libName = "_mlir_ciface_" + baseCallName + "_" + "u" + elemTypeName0 +   \
-                "_to_" + elemTypeName1;                                        \
+      libName = "_mlir_ciface_" + baseCallName + "_" + "u" +                   \
+                elemTypeName0 + "_to_" + elemTypeName1;                        \
     else if (std::string(#OP_NAME) == "VFFpToUIntOp")                          \
-      libName = "_mlir_ciface_" + baseCallName + "_" + elemTypeName0 +         \
-                "_to_" + "u" + elemTypeName1;                                  \
+      libName = "_mlir_ciface_" + baseCallName + "_" +                         \
+                elemTypeName0 + "_to_" + "u" + elemTypeName1;                  \
     std::replace(libName.begin(), libName.end(), '.', '_');                    \
     return libName;                                                            \
   }
@@ -144,7 +144,7 @@ template <typename HIVMAVEOp> hivm::TypeFn getTypeDeductionHint(HIVMAVEOp op) {
                                          : hivm::TypeFn::cast_signed;          \
     auto elemType = getElementTypeOrSelf(getOperands()[0].getType());          \
     std::string elemTypeName =                                                 \
-        hivm::util::getTypeName(getLoc(), elemType, typeDeductionHint);        \
+        hivm::util::getTypeName(getLoc(), elemType, typeDeductionHint);      \
     std::string libName =                                                      \
         "_mlir_ciface_" + baseCallName + "_" + cmpStrRaw + "_" + elemTypeName; \
     std::replace(libName.begin(), libName.end(), '.', '_');                    \
@@ -155,25 +155,27 @@ std::string VFTruncIOp::getOpLibraryCallName() {
   std::string baseCallName = "cast";
   auto elemType0 = getElementTypeOrSelf(getOperands()[0].getType());
   auto elemType1 = getElementTypeOrSelf(getResult().getType());
-  std::string elemTypeName0 = hivm::util::getTypeName(getLoc(), elemType0);
-  std::string elemTypeName1 = hivm::util::getTypeName(getLoc(), elemType1);
-  std::string libName = "_mlir_ciface_" + baseCallName + "_" + elemTypeName0 +
-                        "_to_" + elemTypeName1;
+  std::string elemTypeName0 =
+      hivm::util::getTypeName(getLoc(), elemType0);
+  std::string elemTypeName1 =
+      hivm::util::getTypeName(getLoc(), elemType1);
+  std::string libName = "_mlir_ciface_" + baseCallName + "_" +
+                        elemTypeName0 + "_to_" + elemTypeName1;
   if (getSat()) {
     if (auto uniAttr = getUni()) {
       auto uni = *uniAttr;
       if (uni == hivm::UnsignedMode::SI2UI) {
-        libName = "_mlir_ciface_" + baseCallName + "_" + elemTypeName0 +
-                  "_to_" + "u" + elemTypeName1 + "_sat";
+        libName = "_mlir_ciface_" + baseCallName + "_" +
+                  elemTypeName0 + "_to_" + "u" + elemTypeName1 + "_sat";
       } else if (uni == hivm::UnsignedMode::UI2SI) {
-        libName = "_mlir_ciface_" + baseCallName + "_" + "u" + elemTypeName0 +
-                  "_to_" + elemTypeName1 + "_sat";
+        libName = "_mlir_ciface_" + baseCallName + "_" + "u" +
+                elemTypeName0 + "_to_" + elemTypeName1 + "_sat";
       } else if (uni == hivm::UnsignedMode::UI2UI) {
-        libName = "_mlir_ciface_" + baseCallName + "_" + "u" + elemTypeName0 +
-                  "_to_" + "u" + elemTypeName1 + "_sat";
+        libName = "_mlir_ciface_" + baseCallName + "_" + "u" +
+                elemTypeName0 + "_to_" + "u" + elemTypeName1 + "_sat";
       } else if (uni == hivm::UnsignedMode::SI2SI) {
-        libName = "_mlir_ciface_" + baseCallName + "_" + elemTypeName0 +
-                  "_to_" + elemTypeName1 + "_sat";
+        libName = "_mlir_ciface_" + baseCallName + "_" +
+                elemTypeName0 + "_to_" + elemTypeName1 + "_sat";
       }
     }
   }
@@ -190,8 +192,7 @@ std::string VFLoadOp::getOpLibraryCallName() {
   mlir::OperandRange indices = getIndices();
   unsigned rank = indices.size();
   std::string libName = baseCallName + "_" + patternStr + "_" + elemTypeName;
-  if (pattern != LoadDist::BRC_B64 &&
-      (*this)->hasAttr("ave.unaligned_ub_access")) {
+  if (pattern != LoadDist::BRC_B64 && (*this)->hasAttr("ave.unaligned_ub_access")) {
     libName += "_unalign_rank" + std::to_string(rank);
   } else {
     libName += "_rank" + std::to_string(rank);
@@ -209,8 +210,7 @@ std::string VFMaskedStoreOp::getOpLibraryCallName() {
   mlir::OperandRange indices = getIndices();
   unsigned rank = indices.size();
   std::string libName = baseCallName + "_" + patternStr + "_" + elemTypeName;
-  if (pattern != StoreDist::ONEPT_B64 &&
-      (*this)->hasAttr("ave.unaligned_ub_access")) {
+  if (pattern != StoreDist::ONEPT_B64 && (*this)->hasAttr("ave.unaligned_ub_access")) {
     libName += "_unalign_rank" + std::to_string(rank);
   } else {
     libName += "_rank" + std::to_string(rank);
@@ -226,8 +226,7 @@ std::string VFGatherOp::getOpLibraryCallName() {
   std::string elemTypeName = hivm::util::getTypeName(getLoc(), elemType);
   mlir::OperandRange indices = getIndices();
   unsigned rank = indices.size();
-  std::string libName =
-      baseCallName + "_" + elemTypeName + "_rank" + std::to_string(rank);
+  std::string libName = baseCallName + "_" + elemTypeName + "_rank" + std::to_string(rank);
   std::replace(libName.begin(), libName.end(), '.', '_');
   return libName;
 }
@@ -243,25 +242,21 @@ static std::string stringifyCombineKind(CombiningKind kind) {
   case CombiningKind::UMIN:
     return "vcmin";
   default:
-    std::string message = "Unhandled CombiningKind::" +
-                          mlir::hivmave::stringifyCombiningKind(kind).upper() +
-                          " in switch";
+    std::string message = "Unhandled CombiningKind::" + mlir::hivmave::stringifyCombiningKind(kind).upper() + " in switch";
     llvm::report_fatal_error(llvm::StringRef(message));
   }
 }
 
-// FIXME: CombiningKind::XORI is unsupported by current CCEC version, remove
-// assert and add support in stringifyCombineKind when so Hint: execute 'find ~
-// -type f -name __clang_cce_vector_intrinsics.h'
+// FIXME: CombiningKind::XORI is unsupported by current CCEC version, remove assert and add support in stringifyCombineKind when so
+// Hint: execute 'find ~ -type f -name __clang_cce_vector_intrinsics.h'
 std::string ReductionOp::getOpLibraryCallName() {
   CombiningKind kind = getKind();
   assert(kind != CombiningKind::XORI);
   std::string baseCallName = stringifyCombineKind(kind);
   auto elemType = getElementTypeOrSelf(getOperands()[0].getType());
-  hivm::TypeFn casting =
-      isUnsigned() ? hivm::TypeFn::cast_unsigned : hivm::TypeFn::cast_signed;
-  std::string elemTypeName =
-      hivm::util::getTypeName(getLoc(), elemType, casting);
+  hivm::TypeFn casting = isUnsigned() ? hivm::TypeFn::cast_unsigned
+                                      : hivm::TypeFn::cast_signed;
+  std::string elemTypeName = hivm::util::getTypeName(getLoc(), elemType, casting);
   std::string libName = "_mlir_ciface_" + baseCallName + "_" + elemTypeName;
   return libName;
 }
@@ -271,8 +266,7 @@ std::string VFDivOp::getOpLibraryCallName() {
   std::replace(baseCallName.begin(), baseCallName.end(), '.', '_');
   auto elemType = getElementTypeOrSelf(getOperands()[0].getType());
   auto casting = getCast();
-  std::string elemTypeName =
-      hivm::util::getTypeName(getLoc(), elemType, casting);
+  std::string elemTypeName = hivm::util::getTypeName(getLoc(), elemType, casting);
   std::string libName = "_mlir_ciface_" + baseCallName + "_" + elemTypeName;
   return libName;
 }
@@ -424,8 +418,9 @@ SmallVector<Value> VFLoadOp::getOpLibraryCallInputs(OpBuilder &b) {
   Value base = getBase();
   inputs.push_back(base);
   // compute linear offset from indices and strides
-  Value offset = hivmave::computeLinearMemRefOffset(
-      b, getLoc(), base, getIndices(), b.getI64Type());
+  Value offset =
+      hivmave::computeLinearMemRefOffset(b, getLoc(), base, getIndices(),
+                                         b.getI64Type());
   inputs.push_back(offset);
 
   return inputs;
@@ -436,11 +431,11 @@ SmallVector<Value> VFMaskedStoreOp::getOpLibraryCallInputs(OpBuilder &b) {
   Value base = getBase();
   inputs.push_back(base);
   // compute linear offset from indices and strides
-  Value offset = hivmave::computeLinearMemRefOffset(
-      b, getLoc(), base, getIndices(), b.getI64Type());
+  Value offset =
+      hivmave::computeLinearMemRefOffset(b, getLoc(), base, getIndices(),
+                                         b.getI64Type());
   inputs.push_back(offset);
-  if (getPattern() == StoreDist::ONEPT_B64 ||
-      !(*this)->hasAttr("ave.unaligned_ub_access")) {
+  if (getPattern() == StoreDist::ONEPT_B64 || !(*this)->hasAttr("ave.unaligned_ub_access")) {
     inputs.push_back(getMask());
   }
   inputs.push_back(getVal());
@@ -450,8 +445,9 @@ SmallVector<Value> VFMaskedStoreOp::getOpLibraryCallInputs(OpBuilder &b) {
 SmallVector<Value> VFGatherOp::getOpLibraryCallInputs(OpBuilder &b) {
   SmallVector<Value> inputs;
   inputs.push_back(getBase());
-  Value offset = hivmave::computeLinearMemRefOffset(
-      b, getLoc(), getBase(), getIndices(), b.getI64Type());
+  Value offset =
+      hivmave::computeLinearMemRefOffset(b, getLoc(), getBase(), getIndices(),
+                                         b.getI64Type());
   inputs.push_back(offset);
   inputs.push_back(getIndexVec());
   inputs.push_back(getMask());
@@ -463,7 +459,7 @@ SmallVector<Value> VFGatherOp::getOpLibraryCallInputs(OpBuilder &b) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult VFLoadOp::verify() {
-  unsigned rank = static_cast<unsigned>(getMemRefType().getRank());
+  unsigned rank =  static_cast<unsigned>(getMemRefType().getRank());
   if (getIndices().size() != rank) {
     return emitOpError("requires ") << rank << " indices";
   }
@@ -517,57 +513,8 @@ void hivmave::VFPregTypeCastOp::getCanonicalizationPatterns(
 // VFAddsOp canonicalization
 //===----------------------------------------------------------------------===//
 
-// Return true when the predicate is provably all-true, so a zero-scalar
-// vadds can be folded to its vector operand without changing masked lanes.
-static bool isAllTrueMask(Value mask) {
-  if (auto pge = mask.getDefiningOp<VFPgeOp>()) {
-    // The AVE mask type also admits !ave.mask<...>; only vector masks have
-    // a lane count to compare against.
-    auto maskTy = dyn_cast<VectorType>(pge.getType());
-    if (!maskTy)
-      return false;
-    // Compare the pattern directly with the mask lane count.  Do not use
-    // getNumfromPgePattern here: it may report a fatal error for <H> when
-    // the bit-width attr is absent, and it is not linked by every build.
-    int64_t lanes = maskTy.getNumElements();
-    switch (pge.getPattern()) {
-    case PgePattern::ALL:
-      return true;
-    case PgePattern::VL1:
-      return lanes == 1;
-    case PgePattern::VL2:
-      return lanes == 2;
-    case PgePattern::VL3:
-      return lanes == 3;
-    case PgePattern::VL4:
-      return lanes == 4;
-    case PgePattern::VL8:
-      return lanes == 8;
-    case PgePattern::VL16:
-      return lanes == 16;
-    case PgePattern::VL32:
-      return lanes == 32;
-    case PgePattern::VL64:
-      return lanes == 64;
-    case PgePattern::VL128:
-      return lanes == 128;
-    default:
-      return false;
-    }
-  }
-  if (auto cst = mask.getDefiningOp<arith::ConstantOp>()) {
-    auto dense = dyn_cast<DenseElementsAttr>(cst.getValue());
-    if (!dense || !dense.getType().getElementType().isInteger(1))
-      return false;
-    return dense.isSplat() && dense.getSplatValue<bool>();
-  }
-  return false;
-}
-
-// Fold identity vadds where scalar is 0 and the mask is all-true:
-//   ave.hir.vadds %vec, %cst_0, %all_true_mask -> %vec
-// With a partial mask the inactive lanes must still be zeroed, so the op
-// cannot be replaced by %vec.
+// Fold identity vadds where scalar is 0:
+//   ave.hir.vadds %vec, %cst_0, %mask -> %vec
 struct IdentityVFAddsOpPattern : public OpRewritePattern<VFAddsOp> {
   using OpRewritePattern<VFAddsOp>::OpRewritePattern;
 
@@ -579,20 +526,27 @@ struct IdentityVFAddsOpPattern : public OpRewritePattern<VFAddsOp> {
       return failure();
 
     auto constValue = constOp.getValue();
-    bool isZero = (isa<FloatType>(constValue.getType()) &&
-                   utils::isConst<FloatAttr, float_t>(constValue, 0.0)) ||
-                  (isa<IntegerType>(constValue.getType()) &&
-                   utils::isConst<IntegerAttr, int64_t>(constValue, 0));
-    if (!isZero || !isAllTrueMask(op.getMask()))
-      return failure();
 
-    rewriter.replaceOp(op, op.getVec());
-    return success();
+    // Float zero: vadds(vec, 0.0) -> vec
+    if (isa<FloatType>(constValue.getType()) &&
+        utils::isConst<FloatAttr, float_t>(constValue, 0.0)) {
+      rewriter.replaceOp(op, op.getVec());
+      return success();
+    }
+
+    // Integer zero: vadds(vec, 0) -> vec
+    if (isa<IntegerType>(constValue.getType()) &&
+        utils::isConst<IntegerAttr, int64_t>(constValue, 0)) {
+      rewriter.replaceOp(op, op.getVec());
+      return success();
+    }
+
+    return failure();
   }
 };
 
-void hivmave::VFAddsOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                                    MLIRContext *context) {
+void hivmave::VFAddsOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
   results.add<IdentityVFAddsOpPattern>(context);
 }
 

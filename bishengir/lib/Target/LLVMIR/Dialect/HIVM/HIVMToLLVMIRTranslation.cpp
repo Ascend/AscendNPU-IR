@@ -23,6 +23,26 @@ using namespace mlir;
 using namespace mlir::LLVM;
 
 namespace {
+// These intrinsics are provided by the downstream bisheng LLVM. Emit their
+// declarations without requiring matching IDs in the host LLVM intrinsic table.
+void convertBufferSyncIntrinsic(Operation &op, llvm::IRBuilderBase &builder,
+                                LLVM::ModuleTranslation &translation,
+                                llvm::StringRef name) {
+  auto constant = [&builder, &op](StringRef attr) {
+    return builder.getInt64(cast<IntegerAttr>(op.getAttr(attr)).getInt());
+  };
+  llvm::Value *id = op.getNumOperands()
+                        ? translation.lookupValue(op.getOperand(0))
+                        : constant("buf_id");
+  auto *type = llvm::FunctionType::get(
+      builder.getVoidTy(),
+      {builder.getInt64Ty(), builder.getInt64Ty(), builder.getInt64Ty()},
+      false);
+  auto callee =
+      builder.GetInsertBlock()->getModule()->getOrInsertFunction(name, type);
+  builder.CreateCall(callee, {constant("pipe"), id, constant("mode")});
+}
+
 static constexpr llvm::StringRef kNoAliasScope = "llvm.noalias_scopes";
 /// Create metadata node {mdName, value} and attach it to func's !annotation.
 void addAnnotationMD(llvm::Function *func, StringRef mdName, uint32_t value) {
