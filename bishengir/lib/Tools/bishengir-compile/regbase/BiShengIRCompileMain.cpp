@@ -834,20 +834,23 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     if (compileFlow == CompileFlow::Affinity) {
       success = runAffinityPipelines(hirCompileMode, config);
     } else if (compileFlow == CompileFlow::Mixed) {
-      if (!hasExplicitCLOption("shared-mem-dynamic-size"))
+      if (!mlir::hacc::utils::isAscend960(config.getTarget()) &&
+          !hasExplicitCLOption("shared-mem-dynamic-size"))
         config.setSharedMemDynamicSize(221184);
       success = runMixedPipelines(hirCompileMode, config);
     } else if (compileFlow == CompileFlow::PureSimt) {
       // In the SIMT-only flow, fall back to 120KB (122880 bytes) of dynamic
       // shared memory when the frontend did not explicitly pass
       // --shared-mem-dynamic-size.
-      if (!hasExplicitCLOption("shared-mem-dynamic-size"))
+      if (!mlir::hacc::utils::isAscend960(config.getTarget()) &&
+          !hasExplicitCLOption("shared-mem-dynamic-size"))
         config.setSharedMemDynamicSize(122880);
       success = runModulePipeline(hirCompileMode,
                                   regbase::buildBiShengTTIRPipeline, config,
                                   "BiShengSIMT");
     } else {
-      if (!hasExplicitCLOption("shared-mem-dynamic-size"))
+      if (!mlir::hacc::utils::isAscend960(config.getTarget()) &&
+          !hasExplicitCLOption("shared-mem-dynamic-size"))
         config.setSharedMemDynamicSize(221184);
       // Standard HIR compile path (no SIMD/SIMT split)
       success =

@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/AscendDPX/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HACC/Pipelines/Passes.h"
+#include "bishengir/Dialect/HACC/Targets/NPUTargetSpecUtils.h"
 #include "bishengir/Dialect/HACC/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Pipelines/Passes.h"
@@ -472,10 +473,18 @@ void setupLowerTritonPipelineOptions(
         Twine(options.superBlockFactor));
   options.superBlockBarrier = config.getSuperBlockBarrier();
 #if BSPUB_DAVINCI_BISHENGIR
-  if (config.getSharedMemDynamicSize() < 122880 ||
-      config.getSharedMemDynamicSize() > 221184)
-    llvm::report_fatal_error(
-        "shared-mem-dynamic-size should range from 122880 to 221184.");
+  int minSharedMemSize = 122880;
+  int maxSharedMemSize = 221184;
+  if (hacc::utils::isAscend960(config.getTarget())) {
+    const auto *spec = hacc::lookupTargetSpec(config.getTarget()).value();
+    minSharedMemSize = (spec->UbSize - spec->MaximumDCacheSize) / 8;
+    maxSharedMemSize = (spec->UbSize - spec->MinimalDCacheSize) / 8;
+  }
+  if (config.getSharedMemDynamicSize() < minSharedMemSize ||
+      config.getSharedMemDynamicSize() > maxSharedMemSize)
+    llvm::report_fatal_error("shared-mem-dynamic-size should range from " +
+                             Twine(minSharedMemSize) + " to " +
+                             Twine(maxSharedMemSize) + ".");
   // max size of shared memory available for simt vf.
   options.sharedDynamicSize = config.getSharedMemDynamicSize();
   // encode our own compile optimization
