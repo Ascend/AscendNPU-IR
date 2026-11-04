@@ -968,6 +968,7 @@ REGISTE_DMA_LOAD(2, half);
 REGISTE_DMA_LOAD(2, float);
 REGISTE_DMA_LOAD(2, bfloat16_t);
 #if BISHENG_TPL_REGBASE
+REGISTE_DMA_LOAD_FP8(2, hifloat8_t);
 REGISTE_DMA_LOAD_FP8(2, float8_e4m3_t);
 REGISTE_DMA_LOAD_FP8(2, float8_e5m2_t);
 #endif
@@ -986,6 +987,7 @@ REGISTE_DMA_STORE(2, half);
 REGISTE_DMA_STORE(2, float);
 REGISTE_DMA_STORE(2, bfloat16_t);
 #if BISHENG_TPL_REGBASE
+REGISTE_DMA_STORE(2, hifloat8_t);
 REGISTE_DMA_STORE(2, float8_e4m3_t);
 REGISTE_DMA_STORE(2, float8_e5m2_t);
 #endif
@@ -1005,6 +1007,7 @@ REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, half)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, float)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, bfloat16_t)
 #if BISHENG_TPL_REGBASE
+REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, hifloat8_t);
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, float8_e4m3_t);
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, float8_e5m2_t);
 #endif
@@ -1019,6 +1022,7 @@ REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, int16_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, uint16_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, int32_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, uint32_t)
+REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, hifloat8_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, float8_e4m3_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, float8_e5m2_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, half)

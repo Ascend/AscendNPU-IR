@@ -46,6 +46,10 @@ template <typename T> struct PadValueType {
 };
 
 #if BISHENG_TPL_REGBASE
+template <> struct PadValueType<hifloat8_t> {
+  using type = float;
+};
+
 template <> struct PadValueType<float8_e4m3_t> {
   using type = float;
 };

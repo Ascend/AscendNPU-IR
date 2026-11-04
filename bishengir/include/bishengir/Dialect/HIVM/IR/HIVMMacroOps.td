@@ -398,8 +398,8 @@ def MmadL0Op
 class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
   HIVM_MacroOp<mnemonic, !listconcat([HIVMLocalMatmulLikeOpTraits], traits)> {
   let arguments = !con((ins
-      Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8, F16, BF16]>, "Matrix A">:$a,
-      Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8, F16, BF16]>, "Matrix B">:$b,
+      Arg<ShapedTypeOf<[HiF8, F8E4M3FN, F8E5M2, UI8, I8, F16, BF16]>, "Matrix A">:$a,
+      Arg<ShapedTypeOf<[HiF8, F8E4M3FN, F8E5M2, UI8, I8, F16, BF16]>, "Matrix B">:$b,
       Arg<ShapedTypeOf<[UI8, I8]>, "Matrix ScaleA">:$scaleA,
       Arg<ShapedTypeOf<[UI8, I8]>, "Matrix ScaleB">:$scaleB),
     HIVM_LocalMmadLikeOperands.localMmadLikeArgs,

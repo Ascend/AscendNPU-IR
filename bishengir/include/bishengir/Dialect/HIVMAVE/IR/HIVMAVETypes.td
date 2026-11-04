@@ -113,7 +113,7 @@ def AveByteMaskVector :
     "8-bit data vector (u8/s8/i8), total bits <= 2048">;
 
 def AveValidVector : AveVector<
-  [AnyI1, AnyI8, AnyI16, AnyI32, BF16, F16, F32, F8E4M3FN, F8E5M2]>
+  [AnyI1, AnyI8, AnyI16, AnyI32, BF16, F16, F32, HiF8, F8E4M3FN, F8E5M2]>
 {
   let summary = "vector<N x i1>, vector<N x si8>, vector<N x ui8>, vector<N x si16>, "
                 "vector<N x ui16>, vector<N x si32>, vector<N x ui32>, "
@@ -121,7 +121,7 @@ def AveValidVector : AveVector<
 }
 
 def AveExtValidVector : AveVector<
-  [AnyI1, AnyI8, AnyI16, AnyI32, AnyI64, F8E4M3FN, F8E5M2, BF16, F16, F32]>
+  [AnyI1, AnyI8, AnyI16, AnyI32, AnyI64, HiF8, F8E4M3FN, F8E5M2, BF16, F16, F32]>
 {
   let summary = "vector<N x i1>, vector<N x si8>, vector<N x ui8>, vector<N x si16>, "
                 "vector<N x ui16>, vector<N x si32>, vector<N x ui32>, "

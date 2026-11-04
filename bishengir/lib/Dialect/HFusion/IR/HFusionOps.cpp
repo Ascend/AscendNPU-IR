@@ -2469,6 +2469,11 @@ struct ConstantFolding : public OpRewritePattern<hfusion::CastOp> {
 
   LogicalResult matchAndRewrite(hfusion::CastOp castOp,
                                 PatternRewriter &rewriter) const override {
+    if (isa<HiFloat8Type>(
+            getElementTypeOrSelf(castOp.getInputs()[0].getType())) ||
+        isa<HiFloat8Type>(
+            getElementTypeOrSelf(castOp.getOutputs()[0].getType())))
+      return failure();
     auto output = castOp.getOutputs()[0];
     auto tensorEmptyOp = output.getDefiningOp<tensor::EmptyOp>();
     if (!tensorEmptyOp)

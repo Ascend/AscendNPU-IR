@@ -1495,6 +1495,8 @@ private:
       return hfusion::RoundMode::ODD;
     case (hivm::RoundMode::TRUNCWITHOVERFLOW):
       return hfusion::RoundMode::TRUNCWITHOVERFLOW;
+    case (hivm::RoundMode::HYBRID):
+      return hfusion::RoundMode::HYBRID;
     }
     llvm::report_fatal_error("unsupported hivm::RoundMode");
   }

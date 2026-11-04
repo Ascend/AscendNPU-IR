@@ -1265,6 +1265,14 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
       auto result = rewriter.create<Vldsx1V128BF16InstrOp>(loc, vtype, dataPtr,
                                                            offset, dist, mode);
       rewriter.replaceOp(load, result);
+    } else if (isa<HiFloat8Type>(elementType)) {
+      // Load raw bytes, then restore the semantic type. This is a bitwise
+      // transfer, not a conversion to an OCP FP8 format.
+      auto bytesTy = VectorType::get({256}, rewriter.getI8Type());
+      Value bytes = rewriter.create<Vldsx1V256S8InstrOp>(loc, bytesTy, dataPtr,
+                                                         offset, dist, mode);
+      Value result = rewriter.create<LLVM::BitcastOp>(loc, vtype, bytes);
+      rewriter.replaceOp(load, result);
     } else if (isa<Float8E4M3FNType>(elementType)) {
       auto result = rewriter.create<Vldsx1V256F8E4InstrOp>(loc, vtype, dataPtr,
                                                            offset, dist, mode);
@@ -1445,6 +1453,12 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
     } else if (dElemType.isBF16()) {
       auto result = rewriter.create<Vstsx1V128BF16InstrOp>(
           loc, data, dataPtr, offset, dist, mode, mask);
+      rewriter.replaceOp(store, result);
+    } else if (isa<HiFloat8Type>(dElemType)) {
+      auto bytesTy = VectorType::get({256}, rewriter.getI8Type());
+      Value bytes = rewriter.create<LLVM::BitcastOp>(loc, bytesTy, data);
+      auto result = rewriter.create<Vstsx1V256S8InstrOp>(
+          loc, bytes, dataPtr, offset, dist, mode, mask);
       rewriter.replaceOp(store, result);
     } else if (isa<Float8E4M3FNType>(dElemType)) {
       auto result = rewriter.create<Vstsx1V256F8E4InstrOp>(
@@ -2682,7 +2696,8 @@ struct HIVMBroadcastScalarOpLowering
       vbr = rewriter.create<VbrInstrOp>(loc, vlType, src);
     } else if (srcType.isF32()) {
       vbr = rewriter.create<VbrInstrOp>(loc, vlType, src);
-    } else if (srcType.isFloat8E4M3FN() || srcType.isFloat8E5M2()) {
+    } else if (isa<HiFloat8Type>(srcType) || srcType.isFloat8E4M3FN() ||
+               srcType.isFloat8E5M2()) {
       Type i8Type = rewriter.getI8Type();
       VectorType i8VLType = createVLVectorType(i8Type);
       Value i8Src = rewriter.create<LLVM::BitcastOp>(loc, i8Type, src);
@@ -2721,6 +2736,13 @@ static Value vdupLowerToIntrin(VFBroadcastVectorOp vecBrcOp,
   src =
       rewriter.create<UnrealizedConversionCastOp>(loc, srcTy, src).getResult(0);
   Value mask = getVLRegValueOrSelf(vecBrcOp.getMask(), rewriter);
+  if (isa<HiFloat8Type>(elementType)) {
+    auto bytesTy = VectorType::get({util::VL}, rewriter.getI8Type());
+    Value bytes = rewriter.create<LLVM::BitcastOp>(loc, bytesTy, src);
+    Value broadcast =
+        rewriter.create<IntrOpTy>(loc, bytesTy, bytes, mask, pModeCst);
+    return rewriter.create<LLVM::BitcastOp>(loc, newType, broadcast);
+  }
   if (elementType.isUnsignedInteger(8) || elementType.isSignedInteger(8) ||
       elementType.isSignlessInteger(8) || elementType.isUnsignedInteger(16) ||
       elementType.isSignedInteger(16) || elementType.isSignlessInteger(16) ||
@@ -2749,6 +2771,9 @@ struct HIVMVecBrcOpPattern
     else
       vdup = vdupLowerToIntrin<VdupmZInstrOp>(vecBrcOp, rewriter);
 
+    if (!vdup)
+      return rewriter.notifyMatchFailure(vecBrcOp,
+                                         "unsupported vector broadcast type");
     rewriter.replaceOp(vecBrcOp, vdup);
     return success();
   }
@@ -2802,6 +2827,9 @@ struct HIVMTypeConvertionOpLowering
       if (outElemType.isF32()) {
         if (inElemType.isBF16()) {
           newOp = rewriter.create<VcvtffBF162F32InstrOp>(
+              loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
+        } else if (isa<HiFloat8Type>(inElemType)) {
+          newOp = rewriter.create<VcvtffHiF82F32InstrOp>(
               loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
         } else if (isa<Float8E4M3FNType>(inElemType)) {
           newOp = rewriter.create<VcvtffF8E4M32F32InstrOp>(
@@ -3005,6 +3033,16 @@ struct HIVMTypeConvertionOpLowering
           newOp = rewriter.create<VcvtffF322F16InstrOp>(
               loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
               cstValue(srcOp.getSat()), cstValue(srcOp.getPart()));
+        else if (isa<HiFloat8Type>(outElemType)) {
+          auto mode = srcOp.getRnd();
+          if (mode != hivm::RoundMode::ROUND && mode != hivm::RoundMode::HYBRID)
+            return srcOp.emitError("HiFloat8 supports only ROUND or HYBRID");
+          // HIVM HYBRID is 7; CCE ROUND_HYBRID is 6.
+          auto cceRnd = mode == hivm::RoundMode::HYBRID ? 6u : 1u;
+          newOp = rewriter.create<VcvtffF322HiF8InstrOp>(
+              loc, dstVLVectorTy, srcCasted, mask, cstValue(cceRnd),
+              cstValue(srcOp.getSat()), cstValue(srcOp.getPart()));
+        }
         else if (isa<Float8E4M3FNType>(outElemType))
           newOp = rewriter.create<VcvtffF322F8E4M3InstrOp>(
               loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
@@ -3132,7 +3170,9 @@ struct HIVMTypeConvertionOpLowering
           loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
     }
     if (!newOp)
-      llvm::report_fatal_error("Unsupported type conversion op.");
+      return rewriter.notifyMatchFailure(
+          srcOp,
+          "unsupported type conversion; use FP32 as the HiFloat8 bridge");
 
     UnrealizedConversionCastOp resultCasted =
         rewriter.create<UnrealizedConversionCastOp>(loc, resType,
@@ -5275,6 +5315,7 @@ struct HIVMAVEToAVEIntrinPass
 
     LLVMConversionTarget target(getContext());
     target.addLegalOp<LLVM::BitcastOp>();
+    target.addIllegalOp<VFExtFOp>();
     target.addLegalDialect<hivm_regbaseintrins::HIVMRegbaseIntrinsDialect>();
     target.addIllegalOp<PregPackOp, PregUnpackOp, PregInterleaveOp,
                         PregDeinterleaveOp, VFRegisterGatherOp,

@@ -38,6 +38,7 @@ DEFINE_VECTOR_MAPPING(float, vector_f32);
 DEFINE_VECTOR_MAPPING(half, vector_f16);
 DEFINE_VECTOR_MAPPING(bfloat16_t, vector_bf16);
 #if BISHENG_TPL_REGBASE
+DEFINE_VECTOR_MAPPING(hifloat8_t, vector_hif8);
 DEFINE_VECTOR_MAPPING(float8_e4m3_t, vector_f8e4m3);
 DEFINE_VECTOR_MAPPING(float8_e5m2_t, vector_f8e5m2);
 // 64-bit integers
@@ -74,6 +75,7 @@ using VectorReg = typename VectorTy<T>::type;
     (MASK) = plt_b32(VALUE, POST_UPDATE);                                      \
   else if constexpr (std::is_same<Type, int8_t>::value ||                      \
                      std::is_same<Type, uint8_t>::value ||                     \
+                     std::is_same<Type, hifloat8_t>::value ||                  \
                      std::is_same<Type, float8_e4m3_t>::value ||               \
                      std::is_same<Type, float8_e5m2_t>::value)                 \
     (MASK) = plt_b8(VALUE, POST_UPDATE);                                       \

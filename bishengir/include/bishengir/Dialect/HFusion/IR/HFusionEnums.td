@@ -126,7 +126,8 @@ def RoundMode : I32EnumAttr<"RoundMode", "", [
   I32EnumAttrCase<"CEIL", 3, "ceil">,
   I32EnumAttrCase<"TRUNC", 4, "trunc">,
   I32EnumAttrCase<"ODD", 5, "odd">,
-  I32EnumAttrCase<"TRUNCWITHOVERFLOW", 6, "truncwithoverflow">
+  I32EnumAttrCase<"TRUNCWITHOVERFLOW", 6, "truncwithoverflow">,
+  I32EnumAttrCase<"HYBRID", 7, "hybrid">
 ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::hfusion";
