@@ -53,6 +53,9 @@ public:
   Operation *getNode(unsigned i) const { return nodes[i]; }
   std::optional<unsigned> getIndex(Operation *op) const;
   ArrayRef<unsigned> getSuccessors(unsigned i) const { return intra[i]; }
+  ArrayRef<unsigned> getPredecessors(unsigned i) const {
+    return predecessors[i];
+  }
   SmallVector<SmallVector<Operation *>> formGroups() const;
   void printSummary(llvm::raw_ostream &os,
                     ArrayRef<SmallVector<Operation *>> groups) const;
@@ -90,6 +93,7 @@ private:
   SmallVector<Operation *> nodes;
   DenseMap<Operation *, unsigned> index;
   SmallVector<SmallVector<unsigned>> intra;
+  SmallVector<SmallVector<unsigned>> predecessors;
   SmallVector<CarriedEdge> carried;
 };
 
@@ -117,9 +121,9 @@ public:
   // that has an incompatible dependency.
   void applyCrossCoreTransferBackwardRule();
 
-  // Rule 4: Concatenate adjacent scopes of the same concrete core type in the
-  // loop body, preserving operation order and fusing compatible conditionals.
-  void applyAdjacentSameCoreRule();
+  // Rule 4: Merge same-core scopes connected by an intra-iteration edge or
+  // sharing a predecessor or successor in the loop body.
+  void applyGraphSameCoreRule();
 
 private:
   static bool isCrossCoreTransferOp(Operation *op);
@@ -303,6 +307,15 @@ void ScopeDependenceGraph::buildIntraEdges() {
     for (unsigned j = i + 1; j < n; ++j)
       if (hasMemConflict(mem[i], mem[j]))
         intra[i].push_back(j);
+
+  predecessors.resize(n);
+  for (unsigned i = 0; i < n; ++i) {
+    llvm::sort(intra[i]);
+    intra[i].erase(std::unique(intra[i].begin(), intra[i].end()),
+                   intra[i].end());
+    for (unsigned successor : intra[i])
+      predecessors[successor].push_back(i);
+  }
 }
 
 void ScopeDependenceGraph::buildCarriedEdges() {
@@ -887,25 +900,62 @@ void LoopScopeMerger::applyCrossCoreTransferBackwardRule() {
   }
 }
 
-void LoopScopeMerger::applyAdjacentSameCoreRule() {
-  ScopeOp previous;
-  for (Operation &op : llvm::make_early_inc_range(*loopOp.getBody())) {
-    auto current = dyn_cast<ScopeOp>(&op);
-    auto core = current ? getScopeCoreType(current) : std::nullopt;
-    if (!current || current->hasAttr(kCVMergedScopeAttrName) || !core ||
-        (*core != TCoreType::CUBE && *core != TCoreType::VECTOR)) {
-      previous = ScopeOp();
-      continue;
-    }
+void LoopScopeMerger::applyGraphSameCoreRule() {
+  while (true) {
+    ScopeDependenceGraph graph(loopOp, /*withCarriedEdges=*/false);
+    auto tryMerge = [&](unsigned first, unsigned second) {
+      auto firstScope = dyn_cast<ScopeOp>(graph.getNode(first));
+      auto secondScope = dyn_cast<ScopeOp>(graph.getNode(second));
+      if (!isEligibleForCoreMerge(firstScope) ||
+          !isEligibleForCoreMerge(secondScope))
+        return false;
+      auto core = getScopeCoreType(firstScope);
+      if ((*core != TCoreType::CUBE && *core != TCoreType::VECTOR) ||
+          core != getScopeCoreType(secondScope))
+        return false;
 
-    if (previous && getScopeCoreType(previous) == core) {
-      // The shared helper also reconstructs conditionals split by outlining.
-      if (ScopeOp merged = mergeScopes(previous, current, current)) {
-        previous = merged;
+      SmallVector<Operation *> members{firstScope, secondScope};
+      auto wrapper = wrapGroupInScope(loopOp, members);
+      if (failed(wrapper))
+        return false;
+      ScopeOp merged = mergeScopes(firstScope, secondScope, secondScope);
+      assert(merged && "validated same-core scopes must merge");
+      for (NamedAttribute attr : merged->getAttrs())
+        (*wrapper)->setAttr(attr.getName(), attr.getValue());
+      collapseSingleChildMergedScope(*wrapper);
+      return true;
+    };
+
+    auto tryMergeNeighbors = [&](ArrayRef<unsigned> neighbors) {
+      for (unsigned i = 0; i < neighbors.size(); ++i)
+        for (unsigned j = i + 1; j < neighbors.size(); ++j)
+          if (tryMerge(neighbors[i], neighbors[j]))
+            return true;
+      return false;
+    };
+
+    bool changed = false;
+    for (unsigned i = 0; i < graph.getSize(); ++i) {
+      // Wrappers and scopes with other core types can anchor a fan-in or
+      // fan-out without becoming members of the merge themselves.
+      if (!isa<ScopeOp>(graph.getNode(i)))
         continue;
+      for (unsigned successor : graph.getSuccessors(i)) {
+        if (tryMerge(i, successor)) {
+          changed = true;
+          break;
+        }
+      }
+      if (changed || tryMergeNeighbors(graph.getPredecessors(i)) ||
+          tryMergeNeighbors(graph.getSuccessors(i))) {
+        changed = true;
+        break;
       }
     }
-    previous = current;
+    if (!changed)
+      return;
+    // A successful contraction erases nodes. Rebuild before any further
+    // candidate discovery, including candidates enabled by the last merge.
   }
 }
 
@@ -923,7 +973,7 @@ void MergeCVScopesPass::runOnOperation() {
       &LoopScopeMerger::applyLoopCarriedDepGroupingRule,
       &LoopScopeMerger::applyMergedScopeSameCoreRule,
       &LoopScopeMerger::applyCrossCoreTransferBackwardRule,
-      &LoopScopeMerger::applyAdjacentSameCoreRule,
+      &LoopScopeMerger::applyGraphSameCoreRule,
   };
 
   SmallVector<scf::ForOp> targetLoops;
