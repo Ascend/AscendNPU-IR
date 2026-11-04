@@ -289,10 +289,7 @@ bool isIgnoredBetweenOp(Operation *op) { return isa<hivm::AnchorOp>(op); }
 // lock resources, and pipe barriers from explicit barriers or block-all sync.
 bool containsVFMergeBarrier(Operation *op) {
   WalkResult result = op->walk([](Operation *nestedOp) {
-    if (isa<hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp, hivm::SyncBlockOp,
-            hivm::SyncIntraBlockSetOp, hivm::SyncIntraBlockWaitOp,
-            hivm::CreateSyncBlockLockOp, hivm::SyncBlockLockOp,
-            hivm::SyncBlockUnlockOp, hivm::PipeBarrierOp>(nestedOp))
+    if (nestedOp->hasTrait<OpTrait::HIVMSyncOpTrait>())
       return WalkResult::interrupt();
     return WalkResult::advance();
   });

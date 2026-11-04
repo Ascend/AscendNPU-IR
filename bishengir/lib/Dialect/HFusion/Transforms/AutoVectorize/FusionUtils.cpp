@@ -106,6 +106,9 @@ bool isNonVectorizableOp(Operation *op) {
     return false;
   }
 
+  if (op->hasTrait<OpTrait::HIVMSyncOpTrait>())
+    return true;
+
   return isa<hfusion::LoadOp, hfusion::StoreOp, hfusion::ReduceWithIndexOp,
              hfusion::GatherOp, hfusion::MulExtOp, hfusion::MulExtUiOp,
              hfusion::CumsumOp, hfusion::CumprodOp, hfusion::CummaxOp,
@@ -115,13 +118,9 @@ bool isNonVectorizableOp(Operation *op) {
              tensor::ExtractSliceOp, tensor::CastOp, tensor::CollapseShapeOp,
              tensor::ExpandShapeOp, tensor::ConcatOp, hivm::CopyOp,
              hivm::CustomOp, hivm::CustomMacroOp, hivm::DebugOp, hivm::StoreOp,
-             hivm::BitcastOp, hivm::VGatherOp, hivm::SyncBlockOp, hivm::VSortOp,
-             hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
-             hivm::SyncIntraBlockSetOp, hivm::SyncIntraBlockWaitOp,
-             hivm::CreateSyncBlockLockOp, hivm::SyncBlockLockOp,
-             hivm::SyncBlockUnlockOp, scf::WhileOp, scf::ForOp, scf::IfOp,
-             scope::ScopeOp, func::CallOp, memref::CopyOp,
-             bufferization::MaterializeInDestinationOp>(op);
+             hivm::BitcastOp, hivm::VGatherOp, hivm::VSortOp, scf::WhileOp,
+             scf::ForOp, scf::IfOp, scope::ScopeOp, func::CallOp,
+             memref::CopyOp, bufferization::MaterializeInDestinationOp>(op);
 }
 
 bool isFusableOp(Operation *op) {
