@@ -1207,6 +1207,12 @@ void DimensionAnalyzer::markDimensions() {
             [&](auto op) { markCustomReductionDims(op); })
         .Case<tensor::ExtractSliceOp, tensor::InsertSliceOp>(
             [&](auto op) { processSlice(op); })
+        .Case<tensor::CollapseShapeOp, memref::CollapseShapeOp>([&](auto op) {
+          markReshapedInner(op.getSrc(), op.getReassociationIndices());
+        })
+        .Case<tensor::ExpandShapeOp>([&](auto op) {
+          markReshapedInner(op.getResult(), op.getReassociationIndices());
+        })
         .Case<hivm::FixpipeOp>([&](auto op) { markFixpipeTilingPriority(op); })
         .Case<hivm::VTransposeOp>([&](auto op) { markTransposedDim(op); })
         .Case<memref::AllocOp>([&](auto op) {
@@ -1278,6 +1284,35 @@ void DimensionAnalyzer::tryMarkReduceDim(int64_t structuralIdx,
 void DimensionAnalyzer::tryMarkReduceDimShape(int64_t shapeIdx) {
   if (!tilingDimKindMapForShape.contains(shapeIdx))
     tilingDimKindMapForShape[shapeIdx] = TilingDimensionKind::Reduce;
+}
+
+void DimensionAnalyzer::markReshapedInner(
+    Value higherRank, ArrayRef<ReassociationIndices> reassoc) {
+  auto higherType = dyn_cast<ShapedType>(higherRank.getType());
+  if (!higherType || !higherType.hasRank())
+    return;
+  auto shape = higherType.getShape();
+  createDummyRefIfNotExist({higherRank});
+  auto args = getValueDimIndices(higherRank);
+  for (ArrayRef<int64_t> group : reassoc) {
+    bool seenNonUnit = false;
+    for (int64_t idx : group) {
+      if (idx < 0 || static_cast<size_t>(idx) >= shape.size() ||
+          shape[idx] == 1)
+        continue;
+      if (!seenNonUnit) {
+        seenNonUnit = true;
+        continue;
+      }
+      auto structuralIdx = structuralDsu_->find(args[idx]);
+      auto shapeIdx = equivalentDsu_->find(args[idx]);
+      tilingDimKindMapForCollapser[structuralIdx] =
+          TilingDimensionKind::ReshapedInner;
+      tilingDimKindMapForShape[shapeIdx] = TilingDimensionKind::ReshapedInner;
+      LDBG("Dim " << idx << "(" << structuralIdx
+                  << ") is marked as ReshapedInner");
+    }
+  }
 }
 
 void DimensionAnalyzer::markUnalignedDim(hivm::CopyOp op) {

@@ -89,7 +89,8 @@ public:
   using Dimension = std::pair<Value, int64_t>;
 
   /// Constructor that takes the operation to flatten.
-  explicit DimensionAnalyzerBase(Operation *op, DimensionAnalyzerOptions options = {});
+  explicit DimensionAnalyzerBase(Operation *op,
+                                 DimensionAnalyzerOptions options = {});
   virtual ~DimensionAnalyzerBase() = default;
 
   virtual LogicalResult initialize();
@@ -270,7 +271,8 @@ protected:
   ///
   /// This DSU is value-level (over \c valueToDimIndicesIndex_ ids) and is
   /// intentionally separate from dimension-level DSUs (\c equivalentDsu_ and
-  /// \c structuralDsu_).
+  /// \c structuralDsu_). Skips merging when either value is a function entry
+  /// block argument with unbounded rank-1 memref type (\c memref<?xT>).
   void joinValueGroup(Value a, Value b);
 
   /// Get the value-group DSU representative index for \p v.
@@ -377,7 +379,8 @@ protected:
   bool isHeadOperation(Operation *op);
   bool isTailOperation(Operation *op);
   void separateMemref(Value memrefVal);
-  void separateGroup(Value val, BitVector contiguousMask, ArrayRef<int64_t> shape);
+  void separateGroup(Value val, BitVector contiguousMask,
+                     ArrayRef<int64_t> shape);
 
 private:
   void combineEmptyOp(Value arg);
