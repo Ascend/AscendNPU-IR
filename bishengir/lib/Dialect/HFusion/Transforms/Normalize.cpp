@@ -2588,8 +2588,7 @@ public:
     assert(!inType.isInteger() && "Cast in floor/ceil mode doesn't support "
                                   "integer type input");
     OpBuilder builder(op);
-    Value originalSrc = op.getInputs()[0];
-    Value src = originalSrc;
+    Value src = op.getInputs()[0];
     hfusion::RoundMode roundMode = op.getFun() == linalg::UnaryFn::ceil
                                        ? hfusion::RoundMode::CEIL
                                        : hfusion::RoundMode::FLOOR;
@@ -2607,19 +2606,9 @@ public:
       src = hfusion::castTo(builder, intermediate, rewriter.getF32Type(),
                             roundMode);
     }
-    Value result =
+    auto castOp =
         hfusion::castTo(builder, src, outType, roundMode, op.getOutputs()[0]);
-    // The cast above rounds through an integer intermediate, which turns
-    // -0.0 into +0.0. Restore the sign bit from the original input for the
-    // types supported by the HFusion copysign lowering.
-    if (outType.isF16() || outType.isBF16() || outType.isF32()) {
-      Value signSrc = originalSrc;
-      if (inType != outType)
-        signSrc = hfusion::castTo(builder, originalSrc, outType,
-                                  hfusion::RoundMode::ROUND);
-      result = buildCopysign(builder, op.getLoc(), result, signSrc);
-    }
-    rewriter.replaceOp(op, result);
+    rewriter.replaceOp(op, castOp);
     return success();
   }
 };
