@@ -1760,3 +1760,142 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9599">} {
     return
   }
 }
+
+// -----
+
+// The A3 fixpipe DMA also has no column-stride field: it only programs the
+// destination row stride (dst_D) and drains each row contiguously. Folding a
+// store whose dst has a dynamic (or non-unit) last-dim stride would silently
+// drop the column stride; the store must stay unfolded.
+// CHECK-LABEL: func.func @no_fold_store_dynamic_column_stride
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<16x32xf32>) outs(%{{.*}} : tensor<16x32xf32>) -> tensor<16x32xf32>
+// CHECK: hivm.hir.store ins(%{{.*}} : tensor<16x32xf32>) outs(%{{.*}} : memref<16x32xf32, strided<[?, ?], offset: ?>>)
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
+  func.func @no_fold_store_dynamic_column_stride(
+      %mmad_res: tensor<16x32xf32>,
+      %fixpipe_dst: tensor<16x32xf32>,
+      %store_dst: memref<16x32xf32, strided<[?, ?], offset: ?>>) {
+    %fixpipe = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%mmad_res : tensor<16x32xf32>) outs(%fixpipe_dst : tensor<16x32xf32>)
+        -> tensor<16x32xf32>
+    hivm.hir.store ins(%fixpipe : tensor<16x32xf32>)
+        outs(%store_dst : memref<16x32xf32, strided<[?, ?], offset: ?>>)
+    return
+  }
+}
+
+// -----
+
+// A3: statically known non-unit column stride must stay unfolded.
+// CHECK-LABEL: func.func @no_fold_store_static_column_stride
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<16x32xf32>) outs(%{{.*}} : tensor<16x32xf32>) -> tensor<16x32xf32>
+// CHECK: hivm.hir.store ins(%{{.*}} : tensor<16x32xf32>) outs(%{{.*}} : memref<16x32xf32, strided<[96, 3]>>)
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
+  func.func @no_fold_store_static_column_stride(
+      %mmad_res: tensor<16x32xf32>,
+      %fixpipe_dst: tensor<16x32xf32>,
+      %store_dst: memref<16x32xf32, strided<[96, 3]>>) {
+    %fixpipe = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%mmad_res : tensor<16x32xf32>) outs(%fixpipe_dst : tensor<16x32xf32>)
+        -> tensor<16x32xf32>
+    hivm.hir.store ins(%fixpipe : tensor<16x32xf32>)
+        outs(%store_dst : memref<16x32xf32, strided<[96, 3]>>)
+    return
+  }
+}
+
+// -----
+
+// A3 positive control: a non-unit row stride with a unit column stride is the
+// supported row-padded layout.
+// CHECK-LABEL: func.func @fold_store_static_row_stride_unit_column
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<16x32xf32>) outs(%{{.*}} : memref<16x32xf32, strided<[96, 1]>>)
+// CHECK-NOT: hivm.hir.store
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
+  func.func @fold_store_static_row_stride_unit_column(
+      %mmad_res: tensor<16x32xf32>,
+      %fixpipe_dst: tensor<16x32xf32>,
+      %store_dst: memref<16x32xf32, strided<[96, 1]>>) {
+    %fixpipe = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%mmad_res : tensor<16x32xf32>) outs(%fixpipe_dst : tensor<16x32xf32>)
+        -> tensor<16x32xf32>
+    hivm.hir.store ins(%fixpipe : tensor<16x32xf32>)
+        outs(%store_dst : memref<16x32xf32, strided<[96, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// A3 positive control: dynamic row stride with statically unit column stride.
+// CHECK-LABEL: func.func @fold_store_unit_column_stride
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<16x32xf32>) outs(%{{.*}} : memref<16x32xf32, strided<[?, 1], offset: ?>>)
+// CHECK-NOT: hivm.hir.store
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
+  func.func @fold_store_unit_column_stride(
+      %mmad_res: tensor<16x32xf32>,
+      %fixpipe_dst: tensor<16x32xf32>,
+      %store_dst: memref<16x32xf32, strided<[?, 1], offset: ?>>) {
+    %fixpipe = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%mmad_res : tensor<16x32xf32>) outs(%fixpipe_dst : tensor<16x32xf32>)
+        -> tensor<16x32xf32>
+    hivm.hir.store ins(%fixpipe : tensor<16x32xf32>)
+        outs(%store_dst : memref<16x32xf32, strided<[?, 1], offset: ?>>)
+    return
+  }
+}
+
+// -----
+
+// A3: a cast-erased unit column stride is recovered through the chain.
+// CHECK-LABEL: func.func @fold_store_cast_recovers_unit_column_stride
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<16x32xf32>) outs(%{{.*}} : memref<16x32xf32, strided<[?, 1], offset: ?>>)
+// CHECK-NOT: hivm.hir.store
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
+  func.func @fold_store_cast_recovers_unit_column_stride(
+      %mmad_res: tensor<16x32xf32>,
+      %fixpipe_dst: tensor<16x32xf32>,
+      %gm: memref<16x32xf32, strided<[?, 1], offset: ?>>) {
+    %cast = memref.cast %gm : memref<16x32xf32, strided<[?, 1], offset: ?>> to memref<16x32xf32, strided<[?, ?], offset: ?>>
+    %fixpipe = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%mmad_res : tensor<16x32xf32>) outs(%fixpipe_dst : tensor<16x32xf32>)
+        -> tensor<16x32xf32>
+    hivm.hir.store ins(%fixpipe : tensor<16x32xf32>)
+        outs(%cast : memref<16x32xf32, strided<[?, ?], offset: ?>>)
+    return
+  }
+}
+
+// -----
+
+// A3: batched destination must check the matrix column stride, not the
+// batch/row stride.
+// CHECK-LABEL: func.func @no_fold_batched_column_stride
+// CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {{.*}} -> tensor<2x16x32xf32>
+// CHECK: hivm.hir.store ins(%[[FIX]] : tensor<2x16x32xf32>)
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
+  func.func @no_fold_batched_column_stride(
+      %src: tensor<2x16x32xf32>, %init: tensor<2x16x32xf32>,
+      %gm: memref<2x16x32xf32, strided<[1536, 96, 3]>>) {
+    %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%src : tensor<2x16x32xf32>) outs(%init : tensor<2x16x32xf32>) -> tensor<2x16x32xf32>
+    hivm.hir.store ins(%fix : tensor<2x16x32xf32>) outs(%gm : memref<2x16x32xf32, strided<[1536, 96, 3]>>)
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @fold_batched_unit_column_stride
+// CHECK: hivm.hir.fixpipe {{.*}}outs(%{{.*}} : memref<2x16x32xf32, strided<[?, ?, 1], offset: ?>>)
+// CHECK-NOT: hivm.hir.store
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
+  func.func @fold_batched_unit_column_stride(
+      %src: tensor<2x16x32xf32>, %init: tensor<2x16x32xf32>,
+      %gm: memref<2x16x32xf32, strided<[?, ?, 1], offset: ?>>) {
+    %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%src : tensor<2x16x32xf32>) outs(%init : tensor<2x16x32xf32>) -> tensor<2x16x32xf32>
+    hivm.hir.store ins(%fix : tensor<2x16x32xf32>) outs(%gm : memref<2x16x32xf32, strided<[?, ?, 1], offset: ?>>)
+    return
+  }
+}

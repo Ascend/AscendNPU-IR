@@ -171,11 +171,11 @@ private:
       inlineFixpipeWithRelu(rewriter, loc, op, reluOp);
     } else if (auto storeOp = llvm::dyn_cast_if_present<hivm::StoreOp>(curOp)) {
       //   3. store or layout
-      if (isFixpipeStoreInlinable(storeOp)) {
-        matched = true;
-        inlineFixpipeWithStore(rewriter, loc, op, storeOp,
-                               op.getDpsInputOperand(0)->get());
-      }
+      if (failed(matchFixpipeStoreInlinable(rewriter, op, storeOp)))
+        return failure();
+      matched = true;
+      inlineFixpipeWithStore(rewriter, loc, op, storeOp,
+                             op.getDpsInputOperand(0)->get());
     } else if (auto vMulOp = dyn_cast<hivm::VMulOp>(curOp);
                vMulOp && isOnRegBasedArch(op) &&
                (inlineQuantScale || hasQuantScaleCompileHint(vMulOp)) &&

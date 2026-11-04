@@ -80,6 +80,21 @@ resolveUnitFlagMode(UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
   return unit_flag_mode;
 }
 
+// ND fixpipe DMA has no column-stride field. Reject unsupported descriptors
+// even when they bypass the compiler's store-fusion legality check.
+template <typename T, size_t Dim>
+__aicore__ __attribute__((always_inline)) void
+check_fixpipe_nd_dst_last_dim_contiguous(const memref_t<T, Dim> *dst) {
+  static_assert(Dim >= 1, "fixpipe ND dst must have at least one dimension");
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  assert((dst->strides[Dim - 1] == 1) &&
+         "Last dimension of fixpipe ND dst must be contiguous.");
+#else
+  if (dst->strides[Dim - 1] != 1)
+    trap();
+#endif
+}
+
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_gm_normal_2d_to_2d_core(
@@ -433,6 +448,7 @@ copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(
   if (is_no_op<2>(gm->sizes)) {
     return;
   }
+  check_fixpipe_nd_dst_last_dim_contiguous(gm);
 
   set_nd_para(1, 1, 1);
   set_pre_quant_scale<DST_TYPE>(quant_scale);
@@ -473,6 +489,7 @@ copy_matrix_cc_to_gm_nz2nd_5d_to_3d_core(
   uint16_t m_size = gm->sizes[1];
   uint16_t n_size = gm->sizes[2];
   uint32_t dst_D = gm->strides[1];
+  check_fixpipe_nd_dst_last_dim_contiguous(gm);
 
   // src_nd_stride is counted in C0 blocks and dst_nd_stride in elements, so
   // src_nd_stride works out to align(M) * align(N) / C0, i.e. m_tile_ceil * N1.
@@ -505,8 +522,8 @@ copy_matrix_cc_to_gm_nz2nd_5d_to_3d_core(
     // The unit flag is a one-shot "cube has drained" barrier. Once the first
     // fixpipe has waited on it the whole L0C range is stable, so the remaining
     // fixpipes of this group must not wait again or they would deadlock.
-    uint8_t unit_flag = static_cast<uint8_t>(i == 0 ? unit_flag_mode
-                                                    : UNIT_FLAG::DISABLED);
+    uint8_t unit_flag =
+        static_cast<uint8_t>(i == 0 ? unit_flag_mode : UNIT_FLAG::DISABLED);
     copy_matrix_cc_to_gm_intrin(
         copy_matrix_cc_to_gm_intrin_args<SRC_TYPE, DST_TYPE>{
             gm_ptr + i * dst_batch_stride, l0c_ptr + i * src_batch_stride,
@@ -749,6 +766,7 @@ copy_matrix_cc_to_gm_nz2dn_4d_to_2d_core(
   uint16_t n_size = gm->sizes[0];
   uint16_t m_size = gm->sizes[1];
   uint32_t dst_D = gm->strides[0]; // dstStride_dst_D
+  check_fixpipe_nd_dst_last_dim_contiguous(gm);
 
   set_nd_para(1, 1, 1);
   set_pre_quant_scale<DST_TYPE>(quant_scale);

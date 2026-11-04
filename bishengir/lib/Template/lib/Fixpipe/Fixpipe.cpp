@@ -39,6 +39,21 @@ resolveUnitFlagMode(UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
   return unit_flag_mode;
 }
 
+// ND fixpipe DMA has no column-stride field. Reject unsupported descriptors
+// even when they bypass the compiler's store-fusion legality check.
+template <typename T, size_t Dim>
+__aicore__ __attribute__((always_inline)) void
+check_fixpipe_nd_dst_last_dim_contiguous(const memref_t<T, Dim> *dst) {
+  static_assert(Dim >= 1, "fixpipe ND dst must have at least one dimension");
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  assert((dst->strides[Dim - 1] == 1) &&
+         "Last dimension of fixpipe ND dst must be contiguous.");
+#else
+  if (dst->strides[Dim - 1] != 1)
+    trap();
+#endif
+}
+
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_gm_normal_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
@@ -99,6 +114,7 @@ copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   if (is_no_op<2>(gm->sizes)) {
     return;
   }
+  check_fixpipe_nd_dst_last_dim_contiguous(gm);
 
   set_nd_para(1, 1, 1);
   unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
