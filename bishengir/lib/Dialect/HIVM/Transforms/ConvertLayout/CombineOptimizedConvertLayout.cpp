@@ -664,6 +664,20 @@ struct FoldTensorLoadToLoadMXScalePattern
   }
 };
 
+/// Returns the data_layout declared in the custom op's arg_attrs for the
+/// operand at `operandIndex` (inputs then outputs), or nullptr if the operand
+/// has no declared data_layout.
+static DataLayoutAttr getCustomOpOperandLayout(CustomOp customOp,
+                                               unsigned operandIndex) {
+  auto argAttrs = customOp->getAttrOfType<ArrayAttr>(CustomOp::kArgAttrsName);
+  if (!argAttrs || operandIndex >= argAttrs.size())
+    return nullptr;
+  auto dict = dyn_cast<DictionaryAttr>(argAttrs[operandIndex]);
+  if (!dict)
+    return nullptr;
+  return dict.getAs<DataLayoutAttr>(CustomLikeOpInterface::kDataLayoutName);
+}
+
 //===----------------------------------------------------------------------===//
 // Fold ConvertLayout + Fixpipe
 //
@@ -697,29 +711,54 @@ struct FoldConvertLayoutFixpipePattern
     bool changed = false;
     for (Operation *user :
          llvm::make_early_inc_range(op.getResult().getUsers())) {
-      auto fixpipeOp = dyn_cast<FixpipeOp>(user);
-      if (!fixpipeOp)
-        continue;
+      if (auto fixpipeOp = dyn_cast<FixpipeOp>(user)) {
+        if (fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2ND &&
+            fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2DN &&
+            fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2NZ)
+          continue;
 
-      if (fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2ND &&
-          fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2DN &&
-          fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2NZ)
+        rewriter.modifyOpInPlace(fixpipeOp, [&]() {
+          if (fixpipeOp.getDmaMode() == FixpipeDMAMode::NZ2NZ &&
+              hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>()) &&
+              needChannelSplit(op, fixpipeOp)) {
+            fixpipeOp.setChannelSplit(true);
+          }
+          fixpipeOp.getSrcMutable().assign(op.getSource());
+        });
+        changed = true;
         continue;
+      }
 
-      rewriter.modifyOpInPlace(fixpipeOp, [&]() {
-        if (fixpipeOp.getDmaMode() == FixpipeDMAMode::NZ2NZ &&
-            hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>()) &&
-            needChannelSplit(op, fixpipeOp)) {
-          fixpipeOp.setChannelSplit(true);
+      // A hivm.custom op on the FIX pipe implements fixpipe semantics (e.g.
+      // "fixpipe_nz2dn_*" symbols). Treat it like a FixpipeOp and feed the
+      // fractal tensor directly, but only when the operand's declared
+      // data_layout matches the convert_layout source layout — i.e. the
+      // custom op already expects the fractal layout, making the
+      // Fractal->ND conversion redundant.
+      if (auto customOp = dyn_cast<CustomOp>(user)) {
+        if (customOp.getPipe() != PIPE::PIPE_FIX)
+          continue;
+        for (OpOperand &operand : customOp->getOpOperands()) {
+          if (operand.get() != op.getResult())
+            continue;
+          // Only fold when the operand's declared data_layout matches the
+          // convert_layout source layout — i.e. the custom op already expects
+          // the fractal layout, making the Fractal->ND conversion redundant.
+          auto operandLayout =
+              getCustomOpOperandLayout(customOp, operand.getOperandNumber());
+          if (!operandLayout ||
+              operandLayout.getDataLayout() != srcLayout.getDataLayout())
+            continue;
+          rewriter.modifyOpInPlace(customOp,
+                                   [&]() { operand.assign(op.getSource()); });
+          changed = true;
         }
-        fixpipeOp.getSrcMutable().assign(op.getSource());
-      });
-      changed = true;
+      }
     }
 
     if (!changed)
-      return rewriter.notifyMatchFailure(op,
-                                         "no compatible fixpipe user to fold");
+      return rewriter.notifyMatchFailure(
+          op, "no compatible fixpipe/custom user to fold");
 
     if (op.getResult().use_empty())
       rewriter.eraseOp(op);
@@ -919,6 +958,121 @@ struct FoldFixpipeNz2NzToFractalConvertLayoutPattern
 
     rewriter.replaceOp(op, newFixpipe.getResultTensor());
     rewriter.eraseOp(fixpipeOp);
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// Fold CustomOp + convert_layout
+//
+// A CustomOp result may already carry the target layout declared in its
+// arg_attrs (e.g. a DMA-like custom op with data_layout = Fractal on its
+// output). A convert_layout inserted after such a custom op is redundant
+// when the custom op's declared output layout matches the convert_layout's
+// dstLayout.
+//
+// Matches:
+//   %custom = hivm.hir.custom {arg_attrs = [..., {data_layout = Fractal}]}
+//       ... -> tensor<4D>
+//   %conv = hivm.hir.convert_layout %custom {srcLayout = ND, dstLayout =
+//   Fractal}
+//       -> tensor<4D>
+//
+// Transforms to:
+//   %custom = hivm.hir.custom {arg_attrs = [..., {data_layout = Fractal}]}
+//       ... -> tensor<4D>
+//===----------------------------------------------------------------------===//
+
+struct FoldCustomOpConvertLayoutPattern
+    : public OpRewritePattern<ConvertLayoutOp> {
+  FoldCustomOpConvertLayoutPattern(MLIRContext *context)
+      : OpRewritePattern(context) {}
+
+  LogicalResult matchAndRewrite(ConvertLayoutOp op,
+                                PatternRewriter &rewriter) const override {
+    auto customOp = op.getSource().getDefiningOp<CustomOp>();
+    if (!customOp)
+      return rewriter.notifyMatchFailure(op, "source is not a CustomOp");
+
+    // The custom op must have a single result (the one feeding this convert).
+    if (customOp->getNumResults() != 1)
+      return rewriter.notifyMatchFailure(
+          customOp, "custom op has multiple results; cannot determine layout");
+
+    // Only fold when the convert is the sole user of the custom op result.
+    if (!op.getSource().hasOneUse())
+      return rewriter.notifyMatchFailure(
+          customOp, "custom op result has multiple uses; cannot fold");
+
+    // getOperandsTargetLayout() is keyed by the custom op's *operand* values
+    // (inputs then outputs), not by its result values. Map the result feeding
+    // this convert to its corresponding output operand before looking up the
+    // declared data_layout.
+    auto opResult = dyn_cast<OpResult>(op.getSource());
+    if (!opResult)
+      return rewriter.notifyMatchFailure(customOp, "source is not an OpResult");
+    unsigned resultIdx = opResult.getResultNumber();
+    if (resultIdx >= customOp.getOutputs().size())
+      return rewriter.notifyMatchFailure(
+          customOp, "result index out of range of custom op outputs");
+
+    // Get the custom op's declared output layout from arg_attrs. The output
+    // operand's arg_attrs index follows all input operands.
+    unsigned outputOperandIdx = customOp.getInputs().size() + resultIdx;
+    auto outputLayout = getCustomOpOperandLayout(customOp, outputOperandIdx);
+    if (!outputLayout)
+      return rewriter.notifyMatchFailure(
+          customOp, "custom op output has no declared data_layout");
+
+    // The custom op's declared output layout must match the convert_layout's
+    // dstLayout (comparing the logical layout enum, not the full attribute).
+    if (outputLayout.getDataLayout() != op.getDstLayout().getDataLayout())
+      return rewriter.notifyMatchFailure(
+          op, "custom op output layout does not match convert dstLayout");
+
+    // Case 1: the custom op result type already matches the convert result
+    // type. The convert_layout is a pure no-op; fold it away directly.
+    if (op.getSource().getType() == op.getType()) {
+      rewriter.replaceOp(op, op.getSource());
+      return success();
+    }
+
+    // Case 2: the convert_layout changes the type (e.g. rank-2 ND result to
+    // rank-4 Fractal). Like the named nd2nz op, the custom op already produces
+    // the fractal layout physically; the convert only materializes the rank-4
+    // SSA type. Fold by recreating the custom op so it produces the convert's
+    // result type directly, mirroring FoldFixpipeNz2NzToFractal.
+    auto resultTensorType = dyn_cast<RankedTensorType>(op.getType());
+    if (!resultTensorType)
+      return rewriter.notifyMatchFailure(
+          op, "convert result is not a ranked tensor");
+
+    // The DestinationStyleOpInterface verifier requires each outs operand to
+    // match its corresponding result type, so materialize a new destination
+    // tensor with the convert's (fractal) result type for the folded output.
+    auto mixedFractalShape = op.getMixedOutputShape();
+    auto emptyOp = rewriter.create<tensor::EmptyOp>(
+        op.getLoc(), mixedFractalShape, resultTensorType.getElementType());
+
+    // Rebuild the operand list, replacing the folded output operand with the
+    // new fractal-typed destination. Operand order is: inputs, outputs, tmps.
+    SmallVector<Value> newOperands;
+    size_t numOutputs = customOp.getOutputs().size();
+    for (Value input : customOp.getInputs())
+      newOperands.push_back(input);
+    for (size_t i = 0; i < numOutputs; ++i)
+      newOperands.push_back(i == resultIdx ? emptyOp.getResult()
+                                           : customOp.getOutputs()[i]);
+    for (Value tmp : customOp.getTempBuffers())
+      newOperands.push_back(tmp);
+
+    SmallVector<Type> newResultTypes(customOp->getNumResults(),
+                                     resultTensorType);
+    auto newCustomOp = rewriter.create<CustomOp>(
+        customOp.getLoc(), newResultTypes, newOperands, customOp->getAttrs());
+
+    rewriter.replaceOp(op, newCustomOp.getResults()[resultIdx]);
+    rewriter.eraseOp(customOp);
     return success();
   }
 };
@@ -1426,7 +1580,7 @@ void populateCombineOptimizedConvertLayoutPatterns(RewritePatternSet &patterns,
       FoldFixpipeNz2NzToFractalConvertLayoutPattern,
       FoldTensorLoadToND2NZPattern, FoldTensorLoadToND2NZPattern,
       FoldTensorLoadToLoadMXScalePattern, FoldFixpipeConvertLayoutPattern,
-      FoldConvertLayoutFixpipePattern,
+      FoldConvertLayoutFixpipePattern, FoldCustomOpConvertLayoutPattern,
       FoldConvertLayoutExtractSliceFixpipePattern,
       FoldFixpipeStoreConvertLayoutPattern, FoldUninitL1NDConvertToEmptyPattern,
       RouteVectorFractalizeViaGMPattern, DedupInsertedL1StagingPattern>(

@@ -26,6 +26,7 @@ include "bishengir/Dialect/HIVM/IR/HIVMAttrs.td"
 include "bishengir/Dialect/HIVM/IR/HIVMBase.td"
 include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.td"
 include "bishengir/Dialect/HIVM/IR/HIVMTraits.td"
+include "bishengir/Dialect/HIVM/Interfaces/OpLayoutInterface.td"
 
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/ViewLikeInterface.td"
@@ -806,7 +807,8 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
                            HIVMStructuredOpInterface, ["getIteratorTypesArray",
                                                        "getIndexingMaps"]>,
                        DeclareOpInterfaceMethods<
-                           HIVMInferCoreTypeInterface, ["inferCoreType"]>],
+                           HIVMInferCoreTypeInterface, ["inferCoreType"]>,
+                       CustomLikeOpInterface],
                       traits)> {
 
   string customOpSummary = [{
@@ -839,6 +841,23 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       - CoreType : which core type to execute on, refer to TCoreTypeAttr.
       - VFMode   : which mode to run on vector units, refer to VFModeAttr.
                    Required when requiresVFMode() is true.
+      - arg_attrs: optional per-operand attributes array. Each element is a dictionary
+                   corresponding to one input or output operand. The `data_layout` key specifies
+                   the memory layout of the buffer as a `#hivm.data_layout` attribute.
+
+                   Example for a matrix multiplication (L1Mmad) with 5 inputs (A, B, C, transposeA, transposeB):
+                   ```mlir
+                   arg_attrs = [
+                     {data_layout = #hivm.data_layout<Fractal>},   // Matrix A buffer
+                     {data_layout = #hivm.data_layout<Fractal>},   // Matrix B buffer
+                     {data_layout = #hivm.data_layout<dotC_ND>},   // Matrix C (accumulator) buffer
+                     {},  // transposeA flag (no layout)
+                     {}   // transposeB flag (no layout)
+                   ]
+                   ```
+
+                   The data_layout describes the buffer's memory layout. Layout conversions
+                   are inserted automatically by the compiler when needed.
   }];
 
   dag args = (ins StrAttr:$name, Variadic<AnyType>:$inputs,
@@ -975,7 +994,9 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
   }];
 }
 
-def CustomOp : HIVM_CustomOp<"custom", [SinglePipeOpTrait]> {
+def CustomOp : HIVM_CustomOp<"custom", [
+    SinglePipeOpTrait, CustomLikeOpInterface,
+]> {
   let summary = customOpSummary;
 
   let description = customOpDescription#customOpAttrsDescription#[{
@@ -1326,7 +1347,7 @@ def ScatterTOp : HIVM_Op<"scatterT",[
   let hasVerifier = 1;
 }
 
-def CustomMacroOp : HIVM_CustomOp<"custom_macro", [MacroOpTrait]> {
+def CustomMacroOp : HIVM_CustomOp<"custom_macro", [MacroOpTrait, CustomLikeOpInterface]> {
   let summary = customOpSummary;
 
   let description = customOpDescription#customOpAttrsDescription#[{
