@@ -233,7 +233,7 @@ bool MemLivenessAnalysis::isGlobalWorkSpaceMemPlan() const {
   return planMode == MemPlanMode::GLOBAL_WORKSPACE_PLAN;
 }
 
-void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
+void MemLivenessAnalysis::RecursionIR(Region *region, const Liveness &live) {
   auto result = region->walk<WalkOrder::PreOrder>([&](Operation *op) {
     // recursive control flow
     if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
@@ -360,7 +360,8 @@ void MemLivenessAnalysis::UpdateForOpBufferAlias(scf::ForOp forOp) {
   }
 }
 
-void MemLivenessAnalysis::RecursiveForOp(scf::ForOp forOp, Liveness live) {
+void MemLivenessAnalysis::RecursiveForOp(scf::ForOp forOp,
+                                         const Liveness &live) {
   // Process the operation of ForOp as follows:
   // alloca %allocA
   // %0 = scf.for %arg4 = %c0 to %c1024 step %c128 iter_args(%arg5 = %4)->
@@ -442,7 +443,7 @@ void MemLivenessAnalysis::UpdateConditionOpBufferAlias(
 }
 
 void MemLivenessAnalysis::RecursiveWhileOp(scf::WhileOp whileOp,
-                                           Liveness live) {
+                                           const Liveness &live) {
   // Process the operation of WhileOp as follows:
   // alloca %allocA
   // %0 = scf.while (%arg0 = %init)
@@ -487,7 +488,7 @@ void MemLivenessAnalysis::UpdateIfOpBufferAlias(scf::IfOp ifOp,
   }
 }
 
-void MemLivenessAnalysis::RecursiveIfOp(scf::IfOp ifOp, Liveness live) {
+void MemLivenessAnalysis::RecursiveIfOp(scf::IfOp ifOp, const Liveness &live) {
   // Process the operation of IfOp as follows:
   // %0 = scf.if %cond -> (memref<16xf16, #hivm.address_space<ub>>)
   //        scf.yield %alloc0: memref<16xf16, #hivm.address_space<ub>>
@@ -535,7 +536,7 @@ void MemLivenessAnalysis::UpdateScopeOpBufferAlias(scope::ScopeOp scopeOp,
 }
 
 void MemLivenessAnalysis::RecursiveScopeOp(scope::ScopeOp scopeOp,
-                                           Liveness live) {
+                                           const Liveness &live) {
   (void)UpdateLinearOperation(scopeOp.getOperation());
   auto &scopeRegion = scopeOp.getRegion();
   auto returnOp = cast<scope::ReturnOp>(scopeRegion.front().getTerminator());
@@ -547,7 +548,7 @@ void MemLivenessAnalysis::RecursiveScopeOp(scope::ScopeOp scopeOp,
 
 SmallVector<Value>
 MemLivenessAnalysis::GetLiveBuffersInLoop(LoopLikeOpInterface loopOp,
-                                          Liveness live) {
+                                          const Liveness &live) {
   SmallVector<Value> allocBeforeLoopBuffers;
   const auto *liveBlockInfo = live.getLiveness(loopOp->getBlock());
   assert(liveBlockInfo != nullptr);
@@ -738,7 +739,7 @@ SetVector<Value> MemLivenessAnalysis::GetAliasBuffers(Value aliasBuffer) const {
 
 void MemLivenessAnalysis::UpdateStoreOpInfo(OpInfo *opInfo,
                                             const Value storeValue,
-                                            Liveness live) {
+                                            const Liveness &live) {
   // The src of memref store may also serve as a gen buffer.
   SmallVector<Value, 1> storeValues;
   storeValues.push_back(storeValue);
@@ -818,7 +819,8 @@ void MemLivenessAnalysis::UpdatePreloadBuffers(annotation::MarkOp markOp,
 }
 
 void MemLivenessAnalysis::ProcessMarkOp(annotation::MarkOp markOp,
-                                        OpInfo *curOpInfo, Liveness live) {
+                                        OpInfo *curOpInfo,
+                                        const Liveness &live) {
   if (!isa<MemRefType>(markOp.getSrc().getType())) {
     return;
   }
@@ -1085,7 +1087,7 @@ void MemLivenessAnalysis::PreprocessPreloadBuffersBufferLife() {
   }
 }
 
-void MemLivenessAnalysis::OpKillHandle(OpInfo *opInfo, Liveness live,
+void MemLivenessAnalysis::OpKillHandle(OpInfo *opInfo, const Liveness &live,
                                        Block *block) {
   const auto *liveBlockInfo = live.getLiveness(block);
   assert(liveBlockInfo != nullptr && opInfo != nullptr);
@@ -1105,7 +1107,7 @@ void MemLivenessAnalysis::OpKillHandle(OpInfo *opInfo, Liveness live,
 }
 
 void MemLivenessAnalysis::UpdateOpKillInfo(OpInfo *opInfo, Value operand,
-                                           Liveness live) {
+                                           const Liveness &live) {
   auto aliasBuffers = GetAliasBuffers(operand);
   aliasBuffers.insert(operand);
   if (!AllDeadAfter(opInfo->operation, aliasBuffers, live)) {
@@ -1148,7 +1150,7 @@ bool MemLivenessAnalysis::isParentOpDominate(Operation *op1,
 }
 
 bool MemLivenessAnalysis::AllDeadAfter(Operation *op, SetVector<Value> aliasVec,
-                                       Liveness live) const {
+                                       const Liveness &live) const {
   return llvm::all_of(aliasVec, [&](Value aliasBuffer) {
     // isDeadAfter will only check liveOut and last use in op->getBlock(). It
     // will not check ops in other blocks. And if op->getParentOp() don't have

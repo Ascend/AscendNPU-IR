@@ -395,17 +395,17 @@ public:
   bool isGlobalWorkSpaceMemPlan() const;
 
 private:
-  void RecursionIR(Region *region, Liveness live);
+  void RecursionIR(Region *region, const Liveness &live);
 
   /// Get the buffer used within the loop and defined outside the loop.
   SmallVector<Value> GetLiveBuffersInLoop(LoopLikeOpInterface loopOp,
-                                          Liveness live);
+                                          const Liveness &live);
 
   /// Update for Op tensor init args and tensor result args alias info.
   void UpdateInitAndResAlias(DestinationStyleOpInterface dstStyleOp);
 
   /// Recursive operation while.
-  void RecursiveWhileOp(scf::WhileOp whileOp, Liveness live);
+  void RecursiveWhileOp(scf::WhileOp whileOp, const Liveness &live);
 
   /// Update while Op init args region iter args alias info.
   void UpdateWhileOpInitArgsAlias(scf::WhileOp whileOp);
@@ -418,7 +418,7 @@ private:
   void UpdateConditionOpBufferAlias(scf::ConditionOp conditionOp);
 
   /// Recursive operation for.
-  void RecursiveForOp(scf::ForOp forOp, Liveness live);
+  void RecursiveForOp(scf::ForOp forOp, const Liveness &live);
 
   /// Update for Op init args region iter args alias info.
   void UpdateForOpInitArgsAlias(scf::ForOp forOp);
@@ -427,7 +427,7 @@ private:
   void UpdateForOpBufferAlias(scf::ForOp forOp);
 
   /// Recursive operation if.
-  void RecursiveIfOp(scf::IfOp ifOp, Liveness live);
+  void RecursiveIfOp(scf::IfOp ifOp, const Liveness &live);
 
   /// Update branch dest arg and operand buffer alias info.
   void UpdateBranchOpAlias(Block *brBlock, OperandRange destOperands);
@@ -436,7 +436,7 @@ private:
   void UpdateIfOpBufferAlias(scf::IfOp ifOp, scf::YieldOp yieldOp);
 
   /// Recursive operation scope.
-  void RecursiveScopeOp(scope::ScopeOp scopeOp, Liveness live);
+  void RecursiveScopeOp(scope::ScopeOp scopeOp, const Liveness &live);
 
   /// Update buffer alias information for scopeop.
   void UpdateScopeOpBufferAlias(scope::ScopeOp scopeOp,
@@ -504,16 +504,17 @@ private:
   void UpdateMultiBufferInfo(annotation::MarkOp markOp, Value memrefVal);
 
   /// Update store op information.
-  void UpdateStoreOpInfo(OpInfo *opInfo, const Value storeValue, Liveness live);
+  void UpdateStoreOpInfo(OpInfo *opInfo, const Value storeValue,
+                         const Liveness &live);
 
   /// Check if it is local buffer with memory space
   LogicalResult CheckLocalBufferAllocOp(Operation *op) const;
 
   /// kill buffer handle.
-  void OpKillHandle(OpInfo *opInfo, Liveness live, Block *block);
+  void OpKillHandle(OpInfo *opInfo, const Liveness &live, Block *block);
 
   /// Process kill buffer based on the result live of op.
-  void UpdateOpKillInfo(OpInfo *opInfo, Value operand, Liveness live);
+  void UpdateOpKillInfo(OpInfo *opInfo, Value operand, const Liveness &live);
 
   /// Whether afterBlock is after beforeBlock.
   bool IsBlockAfter(Block *afterBlock, Block *beforeBlock) const;
@@ -523,7 +524,7 @@ private:
 
   /// Have all alias buffer been killed.
   bool AllDeadAfter(Operation *op, SetVector<Value> aliasVec,
-                    Liveness live) const;
+                    const Liveness &live) const;
 
   /// Determine whether two operation are in the same block or op2 is the
   /// ancestor of op1.
@@ -553,7 +554,7 @@ private:
 
   /// Process mark op and update buffer's gen and kill.
   void ProcessMarkOp(annotation::MarkOp markOp, OpInfo *curOpInfo,
-                     Liveness live);
+                     const Liveness &live);
 
   /// Process AllocOp that don't need to plan memory and if return allocOp, we
   /// need to run UpdateOpGenInfo manually.
