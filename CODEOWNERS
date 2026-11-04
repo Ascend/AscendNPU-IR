@@ -90,6 +90,7 @@
 
 # Split mix kernel.
 /bishengir/**/SplitMixKernel.* @danielcm585 @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/**/SplitKernelUtils.* @hocky @danielcm585 @devoperator @cathychan0027 @hid90099092 @tanshengshun
 /bishengir/test/**/split-mix-kernel* @danielcm585 @devoperator @cathychan0027 @hid90099092 @tanshengshun
 
 # CV Data Movement.
