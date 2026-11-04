@@ -18,6 +18,8 @@
 #include "bishengir/Dialect/HIVM/Transforms/FixpipeUtils.h"
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/DMA/Fixpipe/FixpipeCapabilityBinding.h"
+#include "bishengir/Dialect/HIVM/Transforms/FixpipeCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -75,16 +77,50 @@ RankedTensorType computeNz2NzL1DstTypeChannelMerge(RankedTensorType ndType) {
 /// Convert an NZ2ND Fixpipe to NZ2NZ. Applies channel_split or channel_merge
 /// (and a fractal L1 dest type) when the dest type requires it; otherwise only
 /// updates dma_mode in place. Returns the (possibly replaced) FixpipeOp.
+///
+/// channel_split=true is only applied when that candidate is Native. Plain
+/// NZ2NZ / channel_merge still use the historical rewrite: those L1 paths are
+/// not fully modeled until address-space joins the schema (W5.b).
+static bool nz2nzRequestIsNative(FixpipeOp op, AddressSpace dstSpace,
+                                 std::optional<bool> channelSplit) {
+  using bishengir::npu::FixpipeCapabilityRequestBuilder;
+  std::optional<FixpipeCapabilityRequestBuilder> builder =
+      FixpipeCapabilityRequestBuilder::from(op);
+  if (!builder)
+    return false;
+  builder->dmaMode(FixpipeDMAMode::NZ2NZ);
+  if (channelSplit)
+    builder->channelSplit(*channelSplit);
+  builder->srcAddressSpace(AddressSpace::L0C);
+  builder->dstAddressSpace(dstSpace);
+  std::optional<bishengir::npu::NPUArchitectureKind> architecture =
+      lookupModuleArchitecture(op);
+  if (!architecture)
+    return false;
+  auto storage = builder->build();
+  return bishengir::npu::queryNativeSupport(*architecture,
+                                            storage.getRequest()) ==
+         bishengir::npu::NativeSupport::Native;
+}
+
 FixpipeOp convertNz2NdFixpipeToNz2Nz(PatternRewriter &rewriter, FixpipeOp op) {
   auto tensorType = cast<RankedTensorType>(op.getDstOperandType());
   bool channelSplit = shouldEnableChannelSplit(tensorType);
   if (!channelSplit && !shouldEnableChannelMerge(tensorType)) {
+    // Plain NZ2NZ mode switch is an execution-schema question.
+    if (!nz2nzRequestIsNative(op, AddressSpace::L1,
+                              /*channelSplit=*/std::nullopt))
+      return op;
     rewriter.modifyOpInPlace(op, [&]() {
       op.setDmaModeAttr(FixpipeDMAModeAttr::get(rewriter.getContext(),
                                                 FixpipeDMAMode::NZ2NZ));
     });
     return op;
   }
+
+  if (channelSplit &&
+      !nz2nzRequestIsNative(op, AddressSpace::L1, /*channelSplit=*/true))
+    return op;
 
   auto dstTy = channelSplit ? computeNz2NzL1DstTypeChannelSplit(tensorType)
                             : computeNz2NzL1DstTypeChannelMerge(tensorType);

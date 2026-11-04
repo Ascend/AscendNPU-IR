@@ -24,6 +24,7 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/FixpipeCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/InsertPropagation.h"
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/PropagateOp.h"
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/ResolvePropagation.h"
@@ -1803,6 +1804,9 @@ InsertLoadStoreForMixCVPass::setOperationsCoreType(OpBuilder builder,
 }
 
 void InsertLoadStoreForMixCVPass::runOnOperation() {
+  ModuleTargetAnalysis &targets = getAnalysis<ModuleTargetAnalysis>();
+  ModuleTargetAnalysisScope targetScope(targets);
+  markAnalysesPreserved<ModuleTargetAnalysis>();
   OpBuilder builder(&getContext());
   auto *ctx = &getContext();
   auto funcOp = getOperation();

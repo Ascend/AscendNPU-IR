@@ -29,6 +29,8 @@ bool isUserSliceSwappable(FixpipeOp fixpipe,
                           tensor::ExtractSliceOp extractSlice);
 bool hasQuantScaleCompileHint(VMulOp op);
 bool isUserQuantScaleInlinable(FixpipeOp op, VMulOp vMulOp);
+bool canInlineFixpipeWithQuant(FixpipeOp op, ArrayRef<VCastOp> castChain);
+bool canInlineFixpipeWithRelu(FixpipeOp op, VReluOp reluOp);
 
 void inlineFixpipeWithQuant(PatternRewriter &rewriter, Location loc,
                             FixpipeOp op, ArrayRef<VCastOp> castChain,
@@ -42,7 +44,8 @@ void inlineFixpipeWithQuantScale(PatternRewriter &rewriter, FixpipeOp op,
                                  VMulOp vMulOp);
 bool inlineFixpipeWithTranspose(PatternRewriter &rewriter, FixpipeOp op,
                                 VTransposeOp transpose);
-void swapFixpipeWithExtractSlice(PatternRewriter &rewriter, Location loc,
+/// Returns true when the IR was rewritten.
+bool swapFixpipeWithExtractSlice(PatternRewriter &rewriter, Location loc,
                                  FixpipeOp op,
                                  tensor::ExtractSliceOp extractSliceOp);
 /// Hoist \p fixPipeOp out of \p scfForOp. Returns false when an operand is

@@ -1369,8 +1369,9 @@ func.func @keep_type_converting_fixpipe_inside_scf_for(
 // -----
 
 // A type-preserving fixpipe (f32 -> f32) yielded from an scf.for is still
-// hoisted out of the loop.
-//
+// hoisted out of the loop. Requires #hacc.target so the NZ2ND hoist
+// candidate can be confirmed Native.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK-LABEL: func.func @hoist_type_preserving_fixpipe_out_of_scf_for
 // CHECK: %[[FOR:.*]] = scf.for
 // CHECK-NOT: hivm.hir.fixpipe
@@ -1402,6 +1403,7 @@ func.func @hoist_type_preserving_fixpipe_out_of_scf_for(
   hivm.hir.store ins(%for_res : tensor<16x16xf32>)
       outs(%dst : memref<16x16xf32, strided<[16, 1]>>)
   return
+}
 }
 
 // -----

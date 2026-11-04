@@ -38,6 +38,12 @@ std::optional<FixpipePreQuantMode> getQuantModeForCastChain(
     ArrayRef<VCastOp> castChain,
     FixpipePreQuantMode preQuant = FixpipePreQuantMode::NO_QUANT);
 std::optional<FixpipePreQuantMode> getQuantMode(hivm::VCastOp castOp);
+/// Structural NZ2DN transpose checks only (permutation, current NZ2ND mode,
+/// unmodeled attrs). Used by fallback chain collection before cast fusion.
+bool isUserTransposeStructurallyInlinable(FixpipeOp op, Operation *user);
+
+/// Structural checks plus Native on the candidate Fixpipe
+/// (dst = transpose result type, dma_mode = NZ2DN).
 bool isUserTransposeInlinable(FixpipeOp op, Operation *user);
 
 template <typename OpType>
