@@ -470,6 +470,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   if (hivmPipelineOptions.usePipelinev2) {
     pm.nest<func::FuncOp>().addPass(createSetBufferSizePass());
     buildCVPipelineV2(pm, hivmPipelineOptions);
+    pm.addNestedPass<func::FuncOp>(createMarkMultiBufferPass(multiBufferOptions));
   } else if (hivmPipelineOptions.enableMixedCV) {
     // Software pipelining Cube and Vector operations
     if (hivmPipelineOptions.setCVPipelineMode != CVPipelineMode::Off) {

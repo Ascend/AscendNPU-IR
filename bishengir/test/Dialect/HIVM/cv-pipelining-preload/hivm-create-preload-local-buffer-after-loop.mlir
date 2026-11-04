@@ -6,13 +6,15 @@
 // CHECK-LABEL: func.func @yield_preload_local_used_after
 // CHECK-DAG: %[[ADDR0:.*]] = arith.constant 16384 : i64
 // CHECK-DAG: %[[ADDR1:.*]] = arith.constant 65536 : i64
-// CHECK: %[[FOR:.*]] = scf.for
-// CHECK: scf.yield %{{.*}} : memref<64x64xf32, {{.*}}ub{{.*}}>
-// CHECK-NEXT: }
-// CHECK: %[[CLONE:.*]] = hivm.hir.pointer_cast(%[[ADDR0]], %[[ADDR1]])
-// CHECK-NEXT: %[[FLAT:.*]] = memref.collapse_shape %[[CLONE]]
+// CHECK-DAG: %[[OUT_ADDR:.*]] = arith.constant 49152 : i64
+// CHECK: scf.for
+// CHECK: } {hivm.max_preload_num = 2 : i32}
+// CHECK-DAG: %[[OUT_CLONE:.*]] = hivm.hir.pointer_cast(%[[OUT_ADDR]])
+// CHECK-DAG: %[[CLONE:.*]] = hivm.hir.pointer_cast(%[[ADDR0]], %[[ADDR1]])
+// CHECK: %[[FLAT:.*]] = memref.collapse_shape %[[CLONE]]
 // CHECK: hivm.hir.store ins(%[[FLAT]]
-// CHECK: memref.collapse_shape %[[FOR]]
+// CHECK: %[[OUT_FLAT:.*]] = memref.collapse_shape %[[OUT_CLONE]]
+// CHECK: hivm.hir.store ins(%[[OUT_FLAT]]
 func.func @yield_preload_local_used_after(
     %arg0: memref<?xf32, #hivm.address_space<gm>>,
     %arg1: memref<?xf32, #hivm.address_space<gm>>,

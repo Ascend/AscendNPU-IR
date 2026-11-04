@@ -477,6 +477,7 @@ ScopeOp mergeScopes(ScopeOp scope1, ScopeOp scope2, Operation *at) {
          llvm::zip(keptIfResults, mergedIf.getResults()))
       oldRes.replaceAllUsesWith(newRes);
 
+    firstIfById[idAttr.getInt()] = mergedIf;
     if1.erase();
     if2.erase();
   }
