@@ -72,6 +72,7 @@ add_bishengir_unittest(BiShengIRFixpipeCapabilityTests
 )
 add_dependencies(BiShengIRFixpipeCapabilityTests
   BiShengIRFixpipeCapabilityIncGen
+  BiShengIRFixpipeCapabilityBindingIncGen
 )
 target_link_libraries(BiShengIRFixpipeCapabilityTests PRIVATE
   BiShengIRHIVMDialect

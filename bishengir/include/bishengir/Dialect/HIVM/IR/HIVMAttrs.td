@@ -992,7 +992,9 @@ include
     "bishengir/Dialect/HIVM/IR/Contracts/DMA/Fixpipe/FixpipePreQuantContract.td"
 
 def HIVM_FIXPIPEPREQUANT_NO_QUANT :
-    HIVM_FixpipePreQuantCase<"NO_QUANT", 0, [Sig_F32_F32, Sig_I32_I32]>;
+    HIVM_FixpipePreQuantCase<"NO_QUANT", 0,
+                             [Sig_F32_F32, Sig_I32_I32, Sig_I32_I16, Sig_I32_F16,
+                              Sig_I32_UI8, Sig_F32_I8, Sig_F32_UI8]>;
 def HIVM_FIXPIPEPREQUANT_F322F16 :
     HIVM_FixpipePreQuantCase<"F322F16", 1, [Sig_F32_F16]>;
 def HIVM_FIXPIPEPREQUANT_S322I8 :

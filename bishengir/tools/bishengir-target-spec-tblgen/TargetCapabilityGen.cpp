@@ -21,6 +21,7 @@
 #include "mlir/TableGen/Constraint.h"
 #include "mlir/TableGen/Format.h"
 #include "mlir/TableGen/GenInfo.h"
+#include "mlir/TableGen/Operator.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
@@ -972,9 +973,658 @@ static void emitCapabilityRequestSchema(raw_ostream &os,
   }
 }
 
+enum class BindingSourceKind { Operand, Result, Attribute };
+enum class BindingProjection { ElementType, Identity, AddressSpace, Presence };
+
+struct ExpectedSchemaField {
+  std::string key;
+  std::string display;
+};
+
+struct BoundField {
+  const Record *field = nullptr;
+  std::string methodName;
+  std::string display;
+  BindingSourceKind sourceKind = BindingSourceKind::Operand;
+  BindingProjection projection = BindingProjection::Identity;
+  std::string odsName;
+  int odsIndex = -1;
+  std::string valueType;
+  std::string storageType;
+  std::string convertFromStorage;
+  bool hasDefault = false;
+  // Address space may be absent on a tensor. from() still succeeds and leaves
+  // this field empty so the query can set it.
+  bool optionalStorage = false;
+  std::string constBuilderTemplate;
+  std::string qualifiedDefault;
+};
+
+struct ResolvedBinding {
+  const Record *capability = nullptr;
+  std::string className;
+  std::string opClass;
+  SmallVector<BoundField, 0> fields;
+};
+
+static SmallVector<ExpectedSchemaField>
+getExpectedSchemaFields(const Record *capability) {
+  SmallVector<ExpectedSchemaField> fields;
+  for (const Record *slot : getCapabilitySlots(capability)) {
+    for (const Record *property : slot->getValueAsListOfDefs(kProperties)) {
+      ExpectedSchemaField field;
+      field.key = getSlotFieldKey(slot, property);
+      field.display = getEffectiveName(slot) + "." + getEffectiveName(property);
+      fields.push_back(std::move(field));
+    }
+  }
+  for (const Record *parameter : getCapabilityParameters(capability)) {
+    ExpectedSchemaField field;
+    field.key = (Twine("parameter:") + parameter->getName()).str();
+    field.display = getEffectiveName(parameter);
+    fields.push_back(std::move(field));
+  }
+  return fields;
+}
+
+static std::string fieldMethodName(const Record *field) {
+  std::string pascal;
+  if (field->isSubClassOf("SlotField")) {
+    pascal = (Twine(getEffectiveCppName(field->getValueAsDef(kSlot))) +
+              getEffectiveCppName(field->getValueAsDef(kProperty)))
+                 .str();
+  } else {
+    pascal = getEffectiveCppName(field).str();
+  }
+  if (!pascal.empty())
+    pascal.front() = llvm::toLower(pascal.front());
+  return pascal;
+}
+
+static std::string qualifyDefaultExpr(StringRef value, StringRef cppNamespace) {
+  value = value.trim();
+  if (value.empty() || value == "true" || value == "false" ||
+      value.starts_with("::"))
+    return value.str();
+  const bool numeric = llvm::all_of(
+      value, [](char c) { return llvm::isDigit(c) || c == '-' || c == '+'; });
+  if (numeric || cppNamespace.empty())
+    return value.str();
+  return (cppNamespace + "::" + value).str();
+}
+
+static bool attributeDomainMatches(const Record *field,
+                                   const mlir::tblgen::Attribute &attr) {
+  const Record *domain = getRequestFieldDomain(field);
+  const llvm::Record &base = attr.getBaseAttr().getDef();
+  if (isEnumDomain(domain))
+    return &base == domain->getValueAsDef(kEnumAttr);
+  if (isBoolDomain(domain)) {
+    const Record *boolAttr = domain->getValueAsDef(kBoolAttr);
+    return &base == boolAttr || base.isSubClassOf(boolAttr->getName());
+  }
+  return false;
+}
+
+static bool bindExtractor(const Record *extractor,
+                          const mlir::tblgen::Operator &op, StringRef display,
+                          BoundField &out) {
+  const Record *field = extractor->getValueAsDef(kField);
+  const Record *source = extractor->getValueAsDef("Source");
+  const Record *projection = extractor->getValueAsDef("Projection");
+  const StringRef sourceKind = source->getValueAsString("SourceKind");
+  const StringRef projectionKind =
+      projection->getValueAsString("ProjectionKind");
+  const StringRef odsName = source->getValueAsString("OdsName");
+  const std::string opName = op.getCppClassName().str();
+
+  const mlir::tblgen::NamedTypeConstraint *value = nullptr;
+  const mlir::tblgen::NamedAttribute *attribute = nullptr;
+  enum class Found { Missing, Operand, Result, Attribute };
+  Found found = Found::Missing;
+  int odsIndex = -1;
+  int operandIndex = 0;
+  for (int i = 0, end = op.getNumArgs(); i < end; ++i) {
+    mlir::tblgen::Argument argument = op.getArg(i);
+    if (auto *operand =
+            dyn_cast<mlir::tblgen::NamedTypeConstraint *>(argument)) {
+      if (operand->name == odsName) {
+        value = operand;
+        found = Found::Operand;
+        odsIndex = operandIndex;
+        break;
+      }
+      ++operandIndex;
+    } else if (auto *namedAttr =
+                   dyn_cast<mlir::tblgen::NamedAttribute *>(argument)) {
+      if (namedAttr->name == odsName) {
+        attribute = namedAttr;
+        found = Found::Attribute;
+        break;
+      }
+    }
+  }
+  if (found == Found::Missing) {
+    int resultIndex = 0;
+    for (const mlir::tblgen::NamedTypeConstraint &result : op.getResults()) {
+      if (result.name == odsName) {
+        value = &result;
+        found = Found::Result;
+        odsIndex = resultIndex;
+        break;
+      }
+      ++resultIndex;
+    }
+  }
+
+  auto reportSourceMismatch = [&](StringRef expected) {
+    if (found == Found::Missing) {
+      PrintError(extractor->getLoc(), Twine("capability binding: no ") +
+                                          expected + " named '" + odsName +
+                                          "' on '" + opName + "'");
+      return;
+    }
+    StringRef actual = found == Found::Attribute ? "an attribute"
+                       : found == Found::Result  ? "a result"
+                                                 : "an operand";
+    PrintError(extractor->getLoc(),
+               Twine("capability binding: '") + odsName + "' on '" + opName +
+                   "' is " + actual + ", not " +
+                   (expected == "attribute" ? "an attribute"
+                    : expected == "result"  ? "a result"
+                                            : "an operand"));
+  };
+
+  if (sourceKind == "operand") {
+    if (found != Found::Operand) {
+      reportSourceMismatch("operand");
+      return true;
+    }
+  } else if (sourceKind == "result") {
+    if (found != Found::Result) {
+      reportSourceMismatch("result");
+      return true;
+    }
+  } else if (sourceKind == "attribute") {
+    if (found != Found::Attribute) {
+      reportSourceMismatch("attribute");
+      return true;
+    }
+  } else {
+    PrintError(source->getLoc(),
+               "capability binding: unknown source kind '" + sourceKind + "'");
+    return true;
+  }
+
+  out.field = field;
+  out.display = display.str();
+  out.odsName = odsName.str();
+  out.methodName = fieldMethodName(field);
+  out.odsIndex = odsIndex;
+
+  const bool isValue = found != Found::Attribute;
+  if (projectionKind == "presence") {
+    if (!isValue || found != Found::Operand) {
+      PrintError(extractor->getLoc(),
+                 "capability binding: presence projection requires an operand");
+      return true;
+    }
+    if (!isBoolDomain(getRequestFieldDomain(field))) {
+      PrintError(extractor->getLoc(),
+                 "capability binding: presence projection requires a "
+                 "bool-domain field");
+      return true;
+    }
+    out.sourceKind = BindingSourceKind::Operand;
+    out.projection = BindingProjection::Presence;
+    out.valueType = "bool";
+    return false;
+  }
+
+  if (isValue && (value->isOptional() || value->isVariadic() ||
+                  value->isVariadicOfVariadic())) {
+    const StringRef kind = value->isOptional() ? "optional" : "variadic";
+    const StringRef role = found == Found::Result ? "result" : "operand";
+    PrintError(extractor->getLoc(), Twine("capability binding: ") + kind + " " +
+                                        role + " '" + odsName +
+                                        "' cannot feed a required field");
+    return true;
+  }
+
+  if (projectionKind == "element_type") {
+    if (!isValue) {
+      PrintError(extractor->getLoc(),
+                 "capability binding: element_type projection does not apply "
+                 "to an attribute");
+      return true;
+    }
+    if (!isTypeDomain(getRequestFieldDomain(field))) {
+      PrintError(extractor->getLoc(),
+                 "capability binding: element_type projection requires a "
+                 "type-domain field");
+      return true;
+    }
+    out.sourceKind = found == Found::Result ? BindingSourceKind::Result
+                                            : BindingSourceKind::Operand;
+    out.projection = BindingProjection::ElementType;
+    out.valueType = "::mlir::Type";
+    return false;
+  }
+
+  if (projectionKind == "address_space") {
+    if (!isValue) {
+      PrintError(extractor->getLoc(),
+                 "capability binding: address_space projection does not apply "
+                 "to an attribute");
+      return true;
+    }
+    const Record *domain = getRequestFieldDomain(field);
+    if (!domain || !isEnumDomain(domain)) {
+      PrintError(extractor->getLoc(),
+                 "capability binding: address_space projection requires an "
+                 "enum-domain field");
+      return true;
+    }
+    const Record *attr = domain->getValueAsDef(kEnumAttr);
+    if (!attr->isSubClassOf("AttrDef")) {
+      PrintError(extractor->getLoc(),
+                 "capability binding: address_space domain has no AttrDef");
+      return true;
+    }
+    mlir::tblgen::AttrDef attrDef(attr);
+    auto parameters = attrDef.getParameters();
+    if (parameters.size() != 1) {
+      PrintError(extractor->getLoc(),
+                 "capability binding: address_space attribute must have one "
+                 "parameter");
+      return true;
+    }
+    out.sourceKind = found == Found::Result ? BindingSourceKind::Result
+                                            : BindingSourceKind::Operand;
+    out.projection = BindingProjection::AddressSpace;
+    out.optionalStorage = true;
+    out.valueType = parameters.front().getCppType().str();
+    return false;
+  }
+
+  if (projectionKind != "identity") {
+    PrintError(projection->getLoc(),
+               "capability binding: unknown projection '" + projectionKind +
+                   "'");
+    return true;
+  }
+
+  out.projection = BindingProjection::Identity;
+  if (isValue) {
+    if (!isTypeDomain(getRequestFieldDomain(field))) {
+      PrintError(extractor->getLoc(),
+                 "capability binding: identity projection from an SSA value "
+                 "requires a type-domain field");
+      return true;
+    }
+    out.sourceKind = found == Found::Result ? BindingSourceKind::Result
+                                            : BindingSourceKind::Operand;
+    out.valueType = "::mlir::Type";
+    return false;
+  }
+
+  const mlir::tblgen::Attribute &attr = attribute->attr;
+  if (attr.isDerivedAttr()) {
+    PrintError(extractor->getLoc(),
+               Twine("capability binding: derived attribute '") + odsName +
+                   "' cannot be bound");
+    return true;
+  }
+  if (attr.isOptional() && !attr.hasDefaultValue()) {
+    PrintError(extractor->getLoc(),
+               Twine("capability binding: optional attribute '") + odsName +
+                   "' has no ODS default");
+    return true;
+  }
+  if (!attributeDomainMatches(field, attr)) {
+    PrintError(extractor->getLoc(),
+               Twine("capability binding: attribute '") + odsName +
+                   "' does not match the domain of '" + display + "'");
+    return true;
+  }
+  if (attr.hasDefaultValue() && !attr.isConstBuildable()) {
+    PrintError(extractor->getLoc(), Twine("capability binding: attribute '") +
+                                        odsName +
+                                        "' default has no constBuilderCall");
+    return true;
+  }
+
+  const mlir::tblgen::Attribute base = attr.getBaseAttr();
+  out.sourceKind = BindingSourceKind::Attribute;
+  out.valueType = base.getReturnType().trim().str();
+  out.storageType = base.getStorageType().trim().str();
+  out.convertFromStorage = base.getConvertFromStorageCall().trim().str();
+  out.hasDefault = attr.hasDefaultValue();
+  if (out.hasDefault) {
+    out.constBuilderTemplate = attr.getConstBuilderTemplate().str();
+    out.qualifiedDefault = qualifyDefaultExpr(
+        attr.getDefaultValue(), op.getDialect().getCppNamespace());
+  }
+  if (out.valueType.empty() || out.storageType.empty() ||
+      out.convertFromStorage.empty()) {
+    PrintError(extractor->getLoc(), Twine("capability binding: attribute '") +
+                                        odsName +
+                                        "' has no C++ storage conversion");
+    return true;
+  }
+  return false;
+}
+
+static bool resolveBinding(const Record *binding, ResolvedBinding &out) {
+  const Record *capability = binding->getValueAsDef(kCapability);
+  mlir::tblgen::Operator op(binding->getValueAsDef("Operation"));
+  const std::string className =
+      (getEffectiveCppName(capability) + Twine("CapabilityRequestBuilder"))
+          .str();
+  if (!isValidCppIdentifier(className)) {
+    PrintError(binding->getLoc(),
+               "capability binding: invalid builder name '" + className + "'");
+    return true;
+  }
+
+  StringMap<const Record *> extractors;
+  for (const Record *extractor : binding->getValueAsListOfDefs("Extractors")) {
+    const std::string key =
+        getRequestFieldKey(extractor->getValueAsDef(kField));
+    if (!extractors.insert({key, extractor}).second) {
+      const Record *covered = extractor->getValueAsDef(kField);
+      const std::string label = covered->isSubClassOf("CapabilityParameter")
+                                    ? getEffectiveName(covered)
+                                    : covered->getName().str();
+      PrintError(extractor->getLoc(), Twine("capability binding: '") +
+                                          capability->getName() + "' covers '" +
+                                          label + "' more than once");
+      return true;
+    }
+  }
+
+  StringSet<> expectedKeys;
+  SmallVector<ExpectedSchemaField> expected =
+      getExpectedSchemaFields(capability);
+  for (const ExpectedSchemaField &field : expected)
+    expectedKeys.insert(field.key);
+  for (const auto &entry : extractors) {
+    if (expectedKeys.contains(entry.getKey()))
+      continue;
+    PrintError(entry.getValue()->getLoc(),
+               Twine("capability binding: field is not declared by '") +
+                   capability->getName() + "'");
+    return true;
+  }
+
+  out.capability = capability;
+  out.className = className;
+  out.opClass = op.getQualCppClassName();
+  StringSet<> methodNames;
+  for (const ExpectedSchemaField &field : expected) {
+    const auto found = extractors.find(field.key);
+    if (found == extractors.end()) {
+      PrintError(binding->getLoc(),
+                 Twine("capability binding: '") + capability->getName() +
+                     "' does not cover '" + field.display + "'");
+      return true;
+    }
+    BoundField bound;
+    if (bindExtractor(found->getValue(), op, field.display, bound))
+      return true;
+    if (!isValidCppIdentifier(bound.methodName) || bound.methodName == "from" ||
+        bound.methodName == "create" || bound.methodName == "build") {
+      PrintError(found->getValue()->getLoc(),
+                 "capability binding: invalid builder method '" +
+                     bound.methodName + "'");
+      return true;
+    }
+    if (!methodNames.insert(bound.methodName).second) {
+      PrintError(found->getValue()->getLoc(),
+                 "capability binding: duplicate builder method '" +
+                     bound.methodName + "'");
+      return true;
+    }
+    out.fields.push_back(std::move(bound));
+  }
+  return false;
+}
+
+static bool validateCapabilityBindings(const RecordKeeper &records) {
+  SmallVector<const Record *> bindings =
+      getDefinitions(records, "CapabilityBinding");
+  if (bindings.empty())
+    return false;
+
+  SmallVector<const Record *> seen;
+  for (const Record *binding : bindings) {
+    const Record *capability = binding->getValueAsDef(kCapability);
+    if (llvm::is_contained(seen, capability)) {
+      PrintError(binding->getLoc(),
+                 Twine("capability binding: duplicate binding for '") +
+                     capability->getName() + "'");
+      return true;
+    }
+    seen.push_back(capability);
+  }
+
+  for (const Record *binding : bindings) {
+    ResolvedBinding resolved;
+    if (resolveBinding(binding, resolved))
+      return true;
+  }
+  return false;
+}
+
+static bool storesCapabilityValue(const BoundField &field) {
+  return field.sourceKind == BindingSourceKind::Attribute ||
+         field.projection == BindingProjection::AddressSpace ||
+         field.projection == BindingProjection::Presence;
+}
+
+static void emitValueRead(raw_ostream &os, const BoundField &field) {
+  if (field.projection == BindingProjection::AddressSpace) {
+    const char *accessor = field.sourceKind == BindingSourceKind::Result
+                               ? "getODSResults"
+                               : "getODSOperands";
+    // A missing memref scope leaves the field empty. from() still returns
+    // the builder so the query can set srcAddressSpace and dstAddressSpace.
+    os << "  {\n"
+       << "    auto values = op." << accessor << "(" << field.odsIndex << ");\n"
+       << "    if (!values.empty()) {\n"
+       << "      if (auto space = ::mlir::hivm::getOptionalHIVMAddressSpace("
+          "values.front().getType()))\n"
+       << "        builder." << field.methodName << "_ = *space;\n"
+       << "    }\n"
+       << "  }\n";
+    return;
+  }
+  os << "  if (auto " << field.methodName << " = [&]() -> ::std::optional<"
+     << field.valueType << "> {\n";
+  if (field.projection == BindingProjection::Presence) {
+    os << "    auto values = op.getODSOperands(" << field.odsIndex << ");\n"
+       << "    return !values.empty();\n";
+  } else if (field.projection == BindingProjection::ElementType) {
+    const char *accessor = field.sourceKind == BindingSourceKind::Result
+                               ? "getODSResults"
+                               : "getODSOperands";
+    os << "    auto values = op." << accessor << "(" << field.odsIndex << ");\n"
+       << "    if (values.empty())\n"
+       << "      return ::std::nullopt;\n"
+       << "    ::mlir::Value value = values.front();\n"
+       << "    auto shaped = ::llvm::dyn_cast<::mlir::ShapedType>("
+          "value.getType());\n"
+       << "    if (!shaped)\n"
+       << "      return ::std::nullopt;\n"
+       << "    ::mlir::Type elementType = shaped.getElementType();\n"
+       << "    if (!elementType)\n"
+       << "      return ::std::nullopt;\n"
+       << "    return elementType;\n";
+  } else if (field.sourceKind != BindingSourceKind::Attribute) {
+    const char *accessor = field.sourceKind == BindingSourceKind::Result
+                               ? "getODSResults"
+                               : "getODSOperands";
+    os << "    auto values = op." << accessor << "(" << field.odsIndex << ");\n"
+       << "    if (values.empty())\n"
+       << "      return ::std::nullopt;\n"
+       << "    ::mlir::Type type = values.front().getType();\n"
+       << "    if (!type)\n"
+       << "      return ::std::nullopt;\n"
+       << "    return type;\n";
+  } else {
+    os << "    ::mlir::Attribute raw = op->getAttr(\"" << field.odsName
+       << "\");\n"
+       << "    if (!raw) {\n";
+    if (field.hasDefault) {
+      os << "      ::mlir::Builder odsBuilder(op->getContext());\n"
+         << "      auto built = ";
+      mlir::tblgen::FmtContext builderCtx;
+      builderCtx.withBuilder("odsBuilder");
+      os << mlir::tblgen::tgfmt(field.constBuilderTemplate, &builderCtx,
+                                field.qualifiedDefault)
+         << ";\n"
+         << "      return ";
+      mlir::tblgen::FmtContext builtCtx;
+      builtCtx.withSelf("built");
+      os << mlir::tblgen::tgfmt(field.convertFromStorage, &builtCtx) << ";\n";
+    } else {
+      os << "      return ::std::nullopt;\n";
+    }
+    os << "    }\n"
+       << "    auto typed = ::llvm::dyn_cast<" << field.storageType
+       << ">(raw);\n"
+       << "    if (!typed)\n"
+       << "      return ::std::nullopt;\n"
+       << "    return ";
+    mlir::tblgen::FmtContext typedCtx;
+    typedCtx.withSelf("typed");
+    os << mlir::tblgen::tgfmt(field.convertFromStorage, &typedCtx) << ";\n";
+  }
+  os << "  }())\n"
+     << "    builder." << field.methodName << "_ = *" << field.methodName
+     << ";\n"
+     << "  else\n"
+     << "    return ::std::nullopt;\n";
+}
+
+static void emitBindingClass(raw_ostream &os, const ResolvedBinding &binding) {
+  const StringRef className = binding.className;
+  os << "/// Builds a " << getEffectiveName(binding.capability)
+     << " request without creating a temporary operation.\n"
+     << "/// create() takes every required field, so a new schema field fails\n"
+     << "/// to compile at call sites that do not supply it. from() reads the\n"
+     << "/// bound operation and leaves that operation unchanged.\n"
+     << "class " << className << " {\n"
+     << "public:\n"
+     << "  /// nullopt is an illegal binding input. It is not Unknown and it\n"
+     << "  /// is not a hardware miss.\n"
+     << "  static ::std::optional<" << className << "> from(" << binding.opClass
+     << " op);\n\n"
+     << "  static " << className << " create(";
+  for (auto [index, field] : llvm::enumerate(binding.fields)) {
+    if (index != 0)
+      os << ", ";
+    os << field.valueType << " " << field.methodName;
+  }
+  os << ");\n\n";
+  for (const BoundField &field : binding.fields) {
+    os << "  " << className << " &" << field.methodName << "("
+       << field.valueType << " value) {\n"
+       << "    " << field.methodName << "_ = value;\n"
+       << "    return *this;\n"
+       << "  }\n";
+  }
+  os << "\n  /// Owns the field array. The result does not borrow this "
+        "builder.\n"
+     << "  /// mlir::Type handles remain valid with their MLIRContext.\n"
+     << "  CapabilityRequestStorage build() const;\n\n"
+     << "private:\n"
+     << "  " << className << "() = default;\n";
+  for (const BoundField &field : binding.fields) {
+    if (field.optionalStorage)
+      os << "  ::std::optional<" << field.valueType << "> ";
+    else
+      os << "  " << field.valueType << " ";
+    os << field.methodName << "_{};\n";
+  }
+  os << "};\n\n";
+
+  os << "inline ::std::optional<" << className << "> " << className << "::from("
+     << binding.opClass << " op) {\n"
+     << "  " << className << " builder;\n";
+  for (const BoundField &field : binding.fields)
+    emitValueRead(os, field);
+  os << "  return builder;\n}\n\n";
+
+  os << "inline " << className << " " << className << "::create(";
+  for (auto [index, field] : llvm::enumerate(binding.fields)) {
+    if (index != 0)
+      os << ", ";
+    os << field.valueType << " " << field.methodName;
+  }
+  os << ") {\n  " << className << " builder;\n";
+  for (const BoundField &field : binding.fields)
+    os << "  builder." << field.methodName << "_ = " << field.methodName
+       << ";\n";
+  os << "  return builder;\n}\n\n";
+
+  os << "inline CapabilityRequestStorage " << className << "::build() const {\n"
+     << "  CapabilityRequestStorage storage;\n"
+     << "  storage.capability = CapabilityKind::"
+     << getEffectiveCppName(binding.capability) << ";\n"
+     << "  storage.values.reserve(" << binding.fields.size() << ");\n";
+  for (const BoundField &field : binding.fields) {
+    os << "  storage.values.push_back({";
+    emitRequestField(os, field.field, binding.capability);
+    if (storesCapabilityValue(field)) {
+      os << ", CapabilityValue{CapabilityValueDomainKind::"
+         << getEffectiveCppName(getRequestFieldDomain(field.field))
+         << ", static_cast<int64_t>(";
+      if (field.optionalStorage)
+        os << field.methodName << "_.value_or(static_cast<" << field.valueType
+           << ">(-1))";
+      else
+        os << field.methodName << "_";
+      os << ")}});\n";
+    } else {
+      os << ", " << field.methodName << "_});\n";
+    }
+  }
+  os << "  return storage;\n}\n\n";
+}
+
+static bool emitTargetCapabilityBindings(const RecordKeeper &records,
+                                         raw_ostream &os) {
+  if (validateCapabilityRecords(records) || validateCapabilityBindings(records))
+    return true;
+
+  emitSourceFileHeader("Target Capability Bindings", os, records);
+  os << R"(
+#ifndef BISHENGIR_TARGET_CAPABILITY_BINDING_H
+#define BISHENGIR_TARGET_CAPABILITY_BINDING_H
+
+namespace bishengir {
+namespace npu {
+
+)";
+  for (const Record *binding : getDefinitions(records, "CapabilityBinding")) {
+    ResolvedBinding resolved;
+    if (resolveBinding(binding, resolved))
+      return true;
+    emitBindingClass(os, resolved);
+  }
+  os << R"(
+} // namespace npu
+} // namespace bishengir
+
+#endif // BISHENGIR_TARGET_CAPABILITY_BINDING_H
+)";
+  return false;
+}
+
 static bool emitTargetCapabilityDecls(const RecordKeeper &records,
                                       raw_ostream &os) {
-  if (validateCapabilityRecords(records))
+  if (validateCapabilityRecords(records) || validateCapabilityBindings(records))
     return true;
 
   auto valueDomains = getCapabilityValueDomains(records);
@@ -1174,7 +1824,7 @@ static std::string getRecordSymbol(const Record *record) {
 
 static bool emitTargetCapabilityDefs(const RecordKeeper &records,
                                      raw_ostream &os) {
-  if (validateCapabilityRecords(records))
+  if (validateCapabilityRecords(records) || validateCapabilityBindings(records))
     return true;
 
   auto valueDomains = getCapabilityValueDomains(records);
@@ -1655,7 +2305,7 @@ static SmallVector<DocColumn> getDocColumns(const Record *capability) {
 // of the rows; this backend does not invent hardware facts.
 static bool emitTargetCapabilityDoc(const RecordKeeper &records,
                                     raw_ostream &os) {
-  if (validateCapabilityRecords(records))
+  if (validateCapabilityRecords(records) || validateCapabilityBindings(records))
     return true;
 
   auto capabilities =
@@ -1771,5 +2421,12 @@ static mlir::GenRegistration
                            [](const RecordKeeper &records, raw_ostream &os) {
                              return emitTargetCapabilityDoc(records, os);
                            });
+
+static mlir::GenRegistration genTargetCapabilityBindings(
+    "gen-target-capability-binding",
+    "Generate capability request builders bound to ODS operations",
+    [](const RecordKeeper &records, raw_ostream &os) {
+      return emitTargetCapabilityBindings(records, os);
+    });
 
 } // namespace
