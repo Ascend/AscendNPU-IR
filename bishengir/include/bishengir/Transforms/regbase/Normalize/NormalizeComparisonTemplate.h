@@ -480,40 +480,12 @@ public:
       return failure();
 
     Value input = Traits::getInput(op);
-    Value output = Traits::getOutput(op);
-    Type elemType = getElementTypeOrSelf(input.getType());
-    if (!Traits::isSupportedElementType(elemType))
+    if (!Traits::isSupportedElementType(getElementTypeOrSelf(input.getType())))
       return failure();
 
-    auto loc = op->getLoc();
-    Type castType = rewriter.getIntegerType(elemType.getIntOrFloatBitWidth());
-    // step 1: clear the sign bit so the exponent test ignores +/-.
-    Value signMask = getSignMaskConstValue<Traits>(
-        rewriter, loc, elemType.getIntOrFloatBitWidth());
-    Value maskedSignValue = maskSignBit<Traits>(rewriter, loc, input, signMask);
-
-    // step 2: shift the integer bit pattern by the encoding of `-inf`.
-    Value negInf = getComplementOfInfConstValue<Traits>(
-        rewriter, loc, elemType.getIntOrFloatBitWidth());
-    Value minusInfValue =
-        minusInfConstValue<Traits>(rewriter, loc, maskedSignValue, negInf);
-
-    // step 3: clamp the shifted value to [0, 1]; only NaN keeps a non-zero
-    // mask after the min/max pair.
-    Value posOne = rewriter.create<arith::ConstantOp>(
-        loc, castType, rewriter.getIntegerAttr(castType, 1));
-    Value minValue =
-        Traits::createBinaryOp(rewriter, loc, minusInfValue, posOne,
-                               minusInfValue, BinaryKind::MinSigned);
-    Value zero = rewriter.create<arith::ConstantOp>(
-        loc, castType, rewriter.getIntegerAttr(castType, 0));
-    Value maxValue = Traits::createBinaryOp(rewriter, loc, minValue, zero,
-                                            minValue, BinaryKind::MaxSigned);
-
-    // step 4: lower the integer mask to the final bool result.
-    Value result =
-        Traits::lowerIntMaskToBoolResult(rewriter, loc, maxValue, output);
-    rewriter.replaceOp(op, result);
+    // Match the A3 lowering: NaNs are unequal to themselves.
+    rewriter.replaceOp(op, Traits::createCmpOp(rewriter, op->getLoc(), input,
+                                               input, CompareKind::NE));
     return success();
   }
 };

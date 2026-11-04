@@ -98,9 +98,8 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 
 // CHECK-LABEL: @test_NormalizeArgMinMax_reduce_max_with_index
 // CHECK: %[[NEG_INF:.*]] = arith.constant 0xFF800000 : f32
-// CHECK: %[[BITCAST:.*]] = hfusion.bitcast ins(%arg0 : tensor<1x6x1xf32>) outs(%{{.*}} : tensor<1x6x1xi32>) -> tensor<1x6x1xi32>
 // CHECK: %[[MASK_EMPTY:.*]] = tensor.empty() : tensor<1x6x1xi1>
-// CHECK: %[[MASK:.*]] = hfusion.compare {{.*}} ins({{.*}}, {{.*}} : tensor<1x6x1xf32>, f32) outs(%[[MASK_EMPTY]] : tensor<1x6x1xi1>) -> tensor<1x6x1xi1>
+// CHECK: %[[MASK:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vne>} ins(%arg0, %arg0 : tensor<1x6x1xf32>, tensor<1x6x1xf32>) outs(%[[MASK_EMPTY]] : tensor<1x6x1xi1>) -> tensor<1x6x1xi1>
 // CHECK: %[[SELECT_EMPTY:.*]] = tensor.empty() : tensor<1x6x1xf32>
 // CHECK: %[[SELECT:.*]] = hfusion.select ins(%[[MASK]], %[[NEG_INF]], %arg0 : tensor<1x6x1xi1>, f32, tensor<1x6x1xf32>) outs(%[[SELECT_EMPTY]] : tensor<1x6x1xf32>) -> tensor<1x6x1xf32>
 // CHECK: %[[OUT0:.*]] = tensor.empty() : tensor<1x1xf32>
@@ -122,9 +121,8 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 
 // CHECK-LABEL: @test_NormalizeArgMinMax_reduce_min_with_index
 // CHECK: %[[POS_INF:.*]] = arith.constant 0x7F800000 : f32
-// CHECK: %[[BITCAST:.*]] = hfusion.bitcast ins(%arg0 : tensor<1x6x1xf32>) outs(%{{.*}} : tensor<1x6x1xi32>) -> tensor<1x6x1xi32>
 // CHECK: %[[MASK_EMPTY:.*]] = tensor.empty() : tensor<1x6x1xi1>
-// CHECK: %[[MASK:.*]] = hfusion.compare {{.*}} ins({{.*}}, {{.*}} : tensor<1x6x1xf32>, f32) outs(%[[MASK_EMPTY]] : tensor<1x6x1xi1>) -> tensor<1x6x1xi1>
+// CHECK: %[[MASK:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vne>} ins(%arg0, %arg0 : tensor<1x6x1xf32>, tensor<1x6x1xf32>) outs(%[[MASK_EMPTY]] : tensor<1x6x1xi1>) -> tensor<1x6x1xi1>
 // CHECK: %[[SELECT_EMPTY:.*]] = tensor.empty() : tensor<1x6x1xf32>
 // CHECK: %[[SELECT:.*]] = hfusion.select ins(%[[MASK]], %[[POS_INF]], %arg0 : tensor<1x6x1xi1>, f32, tensor<1x6x1xf32>) outs(%[[SELECT_EMPTY]] : tensor<1x6x1xf32>) -> tensor<1x6x1xf32>
 // CHECK: %[[OUT0:.*]] = tensor.empty() : tensor<1x1xf32>
