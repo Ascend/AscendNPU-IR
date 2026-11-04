@@ -106,7 +106,8 @@ bool isNonVectorizableOp(Operation *op) {
     return false;
   }
 
-  if (op->hasTrait<OpTrait::HIVMSyncOpTrait>())
+  if (op->hasTrait<OpTrait::HIVMSyncOpTrait>() ||
+      isa<hivm::CreateSyncBlockLockOp>(op))
     return true;
 
   return isa<hfusion::LoadOp, hfusion::StoreOp, hfusion::ReduceWithIndexOp,

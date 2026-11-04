@@ -91,7 +91,8 @@ bool isVsstbPatternTransposeOp(Operation *op) {
 }
 
 static bool isSyncBarrierOp(Operation *op) {
-  return op->hasTrait<OpTrait::HIVMSyncOpTrait>();
+  return op->hasTrait<OpTrait::HIVMSyncOpTrait>() ||
+         isa<hivm::CreateSyncBlockLockOp>(op);
 }
 
 static bool hasSyncBetween(Block::iterator from, Block::iterator to) {
