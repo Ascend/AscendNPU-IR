@@ -5936,8 +5936,13 @@ public:
     Block &body = op.getCombiner().front();
     auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
     Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
-    if (isa<arith::AddIOp, arith::MaxUIOp, arith::MaxSIOp>(bodyOp)) {
-      // As it is a bool, `add` and `max` can be converted into `or`.
+    if (isa<arith::AddIOp>(bodyOp)) {
+      // i1 addition wraps modulo 2, which is equivalent to xor.
+      replaceBinary<arith::XOrIOp>(bodyOp, rewriter);
+      return success();
+    }
+    if (isa<arith::MaxUIOp, arith::MaxSIOp>(bodyOp)) {
+      // Boolean max is equivalent to or.
       replaceBinary<arith::OrIOp>(bodyOp, rewriter);
       return success();
     }

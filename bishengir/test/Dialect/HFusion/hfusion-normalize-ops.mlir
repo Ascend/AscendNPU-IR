@@ -2577,7 +2577,7 @@ func.func @test_reduce_with_index_i64_return_index(%arg0: tensor<32x32x128xf32>,
 // CHECK-LABEL: @test_reduce_i1_addi
 func.func @test_reduce_i1_addi(%arg0: tensor<16x32x64xi1>) -> tensor<16x64xi1> {
   %0 = tensor.empty() : tensor<16x64xi1>
-  // CHECK: %[[reduce:.*]] = linalg.reduce { arith.ori }
+  // CHECK: %[[reduce:.*]] = linalg.reduce { arith.xori }
   %reduce = linalg.reduce { arith.addi } ins(%arg0 : tensor<16x32x64xi1>) outs(%0 : tensor<16x64xi1>) dimensions = [1]
   return %reduce : tensor<16x64xi1>
 }
