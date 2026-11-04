@@ -93,6 +93,8 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   InferSimtVFMemScopeHint.cpp
   InitEntryKernel.cpp
   InjectBlockSync.cpp
+  CacheModuleTarget.cpp
+  FixpipeCapabilityQuery.cpp
   FixpipeUtils.cpp
   InlineFixpipe/InlineFixpipe.cpp
   InlineFixpipe/InlineFixpipeFallback.cpp
@@ -163,6 +165,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   TightlyCoupledBufferUtils.cpp
   TritonGlobalKernelArgsToHIVMOp.cpp
   UnitFlagInfoBase.cpp
+  VerifyCapability.cpp
   VFOperandSubstitution.cpp
   AnalyzeArithVectorMask.cpp
   WriteBackShared.cpp
@@ -174,6 +177,8 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   DEPENDS
   BiShengIRHIVMTransformsIncGen
   BiShengIRNPUArchitectureFeaturesIncGen
+  BiShengIRFixpipeCapabilityIncGen
+  BiShengIRFixpipeCapabilityBindingIncGen
 
   LINK_LIBS PUBLIC
   MLIRAffineDialect
@@ -189,6 +194,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MLIRDialectUtils
   BiShengIRHACCUtils
   BiShengIRHACCDialect
+  BiShengIRNPUFixpipeCapability
   BiShengIRHIVMAnalysis
   BiShengIRHIVMDialect
   BiShengIRMathExtDialect

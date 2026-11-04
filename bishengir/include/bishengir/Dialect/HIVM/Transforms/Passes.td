@@ -1872,6 +1872,53 @@ def V2SplitKernel : HIVMPass<"hivm-v2-split-kernel", "ModuleOp"> {
   ];
 }
 
+// Compute ModuleTargetAnalysis and preserve it. Does not rewrite IR.
+def CacheModuleTarget : HIVMPass<"hivm-cache-module-target"> {
+  let summary = "Cache the resolved #hacc.target for each module";
+  let description = [{
+    Builds `ModuleTargetAnalysis` for this pass anchor and preserves it.
+    An inner module still overrides an outer module. This is not a
+    process-wide target. A later pass that changes `#hacc.target` must not
+    preserve the analysis.
+  }];
+  let constructor = "mlir::hivm::createCacheModuleTargetPass()";
+  let dependentDialects = ["hacc::HACCDialect"];
+}
+
+// Explicit capability check. Do not add this to a default pipeline.
+// Fixpipe is the first checker. Add another checker for the next op.
+def VerifyCapability : HIVMPass<"hivm-verify-capability"> {
+  let summary = "Check HIVM ops against the selected target capability";
+  let description = [{
+    Explicitly invoked capability check. It is not part of the default
+    pipeline. Each supported op is a separate checker. Fixpipe is the first.
+    The pass does not replace a target-independent op verifier.
+
+    `#hacc.target` is read with `hacc::utils::getTargetDevice` from the nearest
+    enclosing module. A nested module overrides an outer module. A missing
+    attribute is reported as missing; this pass does not assume Ascend910B.
+
+    The Fixpipe checker builds a request through the generated binding and
+    queries the production profile. Other operations are ignored until a
+    checker is registered for them. `unknown` means a partial profile, or a
+    missing profile, has no confirmed native row. It does not mean the
+    hardware rejects the operation. `unsupported` means a complete profile
+    has no native row. `invalid-request` means the request does not match
+    the schema. A binding that cannot read the operation is reported
+    separately and is not a hardware result.
+
+    `strict=true` accepts only `native`. `strict=false` prints the same facts
+    as remarks and then succeeds. A successful report-mode run does not prove
+    that the operation is legal.
+  }];
+  let constructor = "mlir::hivm::createVerifyCapabilityPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "hacc::HACCDialect"];
+  let options = [
+    Option<"strict", "strict", "bool", /*default=*/"true",
+           "Accept only a native capability request">
+  ];
+}
+
 def V2VerifyStage : HIVMPass<"hivm-v2-verify-stage", "ModuleOp"> {
   let summary = "Verify the MIX pipeline stage invariants";
   let description = [{

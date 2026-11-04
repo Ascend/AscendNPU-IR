@@ -367,6 +367,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.addPass(mlir::scf::createRemoveRedundantLoopInitPass());
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
   pm.addPass(mlir::hivm::createNormalizeConvOpsPass());
+  pm.addPass(mlir::hivm::createCacheModuleTargetPass());
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   // Sink vtranspose[1,0] onto an nz2nd fixpipe so the next pass can fold it.
   pm.addPass(mlir::hivm::createOptimizeTransposePlacementPass());
@@ -400,6 +401,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   } else {
     pm.addPass(createInsertNZ2NDForDebugPass());
   }
+  pm.addPass(mlir::hivm::createCacheModuleTargetPass());
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   // Sink vtranspose[1,0] onto an nz2nd fixpipe so the next pass can fold it.
   pm.addPass(mlir::hivm::createOptimizeTransposePlacementPass());

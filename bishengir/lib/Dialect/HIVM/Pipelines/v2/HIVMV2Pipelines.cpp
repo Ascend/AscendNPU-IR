@@ -108,6 +108,7 @@ void buildV2TensorPhase(OpPassManager &pm, const V2PipelineOptions &options) {
   addFuncPass(pm, createHoistTightlyCoupledAllocPass());
 
   // TCB ids must exist on the MIX before the split.
+  pm.addPass(createCacheModuleTargetPass());
   pm.addPass(createInsertFixpipePass());
   pm.addPass(createInlineFixpipePass());
 
