@@ -73,8 +73,6 @@ bool isSafeToExcludeOps(Operation *op);
 
 bool isOutlineableOp(const VFFusionKindOption &option, Operation *op);
 
-bool isCubeFunc(func::FuncOp funcOp);
-
 bool isVsstbPatternTransposeOp(Operation *op);
 
 bool userCanFuseIntoVsstbPatternTransposeOp(Operation *op);

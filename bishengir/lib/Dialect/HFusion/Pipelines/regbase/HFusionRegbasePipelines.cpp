@@ -569,6 +569,7 @@ void buildHFusionPipelines(OpPassManager &pm,
   postProcess(pm, options);
 
   if (runRegBasePasses) {
+    pm.addPass(createSelectHIVMVectorizePass());
     if (!options.disableHfusionVectorize) {
       hfusionAutoVectorizePipeline(pm, options);
     }

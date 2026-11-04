@@ -109,8 +109,9 @@ void buildV2HIRPipeline(OpPassManager &pm,
   if (config.getEnableHfusionCompile()) {
     auto options = std::make_unique<hfusion::HFusionPipelineOptions>();
     setupHFusionPipelineOptions(*options, config);
-    // v2 vectorizes in hivm-vectorize on the unsplit MIX.
-    options->disableHfusionVectorize = true;
+    // HFusion autovectorize owns every op that
+    // is not marked hivm.defer_vectorize.
+    options->disableHfusionVectorize = false;
     hfusion::regbase::buildHFusionPipelines(pm, *options);
   }
 

@@ -112,6 +112,13 @@ def AutoVectorize : Pass<"hfusion-auto-vectorize", "ModuleOp"> {
   ];
 }
 
+def SelectHIVMVectorize : Pass<"hfusion-select-hivm-vectorize", "ModuleOp"> {
+  let summary = "Select work for HIVM vectorization (hivm.defer_vectorize)";
+  let constructor = "mlir::hfusion::createSelectHIVMVectorizePass()";
+  let dependentDialects = ["linalg::LinalgDialect", "tensor::TensorDialect",
+                           "func::FuncDialect", "hivm::HIVMDialect"];
+}
+
 def GenericUnroller : Pass<"hfusion-generic-unroller", "func::FuncOp"> {
   let summary = "Provides lowering of non-vectorizeable linalg ops (currently only linalg.reduce)";
   let constructor = "mlir::hfusion::createGenericUnrollerPass()";

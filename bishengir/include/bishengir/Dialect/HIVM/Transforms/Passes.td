@@ -1486,13 +1486,13 @@ def HIVMBubbleUpExtractSlice
                         "Run on strict mode when bubble up extract slice">];
 }
 
-def HIVMVectorizeOps : HIVMPass<"hivm-vectorize-ops", "func::FuncOp"> {
-  let summary = "Vectorize HIVM ops in a vector function using VL packing";
-  let constructor = "mlir::hivm::createHIVMVectorizeOpsPass()";
-  let dependentDialects = ["arith::ArithDialect", "func::FuncDialect",
-                           "hivm::HIVMDialect", "math::MathDialect",
-                           "mathExt::MathExtDialect", "memref::MemRefDialect",
-                           "tensor::TensorDialect", "vector::VectorDialect"];
+def HIVMVectorize : HIVMPass<"hivm-vectorize", "ModuleOp"> {
+  let summary = "Vectorize tensor-level HIVM computation";
+  let description = [{
+    Module-level entry point for tensor-level HIVM vectorization.
+  }];
+  let constructor = "mlir::hivm::createHIVMVectorizePass()";
+  let dependentDialects = [];
 }
 
 def InsertInitAndFinishForDebug

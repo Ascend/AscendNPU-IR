@@ -13,6 +13,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   AdaptTritonKernel.cpp
   AddFFTSAddr.cpp
   AutoVectorize.cpp
+  SelectHIVMVectorize.cpp
   AutoVectorize/AutoVectorizeInterpreter.cpp
   AutoVectorize/FusedNode.cpp
   AutoVectorize/FusionUtils.cpp
@@ -96,6 +97,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   BiShengIRHACCDialect
   BiShengIRHACCUtils
   BiShengIRHIVMDialect
+  BiShengIRHIVMTransforms
   BiShengIRHFusionAnalysis
   BiShengIRMathExtDialect
   BiShengIRAnnotationDialect
