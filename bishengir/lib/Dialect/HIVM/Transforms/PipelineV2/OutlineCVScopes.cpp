@@ -85,10 +85,10 @@ private:
   static bool isViewLikeMemRefOp(Operation *op);
   static Operation *getRootAlloc(Value memref);
   static bool isGMTarget(Value dst);
-  static bool isStoreFixpipeCopyWriter(Operation *usr, Value memrefVal);
+  static bool isStoreFixpipeCopyND2NZWriter(Operation *usr, Value memrefVal);
   static bool walkAllocUsers(Operation *rootAlloc,
                              llvm::function_ref<bool(OpOperand &)> visitUse);
-  static bool isAllocTargetOfStoreFixpipeCopy(Operation *rootAlloc);
+  static bool isAllocTargetOfStoreFixpipeCopyND2NZ(Operation *rootAlloc);
 
   bool hasLoopLocalToTensor(Value memref);
   bool isStoppingToTensor(Operation *tracedOp, Value startOutput);
@@ -212,11 +212,11 @@ bool CVScopeOutliner::isGMTarget(Value dst) {
   return false;
 }
 
-bool CVScopeOutliner::isStoreFixpipeCopyWriter(Operation *usr,
-                                               Value memrefVal) {
+bool CVScopeOutliner::isStoreFixpipeCopyND2NZWriter(Operation *usr,
+                                                    Value memrefVal) {
   if (auto copyOp = dyn_cast<memref::CopyOp>(usr))
     return copyOp.getTarget() == memrefVal;
-  if (!isa<StoreOp, FixpipeOp, CopyOp>(usr))
+  if (!isa<StoreOp, FixpipeOp, CopyOp, ND2NZOp>(usr))
     return false;
   auto dps = dyn_cast<DestinationStyleOpInterface>(usr);
   return dps && llvm::any_of(dps.getDpsInits(),
@@ -246,9 +246,10 @@ bool CVScopeOutliner::walkAllocUsers(
   return false;
 }
 
-bool CVScopeOutliner::isAllocTargetOfStoreFixpipeCopy(Operation *rootAlloc) {
+bool CVScopeOutliner::isAllocTargetOfStoreFixpipeCopyND2NZ(
+    Operation *rootAlloc) {
   return walkAllocUsers(rootAlloc, [](OpOperand &use) {
-    return isStoreFixpipeCopyWriter(use.getOwner(), use.get());
+    return isStoreFixpipeCopyND2NZWriter(use.getOwner(), use.get());
   });
 }
 
@@ -267,7 +268,8 @@ bool CVScopeOutliner::isStoppingToTensor(Operation *tracedOp,
   auto toTensor = dyn_cast_or_null<bufferization::ToTensorOp>(tracedOp);
   if (!toTensor || toTensor.getResult() == startOutput)
     return false;
-  return isAllocTargetOfStoreFixpipeCopy(getRootAlloc(toTensor.getOperand()));
+  return isAllocTargetOfStoreFixpipeCopyND2NZ(
+      getRootAlloc(toTensor.getOperand()));
 }
 
 TCoreType CVScopeOutliner::determineCoreType(Value output) {
@@ -464,7 +466,8 @@ void CVScopeOutliner::collectLocalOutputs() {
 
   loopOp->walk([&](Operation *op) {
     if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op)) {
-      if (isAllocTargetOfStoreFixpipeCopy(getRootAlloc(toTensor.getOperand())))
+      if (isAllocTargetOfStoreFixpipeCopyND2NZ(
+              getRootAlloc(toTensor.getOperand())))
         addLocalOutput(toTensor.getResult());
       return;
     }
@@ -1051,7 +1054,7 @@ void CVScopeOutliner::computeHoistedOps(WorkItem *item) {
         if (item->hoistedOps.contains(tOp))
           continue;
         bool isAlloc = isa<memref::AllocOp, AllocWorkspaceOp>(tOp) &&
-                       isAllocTargetOfStoreFixpipeCopy(tOp);
+                       isAllocTargetOfStoreFixpipeCopyND2NZ(tOp);
         bool isCast = isa<memref::MemorySpaceCastOp, annotation::MarkOp,
                           bufferization::ToTensorOp, memref::CastOp>(tOp);
         if (!isAlloc && !isCast)
