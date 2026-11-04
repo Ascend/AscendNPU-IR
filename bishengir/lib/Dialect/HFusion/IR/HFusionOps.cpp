@@ -1916,9 +1916,209 @@ struct ReplaceWithLinalgReduce : public OpRewritePattern<ReduceWithIndexOp> {
   }
 };
 
+/// Folds a plain `linalg.reduce` that recomputes the very value this
+/// `hfusion.reduce_with_index` already produces, so that only one full-width
+/// pass over the tile is left.  This is the shape Triton's
+///   chunk_max = tl.max(x); chunk_arg = tl.argmax(x)
+/// reaches us in:
+///   %v    = linalg.reduce (maximumf) ins(%src) outs(fill -inf)  // value used
+///   %wi:2 = hfusion.reduce_with_index {already_initialize_init} <max>
+///             ins(%src, %idx) outs(...)                          // index used
+/// `%wi#0` is the reduced value but is thrown away, while `%v` computes it a
+/// second time.  The two agree because the reduction's init is already the
+/// identity (`already_initialize_init`) and the plain reduction's init is the
+/// matching identity constant.
+///
+/// Both bodies are matched structurally rather than positionally: the yielded
+/// value has to be produced by a binary op over the two accumulator operands,
+/// and the declared `reduce_kind` has to agree with it.  A body that was
+/// reshaped or had other ops fused into it is therefore rejected instead of
+/// being folded into a value it no longer computes.
+struct FoldPlainReduceIntoReduceWithIndex
+    : public OpRewritePattern<ReduceWithIndexOp> {
+  using OpRewritePattern<ReduceWithIndexOp>::OpRewritePattern;
+
+  /// True when `init` fills the identity element of the max/min combiner
+  /// `binOp` (i.e. `-inf` for max, `+inf` for min), which is what makes the
+  /// plain reduction equal to the one with an already-normalized init.
+  static bool isIdentityInit(Value init, Operation &binOp) {
+    auto fillOp = init.getDefiningOp<linalg::FillOp>();
+    if (!fillOp || fillOp.getInputs().size() != 1)
+      return false;
+    auto cstOp = fillOp.getInputs()[0].getDefiningOp<arith::ConstantOp>();
+    if (!cstOp)
+      return false;
+    auto floatAttr = dyn_cast<FloatAttr>(cstOp.getValue());
+    if (!floatAttr)
+      return false;
+
+    StringRef name = binOp.getName().getStringRef();
+    bool isMax = name.contains("max");
+    bool isMin = name.contains("min");
+    if (isMax == isMin)
+      return false;
+    const llvm::APFloat &initValue = floatAttr.getValue();
+    return initValue.isInfinity() &&
+           (isMax ? initValue.isNegative() : !initValue.isNegative());
+  }
+
+  /// Returns the value combiner of a reduction body that is still in the shape
+  /// the region builder emits:
+  ///   ^bb0(%elem, ..., %acc, ...):
+  ///     %v = <combiner>(%elem, %acc)
+  ///     linalg.yield(%v, ...)
+  /// The combiner has to combine the reduced element (`block argument 0`) with
+  /// the accumulator (`block argument numInputs`, in either order, max/min
+  /// commute). Anything else -- the yielded value was post-processed, an op was
+  /// fused between the element and the combiner, or the accumulator is combined
+  /// with itself -- returns null, so a body that no longer reduces exactly the
+  /// source is never mistaken for the plain reduction.
+  static Operation *getValueCombiner(Region &region, unsigned numYieldedValues,
+                                     unsigned numInputs) {
+    if (!region.hasOneBlock() || region.front().empty())
+      return nullptr;
+    Block &block = region.front();
+    if (block.getNumArguments() < numInputs + 1)
+      return nullptr;
+    auto yieldOp = dyn_cast<linalg::YieldOp>(block.getTerminator());
+    if (!yieldOp || yieldOp.getValues().size() != numYieldedValues)
+      return nullptr;
+
+    Operation *combiner = yieldOp.getValues()[0].getDefiningOp();
+    if (!combiner || combiner->getBlock() != &block ||
+        combiner->getNumOperands() != 2 || combiner->getNumResults() != 1)
+      return nullptr;
+
+    Value element = block.getArgument(0);
+    Value accumulator = block.getArgument(numInputs);
+    bool combinesElement = false;
+    bool combinesAccumulator = false;
+    for (Value operand : combiner->getOperands()) {
+      if (operand == element)
+        combinesElement = true;
+      else if (operand == accumulator)
+        combinesAccumulator = true;
+      else
+        return nullptr;
+    }
+    // Both sides have to take part: combining the accumulator with itself would
+    // just fold the init, not the source, and combining the element with itself
+    // is not a reduction over the source either.
+    if (!combinesElement || !combinesAccumulator)
+      return nullptr;
+    return combiner;
+  }
+
+  /// The declared `reduce_kind` must agree with the combiner found in the body,
+  /// so a MAX op whose value body computes a min -- or whose body was reshaped
+  /// into something else -- is rejected instead of being trusted blindly.
+  static bool matchesReduceKind(ReduceWithIndexOp op, Operation &combiner) {
+    StringRef name = combiner.getName().getStringRef();
+    bool isMax = name.contains("max");
+    bool isMin = name.contains("min");
+    if (isMax == isMin)
+      return false;
+    switch (op.getReduceKind().getReduceWithIndexKind()) {
+    case ReduceWithIndexKind::MAX:
+      return isMax;
+    case ReduceWithIndexKind::MIN:
+      return isMin;
+    // Integer reductions never reach the fold: the identity init accepted below
+    // is a float, and only the float argmin/argmax normalization marks the init
+    // as normalized.
+    case ReduceWithIndexKind::MAXUI:
+    case ReduceWithIndexKind::MINUI:
+      return false;
+    }
+    return false;
+  }
+
+  LogicalResult matchAndRewrite(ReduceWithIndexOp op,
+                                PatternRewriter &rewriter) const override {
+    static constexpr llvm::StringLiteral kAlreadyInitializeInit =
+        "already_initialize_init";
+    if (!op.hasPureTensorSemantics() || op->getResultTypes().size() < 2 ||
+        !op->hasAttr(kAlreadyInitializeInit) || op.getInputs().empty())
+      return failure();
+
+    Value src = op.getInputs()[0];
+    Value value = op.getResult()[0];
+    Operation *opCombiner =
+        getValueCombiner(op.getRegion(),
+                         /*numYieldedValues=*/2,
+                         /*numInputs=*/op.getInputs().size());
+    if (!opCombiner || !matchesReduceKind(op, *opCombiner))
+      return failure();
+
+    for (Operation *user : llvm::make_early_inc_range(src.getUsers())) {
+      auto reduceOp = dyn_cast<linalg::ReduceOp>(user);
+      if (!reduceOp)
+        continue;
+      Operation *combiner = getValueCombiner(reduceOp.getRegion(),
+                                             /*numYieldedValues=*/1,
+                                             /*numInputs=*/1);
+      if (!combiner || reduceOp.getNumResults() != 1 ||
+          reduceOp.getInputs().size() != 1 || reduceOp.getInits().size() != 1 ||
+          reduceOp.getDimensions() != op.getDimensions() ||
+          reduceOp.getResult(0).getType() != value.getType())
+        continue;
+      if (combiner->getName() != opCombiner->getName() ||
+          !isIdentityInit(reduceOp.getInits()[0], *combiner))
+        continue;
+
+      // In the Triton pattern above the plain reduction is emitted first, so
+      // its uses sit before the reduce_with_index whose value we want to reuse.
+      // Everything involved is side-effect free, so hoist the op -- together
+      // with the pure producers of its operands, typically the `tensor.empty`
+      // inits -- in front of the plain reduction, unless an operand could not
+      // be made available there.
+      if (op->getBlock() != reduceOp->getBlock())
+        continue;
+      if (!op->isBeforeInBlock(reduceOp)) {
+        SmallVector<Operation *> hoistable;
+        auto dominatesReduce = [&](Value v) {
+          Operation *def = v.getDefiningOp();
+          return !def || (def->getBlock() == op->getBlock() &&
+                          def->isBeforeInBlock(reduceOp));
+        };
+        bool operandsAvailable =
+            llvm::all_of(op->getOperands(), [&](Value operand) {
+              Operation *def = operand.getDefiningOp();
+              if (!def)
+                return true;
+              if (dominatesReduce(operand))
+                return true;
+              // Only move producers that live in this block: moving an op
+              // defined in an enclosing region into it would break the
+              // dominance of its remaining uses.
+              if (def->getBlock() != op->getBlock())
+                return false;
+              if (isMemoryEffectFree(def) &&
+                  llvm::all_of(def->getOperands(), dominatesReduce)) {
+                hoistable.push_back(def);
+                return true;
+              }
+              return false;
+            });
+        if (!operandsAvailable)
+          continue;
+        for (Operation *def : hoistable)
+          def->moveBefore(reduceOp);
+        op->moveBefore(reduceOp);
+      }
+
+      rewriter.replaceAllUsesWith(reduceOp.getResult(0), value);
+      rewriter.eraseOp(reduceOp);
+      return success();
+    }
+    return failure();
+  }
+};
+
 void ReduceWithIndexOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                     MLIRContext *context) {
   results.add<ReplaceWithLinalgReduce>(context);
+  results.add<FoldPlainReduceIntoReduceWithIndex>(context);
 }
 
 LogicalResult ReduceWithIndexOp::verify() {
