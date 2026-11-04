@@ -292,9 +292,12 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
     bitcodePathList.push_back(metaOpFilePath);
   }
 
+  StringRef vfAutoSyncArg = config.shouldEnableVFAutoSync()
+                                ? "--cce-vf-auto-sync=global"
+                                : "--cce-vf-auto-sync=off";
   if (regbaseCompile) {
     arguments.push_back("-mllvm");
-    arguments.push_back("--cce-vf-auto-sync=global");
+    arguments.push_back(vfAutoSyncArg);
   }
   if (config.shouldInjectBarrierAllSync()) {
     arguments.push_back("--cce-auto-sync=bar-all");
@@ -433,9 +436,9 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
     // 1. -enable-mix=true (manual -mllvm, first in argv)
     if (isMixKernel)
       extraOpts.push_back("-enable-mix=true");
-    // 2. --cce-vf-auto-sync=global (manual -mllvm, regbase only)
+    // 2. VF auto-sync (manual -mllvm, regbase only), matching process mode.
     if (regbaseCompile)
-      extraOpts.push_back("--cce-vf-auto-sync=global");
+      extraOpts.push_back(vfAutoSyncArg.str());
     // 3. --cce-auto-sync=bar-all translation.  dav-c310-vec: 5 -mllvm;
     //    dav-c310-cube: driver does not translate (skip); dav-c220-vec: 4
     //    (no -api-deps-filter, already in baseline table).
@@ -470,7 +473,7 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
     extraOpts.push_back("-cce-vf-stack-size=0x2000");
     // 10. --cce-simd-vf-fusion=false translation (dav-c310 vec+cube: 7 -mllvm).
     //     last-wins: -cce-vf-enable-loop-fusion=false repeats step 7's value
-    //     (harmless) and -cce-vf-auto-sync=off overrides step 2's global.
+    //     (harmless) and -cce-vf-auto-sync=off overrides step 2's setting.
     if (config.shouldEnableVFFusion() && isDavC310) {
       extraOpts.push_back("-cce-vf-enable-vf-fusion=false");
       extraOpts.push_back("-cce-vf-enable-vf-loop-extender=false");
@@ -656,7 +659,7 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
         << " -O2 --cce-aicore-only --cce-generic-addrspace=off "
            "-cce-bitcode-is-aicore -Wno-override-module";
     if (regbaseCompile)
-      llvm::errs() << " -mllvm --cce-vf-auto-sync=global ";
+      llvm::errs() << " -mllvm " << vfAutoSyncArg << " ";
     llvm::errs() << " -o " << tryReplaceExtension(outputBin, ".o") << "\n";
   }
   return outputBin;

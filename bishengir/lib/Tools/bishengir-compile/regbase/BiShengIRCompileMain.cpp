@@ -627,6 +627,7 @@ HIVMCMainConfig HIVMCFromBiShengIRConfig(BiShengIRCompileMainConfig &config,
   hivmcConfig.enableDebugInfo(config.getEnableDebugInfo());
   hivmcConfig.saveTemps(config.getSaveTemps());
   hivmcConfig.injectBarrierAllSync(config.getEnableHIVMInjectBarrierAllSync());
+  hivmcConfig.enableVFAutoSync(!config.getEnableTlaMode());
   hivmcConfig.setExtraDeviceBCPaths(config.getLinkAicoreBitcode());
   hivmcConfig.setDisableFMA(config.getDisableFMA());
   hivmcConfig.setSaveLinkedIR(config.getSaveLinkedIR());
