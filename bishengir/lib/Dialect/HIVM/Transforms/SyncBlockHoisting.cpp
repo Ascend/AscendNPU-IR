@@ -132,8 +132,8 @@ struct HoistingSyncBlockPattern
     bool hasCrossBlockSync = false;
     for (auto &region : op->getRegions())
       region.walk([&](Operation *inner) {
-        if (isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp>(
-                inner))
+        if (isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
+                hivm::SyncIntraBlockSetOp, hivm::SyncIntraBlockWaitOp>(inner))
           hasCrossBlockSync = true;
       });
 

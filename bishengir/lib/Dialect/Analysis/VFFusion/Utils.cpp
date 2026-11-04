@@ -92,6 +92,7 @@ bool isVsstbPatternTransposeOp(Operation *op) {
 
 static bool isSyncBarrierOp(Operation *op) {
   return isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
+             hivm::SyncIntraBlockSetOp, hivm::SyncIntraBlockWaitOp,
              hivm::CreateSyncBlockLockOp, hivm::SyncBlockLockOp,
              hivm::SyncBlockUnlockOp>(op);
 }

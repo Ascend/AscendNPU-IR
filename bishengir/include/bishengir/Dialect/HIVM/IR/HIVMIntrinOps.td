@@ -305,6 +305,30 @@ def WaitIntraBlockImmInstrOp : HIVM_IntrinOp<
                        I64Attr:$sync_id);
 }
 
+class BufferSyncImm_InstrOp<string mnemonic>
+    : HIVM_IntrinOp<mnemonic, [], [], 0, [0, 1, 2],
+                    ["pipe", "buf_id", "mode"]> {
+  let arguments = (ins I64Attr:$pipe, I64Attr:$buf_id, I64Attr:$mode);
+  let llvmBuilder = [{
+    convertBufferSyncIntrinsic(opInst, builder, moduleTranslation,
+                              "llvm.}] # mnemonic # [{");
+  }];
+}
+
+class BufferSyncReg_InstrOp<string mnemonic>
+    : HIVM_IntrinOp<mnemonic, [], [], 0, [0, 2], ["pipe", "mode"]> {
+  let arguments = (ins I64Attr:$pipe, I<64>:$buf_id, I64Attr:$mode);
+  let llvmBuilder = [{
+    convertBufferSyncIntrinsic(opInst, builder, moduleTranslation,
+                              "llvm.}] # mnemonic # [{");
+  }];
+}
+
+def GetBufImmInstrOp : BufferSyncImm_InstrOp<"hivm.GET.BUFI.mode">;
+def GetBufRegInstrOp : BufferSyncReg_InstrOp<"hivm.GET.BUF.mode">;
+def RlsBufImmInstrOp : BufferSyncImm_InstrOp<"hivm.RLS.BUFI.mode">;
+def RlsBufRegInstrOp : BufferSyncReg_InstrOp<"hivm.RLS.BUF.mode">;
+
 def SetMaskNormInstrOp : HIVM_IntrinOp<
                              /*string opName=*/"hivm.SET.MASK.NORM",
                              /*list<int> overloadedOperands=*/[],

@@ -36,7 +36,8 @@ include "mlir/IR/BuiltinAttributes.td"
 class HIVM_SynchronizationOp<string mnemonic, list<Trait> traits = []> :
   HIVM_Op<mnemonic, !listconcat(
     [DeclareOpInterfaceMethods<HIVMInferCoreTypeInterface,
-      ["inferCoreType"]>
+      ["inferCoreType"]>,
+     HIVMSyncOpTrait
     ], traits)> {
 }
 
@@ -123,6 +124,84 @@ def PipeBarrierOp : HIVM_SynchronizationOp<"pipe_barrier"> {
 //===----------------------------------------------------------------------===//
 // HIVM block synchronization operations.
 //===----------------------------------------------------------------------===//
+
+class HIVM_SyncIntraBlockOp<string mnemonic> : HIVM_SynchronizationOp<mnemonic> {
+  let summary = "Synchronize individual cores within an A5 mixed block.";
+  let description = [{
+    Explicit intra-block synchronization on Ascend950 (A5). The operation
+    directly signals or waits on the hardware synchronization counter selected
+    by `sync_id` using the pipe owned by `tcore_type`. Each vector subcore owns
+    its own counter, so subcores participate independently.
+
+    This differs from `sync_block_set`/`sync_block_wait`:
+      - `sync_block_*` is the logical AIC/AIV block synchronization used by the
+        scheduler. It describes a producer/consumer handshake between CUBE and
+        VECTOR, can carry `ffts_base_addr`, and is portable across generations
+        (FFTS on A3). On A5 with `INTRA_BLOCK_SYNCHRONIZATION` mode it may be
+        lowered to the same hardware instructions; for a CUBE op it also emits
+        the implicit partner access at `sync_id + 16` so both halves of the
+        AIC/AIV pair stay in sync (except the CV 1:1 FFTS path).
+      - `sync_intra_block_*` exposes exactly one physical counter and performs
+        no implicit partner access. The frontend must issue the matching
+        set/wait on the peer core or subcore itself.
+
+    Use `sync_block_*` for normal CV pipeline handoff where logical block
+    pairing and A3/A5 portability are desired. Use `sync_intra_block_*` only
+    when the frontend needs exact control of a physical A5 counter, for example
+    an explicit subcore-level handoff or a buffer-token protocol. Keeping the
+    operations separate prevents the block-level form from silently acquiring
+    raw-counter semantics and allows each form to keep its own target and ID
+    validation.
+
+    `sync_id` is either a static integer or a dynamic i64; exactly one form is
+    required. Cube IDs are in [0, 31] and Vector IDs in [0, 15], and `pipe`
+    must match the core type and cannot be PIPE_ALL. Available on Ascend950.
+  }];
+  let arguments = (ins HIVM_TCoreTypeAttr:$tcore_type,
+                       HIVM_PipeAttr:$pipe,
+                       OptionalAttr<Builtin_IntegerAttr>:$static_sync_id,
+                       Optional<I64>:$dynamic_sync_id);
+  let assemblyFormat = [{
+    `[` $tcore_type `,` $pipe `,`
+    custom<FlagID>($static_sync_id, $dynamic_sync_id) `]` attr-dict
+  }];
+  let builders = [OpBuilder<(ins "TCoreTypeAttr":$tcore_type,
+      "PipeAttr":$pipe, "OpFoldResult":$sync_id)>];
+  let extraClassDeclaration = [{
+    ::mlir::OpFoldResult getSyncId();
+  }];
+  let hasVerifier = 1;
+}
+
+def SyncIntraBlockSetOp : HIVM_SyncIntraBlockOp<"sync_intra_block_set">;
+def SyncIntraBlockWaitOp : HIVM_SyncIntraBlockOp<"sync_intra_block_wait">;
+
+class HIVM_BufferSyncOp<string mnemonic> : HIVM_SynchronizationOp<mnemonic> {
+  let summary = "Acquire or release an A5 buffer synchronization token.";
+  let description = [{
+    The buffer ID is in [0, 31], including for dynamic IDs. The pipe and mode
+    are compile-time attributes. Mode false blocks the issuing pipeline;
+    mode true selects nonblocking execution. Available on Ascend950.
+    These operations have unknown effects to preserve synchronization ordering.
+  }];
+  let arguments = (ins HIVM_PipeAttr:$pipe,
+                       OptionalAttr<Builtin_IntegerAttr>:$static_buf_id,
+                       Optional<I64>:$dynamic_buf_id,
+                       BoolAttr:$mode);
+  let assemblyFormat = [{
+    `[` $pipe `,`
+    custom<FlagID>($static_buf_id, $dynamic_buf_id) `,` $mode `]` attr-dict
+  }];
+  let builders = [OpBuilder<(ins "PipeAttr":$pipe,
+      "OpFoldResult":$buf_id, "BoolAttr":$mode)>];
+  let extraClassDeclaration = [{
+    ::mlir::OpFoldResult getBufId();
+  }];
+  let hasVerifier = 1;
+}
+
+def GetBufOp : HIVM_BufferSyncOp<"get_buf">;
+def RlsBufOp : HIVM_BufferSyncOp<"rls_buf">;
 
 def SyncBlockOp : HIVM_SynchronizationOp<"sync_block"> {
   let summary = "hivm sync block between different kernels.";
