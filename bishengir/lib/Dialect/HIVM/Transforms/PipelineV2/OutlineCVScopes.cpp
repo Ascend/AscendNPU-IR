@@ -1034,6 +1034,10 @@ static Value getIntermediateInitValue(Value res) {
   auto dpsOp = res.getDefiningOp<DestinationStyleOpInterface>();
   assert(dpsOp && "expected intermediate tensor value to be defined by DPS op");
   Value initVal = dpsOp.getTiedOpOperand(cast<OpResult>(res))->get();
+  // Preserve the broadcast padding on the active path, but reuse its backing
+  // empty tensor as the value for the inactive branch.
+  if (auto broadcast = initVal.getDefiningOp<VBrcOp>())
+    initVal = broadcast.getDst();
   assert(initVal.getDefiningOp<tensor::EmptyOp>() &&
          "expected outs() of intermediate tensor value to be tensor.empty");
   return initVal;

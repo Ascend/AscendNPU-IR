@@ -830,3 +830,60 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   }
 }
 
+// -----
+
+// Both branch-local and enclosing broadcasts keep their padded destinations
+// on the active path, while the inactive path reuses the backing tensor.empty.
+// CHECK-LABEL: func.func @outline_if_intermediate_broadcast_padding
+// CHECK: %[[OUTER_EMPTY:.*]] = tensor.empty() : tensor<16x16xf32>
+// CHECK: %[[OUTER_PAD:.*]] = hivm.hir.vbrc {{.*}} outs(%[[OUTER_EMPTY]] : tensor<16x16xf32>)
+// CHECK: scf.for
+// CHECK: scf.if {{.*}} -> (tensor<16x16xf32>) {
+// CHECK: %[[RELU:.*]] = hivm.hir.vrelu {{.*}} outs(%[[OUTER_PAD]] : tensor<16x16xf32>)
+// CHECK: scf.yield %[[RELU]] : tensor<16x16xf32>
+// CHECK: } else {
+// CHECK-NEXT: scf.yield %[[OUTER_EMPTY]] : tensor<16x16xf32>
+// CHECK: %[[INNER_EMPTY:.*]] = tensor.empty() : tensor<16x32xf32>
+// CHECK-NEXT: %{{.*}} = scf.if {{.*}} -> (tensor<16x32xf32>) {
+// CHECK-NEXT: %[[INNER_PAD:.*]] = hivm.hir.vbrc {{.*}} outs(%[[INNER_EMPTY]] : tensor<16x32xf32>)
+// CHECK-NEXT: %[[EXP:.*]] = hivm.hir.vexp {{.*}} outs(%[[INNER_PAD]] : tensor<16x32xf32>)
+// CHECK: scf.yield %[[EXP]] : tensor<16x32xf32>
+// CHECK: } else {
+// CHECK-NEXT: scf.yield %[[INNER_EMPTY]] : tensor<16x32xf32>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @outline_if_intermediate_broadcast_padding(
+      %x: tensor<16x32xf32>, %y: tensor<16x16xf32>, %b: tensor<1x1x16x16xf16>, %dst0: memref<16x16xf32>, %dst1: memref<16x32xf32>, %dst2: memref<16x16xf32>, %n: index, %cond: i1)
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %pad = arith.constant 0.0 : f32
+    %outer_init = tensor.empty() : tensor<16x16xf32>
+    %outer_padded = hivm.hir.vbrc ins(%pad : f32) outs(%outer_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+    scf.for %i = %c0 to %n step %c1 {
+      scf.if %cond {
+        %inner_init = tensor.empty() : tensor<16x32xf32>
+        %inner_padded = hivm.hir.vbrc ins(%pad : f32) outs(%inner_init : tensor<16x32xf32>) -> tensor<16x32xf32>
+        %exp = hivm.hir.vexp ins(%x : tensor<16x32xf32>) outs(%inner_padded : tensor<16x32xf32>) -> tensor<16x32xf32>
+        %relu = hivm.hir.vrelu ins(%y : tensor<16x16xf32>) outs(%outer_padded : tensor<16x16xf32>) -> tensor<16x16xf32>
+        %f16_init = tensor.empty() : tensor<16x16xf16>
+        %f16 = hivm.hir.vcast ins(%relu : tensor<16x16xf32>) outs(%f16_init : tensor<16x16xf16>) -> tensor<16x16xf16>
+        %f16_4d = tensor.expand_shape %f16 [[0, 1, 2], [3]] output_shape [1, 1, 16, 16] : tensor<16x16xf16> into tensor<1x1x16x16xf16>
+        %cbuf = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+        hivm.hir.copy ins(%f16_4d : tensor<1x1x16x16xf16>) outs(%cbuf : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>)
+        %a = bufferization.to_tensor %cbuf restrict writable : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+        %dot_init = tensor.empty() : tensor<1x1x16x16xf32>
+        %dot = hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : tensor<1x1x16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%dot_init : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
+        hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%dot : tensor<1x1x16x16xf32>) outs(%dst0 : memref<16x16xf32>)
+        hivm.hir.store ins(%exp : tensor<16x32xf32>) outs(%dst1 : memref<16x32xf32>)
+        %sum_exp = hivm.hir.vadd ins(%exp, %x : tensor<16x32xf32>, tensor<16x32xf32>) outs(%inner_init : tensor<16x32xf32>) -> tensor<16x32xf32>
+        hivm.hir.store ins(%sum_exp : tensor<16x32xf32>) outs(%dst1 : memref<16x32xf32>)
+        %sum = hivm.hir.vadd ins(%relu, %y : tensor<16x16xf32>, tensor<16x16xf32>) outs(%outer_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+        hivm.hir.store ins(%sum : tensor<16x16xf32>) outs(%dst2 : memref<16x16xf32>)
+      }
+    }
+    return
+  }
+}
+
