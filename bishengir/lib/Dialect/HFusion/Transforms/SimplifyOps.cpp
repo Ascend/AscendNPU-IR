@@ -112,35 +112,47 @@ bool isSafeToSimplifyCast(CastOp castOp) {
 // 0xFFFF for a zero divisor, which must be truncated back to 0xFF before the
 // value is consumed by a following operation.
 // The chain is ordered from the consumer inwards, i.e. opposite to the value
-// flow. A removable chain is one widening phase followed by a narrowing phase:
-// walking the value flow, the width may not decrease before the narrowing
-// phase starts and may not increase again once it has started. The chain must
-// end in a narrowing phase.
+// flow, and a foldable chain has the same element type at both ends. Composing
+// the chain is therefore an identity exactly when every intermediate value can
+// still hold every value of the chain's source type: no intermediate element
+// width may drop below the source width. A step that narrows below the source
+// width drops high bits which a later widening step cannot restore, so such a
+// chain must be kept even if the width returns to the source width at the end.
+// Note that this is a source-width test and not a phase test: a chain that
+// narrows and widens again while staying at or above the source width (e.g.
+// `i16 -> i64 -> i32 -> i64 -> i16`) is still an identity and may be folded.
 bool isValuePreservingIntegerCastChain(ArrayRef<CastOp> castChain) {
-  bool inNarrowingPhase = false;
-  bool hasWideningAfterNarrowing = false;
-  for (CastOp castOp : llvm::reverse(castChain)) {
+  // Leave mixed integer/float chains to the floating point precision logic.
+  // Bit width is not a precision measure across integer/float boundaries
+  // (`i32 -> f32 -> i32` keeps 32 bits but loses mantissa bits), so those
+  // chains are deliberately not judged here.
+  for (CastOp castOp : castChain) {
     auto inputType = getElementTypeOrSelf(castOp.getInputs().front().getType());
     auto outputType =
         getElementTypeOrSelf(castOp.getOutputs().front().getType());
-
-    // Leave mixed integer/float chains to the floating point precision logic.
-    // A mixed chain must still be accepted even if its integer casts are not
-    // value preserving, so the rejection below is deferred to the end.
     if (!isa<IntegerType>(inputType) || !isa<IntegerType>(outputType))
       return true;
-
-    unsigned inputWidth = cast<IntegerType>(inputType).getWidth();
-    unsigned outputWidth = cast<IntegerType>(outputType).getWidth();
-    if (outputWidth < inputWidth) {
-      inNarrowingPhase = true;
-    } else if (outputWidth > inputWidth && inNarrowingPhase) {
-      // A widening step after the narrowing phase drops high bits and then
-      // restores them, so the chain is not an identity.
-      hasWideningAfterNarrowing = true;
-    }
   }
-  return inNarrowingPhase && !hasWideningAfterNarrowing;
+
+  // castChain is consumer-to-producer, so the value-flow source (and the type
+  // that survives folding) is the input of the last cast.
+  CastOp sourceCast = castChain.back();
+  unsigned sourceWidth =
+      cast<IntegerType>(
+          getElementTypeOrSelf(sourceCast.getInputs().front().getType()))
+          .getWidth();
+
+  // Every intermediate value is the output of one of the casts (the source is
+  // the input of the last one), so comparing outputs is sufficient.
+  for (CastOp castOp : castChain) {
+    unsigned outputWidth =
+        cast<IntegerType>(
+            getElementTypeOrSelf(castOp.getOutputs().front().getType()))
+            .getWidth();
+    if (outputWidth < sourceWidth)
+      return false;
+  }
+  return true;
 }
 
 struct CastOpPattern : public OpRewritePattern<CastOp> {

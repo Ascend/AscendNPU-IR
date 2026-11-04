@@ -813,3 +813,44 @@ func.func @foldWidenThenMultiStepNarrow(%arg0: tensor<4xi16>) -> tensor<4xi16> {
   %t2 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%t1 : tensor<4xi32>) outs(%e2 : tensor<4xi16>) -> tensor<4xi16>
   return %t2 : tensor<4xi16>
 }
+
+// -----
+// Test: the width test is a source-width test, not a phase test. This chain
+// narrows to `i32` and widens again, which the previous phase-based rule kept,
+// but it never drops below the `i16` source width, so every intermediate value
+// still holds the original 16 bits and the chain is an identity.
+// CHECK-LABEL: func.func @foldRepeatedWidenNarrowAboveSourceWidth
+// CHECK-SAME: (%[[arg0:.*]]: tensor<4xi16>)
+// CHECK-NOT: hfusion.cast
+// CHECK: return %[[arg0]] : tensor<4xi16>
+func.func @foldRepeatedWidenNarrowAboveSourceWidth(%arg0: tensor<4xi16>) -> tensor<4xi16> {
+  %e0 = tensor.empty() : tensor<4xi64>
+  %e1 = tensor.empty() : tensor<4xi32>
+  %e2 = tensor.empty() : tensor<4xi64>
+  %e3 = tensor.empty() : tensor<4xi16>
+  %t0 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<4xi16>) outs(%e0 : tensor<4xi64>) -> tensor<4xi64>
+  %t1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%t0 : tensor<4xi64>) outs(%e1 : tensor<4xi32>) -> tensor<4xi32>
+  %t2 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%t1 : tensor<4xi32>) outs(%e2 : tensor<4xi64>) -> tensor<4xi64>
+  %t3 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%t2 : tensor<4xi64>) outs(%e3 : tensor<4xi16>) -> tensor<4xi16>
+  return %t3 : tensor<4xi16>
+}
+
+// -----
+// Test: same shape as above, but one step drops below the `i16` source width,
+// so the high bits are lost and the chain must be kept.
+// CHECK-LABEL: func.func @keepNarrowBelowSourceWidth
+// CHECK: hfusion.cast {{.*}} ins(%{{.*}} : tensor<4xi32>) outs(%{{.*}} : tensor<4xi8>)
+// CHECK: hfusion.cast {{.*}} ins(%{{.*}} : tensor<4xi8>) outs(%{{.*}} : tensor<4xi32>)
+// CHECK: hfusion.cast {{.*}} ins(%{{.*}} : tensor<4xi32>) outs(%{{.*}} : tensor<4xi16>)
+// CHECK: return
+func.func @keepNarrowBelowSourceWidth(%arg0: tensor<4xi16>) -> tensor<4xi16> {
+  %e0 = tensor.empty() : tensor<4xi32>
+  %e1 = tensor.empty() : tensor<4xi8>
+  %e2 = tensor.empty() : tensor<4xi32>
+  %e3 = tensor.empty() : tensor<4xi16>
+  %t0 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<4xi16>) outs(%e0 : tensor<4xi32>) -> tensor<4xi32>
+  %t1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%t0 : tensor<4xi32>) outs(%e1 : tensor<4xi8>) -> tensor<4xi8>
+  %t2 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%t1 : tensor<4xi8>) outs(%e2 : tensor<4xi32>) -> tensor<4xi32>
+  %t3 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%t2 : tensor<4xi32>) outs(%e3 : tensor<4xi16>) -> tensor<4xi16>
+  return %t3 : tensor<4xi16>
+}
