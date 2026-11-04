@@ -36,10 +36,16 @@ public:
   void runOnOperation() override;
 };
 
-template <typename HivmVFTenaryOp, typename HivmVFPreOp, typename HivmVFSucOp>
+// Which element types a mul+add fusion pattern applies to. `Any` keeps the
+// historical behaviour (fuse every element type into the same ternary op) and
+// is used for every target except Ascend960.
+enum class FuseTypePolicy { Any, FloatOnly, NonFloatOnly };
+
+template <typename HivmVFTenaryOp, typename HivmVFPreOp, typename HivmVFSucOp,
+          FuseTypePolicy TypePolicy = FuseTypePolicy::Any>
 struct TenaryOpPattern : public OpRewritePattern<HivmVFSucOp> {
   using OpRewritePattern<HivmVFSucOp>::OpRewritePattern;
-  /// Combine mul and add to vmula
+  /// Combine mul and add to a tenary fused multiply-add op
   /// from:
   /// %0 = ave.hir.vload <NORM> %arg0[%c0] :
   ///        memref<64xf32, #hivm.address_space<ub>> into vector<64xf32>
@@ -62,6 +68,16 @@ struct TenaryOpPattern : public OpRewritePattern<HivmVFSucOp> {
   /// %4 = ave.hir.vmula %2, %0, %1, %3 : vector<64xf32>, vector<64xi1>
   LogicalResult matchAndRewrite(HivmVFSucOp op,
                                 PatternRewriter &rewriter) const override {
+    // Only fuse when the result element type matches the requested class.
+    Type elementType =
+        cast<VectorType>(op.getResult().getType()).getElementType();
+    bool isFloat =
+        elementType.isF16() || elementType.isF32() || elementType.isBF16();
+    if (TypePolicy == FuseTypePolicy::FloatOnly && !isFloat)
+      return failure();
+    if (TypePolicy == FuseTypePolicy::NonFloatOnly && isFloat)
+      return failure();
+
     // The left operand comes from PreOp.
     if (HivmVFPreOp preOp =
             dyn_cast_or_null<HivmVFPreOp>(op.getLhs().getDefiningOp())) {
@@ -121,13 +137,30 @@ void CombineAVEOPsPass::runOnOperation() {
   auto funcOp = getOperation();
   auto moduleOp = funcOp->getParentOfType<ModuleOp>();
   bool archIs950 = hacc::utils::isAscend950(moduleOp);
-  if (!archIs950)
+  bool archIs960 = hacc::utils::isAscend960(moduleOp);
+  if (!archIs950 && !archIs960)
     return;
 
   MLIRContext *ctx = &getContext();
   RewritePatternSet patterns(ctx);
   if (enableFusedMultiplyAdd) {
-    patterns.add<TenaryOpPattern<hivmave::VFMulaOp, hivmave::VFMulOp, hivmave::VFAddOp>>(ctx);
+    if (archIs960) {
+      // Ascend960 (V121) has vfma: non-float mul+add keeps fusing to vmula,
+      // while floats fuse to vfma.
+      patterns
+          .add<TenaryOpPattern<hivmave::VFMulaOp, hivmave::VFMulOp,
+                               hivmave::VFAddOp, FuseTypePolicy::NonFloatOnly>>(
+              ctx);
+      patterns
+          .add<TenaryOpPattern<hivmave::VFmaOp, hivmave::VFMulOp,
+                               hivmave::VFAddOp, FuseTypePolicy::FloatOnly>>(
+              ctx);
+    } else {
+      // Every other regbased target keeps the original behaviour: one vmula
+      // fusion pattern for all element types.
+      patterns.add<TenaryOpPattern<hivmave::VFMulaOp, hivmave::VFMulOp,
+                                   hivmave::VFAddOp>>(ctx);
+    }
   }
   patterns.add<SubExpToExpdifOpPattern>(ctx);
 

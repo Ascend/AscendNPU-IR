@@ -447,10 +447,11 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
                 [&](auto op) { return inferGroupReductionLayout(op); })
             .Case<hivmave::VFPltOp>(
                 [&](auto op) { return solvePregGenProblem(op); })
-            .Case<hivmave::VFSelectOp, hivmave::VFAddsOp, hivmave::VFExpOp,
-                  hivmave::VFMulsOp, hivmave::PregXorOp, hivmave::PregOrOp,
-                  hivmave::PregAndOp, hivmave::PregNotOp, hivmave::VFMulOp,
-                  hivmave::VFAddOp, hivmave::VFSubOp, hivmave::VFDivOp,
+            .Case<hivmave::VFSelectOp, hivmave::VFSelectRv2Op,
+                  hivmave::VFAddsOp, hivmave::VFExpOp, hivmave::VFMulsOp,
+                  hivmave::PregXorOp, hivmave::PregOrOp, hivmave::PregAndOp,
+                  hivmave::PregNotOp, hivmave::VFMulOp, hivmave::VFAddOp,
+                  hivmave::VFSubOp, hivmave::VFDivOp,
                   hivmave::VFBroadcastVectorOp, hivmave::VFXorOp,
                   hivmave::VFAndOp, hivmave::VFOrOp, hivmave::ReductionOp,
                   hivmave::VFModOp, hivmave::VFModUIOp, hivmave::VFExpOp,
@@ -465,7 +466,10 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
                   hivmave::VFExpdifOp, hivmave::VFVMULLOp, hivmave::VFMulaOp,
                   hivmave::VMaxUIOp, hivmave::VMinUIOp, hivmave::VFLRelusOp,
                   hivmave::VMaxsSIOp, hivmave::VMinsSIOp, hivmave::VMaxsUIOp,
-                  hivmave::VMinsUIOp, hivmave::VFCmpS, hivmave::VFVtrcOp>(
+                  hivmave::VMinsUIOp, hivmave::VFCmpS, hivmave::VFVtrcOp,
+                  hivmave::VFmaOp, hivmave::VFmsOp, hivmave::VFnmaOp,
+                  hivmave::VFnmsOp, hivmave::VMaddOp, hivmave::VMsubOp,
+                  hivmave::VNmaddOp, hivmave::VNmsubOp>(
                 [&](auto op) { return solveMaskProblem(op); })
             .Case<hivmave::VFCmpOp>([&](auto op) { return solveProblem(op); })
             .Case<hivmave::VFStoreWithStrideOp>(

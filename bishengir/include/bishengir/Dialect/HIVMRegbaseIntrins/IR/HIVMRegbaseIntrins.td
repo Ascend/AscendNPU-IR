@@ -1020,6 +1020,111 @@ def VmulaSMInstrOp : ElementwiseTenaryInstrOp<"hivm.vmula.s.m"> {
 }
 def VmulaUMInstrOp : ElementwiseTenaryInstrOp<"hivm.vmula.u.m">;
 
+def VfmaInstrOp : ElementwiseTenaryInstrOp<"hivm.vfma.m"> {
+  let summary = "A V300/A6 vector fused multiply-and-add instruction";
+  let description = [{
+    Fused vector multiply-and-add, dst = src1 * src2 + dst (addend as dst).
+    A predicate (MASK) is provided to tell which elements are involved in the three vectors.
+
+    #### Examples:
+
+    ```mlir
+    %0 = "hivm.intr.hivm.vfma.m"(%dst, %src1, %src2, %preg) : (vector<64xf32>, vector<64xf32>, vector<64xf32>, vector<256xi1>)-> (vector<64xf32>)
+    ```
+  }];
+}
+def VfmsInstrOp : ElementwiseTenaryInstrOp<"hivm.vfms.m"> {
+  let summary = "A V300/A6 vector fused multiply-and-subtract instruction";
+  let description = [{
+    Fused vector multiply-and-subtract, dst = src1 * src2 - dst.
+    A predicate (MASK) is provided to tell which elements are involved in the three vectors.
+
+    #### Examples:
+
+    ```mlir
+    %0 = "hivm.intr.hivm.vfms.m"(%dst, %src1, %src2, %preg) : (vector<64xf32>, vector<64xf32>, vector<64xf32>, vector<256xi1>)-> (vector<64xf32>)
+    ```
+  }];
+}
+def VfnmaInstrOp : ElementwiseTenaryInstrOp<"hivm.vfnma.m"> {
+  let summary = "A V300/A6 vector fused negate-multiply-and-add instruction";
+  let description = [{
+    Fused vector negate-multiply-and-add, dst = -(src1 * src2) + dst.
+    A predicate (MASK) is provided to tell which elements are involved in the three vectors.
+
+    #### Examples:
+
+    ```mlir
+    %0 = "hivm.intr.hivm.vfnma.m"(%dst, %src1, %src2, %preg) : (vector<64xf32>, vector<64xf32>, vector<64xf32>, vector<256xi1>)-> (vector<64xf32>)
+    ```
+  }];
+}
+def VfnmsInstrOp : ElementwiseTenaryInstrOp<"hivm.vfnms.m"> {
+  let summary = "A V300/A6 vector fused negate-multiply-and-subtract instruction";
+  let description = [{
+    Fused vector negate-multiply-and-subtract, dst = -(src1 * src2) - dst.
+    A predicate (MASK) is provided to tell which elements are involved in the three vectors.
+
+    #### Examples:
+
+    ```mlir
+    %0 = "hivm.intr.hivm.vfnms.m"(%dst, %src1, %src2, %preg) : (vector<64xf32>, vector<64xf32>, vector<64xf32>, vector<256xi1>)-> (vector<64xf32>)
+    ```
+  }];
+}
+def VmaddInstrOp : ElementwiseTenaryInstrOp<"hivm.vmadd.m"> {
+  let summary = "A V300/A6 vector multiply-and-add instruction";
+  let description = [{
+    Vector multiply-and-add, dst = src1 * src2 + dst.
+    A predicate (MASK) is provided to tell which elements are involved in the three vectors.
+
+    #### Examples:
+
+    ```mlir
+    %0 = "hivm.intr.hivm.vmadd.m"(%dst, %src1, %src2, %preg) : (vector<64xf32>, vector<64xf32>, vector<64xf32>, vector<256xi1>)-> (vector<64xf32>)
+    ```
+  }];
+}
+def VmsubInstrOp : ElementwiseTenaryInstrOp<"hivm.vmsub.m"> {
+  let summary = "A V300/A6 vector multiply-and-subtract instruction";
+  let description = [{
+    Vector multiply-and-subtract, dst = src1 * src2 - dst.
+    A predicate (MASK) is provided to tell which elements are involved in the three vectors.
+
+    #### Examples:
+
+    ```mlir
+    %0 = "hivm.intr.hivm.vmsub.m"(%dst, %src1, %src2, %preg) : (vector<64xf32>, vector<64xf32>, vector<64xf32>, vector<256xi1>)-> (vector<64xf32>)
+    ```
+  }];
+}
+def VnmaddInstrOp : ElementwiseTenaryInstrOp<"hivm.vnmadd.m"> {
+  let summary = "A V300/A6 vector negate-multiply-and-add instruction";
+  let description = [{
+    Vector negate-multiply-and-add, dst = -(src1 * src2) + dst.
+    A predicate (MASK) is provided to tell which elements are involved in the three vectors.
+
+    #### Examples:
+
+    ```mlir
+    %0 = "hivm.intr.hivm.vnmadd.m"(%dst, %src1, %src2, %preg) : (vector<64xf32>, vector<64xf32>, vector<64xf32>, vector<256xi1>)-> (vector<64xf32>)
+    ```
+  }];
+}
+def VnmsubInstrOp : ElementwiseTenaryInstrOp<"hivm.vnmsub.m"> {
+  let summary = "A V300/A6 vector negate-multiply-and-subtract instruction";
+  let description = [{
+    Vector negate-multiply-and-subtract, dst = -(src1 * src2) - dst.
+    A predicate (MASK) is provided to tell which elements are involved in the three vectors.
+
+    #### Examples:
+
+    ```mlir
+    %0 = "hivm.intr.hivm.vnmsub.m"(%dst, %src1, %src2, %preg) : (vector<64xf32>, vector<64xf32>, vector<64xf32>, vector<256xi1>)-> (vector<64xf32>)
+    ```
+  }];
+}
+
 def Vadd3SInstrOp : ElementwiseTenaryInstrOp<"hivm.vadd3.s.m"> {
   let summary = "A V300 vector addition with 3 source operands instruction";
   let description = [{
@@ -2611,6 +2716,54 @@ class PDintlvInstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
 def PDintlvB32InstrOp: PDintlvInstrOp<"hivm.pdintlv.b32">;
 def PDintlvB16InstrOp: PDintlvInstrOp<"hivm.pdintlv.b16">;
 def PDintlvB8InstrOp: PDintlvInstrOp<"hivm.pdintlv.b8">;
+
+class Pintlvv2InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[0],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins predicateVector:$src0,
+                       predicateVector:$src1,
+                       I32:$part
+                       );
+  let results = (outs predicateVector:$res);
+}
+
+def Pintlvv2B32InstrOp: Pintlvv2InstrOp<"hivm.pintlvv2.b32">;
+def Pintlvv2B16InstrOp: Pintlvv2InstrOp<"hivm.pintlvv2.b16">;
+def Pintlvv2B8InstrOp: Pintlvv2InstrOp<"hivm.pintlvv2.b8">;
+
+class PDintlvv2InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[0],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins predicateVector:$src0,
+                       predicateVector:$src1,
+                       I32:$part
+                       );
+  let results = (outs predicateVector:$res);
+}
+
+def PDintlvv2B32InstrOp: PDintlvv2InstrOp<"hivm.pdintlvv2.b32">;
+def PDintlvv2B16InstrOp: PDintlvv2InstrOp<"hivm.pdintlvv2.b16">;
+def PDintlvv2B8InstrOp: PDintlvv2InstrOp<"hivm.pdintlvv2.b8">;
+
+class Vselrv2InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[0],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins ValidVector:$src0,
+                       ValidVector:$src1
+                       );
+  let results = (outs ValidVector:$res);
+}
+
+def Vselrv2InstrOp: Vselrv2InstrOp<"hivm.vselrv2">;
 
 class VpackInstrOp<string mnemonic>
     : HIVMRegbaseIntrins_Op</*string opName=*/mnemonic,
