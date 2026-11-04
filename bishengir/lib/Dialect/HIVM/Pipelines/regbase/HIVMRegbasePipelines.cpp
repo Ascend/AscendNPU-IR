@@ -470,6 +470,9 @@ static void hivmPreBufferizationOptimizationPipeline(
   if (hivmPipelineOptions.usePipelinev2) {
     pm.nest<func::FuncOp>().addPass(createSetBufferSizePass());
     buildCVPipelineV2(pm, hivmPipelineOptions);
+    // Registered kernels skip the early marking pass. Mark coupled buffers
+    // before counting the slots needed between the newly assigned stages.
+    pm.nest<func::FuncOp>().addPass(createMarkTightlyCoupledBufferPass());
     pm.addNestedPass<func::FuncOp>(createMarkMultiBufferPass(multiBufferOptions));
   } else if (hivmPipelineOptions.enableMixedCV) {
     // Software pipelining Cube and Vector operations
