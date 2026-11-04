@@ -208,9 +208,9 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
   buildCanonicalization(pm);
 
   // GLOBAL workspace plan on the unsplit MIX.
-  PlanMemoryRegBaseOptions globalPlanOptions;
+  PlanMemoryOptions globalPlanOptions;
   globalPlanOptions.memMode = MemPlanMode::GLOBAL_WORKSPACE_PLAN;
-  pm.addPass(createPlanMemoryRegBasePass(globalPlanOptions));
+  pm.addPass(createPlanMemoryPass(globalPlanOptions));
 
   // Mark multi-buffer before the local plan allocates slots.
   MarkMultiBufferOptions multiBufferOptions;
@@ -220,8 +220,8 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
   addFuncPass(pm, createMarkMultiBufferPass(multiBufferOptions));
 
   // LOCAL plan on the unsplit MIX.
-  PlanMemoryRegBaseOptions localPlanOptions;
-  pm.addPass(createPlanMemoryRegBasePass(localPlanOptions));
+  PlanMemoryOptions localPlanOptions;
+  pm.addPass(createPlanMemoryPass(localPlanOptions));
 
   // Expand slots before the split clones the counters.
   if (options.enableMultiBuffer)

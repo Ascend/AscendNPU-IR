@@ -119,7 +119,7 @@ AICore架构详情可查阅官方文档：[基本架构](https://www.hiascend.co
 **工作原理**：
 
 1. **Step 1**（拆分前）：运行CrossCoreGSS（通常关闭CV pattern），再执行`InsertAnchorsAndBackup`插入`hivm.anchor`并克隆备份mix函数。
-2. **Step 2**（plan-memory改写后）：`DelayedCrossCoreGSS`匹配备份mix与拆分后的cube/vector函数，清除旧的块内同步，基于anchor重建区间读写信息，求解并将同步物化回mix/cube/vector；最后清理anchor与备份函数。求解推迟到`PlanMemoryRegBase`之后（`HIVMLowerToLoops`之前）——提前求解的同步会被bufferization / 内存规划改写失效。
+2. **Step 2**（plan-memory改写后）：`DelayedCrossCoreGSS`匹配备份mix与拆分后的cube/vector函数，清除旧的块内同步，基于anchor重建区间读写信息，求解并将同步物化回mix/cube/vector；最后清理anchor与备份函数。求解推迟到`PlanMemory`之后（`HIVMLowerToLoops`之前）——提前求解的同步会被bufferization / 内存规划改写失效。
 
 当`--enable-hivm-cross-core-gss`与`--enable-hivm-delayed-cross-core-gss`同时为true时启用（RegBase编译面上二者默认均为`true`）。
 <!-- end id1 -->

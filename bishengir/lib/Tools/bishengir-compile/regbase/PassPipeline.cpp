@@ -193,16 +193,17 @@ void buildAffinityPipeline(OpPassManager &pm,
   // spaces for all memref values.
   pm.addPass(hivm::createInferHIVMMemScopePass());
 
-  PlanMemoryRegBaseOptions planMemoryOptions;
-  planMemoryOptions.enablePrintMemoryAllocatedSize =
-      config.getEnablePrintMemoryAllocatedSize();
+  PlanMemoryOptions planMemoryOptions;
+  planMemoryOptions.enableMemoryDisplay =
+      config.getEnablePrintMemoryAllocatedSize() ||
+      config.getEnableMemoryDisplay();
   // Explicit synchronization cannot cover new aliases introduced by planning.
   // Independent local allocations carry mem_unique; views express sharing.
   planMemoryOptions.disableTightlyCoupledBufferReuse = true;
   planMemoryOptions.disableVFReachableCheck =
       config.getDisableVFReachableCheck();
   planMemoryOptions.planMemoryStrategy = config.getPlanMemoryStrategy();
-  pm.addPass(hivm::createPlanMemoryRegBasePass(planMemoryOptions));
+  pm.addPass(hivm::createPlanMemoryPass(planMemoryOptions));
 
   // Fold addresses and views while preserving input instruction choices.
   pm.addPass(createCanonicalizerPass());

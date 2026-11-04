@@ -121,7 +121,7 @@ In Triton-Ascend, graph sync can also be selected via `sync_solver=True` (maps t
 **Working Principles**:
 
 1. **Step 1** (before split): Run CrossCoreGSS (often with CV patterns disabled), then `InsertAnchorsAndBackup` to place `hivm.anchor` markers and clone a backup mix function.
-2. **Step 2** (after plan-memory rewrites): `DelayedCrossCoreGSS` matches backup mix + split cube/vector functions, removes stale intra-block syncs, rebuilds interval RW info from anchors, solves, and materializes syncs into mix/cube/vector functions; cleanup removes anchors/backups. The solve is delayed until after `PlanMemoryRegBase` (and before `HIVMLowerToLoops`) because earlier sync results would be invalidated by bufferization / memory-planning rewrites.
+2. **Step 2** (after plan-memory rewrites): `DelayedCrossCoreGSS` matches backup mix + split cube/vector functions, removes stale intra-block syncs, rebuilds interval RW info from anchors, solves, and materializes syncs into mix/cube/vector functions; cleanup removes anchors/backups. The solve is delayed until after `PlanMemory` (and before `HIVMLowerToLoops`) because earlier sync results would be invalidated by bufferization / memory-planning rewrites.
 
 This is enabled when both `--enable-hivm-cross-core-gss` and `--enable-hivm-delayed-cross-core-gss` are `true` (both default to `true` on the RegBase compilation surface).
 <!-- end id1 -->
