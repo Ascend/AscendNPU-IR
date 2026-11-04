@@ -117,31 +117,30 @@ bool isSafeToSimplifyCast(CastOp castOp) {
 // phase starts and may not increase again once it has started. The chain must
 // end in a narrowing phase.
 bool isValuePreservingIntegerCastChain(ArrayRef<CastOp> castChain) {
-  // Leave mixed integer/float chains to the floating point precision logic.
-  for (CastOp castOp : castChain) {
-    if (!dyn_cast<IntegerType>(
-            getElementTypeOrSelf(castOp.getInputs().front().getType())) ||
-        !dyn_cast<IntegerType>(
-            getElementTypeOrSelf(castOp.getOutputs().front().getType())))
-      return true;
-  }
-
   bool inNarrowingPhase = false;
+  bool hasWideningAfterNarrowing = false;
   for (CastOp castOp : llvm::reverse(castChain)) {
-    auto inputType = cast<IntegerType>(
-        getElementTypeOrSelf(castOp.getInputs().front().getType()));
-    auto outputType = cast<IntegerType>(
-        getElementTypeOrSelf(castOp.getOutputs().front().getType()));
-    if (outputType.getWidth() < inputType.getWidth()) {
+    auto inputType = getElementTypeOrSelf(castOp.getInputs().front().getType());
+    auto outputType =
+        getElementTypeOrSelf(castOp.getOutputs().front().getType());
+
+    // Leave mixed integer/float chains to the floating point precision logic.
+    // A mixed chain must still be accepted even if its integer casts are not
+    // value preserving, so the rejection below is deferred to the end.
+    if (!isa<IntegerType>(inputType) || !isa<IntegerType>(outputType))
+      return true;
+
+    unsigned inputWidth = cast<IntegerType>(inputType).getWidth();
+    unsigned outputWidth = cast<IntegerType>(outputType).getWidth();
+    if (outputWidth < inputWidth) {
       inNarrowingPhase = true;
-    } else if (outputType.getWidth() > inputType.getWidth() &&
-               inNarrowingPhase) {
+    } else if (outputWidth > inputWidth && inNarrowingPhase) {
       // A widening step after the narrowing phase drops high bits and then
       // restores them, so the chain is not an identity.
-      return false;
+      hasWideningAfterNarrowing = true;
     }
   }
-  return inNarrowingPhase;
+  return inNarrowingPhase && !hasWideningAfterNarrowing;
 }
 
 struct CastOpPattern : public OpRewritePattern<CastOp> {
