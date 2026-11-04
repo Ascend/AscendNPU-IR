@@ -567,7 +567,7 @@ static void rewritePreloadLoop(scf::ForOp forOp,
             while (maybeLocalBuffer.has_value()) {
               for (auto &mapping : info.mappings)
                 mapping.map(*scopeResIter,
-                            mapping.lookup(maybeLocalBuffer.value()));
+                            mapping.lookup(maybeLocalBuffer->getResult()));
               ++scopeResIter;
               maybeLocalBuffer = getLocalBuffer(*scopeResIter);
             }
@@ -595,7 +595,7 @@ static void rewritePreloadLoop(scf::ForOp forOp,
             auto maybeLocalBuffer = getLocalBuffer(*scopeResIter);
             for (auto &mapping : info.mappings)
               mapping.map(*scopeResIter,
-                          mapping.lookup(maybeLocalBuffer.value()));
+                          mapping.lookup(maybeLocalBuffer->getResult()));
           }
         }
 
@@ -712,8 +712,445 @@ static void cleanupPreloadWorkspaceMarks(Operation &op) {
   });
 }
 
+struct PointerCastTraceResult {
+  SmallVector<hivm::PointerCastOp> pointerCasts;
+  SmallVector<arith::SelectOp> selectOps;
+  SmallVector<Value> ifResults;
+  SmallVector<Value> scopeResults;
+};
+
+static LogicalResult collectRootPointerCasts(ArrayRef<Value> roots,
+                                             PointerCastTraceResult &result) {
+  SmallVector<Value> worklist(roots.begin(), roots.end());
+  DenseSet<Value> visited;
+  DenseSet<Operation *> visitedSelects;
+  DenseSet<Value> visitedIfs;
+  DenseSet<Value> visitedScopes;
+  DenseSet<Operation *> visitedPointerCasts;
+
+  while (!worklist.empty()) {
+    Value curr = worklist.pop_back_val();
+    if (!curr || !visited.insert(curr).second)
+      continue;
+    if (!isa<MemRefType>(curr.getType()))
+      return failure();
+
+    if (auto pcOp = curr.getDefiningOp<hivm::PointerCastOp>()) {
+      if (visitedPointerCasts.insert(pcOp).second)
+        result.pointerCasts.push_back(pcOp);
+      continue;
+    }
+
+    if (auto scopeOp = curr.getDefiningOp<scope::ScopeOp>()) {
+      if (visitedScopes.insert(curr).second)
+        result.scopeResults.push_back(curr);
+      auto &scopeBody = scopeOp.getRegion().front();
+      auto returnOp = cast<scope::ReturnOp>(scopeBody.getTerminator());
+      auto resIdx = cast<OpResult>(curr).getResultNumber();
+      worklist.push_back(returnOp.getResults()[resIdx]);
+      continue;
+    }
+
+    if (auto ifOp = curr.getDefiningOp<scf::IfOp>()) {
+      if (visitedIfs.insert(curr).second)
+        result.ifResults.push_back(curr);
+      if (ifOp.getElseRegion().empty())
+        return failure();
+      auto resIdx = cast<OpResult>(curr).getResultNumber();
+      worklist.push_back(ifOp.thenYield().getResults()[resIdx]);
+      worklist.push_back(ifOp.elseYield().getResults()[resIdx]);
+      continue;
+    }
+
+    if (auto selectOp = curr.getDefiningOp<arith::SelectOp>()) {
+      if (visitedSelects.insert(selectOp).second)
+        result.selectOps.push_back(selectOp);
+      worklist.push_back(selectOp.getTrueValue());
+      worklist.push_back(selectOp.getFalseValue());
+      continue;
+    }
+
+    if (auto blockArg = dyn_cast<BlockArgument>(curr)) {
+      auto forOp = dyn_cast<scf::ForOp>(blockArg.getOwner()->getParentOp());
+      if (!forOp || blockArg == forOp.getInductionVar())
+        return failure();
+      unsigned idx = blockArg.getArgNumber() - 1;
+      worklist.push_back(forOp.getInitArgs()[idx]);
+      worklist.push_back(forOp.getYieldedValues()[idx]);
+      continue;
+    }
+
+    if (auto forOp = curr.getDefiningOp<scf::ForOp>()) {
+      auto resIdx = cast<OpResult>(curr).getResultNumber();
+      worklist.push_back(forOp.getInitArgs()[resIdx]);
+      worklist.push_back(forOp.getYieldedValues()[resIdx]);
+      continue;
+    }
+
+    if (auto castOp = curr.getDefiningOp<memref::CastOp>()) {
+      worklist.push_back(castOp.getSource());
+      continue;
+    }
+    if (auto bitcastOp = curr.getDefiningOp<hivm::BitcastOp>()) {
+      worklist.push_back(bitcastOp.getSrc());
+      continue;
+    }
+    if (auto convertLayoutOp = curr.getDefiningOp<hivm::ConvertLayoutOp>()) {
+      worklist.push_back(convertLayoutOp.getSource());
+      continue;
+    }
+    if (auto unrealizedCast =
+            curr.getDefiningOp<UnrealizedConversionCastOp>()) {
+      if (unrealizedCast.getInputs().size() != 1)
+        return failure();
+      worklist.push_back(unrealizedCast.getInputs().front());
+      continue;
+    }
+    if (auto transposeOp = curr.getDefiningOp<memref::TransposeOp>()) {
+      worklist.push_back(transposeOp.getIn());
+      continue;
+    }
+    if (auto collapseOp = curr.getDefiningOp<memref::CollapseShapeOp>()) {
+      worklist.push_back(collapseOp.getSrc());
+      continue;
+    }
+    if (auto expandOp = curr.getDefiningOp<memref::ExpandShapeOp>()) {
+      worklist.push_back(expandOp.getSrc());
+      continue;
+    }
+
+    return failure();
+  }
+
+  if (result.pointerCasts.empty())
+    return failure();
+
+  hivm::PointerCastOp first = result.pointerCasts.front();
+  if (first.getAddrs().empty())
+    return failure();
+  for (hivm::PointerCastOp pc : llvm::drop_begin(result.pointerCasts)) {
+    if (pc.getAddrs() != first.getAddrs() ||
+        pc.getDynamicSizes() != first.getDynamicSizes())
+      return failure();
+  }
+  return success();
+}
+
+static Value clonePointerCastForType(hivm::PointerCastOp srcOp, Type targetType,
+                                     OpBuilder &builder) {
+  if (srcOp.getType() == targetType)
+    return builder.create<hivm::PointerCastOp>(srcOp.getLoc(), srcOp.getType(),
+                                               srcOp.getAddrs(),
+                                               srcOp.getDynamicSizes());
+  auto targetMemRefType = cast<MemRefType>(targetType);
+  if (targetMemRefType.hasStaticShape())
+    return builder.create<hivm::PointerCastOp>(srcOp.getLoc(), targetType,
+                                               srcOp.getAddrs());
+  Value cloned = builder.create<hivm::PointerCastOp>(
+      srcOp.getLoc(), srcOp.getType(), srcOp.getAddrs(),
+      srcOp.getDynamicSizes());
+  if (memref::CastOp::areCastCompatible(cloned.getType(), targetType))
+    return builder.create<memref::CastOp>(srcOp.getLoc(), targetType, cloned);
+  return builder
+      .create<UnrealizedConversionCastOp>(srcOp.getLoc(), targetType, cloned)
+      .getResult(0);
+}
+
+static void pruneUnusedScopeResultsInLoop(scf::ForOp forOp) {
+  SmallVector<scope::ScopeOp> scopeOps;
+  forOp.walk([&](scope::ScopeOp scopeOp) { scopeOps.push_back(scopeOp); });
+
+  for (scope::ScopeOp scopeOp : scopeOps) {
+    if (scopeOp.getNumResults() == 0)
+      continue;
+    llvm::BitVector keepResult(scopeOp.getNumResults(), false);
+    for (unsigned i = 0, e = scopeOp.getNumResults(); i < e; ++i) {
+      if (!scopeOp.getResult(i).use_empty())
+        keepResult.set(i);
+    }
+    if (keepResult.all())
+      continue;
+
+    auto &scopeBody = scopeOp.getRegion().front();
+    auto returnOp = cast<scope::ReturnOp>(scopeBody.getTerminator());
+    SmallVector<Type> newResultTypes;
+    SmallVector<Value> newReturnVals;
+    SmallVector<Value> deadReturnVals;
+    for (unsigned i = 0, e = scopeOp.getNumResults(); i < e; ++i) {
+      if (keepResult.test(i)) {
+        newResultTypes.push_back(scopeOp.getResult(i).getType());
+        newReturnVals.push_back(returnOp.getResults()[i]);
+      } else {
+        deadReturnVals.push_back(returnOp.getResults()[i]);
+      }
+    }
+
+    OpBuilder builder(scopeOp);
+    auto newScopeOp =
+        builder.create<scope::ScopeOp>(scopeOp.getLoc(), newResultTypes);
+    newScopeOp->setAttrs(scopeOp->getAttrs());
+    Region &newRegion = newScopeOp.getRegion();
+    newRegion.takeBody(scopeOp.getRegion());
+    Block &newBody = newRegion.front();
+    auto oldReturnOp = cast<scope::ReturnOp>(newBody.getTerminator());
+    builder.setInsertionPoint(oldReturnOp);
+    builder.create<scope::ReturnOp>(oldReturnOp.getLoc(), newReturnVals);
+    oldReturnOp.erase();
+
+    unsigned newIdx = 0;
+    for (unsigned i = 0, e = scopeOp.getNumResults(); i < e; ++i) {
+      if (keepResult.test(i))
+        scopeOp.getResult(i).replaceAllUsesWith(newScopeOp.getResult(newIdx++));
+    }
+    scopeOp.erase();
+
+    for (Value deadVal : deadReturnVals) {
+      if (Operation *defOp = deadVal.getDefiningOp()) {
+        if (defOp->use_empty() &&
+            isa<hivm::PointerCastOp, arith::SelectOp>(defOp) &&
+            !utils::getAnnotateOpWithAttr(deadVal,
+                                          hivm::PreloadLocalBufferAttr::name)
+                 .has_value()) {
+          defOp->erase();
+        }
+      }
+    }
+  }
+}
+
+static void preprocessPreloadLoop(scf::ForOp forOp) {
+  auto isPointerCast = [](Value value) {
+    return static_cast<bool>(value.getDefiningOp<hivm::PointerCastOp>());
+  };
+
+  // Ensure any preload-local PointerCastOp marked inside `forOp` but defined
+  // outside `forOp` is cloned into the top of `forOp.getBody()` so
+  // `rewritePreloadLoop` rotates it per preload stage.
+  DenseMap<Operation *, hivm::PointerCastOp> externalLocalBuffers;
+  DenseSet<Operation *> localBufferOps;
+  forOp.walk([&](annotation::MarkOp markOp) {
+    if (!utils::isAnnotationWithAttr(markOp,
+                                     hivm::PreloadLocalBufferAttr::name))
+      return;
+    auto roots =
+        utils::tracebackMemRefVecByTargetFn(markOp.getSrc(), isPointerCast);
+    if (roots.size() != 1)
+      return;
+    auto pcOp = roots.front().getDefiningOp<hivm::PointerCastOp>();
+    if (!pcOp || pcOp.getAddrs().empty())
+      return;
+    localBufferOps.insert(pcOp);
+    if (!forOp.getBodyRegion().isAncestor(pcOp->getParentRegion()))
+      externalLocalBuffers.try_emplace(pcOp, pcOp);
+  });
+
+  if (!externalLocalBuffers.empty()) {
+    OpBuilder bodyBuilder = OpBuilder::atBlockBegin(forOp.getBody());
+    for (auto &[opPtr, pcOp] : externalLocalBuffers) {
+      auto clonedPC = bodyBuilder.create<hivm::PointerCastOp>(
+          pcOp.getLoc(), pcOp.getType(), pcOp.getAddrs(),
+          pcOp.getDynamicSizes());
+      pcOp.getResult().replaceUsesWithIf(
+          clonedPC.getResult(), [&](OpOperand &use) {
+            return forOp.getBodyRegion().isAncestor(
+                use.getOwner()->getParentRegion());
+          });
+      localBufferOps.erase(pcOp);
+      localBufferOps.insert(clonedPC);
+    }
+  }
+
+  auto findMarkedLocalBuffer =
+      [&](ArrayRef<hivm::PointerCastOp> pcs) -> hivm::PointerCastOp {
+    for (hivm::PointerCastOp pc : pcs) {
+      if (localBufferOps.contains(pc) ||
+          pc->hasAttr(hivm::PreloadLocalBufferAttr::name) ||
+          utils::getAnnotateOpWithAttr(pc.getResult(),
+                                       hivm::PreloadLocalBufferAttr::name)
+              .has_value())
+        return pc;
+    }
+    return nullptr;
+  };
+
+  unsigned numIterArgs = forOp.getRegionIterArgs().size();
+  llvm::BitVector keepIterArg(numIterArgs, true);
+  OpBuilder builder(forOp);
+
+  for (unsigned idx = 0; idx < numIterArgs; ++idx) {
+    Value initArg = forOp.getInitArgs()[idx];
+    Value iterArg = forOp.getRegionIterArgs()[idx];
+    Value yieldVal = forOp.getYieldedValues()[idx];
+    Value forResult = forOp.getResult(idx);
+
+    if (!isa<MemRefType>(yieldVal.getType()))
+      continue;
+
+    PointerCastTraceResult traceResult;
+    if (failed(collectRootPointerCasts({yieldVal, initArg}, traceResult)))
+      continue;
+
+    hivm::PointerCastOp firstPC = traceResult.pointerCasts.front();
+    hivm::PointerCastOp markedLocalPC =
+        findMarkedLocalBuffer(traceResult.pointerCasts);
+    keepIterArg.reset(idx);
+
+    if (!forResult.use_empty()) {
+      OpBuilder::InsertionGuard guard(builder);
+      builder.setInsertionPointAfter(forOp);
+      Value replacement =
+          clonePointerCastForType(firstPC, forResult.getType(), builder);
+      forResult.replaceAllUsesWith(replacement);
+    }
+
+    if (!iterArg.use_empty()) {
+      Value replacement;
+      if (markedLocalPC && markedLocalPC->getBlock() == forOp.getBody() &&
+          markedLocalPC.getType() == iterArg.getType()) {
+        replacement = markedLocalPC.getResult();
+      } else {
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPointToStart(forOp.getBody());
+        replacement =
+            clonePointerCastForType(firstPC, iterArg.getType(), builder);
+      }
+      iterArg.replaceAllUsesWith(replacement);
+    }
+
+    for (arith::SelectOp selectOp : traceResult.selectOps) {
+      if (!selectOp.use_empty()) {
+        Value replacement;
+        if (markedLocalPC && markedLocalPC->getBlock() == forOp.getBody() &&
+            markedLocalPC.getType() == selectOp.getType()) {
+          replacement = markedLocalPC.getResult();
+        } else {
+          OpBuilder::InsertionGuard guard(builder);
+          builder.setInsertionPoint(selectOp);
+          replacement =
+              clonePointerCastForType(firstPC, selectOp.getType(), builder);
+        }
+        selectOp.replaceAllUsesWith(replacement);
+      }
+      selectOp.erase();
+    }
+
+    for (Value ifRes : traceResult.ifResults) {
+      if (!ifRes.use_empty()) {
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPoint(ifRes.getDefiningOp());
+        Value replacement =
+            clonePointerCastForType(firstPC, ifRes.getType(), builder);
+        ifRes.replaceAllUsesWith(replacement);
+      }
+    }
+
+    for (Value scopeRes : traceResult.scopeResults) {
+      if (llvm::any_of(scopeRes.getUses(), [&](OpOperand &use) {
+            return use.getOwner() != forOp.getBody()->getTerminator();
+          })) {
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPoint(scopeRes.getDefiningOp());
+        Value replacement =
+            clonePointerCastForType(firstPC, scopeRes.getType(), builder);
+        scopeRes.replaceUsesWithIf(replacement, [&](OpOperand &use) {
+          return use.getOwner() != forOp.getBody()->getTerminator();
+        });
+      }
+    }
+  }
+
+  // Also preprocess any remaining arith.select of memrefs inside `forOp` whose
+  // branches trace to root PointerCastOps with identical address lists.
+  SmallVector<arith::SelectOp> remainingSelects;
+  forOp.walk([&](arith::SelectOp selectOp) {
+    if (isa<MemRefType>(selectOp.getType()))
+      remainingSelects.push_back(selectOp);
+  });
+  for (arith::SelectOp selectOp : remainingSelects) {
+    PointerCastTraceResult traceResult;
+    if (failed(collectRootPointerCasts({selectOp.getResult()}, traceResult)))
+      continue;
+    hivm::PointerCastOp firstPC = traceResult.pointerCasts.front();
+    hivm::PointerCastOp markedLocalPC =
+        findMarkedLocalBuffer(traceResult.pointerCasts);
+    if (!selectOp.use_empty()) {
+      Value replacement;
+      if (markedLocalPC && markedLocalPC->getBlock() == forOp.getBody() &&
+          markedLocalPC.getType() == selectOp.getType()) {
+        replacement = markedLocalPC.getResult();
+      } else {
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPoint(selectOp);
+        replacement =
+            clonePointerCastForType(firstPC, selectOp.getType(), builder);
+      }
+      selectOp.replaceAllUsesWith(replacement);
+    }
+    selectOp.erase();
+  }
+
+  scf::ForOp activeForOp = forOp;
+  if (!keepIterArg.all()) {
+    SmallVector<Value> newInitArgs;
+    SmallVector<Value> newYieldVals;
+    for (unsigned idx = 0; idx < numIterArgs; ++idx) {
+      if (keepIterArg.test(idx)) {
+        newInitArgs.push_back(forOp.getInitArgs()[idx]);
+        newYieldVals.push_back(forOp.getYieldedValues()[idx]);
+      }
+    }
+
+    builder.setInsertionPoint(forOp);
+    auto newForOp = builder.create<scf::ForOp>(
+        forOp.getLoc(), forOp.getLowerBound(), forOp.getUpperBound(),
+        forOp.getStep(), newInitArgs);
+    newForOp->setAttrs(forOp->getAttrs());
+
+    Block *oldBody = forOp.getBody();
+    Block *newBody = newForOp.getBody();
+    if (newBody->mightHaveTerminator())
+      newBody->getTerminator()->erase();
+
+    auto oldTermIt = std::prev(oldBody->end());
+    newBody->getOperations().splice(newBody->end(), oldBody->getOperations(),
+                                    oldBody->begin(), oldTermIt);
+
+    forOp.getInductionVar().replaceAllUsesWith(newForOp.getInductionVar());
+    unsigned newIdx = 0;
+    for (unsigned idx = 0; idx < numIterArgs; ++idx) {
+      if (keepIterArg.test(idx)) {
+        forOp.getRegionIterArgs()[idx].replaceAllUsesWith(
+            newForOp.getRegionIterArgs()[newIdx]);
+        forOp.getResult(idx).replaceAllUsesWith(newForOp.getResult(newIdx));
+        ++newIdx;
+      }
+    }
+
+    builder.setInsertionPointToEnd(newBody);
+    builder.create<scf::YieldOp>(oldTermIt->getLoc(), newYieldVals);
+    forOp.erase();
+    activeForOp = newForOp;
+  }
+
+  pruneUnusedScopeResultsInLoop(activeForOp);
+}
+
 void CreatePreloadPass::runOnOperation() {
   auto moduleOp = getOperation();
+  SmallVector<scf::ForOp> candidateLoops;
+  DenseSet<Operation *> seenCandidateLoops;
+  moduleOp->walk([&](scope::ScopeOp scopeOp) {
+    if (!scopeOp->hasAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name) &&
+        !scopeOp->hasAttrOfType<IntegerAttr>(hivm::MaxPreloadNumAttr::name))
+      return;
+    if (auto parentForOp = dyn_cast<scf::ForOp>(scopeOp->getParentOp())) {
+      if (seenCandidateLoops.insert(parentForOp).second)
+        candidateLoops.push_back(parentForOp);
+    }
+  });
+  for (scf::ForOp forOp : candidateLoops)
+    preprocessPreloadLoop(forOp);
+
   DenseMap<scf::ForOp, DenseMap<Operation *, size_t>> loopToScopes;
   DenseMap<scf::ForOp, size_t> loopToMaxPreloadNum;
   DenseMap<scf::ForOp, SmallVector<scope::ScopeOp, 4>> uniqueSlots;
