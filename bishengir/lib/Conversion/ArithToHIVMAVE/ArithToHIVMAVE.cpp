@@ -8,6 +8,7 @@
 
 #include "bishengir/Conversion/ArithToHIVMAVE/ArithToHIVMAVE.h"
 #include "bishengir/Conversion/HFusionToHIVM/Utils.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -2419,16 +2420,23 @@ struct FmaOpLowering : public OpConversionPattern<math::FmaOp> {
     Type elementType = resVecType.getElementType();
     if (!elementType.isF16() && !elementType.isBF16() && !elementType.isF32()) {
       return rewriter.notifyMatchFailure(
-          op, "AVE vmula supports only f16, bf16, and f32");
+          op, "AVE fused multiply-add supports only f16, bf16, and f32");
     }
 
     Value mask =
         hivmave::findReuseableMaskOrCreateOne(op, resVecType, rewriter);
 
-    // AVE vmula uses its first operand as the accumulator:
+    // Both AVE FMA ops use their first operand as the accumulator:
     //   dst = src1 * src2 + dst
-    // Preserve math.fma(a, b, c) by passing c as dst.
-    auto res = rewriter.create<hivmave::VFMulaOp>(loc, resType, c, a, b, mask);
+    // Preserve math.fma(a, b, c) by passing c as dst. Only the dav-920r1
+    // (Ascend960) toolchain provides vfma; keep vmula for the other regbased
+    // targets (e.g. Ascend950).
+    auto moduleOp = op->getParentOfType<ModuleOp>();
+    Value res;
+    if (moduleOp && mlir::hacc::utils::isAscend960(moduleOp))
+      res = rewriter.create<hivmave::VFmaOp>(loc, resType, c, a, b, mask);
+    else
+      res = rewriter.create<hivmave::VFMulaOp>(loc, resType, c, a, b, mask);
     rewriter.replaceOp(op, res);
     return success();
   }
