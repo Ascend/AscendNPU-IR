@@ -1299,6 +1299,9 @@ FailureOr<PipelineModuleResult> bishengir::runBiShengLIRCompileA3(
 
 mlir::LogicalResult bishengir::runHIVMCCompileA3(ModuleOp module,
                                                  HIVMCMainConfig config) {
+  // Echo executed command lines when --save-temps is set.
+  setEchoCommandLines(!config.shouldSaveTemps().empty());
+
   BishengAsyncRuntime *runtime = config.getRuntime();
   // The runtime is created at CLI main() and the LoadInit command
   // (submitLoadInit) is submitted at runBiShengIRPipeline entry (before the

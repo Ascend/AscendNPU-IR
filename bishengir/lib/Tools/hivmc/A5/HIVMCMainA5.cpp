@@ -1554,6 +1554,9 @@ llvm::Error bishengir::runBiShengLIRCompileA5(
 
 llvm::Error bishengir::runHIVMCCompileA5(ModuleOp hirCompileModule,
                                          HIVMCMainConfig config) {
+  // Echo executed command lines when --save-temps is set.
+  setEchoCommandLines(!config.shouldSaveTemps().empty());
+
   BishengAsyncRuntime *runtime = config.getRuntime();
   MLIRContext *ctx = hirCompileModule->getContext();
   mlir::DiagnosticEngine &diagEngine = ctx->getDiagEngine();

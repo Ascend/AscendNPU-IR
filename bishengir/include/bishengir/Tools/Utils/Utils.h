@@ -89,6 +89,9 @@ getTempFile(const std::string &outputFile, TempDirectoriesStore &tempDirsStore);
 llvm::LogicalResult
 checkInOutOptionsValidity(BiShengIRCompileConfigBase &config);
 
+/// Echo executed command lines to stderr; drivers enable it with --save-temps.
+void setEchoCommandLines(bool echo);
+
 llvm::LogicalResult
 execute(llvm::StringRef binName, llvm::StringRef installPath,
         llvm::SmallVectorImpl<llvm::StringRef> &arguments,
