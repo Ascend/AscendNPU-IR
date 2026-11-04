@@ -3,6 +3,7 @@
 // RUN: FileCheck %s --check-prefix=DECL < %t
 // RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_9589 -convert-hivm-to-std="mark-libcall-noinline=true" -split-input-file -verify-diagnostics -o %t.direct
 // RUN: FileCheck %s < %t.direct
+// RUN: FileCheck %s --check-prefix=DECL < %t.direct
 // DECL: func.func private @online_softmax_nz_f16_f8e4m3fn(
 // DECL-SAME: hacc.always_inline
 // CHECK: call @online_softmax_nz_f16_f8e4m3fn

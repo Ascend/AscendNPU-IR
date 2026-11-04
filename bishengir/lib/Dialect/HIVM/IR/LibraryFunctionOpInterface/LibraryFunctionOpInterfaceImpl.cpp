@@ -1734,11 +1734,17 @@ std::string customOpLibraryCallName(Operation *op,
       return getIndexSelectLibraryCallName(concreteOp);
     if (concreteOp.getName() == CustomOpT::kBuiltinIndirectAtomicName)
       return getIndirectAtomicLibraryCallName(concreteOp);
+    // The kBuiltinOnlineSoftmaxNZName handles 3 functions.
     if (concreteOp.getName() == CustomOpT::kBuiltinOnlineSoftmaxNZName) {
+      // The forward function + causal + runtime checking
       if (concreteOp.getInputs().size() == 5)
         return "online_softmax_nz_f16_f8e4m3fn_causal_if";
+
+      // The forward function + causal
       if (concreteOp.getInputs().size() == 4)
         return "online_softmax_nz_f16_f8e4m3fn_causal";
+
+      // The normal forward function
       return "online_softmax_nz_f16_f8e4m3fn";
     }
     if (concreteOp.getName() == CustomOpT::kBuiltinHistogramName)

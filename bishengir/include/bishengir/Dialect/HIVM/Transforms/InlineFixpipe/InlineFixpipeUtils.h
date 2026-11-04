@@ -34,8 +34,9 @@ bool isInsideVectorScope(Operation *op);
 bool isFixpipeStoreInlinable(hivm::StoreOp storeOp);
 Operation *getSingleSiftedUser(Value v);
 SmallVector<VCastOp> collectVCastChain(VCastOp firstCast);
-std::optional<FixpipePreQuantMode>
-getQuantModeForCastChain(ArrayRef<VCastOp> castChain);
+std::optional<FixpipePreQuantMode> getQuantModeForCastChain(
+    ArrayRef<VCastOp> castChain,
+    FixpipePreQuantMode preQuant = FixpipePreQuantMode::NO_QUANT);
 std::optional<FixpipePreQuantMode> getQuantMode(hivm::VCastOp castOp);
 bool isUserTransposeInlinable(FixpipeOp op, Operation *user);
 

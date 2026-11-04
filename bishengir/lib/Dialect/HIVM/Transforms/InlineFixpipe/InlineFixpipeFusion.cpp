@@ -81,21 +81,6 @@ bool isUserSliceSwappable(hivm::FixpipeOp fixpipe,
          !isInsertedToStatic(extractSlice);
 }
 
-Type getInitType(Value v, hivm::FixpipePreQuantMode quant,
-                 PatternRewriter &rewriter) {
-  if (quant == FixpipePreQuantMode ::NO_QUANT)
-    return getElementTypeOrSelf(v);
-  if (quant == FixpipePreQuantMode ::F322F16)
-    return rewriter.getF16Type();
-  if (quant == FixpipePreQuantMode ::F322BF16)
-    return rewriter.getBF16Type();
-  if (quant == FixpipePreQuantMode::S322I8)
-    return rewriter.getI8Type();
-  if (quant == FixpipePreQuantMode::QF322F32_PRE)
-    return rewriter.getF32Type();
-  llvm::report_fatal_error("unsupported QuantMode");
-}
-
 bool isUserTransposeInlinable(hivm::FixpipeOp op, Operation *user) {
   if (!isOnRegBasedArch(op))
     return false;
@@ -111,7 +96,7 @@ void inlineFixpipeWithQuant(PatternRewriter &rewriter, Location loc,
                             ArrayRef<hivm::VCastOp> castChain,
                             Value newFixpipeSrcTensor) {
   std::optional<FixpipePreQuantMode> quantMode =
-      getQuantModeForCastChain(castChain);
+      getQuantModeForCastChain(castChain, op.getPreQuant());
   if (!quantMode) {
     LDBG("cast op quant mode is null");
     return;
@@ -190,8 +175,16 @@ bool isUserQuantScaleInlinable(hivm::FixpipeOp op, hivm::VMulOp vMulOp) {
         return !isa<annotation::MarkOp>(userOp);
       }) != 1)
     return false;
-  if (!traceDownStoreOpWithSingleChain(vMulOp.getResult()[0]))
+  Value result = vMulOp.getResult()[0];
+  if (auto cast =
+          dyn_cast_if_present<hivm::VCastOp>(getSingleSiftedUser(result))) {
+    auto casts = collectVCastChain(cast);
+    if (getQuantModeForCastChain(casts, FixpipePreQuantMode::QF322F32_PRE) !=
+        FixpipePreQuantMode::QF322F16_PRE)
+      return false;
+  } else if (!traceDownStoreOpWithSingleChain(result)) {
     return false;
+  }
 
   unsigned fixpipeOperand =
       vMulOp.getDpsInputOperand(0)->get().getDefiningOp() == op ? 0 : 1;
@@ -214,6 +207,8 @@ void inlineFixpipeWithQuantScale(PatternRewriter &rewriter, hivm::FixpipeOp op,
   }
 
   rewriter.setInsertionPointAfter(vMulOp);
+  quantScale =
+      utils::extractScalarValue(rewriter, op.getLoc(), quantScale).value();
   auto newFixpipe = FixpipeOp::clone(
       rewriter, op, op.getSource(), dst,
       {rewriter.getNamedAttr(
@@ -282,7 +277,7 @@ void swapFixpipeWithExtractSlice(PatternRewriter &rewriter, Location loc,
   auto newExtractSliceResult = newExtractSliceOp->getResult(0);
   Value fixpipeInit = utils::createEmptyOpWithTargetElemType(
       rewriter, extractSliceOp.getLoc(), newExtractSliceResult,
-      getInitType(newExtractSliceResult, op.getPreQuant(), rewriter));
+      getElementTypeOrSelf(extractSliceOp.getResult()));
 
   MLIRContext *ctx = rewriter.getContext();
   bool regBased = isOnRegBasedArch(op);
