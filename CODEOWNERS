@@ -10,6 +10,9 @@
 /AGENTS.md @huangyujun123 @hid90099092 @tanshengshun @cxtjjcz
 /CLAUDE.md @huangyujun123 @hid90099092 @tanshengshun @cxtjjcz
 
+# Pass pipelines.
+/bishengir/**/PassPipeline* @hid90099092 @tanshengshun
+
 # Memory management.
 /bishengir/**/AllocToPointerCast.* @SL25 @ssy_5825 @ykyyky @zhufang_hw @hid90099092 @tanshengshun
 /bishengir/**/PlanMemory.* @SL25 @ssy_5825 @ykyyky @zhufang_hw @hid90099092 @tanshengshun
