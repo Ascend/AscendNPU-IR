@@ -177,6 +177,18 @@ void emitSunkChainAndStore(PatternRewriter &rewriter, Location loc, Value src,
     newStore.setAtomicKindAttr(atomicAttr);
 }
 
+/// Clone debug users of the old if-result into a sunk branch and retarget
+/// them to the value yielded by that branch. Greedy InlineFixpipe rewriting
+/// will preserve a debug-only fixpipe result on the Cube branch while still
+/// fusing the store consumer chain into the original fixpipe.
+void cloneDebugUsers(PatternRewriter &rewriter, Value oldIfResult,
+                     Value branchValue, ArrayRef<hivm::DebugOp> debugUsers) {
+  IRMapping mapping;
+  mapping.map(oldIfResult, branchValue);
+  for (hivm::DebugOp debugOp : debugUsers)
+    rewriter.clone(*debugOp, mapping);
+}
+
 /// Clone ops from \p srcBlock into the builder's current block, excluding
 /// the terminator. Returns the mapped value of \p yieldedValue.
 Value cloneBlockBodyExceptTerminator(PatternRewriter &rewriter, Block &srcBlock,
@@ -313,6 +325,11 @@ LogicalResult sinkFixpipeIntoFallbackIf(PatternRewriter &rewriter, Location loc,
   for (Operation *op : llvm::reverse(chain.ops))
     toErase.push_back(op);
 
+  SmallVector<hivm::DebugOp> debugUsers;
+  for (Operation *user : ifResult.getUsers())
+    if (auto debugOp = dyn_cast<hivm::DebugOp>(user))
+      debugUsers.push_back(debugOp);
+
   OpBuilder::InsertionGuard g(rewriter);
   rewriter.setInsertionPoint(ifOp);
   auto newIf = rewriter.create<scf::IfOp>(loc, TypeRange{}, ifOp.getCondition(),
@@ -322,26 +339,29 @@ LogicalResult sinkFixpipeIntoFallbackIf(PatternRewriter &rewriter, Location loc,
   // Resultless scf.if already has empty scf.yield terminators from the
   // builder (ensureTerminator). Insert branch bodies before those yields;
   // do not create a second terminator.
-  auto populateBranch = [&rewriter, &loc, &chain](
+  auto populateBranch = [&rewriter, &loc, &chain, ifResult, &debugUsers](
                             Block *destBlock, Block &srcBlock, Value yielded) {
     rewriter.setInsertionPointToStart(destBlock);
     Value mapped = cloneBlockBodyExceptTerminator(rewriter, srcBlock, yielded);
+    cloneDebugUsers(rewriter, ifResult, mapped, debugUsers);
     emitSunkChainAndStore(rewriter, loc, mapped, chain);
   };
 
   populateBranch(newIf.thenBlock(), ifOp.getThenRegion().front(), thenYielded);
   populateBranch(newIf.elseBlock(), ifOp.getElseRegion().front(), elseYielded);
 
-  // Erase outer consumer chain (store first), ignored users of the if
-  // result, then the old if (which owns the original in-branch fixpipe).
-  // Marks / debug / dim on the if-result cannot be preserved: the rewrite
-  // deletes that SSA value. Warn so the drop is visible, but do not fail.
+  // Erase outer consumer chain (store first), ignored users of the if result,
+  // then the old if (which owns the original in-branch fixpipe). Debug users
+  // have been cloned into both branches. Marks / dim cannot be preserved
+  // because the rewrite deletes their SSA value; warn, but do not fail.
   for (Operation *op : toErase)
     rewriter.eraseOp(op);
   SmallVector<Operation *> ignoredUsers(ifResult.getUsers().begin(),
                                         ifResult.getUsers().end());
   for (Operation *user : ignoredUsers) {
-    if (isa<annotation::MarkOp, hivm::DebugOp, tensor::DimOp>(user)) {
+    if (isa<hivm::DebugOp>(user)) {
+      rewriter.eraseOp(user);
+    } else if (isa<annotation::MarkOp, tensor::DimOp>(user)) {
       user->emitWarning()
           << "dropping " << user->getName()
           << " on fallback_not_exec if result; the tensor no longer exists "
