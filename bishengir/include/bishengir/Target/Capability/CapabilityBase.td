@@ -429,11 +429,15 @@ class CapabilityExtractor<CapabilityBindingSource source,
 
 // Every schema field has exactly one extractor. The generated from(op)
 // reads those fields, and create() takes all of them as arguments.
+// Verify is true when hivm-verify-capability should check every operation of
+// this type. An alternate binding for the same operation, such as a batched
+// form, sets this to false.
 class CapabilityBinding<CapabilityKey capability, Op operation,
                         list<CapabilityExtractor> extractors> {
   CapabilityKey Capability = capability;
   Op Operation = operation;
   list<CapabilityExtractor> Extractors = extractors;
+  bit Verify = 1;
 }
 
 #endif // BISHENGIR_TARGET_CAPABILITY_CAPABILITYBASE_TD

@@ -26,6 +26,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 
 #include <optional>
+#include <utility>
 
 #include "bishengir/Dialect/HIVM/IR/Capability/DMA/Fixpipe/FixpipeCapabilityBinding.h.inc"
 

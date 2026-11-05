@@ -31,7 +31,11 @@ include "bishengir/Dialect/HIVM/IR/Capability/DMA/CubeLoad/NCHW2NC1HWC0Capabilit
 include "bishengir/Dialect/HIVM/IR/Capability/DMA/CubeLoad/NCHW2C1HWNC0Capability.td"
 include "bishengir/Dialect/HIVM/IR/Capability/DMA/CubeLoad/LoadScaleCapability.td"
 
-def Nd2NzBatchCapabilityBinding : DmaCapabilityBinding<Nd2NzBatch, ND2NZOp, []>;
+def Nd2NzBatchCapabilityBinding : DmaCapabilityBinding<Nd2NzBatch, ND2NZOp, []> {
+  // The same op is already checked by Nd2Nz. This key is only for an explicit
+  // rank-3 query.
+  let Verify = 0;
+}
 
 def Nd2NzCapabilityBinding
     : DmaCapabilityBinding<

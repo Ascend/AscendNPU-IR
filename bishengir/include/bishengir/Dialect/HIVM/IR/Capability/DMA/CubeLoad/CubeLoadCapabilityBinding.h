@@ -26,6 +26,7 @@
 #include "bishengir/Target/NPU/DMA/CubeLoad/CubeLoadCapability.h"
 
 #include <optional>
+#include <utility>
 
 #include "bishengir/Dialect/HIVM/IR/Capability/DMA/CubeLoad/CubeLoadCapabilityBinding.h.inc"
 

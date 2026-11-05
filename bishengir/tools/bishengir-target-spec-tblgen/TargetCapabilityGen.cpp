@@ -1069,6 +1069,7 @@ struct ResolvedBinding {
   const Record *capability = nullptr;
   std::string className;
   std::string opClass;
+  bool verify = true;
   SmallVector<BoundField, 0> fields;
 };
 
@@ -1425,6 +1426,7 @@ static bool resolveBinding(const Record *binding, ResolvedBinding &out) {
   out.capability = capability;
   out.className = className;
   out.opClass = op.getQualCppClassName();
+  out.verify = binding->getValueAsBit("Verify");
   StringSet<> methodNames;
   for (const ExpectedSchemaField &field : expected) {
     const auto found = extractors.find(field.key);
@@ -1438,7 +1440,8 @@ static bool resolveBinding(const Record *binding, ResolvedBinding &out) {
     if (bindExtractor(found->getValue(), op, field.display, bound))
       return true;
     if (!isValidCppIdentifier(bound.methodName) || bound.methodName == "from" ||
-        bound.methodName == "create" || bound.methodName == "build") {
+        bound.methodName == "create" || bound.methodName == "build" ||
+        bound.methodName == "hasUnsetAddressSpace") {
       PrintError(found->getValue()->getLoc(),
                  "capability binding: invalid builder method '" +
                      bound.methodName + "'");
@@ -1603,6 +1606,23 @@ static void emitBindingClass(raw_ostream &os, const ResolvedBinding &binding) {
         "builder.\n"
      << "  /// mlir::Type handles remain valid with their MLIRContext.\n"
      << "  CapabilityRequestStorage build() const;\n\n"
+     << "  /// True when an address-space field was not read from the "
+        "operation.\n"
+     << "  /// build() would store a sentinel instead of a real scope.\n"
+     << "  bool hasUnsetAddressSpace() const {\n    return ";
+  bool anyAddressSpace = false;
+  for (const BoundField &field : binding.fields) {
+    if (field.projection != BindingProjection::AddressSpace ||
+        !field.optionalStorage)
+      continue;
+    if (anyAddressSpace)
+      os << " || ";
+    anyAddressSpace = true;
+    os << "!" << field.methodName << "_";
+  }
+  if (!anyAddressSpace)
+    os << "false";
+  os << ";\n  }\n\n"
      << "private:\n"
      << "  " << className << "() = default;\n";
   for (const BoundField &field : binding.fields) {
@@ -1670,12 +1690,79 @@ static bool emitTargetCapabilityBindings(const RecordKeeper &records,
   emitSourceFileHeader("Target Capability Bindings", os, records);
   emitIncludeGuardOpen(os, scope.bindingGuard);
   emitNamespaceOpen(os, scope, false);
+  SmallVector<ResolvedBinding, 4> bindings;
   for (const Record *binding : getDefinitions(records, "CapabilityBinding")) {
     ResolvedBinding resolved;
     if (resolveBinding(binding, resolved))
       return true;
-    emitBindingClass(os, resolved);
+    bindings.push_back(std::move(resolved));
   }
+  for (const ResolvedBinding &binding : bindings)
+    emitBindingClass(os, binding);
+
+  os << "inline void visitBoundCapabilityOps(\n"
+        "    ::mlir::Operation *root,\n"
+        "    ::llvm::function_ref<void(\n"
+        "        ::mlir::Operation *op, bool bindingFailed, bool "
+        "missingAddressSpace,\n"
+        "        ::std::optional<CapabilityRequestStorage> request)> visit) {\n"
+        "  if (!root)\n"
+        "    return;\n";
+  for (const ResolvedBinding &binding : bindings) {
+    if (!binding.verify)
+      continue;
+    os << "  root->walk([&](" << binding.opClass << " op) {\n"
+       << "    auto builder = " << binding.className << "::from(op);\n"
+       << "    if (!builder) {\n"
+       << "      visit(op.getOperation(), true, false, ::std::nullopt);\n"
+       << "      return;\n"
+       << "    }\n"
+       << "    if (builder->hasUnsetAddressSpace()) {\n"
+       << "      visit(op.getOperation(), false, true, ::std::nullopt);\n"
+       << "      return;\n"
+       << "    }\n"
+       << "    visit(op.getOperation(), false, false, builder->build());\n"
+       << "  });\n";
+  }
+  os << "}\n\n"
+        "struct CapabilityCatalogue {\n"
+        "  using RequestStorage = CapabilityRequestStorage;\n"
+        "  using Request = CapabilityRequest;\n"
+        "  using Support = NativeSupport;\n"
+        "  using Completeness = ProfileCompleteness;\n"
+        "  using Architecture = ::bishengir::npu::NPUArchitectureKind;\n"
+        "  using PropertyKind = CapabilitySlotPropertyKind;\n"
+        "  using ParameterKind = CapabilityParameterKind;\n"
+        "  using FieldValue = CapabilityFieldValue;\n"
+        "  using StoredValue = CapabilityValue;\n"
+        "  using FieldKind = CapabilityRequestFieldKind;\n"
+        "\n"
+        "  template <typename Fn>\n"
+        "  static void visit(::mlir::Operation *root, Fn &&fn) {\n"
+        "    visitBoundCapabilityOps(root, std::forward<Fn>(fn));\n"
+        "  }\n"
+        "  static Support query(Architecture architecture, const Request "
+        "&request) {\n"
+        "    return queryNativeSupport(architecture, request);\n"
+        "  }\n"
+        "  static const ArchitectureCapabilityProfileDesc *\n"
+        "  profile(Architecture architecture) {\n"
+        "    return lookupArchitectureCapabilityProfile(architecture);\n"
+        "  }\n"
+        "  static ::llvm::StringRef completeness(Completeness value) {\n"
+        "    return stringifyProfileCompleteness(value);\n"
+        "  }\n"
+        "  static ::llvm::StringRef property(PropertyKind kind) {\n"
+        "    return stringifyCapabilitySlotPropertyKind(kind);\n"
+        "  }\n"
+        "  static ::llvm::StringRef parameter(ParameterKind kind) {\n"
+        "    return stringifyCapabilityParameterKind(kind);\n"
+        "  }\n"
+        "  static ::std::optional<::llvm::StringRef> value(StoredValue stored) "
+        "{\n"
+        "    return stringifyCapabilityValue(stored);\n"
+        "  }\n"
+        "};\n\n";
   emitNamespaceClose(os, scope);
   emitIncludeGuardClose(os, scope.bindingGuard);
   return false;
