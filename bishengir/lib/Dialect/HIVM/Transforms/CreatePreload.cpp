@@ -68,6 +68,8 @@ struct PreloadInfo {
   DenseMap<Value, size_t> preloadLocalBuffers;
   // IRMapping for rewriting
   SmallVector<IRMapping> mappings;
+  DenseSet<Value> carriedResults;
+  IRMapping carriedYields;
 };
 
 struct CreatePreloadPass : public impl::CreatePreloadBase<CreatePreloadPass> {
@@ -223,10 +225,12 @@ static Value
 preprocessLoopArgs(scf::ForOp forOp, SmallVector<Value> &newInitArgs,
                    DenseMap<Value, hivm::PointerCastOp> &valueToAdapt,
                    const PreloadInfo &info, OpBuilder &b) {
-  for (auto [initArg, iterArg] :
-       llvm::zip_equal(forOp.getInitArgs(), forOp.getRegionIterArgs())) {
+  for (auto [initArg, iterArg, yielded] :
+       llvm::zip_equal(forOp.getInitArgs(), forOp.getRegionIterArgs(),
+                       forOp.getYieldedValues())) {
     if (auto pointerCastOp = initArg.getDefiningOp<hivm::PointerCastOp>();
-        pointerCastOp && getPreloadLocalBufferNum(pointerCastOp, info)) {
+        pointerCastOp && getPreloadLocalBufferNum(pointerCastOp, info) &&
+        !info.carriedResults.contains(yielded) && yielded != iterArg) {
       valueToAdapt[iterArg] = pointerCastOp;
     } else {
       newInitArgs.push_back(initArg);
@@ -276,12 +280,19 @@ static bool isRematerializableAliasOp(Operation *op) {
          isa<arith::ArithDialect>(op->getDialect());
 }
 
-static void rewriteScopeReturnOp(ValueRange returnResults,
+static bool keepScopeResult(Value result, Value returned,
+                            const PreloadInfo &info) {
+  return !getLocalBuffer(returned) || info.carriedResults.contains(result);
+}
+
+static void rewriteScopeReturnOp(scope::ScopeOp scopeOp,
+                                 ValueRange returnResults,
                                  const PreloadInfo &info, Location loc,
                                  OpBuilder &b) {
   SmallVector<Value> newReturns;
-  for (auto res : returnResults) {
-    if (!getLocalBuffer(res)) {
+  for (auto [result, res] :
+       llvm::zip_equal(scopeOp->getResults(), returnResults)) {
+    if (keepScopeResult(result, res, info)) {
       res = info.mappings[info.preloadNum].lookupOrDefault(res);
       newReturns.push_back(res);
     }
@@ -391,8 +402,8 @@ rematerializeViewLikeResult(Value value, scope::ScopeOp scopeOp,
 }
 
 static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
-                                PreloadInfo &info, ValueRange loopArgs,
-                                Location loc, OpBuilder &builder) {
+                                PreloadInfo &info, Location loc,
+                                OpBuilder &builder) {
   auto &scopeBody = scopeOp.getRegion().front();
   auto returnResults =
       cast<scope::ReturnOp>(scopeBody.getTerminator()).getResults();
@@ -400,8 +411,9 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
       loc, cond,
       [&](OpBuilder &b, Location loc) {
         SmallVector<Type> newScopeResultTypes;
-        for (auto res : returnResults) {
-          if (!getLocalBuffer(res))
+        for (auto [result, res] :
+             llvm::zip_equal(scopeOp->getResults(), returnResults)) {
+          if (keepScopeResult(result, res, info))
             newScopeResultTypes.push_back(res.getType());
         }
         auto newOp =
@@ -414,7 +426,7 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
 
         b.setInsertionPointToEnd(bodyBlock);
         rewriteBody(&scopeBody, info, b);
-        rewriteScopeReturnOp(returnResults, info, loc, b);
+        rewriteScopeReturnOp(scopeOp, returnResults, info, loc, b);
         b.setInsertionPointAfter(newOp);
         b.create<scf::YieldOp>(loc, newOp->getResults());
       },
@@ -423,13 +435,15 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
         IRMapping viewMapping;
         for (auto [res, retRes] :
              llvm::zip_equal(scopeOp->getResults(), returnResults)) {
-          if (!getLocalBuffer(retRes)) {
+          if (keepScopeResult(res, retRes, info)) {
             auto yieldUse = llvm::find_if(res.getUses(), [](OpOperand &use) {
               return isa<scf::YieldOp>(use.getOwner());
             });
             if (yieldUse != res.use_end()) {
               auto oprNum = yieldUse->getOperandNumber();
-              newYields.push_back(loopArgs[oprNum]);
+              auto loop = cast<scf::ForOp>(scopeOp->getParentOp());
+              newYields.push_back(info.mappings[info.preloadNum].lookup(
+                  loop.getRegionIterArgs()[oprNum]));
             } else if (auto pointerCastOp =
                            retRes.getDefiningOp<hivm::PointerCastOp>()) {
               auto newRes = b.clone(*pointerCastOp)->getResult(0);
@@ -492,6 +506,10 @@ static void rewritePreloadLoop(scf::ForOp forOp,
       info.ub.getLoc(),
       rewriter.getIntegerAttr(info.ub.getType(), info.maxPreloadNum));
   info.mappings.resize(maxPreloadNum);
+  for (Value yielded : forOp.getYieldedValues())
+    if (auto scopeOp = yielded.getDefiningOp<scope::ScopeOp>();
+        scopeOp && isa<MemRefType>(yielded.getType()))
+      info.carriedResults.insert(yielded);
   collectPreloadLocalBuffers(forOp->getParentOfType<func::FuncOp>(), info);
 
   SmallVector<Value> newInitArgs;
@@ -556,25 +574,24 @@ static void rewritePreloadLoop(scf::ForOp forOp,
           auto loc = scopeOp.getLoc();
           Value cond = getPreloadCondition(info, loc, b);
 
-          auto newOp = rewriteScopeOp(cond, scopeOp, info, args, loc, b);
+          auto newOp = rewriteScopeOp(cond, scopeOp, info, loc, b);
           auto returnResults =
               cast<scope::ReturnOp>(scopeOp.getRegion().front().getTerminator())
                   .getResults();
-          auto scopeResIter = scopeOp.result_begin();
+          auto newResIter = newOp.result_begin();
           SmallVector<IRMapping> viewMappings(info.mappings.size());
-          for (auto newRes : newOp->getResults()) {
-            auto maybeLocalBuffer = getLocalBuffer(*scopeResIter);
-            while (maybeLocalBuffer.has_value()) {
+          for (auto [scopeRes, returnResult] :
+               llvm::zip_equal(scopeOp->getResults(), returnResults)) {
+            if (auto localBuffer = getLocalBuffer(scopeRes)) {
               for (auto &mapping : info.mappings)
-                mapping.map(*scopeResIter,
-                            mapping.lookup(maybeLocalBuffer->getResult()));
-              ++scopeResIter;
-              maybeLocalBuffer = getLocalBuffer(*scopeResIter);
+                mapping.map(scopeRes, mapping.lookup(localBuffer->getResult()));
+              if (info.carriedResults.contains(scopeRes))
+                info.carriedYields.map(scopeRes, *newResIter++);
+              continue;
             }
-
-            Value scopeRes = *scopeResIter;
-            auto resultNumber = cast<OpResult>(scopeRes).getResultNumber();
-            Value returnResult = returnResults[resultNumber];
+            Value newRes = *newResIter++;
+            if (info.carriedResults.contains(scopeRes))
+              info.carriedYields.map(scopeRes, newRes);
             Value source = lookThroughScopeResult(returnResult);
             if (!isa_and_nonnull<ViewLikeOpInterface>(source.getDefiningOp())) {
               for (auto &mapping : info.mappings)
@@ -589,38 +606,27 @@ static void rewritePreloadLoop(scf::ForOp forOp,
                 mapping.map(scopeRes, *rematerialized);
               }
             }
-            ++scopeResIter;
-          }
-          for (; scopeResIter != scopeOp.result_end(); ++scopeResIter) {
-            auto maybeLocalBuffer = getLocalBuffer(*scopeResIter);
-            for (auto &mapping : info.mappings)
-              mapping.map(*scopeResIter,
-                          mapping.lookup(maybeLocalBuffer->getResult()));
           }
         }
 
         SmallVector<Value> newYields;
-        if (!newInitArgs.empty()) {
-          newYields =
-              llvm::map_to_vector(forOp.getYieldedValues(), [&](Value yield) {
-                return info.mappings[maxPreloadNum - 1].lookupOrDefault(yield);
-              });
+        for (auto [arg, yielded] : llvm::zip_equal(forOp.getRegionIterArgs(),
+                                                   forOp.getYieldedValues())) {
+          if (valueToAdapt.contains(arg))
+            continue;
+          newYields.push_back(
+              info.carriedYields.contains(yielded)
+                  ? info.carriedYields.lookup(yielded)
+                  : info.mappings[maxPreloadNum - 1].lookupOrDefault(yielded));
         }
         b.create<scf::YieldOp>(loc, newYields);
       });
 
   LDBG("New for loop:\n" << newForOp);
 
-  // `preprocessLoopArgs` drops every iteration argument that carries a
-  // preload-local buffer, because the new body re-materializes the rotation
-  // belonging to each preload stage instead of threading one buffer through the
-  // loop. The original loop still has one result per iteration argument, so
-  // walk the original arguments rather than the new results and supply a
-  // replacement for the dropped ones too.
-  //
-  // When a kept yield is itself a preload-local buffer, clone that buffer after
-  // the loop instead of rewiring users to the in-loop definition (which would
-  // not dominate post-loop uses once the unused yield is DCE'd).
+  // Preserve the original result order, including aliases elided from the loop.
+  // Keep actual loop results for carried or unchanged state so post-loop uses
+  // retain the final buffer selection; rematerialize only other local aliases.
   SmallVector<Value> newRes;
   newRes.reserve(forOp.getNumResults());
   auto newResIt = newForOp->result_begin();
@@ -631,8 +637,10 @@ static void rewritePreloadLoop(scf::ForOp forOp,
       newRes.push_back(initArg);
       continue;
     }
+    Value oldYield = forOp.getYieldedValues()[iterArg.getArgNumber() - 1];
     if (auto maybeLocalBuffer = getLocalBuffer(*newYieldIt);
-        maybeLocalBuffer.has_value()) {
+        maybeLocalBuffer.has_value() && oldYield != iterArg &&
+        !info.carriedResults.contains(oldYield)) {
       IRRewriter::InsertionGuard guard(rewriter);
       rewriter.setInsertionPointAfter(newForOp);
       hivm::PointerCastOp src = *maybeLocalBuffer;
@@ -918,7 +926,49 @@ static void pruneUnusedScopeResultsInLoop(scf::ForOp forOp) {
   }
 }
 
-static void preprocessPreloadLoop(scf::ForOp forOp) {
+static LogicalResult exportCarriedLocalBuffers(scf::ForOp forOp) {
+  for (OpOperand &yield : forOp.getBody()->getTerminator()->getOpOperands()) {
+    unsigned index = yield.getOperandNumber();
+    if (yield.get() == forOp.getRegionIterArgs()[index] ||
+        (forOp.getRegionIterArgs()[index].use_empty() &&
+         forOp.getResult(index).use_empty()))
+      continue;
+    auto local = getLocalBuffer(yield.get());
+    if (!local || (*local).getAddrs().size() < 2 ||
+        yield.get().getDefiningOp<scope::ScopeOp>())
+      continue;
+    scope::ScopeOp writer;
+    for (Operation *user : (*local)->getUsers()) {
+      auto effects = dyn_cast<MemoryEffectOpInterface>(user);
+      if (!effects || isa<annotation::MarkOp>(user) ||
+          !effects.getEffectOnValue<MemoryEffects::Write>(yield.get()))
+        continue;
+      auto scope = user->getParentOfType<scope::ScopeOp>();
+      if (!scope || scope->getParentOp() != forOp ||
+          (writer && writer != scope))
+        return forOp.emitError(
+            "expected one scope writing a carried preload buffer");
+      writer = scope;
+    }
+    if (!writer)
+      return forOp.emitError("missing writer of a carried preload buffer");
+    auto returned =
+        cast<scope::ReturnOp>(writer.getRegion().front().getTerminator());
+    OpBuilder builder(writer);
+    SmallVector<Type> types(writer.getResultTypes());
+    types.push_back(yield.get().getType());
+    auto replacement = builder.create<scope::ScopeOp>(writer.getLoc(), types);
+    replacement->setAttrs(writer->getAttrs());
+    replacement.getRegion().takeBody(writer.getRegion());
+    returned->insertOperands(returned.getNumOperands(), yield.get());
+    writer.replaceAllUsesWith(replacement->getResults().drop_back());
+    writer.erase();
+    yield.set(replacement->getResults().back());
+  }
+  return success();
+}
+
+static scf::ForOp preprocessPreloadLoop(scf::ForOp forOp) {
   auto isPointerCast = [](Value value) {
     return static_cast<bool>(value.getDefiningOp<hivm::PointerCastOp>());
   };
@@ -998,7 +1048,8 @@ static void preprocessPreloadLoop(scf::ForOp forOp) {
     }
 
     PointerCastTraceResult traceResult;
-    if (failed(collectRootPointerCasts({yieldVal, initArg}, traceResult)))
+    if (failed(collectRootPointerCasts({yieldVal, initArg}, traceResult)) ||
+        traceResult.pointerCasts.front().getAddrs().size() > 1)
       continue;
 
     hivm::PointerCastOp firstPC = traceResult.pointerCasts.front();
@@ -1079,7 +1130,8 @@ static void preprocessPreloadLoop(scf::ForOp forOp) {
   });
   for (arith::SelectOp selectOp : remainingSelects) {
     PointerCastTraceResult traceResult;
-    if (failed(collectRootPointerCasts({selectOp.getResult()}, traceResult)))
+    if (failed(collectRootPointerCasts({selectOp.getResult()}, traceResult)) ||
+        traceResult.pointerCasts.front().getAddrs().size() > 1)
       continue;
     hivm::PointerCastOp firstPC = traceResult.pointerCasts.front();
     hivm::PointerCastOp markedLocalPC =
@@ -1144,6 +1196,7 @@ static void preprocessPreloadLoop(scf::ForOp forOp) {
   }
 
   pruneUnusedScopeResultsInLoop(activeForOp);
+  return activeForOp;
 }
 
 void CreatePreloadPass::runOnOperation() {
@@ -1159,8 +1212,13 @@ void CreatePreloadPass::runOnOperation() {
         candidateLoops.push_back(parentForOp);
     }
   });
-  for (scf::ForOp forOp : candidateLoops)
-    preprocessPreloadLoop(forOp);
+  for (scf::ForOp forOp : candidateLoops) {
+    forOp = preprocessPreloadLoop(forOp);
+    if (failed(exportCarriedLocalBuffers(forOp))) {
+      signalPassFailure();
+      return;
+    }
+  }
 
   DenseMap<scf::ForOp, DenseMap<Operation *, size_t>> loopToScopes;
   DenseMap<scf::ForOp, size_t> loopToMaxPreloadNum;
