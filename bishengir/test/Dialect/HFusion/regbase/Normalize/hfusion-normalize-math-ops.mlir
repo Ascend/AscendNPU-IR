@@ -795,11 +795,12 @@ func.func @test_NormalizeMod_hfusion_mod_f8e4m3fn(%src0: tensor<2048xf8E4M3FN>, 
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeMod_hfusion_mod_i8
+// Integer extension through f16 is exact; retain the source cast's RINT mode.
 // CHECK-SAME: (%[[x:.*]]: tensor<2048xi8>, %[[y:.*]]: tensor<2048xi8>)
 // CHECK: %[[x_f16:.*]] = hfusion.cast {{.*}} ins(%[[x]] : tensor<2048xi8>) outs({{.*}} : tensor<2048xf16>) -> tensor<2048xf16>
-// CHECK: %[[x_i16:.*]] = hfusion.cast {{.*}}round_mode = #hfusion.round_mode<trunc>{{.*}} ins(%[[x_f16]] : tensor<2048xf16>) outs({{.*}} : tensor<2048xi16>) -> tensor<2048xi16>
+// CHECK: %[[x_i16:.*]] = hfusion.cast {{.*}}round_mode = #hfusion.round_mode<rint>{{.*}} ins(%[[x_f16]] : tensor<2048xf16>) outs({{.*}} : tensor<2048xi16>) -> tensor<2048xi16>
 // CHECK: %[[y_f16:.*]] = hfusion.cast {{.*}} ins(%[[y]] : tensor<2048xi8>) outs({{.*}} : tensor<2048xf16>) -> tensor<2048xf16>
-// CHECK: %[[y_i16:.*]] = hfusion.cast {{.*}}round_mode = #hfusion.round_mode<trunc>{{.*}} ins(%[[y_f16]] : tensor<2048xf16>) outs({{.*}} : tensor<2048xi16>) -> tensor<2048xi16>
+// CHECK: %[[y_i16:.*]] = hfusion.cast {{.*}}round_mode = #hfusion.round_mode<rint>{{.*}} ins(%[[y_f16]] : tensor<2048xf16>) outs({{.*}} : tensor<2048xi16>) -> tensor<2048xi16>
 // CHECK: %[[mod_i16:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<mod>} ins(%[[x_i16]], %[[y_i16]] : tensor<2048xi16>, tensor<2048xi16>) outs({{.*}} : tensor<2048xi16>) -> tensor<2048xi16>
 // CHECK: %[[output:.*]] = hfusion.cast {{.*}} ins(%[[mod_i16]] : tensor<2048xi16>) outs({{.*}} : tensor<2048xi8>) -> tensor<2048xi8>
 // CHECK: return %[[output]] : tensor<2048xi8>
@@ -812,11 +813,12 @@ func.func @test_NormalizeMod_hfusion_mod_i8(%src0: tensor<2048xi8>, %src1: tenso
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeMod_hfusion_modui_i8
+// Integer extension through f16 is exact; retain the source cast's RINT mode.
 // CHECK-SAME: (%[[x:.*]]: tensor<2048xi8>, %[[y:.*]]: tensor<2048xi8>)
 // CHECK: %[[x_f16:.*]] = hfusion.cast {{.*}}cast = #hfusion.type_fn<cast_unsigned>{{.*}} ins(%[[x]] : tensor<2048xi8>) outs({{.*}} : tensor<2048xf16>) -> tensor<2048xf16>
-// CHECK: %[[x_i16:.*]] = hfusion.cast {{.*}}round_mode = #hfusion.round_mode<trunc>{{.*}} ins(%[[x_f16]] : tensor<2048xf16>) outs({{.*}} : tensor<2048xi16>) -> tensor<2048xi16>
+// CHECK: %[[x_i16:.*]] = hfusion.cast {{.*}}round_mode = #hfusion.round_mode<rint>{{.*}} ins(%[[x_f16]] : tensor<2048xf16>) outs({{.*}} : tensor<2048xi16>) -> tensor<2048xi16>
 // CHECK: %[[y_f16:.*]] = hfusion.cast {{.*}}cast = #hfusion.type_fn<cast_unsigned>{{.*}} ins(%[[y]] : tensor<2048xi8>) outs({{.*}} : tensor<2048xf16>) -> tensor<2048xf16>
-// CHECK: %[[y_i16:.*]] = hfusion.cast {{.*}}round_mode = #hfusion.round_mode<trunc>{{.*}} ins(%[[y_f16]] : tensor<2048xf16>) outs({{.*}} : tensor<2048xi16>) -> tensor<2048xi16>
+// CHECK: %[[y_i16:.*]] = hfusion.cast {{.*}}round_mode = #hfusion.round_mode<rint>{{.*}} ins(%[[y_f16]] : tensor<2048xf16>) outs({{.*}} : tensor<2048xi16>) -> tensor<2048xi16>
 // CHECK: %[[mod_i16:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<modui>} ins(%[[x_i16]], %[[y_i16]] : tensor<2048xi16>, tensor<2048xi16>) outs({{.*}} : tensor<2048xi16>) -> tensor<2048xi16>
 // CHECK: %[[output:.*]] = hfusion.cast {{.*}} ins(%[[mod_i16]] : tensor<2048xi16>) outs({{.*}} : tensor<2048xi8>) -> tensor<2048xi8>
 // CHECK: return %[[output]] : tensor<2048xi8>

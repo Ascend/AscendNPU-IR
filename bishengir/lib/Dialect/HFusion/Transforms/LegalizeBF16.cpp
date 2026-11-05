@@ -118,14 +118,24 @@ static bool shouldLegalizeBF16Op(Operation *op) {
 }
 
 template <typename Op>
-static Operation *createNewOp(PatternRewriter &rewriter, Op bf16Op,
-                              SmallVector<Value> &castedOperands) {
-  IRMapping mapper;
+static Operation *
+createNewOp(PatternRewriter &rewriter, Op bf16Op,
+            SmallVector<std::pair<Value, Value>> &mappedOperands,
+            SmallVector<std::pair<unsigned, Value>> &positionalOperands) {
+
   Operation *op = bf16Op.getOperation();
-  for (const auto &[idx, oper] : llvm::enumerate(op->getOperands()))
-    mapper.map(oper, castedOperands[idx]);
+
+  IRMapping mapper;
+  for (auto [original, replacement] : mappedOperands) {
+    mapper.map(original, replacement);
+  }
 
   auto *newOp = rewriter.cloneWithoutRegions(*op, mapper);
+
+  for (auto [index, replacement] : positionalOperands) {
+    newOp->setOperand(index, replacement);
+  }
+
   auto *ctx = op->getContext();
   if (isRegBasedArch) {
     for (const auto &[idx, res] : llvm::enumerate(op->getResults())) {
@@ -249,18 +259,34 @@ static void createF32ElementTypeOp(Op bf16Op, PatternRewriter &rewriter) {
   Type bf16Type = rewriter.getBF16Type();
   Type f32Type = rewriter.getF32Type();
 
-  SmallVector<Value> castedOperands;
-  for (auto oper : op->getOperands()) {
-    Value castedOperand =
-        getElementTypeOrSelf(oper.getType()).isBF16()
-            ? castTo(rewriter, oper, /*targetElemType=*/f32Type)
-            : oper;
+  SmallVector<std::pair<Value, Value>> mappedOperands;
+  SmallVector<std::pair<unsigned, Value>> positionalOperands;
+  for (OpOperand &operand : op->getOpOperands()) {
+    Value oper = operand.get();
+    Value castedOperand = oper;
+    if (getElementTypeOrSelf(oper.getType()).isBF16()) {
+      auto linalgOp = dyn_cast<linalg::LinalgOp>(op);
+
+      // An unused destination supplies only shape, not initialized data.
+      if (linalgOp && linalgOp.isDpsInit(&operand) &&
+          !linalgOp.payloadUsesValueFromOperand(&operand)) {
+        castedOperand = utils::createEmptyOpWithTargetElemType(
+            rewriter, op->getLoc(), oper, f32Type);
+        positionalOperands.emplace_back(operand.getOperandNumber(),
+                                        castedOperand);
+      } else {
+        castedOperand = castTo(rewriter, oper, f32Type);
+        mappedOperands.emplace_back(oper, castedOperand);
+      }
+    } else {
+      mappedOperands.emplace_back(oper, castedOperand);
+    }
     if (Operation *castOp = castedOperand.getDefiningOp<hfusion::CastOp>())
       setFastMathContractAttr(castOp);
-    castedOperands.push_back(castedOperand);
   }
 
-  auto newOp = createNewOp<Op>(rewriter, bf16Op, castedOperands);
+  auto newOp =
+      createNewOp<Op>(rewriter, bf16Op, mappedOperands, positionalOperands);
   createF32ElementTypeOpRegion(newOp, rewriter);
 
   rewriter.setInsertionPointAfter(newOp);
