@@ -91,24 +91,6 @@ std::optional<SmallVector<OpFoldResult>> TileView::getRootSizes(Value root) {
     }
   }
 
-  // A collapsed view is plain strided memory over the buffer it came from, so
-  // it can serve as a root: hivm-flatten-ops produces one whenever it merges
-  // the axes a permutation leaves untouched, and without this the fusion would
-  // decline every such load. Only a static result is accepted, which is what
-  // flatten emits; a dynamic one has no sizes to name here.
-  if (auto collapseOp = dyn_cast_or_null<memref::CollapseShapeOp>(def)) {
-    auto collapsedType = cast<MemRefType>(collapseOp.getResult().getType());
-    if (!collapsedType.hasStaticShape()) {
-      return std::nullopt;
-    }
-    Builder builder(collapseOp.getContext());
-    SmallVector<OpFoldResult> sizes;
-    for (int64_t size : collapsedType.getShape()) {
-      sizes.push_back(builder.getIndexAttr(size));
-    }
-    return sizes;
-  }
-
   return std::nullopt;
 }
 

@@ -295,10 +295,10 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   func.func @copyop1d() {
     // CHECK: func.func private @load_gm_to_ubuf_1d_int8_t(memref<{{.*}}, #hivm.address_space<gm>>,
-    // CHECK: memref<{{.*}}, #hivm.address_space<ub>>, i32, i8, index, index, i32)
+    // CHECK: memref<{{.*}}, #hivm.address_space<ub>>, i32, i8, index, i32)
     %src = memref.alloc() : memref<16xi8, #hivm.address_space<gm>>
     %dst = memref.alloc() : memref<16xi8, #hivm.address_space<ub>>
-    // CHECK: call @load_gm_to_ubuf_1d_int8_t(%{{.*}}, %{{.*}}, %c0_i32, %c0_i8, %{{.*}}, %{{.*}}, %c0_i32)
+    // CHECK: call @load_gm_to_ubuf_1d_int8_t(%{{.*}}, %{{.*}}, %c0_i32, %c0_i8, %{{.*}}, %c0_i32)
     hivm.hir.load ins(%src : memref<16xi8, #hivm.address_space<gm>>)
                   outs(%dst : memref<16xi8, #hivm.address_space<ub>>)
     return
@@ -366,12 +366,12 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %dst_first = memref.alloc() : memref<16xi8, #hivm.address_space<ub>>
     %dst_last = memref.alloc() : memref<16xi8, #hivm.address_space<ub>>
 
-    // CHECK: call @load_gm_to_ubuf_1d_int8_t(%{{.*}}, %{{.*}}, %c0_i32, %c0_i8, %{{.*}}, %{{.*}}, %c0_i32)
+    // CHECK: call @load_gm_to_ubuf_1d_int8_t(%{{.*}}, %{{.*}}, %c0_i32, %c0_i8, %{{.*}}, %c0_i32)
     hivm.hir.load ins(%src : memref<16xi8, #hivm.address_space<gm>>)
                   outs(%dst_first : memref<16xi8, #hivm.address_space<ub>>)
                   eviction_policy = <EvictFirst>
 
-    // CHECK: call @load_gm_to_ubuf_1d_int8_t(%{{.*}}, %{{.*}}, %c0_i32, %c0_i8, %{{.*}}, %{{.*}}, %c1_i32)
+    // CHECK: call @load_gm_to_ubuf_1d_int8_t(%{{.*}}, %{{.*}}, %c0_i32, %c0_i8, %{{.*}}, %c1_i32)
     hivm.hir.load ins(%src : memref<16xi8, #hivm.address_space<gm>>)
                   outs(%dst_last : memref<16xi8, #hivm.address_space<ub>>)
                   eviction_policy = <EvictLast>
@@ -397,7 +397,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   func.func @copyop3d() {
-    // CHECK: func.func private @load_gm_to_ubuf_3d_half(memref<{{.*}}>, memref<{{.*}}>, i32, f16, index, index, i32)
+    // CHECK: func.func private @load_gm_to_ubuf_3d_half(memref<{{.*}}>, memref<{{.*}}>, i32, f16, index, i32)
     // CHECK: attributes{{.*}}llvm.emit_c_interface
     %val = arith.constant 10.0 : f16
     %src = memref.alloc() : memref<2x1024x2048xf16, #hivm.address_space<gm>>
@@ -406,7 +406,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
                   outs(%dst : memref<2x1024x2048xf16, #hivm.address_space<ub>>)
                   pad_mode = #hivm.padmode<PadValue>
                   pad_value = %val : f16
-    // CHECK: call @load_gm_to_ubuf_3d_half(%[[src:.*]], %[[dst:.*]], %[[padMode:.*]], %[[padValue:.*]], %[[leftPad:.*]], %[[rightPad:.*]], %[[evict:.*]])
+    // CHECK: call @load_gm_to_ubuf_3d_half(%[[src:.*]], %[[dst:.*]], %[[padMode:.*]], %[[padValue:.*]], %[[leftPad:.*]], %[[evict:.*]])
     return
  }
 }
@@ -414,7 +414,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   func.func @copyop4d() {
-    // CHECK: func.func private @load_gm_to_ubuf_4d_int16_t(memref<{{.*}}>, memref<{{.*}}>, i32, i16, index, index, i32)
+    // CHECK: func.func private @load_gm_to_ubuf_3d_int16_t(memref<{{.*}}>, memref<{{.*}}>, i32, i16, index, i32)
     // CHECK: attributes{{.*}}llvm.emit_c_interface
     %val = arith.constant 10.0 : f16
     %src = memref.alloc() : memref<2x4x8x32xi16, #hivm.address_space<gm>>
@@ -422,7 +422,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     hivm.hir.load ins(%src : memref<2x4x8x32xi16, #hivm.address_space<gm>>)
                   outs(%dst : memref<2x4x8x32xi16, #hivm.address_space<ub>>)
                   pad_mode = #hivm.padmode<PadFirstElem>
-    // CHECK: call @load_gm_to_ubuf_4d_int16_t(%[[src:.*]], %[[dst:.*]], %[[padMode:.*]], %[[padValue:.*]], %[[leftPad:.*]], %[[rightPad:.*]], %[[evict:.*]])
+    // CHECK: call @load_gm_to_ubuf_3d_int16_t(%[[src:.*]], %[[dst:.*]], %[[padMode:.*]], %[[padValue:.*]], %[[leftPad:.*]], %[[evict:.*]])
     return
  }
 }
@@ -437,10 +437,12 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     return
  }
 }
-// A rank-5 load fits the five loop levels the descriptor drives, so it
-// resolves directly and nothing is peeled into surrounding loops.
-// CHECK: call @load_gm_to_ubuf_5d_uint64_t
-// CHECK-NOT: scf.for
+// CHECK: %[[zero:.*]] = arith.constant 0 : index
+// CHECK: scf.for %[[arg0:.*]] = {{.*}} to {{.*}} step {{.*}}
+// CHECK: scf.for %[[arg1:.*]] = {{.*}} to {{.*}} step {{.*}}
+// CHECK: %[[srcSlice:.*]] = memref.subview {{.*}}[%[[arg0]], %[[arg1]], 0, 0, 0
+// CHECK: %[[dstSlice:.*]] = memref.subview {{.*}}[%[[arg0]], %[[arg1]], 0, 0, 0
+// CHECK: func.call @load_gm_to_ubuf_3d_uint64_t
 
 // -----
 
@@ -3003,7 +3005,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     // CHECK: %[[PAD_VALUE:.*]] = arith.constant 0 : i8
     // CHECK: %[[EVICT:.*]] = arith.constant 0 : i32
     // CHECK: call @load_gm_to_ubuf_1d_int8_t(
-    // CHECK-SAME: %{{.*}}, %{{.*}}, %[[EVICT]], %[[PAD_VALUE]], %[[LEFT_PAD]], %[[LEFT_PAD]], %[[EVICT]]
+    // CHECK-SAME: %{{.*}}, %{{.*}}, %[[EVICT]], %[[PAD_VALUE]], %[[LEFT_PAD]], %[[EVICT]]
     hivm.hir.load ins(%src : memref<16xi8, #hivm.address_space<gm>>)
                   outs(%dst : memref<16xi8, #hivm.address_space<ub>>)
 

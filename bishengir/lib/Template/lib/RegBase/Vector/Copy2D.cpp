@@ -31,9 +31,8 @@ check_inputs_of_load_gm_to_ubuf_2d_core(memref_t<__gm__ T, 2> *src,
   // form besides unit and block-aligned. Mirrors the gate in
   // load_gm_to_ubuf_2d_core.
   bool compact_row = left_padding_num == 0 && stride0_ub == dst->sizes[1];
-  // Only the block-DMA burst needs an aligned start; the NDDMA descriptor
-  // writes element granular at any offset, so this is not checked here.
-  (void)dst_ptr;
+  assert(isAddress32ByteAligned(dst_ptr) &&
+         "The starting address of dst must be 32byte aligned.");
   assert(((isSizeAlignedToBlock<T>(stride0_ub) || stride0_ub == 1 ||
            compact_row) &&
           (isSizeAlignedToBlock<T>(stride1_ub) || stride1_ub == 1)) &&
@@ -77,7 +76,7 @@ align_pad_for_load_b64_2d(memref_t<__ubuf__ T, 2> *dst, int64_t pad_value,
 /// + `UB|GM stride[1] != 1`
 ///   + `UB&GM stride[0] < stride[1]`: on-the-fly transpose (load supports
 ///   NDDMA)
-///     - `load_gm_to_ubuf_nd_by_nddma_or_scalar`
+///     - `load_gm_to_ubuf_2d_by_nddma`
 ///   + `UB&GM stride[0] == stride[1] * size[1]`: dimension 0 is contiguous
 ///     - `newOffset2D = offset2D, newSize2D = [size2D[0] * size2D[1], 1],
 ///     newStride2D = [stride2D[1], 1]`
@@ -99,8 +98,7 @@ template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     memref_t<__gm__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst, PadMode pad_mode,
     typename PadValueType<T>::type pad_value, int64_t left_padding_num,
-    int64_t right_padding_num, EvictionPolicy eviction_policy,
-    AtomicKind atomic_kind = AtomicKind::None) {
+    EvictionPolicy eviction_policy, AtomicKind atomic_kind = AtomicKind::None) {
   if (is_no_op<2>(src->sizes)) {
     return;
   }
@@ -115,27 +113,19 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     INTRINSIC(set_mov_pad_val, 0);
   }
 
+  auto dst_ptr = dst->aligned + dst->offset;
+  if (!isAddress32ByteAligned(dst_ptr)) {
+    load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst);
+    return;
+  }
+
   int64_t stride1_gm = src->strides[1];
   int64_t stride1_ub = dst->strides[1];
   int64_t stride0_gm = src->strides[0];
   int64_t stride0_ub = dst->strides[0];
   if (stride1_gm < 0 || stride0_gm < 0 || stride1_ub < 0 || stride0_ub < 0)
       [[unlikely]] {
-    load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 2, DisableDCache>(
-        src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-        static_cast<uint8_t>(eviction_policy));
-    return;
-  }
-
-  if ((stride0_gm < stride1_gm || stride0_ub < stride1_ub)) {
-    // Implicit transposition: NDDMA walks both tiles stride by stride and
-    // pads whole loop0 iterations, so it also serves the padded form. Whether
-    // it can is load_gm_to_ubuf_nd_by_nddma_or_scalar's decision - taken from
-    // the same strides, and the only place that also checks the descriptor's
-    // field widths and the pad placement - so nothing is decided here.
-    load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 2, DisableDCache>(
-        src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-        static_cast<uint8_t>(eviction_policy));
+    load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst);
     return;
   }
 
@@ -143,32 +133,68 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
   // innermost axis: MTE's leftPaddingNum addresses whole contiguous rows, so
   // the contiguous-last-dim path pads the row head/tail of multi-element
   // bursts. With a non-unit innermost stride the copy is decomposed into
-  // per-element bursts (collapse/per-row paths), where a non-zero left
-  // padding corrupts the descriptor (padding count exceeds the burst length
-  // and the pulled-back dst start leaves the row's span). These loads used to
-  // be rejected by the logical-address alignment check; keep them on the
-  // descriptor, which pads whole loop0 runs, or on the scalar path, which
-  // ignores the padding and copies the valid window element by element. A
-  // trailing pad count addresses the same rows, so it diverts the same way.
-  if ((left_padding_num != 0 || right_padding_num != 0) &&
-      (stride1_gm != 1 || stride1_ub != 1)) {
-    load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 2, DisableDCache>(
-        src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-        static_cast<uint8_t>(eviction_policy));
-    return;
+  // per-element bursts (transpose/collapse/per-row paths), where a non-zero
+  // left padding corrupts the descriptor (padding count exceeds the burst
+  // length and the pulled-back dst start leaves the row's span). Exception:
+  // an implicit-transpose layout can instead carry the padding on the NDDMA
+  // descriptor (per-loop lp/rp counts + CONSTANT_PADDING fill), so those
+  // loads fall through to the NDDMA transpose path below.
+  //
+  // The NDDMA fill rides on loop0 and is laid out as one contiguous span per
+  // row around the row's data, starting at the row's pulled-back DMA start.
+  // That placement is provably safe only when the row's data itself is
+  // contiguous (stride1_ub == 1): only then does the row span
+  // [offset + i*stride0, offset + i*stride0 + sizes[1]) delimit the addresses
+  // the fill may touch, and CEIL(lp + sizes[1], npb) <= stride0_ub keeps every
+  // row's padded span inside the row itself. With a strided row
+  // (stride1_ub != 1) the valid elements fan out across stride1_ub-sized
+  // gaps and (lp + sizes[1]) counts elements, not addresses, so the fill can
+  // land on another row's valid element. A 32B-aligned row stride keeps every
+  // row's pulled-back start aligned as well. A transposed UB layout
+  // (stride0_ub == 1, the common implicit-transpose shape) fails the
+  // alignment check and stays on the scalar path.
+  // NDDMA has no 64-bit instantiation, and NEAREST_PADDING (boundary
+  // replication) is not the confirmed FirstElem semantics, so padded b64
+  // and FirstElem loads stay on the scalar path, which ignores the padding
+  // and copies the valid window element by element. FP8 is excluded too:
+  // its pad value arrives as an fp32 pattern (PadValueType), while the
+  // descriptor fills at u8 granularity, so the pattern is not directly
+  // reusable.
+  const bool nddma_transpose_allows_padding =
+      left_padding_num == 0 ||
+      (stride1_ub == 1 && pad_mode != PadMode::FirstElem &&
+       !std::is_same_v<T, int64_t> && !std::is_same_v<T, uint64_t> &&
+       !std::is_same_v<T, float8_e4m3_t> && !std::is_same_v<T, float8_e5m2_t> &&
+       isStrideAligned<T>(stride0_ub) &&
+       CEIL_FACTOR(left_padding_num + dst->sizes[1],
+                   INTR_BYTES_PER_BLOCK / sizeof(T)) <= stride0_ub);
+
+  if (left_padding_num != 0 && (stride1_gm != 1 || stride1_ub != 1)) {
+    const bool implicit_transpose =
+        (stride0_gm < stride1_gm || stride0_ub < stride1_ub);
+    if (!implicit_transpose || !nddma_transpose_allows_padding) {
+      load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst);
+      return;
+    }
+    // fall through: padded implicit transpose with a contiguous, 32B-aligned,
+    // span-contained UB row -> NDDMA
   }
 
-  // Past the descriptor branch everything below is a block-DMA burst. Its
-  // start is the pulled-back address when left padding is present and must be
-  // 32B aligned; left_padding_num = offset % num_per_block by IR
-  // construction, so dst->offset - left_padding_num is that start. The
-  // descriptor above needs no such alignment, which is why this gate sits
-  // here rather than at the top of the core.
-  auto dst_ptr = dst->aligned + dst->offset - left_padding_num;
-  if (!isAddress32ByteAligned(dst_ptr)) {
-    load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 2, DisableDCache>(
-        src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-        static_cast<uint8_t>(eviction_policy));
+  if ((stride0_gm < stride1_gm || stride0_ub < stride1_ub)) {
+    // Implicit transposition scenarios need to be moved through scalar
+    if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
+      load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst);
+    } else if (!nddma_transpose_allows_padding) {
+      // Padded loads with a unit-stride innermost axis only reach the
+      // transpose branch as broadcast shapes (stride0 == 0), which slip past
+      // the gate above; their fill placement is just as unprovable, so they
+      // stay on the scalar path too.
+      load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst);
+    } else {
+      load_gm_to_ubuf_2d_by_nddma<T>(src, dst, pad_mode, pad_value,
+                                     left_padding_num,
+                                     static_cast<uint8_t>(eviction_policy));
+    }
     return;
   }
 
@@ -185,33 +211,20 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     // copy_gm_to_ubuf_align_v2: dst_stride == burst_len byte-exactly, with
     // left and right padding forced to zero (see CANN CopyGmToUbufAlignV2,
     // PaddingMode::Compact). load_gm_to_ubuf_intrin_core already emits exactly
-    // that for a packed row with neither pad count set - it zeroes
-    // rightPaddingNum and does not pull dst back - so such a row needs no 32B
-    // row stride.
+    // that for a packed row without left padding - it zeroes rightPaddingNum
+    // and does not pull dst back - so such a row needs no 32B row stride.
     // Mirrors is_compact_mode in store_ubuf_to_gm_2d_core.
-    const bool is_compact_mode = left_padding_num == 0 &&
-                                 right_padding_num == 0 &&
-                                 stride0_ub == src->sizes[1];
-    // A trailing pad the burst cannot place exactly goes to the descriptor
-    // too, so the two paths agree on where the padding ends.
+    const bool is_compact_mode =
+        left_padding_num == 0 && stride0_ub == src->sizes[1];
     if (!is_compact_mode &&
         (!isStrideAligned<T>(stride0_ub) ||
-         CEIL_FACTOR(left_padding_num + src->sizes[1] + right_padding_num,
+         CEIL_FACTOR(left_padding_num + src->sizes[1],
                      INTR_BYTES_PER_BLOCK / sizeof(T)) > stride0_ub)) {
-      load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 2, DisableDCache>(
-          src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-          l2_cache_ctl);
-      return;
-    }
-    if (!block_dma_can_pad<T>(src->sizes[1], left_padding_num,
-                              right_padding_num)) {
-      load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 2, DisableDCache>(
-          src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-          l2_cache_ctl);
+      load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst);
       return;
     }
     load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
-        src, dst, left_padding_num, right_padding_num, l2_cache_ctl);
+        src, dst, left_padding_num, l2_cache_ctl);
     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
       if (pad_mode == PadMode::Value) {
         INTRINSIC(set_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
@@ -229,9 +242,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
   if (stride1_ub != 1 && !isStrideAligned<T>(stride1_ub)) {
     // UB stride1 is not 1 thus compact mode is unavailable.
     // UB stride1 is not 32B aligned thus normal mode is unavailable.
-    load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 2, DisableDCache>(
-        src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-        l2_cache_ctl);
+    load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst);
     return;
   }
 
@@ -250,15 +261,13 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
                                      {size0 * size1, 1},
                                      {stride1_ub, 1}};
     load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
-        &gm_2d, &ub_2d, left_padding_num, right_padding_num, l2_cache_ctl);
+        &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
     return;
   }
 
   // axis 0 is non-contiguous.
   if (!isStrideAligned<T>(stride0_ub)) {
-    load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 2, DisableDCache>(
-        src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-        l2_cache_ctl);
+    load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst);
     return;
   }
   // UB stride0 is 32B aligned thus we can DMA to move each row.
@@ -274,7 +283,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
                                      {size1, 1},
                                      {stride1_ub, 1}};
     load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
-        &gm_2d, &ub_2d, left_padding_num, right_padding_num, l2_cache_ctl);
+        &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
   }
 }
 #else
@@ -285,8 +294,7 @@ template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     memref_t<__gm__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst, PadMode pad_mode,
     typename PadValueType<T>::type pad_value, int64_t left_padding_num,
-    int64_t right_padding_num, EvictionPolicy eviction_policy,
-    AtomicKind atomic_kind = AtomicKind::None) {
+    EvictionPolicy eviction_policy, AtomicKind atomic_kind = AtomicKind::None) {
   if (is_no_op<2>(src->sizes)) {
     return;
   }
@@ -307,8 +315,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     auto src_ptr = src->aligned + src->offset;
     auto dst_ptr = dst->aligned + dst->offset;
     load_gm_to_ubuf_intrin_core(src_ptr, 0, dst_ptr, 0, 1, 1 * sizeof(T),
-                                left_padding_num, right_padding_num, 0, 0,
-                                l2_cache_ctl);
+                                left_padding_num, 0, 0, l2_cache_ctl);
     return;
   }
 
@@ -317,7 +324,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
   if (stride1_gm == 1 && stride1_ub == 1) [[likely]] {
     // last dimension is contiguous
     load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
-        src, dst, left_padding_num, right_padding_num, l2_cache_ctl);
+        src, dst, left_padding_num, l2_cache_ctl);
     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
       if (pad_mode == PadMode::Value) {
         INTRINSIC(set_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
@@ -357,7 +364,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
                                    {size0, size1, 1},
                                    {stride0_ub, stride1_ub, 1}};
   load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T, DisableDCache>(
-      &gm_3d, &ub_3d, left_padding_num, right_padding_num, l2_cache_ctl);
+      &gm_3d, &ub_3d, left_padding_num, l2_cache_ctl);
 }
 #endif
 

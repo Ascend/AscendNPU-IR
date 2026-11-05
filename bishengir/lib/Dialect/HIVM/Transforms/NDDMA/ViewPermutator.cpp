@@ -14,6 +14,8 @@
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include <numeric>
+
 using namespace mlir;
 using namespace mlir::hivm::nddma;
 
@@ -110,75 +112,6 @@ Value permuteRoot(const TileView &tile, ArrayRef<int64_t> rootPerm,
         .getResult();
   }
 
-  // A collapsed root names the same buffer with permuted sizes and strides,
-  // the same way the reinterpret_cast root above does. The collapse itself is
-  // not rebuilt: its result is already the strided view the permutation
-  // applies to.
-  if (auto collapseOp =
-          dyn_cast_or_null<memref::CollapseShapeOp>(root.getDefiningOp())) {
-    auto collapsedType = cast<MemRefType>(collapseOp.getResult().getType());
-    SmallVector<int64_t> strides;
-    int64_t offset = ShapedType::kDynamic;
-#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
-    if (failed(getStridesAndOffset(collapsedType, strides, offset))) {
-#else
-    if (failed(collapsedType.getStridesAndOffset(strides, offset))) {
-#endif
-      llvm::report_fatal_error("collapsed NDDMA root is not strided");
-    }
-
-    Builder attrBuilder(collapseOp.getContext());
-
-    // Dynamic offset/strides from collaps_shape need separate handling
-    // - use extract_strided_metadata to resolve dynamic values.
-    const bool layoutIsDynamic =
-        ShapedType::isDynamic(offset) ||
-        llvm::any_of(strides,
-                     [](int64_t s) { return ShapedType::isDynamic(s); }) ||
-        llvm::any_of(collapsedType.getShape(),
-                     [](int64_t s) { return ShapedType::isDynamic(s); });
-    memref::ExtractStridedMetadataOp meta;
-    if (layoutIsDynamic) {
-      meta = builder.create<memref::ExtractStridedMetadataOp>(
-          root.getLoc(), collapseOp.getResult());
-    }
-    auto resolve = [&](int64_t isStatic, Value dynamic) -> OpFoldResult {
-      if (ShapedType::isDynamic(isStatic)) {
-        return OpFoldResult(dynamic);
-      }
-      return OpFoldResult(attrBuilder.getIndexAttr(isStatic));
-    };
-
-    SmallVector<OpFoldResult> oldSizes, oldStrides;
-    for (auto [dim, size] : llvm::enumerate(collapsedType.getShape())) {
-      oldSizes.push_back(resolve(size, meta ? meta.getSizes()[dim] : Value()));
-    }
-    for (auto [dim, stride] : llvm::enumerate(strides)) {
-      oldStrides.push_back(
-          resolve(stride, meta ? meta.getStrides()[dim] : Value()));
-    }
-    OpFoldResult newOffset = resolve(offset, meta ? meta.getOffset() : Value());
-
-    SmallVector<OpFoldResult> newSizes = applyPermutation(oldSizes, rootPerm);
-    SmallVector<OpFoldResult> newStrides =
-        applyPermutation(oldStrides, rootPerm);
-
-    SmallVector<Value> dynamicSizes, dynamicStrides;
-    SmallVector<int64_t> staticSizes, staticStrides;
-    dispatchIndexOpFoldResults(newSizes, dynamicSizes, staticSizes);
-    dispatchIndexOpFoldResults(newStrides, dynamicStrides, staticStrides);
-
-    auto layout =
-        StridedLayoutAttr::get(builder.getContext(), offset, staticStrides);
-    auto newType = MemRefType::get(staticSizes, collapsedType.getElementType(),
-                                   layout, collapsedType.getMemorySpace());
-    return builder
-        .create<memref::ReinterpretCastOp>(root.getLoc(), newType,
-                                           collapseOp.getResult(), newOffset,
-                                           newSizes, newStrides)
-        .getResult();
-  }
-
   llvm::report_fatal_error("unsupported root for NDDMA tile permutation");
 }
 
@@ -213,29 +146,27 @@ TileView buildPermutedView(const TileView &tile, ArrayRef<int64_t> rootPerm,
 
 } // namespace
 
-bool mlir::hivm::nddma::isSupportedNDDMAPermutation(
-    ArrayRef<int64_t> permutation) {
+bool mlir::hivm::nddma::isLastTwoDimTranspose(ArrayRef<int64_t> permutation) {
   int64_t rank = static_cast<int64_t>(permutation.size());
   if (rank < 2) {
     return false;
   }
-  if (!isValidPermutation(permutation, rank)) {
-    return false;
-  }
 
-  // An identity permutation has nothing to fuse.
-  for (int64_t dim = 0; dim < rank; ++dim) {
+  for (int64_t dim = 0; dim < rank - 2; ++dim) {
     if (permutation[dim] != dim) {
-      return true;
+      return false;
     }
   }
-  return false;
+  return permutation[rank - 2] == rank - 1 && permutation[rank - 1] == rank - 2;
 }
 
-bool mlir::hivm::nddma::permutationKeepsLastAxis(
-    ArrayRef<int64_t> permutation) {
-  int64_t rank = static_cast<int64_t>(permutation.size());
-  return rank > 0 && permutation[rank - 1] == rank - 1;
+SmallVector<int64_t> mlir::hivm::nddma::getLastTwoDimPermutation(int64_t rank) {
+  SmallVector<int64_t> permutation(rank);
+  std::iota(permutation.begin(), permutation.end(), 0);
+  if (rank >= 2) {
+    std::swap(permutation[rank - 2], permutation[rank - 1]);
+  }
+  return permutation;
 }
 
 ViewPermutator::ViewPermutator(const TileView &tile,

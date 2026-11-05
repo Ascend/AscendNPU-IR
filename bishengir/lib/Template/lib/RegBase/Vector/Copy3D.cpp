@@ -34,9 +34,8 @@ check_inputs_of_load_gm_to_ubuf_3d_core(memref_t<__gm__ T, 3> *src,
   bool packed_tile = left_padding_num == 0 && stride2_ub == 1 &&
                      stride1_ub == src->sizes[2] &&
                      stride0_ub == src->sizes[1] * src->sizes[2];
-  // Only the block-DMA burst needs an aligned start; the NDDMA descriptor
-  // writes element granular at any offset, so this is not checked here.
-  (void)dst_ptr;
+  assert(isAddress32ByteAligned(dst_ptr) &&
+         "The starting address of dst must be 32byte aligned.");
   assert((packed_tile ||
           ((isSizeAlignedToBlock<T>(stride0_ub) || stride0_ub == 1) &&
            (isSizeAlignedToBlock<T>(stride1_ub) || stride1_ub == 1) &&
@@ -121,8 +120,7 @@ template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
     memref_t<__gm__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst, PadMode pad_mode,
     typename PadValueType<T>::type pad_value, int64_t left_padding_num,
-    int64_t right_padding_num, EvictionPolicy eviction_policy,
-    AtomicKind atomic_kind = AtomicKind::None) {
+    EvictionPolicy eviction_policy, AtomicKind atomic_kind = AtomicKind::None) {
   if (is_no_op<3>(src->sizes)) {
     return;
   }
@@ -137,10 +135,16 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
   // Input parameter constraints assert.
   check_inputs_of_load_gm_to_ubuf_3d_core(src, dst, left_padding_num);
 
+  auto dst_ptr = dst->aligned + dst->offset;
+  if (!isAddress32ByteAligned(dst_ptr)) {
+    load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
+    return;
+  }
+
   uint8_t l2_cache_ctl = static_cast<uint8_t>(eviction_policy);
   const int64_t stride2_gm = src->strides[2];
   const int64_t stride2_ub = dst->strides[2];
-  bool has_padding = left_padding_num != 0 || right_padding_num != 0;
+  bool has_padding = left_padding_num != 0;
   const int64_t stride0_ub = dst->strides[0];
   const int64_t stride1_ub = dst->strides[1];
   const int64_t stride0_gm = src->strides[0];
@@ -150,46 +154,17 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
   // offset. Keep those on the scalar path.
   if (stride0_gm < 0 || stride1_gm < 0 || stride2_gm < 0 || stride0_ub < 0 ||
       stride1_ub < 0 || stride2_ub < 0) [[unlikely]] {
-    load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 3, DisableDCache>(
-        src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-        l2_cache_ctl);
+    load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
     return;
   }
   if (((stride0_gm < stride1_gm || stride1_gm < stride2_gm) ||
        (stride0_ub < stride1_ub || stride1_ub < stride2_ub))) {
-    // Implicit transposition: NDDMA walks both tiles stride by stride and
-    // pads whole loop0 iterations, so it also serves the padded form. Whether
-    // it can is load_gm_to_ubuf_nd_by_nddma_or_scalar's decision - taken from
-    // the same strides, and the only place that also checks the descriptor's
-    // field widths and the pad placement - so nothing is decided here.
-    load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 3, DisableDCache>(
-        src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-        l2_cache_ctl);
-    return;
-  }
-
-  // Past the descriptor branch everything below is a block-DMA burst, whose
-  // start must be 32B aligned. The descriptor above needs no such alignment,
-  // which is why this gate sits here rather than at the top of the core.
-  auto dst_ptr = dst->aligned + dst->offset;
-  if (!isAddress32ByteAligned(dst_ptr)) {
-    load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 3, DisableDCache>(
-        src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-        l2_cache_ctl);
-    return;
-  }
-
-  // Send a trailing pad to the NDDMA descriptor at this rank. It extends loop0
-  // by whole iterations, so it places any count up to NDDMA_MAX_PAD exactly.
-  // Block DMA cannot: the cascade below merges contiguous axes before it
-  // reaches a burst, so the burst length that block_dma_can_pad needs is not
-  // known here, and a count the burst cannot place exactly would be rounded up
-  // to a UB block. The *_with_contiguous_last_dim helpers still take the
-  // count, so a caller that does know its burst length can hand it to them.
-  if (right_padding_num != 0) {
-    load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 3, DisableDCache>(
-        src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-        l2_cache_ctl);
+    // Implicit transposition scenarios
+    if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
+      load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
+    } else {
+      load_gm_to_ubuf_3d_by_nddma<T>(src, dst);
+    }
     return;
   }
 
@@ -199,13 +174,11 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
         hasUnalignedUbufStrideFor3dDma<T>(dst->sizes[1], dst->sizes[2],
                                           dst->strides[0], dst->strides[1],
                                           src->strides[0], src->strides[1])) {
-      load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 3, DisableDCache>(
-          src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-          l2_cache_ctl);
+      load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
       return;
     }
     load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T, DisableDCache>(
-        src, dst, left_padding_num, right_padding_num, l2_cache_ctl);
+        src, dst, left_padding_num, l2_cache_ctl);
     return;
   }
   // last dimension is not contiguous
@@ -217,9 +190,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
     // axis 0 is contiguous
     if (stride0_ub == stride1_ub * size1 && stride0_gm == stride1_gm * size1) {
       if (!has_padding && !isStrideAligned<T>(stride2_ub)) {
-        load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 3, DisableDCache>(
-            src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-            l2_cache_ctl);
+        load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
         return;
       }
       memref_t<__gm__ T, 2> gm_2d{src->allocated,
@@ -233,7 +204,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
                                     {size0 * size1 * size2, 1},
                                     {stride2_ub, 1}};
       load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
-          &gm_2d, &ub_2d, left_padding_num, right_padding_num, l2_cache_ctl);
+          &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
       return;
     }
     // axis 0 is non-contiguous
@@ -251,13 +222,11 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
         hasUnalignedUbufStrideFor3dDma<T>(ub_3d.sizes[1], ub_3d.sizes[2],
                                           ub_3d.strides[0], ub_3d.strides[1],
                                           gm_3d.strides[0], gm_3d.strides[1])) {
-      load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 3, DisableDCache>(
-          src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-          l2_cache_ctl);
+      load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
       return;
     }
     load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T, DisableDCache>(
-        &gm_3d, &ub_3d, left_padding_num, right_padding_num, l2_cache_ctl);
+        &gm_3d, &ub_3d, left_padding_num, l2_cache_ctl);
     return;
   }
   // axis 1 is non-contiguous
@@ -277,19 +246,15 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
         hasUnalignedUbufStrideFor3dDma<T>(ub_3d.sizes[1], ub_3d.sizes[2],
                                           ub_3d.strides[0], ub_3d.strides[1],
                                           gm_3d.strides[0], gm_3d.strides[1])) {
-      load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 3, DisableDCache>(
-          src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-          l2_cache_ctl);
+      load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
       return;
     }
     load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T, DisableDCache>(
-        &gm_3d, &ub_3d, left_padding_num, right_padding_num, l2_cache_ctl);
+        &gm_3d, &ub_3d, left_padding_num, l2_cache_ctl);
     return;
   }
   // axis 0 is non-contiguous
-  load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 3, DisableDCache>(
-      src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-      l2_cache_ctl);
+  load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
   return;
 }
 #else
@@ -300,8 +265,7 @@ template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
     memref_t<__gm__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst, PadMode pad_mode,
     typename PadValueType<T>::type pad_value, int64_t left_padding_num,
-    int64_t right_padding_num, EvictionPolicy eviction_policy,
-    AtomicKind atomic_kind = AtomicKind::None) {
+    EvictionPolicy eviction_policy, AtomicKind atomic_kind = AtomicKind::None) {
   if (is_no_op<3>(src->sizes)) {
     return;
   }
@@ -322,15 +286,14 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
     auto src_ptr = src->aligned + src->offset;
     auto dst_ptr = dst->aligned + dst->offset;
     load_gm_to_ubuf_intrin_core(src_ptr, 0, dst_ptr, 0, 1, 1 * sizeof(T),
-                                left_padding_num, right_padding_num, 0, 0,
-                                l2_cache_ctl);
+                                left_padding_num, 0, 0, l2_cache_ctl);
     return;
   }
 
   if (src->strides[2] == 1 && dst->strides[2] == 1) [[likely]] {
     // last dimension is contiguous
     load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T, DisableDCache>(
-        src, dst, left_padding_num, right_padding_num, l2_cache_ctl);
+        src, dst, left_padding_num, l2_cache_ctl);
     return;
   }
 
@@ -408,7 +371,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
                                      {size1, size2, 1},
                                      {stride1_ub, stride2_ub, 1}};
     load_gm_to_ubuf_3d_core_with_contiguous_last_dim(
-        &gm_3d, &ub_3d, left_padding_num, right_padding_num, l2_cache_ctl);
+        &gm_3d, &ub_3d, left_padding_num, l2_cache_ctl);
   }
 }
 #endif
