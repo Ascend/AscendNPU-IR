@@ -214,6 +214,27 @@ static Operation *consumerInsertPoint(scope::ScopeOp consumer) {
   return body.getTerminator();
 }
 
+/// True when moving `cluster` to `landing` would read a value that `consumer`
+/// defines at or after that point.
+static bool clusterOperandAfterLanding(ArrayRef<Operation *> cluster,
+                                       Operation *landing,
+                                       scope::ScopeOp consumer) {
+  DenseSet<Operation *> inCluster(cluster.begin(), cluster.end());
+  for (Operation *op : cluster) {
+    for (Value operand : op->getOperands()) {
+      Operation *def = operand.getDefiningOp();
+      if (!def || inCluster.contains(def) || !consumer->isAncestor(def))
+        continue;
+      Operation *top = def;
+      while (top && top->getParentOp() != consumer.getOperation())
+        top = top->getParentOp();
+      if (!top || !top->isBeforeInBlock(landing))
+        return true;
+    }
+  }
+  return false;
+}
+
 static void collectMarks(Value v, SmallVectorImpl<Operation *> &ops) {
   for (Operation *user : v.getUsers()) {
     if (isa<annotation::MarkOp>(user))
@@ -1134,6 +1155,7 @@ sinkReturnedTensorsToConsumerImpl(scf::ForOp &forOp,
         unsigned resIdx;
         Value dest;
         scope::ScopeOp consumer;
+        Operation *landing = nullptr;
         SmallVector<Value> extras;
         SmallVector<Value> destEmpties;
         SmallVector<Operation *> cluster;
@@ -1179,10 +1201,17 @@ sinkReturnedTensorsToConsumerImpl(scf::ForOp &forOp,
         if (llvm::any_of(cluster,
                          [&](Operation *op) { return claimed.contains(op); }))
           continue;
+        // Land at the front of the consumer so a sibling result, such as a
+        // mask, dominates every use in that scope. Refuse the move when the
+        // cluster reads a value this scope defines at or after that point.
+        Operation *landing = consumerInsertPoint(consumer);
+        if (!landing || clusterOperandAfterLanding(cluster, landing, consumer))
+          continue;
 
         Move m;
         m.resIdx = idx;
         m.dest = retVal;
+        m.landing = landing;
         m.consumer = consumer;
         m.extras = std::move(extras);
         m.destEmpties = std::move(destEmpties);
@@ -1249,7 +1278,7 @@ sinkReturnedTensorsToConsumerImpl(scf::ForOp &forOp,
           rebuildScopeLeavingOps(producer, newReturns, leaveBehind);
 
       for (const Move &m : moves) {
-        Operation *insertBefore = firstUseInScope(m.dest, m.consumer);
+        Operation *insertBefore = m.landing;
         if (!insertBefore)
           insertBefore = consumerInsertPoint(m.consumer);
 
@@ -2878,9 +2907,10 @@ void SinkExclusivePreloadWorkPass::runOnOperation() {
     funcOp.walk([&](scf::ForOp forOp) { forOps.push_back(forOp); });
     for (scf::ForOp forOp : forOps) {
       if (sinkAcrossScopes) {
-        // All-zero scopes must preserve reads of the old state.
-        if (!allScopesPinnedToZero(forOp) &&
-            failed(sinkReturnedTensorsToConsumerImpl(forOp)))
+        // All-zero loops sink too. The cluster lands at the front of the
+        // consumer, so a mask used before the primary result still dominates
+        // that use.
+        if (failed(sinkReturnedTensorsToConsumerImpl(forOp)))
           return signalPassFailure();
         if (failed(sinkCopyChainPastUnusedMmad(forOp)))
           return signalPassFailure();
@@ -3224,10 +3254,10 @@ void RepositionPreloadWorkPass::runOnOperation() {
     for (scf::ForOp forOp : forOps) {
       if (sinkAcrossScopes) {
         clusterSharedLeftMatrixMads(forOp);
-        // Only returned-tensor sinking is unsafe for all-zero scopes: moving
-        // its writer can place writeback before a read of the old state.
-        if (!allScopesPinnedToZero(forOp) &&
-            failed(sinkReturnedTensorsToConsumerImpl(forOp)))
+        // All-zero loops sink too. The cluster lands at the front of the
+        // consumer, so a mask used before the primary result still dominates
+        // that use.
+        if (failed(sinkReturnedTensorsToConsumerImpl(forOp)))
           return signalPassFailure();
         if (failed(sinkCopyChainPastUnusedMmad(forOp)))
           return signalPassFailure();
