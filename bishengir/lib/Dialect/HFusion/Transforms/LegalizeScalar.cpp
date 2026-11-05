@@ -63,6 +63,11 @@ public:
       if (!(elemType.isF16() || elemType.isBF16() || elemType.isF32())) {
         return failure();
       }
+    } else if constexpr (std::is_same_v<arith::MinimumFOp, OpType> ||
+                         std::is_same_v<arith::MaximumFOp, OpType>) {
+      if (!elemType.isF16()) {
+        return failure();
+      }
     } else if constexpr (std::is_same_v<arith::CmpFOp, OpType>) {
       if (!elemType.isBF16()) {
         return failure();
@@ -79,6 +84,10 @@ public:
     if constexpr (std::is_same_v<arith::CmpFOp, OpType>) {
       tensorOp = rewriter.create<arith::CmpFOp>(loc, op.getPredicate(),
                                                 lhsTensor, rhsTensor);
+    } else if constexpr (std::is_same_v<arith::MinimumFOp, OpType> ||
+                         std::is_same_v<arith::MaximumFOp, OpType>) {
+      tensorOp = rewriter.create<OpType>(loc, lhsTensor, rhsTensor,
+                                         op.getFastmathAttr());
     } else {
       tensorOp = rewriter.create<OpType>(loc, lhsTensor, rhsTensor);
     }
@@ -452,6 +461,10 @@ void populateLegalizeScalarConversionPatterns(RewritePatternSet &patterns) {
   patterns.add<LegalizeScalarArithOps<arith::DivFOp>>(patterns.getContext());
   patterns.add<LegalizeScalarArithOps<arith::RemFOp>>(patterns.getContext());
   patterns.add<LegalizeScalarArithOps<arith::CmpFOp>>(patterns.getContext());
+  patterns.add<LegalizeScalarArithOps<arith::MinimumFOp>>(
+      patterns.getContext());
+  patterns.add<LegalizeScalarArithOps<arith::MaximumFOp>>(
+      patterns.getContext());
   patterns.add<LegalizeScalarMathOps<math::SqrtOp>>(patterns.getContext());
   patterns.add<LegalizeScalarCastOps<arith::SIToFPOp>>(patterns.getContext());
   patterns.add<LegalizeScalarCastOps<arith::FPToSIOp>>(patterns.getContext());
