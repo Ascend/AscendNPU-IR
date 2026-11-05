@@ -1,0 +1,23 @@
+set(LLVM_TARGET_DEFINITIONS TensorViewOps.td)
+mlir_tablegen(TensorViewDialect.h.inc -gen-dialect-decls -dialect=tv)
+mlir_tablegen(TensorViewDialect.cpp.inc -gen-dialect-defs -dialect=tv)
+mlir_tablegen(TensorViewOps.h.inc -gen-op-decls)
+mlir_tablegen(TensorViewOps.cpp.inc -gen-op-defs)
+add_public_tablegen_target(BiShengIRTensorViewTableGen)
+
+set(LLVM_TARGET_DEFINITIONS TensorViewTypes.td)
+mlir_tablegen(TensorViewTypes.h.inc -gen-typedef-decls)
+mlir_tablegen(TensorViewTypes.cpp.inc -gen-typedef-defs)
+add_public_tablegen_target(BiShengIRTensorViewTypesIncGen)
+
+set(LLVM_TARGET_DEFINITIONS TensorViewAttrs.td)
+mlir_tablegen(TensorViewEnums.h.inc -gen-enum-decls)
+mlir_tablegen(TensorViewEnums.cpp.inc -gen-enum-defs)
+mlir_tablegen(TensorViewAttrs.h.inc -gen-attrdef-decls)
+mlir_tablegen(TensorViewAttrs.cpp.inc -gen-attrdef-defs)
+add_public_tablegen_target(BiShengIRTensorViewAttrsIncGen)
+
+set(LLVM_TARGET_DEFINITIONS TensorViewInterfaces.td)
+mlir_tablegen(TensorViewInterfaces.h.inc -gen-op-interface-decls)
+mlir_tablegen(TensorViewInterfaces.cpp.inc -gen-op-interface-defs)
+add_public_tablegen_target(BiShengIRTensorViewInterfacesIncGen)

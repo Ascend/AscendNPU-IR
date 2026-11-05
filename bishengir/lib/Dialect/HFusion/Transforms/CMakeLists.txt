@@ -99,6 +99,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   BiShengIRHACCUtils
   BiShengIRHIVMDialect
   BiShengIRHIVMTransforms
+  BiShengIRTensorViewDialect
   BiShengIRHFusionAnalysis
   BiShengIRMathExtDialect
   BiShengIRAnnotationDialect

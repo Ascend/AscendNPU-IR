@@ -45,6 +45,7 @@
 #include "bishengir/Conversion/ProtonToHIVM/ProtonToHIVM.h"
 #include "bishengir/Conversion/TensorToHFusion/TensorToHFusion.h"
 #include "bishengir/Conversion/TensorToHIVM/TensorToHIVM.h"
+#include "bishengir/Conversion/TensorViewToHIVM/TensorViewToHIVM.h"
 #include "bishengir/Conversion/TritonAscendGPUToLLVM/TritonAscendGPUToLLVM.h"
 #include "bishengir/Conversion/VectorToHIVMAVE/VectorToHIVMAVE.h"
 #include "mlir/Pass/Pass.h"

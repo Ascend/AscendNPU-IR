@@ -528,4 +528,12 @@ def AppendSanitizerData : Pass<"append-sanitizer-data"> {
   let dependentDialects = ["LLVM::LLVMDialect"];
 }
 
+def ConvertTensorViewToHIVM : Pass<"convert-tensor-view-to-hivm", "ModuleOp"> {
+  let summary = "Convert bufferized TensorView accesses to HIVM";
+  let constructor = "mlir::createTensorViewToHIVMConversionPass()";
+  let dependentDialects = ["tv::TensorViewDialect", "hivm::HIVMDialect",
+                           "arith::ArithDialect", "memref::MemRefDialect",
+                           "scf::SCFDialect", "func::FuncDialect"];
+}
+
 #endif // BISHENGIR_CONVERSION_PASSES_H
