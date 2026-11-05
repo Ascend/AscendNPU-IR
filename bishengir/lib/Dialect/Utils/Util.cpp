@@ -1224,6 +1224,30 @@ bool utils::isOneSizeShape(Value value) {
 }
 
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
+bool utils::needsNanCheck(Value value) {
+  if (!isa<FloatType>(getElementTypeOrSelf(value.getType())))
+    return false;
+  if (auto fillOp = value.getDefiningOp<linalg::FillOp>())
+    value = fillOp.getInputs()[0];
+
+  APFloat constant(APFloat::Bogus());
+  if (matchPattern(value, m_ConstantFloat(&constant)))
+    return constant.isNaN();
+
+  // A conversion from an integer cannot yield NaN
+  if (Operation *def = value.getDefiningOp()) {
+    Value source;
+    if (isa<arith::SIToFPOp, arith::UIToFPOp>(def))
+      source = def->getOperand(0);
+    else if (auto castOp = dyn_cast<hfusion::CastOp>(def))
+      source = castOp.getInputs()[0];
+    if (source && !isa<FloatType>(getElementTypeOrSelf(source.getType())))
+      return false;
+  }
+
+  return true;
+}
+
 std::optional<Value> utils::extractScalarValue(PatternRewriter &rewriter,
                                                Location loc, Value src) {
   Type type = src.getType();

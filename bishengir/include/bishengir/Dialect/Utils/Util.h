@@ -335,6 +335,12 @@ bool isScalarLike(Value value);
 /// Return true if value is ShapedType with size one, e.g. tensor<1x1x1xf32>.
 bool isOneSizeShape(Value value);
 
+/// Returns true unless `value` is provably never NaN. These count as proof: a
+/// non-floating-point element type, a non-NaN scalar constant, a `linalg.fill`
+/// of such a constant, a splat constant tensor, and a conversion from an
+/// integer. Everything else is reported as possibly NaN
+bool needsNanCheck(Value value);
+
 /// Extract unique scalar value from scalar-like tensor
 std::optional<Value> extractScalarValue(PatternRewriter &rewriter, Location loc,
                                         Value src);

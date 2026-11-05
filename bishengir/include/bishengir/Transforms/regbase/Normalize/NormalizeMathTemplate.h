@@ -1042,19 +1042,23 @@ public:
   }
 };
 
-/// Normalizes maxnumf (minnumf) elemwise binary ops to maxf (minf) by masking
-/// NaN inputs with +/-inf so the hardware maxf/minf op gives maxnumf/minnumf
-/// semantics.
-/// NaN is masked via: select(isnan(x), padding_inf, x)
-///   maxnumf uses -inf as padding so NaN loses the comparison
-///   minnumf uses +inf as padding so NaN loses the comparison
+/// Normalizes maxnumf (minnumf) elemwise binary ops to a single masked select,
+/// which gives maxnumf/minnumf semantics without a hardware maxf/minf op.
 ///
 /// eg.
 ///   dst = elemwise_binary {maxnumf} (src0, src1)
 ///    is normalized to
-///    new_src0 = select(isnan(src0), -inf, src0)
-///    new_src1 = select(isnan(src1), -inf, src1)
-///    dst = elemwise_binary {maxf} (new_src0, new_src1)
+///    cmp_mask = compare {GE} (src0, src1)
+///    src1_nan_mask = isnan(src1)
+///    cond = elemwise_binary {Or} (cmp_mask, src1_nan_mask)
+///    dst = select(cond, src0, src1)
+///
+/// The compare is GE/LE rather than GT/LT so that equal operands keep src0.
+/// That is what decides a +0/-0 pair, which maxnumf/minnumf leave open --
+/// either sign is a valid result -- so this only pins the choice down.
+///
+/// Correctness requires the compare to be ordered, i.e. GE/LE must yield
+/// false whenever either operand is NaN (they lower to arith OGE/OLE).
 template <typename OpType, typename Traits>
 struct NormalizeElemwiseMinMaxNumFOpTemplate : public OpRewritePattern<OpType> {
 public:
@@ -1066,31 +1070,25 @@ public:
       return failure();
 
     bool isMax = Traits::isMaxNumF(op);
-    double paddingInfValue =
-        isMax ? -std::numeric_limits<double>::infinity()
-              : std::numeric_limits<double>::infinity();
-    BinaryKind targetKind = isMax ? BinaryKind::Max : BinaryKind::Min;
+    CompareKind targetKind = isMax ? CompareKind::GE : CompareKind::LE;
 
     Location loc = op->getLoc();
     Value src0 = Traits::getMinMaxNumFInput0(op);
     Value src1 = Traits::getMinMaxNumFInput1(op);
 
-    auto maskNan = [&](Value src) {
-      auto fill = src.template getDefiningOp<linalg::FillOp>();
-      FloatAttr value;
-      // For a non-NaN splat, select(isnan(src), inf, src) is exactly src.
-      if (fill && matchPattern(fill.getInputs()[0], m_Constant(&value)) &&
-          !value.getValue().isNaN())
-        return src;
-      return maskNanWithInf<Traits>(rewriter, loc, src, paddingInfValue);
-    };
+    // A NaN src0 fails the compare, so only src1 needs a NaN check; with both
+    // NaN the select then yields src0, which is NaN.
+    Value cond = Traits::createCmpOp(rewriter, loc, src0, src1, targetKind);
+    if (utils::needsNanCheck(src1)) {
+      Value src1NanMask = Traits::createIsNanOp(rewriter, loc, src1);
+      cond = Traits::createBinaryOp(rewriter, loc, cond, src1NanMask,
+                                    utils::createEmptyOp(rewriter, loc, cond),
+                                    BinaryKind::Or);
+    }
+    Value selectDst = utils::createEmptyOp(rewriter, loc, src0);
+    Value result =
+        Traits::createSelectOp(rewriter, loc, cond, src0, src1, selectDst);
 
-    Value newSrc0 = maskNan(src0);
-    Value newSrc1 = maskNan(src1);
-
-    Value result = Traits::createBinaryOp(
-        rewriter, loc, newSrc0, newSrc1,
-        utils::createEmptyOp(rewriter, loc, src0), targetKind);
     rewriter.replaceOp(op, result);
     return success();
   }

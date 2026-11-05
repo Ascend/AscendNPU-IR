@@ -2826,17 +2826,15 @@ func.func @test_hfusion_select_cast_i1_to_i16(%src0: tensor<32xi1>, %src1: tenso
 }
 
 // -----
+// Only src1 gets a NaN check; src0 needs none because the compare is already
+// false wherever src0 is NaN.
 // CHECK-LABEL: func.func @test_minnumf_normalize
-// CHECK-DAG: %[[C0:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%arg0, %arg0 : tensor<4xf32>, tensor<4xf32>) outs(%{{.*}} : tensor<4xi1>) -> tensor<4xi1>
-// CHECK-DAG: %[[M0:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[C0]] : tensor<4xi1>) outs(%{{.*}} : tensor<4xi1>) -> tensor<4xi1>
-// CHECK-DAG: %[[C1:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%arg1, %arg1 : tensor<4xf32>, tensor<4xf32>) outs(%{{.*}} : tensor<4xi1>) -> tensor<4xi1>
-// CHECK-DAG: %[[M1:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[C1]] : tensor<4xi1>) outs(%{{.*}} : tensor<4xi1>) -> tensor<4xi1>
-// CHECK: %[[EBASE:.*]] = tensor.empty() : tensor<4xf32>
-// CHECK: %[[BASE:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<minf>} ins(%arg0, %arg1 : tensor<4xf32>, tensor<4xf32>) outs(%[[EBASE]] : tensor<4xf32>) -> tensor<4xf32>
-// CHECK: %[[ETMP:.*]] = tensor.empty() : tensor<4xf32>
-// CHECK: %[[TMP:.*]] = hfusion.select ins(%[[M0]], %arg1, %[[BASE]] : tensor<4xi1>, tensor<4xf32>, tensor<4xf32>) outs(%[[ETMP]] : tensor<4xf32>) -> tensor<4xf32>
+// CHECK: %[[CMP:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vle>} ins(%arg0, %arg1 : tensor<4xf32>, tensor<4xf32>) outs(%{{.*}} : tensor<4xi1>) -> tensor<4xi1>
+// CHECK: %[[C1:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%arg1, %arg1 : tensor<4xf32>, tensor<4xf32>) outs(%{{.*}} : tensor<4xi1>) -> tensor<4xi1>
+// CHECK: %[[M1:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[C1]] : tensor<4xi1>) outs(%{{.*}} : tensor<4xi1>) -> tensor<4xi1>
+// CHECK: %[[COND:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%[[CMP]], %[[M1]] : tensor<4xi1>, tensor<4xi1>) outs(%{{.*}} : tensor<4xi1>) -> tensor<4xi1>
 // CHECK: %[[ERES:.*]] = tensor.empty() : tensor<4xf32>
-// CHECK: %[[RES:.*]] = hfusion.select ins(%[[M1]], %arg0, %[[TMP]] : tensor<4xi1>, tensor<4xf32>, tensor<4xf32>) outs(%[[ERES]] : tensor<4xf32>) -> tensor<4xf32>
+// CHECK: %[[RES:.*]] = hfusion.select ins(%[[COND]], %arg0, %arg1 : tensor<4xi1>, tensor<4xf32>, tensor<4xf32>) outs(%[[ERES]] : tensor<4xf32>) -> tensor<4xf32>
 // CHECK: return %[[RES]] : tensor<4xf32>
 func.func @test_minnumf_normalize(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>) -> tensor<4xf32> {
   %out = tensor.empty() : tensor<4xf32>
@@ -2848,16 +2846,12 @@ func.func @test_minnumf_normalize(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>) ->
 
 // -----
 // CHECK-LABEL: func.func @test_maxnumf_normalize
-// CHECK-DAG: %[[C0:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%arg0, %arg0 : tensor<4xf32>, tensor<4xf32>) outs(%{{.*}} : tensor<4xi1>) -> tensor<4xi1>
-// CHECK-DAG: %[[M0:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[C0]] : tensor<4xi1>) outs(%{{.*}} : tensor<4xi1>) -> tensor<4xi1>
-// CHECK-DAG: %[[C1:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%arg1, %arg1 : tensor<4xf32>, tensor<4xf32>) outs(%{{.*}} : tensor<4xi1>) -> tensor<4xi1>
-// CHECK-DAG: %[[M1:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[C1]] : tensor<4xi1>) outs(%{{.*}} : tensor<4xi1>) -> tensor<4xi1>
-// CHECK: %[[EBASE:.*]] = tensor.empty() : tensor<4xf32>
-// CHECK: %[[BASE:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<maxf>} ins(%arg0, %arg1 : tensor<4xf32>, tensor<4xf32>) outs(%[[EBASE]] : tensor<4xf32>) -> tensor<4xf32>
-// CHECK: %[[ETMP:.*]] = tensor.empty() : tensor<4xf32>
-// CHECK: %[[TMP:.*]] = hfusion.select ins(%[[M0]], %arg1, %[[BASE]] : tensor<4xi1>, tensor<4xf32>, tensor<4xf32>) outs(%[[ETMP]] : tensor<4xf32>) -> tensor<4xf32>
+// CHECK: %[[CMP:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vge>} ins(%arg0, %arg1 : tensor<4xf32>, tensor<4xf32>) outs(%{{.*}} : tensor<4xi1>) -> tensor<4xi1>
+// CHECK: %[[C1:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%arg1, %arg1 : tensor<4xf32>, tensor<4xf32>) outs(%{{.*}} : tensor<4xi1>) -> tensor<4xi1>
+// CHECK: %[[M1:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[C1]] : tensor<4xi1>) outs(%{{.*}} : tensor<4xi1>) -> tensor<4xi1>
+// CHECK: %[[COND:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%[[CMP]], %[[M1]] : tensor<4xi1>, tensor<4xi1>) outs(%{{.*}} : tensor<4xi1>) -> tensor<4xi1>
 // CHECK: %[[ERES:.*]] = tensor.empty() : tensor<4xf32>
-// CHECK: %[[RES:.*]] = hfusion.select ins(%[[M1]], %arg0, %[[TMP]] : tensor<4xi1>, tensor<4xf32>, tensor<4xf32>) outs(%[[ERES]] : tensor<4xf32>) -> tensor<4xf32>
+// CHECK: %[[RES:.*]] = hfusion.select ins(%[[COND]], %arg0, %arg1 : tensor<4xi1>, tensor<4xf32>, tensor<4xf32>) outs(%[[ERES]] : tensor<4xf32>) -> tensor<4xf32>
 // CHECK: return %[[RES]] : tensor<4xf32>
 func.func @test_maxnumf_normalize(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>) -> tensor<4xf32> {
   %out = tensor.empty() : tensor<4xf32>
