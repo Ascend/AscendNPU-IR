@@ -952,6 +952,22 @@ module {
 }
 
 // -----
+// f64 -> f32 is a software cast provided by the vector template library
+// (the device has no fp64 lanes and no __truncdfsf2).
+module {
+  // CHECK-LABEL: func.func @test_vcast_double_to_float_1d
+  func.func @test_vcast_double_to_float_1d() attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %f64 = memref.alloc() : memref<16xf64>
+    %f32 = memref.alloc() : memref<16xf32>
+
+    // CHECK: call @vcast_double_to_float_1d_with_mode
+    hivm.hir.vcast ins(%f64 : memref<16xf64>) outs(%f32 : memref<16xf32>)
+                   round_mode = #hivm.round_mode<rint>
+    return
+  }
+}
+
+// -----
 module {
   // CHECK: func.func private @vcast_bfloat16_t_to_float_2d_with_mode(memref<{{.*}}>, memref<{{.*}}>, i32)
   // CHECK: func.func private @vcast_bfloat16_t_to_int32_t_2d_with_mode(memref<{{.*}}>, memref<{{.*}}>, i32)

@@ -14,20 +14,27 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
+#include "bishengir/Dialect/AscendDPX/IR/AscendDPX.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/PatternMatch.h"
@@ -1243,8 +1250,14 @@ struct DecomposeCastScalarToVecOp<arith::TruncFOp>
 
     // create tensor (shape is 1), and store scalar into the tensor
     Value scalarSrc = op.getOperand();
-    if (!isa<BFloat16Type>(getElementTypeOrSelf(scalarSrc.getType())) &&
-        !isa<BFloat16Type>(getElementTypeOrSelf(op.getType()))) {
+    const Type srcElemType = getElementTypeOrSelf(scalarSrc.getType());
+    const Type dstElemType = getElementTypeOrSelf(op.getType());
+    // bf16 has no scalar truncation instruction, and f64 has no scalar
+    // conversion at all.
+    const bool isBf16Cast =
+        isa<BFloat16Type>(srcElemType) || isa<BFloat16Type>(dstElemType);
+    const bool isF64Cast = srcElemType.isF64() && dstElemType.isF32();
+    if (!isBf16Cast && !isF64Cast) {
       return failure();
     }
     auto loc = op.getLoc();
@@ -2226,6 +2239,69 @@ struct HIVMDecomposeOpPass
 };
 } // namespace
 
+namespace {
+
+bool isF64Type(Type type) { return getElementTypeOrSelf(type).isF64(); }
+
+/// Whether the op belongs to a dialect whose ops compute on their operands.
+bool isComputeDialectOp(Operation *op) {
+  Dialect *dialect = op->getDialect();
+  if (!dialect)
+    return false;
+  return isa<arith::ArithDialect, math::MathDialect, hivm::HIVMDialect,
+             hivm_regbaseintrins::HIVMRegbaseIntrinsDialect,
+             vector::VectorDialect, hfusion::HFusionDialect,
+             linalg::LinalgDialect, ascend_dpx::AscendDPXDialect>(dialect);
+}
+
+/// Ops that may mention f64. Creating, moving and addressing an f64 value
+/// needs no fp64 support at all, so only the compute dialects are restricted;
+/// within them the handful of non-computing ops and the supported f64 -> f32
+/// conversion are allowed explicitly.
+bool isAllowedF64Op(Operation *op) {
+  // Moving the raw bits around.
+  if (isa<arith::ConstantOp, arith::BitcastOp>(op))
+    return true;
+  // Materializing the UB address of the length-1 buffer that a decomposed
+  // scalar cast uses; no value is computed.
+  if (isa<hivm::PointerCastOp>(op))
+    return true;
+  // The f64 -> f32 vcast is a software cast implemented by the template
+  // library, see DoubleToFloatRNE.h.
+  if (auto castOp = dyn_cast<hivm::VCastOp>(op))
+    return isF64Type(castOp.getSingleSrc().getType()) &&
+           getElementTypeOrSelf(castOp.getSingleDst().getType()).isF32();
+  return !isComputeDialectOp(op);
+}
+
+/// The device has no fp64 ALU and its runtime does not ship the fp64
+/// soft-float helpers, so an f64 computation or an f64 -> f32 conversion used
+/// to reach the linker as an undefined __adddf3/__extendsfdf2/__truncdfsf2.
+/// Reject what is left here so that unsupported kernels fail with a
+/// diagnostic instead of an undefined symbol. Reading, writing and
+/// addressing f64 is fine, and f64 -> f32 is supported; f64 arithmetic,
+/// widening to f64 and every other f64 conversion are not.
+LogicalResult verifyNoUnsupportedF64Ops(func::FuncOp func) {
+  bool hasUnsupportedOp = false;
+  func.walk([&](Operation *op) {
+    if (hasUnsupportedOp)
+      return WalkResult::interrupt();
+    const bool touchesF64 = llvm::any_of(op->getOperandTypes(), isF64Type) ||
+                            llvm::any_of(op->getResultTypes(), isF64Type);
+    if (!touchesF64 || isAllowedF64Op(op))
+      return WalkResult::advance();
+
+    op->emitError() << "f64 is not supported on this target: can not lower '"
+                    << op->getName() << "' with f64 operands or results. Only "
+                    << "the f64 to f32 conversion is supported.";
+    hasUnsupportedOp = true;
+    return WalkResult::interrupt();
+  });
+  return failure(hasUnsupportedOp);
+}
+
+} // namespace
+
 void HIVMDecomposeOpPass::runOnOperation() {
   auto funcOp = getOperation();
   if (hacc::utils::isHost(funcOp) ||
@@ -2259,6 +2335,9 @@ void HIVMDecomposeOpPass::runOnOperation() {
                                                   : TFuncCoreType::AIC_OR_AIV;
   patterns.add<SyncBlockOpLowering>(&getContext(), isMixModule, funcCoreType);
   (void)applyPatternsGreedily(funcOp, std::move(patterns));
+
+  if (failed(verifyNoUnsupportedF64Ops(funcOp)))
+    signalPassFailure();
 }
 
 std::unique_ptr<Pass> mlir::hivm::createHIVMDecomposeOpPass() {
