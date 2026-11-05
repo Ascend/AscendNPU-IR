@@ -217,6 +217,24 @@ func.func @memref_subview_expand(
 
 // -----
 
+// RegBase inserts a cast when the propagated subview has a more precise
+// layout than the expand_shape result.
+// REGBASE-LABEL: func.func @memref_subview_expand_compatible_cast(
+// REGBASE: %[[EXP:.*]] = memref.expand_shape %arg0 {{\[\[}}0, 1]] output_shape [1, 8]
+// REGBASE: %[[SUB:.*]] = memref.subview %[[EXP]][0, 0] [1, %arg1] [1, 1] : memref<1x8xf32> to memref<1x?xf32, strided<[8, 1]>>
+// REGBASE: %[[CAST:.*]] = memref.cast %[[SUB]] : memref<1x?xf32, strided<[8, 1]>> to memref<1x?xf32>
+// REGBASE: return %[[CAST]]
+func.func @memref_subview_expand_compatible_cast(
+    %arg0: memref<8xf32>, %n: index) -> memref<1x?xf32> {
+  %subview = memref.subview %arg0[0] [%n] [1] :
+      memref<8xf32> to memref<?xf32, strided<[1]>>
+  %expanded = memref.expand_shape %subview [[0, 1]] output_shape [1, %n] :
+      memref<?xf32, strided<[1]>> into memref<1x?xf32>
+  return %expanded : memref<1x?xf32>
+}
+
+// -----
+
 // A3's unit-only subview path rejects this non-unit collapse; RegBase computes
 // the equivalent rectangular subview at source rank.
 // A3-LABEL: func.func @memref_subview_collapse(
