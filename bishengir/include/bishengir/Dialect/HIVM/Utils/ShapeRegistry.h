@@ -29,6 +29,13 @@ namespace hivm {
 /// An empty registry never matches.
 bool isLoopShapeRegistered(llvm::StringRef name);
 
+/// True when `name` or any substring fingerprints to the temporary
+/// bind-sub-block skip-list (currently paged-decode kernels). Matching
+/// kernels stay on CV1:1 (`limit_sub_block_id0`) instead of CV1:2 mix AIV.
+/// This list is independent of `isLoopShapeRegistered` so skip names do not
+/// enable preload / TCB heuristics.
+bool shouldSkipBindSubBlock(llvm::StringRef name);
+
 /// Shared gate for registered-kernel CV / preload heuristics.
 /// LIT may pass `--bypass-shape-registry` to force the heuristic on.
 /// Otherwise `--enable-preload`, a non-zero `--set-workspace-multibuffer`,

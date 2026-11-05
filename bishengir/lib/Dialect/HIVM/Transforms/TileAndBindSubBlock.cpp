@@ -34,6 +34,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
+#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
@@ -1444,9 +1445,23 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   return newFunc;
 }
 
+static bool shouldSkipBindSubBlockByName(ArrayRef<func::FuncOp> functions) {
+  return llvm::any_of(functions, [](func::FuncOp func) {
+    return shouldSkipBindSubBlock(func.getName());
+  });
+}
+
 static bool shouldLimitAllAivToSubBlock0(ArrayRef<func::FuncOp> aivFunctions,
                                          ArrayRef<func::FuncOp> aicFunctions,
                                          ModuleOp moduleOp) {
+  // Temporary name-based CV1:2 skip (paged-decode kernels). Keep these on
+  // CV1:1 until DimensionAnalyzer can pick a profitable tile dim.
+  if (shouldSkipBindSubBlockByName(aivFunctions) ||
+      shouldSkipBindSubBlockByName(aicFunctions)) {
+    LDBG("shape-registry skip-list matched; limit all AIV to sub-block 0");
+    return true;
+  }
+
   // Unranked custom operands or results cannot be tiled. Limit all AIV
   // functions before attempting to tile any of them.
   if (llvm::any_of(aivFunctions, hasUnrankedCustomLikeValue))
