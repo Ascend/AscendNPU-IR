@@ -205,7 +205,8 @@ public:
         Traits::mapCastSignKind(CastSignKind::Preserve, castOp.getCast());
     Value castedVal = Traits::createCastOp(
         rewriter, castOp.getLoc(), input, getElementTypeOrSelf(dstTy),
-        castOp.getRoundMode(), castType, Traits::getCastUnsignedMode(castOp));
+        castOp.getRoundMode(), castType, Traits::getCastUnsignedMode(castOp),
+        Traits::getCastEnableSaturate(castOp));
 
     Value emptyTensor =
         utils::createEmptyOp(rewriter, castOp.getLoc(), castOp.getDpsInits()[0]);
@@ -269,7 +270,8 @@ public:
         Traits::mapCastSignKind(CastSignKind::Preserve, castOp.getCast());
     Value castedVal = Traits::createCastOp(
         rewriter, castOp.getLoc(), pointTensor, getElementTypeOrSelf(dstTy),
-        castOp.getRoundMode(), castType, Traits::getCastUnsignedMode(castOp));
+        castOp.getRoundMode(), castType, Traits::getCastUnsignedMode(castOp),
+        Traits::getCastEnableSaturate(castOp));
 
     Value emptyTensor =
         utils::createEmptyOp(rewriter, castOp.getLoc(), castOp.getDpsInits()[0]);
