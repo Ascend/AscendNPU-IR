@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/DMA/CubeLoad/CubeLoadCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/IR/Capability/DMA/Fixpipe/FixpipeCapabilityBinding.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/ConvertLayoutUtils.h"
@@ -530,9 +530,10 @@ struct FoldDirectLoadToNCHW2NC1HWC0Pattern
                                 PatternRewriter &rewriter) const override {
     if (!isNCHW2NC1HWC0Conversion(op))
       return rewriter.notifyMatchFailure(op, "not an NCHW→NC1HWC0 conversion");
-    ModuleOp module = op->getParentOfType<ModuleOp>();
-    if (!module || !hacc::utils::isAscend950(module))
-      return rewriter.notifyMatchFailure(op, "not an A5 target");
+    Type elementType = getElementTypeOrSelf(op.getSource().getType());
+    if (!isNativeNchw2Nc1hwc0(op, elementType, AddressSpace::GM,
+                              AddressSpace::L1))
+      return rewriter.notifyMatchFailure(op, "NCHW2NC1HWC0 is not Native");
     auto match = matchDirectLoadConvertLayout(op, rewriter);
     if (failed(match))
       return failure();
@@ -559,9 +560,10 @@ struct FoldDirectLoadToNCHW2C1HWNC0Pattern
                                 PatternRewriter &rewriter) const override {
     if (!isNCHW2C1HWNC0Conversion(op))
       return rewriter.notifyMatchFailure(op, "not an NCHW→C1HWNC0 conversion");
-    ModuleOp module = op->getParentOfType<ModuleOp>();
-    if (!module || !hacc::utils::isAscend950(module))
-      return rewriter.notifyMatchFailure(op, "not an A5 target");
+    Type elementType = getElementTypeOrSelf(op.getSource().getType());
+    if (!isNativeNchw2C1hwnc0(op, elementType, AddressSpace::GM,
+                              AddressSpace::L1))
+      return rewriter.notifyMatchFailure(op, "NCHW2C1HWNC0 is not Native");
     auto match = matchDirectLoadConvertLayout(op, rewriter);
     if (failed(match))
       return failure();
