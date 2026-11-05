@@ -530,6 +530,163 @@ struct HIVMPregCastOpLowering
   }
 };
 
+static Value castToVLVector(Value value, Type elementType,
+                            ConversionPatternRewriter &rewriter) {
+  VectorType vlType = createVLVectorType(elementType);
+  if (value.getType() == vlType)
+    return value;
+  return rewriter
+      .create<UnrealizedConversionCastOp>(value.getLoc(), vlType, value)
+      .getResult(0);
+}
+
+struct HIVMVcpaddOpLowering : ConvertOpToLLVMPattern<hivmave::VcpaddOp> {
+  explicit HIVMVcpaddOpLowering(LLVMTypeConverter &converter)
+      : ConvertOpToLLVMPattern<hivmave::VcpaddOp>(converter) {}
+
+  LogicalResult
+  matchAndRewrite(hivmave::VcpaddOp op, hivmave::VcpaddOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto srcType = dyn_cast<VectorType>(op.getSrc().getType());
+    if (!srcType)
+      return rewriter.notifyMatchFailure(op, "expected vector source");
+    Type elementType = srcType.getElementType();
+    if (!elementType.isF16() && !elementType.isF32())
+      return rewriter.notifyMatchFailure(op, "vcpadd requires f16/f32");
+    VectorType vlType = createVLVectorType(elementType);
+    Value src = castToVLVector(op.getSrc(), elementType, rewriter);
+    Value mask = getVLRegValueOrSelf(op.getMask(), rewriter);
+    Value result =
+        rewriter.create<VcpaddInstrOp>(loc, vlType, src, mask).getResult();
+    rewriter.replaceOp(op, castFromVLVector(result, srcType, rewriter));
+    return success();
+  }
+};
+
+struct HIVMVsqzOpLowering : ConvertOpToLLVMPattern<hivmave::VsqzOp> {
+  explicit HIVMVsqzOpLowering(LLVMTypeConverter &converter)
+      : ConvertOpToLLVMPattern<hivmave::VsqzOp>(converter) {}
+
+  LogicalResult
+  matchAndRewrite(hivmave::VsqzOp op, hivmave::VsqzOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto srcType = dyn_cast<VectorType>(op.getSrc().getType());
+    if (!srcType)
+      return rewriter.notifyMatchFailure(op, "expected vector source");
+    Type elementType = srcType.getElementType();
+    if (!(elementType.isInteger(8) || elementType.isInteger(16) ||
+          elementType.isInteger(32) || elementType.isF16() ||
+          elementType.isF32()))
+      return rewriter.notifyMatchFailure(op, "unsupported vsqz element type");
+    VectorType vlType = createVLVectorType(elementType);
+    Value src = castToVLVector(op.getSrc(), elementType, rewriter);
+    Value mask = getVLRegValueOrSelf(op.getMask(), rewriter);
+    bool stored = op.getSqueezeStore() == hivmave::SqueezeStoreMode::STORED;
+    Value store = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI32IntegerAttr(stored ? 1 : 0));
+    Value result = rewriter.create<VsqzXInstrOp>(loc, vlType, src, mask, store)
+                       .getResult();
+    rewriter.replaceOp(op, castFromVLVector(result, srcType, rewriter));
+    return success();
+  }
+};
+
+struct HIVMVusqzOpLowering : ConvertOpToLLVMPattern<hivmave::VusqzOp> {
+  explicit HIVMVusqzOpLowering(LLVMTypeConverter &converter)
+      : ConvertOpToLLVMPattern<hivmave::VusqzOp>(converter) {}
+
+  LogicalResult
+  matchAndRewrite(hivmave::VusqzOp op, hivmave::VusqzOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto resType = dyn_cast<VectorType>(op.getRes().getType());
+    if (!resType)
+      return rewriter.notifyMatchFailure(op, "expected vector result");
+    Type elementType = resType.getElementType();
+    if (!(elementType.isInteger(8) || elementType.isInteger(16) ||
+          elementType.isInteger(32)))
+      return rewriter.notifyMatchFailure(op, "vusqz requires integer result");
+    VectorType vlType = createVLVectorType(elementType);
+    // VUSQZ is an in-place merging instruction: its destination must start at
+    // zero.  Materialize that zero with VBR; a dense zero-vector constant can
+    // survive as BUILD_VECTOR and has no ISel pattern on the CCE backend.
+    Value zeroScalar = rewriter.create<LLVM::ConstantOp>(
+        loc, elementType, rewriter.getIntegerAttr(elementType, 0));
+    Value zero = rewriter.create<VbrInstrOp>(loc, vlType, zeroScalar).getRes();
+    Value mask = getVLRegValueOrSelf(op.getMask(), rewriter);
+    Value result =
+        rewriter.create<VusqzMInstrOp>(loc, vlType, zero, mask).getResult();
+    rewriter.replaceOp(op, castFromVLVector(result, resType, rewriter));
+    return success();
+  }
+};
+
+template <typename OpTy, typename SignedInstrTy, typename UnsignedInstrTy,
+          bool HasCarryIn>
+struct HIVMCarryOpLowering : ConvertOpToLLVMPattern<OpTy> {
+  explicit HIVMCarryOpLowering(LLVMTypeConverter &converter)
+      : ConvertOpToLLVMPattern<OpTy>(converter) {}
+
+  LogicalResult
+  matchAndRewrite(OpTy op, typename OpTy::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto srcType = dyn_cast<VectorType>(op.getSrc0().getType());
+    auto resType = dyn_cast<VectorType>(op.getRes().getType());
+    auto carryType = dyn_cast<VectorType>(op.getCarry().getType());
+    if (!srcType || !resType || !carryType)
+      return rewriter.notifyMatchFailure(op, "expected vector types");
+    if (!srcType.getElementType().isInteger(32) ||
+        srcType.getNumElements() != 64)
+      return rewriter.notifyMatchFailure(
+          op, "carry arithmetic requires vector<64xi32>");
+
+    Type elementType = srcType.getElementType();
+    VectorType vlType = createVLVectorType(elementType);
+    VectorType predType =
+        VectorType::get({util::PREDICATE_BITS}, rewriter.getI1Type());
+    Type structType = LLVM::LLVMStructType::getLiteral(rewriter.getContext(),
+                                                       {vlType, predType});
+    Value src0 = castToVLVector(op.getSrc0(), elementType, rewriter);
+    Value src1 = castToVLVector(op.getSrc1(), elementType, rewriter);
+    Value mask = getVLRegValueOrSelf(op.getMask(), rewriter);
+
+    Operation *newOp = nullptr;
+    if (op.getCast() == hivm::TypeFn::cast_unsigned) {
+      if constexpr (HasCarryIn) {
+        Value carryIn = getVLRegValueOrSelf(op.getCarryIn(), rewriter);
+        newOp = rewriter.create<UnsignedInstrTy>(loc, structType, src0, src1,
+                                                 carryIn, mask);
+      } else {
+        newOp =
+            rewriter.create<UnsignedInstrTy>(loc, structType, src0, src1, mask);
+      }
+    } else {
+      if constexpr (HasCarryIn) {
+        Value carryIn = getVLRegValueOrSelf(op.getCarryIn(), rewriter);
+        newOp = rewriter.create<SignedInstrTy>(loc, structType, src0, src1,
+                                               carryIn, mask);
+      } else {
+        newOp =
+            rewriter.create<SignedInstrTy>(loc, structType, src0, src1, mask);
+      }
+    }
+
+    SmallVector<int64_t, 1> resIndex{0};
+    SmallVector<int64_t, 1> carryIndex{1};
+    Value resultVL = rewriter.create<LLVM::ExtractValueOp>(
+        loc, vlType, newOp->getResult(0), resIndex);
+    Value carryVL = rewriter.create<LLVM::ExtractValueOp>(
+        loc, predType, newOp->getResult(0), carryIndex);
+    Value result = castFromVLVector(resultVL, srcType, rewriter);
+    Value carry = castFromVLVector(carryVL, carryType, rewriter);
+    rewriter.replaceOp(op, {result, carry});
+    return success();
+  }
+};
+
 /// An entry associating the "main" BinaryOp with its instantiations for
 /// vectors.
 template <typename OpTy, typename IntrV128F16OpTy, typename IntrV128S16OpTy,
@@ -3950,7 +4107,13 @@ void populateHIVMAVEToAVEIntrinPatterns(LLVMTypeConverter &converter,
                HIVMPregInterleaveOpLowering<hivmave::PregDeinterleaveOp,
                                            PDintlvB8InstrOp, PDintlvB16InstrOp,
                                            PDintlvB32InstrOp>,
-               HIVMRegisterGatherOpLowering, HIVMGroupReductionOpLowering
+               HIVMRegisterGatherOpLowering, HIVMGroupReductionOpLowering,
+               HIVMVcpaddOpLowering, HIVMVsqzOpLowering,
+               HIVMVusqzOpLowering,
+               HIVMCarryOpLowering<hivmave::VaddcsOp, VaddcsV64S32InstrOp,
+                                   VaddcsV64U32InstrOp, true>,
+               HIVMCarryOpLowering<hivmave::VsubcsOp, VsubcsV64S32InstrOp,
+                                   VsubcsV64U32InstrOp, true>
   >(converter);
   BinaryRegistry::registerPatterns(converter, patterns);
   UnaryRegistry::registerPatterns(converter, patterns);

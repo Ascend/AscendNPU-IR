@@ -965,6 +965,71 @@ def AVE_VFVMULLOp : AVE_VmullBinaryOp<"mull", [DeclareOpInterfaceMethods<AVELibr
   let extraClassDeclaration = opNameDeclaration;
 }
 
+// Pairwise adjacent-lane sum.
+def AVE_VcpaddOp
+    : AVE_LibFnOp<"vcpadd", [Pure, AVEUnaryOpInterface,
+                             AllTypesMatch<["src", "res"]>]> {
+  let summary = "AVE pairwise adjacent-lane sum.";
+  let arguments = (ins AveVector<[F16, F32]>:$src,
+                       AveMaskType:$mask);
+  let results = (outs AveVector<[F16, F32]>:$res);
+  let assemblyFormat = [{
+    $src `,` $mask attr-dict `:` type($src) `,` type($mask)
+  }];
+  let extraClassDeclaration = opNameDeclaration;
+}
+
+// Stable compaction of active lanes toward the low lanes.
+def AVE_VsqzOp
+    : AVE_LibFnOp<"vsqz", [AllTypesMatch<["src", "res"]>]> {
+  let summary = "AVE squeeze selected lanes toward the low lanes.";
+  let arguments = (ins AveVector<[I8, I16, I32, F16, F32]>:$src,
+                       AveMaskType:$mask,
+                       DefaultValuedAttr<AVE_SqueezeStoreModeAttr,
+                                         "SqueezeStoreMode::STORED">:$squeeze_store);
+  let results = (outs AveVector<[I8, I16, I32, F16, F32]>:$res);
+  let assemblyFormat = [{
+    $src `,` $mask attr-dict `:` type($src) `,` type($mask)
+  }];
+  let extraClassDeclaration = opNameDeclaration;
+}
+
+// Carry/borrow arithmetic. CCE uses carry/no-borrow predicates for
+// subtraction; these ops expose that polarity directly.
+class AVE_CarryTernaryOp<string mnemonic>
+    : AVE_LibFnOp<mnemonic, [Pure, AllTypesMatch<["src0", "src1", "res"]>,
+                             AllTypesMatch<["mask", "carry_in", "carry"]>]> {
+  let arguments = (ins AveVector<[I32]>:$src0,
+                       AveVector<[I32]>:$src1,
+                       AveMaskType:$carry_in,
+                       AveMaskType:$mask,
+                       DefaultValuedAttr<HIVM_TypeFnAttr,
+                                         "hivm::TypeFn::cast_signed">:$cast);
+  let results = (outs AveVector<[I32]>:$res,
+                      AveMaskType:$carry);
+  let assemblyFormat = [{
+    $src0 `,` $src1 `,` $carry_in `,` $mask attr-dict `:` type($src0) `,`
+    type($src1) `,` type($carry_in) `,` type($mask) `->` type($res) `,`
+    type($carry)
+  }];
+  let extraClassDeclaration = opNameDeclaration;
+}
+
+def AVE_VaddcsOp : AVE_CarryTernaryOp<"vaddcs">;
+def AVE_VsubcsOp : AVE_CarryTernaryOp<"vsubcs">;
+
+// Exclusive prefix count of an active-lane predicate.
+def AVE_VusqzOp
+    : AVE_LibFnOp<"vusqz", [Pure]> {
+  let summary = "AVE exclusive prefix count of a predicate.";
+  let arguments = (ins AveMaskType:$mask);
+  let results = (outs AveVector<[I8, I16, I32]>:$res);
+  let assemblyFormat = [{
+    $mask attr-dict `:` type($mask) `->` type($res)
+  }];
+  let extraClassDeclaration = opNameDeclaration;
+}
+
 def AVE_VFVpackOp
     : AVE_LibFnOp<"vpack", [Pure, DeclareOpInterfaceMethods<
                                       AVELibraryFunctionOpInterface,
