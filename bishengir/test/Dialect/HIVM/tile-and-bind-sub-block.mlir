@@ -3111,16 +3111,22 @@ func.func @prepare_wy_repr_fwd_kernel_chunk64_mix_aiv(%arg0: memref<?xi8> {hacc.
 // -----
 
 // CHECK-LABEL: func.func @ub_alloc_vreduce_dim0_aic(
-// CHECK: memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
-// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>}
-// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+// CHECK: memref.alloc() : memref<8x16xf32, #hivm.address_space<ub>>
+// CHECK: annotation.mark {{.*}}hivm.tiling_dim = 0 : index, tiledAlloc
+// CHECK: hivm.hir.fixpipe {{.*}}dual_dst_mode = <ROW_SPLIT>
 // CHECK-LABEL: func.func @ub_alloc_vreduce_dim0_aiv(
-// CHECK-NOT: hivm.hir.vreduce {tiled_op}
-// CHECK: hivm.hir.vreduce <sum> ins(%{{.*}} : tensor<16x16xf32>) outs(%{{.*}} : tensor<1x16xf32>) reduce_dims = [0]
+// CHECK: %[[PARTIAL:.*]] = hivm.hir.vreduce {tiled_op} <sum> ins(%{{.*}} : tensor<8x16xf32>) outs(%{{.*}} : tensor<1x16xf32>) reduce_dims = [0]
+// CHECK: %[[WORKSPACE:.*]] = memref_ext.alloc_workspace() : memref<2x16xf32>
+// CHECK: %[[PART:.*]] = memref.subview %[[WORKSPACE]]
+// CHECK: hivm.hir.sync_block[<ALL_SUB_VECTOR>
+// CHECK: hivm.hir.store ins(%[[PARTIAL]] : tensor<1x16xf32>) outs(%[[PART]]
+// CHECK: hivm.hir.sync_block[<ALL_SUB_VECTOR>
+// CHECK: hivm.hir.load ins(%[[WORKSPACE]] : memref<2x16xf32>)
+// CHECK: hivm.hir.vreduce <sum> ins(%{{.*}} : tensor<2x16xf32>) outs(%{{.*}} : tensor<1x16xf32>) reduce_dims = [0]
 // CHECK: scf.if
 // CHECK: hivm.hir.store
 // CHECK: } {limit_sub_block_id0}
-// CHECK-NOT: map_for_to_forall
+// CHECK: } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
 module attributes {hacc.target = #hacc.target<"Ascend910_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
   func.func @ub_alloc_vreduce_dim0_aic() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, mix_mode = "mix"} {
     %0 = tensor.empty() : tensor<16x16xf32>
@@ -5988,9 +5994,18 @@ module attributes {
 // AIV-only: copy to 1x4x16x16 cbuf marks the last fractal axis NotAligned; a
 // later vreduce reduce_dims=[0] on 16x64 shares the structural group. Reduce
 // marking must not overwrite NotAligned (otherwise dim 3 is wrongly selected).
-// CHECK:           hivm.tile_and_bind_subblock_reverted
-// CHECK-NOT:       1x4x16x16{{.*}}tiling_dim = 3
-// CHECK-NOT:       1x4x16x8
+// The fallback can tile another axis while preserving NotAligned. The
+// optional unit-width store reports that it cannot be split and is guarded.
+// CHECK-LABEL: func.func @reduce_mark_preserve_not_aligned_mix_aiv(
+// CHECK-NOT: 1x4x16x8
+// CHECK: annotation.mark {{.*}}hivm.tiling_dim = 1 : index} : memref<1x4x16x16xf16, #hivm.address_space<cbuf>>
+// CHECK: annotation.mark {{.*}}hivm.tiling_dim = 1 : index, tiledAlloc} : memref<16x32xf32, #hivm.address_space<ub>>
+// CHECK: annotation.mark {{.*}}hivm.tiling_dim = 0 : index, tiledAlloc} : memref<32x64xf32, #hivm.address_space<ub>>
+// CHECK-NOT: 1x4x16x8
+// CHECK: } {limit_sub_block_id0}
+// CHECK: } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: 1x4x16x8
+// CHECK: return
 
 #map3 = affine_map<()[s0, s1] -> (s0 - s1)>
 #map11 = affine_map<()[s0, s1, s2] -> (s0 * 8 + s1 + s2)>
@@ -6112,6 +6127,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
         %170 = hivm.hir.vtranspose ins(%expanded_57 : tensor<16x4x16xf16>) outs(%169 : tensor<4x16x16xf16>) permutation = [1, 0, 2] -> tensor<4x16x16xf16>
         %expanded_58 = tensor.expand_shape %170 [[0], [1, 2], [3]] output_shape [4, 1, 16, 16] : tensor<4x16x16xf16> into tensor<4x1x16x16xf16>
         hivm.hir.copy ins(%expanded_58 : tensor<4x1x16x16xf16>) outs(%alloc_17 : memref<4x1x16x16xf16, #hivm.address_space<cbuf>>)
+        // expected-error @+1 {{dimension size (1) is less than minimum tile size (2)}}
         hivm.hir.store ins(%extracted_slice_55 : tensor<?x1xf32>) outs(%subview_47 : memref<?x1xf32, strided<[8, 1], offset: ?>>)
         %memspacecast_59 = memref.memory_space_cast %alloc_19 : memref<64x64xf32, #hivm.address_space<ub>> to memref<64x64xf32>
         %171 = bufferization.to_tensor %memspacecast_59 restrict writable : memref<64x64xf32>
