@@ -374,6 +374,17 @@ class ProfileCompleteness<string cppName = "", string name = ""> {
 def CompleteProfile : ProfileCompleteness<"Complete", "complete">;
 def PartialProfile : ProfileCompleteness<"Partial", "partial">;
 
+// One generated catalogue emits queryNativeSupport and the request types into
+// bishengir::npu. A second catalogue that should link beside the first sets
+// this scope so its symbols and include guards do not collide. Absence keeps
+// the original bishengir::npu placement.
+class CapabilityEmissionScope<string cppNamespace, string declGuard,
+                              string bindingGuard> {
+  string CppNamespace = cppNamespace;
+  string DeclGuard = declGuard;
+  string BindingGuard = bindingGuard;
+}
+
 //===----------------------------------------------------------------------===//
 // 9. Op Bindings
 //===----------------------------------------------------------------------===//

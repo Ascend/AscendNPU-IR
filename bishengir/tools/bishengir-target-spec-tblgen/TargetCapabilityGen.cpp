@@ -126,6 +126,71 @@ static std::string getEffectiveName(const Record *record) {
   return mnemonic ? mnemonic->str() : std::string();
 }
 
+static bool isValidCppIdentifier(StringRef name);
+
+// A catalogue with no CapabilityEmissionScope stays in bishengir::npu and
+// keeps the original include guards. A scope puts that catalogue in
+// bishengir::npu::<CppNamespace> so another catalogue can link beside it.
+struct CapabilityEmissionScope {
+  std::string extraNamespace;
+  std::string declGuard = "BISHENGIR_TARGET_CAPABILITY_H";
+  std::string bindingGuard = "BISHENGIR_TARGET_CAPABILITY_BINDING_H";
+};
+
+static bool parseEmissionScope(const RecordKeeper &records,
+                               CapabilityEmissionScope &scope) {
+  auto defs = records.getAllDerivedDefinitions("CapabilityEmissionScope");
+  if (defs.empty())
+    return false;
+  if (defs.size() != 1) {
+    PrintFatalError(defs.front()->getLoc(),
+                    "expected at most one CapabilityEmissionScope");
+    return true;
+  }
+  const Record *def = defs.front();
+  scope.extraNamespace = def->getValueAsString("CppNamespace").str();
+  scope.declGuard = def->getValueAsString("DeclGuard").str();
+  scope.bindingGuard = def->getValueAsString("BindingGuard").str();
+  if (!isValidCppIdentifier(scope.extraNamespace) || scope.declGuard.empty() ||
+      scope.bindingGuard.empty()) {
+    PrintFatalError(def->getLoc(),
+                    "CapabilityEmissionScope requires an identifier namespace "
+                    "and both include guards");
+    return true;
+  }
+  return false;
+}
+
+static void emitIncludeGuardOpen(raw_ostream &os, StringRef guard) {
+  os << "\n#ifndef " << guard << "\n#define " << guard << "\n";
+}
+
+static void emitNamespaceOpen(raw_ostream &os,
+                              const CapabilityEmissionScope &scope,
+                              bool declareArchitecture) {
+  os << "\nnamespace bishengir {\nnamespace npu {\n";
+  // The definition header included by the .cpp fragment may already have
+  // defined this enum. Only the declaration header forward-declares it, and
+  // it stays in bishengir::npu when an extra catalogue namespace is used.
+  if (declareArchitecture)
+    os << "enum class NPUArchitectureKind;\n";
+  if (!scope.extraNamespace.empty())
+    os << "namespace " << scope.extraNamespace << " {\n";
+  os << "\n";
+}
+
+static void emitNamespaceClose(raw_ostream &os,
+                               const CapabilityEmissionScope &scope) {
+  os << "\n";
+  if (!scope.extraNamespace.empty())
+    os << "} // namespace " << scope.extraNamespace << "\n";
+  os << "} // namespace npu\n} // namespace bishengir\n";
+}
+
+static void emitIncludeGuardClose(raw_ostream &os, StringRef guard) {
+  os << "\n#endif // " << guard << "\n";
+}
+
 static bool isValidCppIdentifier(StringRef name) {
   if (name.empty() || (!llvm::isAlpha(name.front()) && name.front() != '_') ||
       name.contains("__") ||
@@ -1598,27 +1663,21 @@ static bool emitTargetCapabilityBindings(const RecordKeeper &records,
   if (validateCapabilityRecords(records) || validateCapabilityBindings(records))
     return true;
 
+  CapabilityEmissionScope scope;
+  if (parseEmissionScope(records, scope))
+    return true;
+
   emitSourceFileHeader("Target Capability Bindings", os, records);
-  os << R"(
-#ifndef BISHENGIR_TARGET_CAPABILITY_BINDING_H
-#define BISHENGIR_TARGET_CAPABILITY_BINDING_H
-
-namespace bishengir {
-namespace npu {
-
-)";
+  emitIncludeGuardOpen(os, scope.bindingGuard);
+  emitNamespaceOpen(os, scope, false);
   for (const Record *binding : getDefinitions(records, "CapabilityBinding")) {
     ResolvedBinding resolved;
     if (resolveBinding(binding, resolved))
       return true;
     emitBindingClass(os, resolved);
   }
-  os << R"(
-} // namespace npu
-} // namespace bishengir
-
-#endif // BISHENGIR_TARGET_CAPABILITY_BINDING_H
-)";
+  emitNamespaceClose(os, scope);
+  emitIncludeGuardClose(os, scope.bindingGuard);
   return false;
 }
 
@@ -1636,11 +1695,13 @@ static bool emitTargetCapabilityDecls(const RecordKeeper &records,
   auto completenesses =
       asConstRecords(records.getAllDerivedDefinitions("ProfileCompleteness"));
 
-  emitSourceFileHeader("Target Capability Declarations", os, records);
-  os << R"(
-#ifndef BISHENGIR_TARGET_CAPABILITY_H
-#define BISHENGIR_TARGET_CAPABILITY_H
+  CapabilityEmissionScope scope;
+  if (parseEmissionScope(records, scope))
+    return true;
 
+  emitSourceFileHeader("Target Capability Declarations", os, records);
+  emitIncludeGuardOpen(os, scope.declGuard);
+  os << R"(
 #include "mlir/IR/Types.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
@@ -1649,11 +1710,8 @@ static bool emitTargetCapabilityDecls(const RecordKeeper &records,
 #include <cstdint>
 #include <optional>
 #include <variant>
-
-namespace bishengir {
-namespace npu {
-
 )";
+  emitNamespaceOpen(os, scope, true);
 
   emitEnum(os, "CapabilityValueDomainKind", valueDomains);
   emitEnum(os, "CapabilitySlotPropertyKind", properties);
@@ -1734,8 +1792,6 @@ struct ArchitectureCapabilityCoverageDesc {
   ::llvm::ArrayRef<SupportCaseDesc> cases;
 };
 
-enum class NPUArchitectureKind;
-
 struct ArchitectureCapabilityProfileDesc {
   ::bishengir::npu::NPUArchitectureKind architecture;
   ::llvm::ArrayRef<ArchitectureCapabilityCoverageDesc> capabilities;
@@ -1807,12 +1863,9 @@ NativeSupport resolveNativeSupport(
     const CapabilityRequest &request,
     ::llvm::ArrayRef<CapabilityRequestSchemaFieldDesc> schema);
 } // namespace detail
-
-} // namespace npu
-} // namespace bishengir
-
-#endif // BISHENGIR_TARGET_CAPABILITY_H
 )";
+  emitNamespaceClose(os, scope);
+  emitIncludeGuardClose(os, scope.declGuard);
   return false;
 }
 
@@ -1825,6 +1878,10 @@ static std::string getRecordSymbol(const Record *record) {
 static bool emitTargetCapabilityDefs(const RecordKeeper &records,
                                      raw_ostream &os) {
   if (validateCapabilityRecords(records) || validateCapabilityBindings(records))
+    return true;
+
+  CapabilityEmissionScope scope;
+  if (parseEmissionScope(records, scope))
     return true;
 
   auto valueDomains = getCapabilityValueDomains(records);
@@ -1849,11 +1906,8 @@ static bool emitTargetCapabilityDefs(const RecordKeeper &records,
 #include "llvm/Support/ErrorHandling.h"
 #include "mlir/IR/BuiltinTypes.h"
 
-
-namespace bishengir {
-namespace npu {
-
 )";
+  emitNamespaceOpen(os, scope, false);
 
   emitStringifyDef(os, "CapabilityValueDomainKind", valueDomains);
   emitStringifyDef(os, "CapabilitySlotPropertyKind", properties);
@@ -2222,10 +2276,8 @@ NativeSupport queryNativeSupport(::bishengir::npu::NPUArchitectureKind architect
       lookupArchitectureCapabilityProfile(architecture), request,
       getCapabilityRequestSchema(request.capability));
 }
-
-} // namespace npu
-} // namespace bishengir
 )";
+  emitNamespaceClose(os, scope);
   return false;
 }
 
