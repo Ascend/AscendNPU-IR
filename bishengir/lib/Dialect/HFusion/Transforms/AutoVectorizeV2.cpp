@@ -1138,7 +1138,8 @@ private:
       PlanContext &result,
       SmallVector<std::pair<std::string, SmallVector<int64_t>>>
           &otherVectorizableOps);
-  void applyCleanUp(OpBuilder &builder, transform::SequenceOp seqOp);
+  void applyCleanUp(OpBuilder &builder, transform::SequenceOp seqOp,
+                    ValueRange containingLoopHandles);
   void sortFunc(func::FuncOp func);
   transform::SequenceOp buildTransformSequence(func::FuncOp func,
                                                RetriedOptions &retryCtx,
@@ -1362,7 +1363,7 @@ void AutoVectorizeV2::tileAndFuseSiblingForLeafNodes(
       }
     }
     assert(!std::empty(tiledLoopHandles) && "Should fuse more than one loops");
-    applyCleanUp(builder, seqOp);
+    applyCleanUp(builder, seqOp, tiledLoopHandles);
     Value fusedLoopHandle = tiledLoopHandles.front();
     for (Value nextLoopHandle : llvm::drop_begin(tiledLoopHandles)) {
       fusedLoopHandle =
@@ -1383,7 +1384,7 @@ void AutoVectorizeV2::tileAndFuseSiblingForLeafNodes(
     builder.create<transform::AnnotateOp>(loc, fusedLoopHandle,
                                           node->getLabel(), nullptr);
     if (tiledLoopHandles.size() > 1)
-      applyCleanUp(builder, seqOp);
+      applyCleanUp(builder, seqOp, fusedLoopHandle);
   }
 }
 
@@ -1437,13 +1438,16 @@ void AutoVectorizeV2::fuseProducersIntoConsumers(
             innerBuilder.create<transform::ApplyCanonicalizationPatternsOp>(
                 loc);
           });
+      applyCleanUp(builder, seqOp, newContainingLoopHandle);
       Value funcHandle = builder.create<transform::MatchOp>(
           loc, seqOp.getBodyBlock()->getArguments().front(),
           ArrayRef<StringRef>({func::FuncOp::getOperationName()}));
       builder.create<transform::ApplyRegisteredPassOp>(
           loc, builder.getType<transform::AnyOpType>(), funcHandle,
           builder.getStringAttr("eliminate-single-iteration-scf-for"));
-      applyCleanUp(builder, seqOp);
+      // The pass may erase the containing loop. Clean up newly exposed slices
+      // without reusing its handle or running LICM on an ancestor.
+      applyCleanUp(builder, seqOp, ValueRange{});
     }
 }
 
@@ -1521,19 +1525,14 @@ void AutoVectorizeV2::buildVectorizeTransformSequence(
 }
 
 void AutoVectorizeV2::applyCleanUp(OpBuilder &builder,
-                                   transform::SequenceOp seqOp) {
-  auto loopLikeAttr = transform::MatchInterfaceEnumAttr::get(
-      builder.getContext(), transform::MatchInterfaceEnum::LoopLikeInterface);
-  Value loopLikeHandle = builder
-                             .create<transform::MatchOp>(
-                                 builder.getInsertionPoint()->getLoc(),
-                                 builder.getType<transform::AnyOpType>(),
-                                 seqOp.getBodyBlock()->getArguments().front(),
-                                 ArrayAttr(), loopLikeAttr, DictionaryAttr(),
-                                 DictionaryAttr{}, TypeAttr{}, ArrayAttr{})
-                             .getResults();
-  builder.create<transform::ApplyLoopInvariantCodeMotionOp>(
-      loopLikeHandle.getLoc(), loopLikeHandle);
+                                   transform::SequenceOp seqOp,
+                                   ValueRange containingLoopHandles) {
+  // Restrict LICM to the tiling/fusion boundaries. Processing all loops in the
+  // function could lift slices across a boundary established by an earlier
+  // call.
+  for (Value containingLoopHandle : containingLoopHandles)
+    builder.create<transform::ApplyLoopInvariantCodeMotionWithSliceBoundaryOp>(
+        containingLoopHandle.getLoc(), containingLoopHandle);
 
   Value funcHandle = builder.create<transform::MatchOp>(
       builder.getInsertionPoint()->getLoc(),

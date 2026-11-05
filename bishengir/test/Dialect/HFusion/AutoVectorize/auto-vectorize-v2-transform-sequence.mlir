@@ -1,4 +1,12 @@
 // RUN: bishengir-opt %s -hfusion-auto-vectorize-v2="emit-transform-sequence" -hfusion-auto-vectorize-interpreter -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -hfusion-auto-vectorize-v2="emit-transform-sequence" -split-input-file | FileCheck %s --check-prefix=SEQUENCE
+
+// SEQUENCE-LABEL: transform.sequence
+// SEQUENCE: %[[TILED:.*]], %[[LOOP:.*]] = transform.structured.tile_using_for
+// SEQUENCE-NEXT: apply_licm_with_slice_boundary to %[[LOOP]] : !transform.any_op
+// SEQUENCE-LABEL: transform.sequence
+// SEQUENCE: %[[TILED:.*]], %[[LOOP:.*]] = transform.structured.tile_using_for
+// SEQUENCE-NEXT: apply_licm_with_slice_boundary to %[[LOOP]] : !transform.any_op
 
 // CHECK-LABEL: func.func @kernel_a
 // CHECK: vector.transfer_read
