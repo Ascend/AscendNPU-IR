@@ -544,6 +544,26 @@ vector_last_axis_brc_2d(memref_t<__ubuf__ SRC_T, 2> *src,
     return;
   }
 
+  // vbrcb only supports 16/32-bit types, so 1/8-byte types cannot use it.
+  // Broadcast each row with a scalar dup instead: brc_scalar_core_1d dispatches
+  // to the uint16 merge path for 1-byte types and to broadcast_scalar_b64 for
+  // 8-byte types.
+  if constexpr (sizeof(SRC_T) == 1 || sizeof(SRC_T) == 8) {
+    for (int64_t i = 0; i < src->sizes[0]; ++i) {
+      auto tmp_buf_ptr = tmp_buf->aligned + tmp_buf->offset + i * num_per_block;
+      auto src_ptr = src->aligned + src->offset + i;
+      INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+      INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+      SRC_T scalar = *src_ptr;
+      INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+      INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+      brc_scalar_core_1d<SRC_T>(scalar, tmp_buf_ptr, num_per_block);
+    }
+    INTRINSIC(pipe_barrier, PIPE_V);
+    view_as<SRC_T, DST_T, 2>(&tmp_buf_for_brc, dst);
+    return;
+  }
+
   INTRINSIC_NO_ARGS(set_mask_count);
   brc_last_axis_2d_vbrcb<SRC_T>(src, &tmp_buf_for_brc);
   INTRINSIC(pipe_barrier, PIPE_V);
