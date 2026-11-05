@@ -1165,18 +1165,13 @@ private:
       return;
     }
 
-    // Both pad counts are absent-means-zero. The block-DMA paths in the
-    // template still derive their own right pad from the 32B burst geometry;
-    // the NDDMA path is the one that honours this operand, because it pads
-    // whole innermost descriptor iterations (loop0 lp_size / rp_size).
-    Value zero =
-        rewriter.create<arith::ConstantIndexOp>(op->getLoc(), 0).getResult();
+    // calculate left padding num
     Value leftPaddingNum =
-        op.getLeftPaddingNum() ? op.getLeftPaddingNum() : zero;
-    Value rightPaddingNum =
-        op.getRightPaddingNum() ? op.getRightPaddingNum() : zero;
+        op.getLeftPaddingNum()
+            ? op.getLeftPaddingNum()
+            : rewriter.create<arith::ConstantIndexOp>(op->getLoc(), 0)
+                  .getResult();
     inputOperands.push_back(leftPaddingNum);
-    inputOperands.push_back(rightPaddingNum);
   }
   void addPadOperands(PatternRewriter &rewriter, CopyOpType op,
                       SmallVector<Value> &inputOperands,

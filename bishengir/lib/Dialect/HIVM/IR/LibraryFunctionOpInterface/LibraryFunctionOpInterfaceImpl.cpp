@@ -936,27 +936,13 @@ std::string InferMaxRankExternalModel<VGatherOp>::getOpLibraryCallName(
 // LoadOp
 //===----------------------------------------------------------------------===//
 
-static bool loadCanUseNDDMATemplates(LoadOp op) {
-  auto moduleOp = op->getParentOfType<ModuleOp>();
-  if (!moduleOp || !hacc::utils::isRegBasedArch(moduleOp))
-    return false;
-
-  return cast<MemRefType>(op.getSrcOperandType()).getRank() >= 2;
-}
-
 template <>
 int InferMaxRankExternalModel<LoadOp>::inferOpLibraryMaxRank(
     Operation *operation) const {
-  auto op = cast<LoadOp>(operation);
   // RegBase only provides the 1D GM->L1 (cbuf) load template. Higher-rank
-  // copies must be lowered to outer loops around that template call.
-  if (isGMToCbufCopyOnRegBase(op))
-    return 1;
-  // A GM->UB load folds up to five axes into one template call.
-  if (loadCanUseNDDMATemplates(op))
-    return 5;
-  // Every other direction keeps the static 3D rank on every target.
-  return 3;
+  // copies must be lowered to outer loops around that template call; all
+  // other directions keep the static 3D rank on every target.
+  return isGMToCbufCopyOnRegBase(cast<LoadOp>(operation)) ? 1 : 3;
 }
 
 template <>
