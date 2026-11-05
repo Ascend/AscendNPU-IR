@@ -428,6 +428,9 @@ std::unique_ptr<Pass> createMergeCVScopesPass();
 std::unique_ptr<Pass>
 createPipelineStagingPass(const PipelineStagingOptions &options = {});
 
+/// Wrap scopes belonging to the same PipelineV2 preload stage.
+std::unique_ptr<Pass> createWrapCVPreloadScopesPass();
+
 // Create a pass to compose expands and collapses ops
 std::unique_ptr<Pass> createComposeCollapseExpandPass();
 

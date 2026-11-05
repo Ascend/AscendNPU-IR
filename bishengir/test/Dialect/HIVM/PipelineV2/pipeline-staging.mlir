@@ -1,4 +1,5 @@
 // RUN: bishengir-opt %s -pipeline-staging -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -pipeline-staging -wrap-cv-preload-scopes -split-input-file | FileCheck %s --check-prefix=WRAP
 
 // CHECK-LABEL: func.func @copy_to_l1
 // CHECK:       scf.for
@@ -83,6 +84,18 @@ func.func @fixpipe_to_ub(%src: tensor<16xf32>) {
 // same stage as the third scope, leaving the second scope with a larger preload
 // number. Keep the first and third scopes in their original relative order.
 // CHECK-LABEL: func.func @stable_preload_order
+// WRAP-LABEL: func.func @stable_preload_order
+// WRAP: } {{.*}}hivm.preload_num = 3 : i32
+// WRAP-NEXT: %[[STAGE:.*]] = scope.scope : () -> i32 {
+// WRAP-NEXT: %[[FIRST:.*]] = scope.scope : () -> i32 {
+// WRAP: arith.constant 10 : i32
+// WRAP: } {no_inline}
+// WRAP-NEXT: %{{.*}} = scope.scope : () -> i32 {
+// WRAP: arith.constant 30 : i32
+// WRAP: } {no_inline}
+// WRAP-NEXT: scope.return %[[FIRST]] : i32
+// WRAP-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 2 : i32, no_inline}
+// WRAP: arith.addi %[[STAGE]], %[[STAGE]] : i32
 // CHECK:       scf.for
 // CHECK:         scope.scope : () -> i32 {
 // CHECK:           arith.constant 20 : i32
@@ -188,5 +201,4 @@ func.func @hoist_sunk_with_scf_if(%src: memref<16xf32>, %cond: i1) {
   return
 }
 }
-
 

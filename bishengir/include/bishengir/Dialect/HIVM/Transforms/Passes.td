@@ -1603,6 +1603,19 @@ def PipelineStaging
                         "Maximum pipeline multibuffer.">];
 }
 
+def WrapCVPreloadScopes
+    : HIVMPass<"wrap-cv-preload-scopes", "func::FuncOp"> {
+  let summary = "Wrap same-stage CV scopes in one preload scope";
+  let description = [{
+    Runs last in PipelineV2, after PipelineStaging. Preserves inner core
+    scopes and intervening operations while moving preload metadata to one
+    enclosing scope per stage. Values used outside a group are returned by
+    its wrapper. Singleton stages and unrelated loops are left unchanged.
+  }];
+  let constructor = "mlir::hivm::createWrapCVPreloadScopesPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "mlir::scope::ScopeDialect"];
+}
+
 def AutoBlockifyParallelLoop
     : HIVMPass<"auto-blockify-parallel-loop", "func::FuncOp"> {
   let summary = "Enable auto loop on blocks when logical blocknum is larger "
