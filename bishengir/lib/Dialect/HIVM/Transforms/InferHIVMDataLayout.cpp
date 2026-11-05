@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 #include "bishengir/Dialect/HIVM/Transforms/InferHIVMDataLayout.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/DMA/CubeLoad/CubeLoadCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/IR/CustomOp/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
@@ -194,8 +195,13 @@ void convertToBatchND2NZOp(Value src, Value dst, Operation &originalOp,
   // fold it into a single MTE2 descriptor; other architectures still need one
   // ND2NZ per batch.
   auto modeAttr = batchMatmul ? l2CacheModeOf(originalOp) : IntegerAttr{};
-  auto mod = originalOp.getParentOfType<ModuleOp>();
-  if (batchMatmul && mod && hacc::utils::isRegBasedArch(mod)) {
+  auto elementType = cast<ShapedType>(src.getType()).getElementType();
+  // One descriptor only when this architecture's batched ND2NZ row is Native.
+  // C220 has the plain form and not the batch form, so it keeps the loop.
+  if (batchMatmul &&
+      isNativeNd2NzBatch(&originalOp, elementType,
+                         cubeLoadSpaceOr(src.getType(), AddressSpace::GM),
+                         cubeLoadSpaceOr(dst.getType(), AddressSpace::L1))) {
     auto op = builder.create<hivm::ND2NZOp>(src.getLoc(), TypeRange{},
                                             /*src=*/src,
                                             /*dst=*/dst, builder.getUnitAttr());
