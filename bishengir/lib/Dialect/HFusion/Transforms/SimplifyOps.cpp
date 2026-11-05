@@ -104,6 +104,57 @@ bool isSafeToSimplifyCast(CastOp castOp) {
            (inputType.isInteger() && isa<FloatType>(outputType)));
 }
 
+// A chain of integer casts may only be removed when it is value preserving.
+// Unlike floating point, where the precision checks guard the optimization, an
+// integer narrowing cast silently drops the high bits, so a round trip such as
+// `i16 -> i8 -> i16` is *not* an identity. Such chains are semantically
+// meaningful: e.g. `remui i8` is widened to i16 for codegen and can produce
+// 0xFFFF for a zero divisor, which must be truncated back to 0xFF before the
+// value is consumed by a following operation.
+// The chain is ordered from the consumer inwards, i.e. opposite to the value
+// flow, and a foldable chain has the same element type at both ends. Composing
+// the chain is therefore an identity exactly when every intermediate value can
+// still hold every value of the chain's source type: no intermediate element
+// width may drop below the source width. A step that narrows below the source
+// width drops high bits which a later widening step cannot restore, so such a
+// chain must be kept even if the width returns to the source width at the end.
+// Note that this is a source-width test and not a phase test: a chain that
+// narrows and widens again while staying at or above the source width (e.g.
+// `i16 -> i64 -> i32 -> i64 -> i16`) is still an identity and may be folded.
+bool isValuePreservingIntegerCastChain(ArrayRef<CastOp> castChain) {
+  // Leave mixed integer/float chains to the floating point precision logic.
+  // Bit width is not a precision measure across integer/float boundaries
+  // (`i32 -> f32 -> i32` keeps 32 bits but loses mantissa bits), so those
+  // chains are deliberately not judged here.
+  for (CastOp castOp : castChain) {
+    auto inputType = getElementTypeOrSelf(castOp.getInputs().front().getType());
+    auto outputType =
+        getElementTypeOrSelf(castOp.getOutputs().front().getType());
+    if (!isa<IntegerType>(inputType) || !isa<IntegerType>(outputType))
+      return true;
+  }
+
+  // castChain is consumer-to-producer, so the value-flow source (and the type
+  // that survives folding) is the input of the last cast.
+  CastOp sourceCast = castChain.back();
+  unsigned sourceWidth =
+      cast<IntegerType>(
+          getElementTypeOrSelf(sourceCast.getInputs().front().getType()))
+          .getWidth();
+
+  // Every intermediate value is the output of one of the casts (the source is
+  // the input of the last one), so comparing outputs is sufficient.
+  for (CastOp castOp : castChain) {
+    unsigned outputWidth =
+        cast<IntegerType>(
+            getElementTypeOrSelf(castOp.getOutputs().front().getType()))
+            .getWidth();
+    if (outputWidth < sourceWidth)
+      return false;
+  }
+  return true;
+}
+
 struct CastOpPattern : public OpRewritePattern<CastOp> {
   // Return the cast op that defines all inputs of the given op, skipping
   // tensor reshape operations. The skipped operations are recorded so that the
@@ -285,6 +336,12 @@ public:
             break;
           }
         }
+
+        // Integer casts need an explicit guard: a narrowing step followed by a
+        // widening step does not reconstruct the original value and must not be
+        // folded away (see isValuePreservingIntegerCastChain).
+        if (!isValuePreservingIntegerCastChain(castChain))
+          break;
 
         if (reshapes.empty()) {
           rewriter.replaceOp(castOp, nextCast.getInputs());
