@@ -37,7 +37,7 @@ check_inputs_of_reduce_ra0a1(memref_t<__ubuf__ T, 3> *src0,
           isSizeAlignedToBlock<T>(dst->strides[0]) &&
           isSizeAlignedToBlock<T>(dst->strides[1])) &&
          "The src/dst strides[0]/strides[1] must be aligned to block.");
-  assert((src0->strides[1] == 1 && dst->strides[1] == 1) &&
+  assert((src0->strides[2] == 1 && dst->strides[2] == 1) &&
          "The src/dst last dim must be continuous.");
 #endif
 }
@@ -88,6 +88,8 @@ template <ReduceOpTy OP, typename T>
 __aiv__ __attribute__((always_inline)) void
 reduce_ra0a1_core(memref_t<__ubuf__ T, 3> *src0, memref_t<__ubuf__ T, 3> *dst,
                   memref_t<__ubuf__ T, 1> *tmp_buf, T initvalue) {
+  check_inputs_of_reduce_ra0a1(src0, dst, initvalue);
+
   const int64_t size0 = src0->sizes[0];
   const int64_t size1 = src0->sizes[1];
   const int64_t size2 = src0->sizes[2];
@@ -160,16 +162,15 @@ reduce_ra0a1_core<ReduceOpTy::REDUCE_AND, uint8_t>(
       &src0_as_int16, &dst_as_int16, &tmp_as_int16, (int16_t)initvalue);
 }
 
-/// Reduce src (r, a0, a1) with stride [n0, n1, 1] to dst (1, a0, a1) with
-/// stride [n0, n1, 1].
+/// Reduce src (r, a0, a1) to dst (1, a0, a1).
 ///
-/// constraint:
-/// 1. 'n1' is a1 aligned to ub_block_unit.
-/// 2. 'n0' is a0 * a1 aligned to ub_block_unit.
-/// 3. the start pointer address, namely aligned + offset, should be aligned
-/// to ub_block_unit.
-/// 4. reduce_xor requires additional tmp_buf of size a0 *
-/// aligned(a1, ub_block_unit).
+/// The vector path requires block-aligned source plane/row strides,
+/// block-aligned destination row stride, contiguous last dimensions, and
+/// block-aligned start addresses. Inputs that do not meet these requirements
+/// are reduced by scalar operations.
+///
+/// The reduce_xor vector path requires an additional tmp_buf of size
+/// a0 * aligned(a1, ub_block_unit).
 ///
 /// \param initvalue: The initvalue value is as follows
 ///             float16    float32    int8_t    uint8_t    int16_t    uint16_t
@@ -192,9 +193,6 @@ template <ReduceOpTy OP, typename T>
 __aiv__ __attribute__((always_inline)) void
 reduce_ra0a1(memref_t<__ubuf__ T, 3> *src0, memref_t<__ubuf__ T, 3> *dst,
              memref_t<__ubuf__ T, 1> *tmp_buf, T initvalue) {
-  // Input parameter constraints assert.
-  check_inputs_of_reduce_ra0a1(src0, dst, initvalue);
-
   const int64_t size0 = src0->sizes[0];
   const int64_t size1 = src0->sizes[1];
   const int64_t size2 = src0->sizes[2];
