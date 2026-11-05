@@ -986,6 +986,17 @@ static void preprocessPreloadLoop(scf::ForOp forOp) {
     if (!isa<MemRefType>(yieldVal.getType()))
       continue;
 
+    // An invariant memref already has the correct buffer selection. In
+    // particular, cloning an outer-loop multi-buffer pointer_cast into this
+    // loop would rotate its reads with this loop while its writes still use
+    // the outer-loop buffer.
+    if (initArg == yieldVal) {
+      iterArg.replaceAllUsesWith(initArg);
+      forResult.replaceAllUsesWith(initArg);
+      keepIterArg.reset(idx);
+      continue;
+    }
+
     PointerCastTraceResult traceResult;
     if (failed(collectRootPointerCasts({yieldVal, initArg}, traceResult)))
       continue;
