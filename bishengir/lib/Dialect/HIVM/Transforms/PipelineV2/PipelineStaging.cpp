@@ -91,7 +91,7 @@ static void stageScopes(LoopLikeOpInterface &loopOp,
       scopes.push_back(scopeOp);
     if (scopes.empty())
       continue;
-    if (scopes.size() < maxPipelineMultibuffer) {
+    if (maxPipelineMultibuffer == 0 || scopes.size() < maxPipelineMultibuffer) {
       stageScopesNaively(scopes);
       continue;
     }
@@ -478,12 +478,6 @@ static void hoistAllocAndToTensor(LoopLikeOpInterface &loopOp) {
 
 void PipelineStagingPass::runOnOperation() {
   func::FuncOp funcOp = getOperation();
-
-  if (maxPipelineMultibuffer <= 0) {
-    getOperation()->emitWarning("[pipeline-staging] max pipeline multibuffer "
-                                "should be greater than 0, defaulting to 3.");
-    maxPipelineMultibuffer = 3;
-  }
   SmallVector<LoopLikeOpInterface> cvPipelinedLoops;
   collectCVPipelinedLoops(funcOp, cvPipelinedLoops);
 

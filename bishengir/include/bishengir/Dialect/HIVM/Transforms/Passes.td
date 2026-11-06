@@ -1598,8 +1598,8 @@ def PipelineStaging
                            "bishengir::memref_ext::MemRefExtDialect",
                            "bufferization::BufferizationDialect",
                            "memref::MemRefDialect"];
-  let options = [Option<"maxPipelineMultibuffer", "max-pipeline-multibuffer", "int",
-                        /*default=*/"3",
+  let options = [Option<"maxPipelineMultibuffer", "max-pipeline-multibuffer", "unsigned",
+                        /*default=*/"0",
                         "Maximum pipeline multibuffer.">];
 }
 

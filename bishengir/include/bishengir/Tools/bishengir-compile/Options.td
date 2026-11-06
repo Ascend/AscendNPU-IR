@@ -1674,7 +1674,7 @@ def UseDPX : BiShengIRCompileOpt<
 def SetMaxPipelineMultibuffer : HIVMOptimizationControlOptions<
   "Maximum number of multibuffers for pipeline staging. ",
   "unsigned",
-  "3"
+  "0"
 >;
 
 } // let optionScope = ["A5_ONLY"]
