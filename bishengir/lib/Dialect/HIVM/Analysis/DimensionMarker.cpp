@@ -1106,6 +1106,8 @@ void DimensionAnalyzer::combineInferable() {
 }
 
 void DimensionAnalyzer::markDimensions() {
+  requiredUbCounts.clear();
+  requiredUbBuffers.clear();
   auto markCustomReductionDims = [this](auto customOp) {
     if (!customOpHasExplicitSemantics(customOp))
       return;
@@ -1215,6 +1217,28 @@ void DimensionAnalyzer::markDimensions() {
         })
         .Case<hivm::FixpipeOp>([&](auto op) { markFixpipeTilingPriority(op); })
         .Case<hivm::VTransposeOp>([&](auto op) { markTransposedDim(op); })
+        .Case<annotation::MarkOp>([&](auto mark) {
+          auto attr =
+              mark->template getAttrOfType<HIVMTightlyCoupledBufferAttr>(
+                  HIVMTightlyCoupledBufferAttr::name);
+          if (!attr || !attr.getId())
+            return;
+          Value buffer = mark.getSrc();
+          auto type = dyn_cast<MemRefType>(buffer.getType());
+          auto space = GetBufferSpaceAttr(buffer);
+          // Match the trivial-UB exception in the post-bubble-up check.
+          if (!space || space->getAddressSpace() != AddressSpace::UB)
+            return;
+          createDummyRefIfNotExist({buffer});
+          auto indices = getValueDimIndices(buffer);
+          auto groupIndex = getValueGroupIndex(buffer);
+          if (requiredUbBuffers.size() <= static_cast<size_t>(groupIndex))
+            requiredUbBuffers.resize(groupIndex + 1);
+          ++requiredUbCounts[groupIndex];
+          for (int64_t dim = 0; dim < type.getRank(); ++dim)
+            requiredUbBuffers[groupIndex].insert(
+                structuralDsu_->find(indices[dim]));
+        })
         .Case<memref::AllocOp>([&](auto op) {
           if (!hacc::utils::isRegBasedArch(
                   op->template getParentOfType<ModuleOp>()))
