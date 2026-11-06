@@ -57,7 +57,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, llvm.target_t
 //--- a3.mlir
 module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
   func.func @unsupported() -> i64 {
-    // REJECT: 'hivm.hir.try_wait' op is not supported on memory-based (A3) architectures
+    // REJECT: 'hivm.hir.try_wait' op is not natively supported on the enclosing target
     %v = hivm.hir.try_wait flag = 0, sync_mode = <intra_block> : i64
     return %v : i64
   }
