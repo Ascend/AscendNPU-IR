@@ -2153,42 +2153,81 @@ class PlainOpToLibraryCallPattern : public OpRewritePattern<T> {
   }
 };
 
-// The pool is already planned; alloc/get return absolute byte addresses.
-template <typename OpTy>
-class TcbPoolOpToLibraryCallPattern : public OpRewritePattern<OpTy> {
+class TcbPoolInitOpToLibraryCallPattern
+    : public OpRewritePattern<TcbPoolInitOp> {
 public:
-  using OpRewritePattern<OpTy>::OpRewritePattern;
-  LogicalResult matchAndRewrite(OpTy op,
+  using OpRewritePattern<TcbPoolInitOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(TcbPoolInitOp op,
                                 PatternRewriter &rewriter) const final {
-    SmallVector<Value> operands{op.getMetadata()};
     auto i32 = [&](int64_t value) -> Value {
       return rewriter.create<arith::ConstantIntOp>(op.getLoc(), value, 32);
     };
-    std::string name;
-    if constexpr (std::is_same_v<OpTy, TcbPoolInitOp>) {
-      name = "tcb_pool_init";
-    } else if constexpr (std::is_same_v<OpTy, TcbPoolReleaseOp>) {
-      name = "tcb_pool_release";
-      operands.append({i32(op.getEntryOffset()), i32(op.getQueueDepth()),
-                       op.getSeq(), i32(op.getSlots())});
-    } else {
-      auto pointer = op.getPool().template getDefiningOp<PointerCastOp>();
-      if (!pointer || pointer.getAddrs().size() != 1)
-        return rewriter.notifyMatchFailure(
-            op, "expected a planned pool pointer_cast");
-      operands.append({pointer.getSingleAddr(), i32(op.getSlotBytes()),
-                       i32(op.getEntryOffset()), i32(op.getQueueDepth()),
-                       op.getSeq()});
-      if constexpr (std::is_same_v<OpTy, TcbPoolAllocOp>) {
-        name = "tcb_pool_alloc";
-        auto type = cast<MemRefType>(op.getPool().getType());
-        operands.append({i32(op.getSlots()),
-                         i32(type.getNumElements() / op.getSlotBytes())});
-      } else {
-        name = "tcb_pool_get_address";
-      }
-    }
-    replaceWithLibCall(rewriter, op, name, operands, op->getResultTypes());
+    SmallVector<Value> operands{op.getMetadata(),
+                                i32(op.getSlotBytes()),
+                                i32(op.getSlotCount()),
+                                i32(op.getSlotsPerBuffer()[0]),
+                                i32(op.getSlotsPerBuffer()[1]),
+                                i32(op.getSearchBegin()[0]),
+                                i32(op.getSearchBegin()[1]),
+                                i32(op.getSearchEnd()[0]),
+                                i32(op.getSearchEnd()[1]),
+                                i32(op.getFlagMask())};
+    replaceWithLibCall(rewriter, op, "tcb_pool_init", operands,
+                       op->getResultTypes());
+    return success();
+  }
+};
+
+// The pool is already planned; return its absolute byte address and flag ID.
+class TcbPoolAllocOpToLibraryCallPattern
+    : public OpRewritePattern<TcbPoolAllocOp> {
+public:
+  using OpRewritePattern<TcbPoolAllocOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(TcbPoolAllocOp op,
+                                PatternRewriter &rewriter) const final {
+    auto pointer = op.getPool().getDefiningOp<PointerCastOp>();
+    if (!pointer || pointer.getAddrs().size() != 1)
+      return rewriter.notifyMatchFailure(
+          op, "expected a planned pool pointer_cast");
+    Value segment =
+        rewriter.create<arith::ConstantIntOp>(op.getLoc(), op.getSegment(), 32);
+    SmallVector<Value> operands{op.getMetadata(), pointer.getSingleAddr(),
+                                segment};
+    replaceWithLibCall(rewriter, op, "tcb_pool_alloc", operands,
+                       op->getResultTypes());
+    return success();
+  }
+};
+
+// The pool is already planned; return its absolute byte address and flag ID.
+class TcbPoolGetOpToLibraryCallPattern : public OpRewritePattern<TcbPoolGetOp> {
+public:
+  using OpRewritePattern<TcbPoolGetOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(TcbPoolGetOp op,
+                                PatternRewriter &rewriter) const final {
+    auto pointer = op.getPool().getDefiningOp<PointerCastOp>();
+    if (!pointer || pointer.getAddrs().size() != 1)
+      return rewriter.notifyMatchFailure(
+          op, "expected a planned pool pointer_cast");
+    Value segment =
+        rewriter.create<arith::ConstantIntOp>(op.getLoc(), op.getSegment(), 32);
+    SmallVector<Value> operands{op.getMetadata(), pointer.getSingleAddr(),
+                                segment};
+    replaceWithLibCall(rewriter, op, "tcb_pool_get_address", operands,
+                       op->getResultTypes());
+    return success();
+  }
+};
+
+class TcbPoolReleaseOpToLibraryCallPattern
+    : public OpRewritePattern<TcbPoolReleaseOp> {
+public:
+  using OpRewritePattern<TcbPoolReleaseOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(TcbPoolReleaseOp op,
+                                PatternRewriter &rewriter) const final {
+    SmallVector<Value> operands{op.getMetadata()};
+    replaceWithLibCall(rewriter, op, "tcb_pool_release", operands,
+                       op->getResultTypes());
     return success();
   }
 };
@@ -2283,10 +2322,10 @@ void populateHIVMToStandardConversionPatternsRegBase(
                VInterleaveOpToLibraryCallPattern,
                PlainOpToLibraryCallPattern<hivm::InitDebugOp>,
                PlainOpToLibraryCallPattern<hivm::FinishDebugOp>,
-               TcbPoolOpToLibraryCallPattern<hivm::TcbPoolInitOp>,
-               TcbPoolOpToLibraryCallPattern<hivm::TcbPoolAllocOp>,
-               TcbPoolOpToLibraryCallPattern<hivm::TcbPoolGetOp>,
-               TcbPoolOpToLibraryCallPattern<hivm::TcbPoolReleaseOp>,
+               TcbPoolInitOpToLibraryCallPattern,
+               TcbPoolAllocOpToLibraryCallPattern,
+               TcbPoolGetOpToLibraryCallPattern,
+               TcbPoolReleaseOpToLibraryCallPattern,
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockLockOp>,
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockUnlockOp>,
                SyncBlockOpToLibraryCallPattern<hivm::FreeLockVarOp>,
