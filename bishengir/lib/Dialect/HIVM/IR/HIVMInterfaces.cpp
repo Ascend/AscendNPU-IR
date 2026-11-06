@@ -191,6 +191,10 @@ void getEffectsImpl(
 
     effects.emplace_back(MemoryEffects::Write::get(), &operand,
                          SideEffects::DefaultResource::get());
+    if (auto op = dyn_cast<MmadL0Op>(hivmOp.getOperation());
+        op && op.readsAccumulator())
+      effects.emplace_back(MemoryEffects::Read::get(), &operand,
+                           SideEffects::DefaultResource::get());
   }
 }
 

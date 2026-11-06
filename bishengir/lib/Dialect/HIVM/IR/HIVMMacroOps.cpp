@@ -2020,16 +2020,50 @@ void MmadL0Op::build(OpBuilder &odsBuilder, OperationState &odsState,
                      Value real_k, Value real_n, Value c,
                      Value k_direction_align, Value is_with_bias,
                      Value init_condition, UnitAttr enable_HF32,
-                     UnitAttr enable_I4) {
+                     UnitAttr enable_I4, Value bias, BoolAttr disable_gemv) {
   build(odsBuilder, odsState, result_tensors, a, b, real_m, real_k, real_n, c,
-        k_direction_align, is_with_bias, init_condition,
+        k_direction_align, is_with_bias, init_condition, bias,
         /*unit_flag_cond*/ ValueRange{}, enable_HF32, enable_I4,
-        /*unit_flag_mode*/ ArrayAttr{}, /*unit_flag_group_id*/ IntegerAttr{});
+        /*unit_flag_mode*/ ArrayAttr{}, /*unit_flag_group_id*/ IntegerAttr{},
+        disable_gemv ? disable_gemv : odsBuilder.getBoolAttr(true));
 }
 
 SmallVector<IteratorType> MmadL0Op::getIteratorTypesArray() {
+  if (cast<ShapedType>(getA().getType()).getRank() == 4) {
+    // M1, N1, M0, N0, K1, K0. Keep the physical fractals intact.
+    return {IteratorType::kParallel,  IteratorType::kParallel,
+            IteratorType::kParallel,  IteratorType::kParallel,
+            IteratorType::kReduction, IteratorType::kReduction};
+  }
   return {IteratorType::kParallel, IteratorType::kParallel,
           IteratorType::kReduction};
+}
+
+ArrayAttr MmadL0Op::getIndexingMaps() {
+  auto *ctx = getContext();
+  bool physical = cast<ShapedType>(getA().getType()).getRank() == 4;
+  unsigned loops = physical ? 6 : 3;
+  SmallVector<AffineMap> maps(getNumOperands(), AffineMap::get(loops, 0, ctx));
+  auto d = [&](unsigned i) { return getAffineDimExpr(i, ctx); };
+  auto map = [&](ArrayRef<AffineExpr> exprs) {
+    return AffineMap::get(loops, 0, exprs, ctx);
+  };
+  maps[getAMutable().getOperandNumber()] =
+      physical ? map({d(4), d(0), d(2), d(5)}) : map({d(0), d(2)});
+  maps[getBMutable().getOperandNumber()] =
+      physical ? map({d(4), d(1), d(3), d(5)}) : map({d(2), d(1)});
+  maps[getCMutable().getOperandNumber()] =
+      physical ? map({d(1), d(0), d(2), d(3)}) : map({d(0), d(1)});
+  if (getBias()) {
+    // The optional bias segment immediately follows init_condition.
+    unsigned biasIndex = getInitConditionMutable().getOperandNumber() + 1;
+    maps[biasIndex] = physical ? map({d(1) * 16 + d(3)}) : map({d(1)});
+  }
+  return Builder(ctx).getAffineMapArrayAttr(maps);
+}
+
+bool MmadL0Op::readsAccumulator() {
+  return !getBias() && !matchPattern(getInitCondition(), m_One());
 }
 
 LogicalResult MmadL0Op::verify() {
@@ -2050,6 +2084,17 @@ LogicalResult MmadL0Op::verify() {
   if (failed(verifySpace(getC().getType(), AddressSpace::L0C,
                          "c must have L0C (cc) address space")))
     return failure();
+  if (getBias()) {
+    if (failed(verifySpace(getBias().getType(), AddressSpace::BiasBUF,
+                           "bias must have BiasBUF (biasbuf) address space")))
+      return failure();
+    if (cast<ShapedType>(getBias().getType()).getRank() != 1)
+      return emitOpError("bias must be a rank-1 BT vector");
+    if (!matchPattern(getIsWithBias(), m_One()))
+      return emitOpError("bias requires constant is_with_bias = true");
+    if (!matchPattern(getInitCondition(), m_Zero()))
+      return emitOpError("BT bias requires constant init_condition = false");
+  }
   return success();
 }
 

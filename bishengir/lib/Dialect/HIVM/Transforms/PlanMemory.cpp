@@ -56,6 +56,126 @@ using namespace util;
 
 namespace {
 
+bool hasStandaloneMmad(func::FuncOp func) {
+  return func.walk([](MmadL0Op) { return WalkResult::interrupt(); })
+      .wasInterrupted();
+}
+
+// Select buffers requiring explicit cube validation and independent storage.
+// The pass selects the policy once per function, before any planning retries.
+bool requiresExplicitCubePlanning(std::optional<AddressSpaceAttr> space,
+                                  bool enableMmadL0Planning) {
+  if (!enableMmadL0Planning || !space)
+    return false;
+  switch (space->getAddressSpace()) {
+  case AddressSpace::L0A:
+  case AddressSpace::L0B:
+  case AddressSpace::BiasBUF:
+  case AddressSpace::L0C:
+    return true;
+  default:
+    return false;
+  }
+}
+
+// TODO: Move these A5-only requirements into a shared target-specific
+// abstraction when extending standalone MMAD L0 support to A6 and A2/A3.
+// Planner sizes are in bits, while pointer_cast addresses are in bytes.
+constexpr int kA5L0ABAlignBits = 512 * 8;
+constexpr int kA5L0CAlignBits = 1024 * 8;
+constexpr int kA5BTAlignBits = 64 * 8;
+// HACC has no BT capacity spec yet; this matches CATLASS Arch::AtlasA5.
+constexpr int kA5BTSizeBits = 4096 * 8;
+
+LogicalResult validateExplicitCubeAllocs(func::FuncOp func, ModuleOp module) {
+  // The caller has already enabled MMAD L0 planning and checked the target.
+  auto result = func.walk([&](memref::AllocOp alloc) {
+    auto space = GetBufferSpaceAttr(alloc.getResult());
+    if (!requiresExplicitCubePlanning(space, /*enableMmadL0Planning=*/true))
+      return WalkResult::advance();
+
+    auto type = alloc.getType();
+    if (!type.hasStaticShape() || !type.getLayout().isIdentity()) {
+      alloc.emitOpError("explicit A5 cube allocations require static identity "
+                        "layouts; express offsets through views");
+      return WalkResult::interrupt();
+    }
+    if (!type.getElementType().isIntOrFloat() ||
+        type.getElementTypeBitWidth() % utils::kBitsToByte != 0) {
+      alloc.emitOpError("explicit A5 cube allocations require byte-addressable "
+                        "integer or floating-point elements");
+      return WalkResult::interrupt();
+    }
+
+    int64_t capacity = kA5BTSizeBits;
+    int64_t alignment = kA5BTAlignBits;
+    if (space->getAddressSpace() != AddressSpace::BiasBUF) {
+      auto spec = hacc::utils::getNPUTargetSpec(module);
+      if (!spec) {
+        alloc.emitOpError("explicit A5 cube allocation requires device specs; "
+                          "run hacc-append-device-spec first");
+        return WalkResult::interrupt();
+      }
+      auto identifier = space->getAddressSpace() == AddressSpace::L0A
+                            ? hacc::DeviceSpec::L0A_SIZE
+                        : space->getAddressSpace() == AddressSpace::L0B
+                            ? hacc::DeviceSpec::L0B_SIZE
+                            : hacc::DeviceSpec::L0C_SIZE;
+      auto size = spec->getSpecForIdentifierEnum(identifier);
+      if (!size || !isa<IntegerAttr>(size.getValue()) ||
+          cast<IntegerAttr>(size.getValue()).getInt() <= 0) {
+        alloc.emitOpError("explicit A5 cube allocation requires a positive "
+                          "device capacity spec");
+        return WalkResult::interrupt();
+      }
+      capacity = cast<IntegerAttr>(size.getValue()).getInt();
+      alignment = space->getAddressSpace() == AddressSpace::L0C
+                      ? kA5L0CAlignBits
+                      : kA5L0ABAlignBits;
+    }
+    // Do not silently discard an alloc alignment stronger than this planner's
+    // space alignment. Views do not change the backing allocation's alignment.
+    if (auto requested = alloc.getAlignment()) {
+      if (*requested != 0 &&
+          (alignment / utils::kBitsToByte) % *requested != 0) {
+        alloc.emitOpError("unsupported explicit A5 cube allocation alignment");
+        return WalkResult::interrupt();
+      }
+    }
+    // Divide before multiplying dimensions so malformed shapes cannot overflow
+    // getStaticTotalSize or constBits during liveness analysis.
+    int64_t remainingElements = capacity / type.getElementTypeBitWidth();
+    if (remainingElements == 0) {
+      alloc.emitOpError(
+          "explicit A5 cube element exceeds memory-space capacity");
+      return WalkResult::interrupt();
+    }
+    for (int64_t dim : type.getShape()) {
+      if (dim <= 0 || dim > remainingElements) {
+        alloc.emitOpError("explicit A5 cube allocation must have positive "
+                          "dimensions and fit the memory-space capacity");
+        return WalkResult::interrupt();
+      }
+      remainingElements /= dim;
+    }
+    return WalkResult::advance();
+  });
+  return failure(result.wasInterrupted());
+}
+
+bool isCVModule(ModuleOp op) {
+  bool hasAIV = false;
+  bool hasAIC = false;
+  op->walk([&](func::FuncOp funcOp) {
+    if (queryFuncCoreType(funcOp) == TFuncCoreType::AIV) {
+      hasAIV = true;
+    } else if (queryFuncCoreType(funcOp) == TFuncCoreType::AIC) {
+      hasAIC = true;
+    }
+  });
+  return hasAIV && hasAIC;
+}
+
 bool isReusableCastOp(hivm::VCastOp &castOp, Value output, Value input) {
   auto rank = dyn_cast<MemRefType>(output.getType()).getRank();
   if (rank > 1 || !isLastDimContiguous(output) || !isLastDimContiguous(input)) {
@@ -590,7 +710,7 @@ MemLivenessAnalysis::CheckLocalBufferAllocOp(Operation *op) const {
   // TODO: Remove this after plan mem support SSBUF alloc
   assert(!isSsbuffer(memorySpaceAttr) &&
          "Alloc on SSBUFFER is not yet supported!");
-  if (isLocalBuffer(memorySpaceAttr)) {
+  if (isLocalBufferForMemoryPlanning(memorySpaceAttr, enableMmadL0Planning)) {
     return success();
   }
   allocOp.getOperation()->emitError("Alloc buffer not at UB space! ");
@@ -613,7 +733,10 @@ MemLivenessAnalysis::CheckIfUnknownOpTouchBuffer(Operation *op) const {
     // This scene can be ignored.
     return success();
   }
-  if (isOpTouchLocalBuffer(op)) {
+  if (llvm::any_of(getOpTouchBuffer(op), [&](Value value) {
+        return isLocalBufferForMemoryPlanning(GetBufferSpaceAttr(value),
+                                              enableMmadL0Planning);
+      })) {
     op->emitError("PlanMemory Fail : Unrecognized type of Operation touches "
                   "local buffer!");
     return failure();
@@ -1165,7 +1288,8 @@ BufferInfo MemLivenessAnalysis::GenerateBufferInfo(Operation *op,
     llvm_unreachable("Alloc-like on SSBUF is not yet supported!");
   }
 
-  if (isLocalMemPlan() && isLocalBuffer(memorySpaceAttr)) {
+  if (isLocalMemPlan() &&
+      isLocalBufferForMemoryPlanning(memorySpaceAttr, enableMmadL0Planning)) {
     assert(memorySpaceAttr.has_value() && "buffer must has space!");
     return GetBufferInfo(op, operand,
                          memorySpaceAttr.value().getAddressSpace());
@@ -1182,6 +1306,11 @@ BufferInfo MemLivenessAnalysis::GetBufferInfo(Operation *op, Value operand,
   BufferInfo bufferInfo;
   bufferInfo.operation = op;
   bufferInfo.bufferScope = bufferScope;
+  // Explicit slots may be in flight on different pipes after their last SSA
+  // use. Preserve their identity instead of inferring safe asynchronous reuse
+  // from SSA liveness. Views of a single allocation still share its storage.
+  bufferInfo.memoryUnique = requiresExplicitCubePlanning(
+      GetBufferSpaceAttr(operand), enableMmadL0Planning);
   // get buffer size, now for static shape
   Value traceValue = utils::tracebackMemRef(operand);
   auto memRefType = cast<MemRefType>(traceValue.getType());
@@ -1873,6 +2002,11 @@ void MemPlan::GeneratePreloadReuseableSE() {
   LDBG("\n-------localSE2ReuseablePreloadSE info--------\n\n");
   for (auto &[preloadBuffer, reusableInfo] : preloadBufferReuseableInfo) {
     auto *preloadBufferSE = buffer2storageEntry[preloadBuffer];
+    // Preload folding bypasses the normal memoryUnique conflict check. Keep
+    // explicit cube slots out of this reuse path as well.
+    if (requiresExplicitCubePlanning(GetBufferSpaceAttr(preloadBuffer),
+                                     enableMmadL0Planning))
+      continue;
     reusableInfo.preloadBuffer = preloadBuffer;
     // A preload buffer's genOp and killOp cannot reside in the same scope
     // (otherwise it would not be a preload buffer). Thus equal preload_num
@@ -1899,7 +2033,7 @@ void MemPlan::GeneratePreloadReuseableSE() {
 }
 
 PlanStatus MemPlan::PlanLocalMemAddress() {
-  dmaFirstPipelineOpt.build(func_);
+  dmaFirstPipelineOpt.build(func_, enableMmadL0Planning);
   // merge from the first storage entry
   MergeInplaceSE();
   // collect local storage entry and preload's first storage entry, so this
@@ -2205,7 +2339,8 @@ void MemPlan::MemLifeDebugInfo(const StorageEntry *storageEntry) const {
   }
   LLVM_DEBUG({
     storageEntry->bufferLifeVec.forEach([](BufferLifeView bufferLife) {
-      llvm::dbgs() << "bufferLife : " << "allocTime : " << bufferLife.allocTime
+      llvm::dbgs() << "bufferLife : "
+                   << "allocTime : " << bufferLife.allocTime
                    << " , freeTime : " << bufferLife.freeTime << "\n";
     });
   });
@@ -2342,9 +2477,22 @@ MemPlan::GetBufferSpaceInfo(hivm::AddressSpace &space) const {
     return std::make_pair(l1AlignSize, l1SpaceSize);
   case hivm::AddressSpace::L0C:
     return std::make_pair(l0cAlignSize, l0cSpaceSize);
+  case hivm::AddressSpace::L0A:
+    if (enableMmadL0Planning)
+      return std::make_pair(kA5L0ABAlignBits, l0aSpaceSize);
+    break;
+  case hivm::AddressSpace::L0B:
+    if (enableMmadL0Planning)
+      return std::make_pair(kA5L0ABAlignBits, l0bSpaceSize);
+    break;
+  case hivm::AddressSpace::BiasBUF:
+    if (enableMmadL0Planning)
+      return std::make_pair(kA5BTAlignBits, kA5BTSizeBits);
+    break;
   default:
-    llvm::report_fatal_error("Temporarily unsupported memory buffer space !");
+    break;
   }
+  llvm::report_fatal_error("Temporarily unsupported memory buffer space !");
 }
 
 void MemPlan::LocalBufferReusePreloadBuffer(StorageEntry *entry,
@@ -3111,12 +3259,6 @@ LogicalResult MemPlan::InitMemSpecsFromModule(func::FuncOp funcOp) {
   auto aL1Size =
       specInterface.getSpecForIdentifierEnum(hacc::DeviceSpec::L1_SIZE);
   l1SpaceSize = cast<IntegerAttr>(aL1Size.getValue()).getInt();
-  auto aL0ASize =
-      specInterface.getSpecForIdentifierEnum(hacc::DeviceSpec::L0A_SIZE);
-  l0aSpaceSize = cast<IntegerAttr>(aL0ASize.getValue()).getInt();
-  auto aL0BSize =
-      specInterface.getSpecForIdentifierEnum(hacc::DeviceSpec::L0B_SIZE);
-  l0bSpaceSize = cast<IntegerAttr>(aL0BSize.getValue()).getInt();
   auto aL0CSize =
       specInterface.getSpecForIdentifierEnum(hacc::DeviceSpec::L0C_SIZE);
   l0cSpaceSize = cast<IntegerAttr>(aL0CSize.getValue()).getInt();
@@ -3129,6 +3271,15 @@ LogicalResult MemPlan::InitMemSpecsFromModule(func::FuncOp funcOp) {
   auto aL0cAlignSize =
       specInterface.getSpecForIdentifierEnum(hacc::DeviceSpec::L0C_ALIGN_SIZE);
   l0cAlignSize = cast<IntegerAttr>(aL0cAlignSize.getValue()).getInt();
+  if (enableMmadL0Planning) {
+    auto aL0ASize =
+        specInterface.getSpecForIdentifierEnum(hacc::DeviceSpec::L0A_SIZE);
+    l0aSpaceSize = cast<IntegerAttr>(aL0ASize.getValue()).getInt();
+    auto aL0BSize =
+        specInterface.getSpecForIdentifierEnum(hacc::DeviceSpec::L0B_SIZE);
+    l0bSpaceSize = cast<IntegerAttr>(aL0BSize.getValue()).getInt();
+    l0cAlignSize = std::max(l0cAlignSize, kA5L0CAlignBits);
+  }
   return success();
 }
 
@@ -3238,7 +3389,8 @@ private:
   // first is buffer2Offsets and second is preload-local alloc roots.
   std::optional<std::pair<Buffer2Offsets, DenseSet<Value>>>
   planMemoryForFuncOp(func::FuncOp &funcOp,
-                      VFInplaceReuseAnalysis &vfInplaceReuseAnalysis);
+                      VFInplaceReuseAnalysis &vfInplaceReuseAnalysis,
+                      bool enableMmadL0Planning);
 
   // Retry fallback: remove the multi-buffer marks of AIV functions in mix
   // modules, but keep those of preload local buffers.
@@ -3287,7 +3439,8 @@ void PlanMemoryPass::disableAIVMultibuffer(func::FuncOp &funcOp) {
 
 std::optional<std::pair<Buffer2Offsets, DenseSet<Value>>>
 PlanMemoryPass::planMemoryForFuncOp(
-    func::FuncOp &funcOp, VFInplaceReuseAnalysis &vfInplaceReuseAnalysis) {
+    func::FuncOp &funcOp, VFInplaceReuseAnalysis &vfInplaceReuseAnalysis,
+    bool enableMmadL0Planning) {
   // Add a attr to the memref alloc for the tempbuf.
   if (this->enableMemoryDisplay) {
     markTempBufForMemoryDisplay(funcOp);
@@ -3355,7 +3508,7 @@ PlanMemoryPass::planMemoryForFuncOp(
 
       MemLivenessAnalysis memLiveness(
           funcOp, this->memMode, this->disableTightlyCoupledBufferReuse,
-          /*randomSeed=*/usePoolFallback ? 0 : attempt);
+          /*randomSeed=*/usePoolFallback ? 0 : attempt, enableMmadL0Planning);
       memLiveness.build();
       if (usePoolFallback && failed(tcbPoolPlan.adaptLiveness(memLiveness)))
         return std::nullopt;
@@ -3363,7 +3516,7 @@ PlanMemoryPass::planMemoryForFuncOp(
       MemPlan memPlan(this->memMode, this->enableGlobalReuse,
                       this->enableMemoryDisplay, this->restrictInplaceAsISA,
                       this->simtVFDynamicSize, this->disableVFReachableCheck,
-                      this->planMemoryStrategy);
+                      this->planMemoryStrategy, enableMmadL0Planning);
       if (failed(memPlan.InitMemSpecsFromModule(funcOp))) {
         return std::nullopt;
       }
@@ -3571,8 +3724,24 @@ void PlanMemoryPass::runOnOperation() {
       continue;
     if (hivm::isVF(funcOp))
       continue;
+    // Select once per function. MMAD L1 and functions without MMAD L0 retain
+    // the legacy policy, even when another function in the module uses MMAD L0.
+    bool enableMmadL0Planning = this->memMode == MemPlanMode::LOCAL_MEM_PLAN &&
+                                hasStandaloneMmad(funcOp);
+    if (enableMmadL0Planning) {
+      if (!hacc::utils::isAscend950(moduleOp)) {
+        funcOp.emitError("mmadL0 memory planning supports only A5");
+        signalPassFailure();
+        return;
+      }
+      if (failed(validateExplicitCubeAllocs(funcOp, moduleOp))) {
+        signalPassFailure();
+        return;
+      }
+    }
     LDBG("\n-----funcOp " << funcOp.getName() << " mem plan start !! -----\n");
-    auto planned = planMemoryForFuncOp(funcOp, vfInplaceReuseAnalysis);
+    auto planned = planMemoryForFuncOp(funcOp, vfInplaceReuseAnalysis,
+                                       enableMmadL0Planning);
     if (planned.has_value()) {
       planResultMap[funcOp] = std::move(planned.value());
     } else {
