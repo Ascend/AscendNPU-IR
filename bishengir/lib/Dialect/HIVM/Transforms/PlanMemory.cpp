@@ -2228,6 +2228,14 @@ void MemPlan::ReportCurEntryDebugInfo(const StorageEntry *curEntry) const {
 
 StorageEntry *
 MemPlan::GetReorderRootStorageEntry(StorageEntry *rootStorageEntry) {
+  assert(rootStorageEntry->bufInfo->operation &&
+         "Unrecognized legal define operation !");
+  auto moduleOp =
+      rootStorageEntry->bufInfo->operation->getParentOfType<ModuleOp>();
+  if (hacc::utils::isRegBasedArch(moduleOp) &&
+      rootStorageEntry->bufInfo->bufferScope != hivm::AddressSpace::UB) {
+    return rootStorageEntry;
+  }
   SmallVector<StorageEntry *> origStorageEntryVec = {rootStorageEntry};
   origStorageEntryVec.insert(origStorageEntryVec.end(),
                              rootStorageEntry->mergedChildren.begin(),
