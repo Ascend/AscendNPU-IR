@@ -18,7 +18,10 @@ include "bishengir/Target/NPU/Sync/SyncCapabilityProfile.td"
 // CHECK: ## Capability `try_wait`
 // CHECK: `sync_mode`
 
-// Only the intra_block counter query has a support row.
+// Confirmed C310 rows are inherited by dav-920r1 under the
+// forward-compatibility policy. Every catalogue architecture has a
+// profile, so the "No profile" section is empty. The memory-based
+// architectures carry surveyed empty coverages and answer Unknown.
 // CHECK: ### `dav-920r1`
 // CHECK: Coverage: partial
 // CHECK: matches no row is Unknown
@@ -27,5 +30,5 @@ include "bishengir/Target/NPU/Sync/SyncCapabilityProfile.td"
 // CHECK: intra_block
 // CHECK: ## No profile
 // CHECK: returns Unknown
-// CHECK: `dav-c220`
-// CHECK: `dav-m300`
+// CHECK-NOT: `dav-c220`
+// CHECK-NOT: `dav-m300`
