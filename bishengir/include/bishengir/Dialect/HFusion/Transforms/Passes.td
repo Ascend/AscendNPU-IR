@@ -165,7 +165,7 @@ def AutoVectorizeV2 : Pass<"hfusion-auto-vectorize-v2", "ModuleOp"> {
            "Maximum number of ops allowed in one fused node.">,
     Option<"enableVFStackLimit", "enable-vf-stack-limit", "bool", "false",
            "Enable conservative vector function stack slot limit.">,
-    Option<"enableMultipleConsumerFusion", "enable-multiple-consumer-fusion", "bool", "false",
+    Option<"enableMultipleConsumerFusion", "enable-multiple-consumer-fusion", "bool", "true",
            "Enable multiple consumer fusion in AutoVectorizeV2.">,
     Option<"emitTransformSequence", "emit-transform-sequence", "bool", "false",
            "Emit AutoVectorizeV2 payload tags and transform sequence without applying it.">,

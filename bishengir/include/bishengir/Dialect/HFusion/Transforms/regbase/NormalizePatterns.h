@@ -84,8 +84,8 @@ void populateNormalizeArithmeticPatterns(RewritePatternSet &patterns, bool enabl
 void populateNormalizePreFinalArithmeticPatterns(RewritePatternSet &patterns);
 void populateNormalizeFinalArithmeticPatterns(RewritePatternSet &patterns);
 void populateNormalizeModPatterns(RewritePatternSet &patterns);
-void populateNormalizePow2DivRemPatterns(RewritePatternSet &patterns,
-                                         bool enable);
+void populateNormalizeConstDivRemPatterns(RewritePatternSet &patterns,
+                                          bool enableDivRemPow2);
 void populateNormalizePrimaryMathPatterns(RewritePatternSet &patterns);
 void populateNormalizeLateMathPatterns(RewritePatternSet &patterns);
 void populateNormalizeCastingPatterns(RewritePatternSet &patterns);

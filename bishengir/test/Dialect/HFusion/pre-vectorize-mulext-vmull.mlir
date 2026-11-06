@@ -31,3 +31,15 @@ func.func @test_mul_ext_unsigned_2d(%arg0: tensor<16x32xi32>, %arg1: tensor<16x3
 // CHECK-SAME: ins(%arg0, %arg1 : tensor<16x32xi32>, tensor<16x32xi32>)
 // CHECK-SAME: outs(%[[LOW_EMPTY]], %[[HIGH_EMPTY]] : tensor<16x32xi32>, tensor<16x32xi32>)
 // CHECK: arith.mului_extended
+
+// Dynamic shapes must pass their dimensions to both output tensors.
+func.func @test_mul_ext_dynamic(%arg0: tensor<?xi32>, %arg1: tensor<?xi32>)
+    -> (tensor<?xi32>, tensor<?xi32>) {
+  %lo, %hi = hfusion.mulextui %arg0, %arg1 : tensor<?xi32>
+  return %lo, %hi : tensor<?xi32>, tensor<?xi32>
+}
+// CHECK-LABEL: func.func @test_mul_ext_dynamic
+// CHECK: %[[N:.*]] = tensor.dim %arg0
+// CHECK: tensor.empty(%[[N]]) : tensor<?xi32>
+// CHECK: tensor.empty(%{{.*}}) : tensor<?xi32>
+// CHECK: arith.mului_extended
