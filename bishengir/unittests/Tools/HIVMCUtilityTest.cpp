@@ -1,0 +1,133 @@
+//===- HIVMCUtilityTest.cpp - Device IR serialization tests
+//----------------===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "bishengir/Tools/hivmc/Utility.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/AsmParser/Parser.h"
+#include "llvm/IR/DebugProgramInstruction.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/SourceMgr.h"
+#include "gtest/gtest.h"
+
+using namespace bishengir;
+
+namespace {
+
+constexpr llvm::StringLiteral debugModule = R"(
+@storage = global [16 x i8] zeroinitializer
+
+define void @kernel_vf_debug() !dbg !4 {
+entry:
+  #dbg_value(<2 x float> <float 0.000000e+00, float undef>, !7, !DIExpression(DW_OP_LLVM_fragment, 0, 32), !9)
+  #dbg_value(i32 7, !8, !DIExpression(), !9)
+  #dbg_declare(ptr getelementptr (i8, ptr @storage, i64 4), !7, !DIExpression(DW_OP_plus_uconst, 4), !9)
+  ret void, !dbg !9
+}
+
+!llvm.dbg.cu = !{!0}
+!llvm.module.flags = !{!2}
+!0 = distinct !DICompileUnit(language: DW_LANG_C, file: !1, producer: "test", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)
+!1 = !DIFile(filename: "debug.py", directory: "/")
+!2 = !{i32 2, !"Debug Info Version", i32 3}
+!3 = !DISubroutineType(types: !5)
+!4 = distinct !DISubprogram(name: "kernel_vf_debug", scope: !1, file: !1, line: 1, type: !3, spFlags: DISPFlagDefinition, unit: !0)
+!5 = !{}
+!6 = !DIBasicType(name: "int", size: 32, encoding: DW_ATE_signed)
+!7 = !DILocalVariable(name: "vector", scope: !4, file: !1, line: 1, type: !10)
+!8 = !DILocalVariable(name: "scalar", scope: !4, file: !1, line: 1, type: !6)
+!9 = !DILocation(line: 1, column: 1, scope: !4)
+!10 = !DICompositeType(tag: DW_TAG_array_type, baseType: !11, size: 64, flags: DIFlagVector, elements: !12)
+!11 = !DIBasicType(name: "float", size: 32, encoding: DW_ATE_float)
+!12 = !{!13}
+!13 = !DISubrange(count: 2)
+)";
+
+std::unique_ptr<llvm::Module> parseDebugModule(llvm::LLVMContext &context) {
+  llvm::SMDiagnostic diagnostic;
+  return llvm::parseAssemblyString(debugModule, diagnostic, context);
+}
+
+size_t countDebugRecords(const llvm::Module &module) {
+  size_t count = 0;
+  for (const auto &function : module)
+    for (const auto &instruction : llvm::instructions(function))
+      count += llvm::range_size(instruction.getDbgRecordRange());
+  return count;
+}
+
+TEST(HIVMCUtilityTest, SerializeDebugRecordsAndRestoreFormat) {
+  llvm::LLVMContext context;
+  auto module = parseDebugModule(context);
+  ASSERT_NE(module, nullptr);
+  module->setIsNewDbgInfoFormat(true);
+  ASSERT_EQ(countDebugRecords(*module), 3u);
+
+  std::string output = moduleToIrString(*module);
+
+  EXPECT_EQ(output.find("#dbg_"), std::string::npos);
+  EXPECT_NE(output.find("call void @llvm.dbg.value(metadata <2 x float> <float "
+                        "0.000000e+00, float undef>"),
+            std::string::npos);
+  EXPECT_NE(output.find("!DIExpression(DW_OP_LLVM_fragment, 0, 32)"),
+            std::string::npos);
+  EXPECT_NE(output.find("call void @llvm.dbg.value(metadata i32 7"),
+            std::string::npos);
+  EXPECT_NE(
+      output.find("call void @llvm.dbg.declare(metadata ptr getelementptr"),
+      std::string::npos);
+  EXPECT_NE(output.find("!DIExpression(DW_OP_plus_uconst, 4)"),
+            std::string::npos);
+  EXPECT_NE(output.find("attrtype: 64"), std::string::npos);
+  EXPECT_NE(output.find("functype: 256"), std::string::npos);
+  EXPECT_TRUE(module->IsNewDbgInfoFormat);
+  EXPECT_EQ(countDebugRecords(*module), 3u);
+  EXPECT_EQ(output, moduleToIrString(*module));
+}
+
+TEST(HIVMCUtilityTest, PreserveLegacyDebugFormat) {
+  llvm::LLVMContext context;
+  auto module = parseDebugModule(context);
+  ASSERT_NE(module, nullptr);
+  module->setIsNewDbgInfoFormat(false);
+
+  std::string output = moduleToIrString(*module);
+
+  EXPECT_EQ(output.find("#dbg_"), std::string::npos);
+  EXPECT_NE(output.find("call void @llvm.dbg.value"), std::string::npos);
+  EXPECT_NE(output.find("call void @llvm.dbg.declare"), std::string::npos);
+  EXPECT_FALSE(module->IsNewDbgInfoFormat);
+}
+
+TEST(HIVMCUtilityTest, FileAndMemorySerializationMatch) {
+  llvm::LLVMContext context;
+  auto module = parseDebugModule(context);
+  ASSERT_NE(module, nullptr);
+  module->setIsNewDbgInfoFormat(true);
+  std::string expected = moduleToIrString(*module);
+
+  llvm::SmallString<128> path;
+  int fd;
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("hivmc-debug-records", "ll",
+                                                  fd, path));
+  llvm::sys::fs::closeFile(fd);
+  llvm::SmallVector<IRModulePair> modules;
+  modules.emplace_back(std::move(module), SubCoreTarget::AIV);
+  auto files = saveToFiles(modules, path.str().str(), false);
+  ASSERT_EQ(files.size(), 1u);
+  ASSERT_NE(files[0].first, nullptr);
+  auto contents = llvm::MemoryBuffer::getFile(files[0].first->getFilename());
+  ASSERT_TRUE(contents);
+  EXPECT_EQ((*contents)->getBuffer(), expected);
+  EXPECT_TRUE(modules[0].first->IsNewDbgInfoFormat);
+  EXPECT_EQ(countDebugRecords(*modules[0].first), 3u);
+}
+
+} // namespace

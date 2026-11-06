@@ -466,7 +466,7 @@ computeFinalDeltaAuxA3(const SmallVector<ModuleOp, 2> &modules,
 }
 
 std::optional<std::string>
-compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
+compileDeviceKernel(StringRef bishengPath, llvm::Module *llvmModule,
                     const std::string &llvmirFilepath,
                     const std::string &outputBinFilepath, SubCoreTarget arch,
                     const HIVMCMainConfig &config, bool isMixKernel,

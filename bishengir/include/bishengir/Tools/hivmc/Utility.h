@@ -12,9 +12,9 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "bishengir/Tools/hivmc/Config.h"
 #include "bishengir/Tools/Utils/AuxBitcodePaths.h"
 #include "bishengir/Tools/Utils/Utils.h"
+#include "bishengir/Tools/hivmc/Config.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Support/FileUtilities.h"
@@ -103,11 +103,10 @@ llvm::StringRef getAscendPath();
 std::string modifyForVersionMismatch(std::string src);
 
 /// Serialize an LLVM Module to the IR string fed to the device compiler:
-/// `Module::print` then `modifyForVersionMismatch`.  This is the in-memory
-/// equivalent of what `saveToFiles` writes to disk, and must stay in sync
-/// with it so the Native (in-process) and Process (external bisheng) backends
-/// receive identical IR.
-std::string moduleToIrString(const llvm::Module &module);
+/// Temporarily use legacy debug intrinsics before printing and applying the
+/// remaining version adaptations. The module's debug format is restored on
+/// return. Both Native and Process backends use this serializer.
+std::string moduleToIrString(llvm::Module &module);
 
 std::string tryReplaceExtension(llvm::StringRef path,
                                 llvm::StringRef newExtension);
@@ -170,9 +169,8 @@ toSubCoreTargetPaths(const auxbitcode::ResolvedAuxBitcodePaths &paths);
 /// The caller logs a warning on mismatch but does NOT fail-closed: this is a
 /// perf diagnostic (PreloadBase may have warmed a stale path; `handleCompile`
 /// delta preload will still cover the authoritative Attr paths).
-bool verifyEarlyAuxSha(
-    mlir::ModuleOp module,
-    const std::map<SubCoreTarget, std::string> &earlyPaths);
+bool verifyEarlyAuxSha(mlir::ModuleOp module,
+                       const std::map<SubCoreTarget, std::string> &earlyPaths);
 
 /// Get the absolute path of the current executable. Resolves symlinks and
 /// handles invocation via PATH. \p argv0 is argv[0] from main, \p mainAddr
