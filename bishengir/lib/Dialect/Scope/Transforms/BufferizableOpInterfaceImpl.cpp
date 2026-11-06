@@ -151,6 +151,11 @@ struct ReturnOpInterface
     return false;
   }
 
+  bool mustBufferizeInPlace(Operation *op, OpOperand &opOperand,
+                            const AnalysisState &state) const {
+    return true;
+  }
+
   AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
                                       const AnalysisState &state) const {
     auto returnOp = cast<ReturnOp>(op);
