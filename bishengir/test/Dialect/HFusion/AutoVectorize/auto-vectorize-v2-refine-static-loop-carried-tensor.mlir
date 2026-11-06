@@ -1,32 +1,23 @@
-// RUN: bishengir-opt %s --hfusion-auto-vectorize-v2 | FileCheck %s
+// RUN: bishengir-opt %s --hfusion-auto-vectorize-v2 --normalize-tensor-ops | FileCheck %s
 
-// MCF's whole-function single-iteration-loop cleanup can inline a short tiled
-// loop and leave a fully static tensor cast to a dynamic scf.for iter_arg.
-// AutoVectorizeV2 must restore the static loop-carried contract when the loop
-// only updates that tensor through shape-preserving insert_slice operations.
-
+// NormalizeTensorOps refines shape-preserving loop-carried tensors after AV2,
+// independently of the enclosing loop dimensions, tensor rank and element type.
 // CHECK-LABEL: func.func @refine_exact_softmax_tree_reduce_stage
-// CHECK-NOT: tensor.cast {{.*}} tensor<1x16x32xf32> to tensor<1x16x?xf32>
+// CHECK-NOT: tensor.cast
 // CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<1x16x32xf32>)
 // CHECK: tensor.expand_shape {{.*}} output_shape [1, 2, 8, 32] : tensor<1x16x32xf32> into tensor<1x2x8x32xf32>
-// CHECK-LABEL: func.func @do_not_refine_without_softmax_row_loop
-// CHECK: tensor.cast {{.*}} : tensor<1x16x32xf32> to tensor<1x16x?xf32>
+// CHECK-LABEL: func.func @refine_without_softmax_row_loop
+// CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<1x16x32xf32>)
+// CHECK-LABEL: func.func @refine_other_tree_stage
+// CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<1x3x32xf32>)
+// CHECK-LABEL: func.func @refine_other_tail_width
+// CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<1x16x64xf32>)
+// CHECK-LABEL: func.func @refine_other_static_shape
+// CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<3x7xi16>)
+// CHECK-LABEL: func.func @refine_multiple_iter_args
+// CHECK: scf.for {{.*}} iter_args({{.*}}, {{.*}}) -> (tensor<3x7xi16>, tensor<3x7xi16>)
+// CHECK-LABEL: func.func @refine_partial_static_source
 // CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<1x16x?xf32>)
-// CHECK-LABEL: func.func @do_not_refine_other_tree_stage
-// CHECK: tensor.cast {{.*}} : tensor<1x3x32xf32> to tensor<1x3x?xf32>
-// CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<1x3x?xf32>)
-// CHECK-LABEL: func.func @do_not_refine_other_tail_width
-// CHECK: tensor.cast {{.*}} : tensor<1x16x64xf32> to tensor<1x16x?xf32>
-// CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<1x16x?xf32>)
-// CHECK-LABEL: func.func @do_not_refine_other_static_shape
-// CHECK: tensor.cast {{.*}} : tensor<3x7xi16> to tensor<?x?xi16>
-// CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<?x?xi16>)
-// CHECK-LABEL: func.func @do_not_refine_multiple_iter_args
-// CHECK: tensor.cast {{.*}} : tensor<3x7xi16> to tensor<?x?xi16>
-// CHECK: scf.for {{.*}} iter_args({{.*}}, {{.*}}) -> (tensor<?x?xi16>, tensor<3x7xi16>)
-// CHECK-LABEL: func.func @do_not_refine_dynamic_source
-// CHECK: tensor.cast {{.*}} : tensor<1x16x?xf32> to tensor<1x?x?xf32>
-// CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<1x?x?xf32>)
 
 module {
   func.func @refine_exact_softmax_tree_reduce_stage(
@@ -69,7 +60,7 @@ module {
     return %result : tensor<19x32xf32>
   }
 
-  func.func @do_not_refine_without_softmax_row_loop(
+  func.func @refine_without_softmax_row_loop(
       %init: tensor<1x16x32xf32>, %update: tensor<1x1x32xf32>)
       -> tensor<1x16x?xf32>
       attributes {
@@ -93,7 +84,7 @@ module {
     return %result : tensor<1x16x?xf32>
   }
 
-  func.func @do_not_refine_other_tree_stage(
+  func.func @refine_other_tree_stage(
       %rows: tensor<19x32xf32>, %init: tensor<1x3x32xf32>,
       %update: tensor<1x1x32xf32>) -> tensor<19x32xf32>
       attributes {
@@ -127,7 +118,7 @@ module {
     return %result : tensor<19x32xf32>
   }
 
-  func.func @do_not_refine_other_tail_width(
+  func.func @refine_other_tail_width(
       %rows: tensor<19x32xf32>, %init: tensor<1x16x64xf32>,
       %update: tensor<1x1x64xf32>) -> tensor<19x32xf32>
       attributes {
@@ -162,7 +153,7 @@ module {
     return %result : tensor<19x32xf32>
   }
 
-  func.func @do_not_refine_other_static_shape(
+  func.func @refine_other_static_shape(
       %init: tensor<3x7xi16>, %update: tensor<1x7xi16>)
       -> tensor<3x7xi16>
       attributes {
@@ -185,7 +176,7 @@ module {
     return %static : tensor<3x7xi16>
   }
 
-  func.func @do_not_refine_multiple_iter_args(
+  func.func @refine_multiple_iter_args(
       %init: tensor<3x7xi16>, %other: tensor<3x7xi16>,
       %update: tensor<1x7xi16>) -> (tensor<3x7xi16>, tensor<3x7xi16>)
       attributes {
@@ -211,7 +202,7 @@ module {
     return %static, %result#1 : tensor<3x7xi16>, tensor<3x7xi16>
   }
 
-  func.func @do_not_refine_dynamic_source(
+  func.func @refine_partial_static_source(
       %init: tensor<1x16x?xf32>, %update: tensor<1x1x?xf32>)
       -> tensor<1x?x?xf32>
       attributes {
