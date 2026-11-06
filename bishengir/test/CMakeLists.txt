@@ -74,8 +74,16 @@ if(BISHENGIR_RUN_NPU_TESTS)
   endif()
 endif()
 
+# `REQUIRES: execution-engine` tests depend on mlir-cpu-runner and its runtime
+# libraries, which are not shipped/usable in this build configuration. Pass the
+# `disable-execution-engine=1` lit param so lit.cfg.py does not register the
+# `execution-engine` feature and those tests are reported UNSUPPORTED (skipped)
+# instead of executed when running `ninja check-bishengir`. The env-var escape
+# hatch `BISHENGIR_SKIP_EXECUTION_ENGINE_TESTS=1` in lit.cfg.py remains usable
+# for ad-hoc `llvm-lit` invocations.
 add_lit_testsuite(check-bishengir "Running the bishengir regression tests"
   ${CMAKE_CURRENT_BINARY_DIR}
+  PARAMS disable-execution-engine=1
   DEPENDS ${BISHENGIR_TEST_DEPENDS}
 )
 
