@@ -93,3 +93,19 @@ target_link_libraries(BiShengIRCubeLoadCapabilityTests PRIVATE
   BiShengIRNPUCubeLoadCapability
   MLIRIR
 )
+
+# Production sync profiles. The sync catalogue is its own TableGen unit
+# rooted at SyncCapabilityProfile.td and links beside the Fixpipe catalogue.
+add_bishengir_unittest(BiShengIRSyncCapabilityTests
+  PARTIAL_SOURCES_INTENDED
+  SyncCapabilityTest.cpp
+)
+add_dependencies(BiShengIRSyncCapabilityTests
+  BiShengIRSyncCapabilityIncGen
+  BiShengIRSyncCapabilityBindingIncGen
+)
+target_link_libraries(BiShengIRSyncCapabilityTests PRIVATE
+  BiShengIRHIVMDialect
+  BiShengIRNPUSyncCapability
+  MLIRIR
+)
