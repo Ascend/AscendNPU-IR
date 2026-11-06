@@ -193,12 +193,12 @@ struct HIVMIsNanTraits : public HIVMIsInfNanNormalizeTraitsBase {
 ///   bitcast -> vand(sign_mask) -> vadd(-inf_bits) -> bitcast -> vabs
 ///   -> bitcast -> vmin(1) -> vmul(-1) -> vadd(1) -> vcast -> vcmp(eq, 0)
 ///   -> vnot
-using NormalizeIsInfOp = mlir::NormalizeIsInfOpTemplate<VIsInfOp, HIVMIsInfTraits>;
+using NormalizeIsInfOp =
+    mlir::NormalizeIsInfOpTemplate<VIsInfOp, HIVMIsInfTraits>;
 
-/// Normalizes `hivm.hir.visnan` to existing HIVM primitive ops:
-///   bitcast -> vand(sign_mask) -> vadd(-inf_bits) -> vmin(1) -> vmax(0)
-///   -> vcast -> vcmp(eq, 0) -> vnot
-using NormalizeIsNanOp = mlir::NormalizeIsNanOpTemplate<VIsNanOp, HIVMIsNanTraits>;
+/// Normalizes `hivm.hir.visnan(x)` to `compare(x, x, ne)`.
+using NormalizeIsNanOp =
+    mlir::NormalizeIsNanOpTemplate<VIsNanOp, HIVMIsNanTraits>;
 
 void populateNormalizeI8I32CmpPatterns(RewritePatternSet &patterns) {
   if (!NormalizeTraitsBase::archIsRegbased())
