@@ -8414,22 +8414,19 @@ struct NormalizeVPowiToPowf
   }
 };
 
-/// Normalize maxnumf (minnumf) to a single masked select.
+/// Normalize maxnumf (minnumf) to maxf (minf).
 /// eg.
 /// dst = hfusion.elemwise_binary {maxnumf} (src0, src1)
 /// is normalized to:
-///   cmp_mask = hfusion.compare {vge} (src0, src1)
+///   base = hfusion.elemwise_binary {maxf} (src0, src1)
+///   src0_nan_mask = hfusion.isnan(src0)
+///   tmp  = hfusion.select(src0_nan_mask, src1, base)
 ///   src1_nan_mask = hfusion.isnan(src1)
-///   cond = hfusion.elemwise_binary {vor} (cmp_mask, src1_nan_mask)
-///   dst  = hfusion.select(cond, src0, src1)
+///   dst  = hfusion.select(src1_nan_mask, src0, tmp)
 ///
-/// The compare is vge/vle rather than vgt/vlt so that equal operands keep
-/// src0. That is what decides a +0/-0 pair, which maxnumf/minnumf leave
-/// open -- either sign is a valid result -- so this only pins the choice
-/// down.
-///
-/// Correctness requires the compare to be ordered, i.e. vge/vle must yield
-/// false whenever either operand is NaN (they lower to arith OGE/OLE).
+/// This implements "number-aware" min/max:
+/// - if exactly one operand is NaN -> returns the other operand
+/// - if both operands are NaN -> returns NaN
 template <BinaryFn funFrom>
 struct NormalizeMinMaxNumFOp
     : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
@@ -8461,29 +8458,40 @@ private:
     static_assert(
         hfusionFn == BinaryFn::maxf || hfusionFn == BinaryFn::minf,
         "Normalization hfusion::BinaryFn::maxnumf (minnumf) allows "
-        "only hfusion::BinaryFn::maxf (minf) to select the predicate");
-    constexpr CompareFn cmpFn =
-        (hfusionFn == BinaryFn::maxf) ? CompareFn::vge : CompareFn::vle;
+        "only hfusion::BinaryFn::maxf (minf) to be used for replacement");
     Location loc = op->getLoc();
     Value src0 = op.getInputs()[0];
     Value src1 = op.getInputs()[1];
+    // Masks: same shape as src tensors, element type i1.
+    auto isNanResultTensorType =
+        utils::getTensorTypeWithSameShape(src0.getType(), rewriter.getI1Type());
+    // src0_nan_mask = hfusion.isnan(src0)
+    Value src0NanMask =
+        rewriter.create<IsNanOp>(loc, isNanResultTensorType, src0)
+            ->getResult(0);
+    // src1_nan_mask = hfusion.isnan(src1)
+    Value src1NanMask =
+        rewriter.create<IsNanOp>(loc, isNanResultTensorType, src1)
+            ->getResult(0);
 
-    // A NaN src0 fails the compare, so only src1 needs a NaN check; with both
-    // NaN the select then yields src0, which is NaN.
-    Value cond = createCmpOp(rewriter, loc, src0, src1, cmpFn)->getResult(0);
+    // base = hfusion.elemwise_binary {maxf|minf} (src0, src1)
+    auto baseOut = utils::createEmptyOp(rewriter, loc, src0);
+    auto baseOp = createBinaryOp<ElemwiseBinaryOp, BinaryFn, BinaryFnAttr>(
+        rewriter, loc, hfusionFn, ValueRange({src0, src1}),
+        ValueRange(baseOut));
+    Value base = baseOp->getResult(0);
 
-    if (utils::needsNanCheck(src1)) {
-      auto isNanResultTensorType = utils::getTensorTypeWithSameShape(
-          src0.getType(), rewriter.getI1Type());
-      Value src1NanMask =
-          rewriter.create<IsNanOp>(loc, isNanResultTensorType, src1)
-              ->getResult(0);
-      cond = createVorOp(rewriter, loc, cond, src1NanMask)->getResult(0);
-    }
+    // tmp = hfusion.select(src0_nan_mask, src1, base)
+    auto tmpOut = utils::createEmptyOp(rewriter, loc, src0);
+    auto tmpOp = rewriter.create<SelectOp>(
+        loc, TypeRange{tmpOut}, ValueRange({src0NanMask, src1, base}),
+        ValueRange(tmpOut));
+    Value tmp = tmpOp->getResult(0);
 
+    // res = hfusion.select(src1_nan_mask, src0, tmp)
     auto resOut = utils::createEmptyOp(rewriter, loc, src0);
     auto resOp = rewriter.create<SelectOp>(loc, TypeRange{resOut},
-                                           ValueRange({cond, src0, src1}),
+                                           ValueRange({src1NanMask, src0, tmp}),
                                            ValueRange(resOut));
     return resOp->getResult(0);
   }
