@@ -1,3 +1,4 @@
+// REQUIRES: bishengir-hifloat8
 // RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_9589 -convert-hivm-to-std | FileCheck %s
 // RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_9589 -hivm-mark-disable-load -convert-hivm-to-std | FileCheck %s --check-prefix=NOCACHE
 // Padding uses FP32, matching PadValueType<hifloat8_t> and avoiding APFloat.

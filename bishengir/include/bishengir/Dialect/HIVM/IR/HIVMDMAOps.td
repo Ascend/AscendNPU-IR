@@ -70,7 +70,11 @@ def LoadOp
            UniformReassociationFlattenTrait,
            DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
            // TODO: Use trait to avoid writing duplicate type constraints
-           OperElemTypeConstraints<[0], [HiF8, F8E4M3FN, F8E5M2, I1, I8, UI8, I16,
+           OperElemTypeConstraints<[0], [
+#ifdef BSPUB_DAVINCI_BISHENGIR
+             HiF8,
+#endif
+                                         F8E4M3FN, F8E5M2, I1, I8, UI8, I16,
                                          UI16, F16, BF16, I32, UI32, F32, F64,
                                          UI64, I64]>,
            DeclareOpInterfaceMethods<
@@ -243,7 +247,11 @@ def StoreOp : HIVM_DmaOp<"store", [
   // Will automatically use the default uniform reassociation impl
   UniformReassociationFlattenTrait,
   DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
+#ifdef BSPUB_DAVINCI_BISHENGIR
   OperElemTypeConstraints<[0], [HiF8, F8E4M3FN, F8E5M2, I1, I8, UI8,
+#else
+  OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8,
+#endif
     I16, UI16, F16, BF16, I32, UI32, F32, UI64, I64]>,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
   DeclareOpInterfaceMethods<StoreLikeOpInterface>,
@@ -290,7 +298,11 @@ def CopyOp : HIVM_DmaOp<"copy", [
   // Will automatically use the default uniform reassociation impl
   UniformReassociationFlattenTrait,
   DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
+#ifdef BSPUB_DAVINCI_BISHENGIR
   OperElemTypeConstraints<[0], [HiF8, F8E4M3FN, F8E5M2, I1, I8, UI8,
+#else
+  OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8,
+#endif
     I16, UI16, F16, BF16, I32, UI32, F32, UI64, I64]>,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
 ]> {
@@ -688,7 +700,11 @@ def NCHW2C1HWNC0Op : HIVM_DmaOp<"nchw2c1hwnc0", [
 
 def AtomicCasOp : HIVM_Op<"atomic_cas", [
   NoLibraryFunctionTrait,
+#ifdef BSPUB_DAVINCI_BISHENGIR
   OperElemTypeConstraints<[0], [I8, I16, I32, F16, BF16, F32, HiF8, F8E4M3FN,
+#else
+  OperElemTypeConstraints<[0], [I8, I16, I32, F16, BF16, F32, F8E4M3FN,
+#endif
                                 F8E5M2, I64]>,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {

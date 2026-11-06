@@ -117,10 +117,12 @@ template <> struct ElementAccumulatorSelector<bfloat16_t, bfloat16_t> {
 };
 
 #if defined(CATLASS_ARCH_A5_ENABLED)
+#ifdef BSPUB_DAVINCI_BISHENGIR
 template <> struct ElementAccumulatorSelector<hifloat8_t, hifloat8_t> {
   using ElementAccumulator = float;
 };
 
+#endif
 template <> struct ElementAccumulatorSelector<float8_e4m3_t, float8_e4m3_t> {
   using ElementAccumulator = float;
 };

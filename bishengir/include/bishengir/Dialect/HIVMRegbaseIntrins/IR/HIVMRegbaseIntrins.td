@@ -85,7 +85,11 @@ def ValidVector : Type<And<[IsVectorTypePred,
                                 VectorOfLengthAndType<[64], [F32]>.predicate,
                                 VectorOfLengthAndType<[128], [F16]>.predicate,
                                 VectorOfLengthAndType<[128], [BF16]>.predicate,
+#ifdef BSPUB_DAVINCI_BISHENGIR
                                 VectorOfLengthAndType<[256], [HiF8, F8E4M3FN]>.predicate,
+#else
+                                VectorOfLengthAndType<[256], [F8E4M3FN]>.predicate,
+#endif
                                 VectorOfLengthAndType<[256], [F8E5M2]>.predicate,
                                 ]>]>,
     "one of the following types: vector<64xi32>, vector<64xui32>, vector<64xsi32>,"
@@ -116,7 +120,11 @@ def LDOrSTVector : Type<And<[IsVectorTypePred,
                                  VectorOfLengthAndType<[32], [I64]>.predicate,
                                  VectorOfLengthAndType<[32], [SI64]>.predicate,
                                  VectorOfLengthAndType<[32], [UI64]>.predicate,
+#ifdef BSPUB_DAVINCI_BISHENGIR
                                  VectorOfLengthAndType<[256], [HiF8, F8E4M3FN]>.predicate,
+#else
+                                 VectorOfLengthAndType<[256], [F8E4M3FN]>.predicate,
+#endif
                                  VectorOfLengthAndType<[256], [F8E5M2]>.predicate,
                                  VectorOfLengthAndType<[128], [BF16]>.predicate,
                                  VectorOfLengthAndType<[128], [F16]>.predicate,
@@ -2056,11 +2064,19 @@ class BroadCastZmodeInstrOp<string mnemonic>
           /*list<Trait> traits=*/[],
           /*int numResults=*/1> {
   let arguments = (ins VectorOfLengthAndType<[128,  128, 128, 128,  256, 256, 256,    256,      64,  64,  64],
+#ifdef BSPUB_DAVINCI_BISHENGIR
                                              [BF16, F16, I16, UI16, I8,  UI8, F8E5M2, HiF8, F8E4M3FN, F32, I32, UI32]>:$src,
+#else
+                                             [BF16, F16, I16, UI16, I8,  UI8, F8E5M2, F8E4M3FN, F32, I32, UI32]>:$src,
+#endif
                        VectorOfLengthAndType<[256], [I1]>:$mask,
                        I32:$predicateMode);
   let results = (outs VectorOfLengthAndType<[128,  128, 128, 128,  256, 256, 256,    256,      64,  64,  64],
+#ifdef BSPUB_DAVINCI_BISHENGIR
                                             [BF16, F16, I16, UI16, I8,  UI8, F8E5M2, HiF8, F8E4M3FN, F32, I32, UI32]>:$res);
+#else
+                                            [BF16, F16, I16, UI16, I8,  UI8, F8E5M2, F8E4M3FN, F32, I32, UI32]>:$res);
+#endif
 }
 
 class BroadCastMmodeInstrOp<string mnemonic>
@@ -2133,7 +2149,11 @@ def VdupmMInstrOp : BroadCastMmodeInstrOp<"hivm.vdupm.m"> {
 }
 def VdupmZInstrOp : BroadCastZmodeInstrOp<"hivm.vdupm.z">;
 
+#ifdef BSPUB_DAVINCI_BISHENGIR
 def Vdups_IntputType: AnyTypeOf<[I8, UI8, I16, UI16, I32, UI32, F16, F32, BF16, HiF8, F8E4M3FN, F8E5M2]>;
+#else
+def Vdups_IntputType: AnyTypeOf<[I8, UI8, I16, UI16, I32, UI32, F16, F32, BF16, F8E4M3FN, F8E5M2]>;
+#endif
 
 class VdupsZmodeInstrOp<string mnemonic>
     : HIVMRegbaseIntrins_Op<
@@ -2146,7 +2166,11 @@ class VdupsZmodeInstrOp<string mnemonic>
                        VectorOfLengthAndType<[256], [I1]>:$mask,
                        I32:$mode);
   let results = (outs VectorOfLengthAndType<[128, 128, 128, 128, 256, 256, 64, 64, 64, 256, 256],
+#ifdef BSPUB_DAVINCI_BISHENGIR
                                             [BF16, F16, I16, UI16, I8, UI8, F32, I32, UI32, HiF8, F8E4M3FN, F8E5M2]>:$res);
+#else
+                                            [BF16, F16, I16, UI16, I8, UI8, F32, I32, UI32, F8E4M3FN, F8E5M2]>:$res);
+#endif
 }
 
 class VdupsMmodeInstrOp<string mnemonic>
@@ -2285,7 +2309,11 @@ def VdupiZInstrOp : VdupiB16ZmodeInstrOp<"hivm.vdupi.x"> {
   }];
 }
 
+#ifdef BSPUB_DAVINCI_BISHENGIR
 def Vbr_IntputType: AnyTypeOf<[I8, UI8, I16, UI16, I32, UI32, F16, BF16, F32, HiF8, F8E4M3FN, F8E5M2]>;
+#else
+def Vbr_IntputType: AnyTypeOf<[I8, UI8, I16, UI16, I32, UI32, F16, BF16, F32, F8E4M3FN, F8E5M2]>;
+#endif
 
 class VbrInstrBaseOp<string mnemonic> : HIVMRegbaseIntrins_Op<
                                          /*string opName=*/mnemonic,
@@ -2295,7 +2323,11 @@ class VbrInstrBaseOp<string mnemonic> : HIVMRegbaseIntrins_Op<
                                          /*int numResults=*/1> {
   let arguments = (ins Vbr_IntputType:$imm);
   let results = (outs VectorOfLengthAndType<[256, 256, 128, 128, 64, 64, 64, 128, 128, 256, 256],
+#ifdef BSPUB_DAVINCI_BISHENGIR
                                             [I8, UI8, I16, UI16, I32, UI32, F32, F16, BF16, HiF8, F8E4M3FN, F8E5M2]>:$res);
+#else
+                                            [I8, UI8, I16, UI16, I32, UI32, F32, F16, BF16, F8E4M3FN, F8E5M2]>:$res);
+#endif
 }
 def VbrInstrOp : VbrInstrBaseOp<"hivm.vbr"> {
   let summary = "A V300 vector broadcasting instruction";
@@ -2547,14 +2579,20 @@ class VcvtffTruncInstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
                        I32:$sat,
                        I32:$part);
   let results = (outs VectorOfLengthAndType<[128, 128, 256, 256],
+#ifdef BSPUB_DAVINCI_BISHENGIR
                                             [F16, BF16, F8E5M2, HiF8, F8E4M3FN]>:$res);
+#else
+                                            [F16, BF16, F8E5M2, F8E4M3FN]>:$res);
+#endif
 
 }
 
 def VcvtffF322F16InstrOp: VcvtffTruncInstrOp<"hivm.vcvtff.f322f16.x">;
 def VcvtffF322BF16InstrOp: VcvtffTruncInstrOp<"hivm.vcvtff.f322bf16.x">;
+#ifdef BSPUB_DAVINCI_BISHENGIR
 def VcvtffF322HiF8InstrOp: VcvtffTruncInstrOp<"hivm.vcvtff.f322hif8.x">;
 
+#endif
 def VcvtffF322F8E4M3InstrOp: VcvtffTruncInstrOp<"hivm.vcvtff.f322f8e4m3.x">;
 def VcvtffF322F8E5M2InstrOp: VcvtffTruncInstrOp<"hivm.vcvtff.f322f8e5m2.x">;
 
@@ -2565,7 +2603,11 @@ class VcvtffExtInstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
                                          /*list<Trait> traits=*/[],
                                          /*int numResults=*/1> {
   let arguments = (ins VectorOfLengthAndType<[256, 256, 128, 128],
+#ifdef BSPUB_DAVINCI_BISHENGIR
                                             [F8E5M2, HiF8, F8E4M3FN, F16, BF16]>:$src,
+#else
+                                            [F8E5M2, F8E4M3FN, F16, BF16]>:$src,
+#endif
                        predicateVector:$mask,
                        I32:$part);
   let results = (outs VectorOfLengthAndType<[64],
@@ -2575,8 +2617,10 @@ class VcvtffExtInstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
 
 def VcvtffF162F32InstrOp: VcvtffExtInstrOp<"hivm.vcvtff.f162f32.x">;
 def VcvtffBF162F32InstrOp: VcvtffExtInstrOp<"hivm.vcvtff.bf162f32.x">;
+#ifdef BSPUB_DAVINCI_BISHENGIR
 def VcvtffHiF82F32InstrOp: VcvtffExtInstrOp<"hivm.vcvtff.hif82f32.x">;
 
+#endif
 def VcvtffF8E4M32F32InstrOp: VcvtffExtInstrOp<"hivm.vcvtff.f8e4m32f32.x">;
 def VcvtffF8E5M22F32InstrOp: VcvtffExtInstrOp<"hivm.vcvtff.f8e5m22f32.x">;
 
@@ -3003,11 +3047,19 @@ class VGatherInstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
   /*int numResults =*/ 1> {
   let arguments = (ins UbufPtr:$ptr,
                    VectorOfLengthAndType<[64, 128, 256],
+#ifdef BSPUB_DAVINCI_BISHENGIR
                                          [I32, I16, I8, F32, F16, BF16, HiF8, F8E4M3FN, F8E5M2]>:$indices,
+#else
+                                         [I32, I16, I8, F32, F16, BF16, F8E4M3FN, F8E5M2]>:$indices,
+#endif
                    VectorOfLengthAndType<[256],
                                          [I1]>:$mask);
   let results = (outs VectorOfLengthAndType<[64, 128, 256],
+#ifdef BSPUB_DAVINCI_BISHENGIR
                                             [I32, I16, I8, F32, F16, BF16, HiF8, F8E4M3FN, F8E5M2]>:$res);
+#else
+                                            [I32, I16, I8, F32, F16, BF16, F8E4M3FN, F8E5M2]>:$res);
+#endif
 }
 
 def VGatherV64S32InstrOp : VGatherInstrOp<"hivm.vgather2_v300.v64s32"> {

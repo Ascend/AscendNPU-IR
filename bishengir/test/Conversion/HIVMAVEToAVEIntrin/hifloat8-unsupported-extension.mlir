@@ -1,3 +1,4 @@
+// REQUIRES: bishengir-hifloat8
 // RUN: not bishengir-opt %s --convert-hivmave-to-ave-intrin 2>&1 | FileCheck %s
 // A direct HiF8 -> FP16 AVE extension is not a native conversion. The HIVM
 // vectorizer expands it through FP32 before reaching this layer.

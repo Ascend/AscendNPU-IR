@@ -1216,7 +1216,11 @@ class HIVM_ElementwiseTernaryOp<string mnemonic, list<Trait> traits = []> :
 def VSelOp : HIVM_ElementwiseTernaryOp<"vsel",
     [OperElemTypeConstraints<[/*condition=*/0], [I1,I8]>,
      OperElemTypeConstraints<[/*src0=*/1, /*src1=*/2],
+#ifdef BSPUB_DAVINCI_BISHENGIR
                              [I1, AnyI8, AnyI16, F16, BF16, HiF8, F8E4M3FN,
+#else
+                             [I1, AnyI8, AnyI16, F16, BF16, F8E4M3FN,
+#endif
                               F8E5M2, AnyI32, F32, I64, UI64]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface, ["getExtraBufferSize"]>,
      BroadcastableOTF]> {
@@ -1245,7 +1249,11 @@ def VSelOp : HIVM_ElementwiseTernaryOp<"vsel",
 def VBrcOp : HIVM_VectorOp<"vbrc",
     [SameOperandsElementType,
      OperElemTypeConstraints<
+#ifdef BSPUB_DAVINCI_BISHENGIR
          [0], [I8, UI8, I16, F16, UI16, I32, HiF8, F8E4M3FN, F8E5M2, F32, UI32, BF16, I64, UI64, I1]>,
+#else
+         [0], [I8, UI8, I16, F16, UI16, I32, F8E4M3FN, F8E5M2, F32, UI32, BF16, I64, UI64, I1]>,
+#endif
      DeclareOpInterfaceMethods<ExtraBufferOpInterface>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
                                ["getIteratorTypesArray", "getIndexingMaps"]>,
@@ -1435,7 +1443,11 @@ def VReduceOp : HIVM_VectorOp<"vreduce",
 //===----------------------------------------------------------------------===//
 
 def VTransposeOp : HIVM_VectorOp<"vtranspose",
+#ifdef BSPUB_DAVINCI_BISHENGIR
     [OperElemTypeConstraints<[0], [I1, AnyI8, AnyI16, AnyI32, F16, BF16, F32, I64, UI64, HiF8, F8E4M3FN, F8E5M2]>,
+#else
+    [OperElemTypeConstraints<[0], [I1, AnyI8, AnyI16, AnyI32, F16, BF16, F32, I64, UI64, F8E4M3FN, F8E5M2]>,
+#endif
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray", "setIteratorTypesArray", "getIndexingMaps"]>,
      DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
@@ -1561,7 +1573,11 @@ def VInterleaveOp : HIVM_VectorOp<"vinterleave",
     [SameOperandsElementType, AttrSizedOperandSegments,
      HIVMOpSameOperandsAndResultRank,
      OperElemTypeConstraints<[0],
+#ifdef BSPUB_DAVINCI_BISHENGIR
        [I8, UI8, I16, F16, UI16, I32, HiF8, F8E4M3FN, F8E5M2, F32, UI32, BF16, I64, UI64, I1]>,
+#else
+       [I8, UI8, I16, F16, UI16, I32, F8E4M3FN, F8E5M2, F32, UI32, BF16, I64, UI64, I1]>,
+#endif
      DeclareOpInterfaceMethods<ExtraBufferOpInterface>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
@@ -1607,7 +1623,11 @@ def VInterleaveOp : HIVM_VectorOp<"vinterleave",
 def VDeinterleaveOp : HIVM_VectorOp<"vdeinterleave",
     [SameOperandsElementType, HIVMOpSameOperandsAndResultRank,
      OperElemTypeConstraints<[0],
+#ifdef BSPUB_DAVINCI_BISHENGIR
        [I8, UI8, I16, F16, UI16, I32, HiF8, F8E4M3FN, F8E5M2, F32, UI32, BF16, I64, UI64]>,
+#else
+       [I8, UI8, I16, F16, UI16, I32, F8E4M3FN, F8E5M2, F32, UI32, BF16, I64, UI64]>,
+#endif
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
      DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
@@ -1831,7 +1851,11 @@ def VConcatOp : HIVM_VectorOp<"vconcat",
 
 def VGatherOp : HIVM_VectorOp<"vgather",
     [HIVMOpSameOperandsAndResultRank,
+#ifdef BSPUB_DAVINCI_BISHENGIR
      OperElemTypeConstraints<[0], [I1, I8, I16, UI16, I32, UI32, F16, BF16, F32, HiF8, F8E4M3FN, F8E5M2]>,
+#else
+     OperElemTypeConstraints<[0], [I1, I8, I16, UI16, I32, UI32, F16, BF16, F32, F8E4M3FN, F8E5M2]>,
+#endif
      OperElemTypeConstraints<[1], [I16, I32]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,

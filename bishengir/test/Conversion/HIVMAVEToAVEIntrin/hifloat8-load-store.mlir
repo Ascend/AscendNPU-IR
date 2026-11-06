@@ -1,3 +1,4 @@
+// REQUIRES: bishengir-hifloat8
 // RUN: bishengir-opt %s -convert-hivmave-to-ave-intrin | FileCheck %s
 
 // HiFloat8 memory transfers preserve bits through byte register instructions.

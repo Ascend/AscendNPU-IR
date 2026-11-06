@@ -1,3 +1,4 @@
+// REQUIRES: bishengir-hifloat8
 // RUN: bishengir-opt %s --execution-engine-convert-hivm-to-upstream | FileCheck %s
 // CHECK-LABEL: func.func @hybrid
 // CHECK: hfusion.cast

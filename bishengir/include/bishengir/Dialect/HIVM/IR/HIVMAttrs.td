@@ -448,8 +448,10 @@ def HIVM_FLOOR : I32EnumAttrCase<"FLOOR", 2, "floor">;
 def HIVM_CEIL : I32EnumAttrCase<"CEIL", 3, "ceil">;
 def HIVM_TRUNC : I32EnumAttrCase<"TRUNC", 4, "trunc">;
 def HIVM_ODD : I32EnumAttrCase<"ODD", 5, "odd">;
+#ifdef BSPUB_DAVINCI_BISHENGIR
 def HIVM_HYBRID : I32EnumAttrCase<"HYBRID", 7, "hybrid">;
 
+#endif
 def HIVM_TRUNCWITHOVERFLOW : I32EnumAttrCase<"TRUNCWITHOVERFLOW", 6, "truncwithoverflow">;
 
 def HIVM_RoundModeEnum : HIVM_I32Enum<
@@ -460,8 +462,12 @@ def HIVM_RoundModeEnum : HIVM_I32Enum<
     HIVM_CEIL,
     HIVM_TRUNC,
     HIVM_ODD,
+#ifdef BSPUB_DAVINCI_BISHENGIR
     HIVM_TRUNCWITHOVERFLOW,
     HIVM_HYBRID
+#else
+    HIVM_TRUNCWITHOVERFLOW
+#endif
   ]>;
 
 def HIVM_RoundModeAttr : HIVM_I32EnumAttr<"round_mode", HIVM_RoundModeEnum> {

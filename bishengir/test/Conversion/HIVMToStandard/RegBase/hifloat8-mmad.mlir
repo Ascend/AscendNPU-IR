@@ -1,3 +1,4 @@
+// REQUIRES: bishengir-hifloat8
 // RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_9589 -convert-hivm-to-std | FileCheck %s
 
 // CHECK-LABEL: func.func @matmul

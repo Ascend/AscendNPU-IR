@@ -358,3 +358,6 @@ if config.shmem_build_template:
 # only when requested, independently of the normal SHMEM compile tests.
 if lit_config.params.get("shmem-transport-wrappers", "0") == "1":
     config.available_features.add("shmem-transport-wrappers")
+
+if config.bishengir_hifloat8:
+    config.available_features.add("bishengir-hifloat8")

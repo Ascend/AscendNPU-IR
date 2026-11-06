@@ -1,3 +1,4 @@
+// REQUIRES: bishengir-hifloat8
 // RUN: bishengir-translate --mlir-to-llvmir %s | FileCheck %s
 
 // CHECK-LABEL: define <256 x hifloat8> @encode_hybrid(

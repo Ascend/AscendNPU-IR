@@ -1,3 +1,4 @@
+// REQUIRES: bishengir-hifloat8
 // RUN: bishengir-opt %s -convert-hivmave-to-ave-intrin -split-input-file -verify-diagnostics
 
 func.func @unsupported_rint(%x: vector<64xf32>, %mask: vector<256xi1>) -> vector<256xf8HIF> attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {

@@ -363,6 +363,7 @@ LogicalResult VCastOp::verify() {
       "uint32_t_to_uint16_t_truncmode",
       "uint32_t_to_float_rintmode",
       "uint32_t_to_bfloat16_t_rintmode",
+#if BSPUB_DAVINCI_BISHENGIR
       "float_to_hifloat8_t_roundmode",
       "float_to_hifloat8_t_hybridmode",
       "half_to_hifloat8_t_roundmode",
@@ -371,6 +372,7 @@ LogicalResult VCastOp::verify() {
       "hifloat8_t_to_float_rintmode",
       "hifloat8_t_to_half_roundmode",
       "hifloat8_t_to_half_rintmode",
+#endif
       "float_to_float8_e4m3_t_rintmode",
       "uint8_t_to_uint16_t_rintmode",
       "uint16_t_to_uint8_t_truncwithoverflowmode",

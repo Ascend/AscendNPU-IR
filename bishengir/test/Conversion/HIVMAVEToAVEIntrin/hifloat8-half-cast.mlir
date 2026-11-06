@@ -1,3 +1,4 @@
+// REQUIRES: bishengir-hifloat8
 // RUN: bishengir-opt %s --hacc-append-device-spec=target=Ascend950PR_9589 --normalize-vector --convert-arith-to-hivmave --convert-hivmave-to-ave-intrin | FileCheck %s
 // The old HIVM vectorize() interface was removed upstream. Exercise the
 // retained FP32 bridge directly through the current Arith -> AVE lowering.
