@@ -47,7 +47,7 @@ module {
     // CHECK: %[[ALLOCA2:.*]] = memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
     // CCF2 mmad inside for: initCondition = andi(counterPrevious1, firstIter2), remain_in_l0c
     // CHECK: %[[INIT2:.*]] = arith.andi %[[CNT1_ZERO]], {{.*}} : i1
-    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C} ins({{.*}}, {{.*}}, %[[INIT2]], %c64, %c32, %c32
+    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C} ins({{.*}}, {{.*}}, %[[INIT2]], %c64, %c32, %c32
     // counterPrevious2: counterPrevIn=counterPrevious1(runtime) → andi(counter1==0, counter2==0)
     //   compare: andi(counter1==0, counter2==0)  (did CCF1 and CCF2 both never execute?)
     // CHECK: %[[CNT_PREV2:.*]] = arith.andi %[[CNT1_ZERO]], {{.*}} {counter_previous} : i1
@@ -59,13 +59,13 @@ module {
 
     // CCF3: bare mmad (no for) → ReuseL0C from CCF2's IfOp, no counter/addTailFallback
     // CCF3 mmad: initCondition = counterPrevious2 (AndIOp{counter_previous}), remain_in_l0c
-    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C} ins({{.*}}, {{.*}}, %[[CNT_PREV2]], %c64, %c32, %c32
+    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C} ins({{.*}}, {{.*}}, %[[CNT_PREV2]], %c64, %c32, %c32
     // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
     %mmad3 = hivm.hir.mmadL1 ins(%a, %b, %false, %c16, %c16, %c16 : tensor<64x32xf32>, tensor<32x32xf32>, i1, index, index, index) outs(%for2 : tensor<64x32xf32>) -> tensor<64x32xf32>
 
     // CCF4: for with constant bounds (mayNotExec=false) → ReuseL0C, counterPrevious=false (folded)
     // CCF4 mmad: initCondition = false (always accumulate), remain_in_l0c, no may_not_exec
-    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C} ins({{.*}}, {{.*}}, %false, %c64, %c32, %c32
+    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C} ins({{.*}}, {{.*}}, %false, %c64, %c32, %c32
     // CHECK-NOT: may_not_exec
     // CHECK-NOT: scf.if {{.*}} -> (tensor<64x32xf32>)
     // CHECK: return
@@ -98,8 +98,8 @@ module {
     %b = bufferization.to_tensor %alloc_b restrict writable : memref<32x32xf32>
     %empty = tensor.empty() : tensor<64x32xf32>
 
-    // CCF1: bare mmadL1 (definitely executes) → kNormalizedInL0C
-    // CHECK: hivm.hir.mmadL1 {{.*}} normalized_in_L0C
+    // CCF1: bare mmadL1 (definitely executes) → result stays in L0C
+    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
     %mmad1 = hivm.hir.mmadL1 ins(%a, %b, %false, %c16, %c16, %c16 : tensor<64x32xf32>, tensor<32x32xf32>, i1, index, index, index) outs(%empty : tensor<64x32xf32>) -> tensor<64x32xf32>
 
     // CCF2: for with variable bounds, ReuseL0C from CCF1
@@ -146,9 +146,9 @@ module {
     // CHECK: memref.alloca() {normalize_matmul_counter = 1 : i32} : memref<i32>
     // CCF1 mmad: initCondition = firstIter (CmpIOp, counter == 0), remain_in_l0c
     // CHECK: %[[FIRST1_A:.*]] = arith.cmpi eq, {{.*}}, %c0_i32 : i32
-    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C} ins({{.*}}, {{.*}}, %[[FIRST1_A]], %c64, %c32, %c32
+    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C} ins({{.*}}, {{.*}}, %[[FIRST1_A]], %c64, %c32, %c32
     // CHECK: %[[FIRST1_B:.*]] = arith.cmpi eq, {{.*}}, %c0_i32 : i32
-    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C} ins({{.*}}, {{.*}}, %[[FIRST1_B]], %c64, %c32, %c32
+    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C} ins({{.*}}, {{.*}}, %[[FIRST1_B]], %c64, %c32, %c32
     %for1:2 = scf.for %i1 = %lb to %ub step %c1_i32 iter_args(%acc1_0 = %vbrc_zero1, %acc1_1 = %vbrc_zero2) -> (tensor<64x32xf32>, tensor<64x32xf32>) : i32 {
       %mmad1_0 = hivm.hir.mmadL1 ins(%a, %b, %false, %c16, %c16, %c16 : tensor<64x32xf32>, tensor<32x32xf32>, i1, index, index, index) outs(%acc1_0 : tensor<64x32xf32>) -> tensor<64x32xf32>
       %mmad1_1 = hivm.hir.mmadL1 ins(%a, %b, %false, %c16, %c16, %c16 : tensor<64x32xf32>, tensor<32x32xf32>, i1, index, index, index) outs(%acc1_1 : tensor<64x32xf32>) -> tensor<64x32xf32>
@@ -160,9 +160,9 @@ module {
     // CHECK: memref.alloca() {normalize_matmul_counter = 1 : i32} : memref<i32>
     // CCF2 mmad: initCondition = andi(counterPrevious1, firstIter2) (AndIOp), remain_in_l0c
     // CHECK: %[[INIT2_A:.*]] = arith.andi {{.*}}, {{.*}} : i1
-    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C} ins({{.*}}, {{.*}}, %[[INIT2_A]], %c64, %c32, %c32
+    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C} ins({{.*}}, {{.*}}, %[[INIT2_A]], %c64, %c32, %c32
     // CHECK: %[[INIT2_B:.*]] = arith.andi {{.*}}, {{.*}} : i1
-    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C} ins({{.*}}, {{.*}}, %[[INIT2_B]], %c64, %c32, %c32
+    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C} ins({{.*}}, {{.*}}, %[[INIT2_B]], %c64, %c32, %c32
     %for2:2 = scf.for %i2 = %lb to %ub step %c1_i32 iter_args(%acc2_0 = %for1#0, %acc2_1 = %for1#1) -> (tensor<64x32xf32>, tensor<64x32xf32>) : i32 {
       %mmad2_0 = hivm.hir.mmadL1 ins(%a, %b, %false, %c16, %c16, %c16 : tensor<64x32xf32>, tensor<32x32xf32>, i1, index, index, index) outs(%acc2_0 : tensor<64x32xf32>) -> tensor<64x32xf32>
       %mmad2_1 = hivm.hir.mmadL1 ins(%a, %b, %false, %c16, %c16, %c16 : tensor<64x32xf32>, tensor<32x32xf32>, i1, index, index, index) outs(%acc2_1 : tensor<64x32xf32>) -> tensor<64x32xf32>
@@ -174,9 +174,9 @@ module {
     // CHECK: memref.alloca() {normalize_matmul_counter = 1 : i32} : memref<i32>
     // CCF3 mmad: initCondition = andi(counterPrevious2, firstIter3) (AndIOp), remain_in_l0c
     // CHECK: %[[INIT3_A:.*]] = arith.andi {{.*}}, {{.*}} : i1
-    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C} ins({{.*}}, {{.*}}, %[[INIT3_A]], %c64, %c32, %c32
+    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C} ins({{.*}}, {{.*}}, %[[INIT3_A]], %c64, %c32, %c32
     // CHECK: %[[INIT3_B:.*]] = arith.andi {{.*}}, {{.*}} : i1
-    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C} ins({{.*}}, {{.*}}, %[[INIT3_B]], %c64, %c32, %c32
+    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C} ins({{.*}}, {{.*}}, %[[INIT3_B]], %c64, %c32, %c32
     // CHECK-COUNT-2: scf.if {{.*}} -> (tensor<64x32xf32>)
     // CHECK: hivm.hir.vbrc
     // CHECK: return

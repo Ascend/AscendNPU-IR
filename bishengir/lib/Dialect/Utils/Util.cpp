@@ -28,6 +28,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/DLTI/DLTI.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
@@ -182,6 +183,38 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
 } // namespace
 
 namespace utils {
+
+llvm::SmallVector<size_t> getIntegersOfArrayAttr(Operation *op,
+                                                 llvm::StringLiteral attrName) {
+  ArrayAttr arr = op->getAttrOfType<ArrayAttr>(attrName);
+  llvm::SmallVector<size_t> result;
+  if (!arr)
+    return result;
+  result.reserve(arr.size());
+  for (Attribute attr : arr) {
+    auto intAttr = dyn_cast<IntegerAttr>(attr);
+    // In production you may want to assert or handle errors.
+    assert(intAttr && "ArrayAttr element is not an IntegerAttr");
+    // Use getValue().getZExtValue() to interpret as unsigned.
+    result.push_back(intAttr.getValue().getZExtValue());
+  }
+  return result;
+}
+
+void insertIntegerAttrToArrayAttr(Operation *op, llvm::StringLiteral attrName,
+                                  size_t value, Builder &builder) {
+  auto arr = getIntegersOfArrayAttr(op, attrName);
+  if (std::find(arr.begin(), arr.end(), value) != arr.end())
+    return;
+  arr.push_back(value);
+  std::sort(arr.begin(), arr.end());
+
+  SmallVector<Attribute> newAttrs;
+  for (auto idx : arr) {
+    newAttrs.push_back(builder.getI32IntegerAttr(idx));
+  }
+  op->setAttr(attrName, builder.getArrayAttr(newAttrs));
+}
 
 LogicalResult getStridesAndOffsetCompat(MemRefType type,
                                         SmallVectorImpl<int64_t> &strides,
