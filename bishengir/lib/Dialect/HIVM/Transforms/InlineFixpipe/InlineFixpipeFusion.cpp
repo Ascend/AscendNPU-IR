@@ -21,7 +21,9 @@
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/DMA/Fixpipe/FixpipeCapabilityBinding.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/FixpipeCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/Transforms/FixpipeUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/InlineFixpipe/InlineFixpipeUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -39,6 +41,20 @@
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 using namespace mlir;
+using bishengir::npu::FixpipeCapabilityRequestBuilder;
+using bishengir::npu::NativeSupport;
+using bishengir::npu::queryNativeSupport;
+
+static bool builtRequestIsNative(Operation *anchor,
+                                 FixpipeCapabilityRequestBuilder builder) {
+  std::optional<bishengir::npu::NPUArchitectureKind> architecture =
+      hivm::lookupModuleArchitecture(anchor);
+  if (!architecture)
+    return false;
+  auto storage = builder.build();
+  return queryNativeSupport(*architecture, storage.getRequest()) ==
+         NativeSupport::Native;
+}
 
 namespace mlir::hivm {
 
@@ -81,14 +97,52 @@ bool isUserSliceSwappable(hivm::FixpipeOp fixpipe,
          !isInsertedToStatic(extractSlice);
 }
 
-bool isUserTransposeInlinable(hivm::FixpipeOp op, Operation *user) {
-  if (!isOnRegBasedArch(op))
+Type getInitType(Value v, hivm::FixpipePreQuantMode quant,
+                 PatternRewriter &rewriter) {
+  if (quant == FixpipePreQuantMode ::NO_QUANT)
+    return getElementTypeOrSelf(v);
+  if (quant == FixpipePreQuantMode ::F322F16 ||
+      quant == FixpipePreQuantMode::QF322F16_PRE)
+    return rewriter.getF16Type();
+  if (quant == FixpipePreQuantMode ::F322BF16)
+    return rewriter.getBF16Type();
+  if (quant == FixpipePreQuantMode::S322I8)
+    return rewriter.getI8Type();
+  if (quant == FixpipePreQuantMode::QF322F32_PRE)
+    return rewriter.getF32Type();
+  llvm::report_fatal_error("unsupported QuantMode");
+}
+
+/// Candidate dma_mode for a cast/quant rewrite. Mem-based paths historically
+/// force NZ2ND; reg-based keeps the current mode. The capability query decides
+/// whether that candidate is Native before this helper runs.
+static FixpipeDMAModeAttr candidateDmaModeForQuant(hivm::FixpipeOp op,
+                                                   MLIRContext *ctx) {
+  if (isOnRegBasedArch(op))
+    return op.getDmaModeAttr();
+  return FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+}
+
+bool canInlineFixpipeWithQuant(hivm::FixpipeOp op,
+                               ArrayRef<hivm::VCastOp> castChain) {
+  std::optional<FixpipePreQuantMode> quantMode =
+      getQuantModeForCastChain(castChain, op.getPreQuant());
+  if (!quantMode)
     return false;
-  auto transpose = dyn_cast<hivm::VTransposeOp>(user);
-  if (!transpose || op.getDmaMode() != FixpipeDMAMode::NZ2ND)
+  hivm::VCastOp lastCast = castChain.back();
+  Type dstElementType = getElementTypeOrSelf(lastCast.getResult()[0].getType());
+  FixpipeDMAMode dmaMode =
+      candidateDmaModeForQuant(op, op.getContext()).getValue();
+  std::optional<FixpipeCapabilityRequestBuilder> builder =
+      FixpipeCapabilityRequestBuilder::from(op);
+  if (!builder)
     return false;
-  ArrayRef<int64_t> permutation = transpose.getPermutation();
-  return permutation.size() == 2 && permutation[0] == 1 && permutation[1] == 0;
+  builder->dstElementType(dstElementType);
+  builder->dmaMode(dmaMode);
+  builder->preQuantMode(*quantMode);
+  builder->srcAddressSpace(AddressSpace::L0C);
+  builder->dstAddressSpace(AddressSpace::GM);
+  return builtRequestIsNative(op, std::move(*builder));
 }
 
 void inlineFixpipeWithQuant(PatternRewriter &rewriter, Location loc,
@@ -123,6 +177,22 @@ void inlineFixpipeWithQuant(PatternRewriter &rewriter, Location loc,
     rewriter.eraseOp(castOp);
   rewriter.eraseOp(op);
   LDBG("InlineFixpipeWithPreQuant");
+}
+
+bool canInlineFixpipeWithRelu(hivm::FixpipeOp op, hivm::VReluOp reluOp) {
+  std::optional<FixpipePreReluMode> reluMode = getReluMode(reluOp);
+  if (!reluMode)
+    return false;
+  // NORMAL_RELU is not a Native row in the current Partial profiles (PR-4).
+  // Refuse rather than invent hardware facts.
+  std::optional<FixpipeCapabilityRequestBuilder> builder =
+      FixpipeCapabilityRequestBuilder::from(op);
+  if (!builder)
+    return false;
+  builder->preRelu(*reluMode);
+  builder->srcAddressSpace(AddressSpace::L0C);
+  builder->dstAddressSpace(AddressSpace::GM);
+  return builtRequestIsNative(op, std::move(*builder));
 }
 
 void inlineFixpipeWithRelu(PatternRewriter &rewriter, Location loc,
@@ -165,6 +235,16 @@ bool hasQuantScaleCompileHint(hivm::VMulOp op) {
   });
 }
 
+static FixpipePreQuantMode candidatePreQuantForQuantScale(hivm::FixpipeOp op,
+                                                          Value dst) {
+  auto preQuant = op.getPreQuant();
+  if (preQuant == FixpipePreQuantMode::NO_QUANT &&
+      getElementTypeOrSelf(op.getSrcOperandType()).isF32() &&
+      getElementTypeOrSelf(dst.getType()).isF32())
+    return FixpipePreQuantMode::QF322F32_PRE;
+  return preQuant;
+}
+
 bool isUserQuantScaleInlinable(hivm::FixpipeOp op, hivm::VMulOp vMulOp) {
   auto dualDstMode = op.getDualDstModeAttr();
   if ((dualDstMode &&
@@ -189,7 +269,22 @@ bool isUserQuantScaleInlinable(hivm::FixpipeOp op, hivm::VMulOp vMulOp) {
   unsigned fixpipeOperand =
       vMulOp.getDpsInputOperand(0)->get().getDefiningOp() == op ? 0 : 1;
   Value quantScale = vMulOp.getDpsInputOperand(1 - fixpipeOperand)->get();
-  return utils::isScalarLike(quantScale);
+  if (!utils::isScalarLike(quantScale))
+    return false;
+
+  Value dst = vMulOp.getDpsInitOperand(0)->get();
+  FixpipePreQuantMode preQuant = candidatePreQuantForQuantScale(op, dst);
+  Type dstElementType = getElementTypeOrSelf(dst.getType());
+  std::optional<FixpipeCapabilityRequestBuilder> builder =
+      FixpipeCapabilityRequestBuilder::from(op);
+  if (!builder)
+    return false;
+  builder->dstElementType(dstElementType);
+  builder->dmaMode(op.getDmaMode());
+  builder->preQuantMode(preQuant);
+  builder->srcAddressSpace(AddressSpace::L0C);
+  builder->dstAddressSpace(AddressSpace::GM);
+  return builtRequestIsNative(op, std::move(*builder));
 }
 
 void inlineFixpipeWithQuantScale(PatternRewriter &rewriter, hivm::FixpipeOp op,
@@ -198,13 +293,7 @@ void inlineFixpipeWithQuantScale(PatternRewriter &rewriter, hivm::FixpipeOp op,
       vMulOp.getDpsInputOperand(0)->get().getDefiningOp() == op ? 0 : 1;
   Value quantScale = vMulOp.getDpsInputOperand(1 - fixpipeOperand)->get();
   Value dst = vMulOp.getDpsInitOperand(0)->get();
-
-  auto preQuant = op.getPreQuant();
-  if (preQuant == FixpipePreQuantMode::NO_QUANT &&
-      getElementTypeOrSelf(op.getSrcOperandType()).isF32() &&
-      getElementTypeOrSelf(dst.getType()).isF32()) {
-    preQuant = FixpipePreQuantMode::QF322F32_PRE;
-  }
+  FixpipePreQuantMode preQuant = candidatePreQuantForQuantScale(op, dst);
 
   rewriter.setInsertionPointAfter(vMulOp);
   quantScale =
@@ -261,14 +350,40 @@ bool inlineFixpipeWithTranspose(PatternRewriter &rewriter, hivm::FixpipeOp op,
   return true;
 }
 
-void swapFixpipeWithExtractSlice(PatternRewriter &rewriter, Location loc,
+bool swapFixpipeWithExtractSlice(PatternRewriter &rewriter, Location loc,
                                  hivm::FixpipeOp op,
                                  tensor::ExtractSliceOp extractSliceOp) {
-  rewriter.setInsertionPointAfter(extractSliceOp);
   auto fixpipeSrc = op.getDpsInputOperand(0)->get();
-
   auto newExtractSliceResType =
       extractSliceOp.getResultType().clone(getElementTypeOrSelf(fixpipeSrc));
+  Type dstElem =
+      getInitType(extractSliceOp.getResult(), op.getPreQuant(), rewriter);
+
+  MLIRContext *ctx = rewriter.getContext();
+  // Prefer keeping the current mode when Native; otherwise the historical
+  // mem-based NZ2ND fallback if that candidate is Native.
+  auto nativeDma = [&](FixpipeDMAMode dmaMode) {
+    std::optional<FixpipeCapabilityRequestBuilder> builder =
+        FixpipeCapabilityRequestBuilder::from(op);
+    if (!builder)
+      return false;
+    builder->dstElementType(dstElem);
+    builder->dmaMode(dmaMode);
+    builder->preQuantMode(op.getPreQuant());
+    builder->preRelu(op.getPreRelu());
+    builder->channelSplit(op.getChannelSplit());
+    builder->srcAddressSpace(AddressSpace::L0C);
+    builder->dstAddressSpace(AddressSpace::GM);
+    return builtRequestIsNative(op, std::move(*builder));
+  };
+  FixpipeDMAModeAttr dmaModeAttr = op.getDmaModeAttr();
+  if (!nativeDma(dmaModeAttr.getValue())) {
+    if (!nativeDma(FixpipeDMAMode::NZ2ND))
+      return false;
+    dmaModeAttr = FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+  }
+
+  rewriter.setInsertionPointAfter(extractSliceOp);
   auto newExtractSliceOp = rewriter.create<tensor::ExtractSliceOp>(
       extractSliceOp.getLoc(), newExtractSliceResType, fixpipeSrc,
       extractSliceOp.getMixedOffsets(), extractSliceOp.getMixedSizes(),
@@ -279,17 +394,16 @@ void swapFixpipeWithExtractSlice(PatternRewriter &rewriter, Location loc,
       rewriter, extractSliceOp.getLoc(), newExtractSliceResult,
       getElementTypeOrSelf(extractSliceOp.getResult()));
 
-  MLIRContext *ctx = rewriter.getContext();
   bool regBased = isOnRegBasedArch(op);
-  FixpipeDMAModeAttr dmaModeAttr =
-      regBased ? op.getDmaModeAttr()
-               : FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+  dmaModeAttr = regBased ? op.getDmaModeAttr()
+                         : FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
   auto newFixpipeOp = FixpipeOp::clone(
       rewriter, op, newExtractSliceResult, fixpipeInit,
       {rewriter.getNamedAttr(op.getDmaModeAttrName(), dmaModeAttr)});
   rewriter.replaceOp(extractSliceOp, newFixpipeOp.getResultTensor());
   rewriter.eraseOp(op);
   LDBG("InlineFixpipeWithExtractSliceReshape");
+  return true;
 }
 
 bool traceDownStoreOpWithSingleChain(Value v) {

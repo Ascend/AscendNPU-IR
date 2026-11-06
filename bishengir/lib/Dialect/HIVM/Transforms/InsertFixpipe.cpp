@@ -25,6 +25,7 @@
 #include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/FixpipeCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/Transforms/FixpipeUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -293,6 +294,11 @@ static bool tryInsertFractalOutputFixpipe(PatternRewriter &rewriter,
                                           Value result) {
   auto convert = getOutputFractalConvert(result);
   if (!convert)
+    return false;
+  Type elemType = getElementTypeOrSelf(result.getType());
+  // C220 has no f32→f32 NZ2NZ Native row; refuse and fall back to NZ2ND.
+  if (!isNativeFixpipeCreate(insertAfterOp, elemType, elemType,
+                             FixpipeDMAMode::NZ2NZ))
     return false;
   rewriter.setInsertionPointAfter(insertAfterOp);
   Value dst = utils::createEmptyOp(rewriter, insertAfterOp->getLoc(),
@@ -662,7 +668,9 @@ public:
       return failure();
 
     bool changed = false;
-    if (isOnRegBasedArch(opInst) && allUsersReachFixpipe(mmadLikeOpRes))
+    // Skip when every use already reaches a Fixpipe. Previously limited to
+    // reg-based; the condition is target-independent.
+    if (allUsersReachFixpipe(mmadLikeOpRes))
       return failure();
     if (!shouldSkipOuterFixpipeForAccumulation(opInst, mmadLikeOpRes)) {
 
@@ -998,6 +1006,8 @@ void populateMoveFixpipePatterns(RewritePatternSet &patterns) {
 }
 
 void InsertFixpipe::runOnOperation() {
+  ModuleTargetAnalysis &targets = getAnalysis<ModuleTargetAnalysis>();
+  ModuleTargetAnalysisScope targetScope(targets);
   RewritePatternSet iterArgPatterns(&getContext());
   populateInsertFixpipeForIterArgPatterns(iterArgPatterns);
   if (failed(
@@ -1018,6 +1028,7 @@ void InsertFixpipe::runOnOperation() {
   if (failed(applyPatternsGreedily(getOperation(),
                                    std::move(moveFixpipePatterns)))) {
     signalPassFailure();
+    return;
   }
 
   RewritePatternSet insertFixpipeForDevicePrintPattern(&getContext());
@@ -1026,7 +1037,9 @@ void InsertFixpipe::runOnOperation() {
   if (failed(applyPatternsGreedily(
           getOperation(), std::move(insertFixpipeForDevicePrintPattern)))) {
     signalPassFailure();
+    return;
   }
+  markAnalysesPreserved<ModuleTargetAnalysis>();
 }
 
 std::unique_ptr<Pass> createInsertFixpipePass() {

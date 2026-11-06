@@ -185,6 +185,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   // After Insert/Inline split, InlineFixpipe only folds into existing fixpipe.
   // A3 mem-based path still needs InsertFixpipe (MR 2052 /
   // compile-bisheng-distributed).
+  pm.addPass(mlir::hivm::createCacheModuleTargetPass());
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   {
     InlineFixpipeOptions inlineFixpipeOpts;
@@ -205,6 +206,7 @@ static void hivmPreBufferizationOptimizationPipeline(
 
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
   pm.addPass(createInsertNZ2NDForDebugPass());
+  pm.addPass(mlir::hivm::createCacheModuleTargetPass());
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   {
     InlineFixpipeOptions inlineFixpipeOpts;

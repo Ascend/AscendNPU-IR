@@ -8,8 +8,10 @@
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/DMA/Fixpipe/FixpipeCapabilityBinding.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/ConvertLayoutUtils.h"
+#include "bishengir/Dialect/HIVM/Transforms/FixpipeCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -719,8 +721,24 @@ struct FoldConvertLayoutFixpipePattern
 
         rewriter.modifyOpInPlace(fixpipeOp, [&]() {
           if (fixpipeOp.getDmaMode() == FixpipeDMAMode::NZ2NZ &&
-              hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>()) &&
-              needChannelSplit(op, fixpipeOp)) {
+              needChannelSplit(op, fixpipeOp) && [&] {
+                using bishengir::npu::FixpipeCapabilityRequestBuilder;
+                std::optional<FixpipeCapabilityRequestBuilder> builder =
+                    FixpipeCapabilityRequestBuilder::from(fixpipeOp);
+                if (!builder)
+                  return false;
+                builder->channelSplit(true);
+                builder->srcAddressSpace(AddressSpace::L0C);
+                builder->dstAddressSpace(AddressSpace::L1);
+                std::optional<bishengir::npu::NPUArchitectureKind>
+                    architecture = lookupModuleArchitecture(fixpipeOp);
+                if (!architecture)
+                  return false;
+                auto storage = builder->build();
+                return bishengir::npu::queryNativeSupport(
+                           *architecture, storage.getRequest()) ==
+                       bishengir::npu::NativeSupport::Native;
+              }()) {
             fixpipeOp.setChannelSplit(true);
           }
           fixpipeOp.getSrcMutable().assign(op.getSource());
@@ -1310,6 +1328,29 @@ struct FoldFixpipeStoreConvertLayoutPattern
     newToTensorOp->setAttrs(match.toTensorOp->getAttrs());
 
     FixpipeOp fixpipeOp = match.fixpipeOp;
+    // channel_split=true must be Native. Plain NZ2NZ stays ungated until
+    // address-space/layout capability covers L1-only rows (W5.b).
+    if (match.channelSplit && [&] {
+          using bishengir::npu::FixpipeCapabilityRequestBuilder;
+          std::optional<FixpipeCapabilityRequestBuilder> builder =
+              FixpipeCapabilityRequestBuilder::from(fixpipeOp);
+          if (!builder)
+            return true;
+          builder->dmaMode(FixpipeDMAMode::NZ2NZ);
+          builder->channelSplit(true);
+          builder->srcAddressSpace(AddressSpace::L0C);
+          builder->dstAddressSpace(AddressSpace::L1);
+          std::optional<bishengir::npu::NPUArchitectureKind> architecture =
+              lookupModuleArchitecture(fixpipeOp);
+          if (!architecture)
+            return true;
+          auto storage = builder->build();
+          return bishengir::npu::queryNativeSupport(*architecture,
+                                                    storage.getRequest()) !=
+                 bishengir::npu::NativeSupport::Native;
+        }())
+      return rewriter.notifyMatchFailure(
+          op, "channel_split candidate is not Native on this target");
     rewriter.modifyOpInPlace(fixpipeOp, [&]() {
       fixpipeOp.getDstMutable().assign(newBuffer);
       fixpipeOp.setDmaModeAttr(FixpipeDMAModeAttr::get(rewriter.getContext(),
@@ -1597,6 +1638,8 @@ struct CombineOptimizedConvertLayoutPass
     : public impl::CombineOptimizedConvertLayoutBase<
           CombineOptimizedConvertLayoutPass> {
   void runOnOperation() override {
+    ModuleTargetAnalysis &targets = getAnalysis<ModuleTargetAnalysis>();
+    ModuleTargetAnalysisScope targetScope(targets);
     auto module = getOperation();
     MLIRContext *context = &getContext();
 
@@ -1608,6 +1651,7 @@ struct CombineOptimizedConvertLayoutPass
 
     if (failed(applyPatternsGreedily(module, std::move(patterns), config)))
       signalPassFailure();
+    markAnalysesPreserved<ModuleTargetAnalysis>();
   }
 };
 } // namespace mlir::hivm

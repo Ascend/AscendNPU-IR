@@ -499,6 +499,13 @@ createV2SplitKernelPass(const V2SplitKernelOptions &options = {});
 std::unique_ptr<Pass>
 createV2VerifyStagePass(const V2VerifyStageOptions &options = {});
 
+/// Build and preserve `ModuleTargetAnalysis` for the current pipeline anchor.
+std::unique_ptr<Pass> createCacheModuleTargetPass();
+
+/// Check registered HIVM capability patterns. Fixpipe is the first pattern.
+/// Not part of the default pipeline. `strict` accepts only native.
+std::unique_ptr<Pass> createVerifyCapabilityPass();
+
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//

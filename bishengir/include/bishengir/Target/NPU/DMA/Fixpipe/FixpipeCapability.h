@@ -18,6 +18,10 @@
 // Generated query for the production Fixpipe execution profiles. The request
 // carries mlir::Type values and raw enum/bool values. It does not include
 // HIVM headers, and HACC does not include this header.
+//
+// The Fixpipe Op binding and request builders live in
+// bishengir/Dialect/HIVM/IR/Capability/DMA/Fixpipe/FixpipeCapabilityBinding.h.
+// They are not part of this query library.
 
 #ifndef BISHENGIR_TARGET_NPU_DMA_FIXPIPE_FIXPIPECAPABILITY_H
 #define BISHENGIR_TARGET_NPU_DMA_FIXPIPE_FIXPIPECAPABILITY_H

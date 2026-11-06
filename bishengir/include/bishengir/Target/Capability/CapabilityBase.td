@@ -374,4 +374,55 @@ class ProfileCompleteness<string cppName = "", string name = ""> {
 def CompleteProfile : ProfileCompleteness<"Complete", "complete">;
 def PartialProfile : ProfileCompleteness<"Partial", "partial">;
 
+//===----------------------------------------------------------------------===//
+// 9. Op Bindings
+//===----------------------------------------------------------------------===//
+
+// A binding says where a request field comes from. It does not say which
+// values a target supports. The schema remains the query protocol; the
+// extractor is source, then projection, then request field.
+//
+// element_type reads the element type of a shaped operand or result.
+// identity reads an enum or bool attribute, or the full type of an SSA value.
+// Address space and optional slots are not projections yet. An optional
+// attribute with no ODS default cannot feed a required field.
+
+class CapabilityProjection<string kind> {
+  string ProjectionKind = kind;
+}
+def ElementTypeProjection : CapabilityProjection<"element_type">;
+def IdentityProjection : CapabilityProjection<"identity">;
+// Memref HIVM address space. An unscoped tensor leaves the field unset.
+def AddressSpaceProjection : CapabilityProjection<"address_space">;
+// True when an optional operand is present. Absence is false, not a failure.
+def PresenceProjection : CapabilityProjection<"presence">;
+
+class CapabilityBindingSource<string kind, string odsName> {
+  string SourceKind = kind;
+  string OdsName = odsName;
+}
+class OperandBindingSource<string odsName>
+    : CapabilityBindingSource<"operand", odsName>;
+class ResultBindingSource<string odsName>
+    : CapabilityBindingSource<"result", odsName>;
+class AttributeBindingSource<string odsName>
+    : CapabilityBindingSource<"attribute", odsName>;
+
+class CapabilityExtractor<CapabilityBindingSource source,
+                          CapabilityProjection projection,
+                          CapabilityRequestField requestField> {
+  CapabilityBindingSource Source = source;
+  CapabilityProjection Projection = projection;
+  CapabilityRequestField Field = requestField;
+}
+
+// Every schema field has exactly one extractor. The generated from(op)
+// reads those fields, and create() takes all of them as arguments.
+class CapabilityBinding<CapabilityKey capability, Op operation,
+                        list<CapabilityExtractor> extractors> {
+  CapabilityKey Capability = capability;
+  Op Operation = operation;
+  list<CapabilityExtractor> Extractors = extractors;
+}
+
 #endif // BISHENGIR_TARGET_CAPABILITY_CAPABILITYBASE_TD
