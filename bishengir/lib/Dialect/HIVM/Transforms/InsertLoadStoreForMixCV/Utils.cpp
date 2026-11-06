@@ -40,6 +40,25 @@ using bishengir::npu::FixpipeCapabilityRequestBuilder;
 
 namespace mlir::hivm {
 
+void ensureAllocInUbAddressSpaceIfNeeded(PatternRewriter &rewriter,
+                                         memref::AllocOp allocOp) {
+  auto oldType = allocOp.getType();
+  if (getOptionalHIVMAddressSpace(oldType))
+    return;
+
+  auto ubSpace = rewriter.getAttr<AddressSpaceAttr>(AddressSpace::UB);
+  auto newType = MemRefType::Builder(oldType).setMemorySpace(ubSpace);
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.modifyOpInPlace(allocOp,
+                           [&]() { allocOp.getMemref().setType(newType); });
+
+  // Preserve view and region-argument types until memory-scope inference.
+  rewriter.setInsertionPointAfter(allocOp);
+  auto cast = rewriter.create<memref::MemorySpaceCastOp>(
+      allocOp.getLoc(), oldType, allocOp.getMemref());
+  rewriter.replaceAllUsesExcept(allocOp.getMemref(), cast.getResult(), cast);
+}
+
 bool isConstZero(Value v) {
   auto type = getElementTypeOrSelf(v);
   if (auto floatType = dyn_cast<FloatType>(type)) {

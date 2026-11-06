@@ -1819,10 +1819,6 @@ def V2SplitKernel : HIVMPass<"hivm-v2-split-kernel", "ModuleOp"> {
   let constructor = "mlir::hivm::createV2SplitKernelPass()";
   let dependentDialects = ["func::FuncDialect", "hivm::HIVMDialect",
                            "scf::SCFDialect"];
-  let options = [
-    Option<"ghost", "ghost", "bool", /*default=*/"true",
-           "Keep the MIX function unsplit">
-  ];
 }
 
 // Compute ModuleTargetAnalysis and preserve it. Does not rewrite IR.
