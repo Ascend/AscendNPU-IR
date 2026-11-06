@@ -17,6 +17,9 @@
 
 #include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
+
 #include <cstddef>
 #include <cstdint>
 
@@ -30,27 +33,35 @@ constexpr uint64_t kSpanSaltSeed = 0x9E3779B97F4A7C15ULL;
 constexpr uint64_t advanceSpanSalt(uint64_t s) {
   return s * 6364136223846793005ULL + 1442695040888963407ULL;
 }
-} // namespace
 
-bool mlir::hivm::isLoopShapeRegistered(StringRef name) {
-  if (name.empty() || kSpanKeyCount == 0)
+bool nameMatchesKeys(StringRef name, const uint64_t *keys, unsigned count) {
+  if (name.empty() || count == 0)
     return false;
-  uint64_t salt[kSpanKeyCount] = {};
+  llvm::SmallVector<uint64_t, 16> salt(count);
   uint64_t s = kSpanSaltSeed;
-  for (unsigned k = 0; k < kSpanKeyCount; ++k) {
+  for (unsigned k = 0; k < count; ++k) {
     s = advanceSpanSalt(s);
     salt[k] = s;
   }
-  // Fingerprint every substring so decorated symbols resolve to the same shape.
+  // Fingerprint every substring so decorated symbols resolve to the same key.
   for (size_t i = 0, n = name.size(); i < n; ++i) {
     uint64_t h = 0xcbf29ce484222325ULL;
     for (size_t j = i; j < n; ++j) {
       h ^= static_cast<unsigned char>(name[j]);
       h *= 0x100000001b3ULL;
-      for (unsigned k = 0; k < kSpanKeyCount; ++k)
-        if ((h ^ salt[k]) == kSpanKeys[k])
+      for (unsigned k = 0; k < count; ++k)
+        if ((h ^ salt[k]) == keys[k])
           return true;
     }
   }
   return false;
+}
+} // namespace
+
+bool mlir::hivm::isLoopShapeRegistered(StringRef name) {
+  return nameMatchesKeys(name, kSpanKeys, kSpanKeyCount);
+}
+
+bool mlir::hivm::shouldSkipBindSubBlock(StringRef name) {
+  return nameMatchesKeys(name, kSkipBindKeys, kSkipBindKeyCount);
 }
