@@ -1621,12 +1621,11 @@ private:
     if (op.getPadValue()) {
       padValue = op.getPadValue();
       Type elemType = getElementTypeOrSelf(op.getSrc().getType());
+      if (
 #if BSPUB_DAVINCI_BISHENGIR
-      if (isa<HiFloat8Type>(elemType) || isa<Float8E4M3FNType>(elemType) ||
-          isa<Float8E5M2Type>(elemType)) {
-#else
-      if (isa<Float8E4M3FNType>(elemType) || isa<Float8E5M2Type>(elemType)) {
+          isa<HiFloat8Type>(elemType) ||
 #endif
+          isa<Float8E4M3FNType>(elemType) || isa<Float8E5M2Type>(elemType)) {
         bool isSpan = false;
         if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>)
           isSpan = op.isSpanPaddedLoad();
@@ -1656,12 +1655,11 @@ private:
                                       rewriter.getIntegerType(width));
               })
               .Case([&](FloatType floatType) {
+                if (
 #if BSPUB_DAVINCI_BISHENGIR
-                if (isa<HiFloat8Type>(floatType) ||
-                    isa<Float8E4M3FNType>(floatType) ||
-#else
-                if (isa<Float8E4M3FNType>(floatType) ||
+                    isa<HiFloat8Type>(floatType) ||
 #endif
+                    isa<Float8E4M3FNType>(floatType) ||
                     isa<Float8E5M2Type>(floatType)) {
                   auto constantOp = rewriter.create<arith::ConstantOp>(
                       op.getLoc(),
@@ -2157,12 +2155,11 @@ public:
       return rewriter.create<arith::BitcastOp>(val.getLoc(), I8Ty, val);
     };
     auto src = op.getOperand(0);
+    if (
 #if BSPUB_DAVINCI_BISHENGIR
-    if (isa<HiFloat8Type>(src.getType()) || src.getType().isFloat8E4M3FN() ||
-        src.getType().isFloat8E5M2())
-#else
-    if (src.getType().isFloat8E4M3FN() || src.getType().isFloat8E5M2())
+        isa<HiFloat8Type>(src.getType()) ||
 #endif
+        src.getType().isFloat8E4M3FN() || src.getType().isFloat8E5M2())
       op->setOperand(0, BitCastFp8(src));
     // TODO: Unify the logic with deduceAlignmentForDPSInitOperand
     AlignKind alignKind =

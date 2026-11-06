@@ -2700,12 +2700,11 @@ struct HIVMBroadcastScalarOpLowering
       vbr = rewriter.create<VbrInstrOp>(loc, vlType, src);
     } else if (srcType.isF32()) {
       vbr = rewriter.create<VbrInstrOp>(loc, vlType, src);
+    } else if (
 #if BSPUB_DAVINCI_BISHENGIR
-    } else if (isa<HiFloat8Type>(srcType) || srcType.isFloat8E4M3FN() ||
-               srcType.isFloat8E5M2()) {
-#else
-    } else if (srcType.isFloat8E4M3FN() || srcType.isFloat8E5M2()) {
+        isa<HiFloat8Type>(srcType) ||
 #endif
+        srcType.isFloat8E4M3FN() || srcType.isFloat8E5M2()) {
       Type i8Type = rewriter.getI8Type();
       VectorType i8VLType = createVLVectorType(i8Type);
       Value i8Src = rewriter.create<LLVM::BitcastOp>(loc, i8Type, src);
