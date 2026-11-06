@@ -18,7 +18,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
     }
     %1 = scope.scope : () -> (f32) {
       scope.return %cst_1 : f32
-    } {outline = true}
+    } {outline}
     return %0, %1 : f32, f32
   }
 }

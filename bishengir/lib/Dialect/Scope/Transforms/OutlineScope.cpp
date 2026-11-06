@@ -130,6 +130,8 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
 
     func::FuncOp newFuncOp = rewriter.create<func::FuncOp>(
         moduleOp->getLoc(), prefixFunctionName, funcTy, scopeOp->getAttrs());
+    // Drop the `outline` marker: it only selects the scope to outline.
+    newFuncOp->removeAttr(OutlineAttr::getMnemonic());
     // Transfer layout attribute from the defining op of an input to the
     // outlined function argument, if present.
     for (auto [idx, input] : llvm::enumerate(inputs)) {
@@ -253,7 +255,8 @@ public:
 
   LogicalResult matchAndRewrite(scope::ScopeOp scopeOp,
                                 PatternRewriter &rewriter) const override {
-    if (outlineMarkedScopesOnly && !scopeOp->hasAttr("outline"))
+    if (outlineMarkedScopesOnly &&
+        !scopeOp->hasAttr(OutlineAttr::getMnemonic()))
       return failure();
     SmallVector<Value> inputs = getInputs(scopeOp);
     FailureOr<func::FuncOp> newFuncOp = outlineScope(scopeOp, inputs, rewriter);

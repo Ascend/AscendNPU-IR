@@ -175,7 +175,7 @@ scope::ScopeOp createScope(const OrderedOps &simtVFOps, IRRewriter &rewriter,
                            Location loc) {
   auto scopeOp = rewriter.create<scope::ScopeOp>(
       loc, simtVFOps.back()->getResultTypes(), true);
-  scopeOp->setAttr("outline", rewriter.getUnitAttr());
+  scopeOp->setAttr(scope::OutlineAttr::getMnemonic(), rewriter.getUnitAttr());
   scopeOp->setAttr(
       TFuncCoreTypeAttr::name,
       TFuncCoreTypeAttr::get(rewriter.getContext(), TFuncCoreType::AIV));
@@ -255,7 +255,8 @@ void AutoScopePass::runOnOperation() {
   mod->walk([&](scope::ScopeOp scopeOp) {
     if (auto vectorMode = scopeOp->getAttrOfType<StringAttr>("vector_mode")) {
       if (vectorMode.getValue() == "simt") {
-        scopeOp->setAttr("outline", rewriter.getUnitAttr());
+        scopeOp->setAttr(scope::OutlineAttr::getMnemonic(),
+                         rewriter.getUnitAttr());
         scopeOp->setAttr(
             TFuncCoreTypeAttr::name,
             TFuncCoreTypeAttr::get(rewriter.getContext(), TFuncCoreType::AIV));
