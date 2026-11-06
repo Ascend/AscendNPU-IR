@@ -23,6 +23,7 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -56,9 +57,9 @@ struct PipelineStagingPass
 } // namespace
 
 static void collectCVPipelinedLoops(func::FuncOp &funcOp,
-                                    SmallVector<LoopLikeOpInterface> &loops) {
+                                    SmallVector<scf::ForOp> &loops) {
   funcOp.walk<WalkOrder::PreOrder>(
-      [&](LoopLikeOpInterface loopOp) -> WalkResult {
+      [&](scf::ForOp loopOp) -> WalkResult {
         if (loopOp->hasAttr(hivm::CVPipelinedLoopAttr::name)) {
           loops.push_back(loopOp);
           return WalkResult::skip();
@@ -83,7 +84,7 @@ static void stageScopesNaively(SmallVector<scope::ScopeOp> &scopeOps) {
   }
 }
 
-static void stageScopes(LoopLikeOpInterface &loopOp,
+static void stageScopes(scf::ForOp &loopOp,
                         int maxPipelineMultibuffer) {
   for (Region &region : loopOp->getRegions()) {
     SmallVector<scope::ScopeOp> scopes;
@@ -297,7 +298,7 @@ static void getAllWritesToAlloc(Value root, SmallVector<Operation *> &writes) {
   }
 }
 
-static void sortScopes(LoopLikeOpInterface &loopOp) {
+static void sortScopes(scf::ForOp &loopOp) {
   for (Region &region : loopOp->getRegions()) {
     assert(llvm::all_of(region.getOps(),
                         [](Operation &op) {
@@ -327,165 +328,169 @@ static void sortScopes(LoopLikeOpInterface &loopOp) {
   }
 }
 
-static void hoistAllocAndToTensor(LoopLikeOpInterface &loopOp) {
-  for (Region &region : loopOp->getRegions()) {
-    SmallVector<scope::ScopeOp> scopes;
-    for (scope::ScopeOp scopeOp : region.getOps<scope::ScopeOp>())
-      scopes.push_back(scopeOp);
-    if (scopes.empty())
+static void hoistAllocAndToTensor(scope::ScopeOp &scopeOp) {
+  if (scopeOp.getNumResults() == 0)
+    return;
+
+  Block &body = scopeOp.getRegion().front();
+  auto returnOp = cast<scope::ReturnOp>(body.getTerminator());
+
+  auto onlyWrittenToOnceByCrossCore = [&](Value allocVal) -> Operation * {
+    SmallVector<Operation *> writes;
+    getAllWritesToAlloc(allocVal, writes);
+
+    if (writes.size() != 1)
+      return nullptr;
+
+    Operation *write = writes[0];
+    if (isFixpipeToUB(write) || isCrossCoreCopy(write))
+      return write;
+    return nullptr;
+  };
+
+  DenseMap<unsigned, Value> replacementResults;
+  DenseSet<Operation *> moveBeforeSet;
+  DenseSet<Operation *> moveAfterSet;
+  for (auto [index, returnOperand] :
+        llvm::enumerate(returnOp->getOperands())) {
+    auto toTensorOp =
+        returnOperand.getDefiningOp<bufferization::ToTensorOp>();
+    if (!toTensorOp || toTensorOp->getBlock() != &body)
       continue;
 
-    for (scope::ScopeOp scopeOp : llvm::make_early_inc_range(scopes)) {
-      if (scopeOp.getNumResults() == 0)
-        continue;
+    Value operand = toTensorOp.getOperand();
+    auto castOp = operand.getDefiningOp<memref::MemorySpaceCastOp>();
+    auto allocOp = castOp
+                        ? castOp.getSource().getDefiningOp<memref::AllocOp>()
+                        : operand.getDefiningOp<memref::AllocOp>();
+    if (!allocOp || allocOp->getBlock() != &body ||
+        (castOp && castOp->getBlock() != &body))
+      continue;
 
-      Block &body = scopeOp.getRegion().front();
-      auto returnOp = cast<scope::ReturnOp>(body.getTerminator());
+    Operation *writeOp = onlyWrittenToOnceByCrossCore(allocOp);
+    Operation *writeInBody =
+        writeOp ? body.findAncestorOpInBlock(*writeOp) : nullptr;
+    if (!writeInBody || !allocOp->isBeforeInBlock(writeInBody))
+      continue;
 
-      auto onlyWrittenToOnceByCrossCore = [&](Value allocVal) -> Operation * {
-        SmallVector<Operation *> writes;
-        getAllWritesToAlloc(allocVal, writes);
+    bool castUsedByWrite =
+        castOp && llvm::is_contained(writeOp->getOperands(), operand);
+    if (castUsedByWrite && !castOp->isBeforeInBlock(writeInBody))
+      continue;
 
-        if (writes.size() != 1)
-          return nullptr;
+    bool shouldSinkToTensor = returnOperand.hasOneUse();
 
-        Operation *write = writes[0];
-        if (isFixpipeToUB(write) || isCrossCoreCopy(write))
-          return write;
-        return nullptr;
-      };
+    SmallVector<Operation *> moveBefore{allocOp};
+    SmallVector<Operation *> moveAfter;
+    
+    if(shouldSinkToTensor)
+      moveAfter.push_back(toTensorOp);
 
-      DenseMap<unsigned, Value> replacementResults;
-      DenseSet<Operation *> moveBeforeSet;
-      DenseSet<Operation *> moveAfterSet;
-      for (auto [index, returnOperand] :
-           llvm::enumerate(returnOp->getOperands())) {
-        auto toTensorOp =
-            returnOperand.getDefiningOp<bufferization::ToTensorOp>();
-        if (!toTensorOp || toTensorOp->getBlock() != &body ||
-            !returnOperand.hasOneUse())
+    if (castOp)
+      (castUsedByWrite ? moveBefore : moveAfter).push_back(castOp);
+
+    auto collectUsers = [&](Value value, bool valueInMoveBefore) {
+      for (Operation *user : value.getUsers()) {
+        if (user == writeOp || user == toTensorOp || user == castOp)
           continue;
-
-        Value operand = toTensorOp.getOperand();
-        auto castOp = operand.getDefiningOp<memref::MemorySpaceCastOp>();
-        auto allocOp = castOp
-                           ? castOp.getSource().getDefiningOp<memref::AllocOp>()
-                           : operand.getDefiningOp<memref::AllocOp>();
-        if (!allocOp || allocOp->getBlock() != &body ||
-            (castOp && castOp->getBlock() != &body))
-          continue;
-
-        Operation *writeOp = onlyWrittenToOnceByCrossCore(allocOp);
-        Operation *writeInBody =
-            writeOp ? body.findAncestorOpInBlock(*writeOp) : nullptr;
-        if (!writeInBody || !allocOp->isBeforeInBlock(writeInBody))
-          continue;
-
-        bool castUsedByWrite =
-            castOp && llvm::is_contained(writeOp->getOperands(), operand);
-        if (castUsedByWrite && !castOp->isBeforeInBlock(writeInBody))
-          continue;
-
-        SmallVector<Operation *> moveBefore{allocOp};
-        SmallVector<Operation *> moveAfter{toTensorOp};
-        if (castOp)
-          (castUsedByWrite ? moveBefore : moveAfter).push_back(castOp);
-
-        auto collectUsers = [&](Value value, bool valueInMoveBefore) {
-          for (Operation *user : value.getUsers()) {
-            if (user == writeOp || user == toTensorOp || user == castOp)
-              continue;
-            if (user->getBlock() != &body || !isa<annotation::MarkOp>(user))
-              return false;
-            (valueInMoveBefore ? moveBefore : moveAfter).push_back(user);
-          }
-          return true;
-        };
-        if (!collectUsers(allocOp, /*valueInMoveBefore=*/true) ||
-            (castOp && !collectUsers(castOp, castUsedByWrite)))
-          continue;
-
-        DenseSet<Operation *> movingOps;
-        movingOps.insert(moveBefore.begin(), moveBefore.end());
-        movingOps.insert(moveAfter.begin(), moveAfter.end());
-        auto operandsAvailable = [&](Operation *op, bool beforeScope) {
-          for (Value value : op->getOperands()) {
-            Operation *def = value.getDefiningOp();
-            if (def && scopeOp->isAncestor(def) &&
-                (!movingOps.contains(def) ||
-                 (beforeScope && !llvm::is_contained(moveBefore, def))))
-              return false;
-          }
-          return true;
-        };
-        if (!llvm::all_of(
-                moveBefore,
-                [&](Operation *op) { return operandsAvailable(op, true); }) ||
-            !llvm::all_of(moveAfter, [&](Operation *op) {
-              return operandsAvailable(op, false);
-            }))
-          continue;
-
-        replacementResults[index] = returnOperand;
-        moveBeforeSet.insert(moveBefore.begin(), moveBefore.end());
-        moveAfterSet.insert(moveAfter.begin(), moveAfter.end());
+        if (user->getBlock() != &body || !isa<annotation::MarkOp>(user))
+          return false;
+        (valueInMoveBefore ? moveBefore : moveAfter).push_back(user);
       }
+      return true;
+    };
+    if (!collectUsers(allocOp, /*valueInMoveBefore=*/true) ||
+        (castOp && !collectUsers(castOp, castUsedByWrite)))
+      continue;
 
-      if (replacementResults.empty())
-        continue;
-
-      SmallVector<Operation *> moveBefore;
-      SmallVector<Operation *> moveAfter;
-      for (Operation &op : body) {
-        if (moveBeforeSet.contains(&op))
-          moveBefore.push_back(&op);
-        if (moveAfterSet.contains(&op))
-          moveAfter.push_back(&op);
+    DenseSet<Operation *> movingOps;
+    movingOps.insert(moveBefore.begin(), moveBefore.end());
+    movingOps.insert(moveAfter.begin(), moveAfter.end());
+    auto operandsAvailable = [&](Operation *op, bool beforeScope) {
+      for (Value value : op->getOperands()) {
+        Operation *def = value.getDefiningOp();
+        if (def && scopeOp->isAncestor(def) &&
+            (!movingOps.contains(def) ||
+              (beforeScope && !llvm::is_contained(moveBefore, def))))
+          return false;
       }
+      return true;
+    };
+    if (!llvm::all_of(
+            moveBefore,
+            [&](Operation *op) { return operandsAvailable(op, true); }) ||
+        !llvm::all_of(moveAfter, [&](Operation *op) {
+          return operandsAvailable(op, false);
+        }))
+      continue;
 
-      SmallVector<Type> resultTypes;
-      SmallVector<Value> returnValues;
-      for (auto [index, value] : llvm::enumerate(returnOp->getOperands())) {
-        if (replacementResults.count(index))
-          continue;
-        resultTypes.push_back(scopeOp.getResult(index).getType());
-        returnValues.push_back(value);
-      }
-
-      OpBuilder builder(scopeOp);
-      auto newScopeOp =
-          builder.create<scope::ScopeOp>(scopeOp.getLoc(), resultTypes);
-      newScopeOp->setAttrs(scopeOp->getAttrs());
-      newScopeOp.getRegion().takeBody(scopeOp.getRegion());
-      returnOp->setOperands(returnValues);
-
-      for (Operation *op : moveBefore)
-        op->moveBefore(newScopeOp);
-      for (Operation *op : moveAfter)
-        op->moveBefore(scopeOp);
-
-      unsigned nextResult = 0;
-      for (auto [index, result] : llvm::enumerate(scopeOp.getResults())) {
-        auto replacement = replacementResults.find(index);
-        result.replaceAllUsesWith(replacement != replacementResults.end()
-                                      ? replacement->second
-                                      : newScopeOp.getResult(nextResult++));
-      }
-      scopeOp.erase();
-    }
+    if(shouldSinkToTensor)
+      replacementResults[index] = returnOperand;
+    moveBeforeSet.insert(moveBefore.begin(), moveBefore.end());
+    moveAfterSet.insert(moveAfter.begin(), moveAfter.end());
   }
+
+  if (moveBeforeSet.empty() || moveBeforeSet.empty())
+    return;
+
+  SmallVector<Operation *> moveBefore;
+  SmallVector<Operation *> moveAfter;
+  for (Operation &op : body) {
+    if (moveBeforeSet.contains(&op))
+      moveBefore.push_back(&op);
+    if (moveAfterSet.contains(&op))
+      moveAfter.push_back(&op);
+  }
+
+  SmallVector<Type> resultTypes;
+  SmallVector<Value> returnValues;
+  for (auto [index, value] : llvm::enumerate(returnOp->getOperands())) {
+    if (replacementResults.count(index))
+      continue;
+    resultTypes.push_back(scopeOp.getResult(index).getType());
+    returnValues.push_back(value);
+  }
+
+  OpBuilder builder(scopeOp);
+  auto newScopeOp =
+      builder.create<scope::ScopeOp>(scopeOp.getLoc(), resultTypes);
+  newScopeOp->setAttrs(scopeOp->getAttrs());
+  newScopeOp.getRegion().takeBody(scopeOp.getRegion());
+  returnOp->setOperands(returnValues);
+
+  for (Operation *op : moveBefore)
+    op->moveBefore(newScopeOp);
+  for (Operation *op : moveAfter)
+    op->moveBefore(scopeOp);
+
+  unsigned nextResult = 0;
+  for (auto [index, result] : llvm::enumerate(scopeOp.getResults())) {
+    auto replacement = replacementResults.find(index);
+    result.replaceAllUsesWith(replacement != replacementResults.end()
+                                  ? replacement->second
+                                  : newScopeOp.getResult(nextResult++));
+  }
+  scopeOp.erase();
 }
 
 void PipelineStagingPass::runOnOperation() {
   func::FuncOp funcOp = getOperation();
-  SmallVector<LoopLikeOpInterface> cvPipelinedLoops;
+  SmallVector<scf::ForOp> cvPipelinedLoops;
   collectCVPipelinedLoops(funcOp, cvPipelinedLoops);
 
-  for (LoopLikeOpInterface loopOp : cvPipelinedLoops) {
+  for (scf::ForOp loopOp : cvPipelinedLoops) {
     stageScopes(loopOp, maxPipelineMultibuffer);
     sortScopes(loopOp);
-    hoistAllocAndToTensor(loopOp);
   }
+
+  LLVM_DEBUG({
+    for (scf::ForOp loopOp : cvPipelinedLoops)
+      writeScopeDependenceGraphToDotFile(loopOp, "staged");
+  });
+
+  funcOp->walk<WalkOrder::PostOrder>([&](scope::ScopeOp scopeOp){
+    hoistAllocAndToTensor(scopeOp);
+  });
 }
 
 std::unique_ptr<Pass>
