@@ -845,9 +845,9 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
       if (!mlir::hacc::utils::isAscend960(config.getTarget()) &&
           !hasExplicitCLOption("shared-mem-dynamic-size"))
         config.setSharedMemDynamicSize(122880);
-      success = runModulePipeline(hirCompileMode,
-                                  regbase::buildBiShengTTIRPipeline, config,
-                                  "BiShengSIMT");
+      success =
+          runModulePipeline(hirCompileMode, regbase::buildBiShengTTIRPipeline,
+                            config, "BiShengSIMT");
     } else {
       if (!mlir::hacc::utils::isAscend960(config.getTarget()) &&
           !hasExplicitCLOption("shared-mem-dynamic-size"))

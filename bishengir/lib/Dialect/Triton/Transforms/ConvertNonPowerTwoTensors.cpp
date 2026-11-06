@@ -1973,7 +1973,7 @@ Value getReplacementCreationOp(OpBuilder &builder, Operation *tensorCreatorOp,
         Type elementType = emptyOp.getType().getElementType();
         RankedTensorType newType =
             RankedTensorType::get(data.localVirtualShape, elementType);
-        
+
         res = builder.create<tensor::EmptyOp>(loc, newType, ValueRange{});
       });
 

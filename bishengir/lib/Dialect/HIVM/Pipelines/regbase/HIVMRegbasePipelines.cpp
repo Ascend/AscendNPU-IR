@@ -730,7 +730,8 @@ static void hivmPostBufferizationOptimizationPipeline(
   planMemoryOption.enableMemoryDisplay =
       hivmPipelineOptions.enableMemoryDisplay ||
       hivmPipelineOptions.enablePrintMemoryAllocatedSize;
-  planMemoryOption.sharedMemDynamicSize = hivmPipelineOptions.sharedMemDynamicSize;
+  planMemoryOption.sharedMemDynamicSize =
+      hivmPipelineOptions.sharedMemDynamicSize;
   planMemoryOption.disableTightlyCoupledBufferReuse =
       hivmPipelineOptions.disableTightlyCoupledBufferReuse;
   planMemoryOption.disableVFReachableCheck =

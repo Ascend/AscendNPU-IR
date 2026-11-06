@@ -5982,8 +5982,7 @@ public:
 
     auto inputType = dyn_cast<RankedTensorType>(op.getInputs()[0].getType());
     auto initType = dyn_cast<RankedTensorType>(op.getInits()[0].getType());
-    if (!inputType || !initType ||
-        !inputType.getElementType().isInteger(1) ||
+    if (!inputType || !initType || !inputType.getElementType().isInteger(1) ||
         !initType.getElementType().isInteger(1))
       return failure();
 
@@ -5994,8 +5993,8 @@ public:
         std::distance(body.begin(), body.end()) != 2)
       return failure();
 
-    auto xorOp = dyn_cast_or_null<arith::XOrIOp>(
-        yieldOp.getValues()[0].getDefiningOp());
+    auto xorOp =
+        dyn_cast_or_null<arith::XOrIOp>(yieldOp.getValues()[0].getDefiningOp());
     if (!xorOp)
       return failure();
 
@@ -6025,7 +6024,8 @@ public:
     rewriter.create<linalg::YieldOp>(loc, xorResult);
 
     rewriter.setInsertionPointAfter(newOp);
-    Value castBack = castTo(rewriter, newOp->getResult(0), rewriter.getI1Type());
+    Value castBack =
+        castTo(rewriter, newOp->getResult(0), rewriter.getI1Type());
     rewriter.replaceOp(op, castBack);
     return success();
   }
