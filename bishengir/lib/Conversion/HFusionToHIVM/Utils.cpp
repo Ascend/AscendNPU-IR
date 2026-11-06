@@ -84,7 +84,7 @@ Value createCollapseShapeOp(PatternRewriter &rewriter, Location loc,
 
 hivm::RoundMode mapRoundModeHFusionToHiVM(hfusion::RoundMode hsRndMode) {
   switch (hsRndMode) {
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
   case (hfusion::RoundMode::HYBRID):
     return hivm::RoundMode::HYBRID;
 #endif

@@ -252,7 +252,7 @@ template <> Operation *ElemwiseOpConvertor::create<hivm::VCmpOp>() {
 
 static hivm::RoundMode mapRoundModeHFusionToHiVM(hfusion::RoundMode hsRndMode) {
   switch (hsRndMode) {
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
   case (hfusion::RoundMode::HYBRID):
     return hivm::RoundMode::HYBRID;
 #endif

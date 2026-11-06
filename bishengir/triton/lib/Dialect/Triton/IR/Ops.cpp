@@ -866,7 +866,7 @@ OpFoldResult FpToFpOp::fold(FoldAdaptor adaptor) {
     return srcVal;
   }
 
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
   if (isa<HiFloat8Type>(getElementTypeOrSelf(getType())) ||
       isa<HiFloat8Type>(getElementTypeOrSelf(getSrc().getType())))
     return {};

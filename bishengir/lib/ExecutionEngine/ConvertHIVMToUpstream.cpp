@@ -1495,7 +1495,7 @@ private:
       return hfusion::RoundMode::ODD;
     case (hivm::RoundMode::TRUNCWITHOVERFLOW):
       return hfusion::RoundMode::TRUNCWITHOVERFLOW;
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
     case (hivm::RoundMode::HYBRID):
       return hfusion::RoundMode::HYBRID;
 #endif

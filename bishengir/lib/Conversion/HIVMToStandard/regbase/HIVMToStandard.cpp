@@ -1622,7 +1622,7 @@ private:
       padValue = op.getPadValue();
       Type elemType = getElementTypeOrSelf(op.getSrc().getType());
       if (
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
           isa<HiFloat8Type>(elemType) ||
 #endif
           isa<Float8E4M3FNType>(elemType) || isa<Float8E5M2Type>(elemType)) {
@@ -1656,7 +1656,7 @@ private:
               })
               .Case([&](FloatType floatType) {
                 if (
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
                     isa<HiFloat8Type>(floatType) ||
 #endif
                     isa<Float8E4M3FNType>(floatType) ||
@@ -2156,7 +2156,7 @@ public:
     };
     auto src = op.getOperand(0);
     if (
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
         isa<HiFloat8Type>(src.getType()) ||
 #endif
         src.getType().isFloat8E4M3FN() || src.getType().isFloat8E5M2())

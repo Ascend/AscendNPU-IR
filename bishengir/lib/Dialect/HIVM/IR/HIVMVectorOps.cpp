@@ -363,7 +363,7 @@ LogicalResult VCastOp::verify() {
       "uint32_t_to_uint16_t_truncmode",
       "uint32_t_to_float_rintmode",
       "uint32_t_to_bfloat16_t_rintmode",
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
       "float_to_hifloat8_t_roundmode",
       "float_to_hifloat8_t_hybridmode",
       "half_to_hifloat8_t_roundmode",

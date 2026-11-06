@@ -38,7 +38,7 @@ DEFINE_VECTOR_MAPPING(float, vector_f32);
 DEFINE_VECTOR_MAPPING(half, vector_f16);
 DEFINE_VECTOR_MAPPING(bfloat16_t, vector_bf16);
 #if BISHENG_TPL_REGBASE
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
 DEFINE_VECTOR_MAPPING(hifloat8_t, vector_hif8);
 #endif
 DEFINE_VECTOR_MAPPING(float8_e4m3_t, vector_f8e4m3);
@@ -65,7 +65,7 @@ DEFINE_VECTOR_MAPPING(uint8_t, vector_u8);
 template <typename T>
 using VectorReg = typename VectorTy<T>::type;
 
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
 #define CREATE_MASK_BY_SIZE(MASK, Type, VALUE)                                 \
   if constexpr (std::is_same<Type, int16_t>::value ||                          \
                 std::is_same<Type, uint16_t>::value ||                         \

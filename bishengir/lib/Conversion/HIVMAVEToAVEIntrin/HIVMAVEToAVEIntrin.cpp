@@ -1265,7 +1265,7 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
       auto result = rewriter.create<Vldsx1V128BF16InstrOp>(loc, vtype, dataPtr,
                                                            offset, dist, mode);
       rewriter.replaceOp(load, result);
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
     } else if (isa<HiFloat8Type>(elementType)) {
       // Load raw bytes, then restore the semantic type. This is a bitwise
       // transfer, not a conversion to an OCP FP8 format.
@@ -1455,7 +1455,7 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
     } else if (dElemType.isBF16()) {
       auto result = rewriter.create<Vstsx1V128BF16InstrOp>(
           loc, data, dataPtr, offset, dist, mode, mask);
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
       rewriter.replaceOp(store, result);
     } else if (isa<HiFloat8Type>(dElemType)) {
       auto bytesTy = VectorType::get({256}, rewriter.getI8Type());
@@ -2701,7 +2701,7 @@ struct HIVMBroadcastScalarOpLowering
     } else if (srcType.isF32()) {
       vbr = rewriter.create<VbrInstrOp>(loc, vlType, src);
     } else if (
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
         isa<HiFloat8Type>(srcType) ||
 #endif
         srcType.isFloat8E4M3FN() || srcType.isFloat8E5M2()) {
@@ -2743,7 +2743,7 @@ static Value vdupLowerToIntrin(VFBroadcastVectorOp vecBrcOp,
   src =
       rewriter.create<UnrealizedConversionCastOp>(loc, srcTy, src).getResult(0);
   Value mask = getVLRegValueOrSelf(vecBrcOp.getMask(), rewriter);
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
   if (isa<HiFloat8Type>(elementType)) {
     auto bytesTy = VectorType::get({util::VL}, rewriter.getI8Type());
     Value bytes = rewriter.create<LLVM::BitcastOp>(loc, bytesTy, src);
@@ -2780,7 +2780,7 @@ struct HIVMVecBrcOpPattern
     else
       vdup = vdupLowerToIntrin<VdupmZInstrOp>(vecBrcOp, rewriter);
 
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
     if (!vdup)
       return rewriter.notifyMatchFailure(vecBrcOp,
                                          "unsupported vector broadcast type");
@@ -2838,7 +2838,7 @@ struct HIVMTypeConvertionOpLowering
       if (outElemType.isF32()) {
         if (inElemType.isBF16()) {
           newOp = rewriter.create<VcvtffBF162F32InstrOp>(
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
               loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
         } else if (isa<HiFloat8Type>(inElemType)) {
           newOp = rewriter.create<VcvtffHiF82F32InstrOp>(
@@ -3046,7 +3046,7 @@ struct HIVMTypeConvertionOpLowering
           newOp = rewriter.create<VcvtffF322F16InstrOp>(
               loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
               cstValue(srcOp.getSat()), cstValue(srcOp.getPart()));
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
         else if (isa<HiFloat8Type>(outElemType)) {
           auto mode = srcOp.getRnd();
           if (mode != hivm::RoundMode::ROUND && mode != hivm::RoundMode::HYBRID)
@@ -3185,7 +3185,7 @@ struct HIVMTypeConvertionOpLowering
           loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
     }
     if (!newOp)
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
       return rewriter.notifyMatchFailure(
           srcOp,
           "unsupported type conversion; use FP32 as the HiFloat8 bridge");
@@ -5334,7 +5334,7 @@ struct HIVMAVEToAVEIntrinPass
 
     LLVMConversionTarget target(getContext());
     target.addLegalOp<LLVM::BitcastOp>();
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
     target.addIllegalOp<VFExtFOp>();
 #endif
     target.addLegalDialect<hivm_regbaseintrins::HIVMRegbaseIntrinsDialect>();

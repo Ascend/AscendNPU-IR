@@ -2469,7 +2469,7 @@ struct ConstantFolding : public OpRewritePattern<hfusion::CastOp> {
 
   LogicalResult matchAndRewrite(hfusion::CastOp castOp,
                                 PatternRewriter &rewriter) const override {
-#if BSPUB_DAVINCI_BISHENGIR
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
     if (isa<HiFloat8Type>(
             getElementTypeOrSelf(castOp.getInputs()[0].getType())) ||
         isa<HiFloat8Type>(
