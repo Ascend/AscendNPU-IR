@@ -13,3 +13,4 @@ add_dependencies(BiShengIRNPUArchitectureFeaturesIncGen
 add_dependencies(mlir-headers BiShengIRNPUArchitectureFeaturesIncGen)
 
 add_subdirectory(DMA)
+add_subdirectory(Sync)
