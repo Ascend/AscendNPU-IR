@@ -28,7 +28,7 @@ module {
     // CHECK: scf.if {{.*}} -> (tensor<64x32xf32>)
     // CCF1 mmad inside if: initCondition = firstIter (counter == 0)
     // CHECK: %[[FIRST1:.*]] = arith.cmpi eq, {{.*}}, %c0_i32 : i32
-    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C} ins({{.*}}, {{.*}}, %[[FIRST1]], %c64, %c32, %c32
+    // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C} ins({{.*}}, {{.*}}, %[[FIRST1]], %c64, %c32, %c32
     // counterPrevious1: counterPrevIn=true → m_One → CmpIOp{counter_previous}
     //   compare: load(counter1) == 0  (did CCF1's mmad ever execute?)
     // CHECK: %[[CNT1_ZERO:.*]] = arith.cmpi eq, {{.*}}, %c0_i32 {counter_previous} : i32

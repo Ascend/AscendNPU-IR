@@ -1247,6 +1247,17 @@ Value findCounterBufFor(Operation *ccfOp, unsigned idx) {
 // whatever this CCF leaves behind is never read and no zero fill is needed. The
 // guard only matters when the chain ends here, e.g. at a store or a return.
 bool needsTailFallback(Value ccfOutVal) {
+  // scf.if keeps the accumulator in L0C, but the value is not a single use:
+  //   %1 = mmad
+  //   scf.if {
+  //     %2 = mmad outs(%1)
+  //     scf.yield %2
+  //   } else {
+  //     scf.yield %1
+  //   }
+  // %1 is the outs of the then mmad and the else yield. hasOneUse() below is
+  // false, so it would insert a zero fill and drop %1 out of L0C. Skip the
+  // fill when every use is inside the if and the if result stays in L0C.
   for (OpOperand &use : ccfOutVal.getUses()) {
     Operation *user = use.getOwner();
     auto yieldOp = dyn_cast<scf::YieldOp>(user);
@@ -1739,10 +1750,11 @@ static void setupCCFInitCondition(PatternRewriter &rewriter,
                                   NormalizeCtx &ctx) {
   ctx.initCondition = updateInitCondition(rewriter, ctx.op, ctx.counterBuf);
   ctx.isUsingCounter = true;
-  if (!isa<scf::IfOp>(ctx.op->getParentOp())) {
-    addRemainInL0CIndex(ctx.tmpNewMmad, 0);
-    addRemainInL0CIndex(ctx.op, 0);
-  }
+  // An scf.if parent used to be skipped. propagateRemainInL0C now copies
+  // remain_in_l0c onto the if only when every branch stays in L0C, so the
+  // mmad itself is marked the same way as one nested in scf.for / scf.while.
+  addRemainInL0CIndex(ctx.tmpNewMmad, 0);
+  addRemainInL0CIndex(ctx.op, 0);
 }
 
 class ReuseL0CStrategy : public BiasModeStrategy {
@@ -1759,10 +1771,8 @@ public:
         // statically false; no need to track execution count. The next CCF's
         // counterPrevIn will also trace to a dirty source (matmul/normalized
         // ForOp), so it short-circuits to false regardless of this counter.
-        if (!isa<scf::IfOp>(ctx.op->getParentOp())) {
-          addRemainInL0CIndex(ctx.tmpNewMmad, 0);
-          addRemainInL0CIndex(ctx.op, 0);
-        }
+        addRemainInL0CIndex(ctx.tmpNewMmad, 0);
+        addRemainInL0CIndex(ctx.op, 0);
         ctx.op.setInitCondition(ctx.counterPrevious);
       } else {
         setupCCFInitCondition(rewriter, ctx);
@@ -2534,13 +2544,64 @@ static SmallVector<OpOperand *> getForwardingYields(Operation *op,
   return yields;
 }
 
-// True when any path producing `value` is not a cube op with `remain_in_l0c`.
+static bool allProducerRemainInL0c(OpResult result, DenseSet<Value> &onPath);
+
+static bool loopResultListedInL0C(Operation *op, unsigned resultIdx) {
+  auto listed = [resultIdx](ArrayAttr attr) {
+    if (!attr)
+      return false;
+    return llvm::any_of(attr, [resultIdx](Attribute element) {
+      auto index = dyn_cast<IntegerAttr>(element);
+      return index && index.getInt() == static_cast<int64_t>(resultIdx);
+    });
+  };
+  if (op->hasAttrOfType<UnitAttr>(kNormalizedInL0C) ||
+      op->hasAttrOfType<UnitAttr>(hivm::RemainInL0CAttr::name))
+    return true;
+  return listed(op->getAttrOfType<ArrayAttr>(kNormalizedInL0C)) ||
+         listed(op->getAttrOfType<ArrayAttr>(hivm::RemainInL0CAttr::name));
+}
+
+// A block argument is an L0C accumulator when its loop result is already
+// marked, is the result currently being proved, or is fed by one. Function
+// arguments and other non-carried values are not.
+static bool isCarriedL0CBlockArg(BlockArgument arg, DenseSet<Value> &onPath) {
+  Operation *parent = arg.getOwner()->getParentOp();
+  unsigned resultIdx = 0;
+  Value init;
+  if (auto forOp = dyn_cast<scf::ForOp>(parent)) {
+    if (arg.getArgNumber() == 0)
+      return false;
+    resultIdx = arg.getArgNumber() - 1;
+    if (resultIdx >= forOp.getNumResults())
+      return false;
+    init = forOp.getInitArgs()[resultIdx];
+  } else if (auto whileOp = dyn_cast<scf::WhileOp>(parent)) {
+    if (arg.getOwner() != whileOp.getAfterBody())
+      return false;
+    resultIdx = arg.getArgNumber();
+    if (resultIdx >= whileOp.getNumResults())
+      return false;
+    init = whileOp.getInits()[resultIdx];
+  } else {
+    return false;
+  }
+  if (loopResultListedInL0C(parent, resultIdx) ||
+      onPath.contains(parent->getResult(resultIdx)))
+    return true;
+  if (auto initArg = dyn_cast<BlockArgument>(init))
+    return isCarriedL0CBlockArg(initArg, onPath);
+  auto initResult = dyn_cast<OpResult>(init);
+  if (!initResult)
+    return false;
+  return allProducerRemainInL0c(initResult, onPath);
+}
+
+// True when every path producing `result` stays in L0C.
 static bool allProducerRemainInL0c(OpResult result, DenseSet<Value> &onPath) {
   Operation *def = result.getDefiningOp();
-  // TODO: refactor this with propagator approach because,
-  // iter arg isn't always be in l0c
   if (!def)
-    return true;
+    return false;
 
   if (isRemainCubeOp(def))
     return true;
@@ -2555,10 +2616,13 @@ static bool allProducerRemainInL0c(OpResult result, DenseSet<Value> &onPath) {
     return false;
 
   for (OpOperand *site : yields) {
-    auto defOp = site->get().getDefiningOp();
-    if (!defOp)
+    Value yielded = site->get();
+    if (auto blockArg = dyn_cast<BlockArgument>(yielded)) {
+      if (!isCarriedL0CBlockArg(blockArg, onPath))
+        return false;
       continue;
-    if (!allProducerRemainInL0c(cast<OpResult>(site->get()), onPath))
+    }
+    if (!allProducerRemainInL0c(cast<OpResult>(yielded), onPath))
       return false;
   }
   return true;
