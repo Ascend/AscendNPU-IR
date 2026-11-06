@@ -16,7 +16,6 @@
 //===----------------------------------------------------------------------===//
 #include "bishengir/Dialect/HIVM/Utils/WorklistBuilder.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
@@ -1813,7 +1812,6 @@ LogicalResult WorklistBuilder::runRoundExtraction() {
 FailureOr<WorklistBuildResult> WorklistBuilder::build() {
   int multibuffer = numMultibuffer > 1 ? numMultibuffer : -1;
 
-  bool foundMarkMultibuffer = false;
   for (Operation &op : targetBlock->getOperations()) {
     if (isCoreOp(op))
       toBePipelined.insert(&op);
@@ -1823,12 +1821,10 @@ FailureOr<WorklistBuildResult> WorklistBuilder::build() {
     }
     if (isLoopMode) {
       if (auto mark = dyn_cast<annotation::MarkOp>(&op)) {
-        // Check existance of MultiBuffer mark
+        if (numMultibuffer != -1)
+          continue;
         int markMultibuffer = getMultibufferCount(mark);
         if (markMultibuffer == -1)
-          continue;
-        foundMarkMultibuffer = true;
-        if (numMultibuffer != -1)
           continue;
         if (multibuffer < 2)
           multibuffer = markMultibuffer;
@@ -1840,15 +1836,6 @@ FailureOr<WorklistBuildResult> WorklistBuilder::build() {
     if (illegalRegionedOp(op, isLoopMode))
       return failure();
   }
-
-  // Only do pipelining for not RegBased Arch when there is MultiBuffer mark
-  // inside the loop.
-  if (isLoopMode && !foundMarkMultibuffer) {
-    auto moduleOp = scopeOp->getParentOfType<ModuleOp>();
-    if (moduleOp && !hacc::utils::isRegBasedArch(moduleOp))
-      return failure();
-  }
-
   LLVM_DEBUG({
     dbgs() << "[build] Separators:\n";
     for (Operation *op : separators) {
