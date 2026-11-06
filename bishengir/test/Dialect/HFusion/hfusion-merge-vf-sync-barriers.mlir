@@ -273,3 +273,33 @@ func.func @no_sync(%active: i1) {
   func.call @second_vf_0() : () -> ()
   return
 }
+
+// -----
+
+// Buffer token operations are synchronization barriers too. The token must not
+// be crossed when merging vector function calls.
+// CHECK-LABEL: func.func @buffer_sync(
+// CHECK: call @first_vf_0
+// CHECK: hivm.hir.get_buf
+// CHECK: call @second_vf_0
+// CHECK: return
+func.func @first_vf_0() attributes {
+    hivm.vector_function, hivm.func_core_type = #hivm.func_core_type<AIV>} {
+  return
+}
+func.func @second_vf_0() attributes {
+    hivm.vector_function, hivm.func_core_type = #hivm.func_core_type<AIV>} {
+  return
+}
+func.func @buffer_sync(%active: i1, %n: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  func.call @first_vf_0() : () -> ()
+  scf.for %i = %c0 to %n step %c1 {
+    scf.if %active {
+      hivm.hir.get_buf[<PIPE_V>, 0, false]
+    }
+  }
+  func.call @second_vf_0() : () -> ()
+  return
+}
