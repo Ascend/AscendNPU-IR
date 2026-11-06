@@ -1669,7 +1669,7 @@ static void findWriteOp(Value mem, SmallVector<Operation *> &writeOps) {
       }
 
       if (op->hasTrait<OpTrait::IsTerminator>() ||
-          isa<hivm::SyncBlockSetOp>(op))
+          isa<hivm::SyncBlockSetOp, hivm::SyncIntraBlockSetOp>(op))
         break;
     }
   }

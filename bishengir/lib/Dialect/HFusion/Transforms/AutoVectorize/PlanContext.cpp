@@ -382,6 +382,7 @@ void PlanContext::computeConflictLists(func::FuncOp func) {
             // previous/following scan and the body walk below.
             if (op->getNumRegions() == 0 &&
                 !isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp,
+                     hivm::SyncIntraBlockSetOp, hivm::SyncIntraBlockWaitOp,
                      hivm::SyncBlockWaitOp, hivm::CreateSyncBlockLockOp,
                      hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp>(op) &&
                 !isa<hivm::CopyOp, memref::CopyOp>(op))
@@ -407,6 +408,7 @@ void PlanContext::computeConflictLists(func::FuncOp func) {
               if (isa<hivm::AnchorOp>(op))
                 return WalkResult::interrupt();
               return isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp,
+                         hivm::SyncIntraBlockSetOp, hivm::SyncIntraBlockWaitOp,
                          hivm::SyncBlockWaitOp, hivm::CreateSyncBlockLockOp,
                          hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp>(op)
                          ? WalkResult::interrupt()
@@ -435,6 +437,7 @@ void PlanContext::computeConflictLists(func::FuncOp func) {
           }
 
           if (isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp,
+                  hivm::SyncIntraBlockSetOp, hivm::SyncIntraBlockWaitOp,
                   hivm::SyncBlockWaitOp, hivm::CreateSyncBlockLockOp,
                   hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp, scf::ForOp,
                   scf::WhileOp, scf::IfOp, scope::ScopeOp>(op)) {

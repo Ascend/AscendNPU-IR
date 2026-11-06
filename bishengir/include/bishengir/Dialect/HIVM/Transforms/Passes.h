@@ -122,10 +122,6 @@ std::unique_ptr<Pass> createLowerMultiBufferCounterPass();
 std::unique_ptr<Pass>
 createPlanMemoryPass(const PlanMemoryOptions &planMemoryOption = {});
 
-/// Create a pass to plan memory on regbase targets.
-std::unique_ptr<Pass>
-createPlanMemoryRegBasePass(const PlanMemoryRegBaseOptions &options = {});
-
 /// Create a pass to inject sync
 std::unique_ptr<Pass>
 createInjectSyncPass(const InjectSyncOptions &options = {});
@@ -381,8 +377,8 @@ std::unique_ptr<Pass> createSubBlockGuardCleanupPass();
 std::unique_ptr<Pass> createHIVMBubbleUpExtractSlicePass(
     const HIVMBubbleUpExtractSliceOptions &options = {});
 
-/// Create a pass to vectorize hivm ops.
-std::unique_ptr<Pass> createHIVMVectorizeOpsPass();
+/// Create the tensor-level HIVM vectorization pass.
+std::unique_ptr<Pass> createHIVMVectorizePass();
 
 // Create a pass to insert init and finish for debug.
 std::unique_ptr<Pass> createInsertInitAndFinishForDebugPass();

@@ -112,6 +112,13 @@ def AutoVectorize : Pass<"hfusion-auto-vectorize", "ModuleOp"> {
   ];
 }
 
+def SelectHIVMVectorize : Pass<"hfusion-select-hivm-vectorize", "ModuleOp"> {
+  let summary = "Select work for HIVM vectorization (hivm.defer_vectorize)";
+  let constructor = "mlir::hfusion::createSelectHIVMVectorizePass()";
+  let dependentDialects = ["linalg::LinalgDialect", "tensor::TensorDialect",
+                           "func::FuncDialect", "hivm::HIVMDialect"];
+}
+
 def GenericUnroller : Pass<"hfusion-generic-unroller", "func::FuncOp"> {
   let summary = "Provides lowering of non-vectorizeable linalg ops (currently only linalg.reduce)";
   let constructor = "mlir::hfusion::createGenericUnrollerPass()";
@@ -255,6 +262,21 @@ def FlattenOps : Pass<"hfusion-flatten-ops", "func::FuncOp"> {
              "dimension analyzer">,
       Option<"skipScope", "skip-scope", "bool", /*default=*/"true",
              "Whether to skip the current pass when scope exists">];
+}
+
+def FlattenReductionRegions
+    : Pass<"hfusion-flatten-reduction-regions", "func::FuncOp"> {
+  let constructor = "mlir::hfusion::createFlattenReductionRegionsPass()";
+  let summary = "Flatten compatible local tensor reduction regions before V2";
+  let description = [{
+    Collapse adjacent reduction dimensions in linalg.generic operations and
+    their compatible elementwise producers. Keep parallel dimensions, projected
+    input maps, and producers with outside users at region boundaries. Run after
+    PreVectorizationFusion so broadcast and reduction payload fusion is retained,
+    and canonicalize the resulting tensor reshapes before AutoVectorizeV2.
+  }];
+  let dependentDialects = ["arith::ArithDialect", "linalg::LinalgDialect",
+                           "tensor::TensorDialect"];
 }
 
 def TensorResToOutParams

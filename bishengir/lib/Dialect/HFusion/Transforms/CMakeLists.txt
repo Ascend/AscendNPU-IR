@@ -13,6 +13,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   AdaptTritonKernel.cpp
   AddFFTSAddr.cpp
   AutoVectorize.cpp
+  SelectHIVMVectorize.cpp
   AutoVectorize/AutoVectorizeInterpreter.cpp
   AutoVectorize/FusedNode.cpp
   AutoVectorize/FusionUtils.cpp
@@ -36,6 +37,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   DropSymbols.cpp
   EliminateDuplicateFuncs.cpp
   FlattenOps.cpp
+  FlattenReductionRegions.cpp
   FoldUnitDims.cpp
   FoldSymbolicDim.cpp
   GenericUnroller.cpp
@@ -96,6 +98,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   BiShengIRHACCDialect
   BiShengIRHACCUtils
   BiShengIRHIVMDialect
+  BiShengIRHIVMTransforms
   BiShengIRHFusionAnalysis
   BiShengIRMathExtDialect
   BiShengIRAnnotationDialect

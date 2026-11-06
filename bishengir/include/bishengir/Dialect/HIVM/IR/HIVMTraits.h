@@ -138,6 +138,10 @@ public:
 template <typename ConcreteType>
 class SinglePipeOpTrait : public TraitBase<ConcreteType, SinglePipeOpTrait> {};
 
+/// Marker trait for all HIVM synchronization operations.
+template <typename ConcreteType>
+class HIVMSyncOpTrait : public TraitBase<ConcreteType, HIVMSyncOpTrait> {};
+
 template <hivm::PIPE Pipe> class OpPipeTrait {
 public:
   template <typename ConcreteType>

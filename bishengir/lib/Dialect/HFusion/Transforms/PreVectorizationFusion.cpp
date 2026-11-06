@@ -139,6 +139,8 @@ struct HFusionGeneralizationPatterns
       mlir::linalg::LinalgOp>::OpInterfaceRewritePattern;
   LogicalResult matchAndRewrite(linalg::LinalgOp op,
                                 PatternRewriter &rewriter) const override {
+    if (op->hasAttr("hivm.defer_vectorize"))
+      return failure();
     // TODO: Skip AIC temporary. Move VF to HIVM
     if (scope::utils::isInCubeScope(op)) {
       return failure();
@@ -375,6 +377,7 @@ bool ElemwiseOpFuseControlFn(OpOperand *operand, int maxFusedElementwiseOps,
       // If a synchronization barrier is found, prohibit fusion to avoid data
       // races.
       if (isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
+              hivm::SyncIntraBlockSetOp, hivm::SyncIntraBlockWaitOp,
               hivm::CreateSyncBlockLockOp, hivm::SyncBlockLockOp,
               hivm::SyncBlockUnlockOp>(it)) {
         hasSyncBarrier = true;

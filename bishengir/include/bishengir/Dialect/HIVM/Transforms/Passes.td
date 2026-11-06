@@ -307,53 +307,6 @@ def PlanMemory : HIVMPass<"hivm-plan-memory", "ModuleOp"> {
   ];
 }
 
-def PlanMemoryRegBase : HIVMPass<"hivm-plan-memory-regbase", "ModuleOp"> {
-  let summary = "Plan memory for HIVM Ops on A5";
-  let constructor = "mlir::hivm::createPlanMemoryRegBasePass()";
-  let dependentDialects = ["hivm::HIVMDialect", ];
-  let options =
-      [Option<"memMode", "mem-plan-mode", "hivm::MemPlanMode",
-              "hivm::MemPlanMode::LOCAL_MEM_PLAN",
-              "plan mem mode (default is LOCAL_MEM_PLAN)",
-              [{::llvm::cl::values(
-               clEnumValN(hivm::MemPlanMode::LOCAL_MEM_PLAN, "local-mem-plan",
-                          "plan mem mode is for memref.alloc"),
-               clEnumValN(
-                   hivm::MemPlanMode::GLOBAL_WORKSPACE_PLAN,
-                   "global-work-space-plan",
-                   "plan mem mode is for memref_ext.alloc_workspace"))}]>,
-       Option<"enableGlobalReuse", "enable-global-workspace-reuse", "bool",
-              /*default=*/"false",
-              "Enable global workspace reuse ,default : false">,
-       Option<"enablePrintMemoryAllocatedSize",
-              "enable-print-memory-allocated-size", "bool",
-              /*default=*/"false",
-              "Enable print memory allocated size, default : false">,
-       Option<"restrictInplaceAsISA", "restrict-inplace-as-isa", "bool",
-              /*default=*/"false",
-              "restrict memory inplace as isa, default : false">,
-       Option<"simtVFDynamicSize", "simt-vf-dynamic-size", "int",
-              /*default=*/"216",
-              "Dynamic ub size(KB) for simt VF, default : 216">,
-       Option<"disableTightlyCoupledBufferReuse",
-              "disable-tightly-coupled-buffer-reuse", "bool",
-              /*default=*/"false",
-              "Disable tightly coupled buffer reuse, default : false">,
-       Option<"disableVFReachableCheck", "disable-vf-reachable-check", "bool",
-              /*default=*/"false",
-              "Disable VF reachable check, default : false">,
-       Option<"planMemoryStrategy", "plan-memory-strategy",
-              "::mlir::hivm::PlanMemoryStrategy",
-              "mlir::hivm::PlanMemoryStrategy::DEFAULT",
-              "Plan memory strategy for storage entry reorder",
-              [{::llvm::cl::values(
-               clEnumValN(mlir::hivm::PlanMemoryStrategy::DEFAULT, "default",
-                          "keep original storage entry order without sorting"),
-               clEnumValN(mlir::hivm::PlanMemoryStrategy::LARGEST_FIRST, "largest-first",
-                          "sort storage entries by const bits descending, allocate larger buffer first"))}]>,
-  ];
-}
-
 def InjectSync : HIVMPass<"hivm-inject-sync", "func::FuncOp"> {
   let summary = "auto inject sync ";
   let constructor = "mlir::hivm::createInjectSyncPass()";
@@ -1486,13 +1439,13 @@ def HIVMBubbleUpExtractSlice
                         "Run on strict mode when bubble up extract slice">];
 }
 
-def HIVMVectorizeOps : HIVMPass<"hivm-vectorize-ops", "func::FuncOp"> {
-  let summary = "Vectorize HIVM ops in a vector function using VL packing";
-  let constructor = "mlir::hivm::createHIVMVectorizeOpsPass()";
-  let dependentDialects = ["arith::ArithDialect", "func::FuncDialect",
-                           "hivm::HIVMDialect", "math::MathDialect",
-                           "mathExt::MathExtDialect", "memref::MemRefDialect",
-                           "tensor::TensorDialect", "vector::VectorDialect"];
+def HIVMVectorize : HIVMPass<"hivm-vectorize", "ModuleOp"> {
+  let summary = "Vectorize tensor-level HIVM computation";
+  let description = [{
+    Module-level entry point for tensor-level HIVM vectorization.
+  }];
+  let constructor = "mlir::hivm::createHIVMVectorizePass()";
+  let dependentDialects = [];
 }
 
 def InsertInitAndFinishForDebug

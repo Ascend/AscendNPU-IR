@@ -42,9 +42,9 @@ struct HFusionPipelineOptions
 #define GEN_HFUSION_OPTION_REGISTRATION
 #include "bishengir/Tools/bishengir-compile/PassPipelineOptions.cpp.inc"
 
-  PassOptions::Option<std::string> target{
-      *this, "target", llvm::cl::desc("Target device name"),
-      llvm::cl::init("Ascend910B1")};
+  PassOptions::Option<std::string> target{*this, "target",
+                                          llvm::cl::desc("Target device name"),
+                                          llvm::cl::init("Ascend910B1")};
 
   bool insertFFTS{true};
 
@@ -63,7 +63,7 @@ void registerLowerHFusionPipelines();
 
 namespace regbase {
 void buildHFusionPipelines(OpPassManager &pm,
-                            const HFusionPipelineOptions &options);
+                           const HFusionPipelineOptions &options);
 
 /// Build the HFusion pipeline for RegBase (Ascend950) targets.
 /// This is used by the delayed RegBase vectorize path when Mixed CV is enabled.

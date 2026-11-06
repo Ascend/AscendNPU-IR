@@ -972,6 +972,9 @@ private:
   void ReportAllocatedEntryDebugInfo(const StorageEntry *rootStorageEntry,
                                      bool isFail) const;
 
+  /// Print the max allocated size after a successful plan.
+  void PrintSuccessfulAllocatedMaxBits();
+
   /// Check if every life in `lives` can reuse this preload buffer.
   /// Before-gen requires an exact free time and VF inplace only on buffers
   /// that end at the merged interval. After-kill requires an exact alloc time

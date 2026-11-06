@@ -26,47 +26,26 @@ include "mlir/IR/OpBase.td"
 
 def VectorizableOpInterface : OpInterface<"VectorizableOpInterface"> {
   let description = [{
-    Interface for operations that needs to be vectorized.
+    Marker interface for operations that HIVM vectorization may select.
   }];
   let cppNamespace = "::mlir::hivm";
   let methods = [
     InterfaceMethod<
       /*desc=*/[{
-        Method to vectorize the operation.
-      }],
-      /*retType=*/"::llvm::LogicalResult",
-      /*methodName=*/"vectorize",
-      /*args=*/(ins "::mlir::RewriterBase &":$rewriter, "::llvm::ArrayRef<int64_t>":$vectorSizes),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/[{
-        return ::llvm::failure();
-      }]
-    >,
-    InterfaceMethod<
-      /*desc=*/[{
-        Whether `vectorize` can lower this operation to vector IR.
-        Defaults to true: an operation is vectorizable unless it opts out
-        by attaching `NotVectorizableTrait`, which makes this default
-        answer false.
+        Whether this operation is a vectorization candidate.
       }],
       /*retType=*/"bool",
       /*methodName=*/"isVectorizable",
       /*args=*/(ins),
       /*methodBody=*/"",
       /*defaultImplementation=*/[{
-        return !$_op->template hasTrait<::mlir::OpTrait::NotVectorizableTrait>();
+        return true;
       }]
     >
   ];
 }
 
-/// Marker trait for ops that are not vectorizable.
-/// Op marked with `NotVectorizableTrait` will return false for
-/// `isVectorizable()`.
-def NotVectorizableTrait : NativeOpTrait<"NotVectorizableTrait">;
-
-/// Marker trait for vectorizable op that implements `vectorize()`.
 def VectorizableTrait
-    : DeclareOpInterfaceMethods<VectorizableOpInterface, ["vectorize"]>;
+    : DeclareOpInterfaceMethods<VectorizableOpInterface, []>;
 
 #endif // BISHENGIR_DIALECT_HIVM_INTERFACES_VECTORIZABLEOPINTERFACE_TD

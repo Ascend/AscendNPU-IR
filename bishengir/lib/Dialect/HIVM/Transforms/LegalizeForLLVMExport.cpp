@@ -176,6 +176,34 @@ struct HIVMTryWaitOpLowering : public ConvertOpToLLVMPattern<TryWaitOp> {
   }
 };
 
+template <typename Op, typename ImmOp, typename RegOp>
+struct HIVMBufferSyncOpLowering : public ConvertOpToLLVMPattern<Op> {
+  using ConvertOpToLLVMPattern<Op>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(Op op, typename Op::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto module = op->template getParentOfType<ModuleOp>();
+    if (!hacc::utils::isAscend950(module))
+      return op.emitOpError("requires an Ascend950 target");
+    std::optional<int64_t> constantId;
+    if (auto id = op.getStaticBufId())
+      constantId = id->getInt();
+    else if (auto constant =
+                 op.getDynamicBufId()
+                     .template getDefiningOp<arith::ConstantIntOp>())
+      constantId = constant.value();
+    auto pipe = static_cast<int64_t>(op.getPipe().getPipe());
+    int64_t mode = op.getMode() ? 1 : 0;
+    if (constantId)
+      rewriter.replaceOpWithNewOp<ImmOp>(op, pipe, *constantId, mode);
+    else
+      rewriter.replaceOpWithNewOp<RegOp>(op, pipe, adaptor.getDynamicBufId(),
+                                         mode);
+    return success();
+  }
+};
+
 struct HIVMPipeBarrierOpLowering
     : public ConvertOpToLLVMPattern<PipeBarrierOp> {
   explicit HIVMPipeBarrierOpLowering(LLVMTypeConverter &converter)
@@ -312,6 +340,40 @@ template <typename SyncOp> static bool needsFFTSIntraBlockSync(SyncOp op) {
            : TCoreRatioAttr{};
   return ratio && ratio.getCube() == 1 && ratio.getVector() == 1;
 }
+
+template <typename Op, typename ImmOp, typename RegOp>
+struct HIVMIntraBlockSyncOpLowering : public ConvertOpToLLVMPattern<Op> {
+  using ConvertOpToLLVMPattern<Op>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(Op op, typename Op::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (!hacc::utils::isAscend950(op->template getParentOfType<ModuleOp>()))
+      return op.emitOpError("requires an Ascend950 target");
+    auto pipe = static_cast<uint64_t>(op.getPipe().getPipe());
+    std::optional<int64_t> constantId;
+    if (auto id = op.getStaticSyncId())
+      constantId = id->getInt();
+    else if (auto constant =
+                 op.getDynamicSyncId()
+                     .template getDefiningOp<arith::ConstantIntOp>())
+      constantId = constant.value();
+    if (constantId) {
+      rewriter.template replaceOpWithNewOp<ImmOp>(op, pipe, *constantId);
+    } else {
+      rewriter.template replaceOpWithNewOp<RegOp>(op, pipe,
+                                                  adaptor.getDynamicSyncId());
+    }
+    return success();
+  }
+};
+
+using HIVMIntraBlockSetOpLowering =
+    HIVMIntraBlockSyncOpLowering<SyncIntraBlockSetOp, SetIntraBlockImmInstrOp,
+                                 SetIntraBlockRegInstrOp>;
+using HIVMIntraBlockWaitOpLowering =
+    HIVMIntraBlockSyncOpLowering<SyncIntraBlockWaitOp, WaitIntraBlockImmInstrOp,
+                                 WaitIntraBlockRegInstrOp>;
 
 struct HIVMSetBlockSyncOpLowering
     : public ConvertOpToLLVMPattern<SyncBlockSetOp> {
@@ -625,6 +687,12 @@ void mlir::populateHIVMLegalizeForLLVMExportPatterns(
                HIVMWaitFlagOpLowering,
                HIVMPipeBarrierOpLowering,
                HIVMTryWaitOpLowering,
+               HIVMBufferSyncOpLowering<GetBufOp, GetBufImmInstrOp,
+                                        GetBufRegInstrOp>,
+               HIVMBufferSyncOpLowering<RlsBufOp, RlsBufImmInstrOp,
+                                        RlsBufRegInstrOp>,
+               HIVMIntraBlockSetOpLowering,
+               HIVMIntraBlockWaitOpLowering,
                HIVMSetFFTSBaseAddrOpLowering,
                HIVMSetMaskNormOpLowering,
                HIVMSetCtrlOpLowering,
@@ -669,6 +737,8 @@ void mlir::configureHIVMLegalizeForExportTarget(LLVMConversionTarget &target) {
   target.addLegalOp<DCCIDstUBInstrOp>();
   target.addLegalOp<SetIntraBlockRegInstrOp>();
   target.addLegalOp<SetIntraBlockImmInstrOp>();
+  target.addLegalOp<GetBufImmInstrOp, GetBufRegInstrOp, RlsBufImmInstrOp,
+                    RlsBufRegInstrOp>();
   target.addLegalOp<WaitIntraBlockRegInstrOp>();
   target.addLegalOp<WaitIntraBlockImmInstrOp>();
   target.addLegalOp<LoadScalarOp>();

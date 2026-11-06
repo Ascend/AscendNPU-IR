@@ -6,6 +6,7 @@ add_bishengir_dialect_library(BiShengIRHIVMV2Pipelines
 
   LINK_LIBS PUBLIC
   BiShengIRBufferizationTransforms
+  BiShengIRHFusionTransforms
   BiShengIRHIVMPipelines
   BiShengIRHIVMTransforms
   BiShengIRMemRefExtLowering

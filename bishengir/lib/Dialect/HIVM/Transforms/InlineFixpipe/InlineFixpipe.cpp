@@ -158,7 +158,7 @@ private:
     auto castOp = dyn_cast_if_present<hivm::VCastOp>(curOp);
     if (op.getFixpipeState() <= op.needFixpipePreFuse() && castOp) {
       SmallVector<hivm::VCastOp> castChain = collectVCastChain(castOp);
-      if (getQuantModeForCastChain(castChain).has_value()) {
+      if (getQuantModeForCastChain(castChain, op.getPreQuant()).has_value()) {
         matched = true;
         inlineFixpipeWithQuant(rewriter, loc, op, castChain,
                                op.getDpsInputOperand(0)->get());
@@ -171,11 +171,11 @@ private:
       inlineFixpipeWithRelu(rewriter, loc, op, reluOp);
     } else if (auto storeOp = llvm::dyn_cast_if_present<hivm::StoreOp>(curOp)) {
       //   3. store or layout
-      if (isFixpipeStoreInlinable(storeOp)) {
-        matched = true;
-        inlineFixpipeWithStore(rewriter, loc, op, storeOp,
-                               op.getDpsInputOperand(0)->get());
-      }
+      if (failed(matchFixpipeStoreInlinable(rewriter, op, storeOp)))
+        return failure();
+      matched = true;
+      inlineFixpipeWithStore(rewriter, loc, op, storeOp,
+                             op.getDpsInputOperand(0)->get());
     } else if (auto vMulOp = dyn_cast<hivm::VMulOp>(curOp);
                vMulOp && isOnRegBasedArch(op) &&
                (inlineQuantScale || hasQuantScaleCompileHint(vMulOp)) &&

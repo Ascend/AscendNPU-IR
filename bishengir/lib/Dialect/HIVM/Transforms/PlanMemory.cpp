@@ -23,11 +23,13 @@
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExtImpl.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
@@ -765,6 +767,9 @@ void MemLivenessAnalysis::UpdateOpGenInfo(OpInfo *opInfo,
     return;
   }
   for (Value operand : results) {
+    if (skipMemPlan.find(operand) != skipMemPlan.end()) {
+      continue;
+    }
     auto aliasBuffers = GetAliasBuffers(operand);
     aliasBuffers.insert(operand);
     for (auto buffer : aliasBuffers) {
@@ -778,9 +783,8 @@ void MemLivenessAnalysis::UpdateOperandGenInfo(OpInfo *opInfo, Value operand) {
   if (iterBuffer == buffer2status.end())
     return;
   if (iterBuffer->second == BufferStatus::DEFFINED) {
-    if (IsPreloadBuffer(operand)) {
+    if (IsPreloadBuffer(operand))
       preloadBufferReuseableInfo[operand].genInfo = opInfo;
-    }
     genKillMap[opInfo].gen.push_back(operand);
     buffer2status[iterBuffer->first] = BufferStatus::GENED;
   } else if (iterBuffer->second == BufferStatus::KILLED) {
@@ -943,13 +947,13 @@ void MemLivenessAnalysis::UpdatePreloadBuffersKillInfo(OpInfo *opInfo) {
 /// 6:        ops
 /// 7:        hivm.hir.load outs(%alloc)
 /// 8:        ops
-/// 9:      } {perload_num = 1}
+/// 9:      } {preload_num = 1}
 /// 10:     scope.scope : () -> () {
 /// 11:       %alloc_0 = memref.alloc()
 /// 12:       func.call @vf_reuse_direct(%alloc, %alloc_0)
 /// 13:       read %alloc_0
 /// 14:       scope.return
-/// 15:     } {perload_num = 0}
+/// 15:     } {preload_num = 0}
 /// 16:   }
 /// 17:   return
 /// 18: }
@@ -957,11 +961,11 @@ void MemLivenessAnalysis::UpdatePreloadBuffersKillInfo(OpInfo *opInfo) {
 /// reuseableBufferLifeBeforeGen:
 /// 1. allocTime: scope start index(line 6)
 /// 2. freeTime: scope end index(line 7)
-/// 3. genScopePerloadNum: preload num:1
+/// 3. genScopePreloadNum: preload num:1
 /// reuseableBufferLifeAfterKill:
 /// 1. allocTime: scope start index(line 12)
 /// 2. freeTime: scope end index(line 14)
-/// 3. genScopePerloadNum: preload num:0
+/// 3. genScopePreloadNum: preload num:0
 void MemLivenessAnalysis::GeneratePreloadBufferReuseableInfo() {
   int scopeStart = -1;
   SmallVector<Value> killBuffers;
@@ -999,7 +1003,7 @@ void MemLivenessAnalysis::GeneratePreloadBufferReuseableInfo() {
         ++iter;
         continue;
       }
-      // Set genScopePerloadNum and save preload buffer genTime(line 7) to
+      // Set genScopePreloadNum and save preload buffer genTime(line 7) to
       // reuseableBufferLifeBeforeGen's freeTime
       if (parentScope && preloadBufferReuseableInfo[buffer].genInfo == opInfo) {
         std::unique_ptr<BufferLife> bufferLife =
@@ -1673,6 +1677,9 @@ LogicalResult MemPlan::plan(bool emitErrors) {
   }
   // Update the address information of each buffer after memory buffer.
   UpdateBuffer2Offsets();
+  if (enableMemoryDisplay) {
+    PrintSuccessfulAllocatedMaxBits();
+  }
   return success();
 }
 
@@ -1703,6 +1710,23 @@ void MemPlan::GenerateStorageEntry() {
       ValidateParameters(entry);
       StorageEntryVec.emplace_back(std::move(entry));
     }
+  }
+}
+
+void MemPlan::PrintSuccessfulAllocatedMaxBits() {
+  // TODO: This print may be merged into the existing debug log output and
+  // could be redundant.
+  auto it = memscope2rootStorageEntry.find(hivm::AddressSpace::UB);
+  if (it != memscope2rootStorageEntry.end()) {
+    assert(it->second != nullptr);
+    uint64_t ubAllocBits =
+        it->second->alignedConstBits + it->second->bitsOffset;
+    for (auto &child : it->second->mergedChildren) {
+      ubAllocBits =
+          std::max(ubAllocBits, child->bitsOffset + child->alignedConstBits);
+    }
+    llvm::outs() << "[AscendNPU IR] Allocated UB size = " << ubAllocBits
+                 << " bits \n";
   }
 }
 
@@ -2204,6 +2228,14 @@ void MemPlan::ReportCurEntryDebugInfo(const StorageEntry *curEntry) const {
 
 StorageEntry *
 MemPlan::GetReorderRootStorageEntry(StorageEntry *rootStorageEntry) {
+  assert(rootStorageEntry->bufInfo->operation &&
+         "Unrecognized legal define operation !");
+  auto moduleOp =
+      rootStorageEntry->bufInfo->operation->getParentOfType<ModuleOp>();
+  if (hacc::utils::isRegBasedArch(moduleOp) &&
+      rootStorageEntry->bufInfo->bufferScope != hivm::AddressSpace::UB) {
+    return rootStorageEntry;
+  }
   SmallVector<StorageEntry *> origStorageEntryVec = {rootStorageEntry};
   origStorageEntryVec.insert(origStorageEntryVec.end(),
                              rootStorageEntry->mergedChildren.begin(),
@@ -2899,8 +2931,10 @@ inline bool MemPlan::VerifyConflictStage0(
     return false;
   }
   // if buffer in b1 has mem_unique, b1 will have only one element.
-  auto *bufferInfoIt1 = bufferInfos.find(e->bufferLifeVec.frontBuffer());
-  auto *bufferInfoIt2 = bufferInfos.find(last->bufferLifeVec.frontBuffer());
+  auto bufferInfoIt1 = bufferInfos.find(e->bufferLifeVec.frontBuffer());
+  auto bufferInfoIt2 = bufferInfos.find(last->bufferLifeVec.frontBuffer());
+  assert(bufferInfoIt1 != bufferInfos.end() &&
+         bufferInfoIt2 != bufferInfos.end());
   if (bufferInfoIt1->second.memoryUnique ||
       bufferInfoIt2->second.memoryUnique) {
     return true;

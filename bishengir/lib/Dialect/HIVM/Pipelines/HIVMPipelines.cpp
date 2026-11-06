@@ -472,7 +472,8 @@ static void hivmPostBufferizationOptimizationPipeline(
       createMarkMultiBufferPass(multiBufferOptions));
   PlanMemoryOptions planMemoryOption;
   planMemoryOption.enableMemoryDisplay =
-      hivmPipelineOptions.enableMemoryDisplay;
+      hivmPipelineOptions.enableMemoryDisplay ||
+      hivmPipelineOptions.enablePrintMemoryAllocatedSize;
   planMemoryOption.disableTightlyCoupledBufferReuse =
       hivmPipelineOptions.disableTightlyCoupledBufferReuse;
   planMemoryOption.planMemoryStrategy = hivmPipelineOptions.planMemoryStrategy;

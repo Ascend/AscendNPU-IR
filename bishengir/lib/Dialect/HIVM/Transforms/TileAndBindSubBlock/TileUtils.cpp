@@ -302,7 +302,12 @@ LogicalResult InsertFixpipeDstPropagateUp::matchAndRewrite(
     if (tilingDim == -1) {
       op->emitWarning("The tilingDim in AIC does not exist! Maybe because AIV "
                       "tightly coupled alloc is not tiled!");
-          return failure();
+      // A tiled AIV consumer must not keep a NO_DUAL scalar drain: the two
+      // sub-blocks can select different TCB slots while the AIC writes only
+      // the current slot. Force the conservative CV1:1 rollback instead of
+      // letting one sub-block read an unwritten slot.
+      op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
+      return failure();
     }
 
     // compute the fixpipe split info

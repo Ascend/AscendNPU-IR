@@ -134,6 +134,8 @@ inline bool hasCastReduceCopyPattern(ModuleOp moduleOp) {
 
 // TODO: pattern that needs optimization.
 inline bool hasPtr11CompareSyncForPattern(ModuleOp moduleOp) {
+  // Number of consecutive synchronization ops that identifies this pattern.
+  constexpr int kPtr11CompareSyncOpThreshold = 6;
   if (!detail::hasLLVMPtr11(moduleOp))
     return false;
   bool found = false;
@@ -158,8 +160,10 @@ inline bool hasPtr11CompareSyncForPattern(ModuleOp moduleOp) {
         }
         break;
       case kLookingForSync:
-        if (isa<hivm::SyncBlockSetOp>(blockOp)) {
-          if (++syncCount >= 6)
+        if (isa<hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
+                hivm::SyncIntraBlockSetOp, hivm::SyncIntraBlockWaitOp>(
+                blockOp)) {
+          if (++syncCount >= kPtr11CompareSyncOpThreshold)
             state = kLookingForFor;
         }
         break;

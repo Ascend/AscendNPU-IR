@@ -109,6 +109,8 @@ createHFusionAutoSchedulePass(const AutoScheduleOptions &options = {});
 std::unique_ptr<Pass>
 createHFusionAutoVectorizePass(const AutoVectorizeOptions &options = {});
 
+std::unique_ptr<Pass> createSelectHIVMVectorizePass();
+
 /// Create a pass to handle non-vectorizeable linalg.generic cases
 std::unique_ptr<Pass> createGenericUnrollerPass();
 
@@ -152,6 +154,9 @@ std::unique_ptr<Pass> createConvertGenericToNamedOpPass();
 /// Create a pass to flatten linalg and hfusion ops.
 std::unique_ptr<Pass>
 createFlattenOpsPass(const FlattenOpsOptions &options = {});
+
+/// Collapse local tensor regions using compatible reduction dimensions.
+std::unique_ptr<Pass> createFlattenReductionRegionsPass();
 
 /// Create a pass to move output tensor results' tied init operand to function
 /// parameters.

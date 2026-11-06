@@ -21,7 +21,7 @@ if(Python3_Interpreter_FOUND)
   set(SKEW_SHAPE_TABLE_TARGET BiShengIRSkewShapeTable)
 else()
   file(WRITE ${SKEW_SHAPE_TABLE}
-       "namespace {\nconstexpr unsigned kSpanKeyCount = 0;\nconstexpr uint64_t kSpanKeys[kSpanKeyCount] = {0ULL};\n}\n")
+       "namespace {\nconstexpr unsigned kSpanKeyCount = 0;\nconstexpr uint64_t kSpanKeys[1] = {0ULL};\nconstexpr unsigned kSkipBindKeyCount = 0;\nconstexpr uint64_t kSkipBindKeys[1] = {0ULL};\n}\n")
 endif()
 
 file(GLOB HIVM_FLATTEN ${CMAKE_CURRENT_SOURCE_DIR}/FlattenInterface/*.cpp)
@@ -34,11 +34,9 @@ file(GLOB HIVM_LAYOUT ${CMAKE_CURRENT_SOURCE_DIR}/OpLayoutInterface/*.cpp)
 file(GLOB HIVM_LIBRARY_FUNCTION ${CMAKE_CURRENT_SOURCE_DIR}/LibraryFunctionOpInterface/*.cpp)
 file(GLOB HIVM_PIPE ${CMAKE_CURRENT_SOURCE_DIR}/OpPipeInterface/*.cpp)
 file(GLOB HIVM_VECTOR_BASE ${CMAKE_CURRENT_SOURCE_DIR}/VectorOpBase/*.cpp)
-file(GLOB HIVM_VECTORIZE ${CMAKE_CURRENT_SOURCE_DIR}/Vectorize/*.cpp)
 file(GLOB_RECURSE HIVM_CONTRACT ${CMAKE_CURRENT_SOURCE_DIR}/Contracts/*.cpp)
 file(GLOB HIVM_CANONICALIZATIONS ${CMAKE_CURRENT_SOURCE_DIR}/Canonicalizations/*.cpp)
 file(GLOB HIVM_CUSTOM_OP ${CMAKE_CURRENT_SOURCE_DIR}/CustomOp/*.cpp)
-file(GLOB HIVM_VECTORIZE ${CMAKE_CURRENT_SOURCE_DIR}/Vectorize/*.cpp)
 
 add_bishengir_dialect_library(BiShengIRHIVMDialect
   ${HIVM_FLATTEN}
@@ -51,10 +49,8 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   ${HIVM_LIBRARY_FUNCTION}
   ${HIVM_PIPE}
   ${HIVM_VECTOR_BASE}
-  ${HIVM_VECTORIZE}
   ${HIVM_CANONICALIZATIONS}
   ${HIVM_CUSTOM_OP}
-  ${HIVM_VECTORIZE}
   HIVMCanonicalizations.cpp
   HIVMDialect.cpp
   HIVMDialectExtension.cpp

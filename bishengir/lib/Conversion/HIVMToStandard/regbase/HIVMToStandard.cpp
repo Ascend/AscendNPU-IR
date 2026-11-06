@@ -176,15 +176,18 @@ static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
           hivm::TFuncCoreTypeAttr::get(op->getContext(), *funcCoreType));
 
     // Only mark AIV lib calls as noinline by default; other lib calls are
-    // always inlined. HIVM custom ops default to noinline unless explicitly
-    // marked always_inline with hivm.inline_mode.
+    // always inlined. Custom ops use their explicit or builtin inline policy,
+    // falling back to noinline.
     bool markNoInline = hivm::detail::getMarkLibCallNoInline() &&
                         funcCoreType == hivm::TFuncCoreType::AIV;
     std::optional<hivm::InlineMode> inlineMode;
-    if (auto customOp = dyn_cast<hivm::CustomOp>(op))
-      inlineMode =
-          customOp.getInlineMode().value_or(hivm::InlineMode::NoInline);
-    else if (auto customMacroOp = dyn_cast<hivm::CustomMacroOp>(op))
+    if (auto customOp = dyn_cast<hivm::CustomOp>(op)) {
+      auto builtin = hivm::CustomOp::kBuiltins.find(customOp.getName());
+      auto defaultMode = hivm::InlineMode::NoInline;
+      if (builtin != hivm::CustomOp::kBuiltins.end())
+        defaultMode = builtin->second.inlineMode.value_or(defaultMode);
+      inlineMode = customOp.getInlineMode().value_or(defaultMode);
+    } else if (auto customMacroOp = dyn_cast<hivm::CustomMacroOp>(op))
       inlineMode =
           customMacroOp.getInlineMode().value_or(hivm::InlineMode::NoInline);
     if (inlineMode) {

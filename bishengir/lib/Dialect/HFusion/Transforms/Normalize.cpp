@@ -2588,8 +2588,7 @@ public:
     assert(!inType.isInteger() && "Cast in floor/ceil mode doesn't support "
                                   "integer type input");
     OpBuilder builder(op);
-    Value originalSrc = op.getInputs()[0];
-    Value src = originalSrc;
+    Value src = op.getInputs()[0];
     hfusion::RoundMode roundMode = op.getFun() == linalg::UnaryFn::ceil
                                        ? hfusion::RoundMode::CEIL
                                        : hfusion::RoundMode::FLOOR;
@@ -2607,19 +2606,9 @@ public:
       src = hfusion::castTo(builder, intermediate, rewriter.getF32Type(),
                             roundMode);
     }
-    Value result =
+    auto castOp =
         hfusion::castTo(builder, src, outType, roundMode, op.getOutputs()[0]);
-    // The cast above rounds through an integer intermediate, which turns
-    // -0.0 into +0.0. Restore the sign bit from the original input for the
-    // types supported by the HFusion copysign lowering.
-    if (outType.isF16() || outType.isBF16() || outType.isF32()) {
-      Value signSrc = originalSrc;
-      if (inType != outType)
-        signSrc = hfusion::castTo(builder, originalSrc, outType,
-                                  hfusion::RoundMode::ROUND);
-      result = buildCopysign(builder, op.getLoc(), result, signSrc);
-    }
-    rewriter.replaceOp(op, result);
+    rewriter.replaceOp(op, castOp);
     return success();
   }
 };
@@ -5947,8 +5936,13 @@ public:
     Block &body = op.getCombiner().front();
     auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
     Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
-    if (isa<arith::AddIOp, arith::MaxUIOp, arith::MaxSIOp>(bodyOp)) {
-      // As it is a bool, `add` and `max` can be converted into `or`.
+    if (isa<arith::AddIOp>(bodyOp)) {
+      // i1 addition wraps modulo 2, which is equivalent to xor.
+      replaceBinary<arith::XOrIOp>(bodyOp, rewriter);
+      return success();
+    }
+    if (isa<arith::MaxUIOp, arith::MaxSIOp>(bodyOp)) {
+      // Boolean max is equivalent to or.
       replaceBinary<arith::OrIOp>(bodyOp, rewriter);
       return success();
     }
@@ -5971,6 +5965,69 @@ private:
     auto targetOp = rewriter.create<targetType>(op->getLoc(), op->getOperand(0),
                                                 op->getOperand(1));
     rewriter.modifyOpInPlace(op, [&]() { op->replaceAllUsesWith(targetOp); });
+  }
+};
+
+/// Normalize an i1 XOR reduction to i16 because A3 reduction templates do not
+/// provide bool specializations.
+struct NormalizeReduceXorI1ToI16 : public OpRewritePattern<linalg::ReduceOp> {
+public:
+  using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(linalg::ReduceOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics() || op.getInputs().size() != 1 ||
+        op.getInits().size() != 1 || op->getNumResults() != 1)
+      return failure();
+
+    auto inputType = dyn_cast<RankedTensorType>(op.getInputs()[0].getType());
+    auto initType = dyn_cast<RankedTensorType>(op.getInits()[0].getType());
+    if (!inputType || !initType ||
+        !inputType.getElementType().isInteger(1) ||
+        !initType.getElementType().isInteger(1))
+      return failure();
+
+    Block &body = op.getCombiner().front();
+    auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
+    if (!yieldOp || yieldOp.getValues().size() != 1 ||
+        body.getNumArguments() != 2 ||
+        std::distance(body.begin(), body.end()) != 2)
+      return failure();
+
+    auto xorOp = dyn_cast_or_null<arith::XOrIOp>(
+        yieldOp.getValues()[0].getDefiningOp());
+    if (!xorOp)
+      return failure();
+
+    Value arg0 = body.getArgument(0);
+    Value arg1 = body.getArgument(1);
+    if (!((xorOp.getLhs() == arg0 && xorOp.getRhs() == arg1) ||
+          (xorOp.getLhs() == arg1 && xorOp.getRhs() == arg0)))
+      return failure();
+
+    Location loc = op.getLoc();
+    Type i16Type = rewriter.getI16Type();
+    Value inputI16 = castTo(rewriter, op.getInputs()[0], i16Type);
+    Value initI16 = castTo(rewriter, op.getInits()[0], i16Type);
+
+    IRMapping mapper;
+    mapper.map(op.getInputs()[0], inputI16);
+    mapper.map(op.getInits()[0], initI16);
+    Operation *newOp = rewriter.cloneWithoutRegions(*op, mapper);
+    newOp->getResult(0).setType(initType.clone(i16Type));
+
+    Region &newRegion = newOp->getRegion(0);
+    Block *newBody = rewriter.createBlock(&newRegion);
+    BlockArgument lhs = newBody->addArgument(i16Type, loc);
+    BlockArgument rhs = newBody->addArgument(i16Type, loc);
+    rewriter.setInsertionPointToStart(newBody);
+    Value xorResult = rewriter.create<arith::XOrIOp>(loc, lhs, rhs);
+    rewriter.create<linalg::YieldOp>(loc, xorResult);
+
+    rewriter.setInsertionPointAfter(newOp);
+    Value castBack = castTo(rewriter, newOp->getResult(0), rewriter.getI1Type());
+    rewriter.replaceOp(op, castBack);
+    return success();
   }
 };
 
@@ -10269,6 +10326,7 @@ void populateNormalizeI1ToTargetPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeToTargetType<bool, hfusion::InterleaveOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, linalg::BroadcastOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, linalg::ReduceOp>>(ctx);
+  patterns.add<NormalizeReduceXorI1ToI16>(ctx);
   patterns.add<NormalizeToTargetType<bool, CompareOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, SelectOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, linalg::TransposeOp>>(ctx);

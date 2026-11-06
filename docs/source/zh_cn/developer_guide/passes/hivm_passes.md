@@ -510,24 +510,12 @@
 
 - `-mem-plan-mode`：内存规划模式，默认为LOCAL_MEM_PLAN。
 - `-enable-global-workspace-reuse`：启用全局工作空间复用，默认关闭。
-- `-restrict-inplace-as-isa`：限制内存就地操作与ISA保持一致，默认关闭。
-
-<!-- npu="950" id1 -->
-## -hivm-plan-memory-regbase
-
-**功能**：在Ascend 950PR&950DT系列产品上为HIVM算子执行内存规划。
-
-**选项**：
-
-- `-mem-plan-mode`：内存规划模式，默认为LOCAL_MEM_PLAN。
-- `-enable-global-workspace-reuse`：启用全局工作空间复用，默认关闭。
 - `-enable-print-memory-allocated-size`：打印已分配内存大小，默认关闭。
 - `-restrict-inplace-as-isa`：限制内存就地操作与ISA保持一致，默认关闭。
 - `-simt-vf-dynamic-size`：SIMT VF的动态UB大小（KB），默认216。
 - `-disable-tightly-coupled-buffer-reuse`：禁用紧耦合缓冲区复用，默认关闭。
 - `-disable-vf-reachable-check`：禁用VF可达性检查，默认关闭。
 - `-plan-memory-strategy`：存储条目重排序的内存规划策略。
-<!-- end id1 -->
 
 ## -hivm-pre-mark-stride-align
 

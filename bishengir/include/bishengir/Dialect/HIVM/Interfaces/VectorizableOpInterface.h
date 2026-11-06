@@ -20,15 +20,6 @@
 
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/OpDefinition.h"
-#include "mlir/IR/PatternMatch.h"
-#include "llvm/ADT/ArrayRef.h"
-
-namespace mlir::OpTrait {
-/// Marker trait for ops that are not vectorizable
-template <typename ConcreteType>
-class NotVectorizableTrait
-    : public TraitBase<ConcreteType, NotVectorizableTrait> {};
-} // namespace mlir::OpTrait
 
 // Include the generated interface declarations.
 #include "bishengir/Dialect/HIVM/Interfaces/VectorizableOpInterface.h.inc"

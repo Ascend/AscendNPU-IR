@@ -866,4 +866,29 @@ def StoreLikeOpInterface : OpInterface<"StoreLikeOpInterface", [DestinationStyle
 
 }
 
+def CustomLikeOpInterface : OpInterface<"CustomLikeOpInterface"> {
+  let description = [{
+    Interface for custom operation types (CustomOp and CustomMacroOp) that
+    share common attribute names and structure for data layout inference.
+  }];
+  let cppNamespace = "::mlir::hivm";
+
+  let methods = [
+    InterfaceMethod<
+        /*desc=*/[{Returns the input operands of the custom operation.}],
+        /*retTy=*/"::mlir::OperandRange",
+        /*methodName=*/"getInputs">,
+    InterfaceMethod<
+        /*desc=*/[{Returns the output operands of the custom operation.}],
+        /*retTy=*/"::mlir::OperandRange",
+        /*methodName=*/"getOutputs">
+  ];
+
+  let extraSharedClassDeclaration = [{
+    static constexpr ::llvm::StringLiteral kArgAttrsName = "arg_attrs";
+    static constexpr ::llvm::StringLiteral kDataLayoutName = "data_layout";
+    static constexpr ::llvm::StringLiteral kAddressSpaceName = "address_space";
+  }];
+}
+
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMINTERFACES_TD

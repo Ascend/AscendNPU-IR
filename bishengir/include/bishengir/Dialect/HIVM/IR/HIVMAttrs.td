@@ -132,9 +132,21 @@ def HIVM_DataLayoutAttr : HIVM_Attr<"DataLayout", "data_layout"> {
     OptionalParameter<"DenseI64ArrayAttr">:$fractalSizes
   );
   let description = [{
-    HIVM data layout mapping attribute. Maps to DOTA_ND, DOTB_ND, DOTC_ND, zN, nZ and ND.
+    HIVM data layout mapping attribute. Specifies tensor/memref memory layout:
+      - `ND`: Natural/dense row-major layout
+      - `nZ`: Non-fractal layout optimized for matrix operands
+      - `zN`: Fractal block layout (Z-order curve)
+      - `DOTA_ND`: Matrix A layout for dot product operations
+      - `DOTB_ND`: Matrix B layout for dot product operations
+      - `DOTC_ND`: Matrix C (accumulator) layout for dot product operations
+      - `Fractal`: Generic fractal layout with configurable block sizes
+      - `NCHW`, `NC1HWC0`, `C1HWNC0`: Convolution-specific layouts
+      - `SCALEA_ND`, `SCALEB_DN`, `SCALEA_zZ`, `SCALEB_nN`: MX-format scale layouts
+
+    Parameters:
       - `transpose`: Indicates that the layout is transposed.
                      Only valid and must be present for DOTA_ND and DOTB_ND layout.
+      - `fractalSizes`: Block dimensions for fractal layouts
   }];
   let builders = [
     AttrBuilder<(ins "hivm::DataLayout":$data_layout), [{
@@ -989,13 +1001,16 @@ def HIVM_FIXPIPEPREQUANT_QF322F32_PRE :
     HIVM_FixpipePreQuantCase<"QF322F32_PRE", 15, [Sig_F32_F32]>;
 def HIVM_FIXPIPEPREQUANT_F322BF16 :
     HIVM_FixpipePreQuantCase<"F322BF16", 16, [Sig_F32_BF16]>;
+def HIVM_FIXPIPEPREQUANT_QF322F16_PRE :
+    HIVM_FixpipePreQuantCase<"QF322F16_PRE", 32, [Sig_F32_F16]>;
 
 def HIVM_FixpipePreQuantModeEnum
     : HIVM_I32Enum<"FixpipePreQuantMode", "HIVM fixpipe pre_quant mode",
                    [HIVM_FIXPIPEPREQUANT_NO_QUANT, HIVM_FIXPIPEPREQUANT_S322I8,
                     HIVM_FIXPIPEPREQUANT_F322F16,
                     HIVM_FIXPIPEPREQUANT_QF322F32_PRE,
-                    HIVM_FIXPIPEPREQUANT_F322BF16]>;
+                    HIVM_FIXPIPEPREQUANT_F322BF16,
+                    HIVM_FIXPIPEPREQUANT_QF322F16_PRE]>;
 
 def HIVM_FixpipePreQuantModeAttr : HIVM_I32EnumAttr<
   "fixpipe_pre_quant_mode", HIVM_FixpipePreQuantModeEnum> {

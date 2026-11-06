@@ -117,6 +117,7 @@ bool isNonVectorizableOp(Operation *op) {
              hivm::CustomOp, hivm::CustomMacroOp, hivm::DebugOp, hivm::StoreOp,
              hivm::BitcastOp, hivm::VGatherOp, hivm::SyncBlockOp, hivm::VSortOp,
              hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
+             hivm::SyncIntraBlockSetOp, hivm::SyncIntraBlockWaitOp,
              hivm::CreateSyncBlockLockOp, hivm::SyncBlockLockOp,
              hivm::SyncBlockUnlockOp, scf::WhileOp, scf::ForOp, scf::IfOp,
              scope::ScopeOp, func::CallOp, memref::CopyOp,
@@ -125,6 +126,8 @@ bool isNonVectorizableOp(Operation *op) {
 
 bool isFusableOp(Operation *op) {
   if (!op)
+    return false;
+  if (op->hasAttr("hivm.defer_vectorize"))
     return false;
   if (analysis::isExpandShapeOpCanFuseIntoVsstbPatternTranspose(op))
     return true;

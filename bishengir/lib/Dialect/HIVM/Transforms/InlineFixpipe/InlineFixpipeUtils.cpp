@@ -18,14 +18,18 @@
 #include "bishengir/Dialect/HIVM/Transforms/InlineFixpipe/InlineFixpipeUtils.h"
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/FixpipeUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace mlir;
@@ -41,11 +45,68 @@ bool isInsideVectorScope(Operation *op) {
   return coreTypeAttr && coreTypeAttr.getTcoretype() == hivm::TCoreType::VECTOR;
 }
 
-bool isFixpipeStoreInlinable(hivm::StoreOp storeOp) {
+/// Prove that the destination's innermost (column) stride is one. A dynamic
+/// stride can be recovered through memref.cast; an unproven stride keeps the
+/// store on the vector-side strided-store path.
+static LogicalResult proveUnitInnermostStride(PatternRewriter &rewriter,
+                                              hivm::StoreOp storeOp) {
+  Value dst = storeOp.getDst();
+  while (true) {
+    auto dstType = dyn_cast<MemRefType>(dst.getType());
+    if (!dstType)
+      return rewriter.notifyMatchFailure(
+          storeOp, "ND fixpipe destination must be a ranked memref");
+    if (dstType.getRank() == 0)
+      return rewriter.notifyMatchFailure(
+          storeOp, "ND fixpipe destination must have rank >= 1");
+
+    SmallVector<int64_t> strides;
+    int64_t offset;
+    if (failed(getStridesAndOffset(dstType, strides, offset)))
+      return rewriter.notifyMatchFailure(
+          storeOp, "ND fixpipe destination must have a strided layout");
+
+    int64_t columnStride = strides.back();
+    if (!ShapedType::isDynamic(columnStride)) {
+      if (columnStride == 1)
+        return success();
+      return rewriter.notifyMatchFailure(
+          storeOp, llvm::Twine("ND fixpipe destination innermost stride is ") +
+                       llvm::Twine(columnStride) + ", expected 1");
+    }
+
+    // A cast may erase a known unit stride or refine a dynamic one. Check
+    // each type before looking through it for more precise stride information.
+    auto castOp = dst.getDefiningOp<memref::CastOp>();
+    if (!castOp)
+      return rewriter.notifyMatchFailure(
+          storeOp, "ND fixpipe destination innermost stride is dynamic and "
+                   "cannot be proven 1");
+    dst = castOp.getSource();
+  }
+}
+
+LogicalResult matchFixpipeStoreInlinable(PatternRewriter &rewriter,
+                                         hivm::FixpipeOp fixpipeOp,
+                                         hivm::StoreOp storeOp) {
   auto attr = storeOp.getAtomicKindAttr();
   auto kind = attr ? attr.getValue() : hivm::AtomicKind::NONE;
-  return kind == AtomicKind::NONE || kind == AtomicKind::ADD ||
-         kind == AtomicKind::MAX || kind == AtomicKind::MIN;
+  if (kind != AtomicKind::NONE && kind != AtomicKind::ADD &&
+      kind != AtomicKind::MAX && kind != AtomicKind::MIN)
+    return rewriter.notifyMatchFailure(
+        storeOp, llvm::Twine("fixpipe store fusion does not support atomic "
+                             "kind '") +
+                     stringifyAtomicKind(kind) + "'");
+
+  // ND fixpipe DMA only programs the destination row stride. NZ2NZ preserves
+  // the fractal layout, whose innermost dimension is also consumed as
+  // contiguous. Require a positively proven unit column stride for all three
+  // modes; row-strided (packed rows) remaps remain foldable.
+  FixpipeDMAMode dmaMode = fixpipeOp.getDmaMode();
+  if (dmaMode == FixpipeDMAMode::NZ2NZ || dmaMode == FixpipeDMAMode::NZ2ND ||
+      dmaMode == FixpipeDMAMode::NZ2DN)
+    return proveUnitInnermostStride(rewriter, storeOp);
+  return success();
 }
 
 Operation *getSingleSiftedUser(Value v) {
@@ -114,6 +175,7 @@ getQuantModeForTypes(Type inputType, Type outputType) {
   // NO_QUANT describes identity signatures and is not an explicit quantizing
   // fusion choice.
   llvm::erase(candidates, FixpipePreQuantMode::NO_QUANT);
+  llvm::erase(candidates, FixpipePreQuantMode::QF322F16_PRE);
   if (candidates.size() != 1)
     return std::nullopt;
   FixpipePreQuantMode mode = candidates.front();
@@ -135,7 +197,8 @@ static bool isIntegerNarrowing(Type inputType, Type outputType) {
 /// first cast's input to element type of the last cast's output. Every cast
 /// in the chain (and the overall conversion) must be inlinable.
 std::optional<FixpipePreQuantMode>
-getQuantModeForCastChain(ArrayRef<hivm::VCastOp> castChain) {
+getQuantModeForCastChain(ArrayRef<hivm::VCastOp> castChain,
+                         FixpipePreQuantMode preQuant) {
   assert(!castChain.empty() && "cast chain must be non-empty");
   for (hivm::VCastOp castOp : castChain) {
     if (!isVCastInlinableIntoFixpipe(castOp))
@@ -175,7 +238,19 @@ getQuantModeForCastChain(ArrayRef<hivm::VCastOp> castChain) {
     }
   }
 
-  return getQuantModeForTypes(inputType, outputType);
+  auto mode = getQuantModeForTypes(inputType, outputType);
+  if (preQuant != FixpipePreQuantMode::QF322F32_PRE)
+    return mode;
+
+  // Compose scalar PRE scaling with its final conversion, preserving scale.
+  auto module = firstCast->getParentOfType<ModuleOp>();
+  auto saturate = firstCast->getAttrOfType<BoolAttr>("enable_saturate");
+  if (mode != FixpipePreQuantMode::F322F16 || castChain.size() != 1 ||
+      firstCast.getRoundMode() != RoundMode::RINT ||
+      (saturate && saturate.getValue()) || !module ||
+      !hacc::utils::isAscend950(module))
+    return std::nullopt;
+  return FixpipePreQuantMode::QF322F16_PRE;
 }
 
 std::optional<FixpipePreQuantMode> getQuantMode(hivm::VCastOp castOp) {

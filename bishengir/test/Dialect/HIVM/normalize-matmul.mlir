@@ -3123,6 +3123,67 @@ func.func @test_mmadL1_fold_vtranspose_b(%a: tensor<16x64xf16>, %b: tensor<32x64
 }
 
 // -----
+// A5: `dot_pad_only_k` is a hint consumed only by this pass, so the mark is
+// dropped once it has been read. A leftover mark would keep the already-folded
+// vtranspose alive, because annotation.mark writes the value it marks.
+// CHECK-LABEL: func.func @test_mmadL1_fold_vtranspose_b_drop_pad_hint
+// CHECK-NOT: hivm.hir.vtranspose
+// CHECK-NOT: dot_pad_only_k
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, b_transpose} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<16x64xf16>, tensor<32x64xf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+func.func @test_mmadL1_fold_vtranspose_b_drop_pad_hint(%a: tensor<16x64xf16>, %b: tensor<32x64xf16>) -> tensor<16x32xf32> {
+  %true = arith.constant true
+  %c0 = arith.constant 0 : index
+  %bt_init = tensor.empty() : tensor<64x32xf16>
+  %bt = hivm.hir.vtranspose ins(%b : tensor<32x64xf16>) outs(%bt_init : tensor<64x32xf16>) permutation = [1, 0] -> tensor<64x32xf16>
+  annotation.mark %bt {dot_pad_only_k} : tensor<64x32xf16>
+  %empty = tensor.empty() : tensor<16x32xf32>
+  %r = hivm.hir.mmadL1 ins(%a, %bt, %true, %c0, %c0, %c0 : tensor<16x64xf16>, tensor<64x32xf16>, i1, index, index, index) outs(%empty : tensor<16x32xf32>) -> tensor<16x32xf32>
+  return %r : tensor<16x32xf32>
+}
+}
+
+// -----
+// A5: the `dot_pad_only_k` hint on a folded vtranspose has to reach the mmad
+// operand, otherwise the L1 pad of that operand cannot be dropped. The hint is
+// consumed by this pass and dropped afterwards, so the pad-less load is the
+// observable effect here. %arg4 is real_n, i.e. the tail extent the mmad uses
+// once the pad of the B load is optimized away.
+// CHECK-LABEL: func.func @test_mmadL1_fold_vtranspose_b_pad_hint_reaches_mmad
+// CHECK-NOT: hivm.hir.vtranspose
+// CHECK-NOT: dot_pad_only_k
+// The load must end right after outs(...): pad_mode/pad_value/left_padding_num/
+// init_out_buffer/init_condition would print between outs(...) and the end of
+// that line. A trailing CHECK-NOT could not catch them (NOT only scans whole
+// lines after the previous match), so anchor the line instead.
+// CHECK: hivm.hir.load ins({{.*}}) outs({{.*}}){{$}}
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, b_transpose} ins(%{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %arg4 : tensor<16x64xi8>, tensor<?x?xi8>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+func.func @test_mmadL1_fold_vtranspose_b_pad_hint_reaches_mmad(%gm_b: memref<?x?xi8>, %a: tensor<16x64xi8>, %tile_n: index, %tile_k: index, %real_n: index, %real_k: index) -> tensor<16x32xi32> {
+  %c0 = arith.constant 0 : index
+  %c0_i8 = arith.constant 0 : i8
+  %init_cond = arith.constant 1 : i1
+  %true = arith.constant true
+  %gm_subview_b = memref.subview %gm_b[0, 0] [%real_n, %real_k] [1, 1] : memref<?x?xi8> to memref<?x?xi8, strided<[?, 1]>>
+  %alloc_b = memref.alloc(%tile_n, %tile_k) : memref<?x?xi8>
+  %subview_b = memref.subview %alloc_b[0, 0] [%real_n, %real_k] [1, 1] : memref<?x?xi8> to memref<?x?xi8, strided<[?, 1]>>
+  hivm.hir.load ins(%gm_subview_b : memref<?x?xi8, strided<[?, 1]>>) outs(%subview_b : memref<?x?xi8, strided<[?, 1]>>)
+    pad_mode = <PadValue>
+    pad_value = %c0_i8 : i8
+    left_padding_num = %c0 : index
+    init_out_buffer = true
+    init_condition = %init_cond : i1
+  %tensor_b = bufferization.to_tensor %alloc_b restrict writable : memref<?x?xi8>
+  %bt_init = tensor.empty(%real_k, %real_n) : tensor<?x?xi8>
+  %bt = hivm.hir.vtranspose ins(%tensor_b : tensor<?x?xi8>) outs(%bt_init : tensor<?x?xi8>) permutation = [1, 0] -> tensor<?x?xi8>
+  annotation.mark %bt {dot_pad_only_k} : tensor<?x?xi8>
+  %empty = tensor.empty() : tensor<16x32xi32>
+  %r = hivm.hir.mmadL1 ins(%a, %bt, %true, %c0, %c0, %c0 : tensor<16x64xi8>, tensor<?x?xi8>, i1, index, index, index) outs(%empty : tensor<16x32xi32>) -> tensor<16x32xi32>
+  return %r : tensor<16x32xi32>
+}
+}
+
+// -----
 // A5: a batch vtranspose swapping the two innermost axes is absorbed.
 // CHECK-LABEL: func.func @test_batchMmadL1_fold_vtranspose_innermost
 // CHECK-NOT: hivm.hir.vtranspose
