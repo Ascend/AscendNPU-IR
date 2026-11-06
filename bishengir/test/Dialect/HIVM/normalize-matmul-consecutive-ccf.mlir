@@ -6,11 +6,11 @@
 // CHECK-LABEL: func.func @ccf_for_for
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.for
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.for
 // CHECK: arith.andi
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: hivm.hir.vbrc
 // CHECK: fallback_not_exec
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -40,11 +40,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK-LABEL: func.func @ccf_for_while
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.for
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.while
 // CHECK: arith.andi
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: hivm.hir.vbrc
 // CHECK: fallback_not_exec
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -79,11 +79,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK-LABEL: func.func @ccf_for_if
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.for
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.if
 // CHECK: arith.andi
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: hivm.hir.vbrc
 // CHECK: fallback_not_exec
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -115,10 +115,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK-LABEL: func.func @ccf_for_mmad
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.for
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: memref.load
 // CHECK: arith.cmpi
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
 // CHECK-NOT: hivm.hir.vadd
 // CHECK-NOT: fallback_not_exec
 // CHECK: return
@@ -146,11 +146,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK-LABEL: func.func @ccf_while_for
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.while
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.for
 // CHECK: arith.andi
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: hivm.hir.vbrc
 // CHECK: fallback_not_exec
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -185,11 +185,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK-LABEL: func.func @ccf_while_while
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.while
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.while
 // CHECK: arith.andi
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: hivm.hir.vbrc
 // CHECK: fallback_not_exec
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -229,11 +229,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK-LABEL: func.func @ccf_while_if
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.while
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.if
 // CHECK: arith.andi
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: hivm.hir.vbrc
 // CHECK: fallback_not_exec
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -270,10 +270,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK-LABEL: func.func @ccf_while_mmad
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.while
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: memref.load
 // CHECK: arith.cmpi
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
 // CHECK-NOT: hivm.hir.vadd
 // CHECK-NOT: fallback_not_exec
 // CHECK: return
@@ -306,10 +306,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK-LABEL: func.func @ccf_if_for
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.if
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.for
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: hivm.hir.vadd
 // CHECK: fallback_not_exec
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -341,10 +341,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK-LABEL: func.func @ccf_if_while
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.if
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.while
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: hivm.hir.vadd
 // CHECK: fallback_not_exec
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -381,10 +381,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK-LABEL: func.func @ccf_if_if
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.if
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.if
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: hivm.hir.vadd
 // CHECK: fallback_not_exec
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -418,8 +418,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK-LABEL: func.func @ccf_if_mmad
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.if
-// CHECK: hivm.hir.mmadL1
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
 // CHECK: hivm.hir.vadd
 // CHECK: return
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -446,10 +446,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // bare mmad consecutive with scf.for
 // ============================================================================
 // CHECK-LABEL: func.func @ccf_mmad_for
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.for
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK-NOT: hivm.hir.vadd
 // CHECK-NOT: fallback_not_exec
 // CHECK: return
@@ -475,10 +475,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // bare mmad consecutive with scf.while
 // ============================================================================
 // CHECK-LABEL: func.func @ccf_mmad_while
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.while
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK-NOT: hivm.hir.vadd
 // CHECK-NOT: fallback_not_exec
 // CHECK: return
@@ -509,10 +509,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // bare mmad consecutive with scf.if
 // ============================================================================
 // CHECK-LABEL: func.func @ccf_mmad_if
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: scf.if
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK-NOT: hivm.hir.vadd
 // CHECK-NOT: fallback_not_exec
 // CHECK: return
@@ -540,10 +540,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // bare mmad consecutive with bare mmad
 // ============================================================================
 // CHECK-LABEL: func.func @ccf_mmad_mmad
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK-NOT: memref.alloca() {normalize_matmul_counter
 // CHECK-NOT: memref.alloca() {normalize_matmul_counter
-// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
 // CHECK-NOT: hivm.hir.vadd
 // CHECK-NOT: fallback_not_exec
 // CHECK: return

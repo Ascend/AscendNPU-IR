@@ -230,6 +230,11 @@ bool isRemainInL0c(OpOperand &use) {
   auto *defOp = result.getDefiningOp();
   if (!defOp)
     return false;
+  // scf.if is remain only for a result propagateRemainInL0C marked. Walking
+  // the then yield would treat a mixed if as L0C when only that branch's
+  // mmad stays in L0C.
+  if (isa<scf::IfOp>(defOp))
+    return isResultRemainInL0C(result);
   if (defOp->hasAttr(RemainInL0CAttr::name)) {
     return true;
   }

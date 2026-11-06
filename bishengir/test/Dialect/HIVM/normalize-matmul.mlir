@@ -758,13 +758,14 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">, hfusion.disableHfu
 }
 
 // -----
-// A3: scf.if with else branch yielding vbrc (not in L0C) should NOT get
+// A3: scf.if with else branch yielding vbrc (not in L0C) does not get
 // hivm.remain_in_l0c, because the else path doesn't keep data in L0C.
+// The mmad in the then branch still does: its own result stays in L0C.
 // CHECK-LABEL: func.func @test_a3_dot_reuse_l0c_through_if_else_not_l0c
 // CHECK: %[[VBRC:.*]] = hivm.hir.vbrc
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
 // CHECK: scf.if
-// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: } else {
 // CHECK: scf.yield %[[VBRC]]
 // CHECK: } {may_not_exec, normalized_in_L0C = [0 : i32]}
@@ -1940,7 +1941,7 @@ func.func @test_matmul_with_scope_matmul_limited_in_cube(%arg1: memref<16x16xf16
       %189 = scf.if %187 -> tensor<64x64xf32> {
         // CHECK: %[[LOADED:.*]] = memref.load %[[ALLOCA]][] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
         // CHECK: %[[CMP:.*]] = arith.cmpi eq, %[[LOADED]], %[[C0_I32]] : i32
-        // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C} ins({{.*}}, {{.*}}, %[[CMP]], %[[C64]], %[[C64]], %[[C64]]
+        // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C} ins({{.*}}, {{.*}}, %[[CMP]], %[[C64]], %[[C64]], %[[C64]]
         // CHECK: %[[INCREMENTED:.*]] = arith.addi %[[LOADED]], %[[C1_I32]] : i32
         // CHECK: memref.store %[[INCREMENTED]], %[[ALLOCA]][] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
         %190 = hivm.hir.mmadL1 ins(%ma, %mb, %false, %c0, %c0, %c0 : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index) outs(%arg22 : tensor<64x64xf32>) -> tensor<64x64xf32>
@@ -1950,6 +1951,7 @@ func.func @test_matmul_with_scope_matmul_limited_in_cube(%arg1: memref<16x16xf16
       } {hivm.matmul_limited_in_cube, ssbuffer.if = 6 : i32}
 
       scf.yield %189 : tensor<64x64xf32>
+    // CHECK: } {hivm.remain_in_l0c = [0 : i32], normalized_in_L0C = [0 : i32]}
     }
 
     bufferization.materialize_in_destination %result in writable %alloc_15 : (tensor<64x64xf32>, memref<64x64xf32>) -> ()
@@ -2337,7 +2339,7 @@ func.func @test_mmadmx_with_scope_matmul_limited_in_cube() {
       %189 = scf.if %187 -> tensor<64x64xf32> {
         // CHECK: %[[LOADED:.*]] = memref.load %[[ALLOCA]][] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
         // CHECK: %[[CMP:.*]] = arith.cmpi eq, %[[LOADED]], %[[C0_I32]] : i32
-        // CHECK: hivm.hir.mmadmxL1 {already_set_real_mkn, normalized_in_L0C} ins({{.*}}, {{.*}}, {{.*}}, {{.*}}, %[[CMP]], %[[C64]], %[[C64]], %[[C64]]
+        // CHECK: hivm.hir.mmadmxL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C} ins({{.*}}, {{.*}}, {{.*}}, {{.*}}, %[[CMP]], %[[C64]], %[[C64]], %[[C64]]
         // CHECK: %[[INCREMENTED:.*]] = arith.addi %[[LOADED]], %[[C1_I32]] : i32
         // CHECK: memref.store %[[INCREMENTED]], %[[ALLOCA]][] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
         %190 = hivm.hir.mmadmxL1 ins(%ma, %mb, %scaleA, %scaleB, %false, %c0, %c0, %c0 : tensor<64x64xf8E4M3FN>, tensor<64x64xf8E4M3FN>, tensor<1xi8>, tensor<1xi8>, i1, index, index, index) outs(%arg22 : tensor<64x64xf32>) -> tensor<64x64xf32>
@@ -2347,6 +2349,7 @@ func.func @test_mmadmx_with_scope_matmul_limited_in_cube() {
       } {hivm.matmul_limited_in_cube, ssbuffer.if = 6 : i32}
 
       scf.yield %189 : tensor<64x64xf32>
+    // CHECK: } {hivm.remain_in_l0c = [0 : i32], normalized_in_L0C = [0 : i32]}
     }
 
     bufferization.materialize_in_destination %result in writable %alloc_15 : (tensor<64x64xf32>, memref<64x64xf32>) -> ()
@@ -2968,10 +2971,11 @@ func.func @test_mmadmx_empty_init_splitk() -> tensor<16x16xf32> {
 }
 
 // -----
-// A5: scf.if-only CCF sets may_not_exec (no remain_in_l0c on if parent).
+// A5: scf.if-only CCF sets may_not_exec. The mmad stays in L0C, but the if
+// parent does not: its else yield is the vbrc, not an L0C accumulator.
 // CHECK-LABEL: func.func @test_mmadL1_if_only_may_not_exec
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
-// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: } {may_not_exec, normalized_in_L0C = [0 : i32]}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_mmadL1_if_only_may_not_exec(%cond: i1) -> tensor<16x16xf32> {
