@@ -6,13 +6,11 @@
 // CHECK: scope.scope
 // CHECK:   hivm.hir.mmadL1
 // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>
-// The non-NaN fill sits in the src1 position, so maxnumf needs no NaN check
-// and collapses to one compare and one select.
 // CHECK: scope.scope
 // CHECK:   %[[ZERO:.*]] = hivm.hir.vbrc
-// CHECK:   %[[CMP:.*]] = hivm.hir.vcmp ins(%{{.*}}, %[[ZERO]] : tensor<16x16xf32>, tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xi1>) compare_mode = <ge>
-// CHECK:   hivm.hir.vsel ins(%[[CMP]], %{{.*}}, %[[ZERO]]
+// CHECK:   %[[MASKED:.*]] = hivm.hir.vsel
 // CHECK-NOT:   hivm.hir.vsel
+// CHECK:   hivm.hir.vmax ins(%[[MASKED]], %[[ZERO]]
 // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @preload_non_nan_fill(

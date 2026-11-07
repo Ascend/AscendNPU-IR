@@ -1081,13 +1081,16 @@ func.func @test_NormalizeErf_hfusion_elemwise_erf_f16(%arg0: tensor<1024xf16>) -
 
 // -----
 
-// The NaN check applies to src1 only; its expansion is covered by
-// hfusion-normalize-comparison-ops.mlir.
 // CHECK-LABEL: func.func @test_NormalizeElemwiseMinMaxNumF_minf
-// CHECK: %[[CMP:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vle>} ins(%arg0, %arg1 : tensor<512xf32>, tensor<512xf32>) outs(%{{.*}} : tensor<512xi1>) -> tensor<512xi1>
-// CHECK: %[[COND:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%[[CMP]], %{{.*}} : tensor<512xi1>, tensor<512xi1>) outs(%{{.*}} : tensor<512xi1>) -> tensor<512xi1>
+// CHECK: %[[INFINITY:.*]] : f32
+// CHECK: %[[SRC_0_NAN_MASK:.*]] -> tensor<512xi1>
+// CHECK: %[[EMPTY_0:.*]] = tensor.empty() : tensor<512xf32>
+// CHECK: %[[NEW_SRC_0:.*]] = hfusion.select ins(%[[SRC_0_NAN_MASK:.*]], %[[INFINITY:.*]], %arg0 : tensor<512xi1>, f32, tensor<512xf32>) outs(%[[EMPTY_0:.*]] : tensor<512xf32>) -> tensor<512xf32>
+// CHECK: %[[SRC_1_NAN_MASK:.*]] -> tensor<512xi1>
+// CHECK: %[[EMPTY_1:.*]] = tensor.empty() : tensor<512xf32>
+// CHECK: %[[NEW_SRC_1:.*]] = hfusion.select ins(%[[SRC_1_NAN_MASK:.*]], %[[INFINITY:.*]], %arg1 : tensor<512xi1>, f32, tensor<512xf32>) outs(%[[EMPTY_1:.*]] : tensor<512xf32>) -> tensor<512xf32>
 // CHECK: %[[EMPTY_RES:.*]] = tensor.empty() : tensor<512xf32>
-// CHECK: %[[RET:.*]] = hfusion.select ins(%[[COND]], %arg0, %arg1 : tensor<512xi1>, tensor<512xf32>, tensor<512xf32>) outs(%[[EMPTY_RES]] : tensor<512xf32>) -> tensor<512xf32>
+// CHECK: %[[RET:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<minf>} ins(%[[NEW_SRC_0:.*]], %[[NEW_SRC_1:.*]] : tensor<512xf32>, tensor<512xf32>) outs(%[[EMPTY_RES:.*]] : tensor<512xf32>) -> tensor<512xf32>
 func.func @test_NormalizeElemwiseMinMaxNumF_minf(%arg0: tensor<512xf32>, %arg1: tensor<512xf32>) -> tensor<512xf32> {
   %0 = tensor.empty() : tensor<512xf32>
   %1 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<minnumf>} ins(%arg0, %arg1 : tensor<512xf32>, tensor<512xf32>) outs(%0 : tensor<512xf32>) -> tensor<512xf32>
@@ -1097,10 +1100,15 @@ func.func @test_NormalizeElemwiseMinMaxNumF_minf(%arg0: tensor<512xf32>, %arg1: 
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeElemwiseMinMaxNumF_maxf
-// CHECK: %[[CMP:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vge>} ins(%arg0, %arg1 : tensor<512xf32>, tensor<512xf32>) outs(%{{.*}} : tensor<512xi1>) -> tensor<512xi1>
-// CHECK: %[[COND:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%[[CMP]], %{{.*}} : tensor<512xi1>, tensor<512xi1>) outs(%{{.*}} : tensor<512xi1>) -> tensor<512xi1>
+// CHECK: %[[INFINITY:.*]] : f32
+// CHECK: %[[SRC_0_NAN_MASK:.*]] -> tensor<512xi1>
+// CHECK: %[[EMPTY_0:.*]] = tensor.empty() : tensor<512xf32>
+// CHECK: %[[NEW_SRC_0:.*]] = hfusion.select ins(%[[SRC_0_NAN_MASK:.*]], %[[INFINITY:.*]], %arg0 : tensor<512xi1>, f32, tensor<512xf32>) outs(%[[EMPTY_0:.*]] : tensor<512xf32>) -> tensor<512xf32>
+// CHECK: %[[SRC_1_NAN_MASK:.*]] -> tensor<512xi1>
+// CHECK: %[[EMPTY_1:.*]] = tensor.empty() : tensor<512xf32>
+// CHECK: %[[NEW_SRC_1:.*]] = hfusion.select ins(%[[SRC_1_NAN_MASK:.*]], %[[INFINITY:.*]], %arg1 : tensor<512xi1>, f32, tensor<512xf32>) outs(%[[EMPTY_1:.*]] : tensor<512xf32>) -> tensor<512xf32>
 // CHECK: %[[EMPTY_RES:.*]] = tensor.empty() : tensor<512xf32>
-// CHECK: %[[RET:.*]] = hfusion.select ins(%[[COND]], %arg0, %arg1 : tensor<512xi1>, tensor<512xf32>, tensor<512xf32>) outs(%[[EMPTY_RES]] : tensor<512xf32>) -> tensor<512xf32>
+// CHECK: %[[RET:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<maxf>} ins(%[[NEW_SRC_0:.*]], %[[NEW_SRC_1:.*]] : tensor<512xf32>, tensor<512xf32>) outs(%[[EMPTY_RES:.*]] : tensor<512xf32>) -> tensor<512xf32>
 func.func @test_NormalizeElemwiseMinMaxNumF_maxf(%arg0: tensor<512xf32>, %arg1: tensor<512xf32>) -> tensor<512xf32> {
   %0 = tensor.empty() : tensor<512xf32>
   %1 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<maxnumf>} ins(%arg0, %arg1 : tensor<512xf32>, tensor<512xf32>) outs(%0 : tensor<512xf32>) -> tensor<512xf32>
