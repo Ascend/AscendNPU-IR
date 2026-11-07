@@ -1292,12 +1292,15 @@ struct ExpandLoad1D : public OpRewritePattern<hivm::LoadOp> {
     Value dst = loadOp.getDst();
     auto srcType = mlir::dyn_cast<MemRefType>(src.getType());
     auto dstType = mlir::dyn_cast<MemRefType>(dst.getType());
-    auto srcSize = srcType.getDimSize(0);
-
     if (!srcType || !dstType || srcType.getRank() != 1) {
       LLVM_DEBUG(llvm::dbgs() << "  Match Failed: Not 1D\n");
       return failure();
     }
+
+    // Vector loads retain their rank-one views, including outlined VF operands.
+    if (getCoreType(loadOp) == TCoreType::VECTOR)
+      return failure();
+    auto srcSize = srcType.getDimSize(0);
 
     Location loc = loadOp.getLoc();
     SmallVector<ReassociationIndices> reassoc = {{0, 1}};
