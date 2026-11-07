@@ -4,7 +4,7 @@
 // RUN: bishengir-opt %t/stages.mlir -hacc-append-device-spec=target=Ascend950PR_950z -hivm-mark-buffer-pool -hivm-mark-buffer-pool -split-input-file | FileCheck %t/stages.mlir
 // RUN: bishengir-opt %t/ssbuffer.mlir -hacc-append-device-spec=target=Ascend950PR_950z -hivm-mark-buffer-pool | FileCheck %t/ssbuffer.mlir
 // RUN: bishengir-opt %t/unseparated.mlir -o %t/unseparated-before.mlir
-// RUN: bishengir-opt %t/unseparated.mlir -hivm-mark-buffer-pool -o %t/unseparated-after.mlir
+// RUN: bishengir-opt %t/unseparated.mlir -hivm-mark-buffer-pool -hivm-enable-buffer-pool -o %t/unseparated-after.mlir
 // RUN: diff %t/unseparated-before.mlir %t/unseparated-after.mlir
 
 //--- stages.mlir
