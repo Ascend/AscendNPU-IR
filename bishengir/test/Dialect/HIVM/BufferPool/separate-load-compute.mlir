@@ -19,7 +19,7 @@
 // RUN: bishengir-opt %t/marked.mlir -hivm-plan-memory -hivm-enable-buffer-pool -hivm-graph-sync-solver -o /dev/null
 
 //--- candidates.mlir
-module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+module attributes {hivm.load_buffer_pool = true, hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // A module pass must continue past declarations and functions with no work.
 func.func private @external()
 func.func @no_load() {
@@ -63,9 +63,9 @@ func.func @nested_staged(%src: memref<16x16xf16, #hivm.address_space<gm>>, %rhs:
 }
 // -----
 
-module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+module attributes {hivm.load_buffer_pool = true, hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK-LABEL: func.func @hoisted_buffer
-func.func @hoisted_buffer(%src: memref<16x16xf16, #hivm.address_space<gm>>, %rhs: tensor<1x1x16x16xf32>) {
+func.func @hoisted_buffer(%src: memref<16x16xf16, #hivm.address_space<gm>>, %rhs: tensor<16x16xf32>) {
   %tile_size = arith.constant 16 : index
   %init = arith.constant true
   %c0 = arith.constant 0 : index
@@ -74,28 +74,28 @@ func.func @hoisted_buffer(%src: memref<16x16xf16, #hivm.address_space<gm>>, %rhs
   // CHECK: scf.for
   scf.for %i = %c0 to %c4 step %c1 {
     // CHECK: %[[BUF:.*]] = memref.alloc
-    %buf = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+    %buf = memref.alloc() : memref<16x16xf16>
     // CHECK-NEXT: scope.scope : () -> () {
-    // CHECK: hivm.hir.nd2nz {{.*}} outs(%[[BUF]]
+    // CHECK: hivm.hir.load {{.*}} outs(%[[BUF]]
     // CHECK-NEXT: scope.return
-    // CHECK-NEXT: } {hivm.load_preload = 1 : i32,
+    // CHECK-NEXT: } {hivm.load_preload = 1 : i32, hivm.loop_core_type = #hivm.tcore_type<CUBE>, no_inline}
     // CHECK-NEXT: %[[T:.*]] = bufferization.to_tensor %[[BUF]]
-    %t = bufferization.to_tensor %buf restrict writable : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
-    // CHECK-NEXT: {{.*}}scope.scope : () -> tensor<1x1x16x16xf32>
-    %r = scope.scope : () -> tensor<1x1x16x16xf32> {
-      hivm.hir.nd2nz ins(%src : memref<16x16xf16, #hivm.address_space<gm>>) outs(%buf : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>)
+    %t = bufferization.to_tensor %buf restrict writable : memref<16x16xf16>
+    // CHECK-NEXT: {{.*}}scope.scope : () -> tensor<16x16xf32>
+    %r = scope.scope : () -> tensor<16x16xf32> {
+      hivm.hir.load ins(%src : memref<16x16xf16, #hivm.address_space<gm>>) outs(%buf : memref<16x16xf16>) core_type = <CUBE>
       // CHECK: hivm.hir.mmadL1 ins(%[[T]]
-      %sum = hivm.hir.mmadL1 ins(%t, %t, %init, %tile_size, %tile_size, %tile_size : tensor<1x1x16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%rhs : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
-      scope.return %sum : tensor<1x1x16x16xf32>
+      %sum = hivm.hir.mmadL1 ins(%t, %t, %init, %tile_size, %tile_size, %tile_size : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%rhs : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scope.return %sum : tensor<16x16xf32>
     // CHECK: hivm.preload_num = 0 : i32
-    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.preload_num = 0 : i32, hivm.max_preload_num = 1 : i32, no_inline}
+    } {hivm.preload_num = 0 : i32, hivm.max_preload_num = 1 : i32, no_inline}
   } {hivm.cv_pipelined_loop}
   return
 }
 }
 // -----
 
-module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+module attributes {hivm.load_buffer_pool = true, hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK-LABEL: func.func @ssbuffer_padding
 func.func @ssbuffer_padding(%src: memref<?x16xf16, #hivm.address_space<gm>>, %out: memref<1x1x16x16xf32, #hivm.address_space<cc>>, %pad: i1, %head: i32, %headStride: index) {
   %tile_size = arith.constant 16 : index
@@ -126,7 +126,7 @@ func.func @ssbuffer_padding(%src: memref<?x16xf16, #hivm.address_space<gm>>, %ou
     // CHECK: hivm.hir.vbrc {{.*}} outs(%[[BUF]]
     // CHECK: hivm.hir.nd2nz {{.*}} outs(%[[BUF]]
     // CHECK-NEXT: scope.return
-    // CHECK-NEXT: } {hivm.load_preload = 1 : i32,
+    // CHECK-NEXT: } {hivm.load_preload = 1 : i32, hivm.loop_core_type = #hivm.tcore_type<CUBE>, no_inline}
     // CHECK: scf.if %{{.*}} -> (i32) {
     %next = scf.if %cond -> i32 {
       %buf = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
@@ -148,7 +148,7 @@ func.func @ssbuffer_padding(%src: memref<?x16xf16, #hivm.address_space<gm>>, %ou
       // CHECK: scf.yield
       scf.yield %count : i32
     // CHECK: ssbuffer.if = 99 : i32
-    } {ssbuffer.if = 99 : i32, hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+    } {ssbuffer.if = 99 : i32}
     scf.yield %next : i32
   }
   return
@@ -156,6 +156,7 @@ func.func @ssbuffer_padding(%src: memref<?x16xf16, #hivm.address_space<gm>>, %ou
 }
 
 //--- unchanged.mlir
+module attributes {hivm.load_buffer_pool = true} {
 // Unsupported candidates retain all original guards, allocations and writes.
 // No load marker is created, so Mark has no work and needs no target spec.
 func.func private @opaque(memref<1x1x16x16xf16, #hivm.address_space<cbuf>>)
@@ -190,6 +191,7 @@ func.func @vector_unchanged(%src: memref<16xf32, #hivm.address_space<gm>>, %rhs:
     } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 0 : i32, hivm.max_preload_num = 1 : i32, no_inline}
   } {hivm.cv_pipelined_loop}
   return
+}
 }
 
 //--- while.mlir

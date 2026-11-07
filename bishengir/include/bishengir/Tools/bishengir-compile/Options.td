@@ -1368,6 +1368,12 @@ def InlineQuantScaleInFixpipe : HIVMOptimizationControlOptions<
   let passGroup = ["HIVM"];
 }
 
+def DecoupledMemoryComputeScheduling : HIVMOptimizationControlOptions<
+  "Enable decoupled memory and compute scheduling for Cube loads (RegBase only).",
+  "bool",
+  "true"
+>;
+
 def UsePipelinev2 : HIVMOptimizationControlOptions<
   "Enable pipeline v2, bypassing cv-pipelining pass and using pipeline v2 passes (RegBase only for now).",
   "bool",
