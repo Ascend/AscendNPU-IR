@@ -109,7 +109,15 @@ void GraphSyncSolverPass::runOnOperation() {
     return signalPassFailure();
   }
 
+  auto enableBufferPool =
+      moduleOp->getAttrOfType<BoolAttr>("hivm.load_buffer_pool");
+  if (enableBufferPool && enableBufferPool.getValue() &&
+      failed(solver->prepareBufferPoolSync()))
+    return signalPassFailure();
+
   solver->solve();
+  if (solver->hasBufferPoolSyncFailure())
+    return signalPassFailure();
   DEBUG_WITH_TYPE("hivm-gss-profile", { solver->perfInfo.print(); });
 
   if (solver->hasCustomMacroEventIdConflict()) {

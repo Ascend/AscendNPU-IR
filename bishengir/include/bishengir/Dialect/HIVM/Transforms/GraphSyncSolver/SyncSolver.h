@@ -17,6 +17,7 @@
 #ifndef BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVER_H
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVER_H
 
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/BufferPoolSync.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/CorePipeInfo.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/CustomMacroSync.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/EventIdSolver.h"
@@ -70,6 +71,8 @@ public:
 
   // Custom-macro reserved event-id numbers and any reservation conflicts.
   CustomMacroSyncState customMacroSync;
+  BufferPoolSync bufferPoolSync;
+  bool bufferPoolSyncFailed = false;
 
   // Counters for debugging / performance tracing of the solve loop.
   struct PerfInfo {
@@ -202,6 +205,10 @@ public:
 
   // Entry point: run the solver (or barrier-all mode) for the function.
   void solve();
+
+  LogicalResult prepareBufferPoolSync();
+  void processBufferPoolDependencies();
+  bool hasBufferPoolSyncFailure() const { return bufferPoolSyncFailed; }
 
   // Whether custom macros reserved conflicting event-id numbers.
   bool hasCustomMacroEventIdConflict() const {
@@ -337,6 +344,11 @@ protected:
   // otherwise nullopt.
   std::optional<UnitFlagInfo> checkUnitFlagPatterns(Occurrence *occ1,
                                                     Occurrence *occ2);
+
+  // Whether the pool protocol covers every conflict on the requested pipes.
+  bool checkBufferPoolCoveredConflict(RWOperation *rwOp1, RWOperation *rwOp2,
+                                      CorePipeInfo corePipeSrc,
+                                      CorePipeInfo corePipeDst);
 
   // Whether two MemInfos (or MemInfo lists) conflict under the given
   // constraints.

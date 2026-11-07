@@ -9,11 +9,14 @@
 // RUN: FileCheck %t/while.mlir --check-prefix=WHILEMARK < %t/while-marked.mlir
 // RUN: bishengir-opt %t/while-marked.mlir -hivm-plan-memory -hivm-enable-buffer-pool -o %t/while-enabled.mlir
 // RUN: FileCheck %t/while.mlir --check-prefix=WHILE --implicit-check-not=scope.scope --implicit-check-not=hivm.load_preload --implicit-check-not=memref.load --implicit-check-not=memref.store < %t/while-enabled.mlir
+// RUN: bishengir-opt %t/while-enabled.mlir -hivm-graph-sync-solver=solver-version=v1 -hivm-enable-multi-buffer | FileCheck %t/while.mlir --check-prefix=WHILESYNC --implicit-check-not=hivm.hir.experimental.pool_slot --implicit-check-not=hivm.experimental_pool_ready --implicit-check-not=hivm.experimental_pool_release
+// RUN: bishengir-opt %t/while-enabled.mlir -hivm-graph-sync-solver=solver-version=v2 -hivm-enable-multi-buffer | FileCheck %t/while.mlir --check-prefix=WHILESYNC --implicit-check-not=hivm.hir.experimental.pool_slot --implicit-check-not=hivm.experimental_pool_ready --implicit-check-not=hivm.experimental_pool_release
 
 // RUN: bishengir-opt %t/ssbuffer-stages.mlir -hivm-separate-load-compute -o %t/separated.mlir
 // RUN: FileCheck %t/ssbuffer-stages.mlir --check-prefix=STAGE --implicit-check-not=hivm.mempool < %t/separated.mlir
 // RUN: sed 's/, ssbuffer.if = [0-9][0-9]* : i32//' %t/separated.mlir | bishengir-opt -hacc-append-device-spec=target=Ascend950PR_950z -hivm-mark-buffer-pool -o %t/marked.mlir
 // RUN: FileCheck %t/ssbuffer-stages.mlir --check-prefixes=POOL,STAGE --implicit-check-not=ssbuffer.if < %t/marked.mlir
+// RUN: bishengir-opt %t/marked.mlir -hivm-plan-memory -hivm-enable-buffer-pool -hivm-graph-sync-solver -o /dev/null
 
 //--- candidates.mlir
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
@@ -190,6 +193,7 @@ func.func @vector_unchanged(%src: memref<16xf32, #hivm.address_space<gm>>, %rhs:
 }
 
 //--- while.mlir
+module attributes {hivm.load_buffer_pool = true} {
 // Both regions schedule two streams. They must form separate pools and
 // retain separate state, including when only before executes (limit = 0).
 // WHILEMARK-LABEL: func.func @ssbuffer_while_regions
@@ -330,8 +334,10 @@ func.func @ssbuffer_while_regions(%src: memref<?x16xf16, #hivm.address_space<gm>
   // WHILESYNC: return
   return
 }
+}
 
 //--- ssbuffer-stages.mlir
+module attributes {hivm.load_buffer_pool = true} {
 // SSBuffer numbers do not encode stages. Mark uses the stages even after
 // the original scheduling attributes disappear.
 // STAGE-LABEL: func.func @startup_distance
@@ -396,4 +402,5 @@ func.func @startup_distance(%src: memref<?x16xf16, #hivm.address_space<gm>>,
     scf.yield %nextK, %nextV : index, index
   }
   return
+}
 }
