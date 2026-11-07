@@ -31,6 +31,7 @@
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
@@ -1087,6 +1088,10 @@ void MemLivenessAnalysis::GeneratePreloadBufferReuseableInfo() {
   for (size_t i = 0; i < linearOperation.size(); ++i) {
     auto *opInfo = linearOperation[i].get();
     auto parentScope = opInfo->operation->getParentOfType<scope::ScopeOp>();
+    // Independent Load scopes do not carry a compute preload stage. Keep
+    // extending their buffer lifetimes without deriving scope reuse windows.
+    if (parentScope && parentScope->hasAttr(hivm::LoadPreloadAttr::name))
+      parentScope = nullptr;
     // Get scope start index(line 6) and preload num. Scope start will be
     // reuseableBufferLifeBeforeGen's allocTime.
     if (parentScope && opInfo->operation == &parentScope.getBody()->front()) {
@@ -1790,6 +1795,7 @@ LogicalResult MemPlan::plan(bool emitErrors) {
 }
 
 void MemPlan::GenerateStorageEntry() {
+  DenseMap<int64_t, StorageEntry *> pools;
   // create new storage entry.
   for (auto &operation : linearOperation) {
     auto it = genKillMap.find(operation.get());
@@ -1801,6 +1807,26 @@ void MemPlan::GenerateStorageEntry() {
         continue;
       }
       const std::shared_ptr<BufferLife> &bufLife = buffer2Life.at(genBuffer);
+      std::optional<int64_t> poolId;
+      if (planMode == MemPlanMode::LOCAL_MEM_PLAN) {
+        if (auto mark = utils::getAnnotateOpWithAttr(
+                genBuffer, hivm::MemPoolSizeAttr::name)) {
+          poolId =
+              cast<IntegerAttr>((*mark)->getAttr(hivm::MemPoolIdAttr::name))
+                  .getInt();
+          // Every member can become the first interval after lifetime merging.
+          iter->second.memoryUnique = true;
+          auto pool = pools.find(*poolId);
+          if (pool != pools.end()) {
+            StorageEntry *entry = pool->second;
+            entry->bufferLifeVec.append(bufLife->buffer, bufLife->allocTime,
+                                        bufLife->freeTime);
+            entry->inplaceBuffers.push_back(genBuffer);
+            buffer2storageEntry[genBuffer] = entry;
+            continue;
+          }
+        }
+      }
       std::unique_ptr<StorageEntry> entry =
           std::make_unique<StorageEntry>(nextEntryMemoId++);
       entry->bufInfo = &iter->second;
@@ -1812,6 +1838,8 @@ void MemPlan::GenerateStorageEntry() {
         entry->multiBufferNum = multiBuffer->second;
       }
       buffer2storageEntry[genBuffer] = entry.get();
+      if (poolId)
+        pools[*poolId] = entry.get();
       // Verify the validity of parameters after initialization.
       ValidateParameters(entry);
       StorageEntryVec.emplace_back(std::move(entry));
@@ -1885,6 +1913,13 @@ void MemPlan::MergeInplaceSE() {
   SmallVector<ValuePair> inplaceList = GenerateInplaceList();
   // try to merge storage entries. genSE is replaced by KillSE.
   for (const auto &pairIter : inplaceList) {
+    // Pool membership already determines allocation sharing. Ordinary inplace
+    // reuse must not absorb a pool member or change its committed slot count.
+    if (utils::getAnnotateOpWithAttr(pairIter.first,
+                                     hivm::MemPoolSizeAttr::name) ||
+        utils::getAnnotateOpWithAttr(pairIter.second,
+                                     hivm::MemPoolSizeAttr::name))
+      continue;
     const StorageEntry *genSE = buffer2storageEntry[pairIter.first];
     StorageEntry *killSE = buffer2storageEntry[pairIter.second];
     if (genSE == killSE) {
@@ -3689,8 +3724,40 @@ void MemPlan::SetMemscope2rootSuccessStorageEntry() {
   }
 }
 
+/// MarkBufferPool guarantees pool metadata and compatible member allocations.
+/// Check only the allocation loop ownership required by the current pool path.
+static LogicalResult validateBufferPoolMarks(ModuleOp module) {
+  for (func::FuncOp function : module.getOps<func::FuncOp>()) {
+    DenseMap<int64_t, Operation *> poolLoops;
+    auto result = function.walk([&](annotation::MarkOp mark) {
+      if (!mark->hasAttr(MemPoolSizeAttr::name))
+        return WalkResult::advance();
+      auto id = cast<IntegerAttr>(mark->getAttr(MemPoolIdAttr::name));
+      auto alloc = cast<memref::AllocOp>(mark.getSrc().getDefiningOp());
+      auto fail = [&](StringRef message) {
+        mark.emitError(message);
+        return WalkResult::interrupt();
+      };
+      Operation *loop =
+          alloc->getParentOfType<LoopLikeOpInterface>().getOperation();
+      if (!loop)
+        return fail("buffer pool requires an owning scheduling loop");
+      auto [it, inserted] = poolLoops.try_emplace(id.getInt(), loop);
+      if (!inserted && it->second != loop)
+        return fail("members of a buffer pool must have the same owning loop");
+      return WalkResult::advance();
+    });
+    if (result.wasInterrupted())
+      return failure();
+  }
+  return success();
+}
+
 void PlanMemoryPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
+  if (memMode == MemPlanMode::LOCAL_MEM_PLAN &&
+      failed(validateBufferPoolMarks(moduleOp)))
+    return signalPassFailure();
   VFInplaceReuseAnalysis vfInplaceReuseAnalysis(moduleOp);
   // Cache per-func plan results (buffer2Offsets + preload-local roots) from
   // the first walk; the second walk uses them to populate addresses on

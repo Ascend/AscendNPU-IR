@@ -7,6 +7,8 @@
 
 // RUN: bishengir-opt %t/while.mlir -hacc-append-device-spec=target=Ascend950PR_950z -hivm-separate-load-compute -hivm-mark-buffer-pool -o %t/while-marked.mlir
 // RUN: FileCheck %t/while.mlir --check-prefix=WHILEMARK < %t/while-marked.mlir
+// RUN: bishengir-opt %t/while-marked.mlir -hivm-plan-memory -hivm-enable-buffer-pool -o %t/while-enabled.mlir
+// RUN: FileCheck %t/while.mlir --check-prefix=WHILE --implicit-check-not=scope.scope --implicit-check-not=hivm.load_preload --implicit-check-not=memref.load --implicit-check-not=memref.store < %t/while-enabled.mlir
 
 // RUN: bishengir-opt %t/ssbuffer-stages.mlir -hivm-separate-load-compute -o %t/separated.mlir
 // RUN: FileCheck %t/ssbuffer-stages.mlir --check-prefix=STAGE --implicit-check-not=hivm.mempool < %t/separated.mlir
