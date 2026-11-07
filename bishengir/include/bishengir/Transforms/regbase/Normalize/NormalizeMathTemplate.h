@@ -1066,9 +1066,8 @@ public:
       return failure();
 
     bool isMax = Traits::isMaxNumF(op);
-    double paddingInfValue =
-        isMax ? -std::numeric_limits<double>::infinity()
-              : std::numeric_limits<double>::infinity();
+    double paddingInfValue = isMax ? -std::numeric_limits<double>::infinity()
+                                   : std::numeric_limits<double>::infinity();
     BinaryKind targetKind = isMax ? BinaryKind::Max : BinaryKind::Min;
 
     Location loc = op->getLoc();

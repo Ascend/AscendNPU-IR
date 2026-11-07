@@ -901,10 +901,10 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
               wrapThis(FunctionType::NONE,
                        {{mask, State::B16}, {index, State::B16}})};
     case COMB_CASE(16, State::B16):
-      // A gather from 8-bit memory typed as vector<128xi16> (each byte in its
-      // own 16-bit slot, as the B8 dual gather produces) is the same
-      // instruction as the b8_2vl case above, so it accepts a b8 mask too.
-      if (op.getMemRefType().getElementTypeBitWidth() == 8)
+      // A split B8 gather uses one logical predicate per 16-bit result slot.
+      // Encode these 128-lane predicates at B16 granularity.
+      if (op.getMemRefType().getElementTypeBitWidth() == 8 &&
+          cast<VectorType>(mask.getType()).getNumElements() != 128)
         return {wrapThis(FunctionType::NONE,
                          {{mask, State::B16}, {index, State::B16}}),
                 wrapThis(FunctionType::NONE,

@@ -556,6 +556,7 @@ def VCastOp : HIVM_ElementwiseUnaryOp<"vcast",
         | f32    | ui64   | trunc                                         |
         | f32    | f8e5m2 | rint                                          |
         | f32    | f8e4m3 | rint                                          |
+        | f64    | f32    | rint                                          |
         | f16    | i1     | rint                                          |
         | f16    | f16    | ceil, floor                                   |
         | bf16   | i1     | rint                                          |

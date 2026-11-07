@@ -1298,26 +1298,20 @@ class TransferReadToGatheringLoadPattern
       if (dim < 1) {
         return failure();
       }
-      // make sure the mask is a vector.constant_mask or a full mask
-      // (we currently cannot handle non-constant mask because we cannot
-      // apply inverse affine transform to them for now.)
-      auto originalMask = readop.getMask();
-      if (!originalMask) {
-        isFullMask = true;
-      } else {
-        auto constmask =
-            dyn_cast<vector::ConstantMaskOp>(originalMask.getDefiningOp());
-        if (!constmask)
-          return failure();
-        if (constmask.isAllOnesMask()) {
-          isFullMask = true;
-        } else {
-          for (auto v : constmask.getMaskDimSizes()) {
-            constantMaskBounds.push_back(
-                cast<IntegerAttr>(v).getValue().getSExtValue());
-          }
-        }
-      }
+    }
+    // make sure the mask is a vector.constant_mask or a full mask
+    // (we currently cannot handle non-constant mask because we cannot
+    // apply inverse affine transform to them for now.)
+    auto originalMask = readop.getMask();
+    isFullMask = !originalMask;
+    if (originalMask) {
+      auto constMask = originalMask.getDefiningOp<vector::ConstantMaskOp>();
+      if (!constMask)
+        return failure();
+      isFullMask = constMask.isAllOnesMask();
+      if (!isFullMask)
+        for (Attribute bound : constMask.getMaskDimSizes())
+          constantMaskBounds.push_back(cast<IntegerAttr>(bound).getInt());
     }
     // Extract physical strides from both strided and affine layouts.
     int64_t offset;
@@ -1609,35 +1603,30 @@ class TransferReadToGatheringLoadPattern
     bool reuseOriginalMask =
         permMap.isIdentity() && readop.getMask() &&
         cast<VectorType>(readop.getMask().getType()).getRank() == 1;
-    // Currently the only partial mask that can be rebuilt on the flattened
-    // lane order is a prefix: gatherMasks[0..N-1] true, gatherMasks[N..] false.
-    // This must be decided before any IR is created -- a `return failure()`
-    // after `createIndexVector` leaves a dead index constant behind, and the
-    // greedy driver then re-matches this op until it hits the iteration limit.
-    // TODO: handle non-prefix masks instead of falling back to the contiguous
-    // load, which silently ignores the stride.
-    if (!reuseOriginalMask && !isFullMask &&
-        !(firstEnabledBit < lastEnabledBit &&
-          lastEnabledBit + 1 == firstDisabledBit &&
-          firstDisabledBit <= lastDisabledBit))
+    // Validate rebuilt masks before creating IR. Only rank-1 identity masks
+    // can be reused directly without rebuilding them as a prefix.
+    // A prefix has no enabled lanes after the first disabled lane. This also
+    // accepts empty and one-lane masks without special-casing their endpoints.
+    bool hasDisabledLanes = firstDisabledBit != -1;
+    int64_t enabledPrefix =
+        (!isFullMask && hasDisabledLanes) ? firstDisabledBit : totalDestSize;
+
+    if (!reuseOriginalMask && !isFullMask && lastEnabledBit >= enabledPrefix)
       return failure();
+    if (!readop.getPadding().getDefiningOp<arith::ConstantOp>())
+      return rewriter.notifyMatchFailure(readop, "requires constant padding");
 
     auto indexVecValues = createIndexVector(readop, rewriter, memrefType,
                                             gatherIndices, totalDestSize);
     Value finalResult;
-    decltype(readop.getMask()) newMask;
+    Value newMask;
     VectorType maskType =
         VectorType::get({totalDestSize}, rewriter.getI1Type());
     if (reuseOriginalMask) {
       newMask = readop.getMask();
     } else {
-      // Checked above: a partial mask covers the first `firstDisabledBit`
-      // lanes, a full mask covers all of them.
-      ArrayAttr maskDimSizes = rewriter.getI64ArrayAttr(
-          {isFullMask ? totalDestSize : firstDisabledBit});
-      auto newConstMask = rewriter.create<vector::ConstantMaskOp>(
-          readop.getLoc(), maskType, maskDimSizes);
-      newMask = newConstMask;
+      newMask = rewriter.create<vector::ConstantMaskOp>(
+          readop.getLoc(), maskType, rewriter.getI64ArrayAttr({enabledPrefix}));
     }
 
     if (indexVecValues.size() == 2) {

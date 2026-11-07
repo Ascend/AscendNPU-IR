@@ -227,6 +227,7 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 
 // CHECK-LABEL: func.func @test_reduce_with_index_canonicalized_to_linalg
 // CHECK: linalg.reduce
+// CHECK: arith.maximumf
 func.func @test_reduce_with_index_canonicalized_to_linalg(%arg0: tensor<24x768x768xf32>) -> tensor<24x768x1xf32> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %c0_i64 = arith.constant 0 : i64
   %cst = arith.constant 0xFF800000 : f32
@@ -237,6 +238,19 @@ func.func @test_reduce_with_index_canonicalized_to_linalg(%arg0: tensor<24x768x7
   %4:2 = hfusion.reduce_with_index {tie_break_left = true} <max> ins(%arg0 : tensor<24x768x768xf32>) outs(%3, %1 : tensor<24x768xf32>, tensor<24x768xi64>) dimensions = [2] -> tensor<24x768xf32>, tensor<24x768xi64>
   %expanded = tensor.expand_shape %4#0 [[0], [1, 2]] output_shape [24, 768, 1] : tensor<24x768xf32> into tensor<24x768x1xf32>
   return %expanded : tensor<24x768x1xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_reduce_with_index_unsigned_src_to_linalg
+// CHECK: linalg.reduce
+// CHECK: arith.minui
+// CHECK: arith.maxui
+func.func @test_reduce_with_index_unsigned_src_to_linalg(%arg0: tensor<32xi32>, %arg1: tensor<32xi32>) -> (tensor<i32>, tensor<i32>) {
+  %0 = tensor.empty() : tensor<i32>
+  %1:2 = hfusion.reduce_with_index {tie_break_left = true, unsigned_src = true} <min> ins(%arg0, %arg1 : tensor<32xi32>, tensor<32xi32>) outs(%0, %0 : tensor<i32>, tensor<i32>) dimensions = [0] -> tensor<i32>, tensor<i32>
+  %2:2 = hfusion.reduce_with_index {tie_break_left = true, unsigned_src = true} <max> ins(%arg0, %arg1 : tensor<32xi32>, tensor<32xi32>) outs(%0, %0 : tensor<i32>, tensor<i32>) dimensions = [0] -> tensor<i32>, tensor<i32>
+  return %1#0, %2#0 : tensor<i32>, tensor<i32>
 }
 
 // -----

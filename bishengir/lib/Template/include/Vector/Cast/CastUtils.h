@@ -375,6 +375,8 @@ DECLARE_CAST(int32_t, int16_t, 1);
 DECLARE_CAST(int64_t, int32_t, 1);
 // cast int64 to float32
 DECLARE_CAST(int64_t, float, 1);
+// cast double to float32 (software cast, see DoubleToFloatRNE.h)
+DECLARE_CAST(double, float, 1);
 // cast int32 to int8 overflow
 DECLARE_CAST_OVERFLOW(int32_t, int8_t, 1);
 // cast int16 to int8 overflow
@@ -446,6 +448,8 @@ DECLARE_CAST(int32_t, int16_t, 2);
 DECLARE_CAST(int64_t, int32_t, 2);
 // cast int64 to float32
 DECLARE_CAST(int64_t, float, 2);
+// cast double to float32 (software cast, see DoubleToFloatRNE.h)
+DECLARE_CAST(double, float, 2);
 // cast int32 to int8 overflow
 DECLARE_CAST_OVERFLOW(int32_t, int8_t, 2);
 // cast int16 to int8 overflow

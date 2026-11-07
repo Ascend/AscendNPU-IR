@@ -16,6 +16,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinDialect.h"
@@ -29,7 +30,9 @@
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include <algorithm>
 #include <cstddef>
+#include <utility>
 
 #define DEBUG_TYPE "convert-vector-to-hivmave"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -216,6 +219,19 @@ struct StoreOpPattern : public OpRewritePattern<vector::StoreOp> {
   }
 };
 
+// Shape casts preserve the flattened mask bits and may only change shape.
+static Value unwrapMaskShapeCasts(Value mask, VectorType maskType) {
+  if (!mask || !maskType)
+    return {};
+  while (auto castOp = mask.getDefiningOp<vector::ShapeCastOp>()) {
+    auto srcType = dyn_cast<VectorType>(castOp.getSource().getType());
+    if (!srcType || srcType.getNumElements() != maskType.getNumElements())
+      return {};
+    mask = castOp.getSource();
+  }
+  return mask;
+}
+
 // Return empty bounds when the mask cannot be recovered or mapped.
 static SmallVector<int64_t>
 restoreSourceMaskBounds(AffineMap permutationMap,
@@ -241,15 +257,9 @@ restoreSourceMaskBounds(AffineMap permutationMap,
 static SmallVector<int64_t> getConstantMaskBounds(Value mask,
                                                   VectorType maskType,
                                                   AffineMap permutationMap) {
-  if (!mask || !maskType)
+  mask = unwrapMaskShapeCasts(mask, maskType);
+  if (!mask)
     return {};
-  // Unwrap all shape casts before recovering bounds in the read's mask type.
-  while (auto castOp = mask.getDefiningOp<vector::ShapeCastOp>()) {
-    auto srcType = dyn_cast<VectorType>(castOp.getSource().getType());
-    if (!srcType || srcType.getNumElements() != maskType.getNumElements())
-      return {};
-    mask = castOp.getSource();
-  }
   auto constMask = mask.getDefiningOp<vector::ConstantMaskOp>();
   if (!constMask)
     return {};
@@ -797,7 +807,8 @@ struct VecGatherOpPattern : public OpRewritePattern<vector::GatherOp> {
       // If the TransferWrite op does not have a mask, create one
       mask = hivmave::createMaskByPGE(resultType, rewriter, loc);
     } else {
-      if (utils::getAnnotateOpWithAttr(mask, utils::maskOpIdx)) {
+      if (!op->hasAttr("secondary_index") &&
+          utils::getAnnotateOpWithAttr(mask, utils::maskOpIdx)) {
         mask = hivmave::findReuseableMaskOrCreateOne(op, resultType, rewriter);
       }
     }
@@ -829,8 +840,11 @@ struct VecGatherOpPattern : public OpRewritePattern<vector::GatherOp> {
         op->getAttrOfType<DenseElementsAttr>("secondary_index");
     Value result;
     if (secondaryIndexAttr) {
+      auto masks = splitDualGatherMask(rewriter, loc, mask);
+      if (failed(masks))
+        return op.emitError("dual B8 gather requires a constant mask");
       result = createDualGather(rewriter, loc, resultType, base, indices,
-                                indexVec, mask, secondaryIndexAttr);
+                                indexVec, *masks, secondaryIndexAttr);
     } else {
       auto gather = rewriter.create<hivmave::VFGatherOp>(
           loc, resultType, base, indices, indexVec, mask);
@@ -842,9 +856,94 @@ struct VecGatherOpPattern : public OpRewritePattern<vector::GatherOp> {
   }
 
 private:
+  // A supported constant mask is either a true prefix or explicit lane bits.
+  struct ConstantMaskInfo {
+    int64_t extent = -1;
+    DenseIntElementsAttr bits;
+  };
+
+  static FailureOr<ConstantMaskInfo> getConstantMaskInfo(Value mask) {
+    auto maskType = dyn_cast<VectorType>(mask.getType());
+    if (!maskType || maskType.getRank() != 1)
+      return failure();
+    ConstantMaskInfo info;
+    if (auto constantMask = mask.getDefiningOp<vector::ConstantMaskOp>()) {
+      info.extent =
+          cast<IntegerAttr>(constantMask.getMaskDimSizes()[0]).getInt();
+    } else if (auto constant = mask.getDefiningOp<arith::ConstantOp>()) {
+      info.bits = dyn_cast<DenseIntElementsAttr>(constant.getValue());
+      if (!info.bits)
+        return failure();
+    } else if (auto plt = mask.getDefiningOp<hivmave::VFPltOp>()) {
+      auto bound = plt.getTrueShape().getDefiningOp<arith::ConstantIndexOp>();
+      if (!bound)
+        return failure();
+      info.extent = std::min<int64_t>(bound.value(), maskType.getNumElements());
+    } else if (auto pge = mask.getDefiningOp<hivmave::VFPgeOp>()) {
+      // H requires an explicit predicate width
+      if (pge.getPattern() == hivmave::PgePattern::H &&
+          hivmave::getBitWidthFromAttr(pge) == -1)
+        return failure();
+      info.extent = hivmave::getNumfromPgePattern(pge);
+      if (info.extent > maskType.getNumElements())
+        return failure();
+    } else {
+      return failure();
+    }
+
+    return info;
+  }
+
+  static Value createHalfMask(PatternRewriter &rewriter, Location loc,
+                              const ConstantMaskInfo &info, unsigned parity) {
+    auto halfType = VectorType::get({128}, rewriter.getI1Type());
+    DenseIntElementsAttr bits = info.bits;
+    if (bits) {
+      SmallVector<APInt> halfBits(128, APInt(1, 0));
+      auto values = bits.getValues<APInt>();
+      for (unsigned j = 0; 2 * j + parity < values.size(); ++j)
+        halfBits[j] = values[2 * j + parity];
+      return rewriter.create<arith::ConstantOp>(
+          loc, halfType, DenseIntElementsAttr::get(halfType, halfBits));
+    }
+    int64_t halfExtent = (info.extent + 1 - parity) / 2;
+    auto pattern = hivmave::getPgePatternAttr(rewriter, halfExtent, 128);
+    if (succeeded(pattern))
+      return rewriter.create<hivmave::VFPgeOp>(loc, halfType, *pattern);
+    auto bound = rewriter.create<arith::ConstantIndexOp>(loc, halfExtent);
+    return rewriter
+        .create<hivmave::VFPltOp>(loc, halfType, rewriter.getIndexType(), bound)
+        .getRes();
+  }
+
+  // The result mask addresses logical bytes, whereas each native gather
+  // addresses one parity of those bytes in 128 separate 16-bit slots.
+  static FailureOr<std::pair<Value, Value>>
+  splitDualGatherMask(PatternRewriter &rewriter, Location loc, Value mask) {
+    auto maskType = cast<VectorType>(mask.getType());
+    if (maskType.getRank() != 1 || maskType.isScalable() ||
+        maskType.getNumElements() > 256)
+      return failure();
+
+    mask = unwrapMaskShapeCasts(mask, maskType);
+    if (!mask)
+      return failure();
+    maskType = cast<VectorType>(mask.getType());
+    if (maskType.getRank() != 1)
+      return failure();
+
+    auto info = getConstantMaskInfo(mask);
+    if (failed(info))
+      return failure();
+
+    return std::make_pair(createHalfMask(rewriter, loc, *info, 0),
+                          createHalfMask(rewriter, loc, *info, 1));
+  }
+
   static Value createDualGather(PatternRewriter &rewriter, Location loc,
                                 VectorType resultType, Value base,
-                                ValueRange indices, Value indexVec, Value mask,
+                                ValueRange indices, Value indexVec,
+                                const std::pair<Value, Value> &masks,
                                 DenseElementsAttr secondaryIndexAttr) {
     auto secondaryIndexConstant =
         rewriter.create<arith::ConstantOp>(loc, secondaryIndexAttr);
@@ -859,9 +958,9 @@ private:
     // zero-extended up to a 256-lane result: each requested byte lands in
     // the low 8 bits of its own 16-bit lane, the high 8 bits are always zero.
     auto gather1 = rewriter.create<hivmave::VFGatherOp>(
-        loc, i16VecType, base, indices, indexVec, mask);
+        loc, i16VecType, base, indices, indexVec, masks.first);
     auto gather2 = rewriter.create<hivmave::VFGatherOp>(
-        loc, i16VecType, base, indices, secondaryIndexVec, mask);
+        loc, i16VecType, base, indices, secondaryIndexVec, masks.second);
     Value gather1Result = gather1.getResult();
     Value gather2Result = gather2.getResult();
 
@@ -1245,6 +1344,62 @@ struct ShapeCastOpPattern : public OpRewritePattern<vector::ShapeCastOp> {
   }
 };
 
+// Validate the producer and recover constant bounds in its own shape.
+// A shape cast preserves the number of enabled lanes; this does not recover
+// the positions or rectangular bounds of a partial mask in the new shape.
+static FailureOr<SmallVector<int64_t>> getStaticMaskBounds(Value mask) {
+  if (!mask)
+    return failure();
+  auto maskType = dyn_cast<VectorType>(mask.getType());
+  if (!maskType || maskType.isScalable())
+    return failure();
+  while (auto castOp = mask.getDefiningOp<vector::ShapeCastOp>()) {
+    auto sourceType = castOp.getSourceVectorType();
+    if (sourceType.isScalable() ||
+        sourceType.getNumElements() != maskType.getNumElements())
+      return failure();
+    mask = castOp.getSource();
+  }
+
+  SmallVector<int64_t> bounds;
+  if (auto constantMask = mask.getDefiningOp<vector::ConstantMaskOp>()) {
+    for (Attribute bound : constantMask.getMaskDimSizes())
+      bounds.push_back(cast<IntegerAttr>(bound).getInt());
+  } else if (auto createMask = mask.getDefiningOp<vector::CreateMaskOp>()) {
+    for (Value operand : createMask.getOperands()) {
+      auto bound = getConstantIntValue(operand);
+      if (!bound)
+        return failure();
+      bounds.push_back(*bound);
+    }
+  } else {
+    return failure();
+  }
+
+  auto producerType = cast<VectorType>(mask.getType());
+  if (bounds.size() != producerType.getShape().size())
+    return failure();
+  for (auto [dim, size] : llvm::enumerate(producerType.getShape()))
+    bounds[dim] = std::clamp<int64_t>(bounds[dim], 0, size);
+  return bounds;
+}
+
+static void eraseUnusedMask(Value mask, RewriterBase &rewriter) {
+  while (Operation *def = mask.getDefiningOp()) {
+    if (!def->use_empty() ||
+        !isa<vector::ShapeCastOp, vector::ConstantMaskOp, vector::CreateMaskOp>(
+            def))
+      break;
+    Value source;
+    if (auto castOp = dyn_cast<vector::ShapeCastOp>(def))
+      source = castOp.getSource();
+    rewriter.eraseOp(def);
+    if (!source)
+      break;
+    mask = source;
+  }
+}
+
 namespace {
 struct VectorToHIVMAVEPass
     : public impl::ConvertVectorToHIVMAVEBase<VectorToHIVMAVEPass> {
@@ -1258,11 +1413,33 @@ struct VectorToHIVMAVEPass
     // Reject reads that TransferReadOpPattern cannot lower correctly up front,
     // so the failure is reported with its actual reason instead of the
     // generic "failed to legalize" from the conversion driver
-    WalkResult unloweredRead =
-        moduleOp->walk([](vector::TransferReadOp readOp) {
+    SmallVector<vector::TransferReadOp> emptyReads, fullMaskReads;
+    WalkResult unloweredRead = moduleOp->walk(
+        [&emptyReads, &fullMaskReads](vector::TransferReadOp readOp) {
+          auto bounds = getStaticMaskBounds(readOp.getMask());
+          bool isFullMask = false;
+          if (succeeded(bounds)) {
+            if (llvm::is_contained(*bounds, 0)) {
+              emptyReads.push_back(readOp);
+              return WalkResult::advance();
+            }
+            // Clamped bounds cover the entire mask if their product equals
+            // its element count. This does not infer partial-mask positions.
+            int64_t activeLanes = 1;
+            for (int64_t bound : *bounds)
+              activeLanes *= bound;
+            isFullMask =
+                activeLanes ==
+                cast<VectorType>(readOp.getMask().getType()).getNumElements();
+          }
           if (!isPlainLoadableTransferRead(readOp)) {
             readOp.emitOpError(kPermutedReadNotGatheredMsg);
             return WalkResult::interrupt();
+          }
+          // Clearing this full mask removes the need for a padding select.
+          if (isFullMask && !readOp.getPermutationMap().isIdentity()) {
+            fullMaskReads.push_back(readOp);
+            return WalkResult::advance();
           }
           // Without this the splat and the select are emitted anyway and then
           // survive every later pass un-lowered, with a zero exit code, until
@@ -1277,6 +1454,21 @@ struct VectorToHIVMAVEPass
     if (unloweredRead.wasInterrupted()) {
       signalPassFailure();
       return;
+    }
+    // Fold before mask producers are converted, while their exact bits are
+    // still available. In particular, an empty read must not access memory.
+    IRRewriter rewriter(&getContext());
+    for (auto readOp : emptyReads) {
+      Value mask = readOp.getMask();
+      rewriter.setInsertionPoint(readOp);
+      rewriter.replaceOpWithNewOp<vector::BroadcastOp>(
+          readOp, readOp.getVectorType(), readOp.getPadding());
+      eraseUnusedMask(mask, rewriter);
+    }
+    for (auto readOp : fullMaskReads) {
+      Value mask = readOp.getMask();
+      readOp.getMaskMutable().clear();
+      eraseUnusedMask(mask, rewriter);
     }
     target.addLegalDialect<hivmave::AVEDialect, arith::ArithDialect,
                            BuiltinDialect, annotation::AnnotationDialect>();
