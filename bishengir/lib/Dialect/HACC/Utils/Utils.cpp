@@ -76,6 +76,14 @@ bool isDeviceEntry(Operation *func) {
   return haccFunction.isDeviceEntry();
 }
 
+bool isExportedDevice(Operation *func) {
+  return isDevice(func) && func->hasAttrOfType<UnitAttr>(kExportDeviceAttrName);
+}
+
+bool isCompilationRoot(Operation *func) {
+  return isDeviceEntry(func) || isExportedDevice(func);
+}
+
 bool hasNoIOAlias(Operation *func) {
   return func->hasAttr(hacc::NoIOAliasAttr::name);
 }
