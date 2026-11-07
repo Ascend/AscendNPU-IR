@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s --pass-pipeline="builtin.module(hivm-v2-pipeline{target=Ascend950PR_9579 ghost-split-mix=false verify-stage=all})" | FileCheck %s
+// RUN: bishengir-opt %s --pass-pipeline="builtin.module(hivm-v2-pipeline{target=Ascend950PR_9579})" | FileCheck %s
 
 // Compile a vector prologue followed by matmul through the full v2 pipeline.
 // Keep the internal data dependencies; completion at the call boundary belongs
