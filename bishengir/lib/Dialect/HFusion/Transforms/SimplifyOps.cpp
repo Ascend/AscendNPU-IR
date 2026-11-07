@@ -28,6 +28,7 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/Support/Debug.h"
 
 #define DEBUG_TYPE "hfusion-simplify-ops"
 
@@ -104,55 +105,325 @@ bool isSafeToSimplifyCast(CastOp castOp) {
            (inputType.isInteger() && isa<FloatType>(outputType)));
 }
 
-// A chain of integer casts may only be removed when it is value preserving.
-// Unlike floating point, where the precision checks guard the optimization, an
-// integer narrowing cast silently drops the high bits, so a round trip such as
-// `i16 -> i8 -> i16` is *not* an identity. Such chains are semantically
-// meaningful: e.g. `remui i8` is widened to i16 for codegen and can produce
-// 0xFFFF for a zero divisor, which must be truncated back to 0xFF before the
-// value is consumed by a following operation.
-// The chain is ordered from the consumer inwards, i.e. opposite to the value
-// flow, and a foldable chain has the same element type at both ends. Composing
-// the chain is therefore an identity exactly when every intermediate value can
-// still hold every value of the chain's source type: no intermediate element
-// width may drop below the source width. A step that narrows below the source
-// width drops high bits which a later widening step cannot restore, so such a
-// chain must be kept even if the width returns to the source width at the end.
-// Note that this is a source-width test and not a phase test: a chain that
-// narrows and widens again while staying at or above the source width (e.g.
-// `i16 -> i64 -> i32 -> i64 -> i16`) is still an identity and may be folded.
-bool isValuePreservingIntegerCastChain(ArrayRef<CastOp> castChain) {
-  // Leave mixed integer/float chains to the floating point precision logic.
-  // Bit width is not a precision measure across integer/float boundaries
-  // (`i32 -> f32 -> i32` keeps 32 bits but loses mantissa bits), so those
-  // chains are deliberately not judged here.
+// ---------------------------------------------------------------------------
+// Cast chain folding guards
+//
+// CastOpPattern removes a whole cast chain when the innermost input and the
+// outermost result share the same element type, i.e. when the composition
+// looks like the identity. That is only true when no step drops information:
+//
+//   * an integer step drops the high bits when it narrows;
+//   * an `int -> float` step drops the low bits when the float mantissa is
+//     narrower than the integer;
+//   * a `float -> int` step truncates the fraction and clips the exponent
+//     range, so it is only exact for integer values that already fit.
+//
+// For chains whose source type is an integer this can be decided locally: an
+// integer type carries its width in bits and a float type carries exactly the
+// `getFPMantissaWidth()`-bit integers, so the chain is the identity exactly
+// when no intermediate value is narrower than the source type. Such chains are
+// semantically meaningful and must be kept: e.g. `remui i8` is widened to i16
+// for codegen and can produce 0xFFFF for a zero divisor, which must be
+// truncated back to 0xFF before the value is consumed, and an i8 `cdiv`
+// narrows through `f16` so that a zero divisor saturates to 127 instead of
+// 32767.
+//
+// A floating point source type admits values with a fraction or an out-of-range
+// exponent, so the capacity model does not apply there and a chain crossing the
+// integer domain cannot be proven to be the identity; pure floating point
+// chains keep the pre-existing precision-rank policy.
+// ---------------------------------------------------------------------------
+
+// Number of bits of integer information an element type can carry without
+// loss. Floating point types are exact for every `getFPMantissaWidth()`-bit
+// integer, and every rounding mode is the identity on such values.
+static std::optional<unsigned> getExactIntegerCapacity(Type elemType) {
+  if (auto intType = dyn_cast<IntegerType>(elemType))
+    return intType.getWidth();
+  if (auto floatType = dyn_cast<FloatType>(elemType))
+    return floatType.getFPMantissaWidth();
+  return std::nullopt;
+}
+
+// Element type that survives folding. `castChain` is consumer-to-producer and a
+// foldable chain has the same element type at both ends, so this is the input
+// of the innermost cast.
+static Type getCastChainSourceType(ArrayRef<CastOp> castChain) {
+  // CastOp accessors are not const, so copy the op wrapper before reading it.
+  CastOp innermost = castChain.back();
+  return getElementTypeOrSelf(innermost.getInputs().front().getType());
+}
+
+// True when any cast of the chain crosses the integer/floating point boundary.
+static bool crossesIntegerDomain(ArrayRef<CastOp> castChain) {
   for (CastOp castOp : castChain) {
-    auto inputType = getElementTypeOrSelf(castOp.getInputs().front().getType());
-    auto outputType =
+    Type inputType = getElementTypeOrSelf(castOp.getInputs().front().getType());
+    Type outputType =
         getElementTypeOrSelf(castOp.getOutputs().front().getType());
-    if (!isa<IntegerType>(inputType) || !isa<IntegerType>(outputType))
+    if (inputType.isInteger() != outputType.isInteger())
       return true;
   }
+  return false;
+}
 
-  // castChain is consumer-to-producer, so the value-flow source (and the type
-  // that survives folding) is the input of the last cast.
-  CastOp sourceCast = castChain.back();
-  unsigned sourceWidth =
-      cast<IntegerType>(
-          getElementTypeOrSelf(sourceCast.getInputs().front().getType()))
-          .getWidth();
+// A chain of casts is value preserving when every intermediate value can still
+// hold every value of the source type: no intermediate capacity may drop below
+// the source capacity. A step that narrows below it drops bits that a later
+// widening step cannot restore. This is a source-width test and not a phase
+// test: a chain that narrows and widens again while staying at or above the
+// source width (e.g. `i16 -> i64 -> i32 -> i64 -> i16`) is still an identity
+// and may be folded.
+static bool isValuePreservingCastChain(ArrayRef<CastOp> castChain) {
+  std::optional<unsigned> sourceCapacity =
+      getExactIntegerCapacity(getCastChainSourceType(castChain));
+  if (!sourceCapacity)
+    return false;
 
   // Every intermediate value is the output of one of the casts (the source is
-  // the input of the last one), so comparing outputs is sufficient.
+  // the input of the innermost one), so comparing the outputs is sufficient.
   for (CastOp castOp : castChain) {
-    unsigned outputWidth =
-        cast<IntegerType>(
-            getElementTypeOrSelf(castOp.getOutputs().front().getType()))
-            .getWidth();
-    if (outputWidth < sourceWidth)
+    std::optional<unsigned> capacity = getExactIntegerCapacity(
+        getElementTypeOrSelf(castOp.getOutputs().front().getType()));
+    if (!capacity || *capacity < *sourceCapacity)
       return false;
   }
   return true;
+}
+
+// A saturating cast clamps out-of-range values instead of truncating them, but
+// it only clamps when the value range reaching it does not fit the narrow
+// result. That range is fixed by the producing cast: `cast_unsigned` zero
+// extends the source into [0, 2^src-1] and `cast_signed` sign extends it into
+// [-2^(src-1), 2^(src-1)-1]. The narrow result is unsigned only for the `*2ui`
+// unsigned modes. When the range already fits, the saturating narrow is the
+// exact inverse of the extension and the chain stays foldable.
+static bool hasClampingSaturatingCast(ArrayRef<CastOp> castChain) {
+  for (size_t index = 0; index < castChain.size(); ++index) {
+    CastOp castOp = castChain[index];
+    if (!castOp.getEnableSaturate())
+      continue;
+
+    // Without a producer inside the chain the incoming range is unknown.
+    if (index + 1 >= castChain.size())
+      return true;
+    CastOp producer = castChain[index + 1];
+
+    auto sourceType = dyn_cast<IntegerType>(
+        getElementTypeOrSelf(producer.getInputs().front().getType()));
+    auto middleType = dyn_cast<IntegerType>(
+        getElementTypeOrSelf(producer.getOutputs().front().getType()));
+    auto destType = dyn_cast<IntegerType>(
+        getElementTypeOrSelf(castOp.getOutputs().front().getType()));
+    if (!sourceType || !middleType || !destType)
+      return true;
+
+    // Only a widening producer yields a range we can bound.
+    if (middleType.getWidth() < sourceType.getWidth())
+      return true;
+
+    bool producerUnsigned = producer.getCast() == TypeFn::cast_unsigned;
+    UnsignedMode mode = castOp.getUnsignedMode();
+    bool destUnsigned =
+        mode == UnsignedMode::UI2UI || mode == UnsignedMode::SI2UI;
+
+    // Crossed signedness widens the incoming range past the result domain.
+    if (producerUnsigned != destUnsigned)
+      return true;
+    // The source range is wider than the result domain.
+    if (sourceType.getWidth() > destType.getWidth())
+      return true;
+  }
+  return false;
+}
+
+// A `float -> int` step is only the inverse of a preceding `int -> float` step
+// while the value keeps its signedness: converting a negative float to an
+// unsigned integer clamps to zero, and no later cast can restore the bit
+// pattern. Check every crossing step against the cast that produced its float
+// operand.
+static bool hasSignednessCrossingFloatToInt(ArrayRef<CastOp> castChain) {
+  for (size_t index = 0; index < castChain.size(); ++index) {
+    CastOp castOp = castChain[index];
+    Type inputType = getElementTypeOrSelf(castOp.getInputs().front().getType());
+    Type outputType =
+        getElementTypeOrSelf(castOp.getOutputs().front().getType());
+    if (!isa<FloatType>(inputType) || !outputType.isInteger())
+      continue;
+
+    // Without a producer inside the chain the incoming signedness is unknown.
+    if (index + 1 >= castChain.size())
+      return true;
+    CastOp producer = castChain[index + 1];
+    if (!getElementTypeOrSelf(producer.getInputs().front().getType())
+             .isInteger())
+      return true;
+
+    bool producerUnsigned = producer.getCast() == TypeFn::cast_unsigned;
+    UnsignedMode mode = castOp.getUnsignedMode();
+    bool destUnsigned =
+        mode == UnsignedMode::UI2UI || mode == UnsignedMode::SI2UI;
+    if (producerUnsigned != destUnsigned)
+      return true;
+  }
+  return false;
+}
+
+// Precision rank of a floating point type (higher == more precision). Returns
+// -1 for non float types so that the float-only checks below skip integer
+// casts.
+static int getPrecisionRank(Type type) {
+  if (type.isBF16())
+    return 0; // lowest precision
+  if (type.isF16())
+    return 1;
+  if (type.isF32())
+    return 2;
+  if (type.isF64())
+    return 3; // highest precision
+  return -1;  // non-float type
+}
+
+// Helper to test for fastmath<contract> attribute.
+static bool hasFastMathContract(CastOp op) {
+  auto fastMathAttr = op->getAttrOfType<mlir::arith::FastMathFlagsAttr>(
+      mlir::arith::FastMathFlagsAttr::name);
+  if (!fastMathAttr)
+    return false;
+
+  using arith::FastMathFlags;
+  FastMathFlags flags = fastMathAttr.getValue();
+
+  return mlir::arith::bitEnumContainsAll(flags, FastMathFlags::contract);
+}
+
+// Check if the chain has a precision down-then-up pattern.
+static bool hasPrecisionDownUpPattern(ArrayRef<CastOp> chain) {
+  if (chain.size() < 2)
+    return false;
+
+  // Track if we've seen a precision decrease.
+  bool hasDecreased = false;
+
+  for (CastOp castOp : llvm::reverse(chain)) {
+    Type inType = getElementTypeOrSelf(castOp.getInputs()[0].getType());
+    Type outType = getElementTypeOrSelf(castOp.getOutputs()[0].getType());
+
+    int inRank = getPrecisionRank(inType);
+    int outRank = getPrecisionRank(outType);
+
+    // Skip if not float-to-float cast.
+    if (inRank < 0 || outRank < 0)
+      continue;
+
+    if (outRank < inRank) {
+      // Precision decrease.
+      hasDecreased = true;
+    } else if (outRank > inRank && hasDecreased) {
+      // Precision increase after a decrease - this is the pattern we're
+      // looking for.
+      return true;
+    }
+  }
+  return false;
+}
+
+// Check if a cast is a precision upcast (safe, no precision loss).
+static bool isPrecisionUpcast(CastOp op) {
+  Type inType = getElementTypeOrSelf(op.getInputs()[0].getType());
+  Type outType = getElementTypeOrSelf(op.getOutputs()[0].getType());
+  int inRank = getPrecisionRank(inType);
+  int outRank = getPrecisionRank(outType);
+  // Precision upcast means output has higher or equal precision.
+  return inRank >= 0 && outRank >= 0 && outRank >= inRank;
+}
+
+// Check if all casts in the chain have fastmath contract. Precision upcasts are
+// allowed without fastmath contract since they are safe and do not cause
+// precision loss.
+static bool allHaveFastMathContract(ArrayRef<CastOp> chain) {
+  for (CastOp op : chain) {
+    if (isPrecisionUpcast(op))
+      continue;
+    if (!hasFastMathContract(op))
+      return false;
+  }
+  return true;
+}
+
+// Why a cast chain must not be folded away. `None` means the composition is
+// provably the identity and the chain can be removed.
+enum class CastChainBlockReason {
+  None,
+  SaturatingCast,
+  SignednessCrossing,
+  IntegerDomainNarrowing,
+  CrossDomainWithoutIntegrality,
+  FloatPrecisionLoss,
+};
+
+// Only referenced by the LLVM_DEBUG diagnostic below, which is compiled out in
+// release builds.
+[[maybe_unused]] static StringRef
+stringifyCastChainBlockReason(CastChainBlockReason reason) {
+  switch (reason) {
+  case CastChainBlockReason::None:
+    return "None";
+  case CastChainBlockReason::SaturatingCast:
+    return "SaturatingCast";
+  case CastChainBlockReason::SignednessCrossing:
+    return "SignednessCrossing";
+  case CastChainBlockReason::IntegerDomainNarrowing:
+    return "IntegerDomainNarrowing";
+  case CastChainBlockReason::CrossDomainWithoutIntegrality:
+    return "CrossDomainWithoutIntegrality";
+  case CastChainBlockReason::FloatPrecisionLoss:
+    return "FloatPrecisionLoss";
+  }
+  llvm_unreachable("unknown CastChainBlockReason");
+}
+
+// Single entry point for the "may this cast chain be folded away?" decision.
+// `castChain.front()` is the outermost cast that is about to be removed and the
+// remaining casts produce its input. Whenever a new cast kind or scenario needs
+// to block the fold, add a rule here together with a lit regression test
+// instead of duplicating the check at the call site.
+static CastChainBlockReason
+getCastChainBlockReason(ArrayRef<CastOp> castChain) {
+  if (castChain.empty())
+    return CastChainBlockReason::None;
+
+  // A saturating cast may clamp the value; only block the fold when the
+  // incoming range does not fit the narrow result (see
+  // hasClampingSaturatingCast).
+  if (hasClampingSaturatingCast(castChain))
+    return CastChainBlockReason::SaturatingCast;
+
+  // Crossing the integer boundary with the wrong signedness cannot be undone.
+  if (hasSignednessCrossingFloatToInt(castChain))
+    return CastChainBlockReason::SignednessCrossing;
+
+  if (isa<IntegerType>(getCastChainSourceType(castChain))) {
+    // Integer source: the capacity test is exact, so no fastmath or matmul
+    // escape hatch applies. Dropping integer bits is not a floating point
+    // relaxation.
+    if (!isValuePreservingCastChain(castChain))
+      return CastChainBlockReason::IntegerDomainNarrowing;
+    return CastChainBlockReason::None;
+  }
+
+  // Floating point source: a chain that crosses the integer domain truncates
+  // the fraction and clips the exponent range, and nothing local proves the
+  // values are integers, so keep the chain.
+  if (crossesIntegerDomain(castChain))
+    return CastChainBlockReason::CrossDomainWithoutIntegrality;
+
+  // Pure floating point chains follow the pre-existing precision policy.
+  if (hasPrecisionDownUpPattern(castChain) &&
+      !allHaveFastMathContract(castChain) &&
+      !involvesLinalgMatmul(castChain.front()->getOperand(0)))
+    return CastChainBlockReason::FloatPrecisionLoss;
+
+  return CastChainBlockReason::None;
 }
 
 struct CastOpPattern : public OpRewritePattern<CastOp> {
@@ -224,90 +495,6 @@ public:
       return failure();
     }
 
-    // Helper to test for fastmath<contract> attribute.
-    auto hasFastMathContract = [](CastOp op) -> bool {
-      auto fastMathAttr = op->getAttrOfType<mlir::arith::FastMathFlagsAttr>(
-          mlir::arith::FastMathFlagsAttr::name);
-      if (!fastMathAttr)
-        return false;
-
-      using arith::FastMathFlags;
-      FastMathFlags flags = fastMathAttr.getValue();
-
-      return mlir::arith::bitEnumContainsAll(flags, FastMathFlags::contract);
-    };
-
-    // Process ops bottom-to-top.
-
-    // Helper to get precision rank for float types (higher = more precision)
-    auto getPrecisionRank = [](Type type) -> int {
-      if (type.isBF16())
-        return 0; // lowest precision
-      if (type.isF16())
-        return 1;
-      if (type.isF32())
-        return 2;
-      if (type.isF64())
-        return 3; // highest precision
-      return -1;  // non-float type
-    };
-
-    // Helper to check if chain has precision down-then-up pattern
-    auto hasPrecisionDownUpPattern =
-        [&getPrecisionRank](SmallVector<CastOp> &chain) -> bool {
-      if (chain.size() < 2)
-        return false;
-
-      // Track if we've seen a precision decrease
-      bool hasDecreased = false;
-
-      for (int i = static_cast<int>(chain.size()) - 1; i >= 0; --i) {
-        Type inType = getElementTypeOrSelf(chain[i].getInputs()[0].getType());
-        Type outType = getElementTypeOrSelf(chain[i].getOutputs()[0].getType());
-
-        int inRank = getPrecisionRank(inType);
-        int outRank = getPrecisionRank(outType);
-
-        // Skip if not float-to-float cast
-        if (inRank < 0 || outRank < 0)
-          continue;
-
-        if (outRank < inRank) {
-          // Precision decrease
-          hasDecreased = true;
-        } else if (outRank > inRank && hasDecreased) {
-          // Precision increase after a decrease - this is the pattern we're
-          // looking for
-          return true;
-        }
-      }
-      return false;
-    };
-
-    // Helper to check if a cast is precision upcast (safe, no precision loss)
-    auto isPrecisionUpcast = [&getPrecisionRank](CastOp op) -> bool {
-      Type inType = getElementTypeOrSelf(op.getInputs()[0].getType());
-      Type outType = getElementTypeOrSelf(op.getOutputs()[0].getType());
-      int inRank = getPrecisionRank(inType);
-      int outRank = getPrecisionRank(outType);
-      // Precision upcast means output has higher or equal precision
-      return inRank >= 0 && outRank >= 0 && outRank >= inRank;
-    };
-
-    // Helper to check if all casts in chain have fastmath contract
-    // Precision upcasts are allowed without fastmath contract since they are
-    // safe and don't cause precision loss
-    auto allHaveFastMathContract = [&isPrecisionUpcast, &hasFastMathContract](
-                                       SmallVector<CastOp> &chain) -> bool {
-      for (CastOp op : chain) {
-        // Skip precision upcasts - they are safe
-        if (isPrecisionUpcast(op))
-          continue;
-        if (!hasFastMathContract(op))
-          return false;
-      }
-      return true;
-    };
 
     // Traverse the chain of input cast ops to see if an op with the same
     // input types can be found.
@@ -327,21 +514,15 @@ public:
           getElementTypeOrSelf(castOp.getResults().front().getType())) {
         // Found a cast where the input types match the output types of the
         // matched op. We can directly use those inputs and the matched op can
-        // be removed.
-        // Check if chain has precision down-then-up pattern, if so all casts
-        // must have fastmath contract to allow optimization.
-        if (hasPrecisionDownUpPattern(castChain) &&
-            !allHaveFastMathContract(castChain)) {
-          if (!involvesLinalgMatmul(castChain[0].getOperand(0))) {
-            break;
-          }
-        }
-
-        // Integer casts need an explicit guard: a narrowing step followed by a
-        // widening step does not reconstruct the original value and must not be
-        // folded away (see isValuePreservingIntegerCastChain).
-        if (!isValuePreservingIntegerCastChain(castChain))
+        // be removed, but only when the whole chain composes to the identity
+        // (see getCastChainBlockReason for the rules).
+        if (CastChainBlockReason reason = getCastChainBlockReason(castChain);
+            reason != CastChainBlockReason::None) {
+          LLVM_DEBUG(llvm::dbgs()
+                     << "keep cast chain, blocked by "
+                     << stringifyCastChainBlockReason(reason) << "\n");
           break;
+        }
 
         if (reshapes.empty()) {
           rewriter.replaceOp(castOp, nextCast.getInputs());
