@@ -282,10 +282,6 @@ protected:
   /// Chosen tiling axis index per SSA \c Value; \c -1 when not chosen.
   DenseMap<Value, int64_t> tilingDim_;
 
-  /// Required UB count and structural parent indices, keyed by value group.
-  DenseMap<int64_t, int64_t> requiredUbCounts;
-  SmallVector<DenseSet<int64_t>> requiredUbBuffers;
-
   /// How each solver dimension behaves for tiling (\c Parallel, \c RankReduced,
   /// \c Reduce, \c ReshapedInner). Keys follow \c markDimensions.
   DenseMap<int64_t, TilingDimensionKind> tilingDimKindMapForCollapser;
