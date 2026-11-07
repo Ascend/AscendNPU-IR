@@ -128,37 +128,6 @@ struct NormalizeArithMathScalarBinary : public OpRewritePattern<BinaryOp> {
   }
 };
 
-// Vectorize the comparison and selection together, preserving their types.
-struct NormalizeBroadcastSelect : public OpRewritePattern<vector::BroadcastOp> {
-  using OpRewritePattern<vector::BroadcastOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(vector::BroadcastOp op,
-                                PatternRewriter &rewriter) const override {
-    auto select = op.getSource().getDefiningOp<arith::SelectOp>();
-    if (!select || !select->hasOneUse() || !select.getType().isIntOrFloat())
-      return failure();
-    auto cmp = select.getCondition().getDefiningOp<arith::CmpFOp>();
-    if (!cmp || !cmp->hasOneUse())
-      return failure();
-
-    auto type = op.getResultVectorType();
-    Location loc = op.getLoc();
-    auto broadcast = [&rewriter, loc, type](Value value) -> Value {
-      auto operandType = type.cloneWith(std::nullopt, value.getType());
-      return rewriter.create<vector::BroadcastOp>(loc, operandType, value);
-    };
-    Value condition = rewriter.create<arith::CmpFOp>(
-        cmp.getLoc(), cmp.getPredicate(), broadcast(cmp.getLhs()),
-        broadcast(cmp.getRhs()), cmp.getFastmath());
-    rewriter.replaceOpWithNewOp<arith::SelectOp>(
-        op, condition, broadcast(select.getTrueValue()),
-        broadcast(select.getFalseValue()));
-    rewriter.eraseOp(select);
-    rewriter.eraseOp(cmp);
-    return success();
-  }
-};
-
 template <typename UnaryOp>
 struct NormalizeArithMathScalarUnary : public OpRewritePattern<UnaryOp> {
   using OpRewritePattern<UnaryOp>::OpRewritePattern;
@@ -301,7 +270,6 @@ void NormalizeArithPass::runOnOperation() {
                ConvertCastBoolToOtherTypeBySelect<arith::UIToFPOp>,
                ElimVectorIndexCastPattern<arith::IndexCastOp>,
                ElimVectorIndexCastPattern<arith::IndexCastUIOp>,
-               NormalizeBroadcastSelect,
                NormalizeArithMathScalarBinary<arith::AddFOp>,
                NormalizeArithMathScalarBinary<arith::DivFOp>,
                NormalizeArithMathScalarUnary<math::SqrtOp>>(&getContext());
