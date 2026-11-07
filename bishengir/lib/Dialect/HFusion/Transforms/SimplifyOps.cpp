@@ -190,82 +190,85 @@ static bool isValuePreservingCastChain(ArrayRef<CastOp> castChain) {
   return true;
 }
 
-// A saturating cast clamps out-of-range values instead of truncating them, but
-// it only clamps when the value range reaching it does not fit the narrow
-// result. That range is fixed by the producing cast: `cast_unsigned` zero
-// extends the source into [0, 2^src-1] and `cast_signed` sign extends it into
-// [-2^(src-1), 2^(src-1)-1]. The narrow result is unsigned only for the `*2ui`
-// unsigned modes. When the range already fits, the saturating narrow is the
-// exact inverse of the extension and the chain stays foldable.
-static bool hasClampingSaturatingCast(ArrayRef<CastOp> castChain) {
-  for (size_t index = 0; index < castChain.size(); ++index) {
-    CastOp castOp = castChain[index];
-    if (!castOp.getEnableSaturate())
-      continue;
-
-    // Without a producer inside the chain the incoming range is unknown.
-    if (index + 1 >= castChain.size())
+// True when any cast in the chain asks for saturation.
+static bool hasSaturatingCast(ArrayRef<CastOp> castChain) {
+  for (CastOp castOp : castChain)
+    if (castOp.getEnableSaturate())
       return true;
-    CastOp producer = castChain[index + 1];
+  return false;
+}
 
-    auto sourceType = dyn_cast<IntegerType>(
-        getElementTypeOrSelf(producer.getInputs().front().getType()));
-    auto middleType = dyn_cast<IntegerType>(
-        getElementTypeOrSelf(producer.getOutputs().front().getType()));
-    auto destType = dyn_cast<IntegerType>(
-        getElementTypeOrSelf(castOp.getOutputs().front().getType()));
-    if (!sourceType || !middleType || !destType)
-      return true;
-
-    // Only a widening producer yields a range we can bound.
-    if (middleType.getWidth() < sourceType.getWidth())
-      return true;
-
-    bool producerUnsigned = producer.getCast() == TypeFn::cast_unsigned;
+// Signedness of the value produced by `castOp`. Integer outputs use the
+// explicit unsigned_mode when it is non-default; otherwise the cast kind
+// describes the conversion.
+static bool isUnsignedOutput(CastOp castOp) {
+  Type outputType =
+      getElementTypeOrSelf(castOp.getOutputs().front().getType());
+  if (outputType.isInteger()) {
     UnsignedMode mode = castOp.getUnsignedMode();
-    bool destUnsigned =
-        mode == UnsignedMode::UI2UI || mode == UnsignedMode::SI2UI;
+    if (mode != UnsignedMode::SI2SI)
+      return mode == UnsignedMode::UI2UI || mode == UnsignedMode::SI2UI;
+  }
+  return castOp.getCast() == TypeFn::cast_unsigned;
+}
 
-    // Crossed signedness widens the incoming range past the result domain.
-    if (producerUnsigned != destUnsigned)
-      return true;
-    // The source range is wider than the result domain.
-    if (sourceType.getWidth() > destType.getWidth())
-      return true;
+// Signedness of the chain source, read from the innermost cast. A saturating
+// innermost cast carries its input signedness in unsigned_mode; otherwise the
+// cast kind tells whether the source is sign- or zero-extended.
+static bool isUnsignedSource(CastOp castOp) {
+  Type inputType = getElementTypeOrSelf(castOp.getInputs().front().getType());
+  Type outputType =
+      getElementTypeOrSelf(castOp.getOutputs().front().getType());
+  if (inputType.isInteger() && outputType.isInteger()) {
+    UnsignedMode mode = castOp.getUnsignedMode();
+    if (mode != UnsignedMode::SI2SI)
+      return mode == UnsignedMode::UI2SI || mode == UnsignedMode::UI2UI;
+  }
+  return castOp.getCast() == TypeFn::cast_unsigned;
+}
+
+// Does the exact value range of `outputType` contain every value of a
+// `sourceWidth`-bit integer with the given signedness?
+static bool containsIntegerRange(Type outputType, bool outputUnsigned,
+                                 unsigned sourceWidth, bool sourceUnsigned) {
+  if (auto intType = dyn_cast<IntegerType>(outputType)) {
+    unsigned outputWidth = intType.getWidth();
+    if (sourceUnsigned)
+      return outputUnsigned ? outputWidth >= sourceWidth
+                            : outputWidth > sourceWidth;
+    // A signed source has negative values, so an unsigned output can never
+    // contain it.
+    return outputUnsigned ? false : outputWidth >= sourceWidth;
+  }
+  if (auto floatType = dyn_cast<FloatType>(outputType)) {
+    unsigned mantissa = floatType.getFPMantissaWidth();
+    return sourceUnsigned ? sourceWidth <= mantissa
+                          : sourceWidth <= mantissa + 1;
   }
   return false;
 }
 
-// A `float -> int` step is only the inverse of a preceding `int -> float` step
-// while the value keeps its signedness: converting a negative float to an
-// unsigned integer clamps to zero, and no later cast can restore the bit
-// pattern. Check every crossing step against the cast that produced its float
-// operand.
-static bool hasSignednessCrossingFloatToInt(ArrayRef<CastOp> castChain) {
-  for (size_t index = 0; index < castChain.size(); ++index) {
-    CastOp castOp = castChain[index];
-    Type inputType = getElementTypeOrSelf(castOp.getInputs().front().getType());
+// Value-range check used when the chain contains a saturating cast or a
+// floating point hop. Walk every output type: the chain is foldable only when
+// each output's exact range contains the whole source range. Comparing widths
+// and signedness is enough because integer/float ranges are intervals.
+static bool isRangePreservingCastChain(ArrayRef<CastOp> castChain) {
+  Type sourceType = getCastChainSourceType(castChain);
+  auto sourceInt = dyn_cast<IntegerType>(sourceType);
+  if (!sourceInt)
+    return false;
+
+  bool sourceUnsigned = isUnsignedSource(castChain.back());
+  unsigned sourceWidth = sourceInt.getWidth();
+  for (CastOp castOp : castChain) {
     Type outputType =
         getElementTypeOrSelf(castOp.getOutputs().front().getType());
-    if (!isa<FloatType>(inputType) || !outputType.isInteger())
-      continue;
-
-    // Without a producer inside the chain the incoming signedness is unknown.
-    if (index + 1 >= castChain.size())
-      return true;
-    CastOp producer = castChain[index + 1];
-    if (!getElementTypeOrSelf(producer.getInputs().front().getType())
-             .isInteger())
-      return true;
-
-    bool producerUnsigned = producer.getCast() == TypeFn::cast_unsigned;
-    UnsignedMode mode = castOp.getUnsignedMode();
-    bool destUnsigned =
-        mode == UnsignedMode::UI2UI || mode == UnsignedMode::SI2UI;
-    if (producerUnsigned != destUnsigned)
-      return true;
+    bool outputUnsigned = isUnsignedOutput(castOp);
+    if (!containsIntegerRange(outputType, outputUnsigned, sourceWidth,
+                              sourceUnsigned))
+      return false;
   }
-  return false;
+  return true;
 }
 
 // Precision rank of a floating point type (higher == more precision). Returns
@@ -354,8 +357,6 @@ static bool allHaveFastMathContract(ArrayRef<CastOp> chain) {
 // provably the identity and the chain can be removed.
 enum class CastChainBlockReason {
   None,
-  SaturatingCast,
-  SignednessCrossing,
   IntegerDomainNarrowing,
   CrossDomainWithoutIntegrality,
   FloatPrecisionLoss,
@@ -368,10 +369,6 @@ stringifyCastChainBlockReason(CastChainBlockReason reason) {
   switch (reason) {
   case CastChainBlockReason::None:
     return "None";
-  case CastChainBlockReason::SaturatingCast:
-    return "SaturatingCast";
-  case CastChainBlockReason::SignednessCrossing:
-    return "SignednessCrossing";
   case CastChainBlockReason::IntegerDomainNarrowing:
     return "IntegerDomainNarrowing";
   case CastChainBlockReason::CrossDomainWithoutIntegrality:
@@ -392,40 +389,34 @@ getCastChainBlockReason(ArrayRef<CastOp> castChain) {
   if (castChain.empty())
     return CastChainBlockReason::None;
 
-  // A saturating cast may clamp the value; only block the fold when the
-  // incoming range does not fit the narrow result (see
-  // hasClampingSaturatingCast).
-  if (hasClampingSaturatingCast(castChain))
-    return CastChainBlockReason::SaturatingCast;
+  Type sourceType = getCastChainSourceType(castChain);
 
-  // Crossing the integer boundary with the wrong signedness cannot be undone.
-  if (hasSignednessCrossingFloatToInt(castChain))
-    return CastChainBlockReason::SignednessCrossing;
-
-  if (isa<IntegerType>(getCastChainSourceType(castChain))) {
-    // Integer source: the capacity test is exact, so no fastmath or matmul
-    // escape hatch applies. Dropping integer bits is not a floating point
-    // relaxation.
+  if (isa<IntegerType>(sourceType)) {
+    // Integer source. If any hop is saturating or crosses the int/float
+    // boundary, width alone cannot describe the conversion: use the exact
+    // value-range test. Otherwise the chain is pure integer truncation and
+    // the bit-width test is both exact and cheaper.
+    if (hasSaturatingCast(castChain) || crossesIntegerDomain(castChain)) {
+      if (!isRangePreservingCastChain(castChain))
+        return CastChainBlockReason::IntegerDomainNarrowing;
+      return CastChainBlockReason::None;
+    }
     if (!isValuePreservingCastChain(castChain))
       return CastChainBlockReason::IntegerDomainNarrowing;
     return CastChainBlockReason::None;
   }
 
-  // Floating point source: a chain that crosses the integer domain truncates
-  // the fraction and clips the exponent range, and nothing local proves the
-  // values are integers, so keep the chain.
+  // Floating point source: crossing the integer domain loses the fraction and
+  // the exponent range, so keep the chain. Pure float chains keep the existing
+  // precision policy.
   if (crossesIntegerDomain(castChain))
     return CastChainBlockReason::CrossDomainWithoutIntegrality;
-
-  // Pure floating point chains follow the pre-existing precision policy.
   if (hasPrecisionDownUpPattern(castChain) &&
       !allHaveFastMathContract(castChain) &&
       !involvesLinalgMatmul(castChain.front()->getOperand(0)))
     return CastChainBlockReason::FloatPrecisionLoss;
-
   return CastChainBlockReason::None;
 }
-
 struct CastOpPattern : public OpRewritePattern<CastOp> {
   // Return the cast op that defines all inputs of the given op, skipping
   // tensor reshape operations. The skipped operations are recorded so that the
