@@ -491,11 +491,6 @@ public:
       return success();
     }
 
-    if (!isSafeToSimplifyCast(castOp)) {
-      return failure();
-    }
-
-
     // Traverse the chain of input cast ops to see if an op with the same
     // input types can be found.
     SmallVector<CastOp> castChain;

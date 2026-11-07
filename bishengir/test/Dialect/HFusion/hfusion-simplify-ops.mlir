@@ -1052,3 +1052,60 @@ func.func @foldSignednessMatchFloatToInt(%arg0: tensor<4xi8>) -> tensor<4xi8> {
   %t2 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%t1 : tensor<4xi16>) outs(%e2 : tensor<4xi8>) -> tensor<4xi8>
   return %t2 : tensor<4xi8>
 }
+
+// -----
+// Test: 2-cast mixed chain enters the rules after removing the outer
+// cross-domain blacklist. i8 fits f16's exact integer range, so it folds.
+// CHECK-LABEL: func.func @foldTwoCastMixedI8F16
+// CHECK-SAME: (%[[arg0:.*]]: tensor<4xi8>)
+// CHECK-NOT: hfusion.cast
+// CHECK: return %[[arg0]] : tensor<4xi8>
+func.func @foldTwoCastMixedI8F16(%arg0: tensor<4xi8>) -> tensor<4xi8> {
+  %e0 = tensor.empty() : tensor<4xf16>
+  %e1 = tensor.empty() : tensor<4xi8>
+  %t0 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<4xi8>) outs(%e0 : tensor<4xf16>) -> tensor<4xf16>
+  %t1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%t0 : tensor<4xf16>) outs(%e1 : tensor<4xi8>) -> tensor<4xi8>
+  return %t1 : tensor<4xi8>
+}
+
+// -----
+// Test: u8 also fits f16's exact integer range; unsigned->unsigned sign match.
+// CHECK-LABEL: func.func @foldTwoCastMixedU8F16
+// CHECK-SAME: (%[[arg0:.*]]: tensor<4xi8>)
+// CHECK-NOT: hfusion.cast
+// CHECK: return %[[arg0]] : tensor<4xi8>
+func.func @foldTwoCastMixedU8F16(%arg0: tensor<4xi8>) -> tensor<4xi8> {
+  %e0 = tensor.empty() : tensor<4xf16>
+  %e1 = tensor.empty() : tensor<4xi8>
+  %t0 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<4xi8>) outs(%e0 : tensor<4xf16>) -> tensor<4xf16>
+  %t1 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<trunc>, unsigned_mode = #hfusion.unsigned_mode<ui2ui>} ins(%t0 : tensor<4xf16>) outs(%e1 : tensor<4xi8>) -> tensor<4xi8>
+  return %t1 : tensor<4xi8>
+}
+
+// -----
+// Test: i16 cannot fit f16's exact integer range; keep both casts.
+// CHECK-LABEL: func.func @keepTwoCastMixedI16F16
+// CHECK-SAME: (%[[arg0:.*]]: tensor<4xi16>)
+// CHECK-COUNT-2: hfusion.cast
+// CHECK: return
+func.func @keepTwoCastMixedI16F16(%arg0: tensor<4xi16>) -> tensor<4xi16> {
+  %e0 = tensor.empty() : tensor<4xf16>
+  %e1 = tensor.empty() : tensor<4xi16>
+  %t0 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<4xi16>) outs(%e0 : tensor<4xf16>) -> tensor<4xf16>
+  %t1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%t0 : tensor<4xf16>) outs(%e1 : tensor<4xi16>) -> tensor<4xi16>
+  return %t1 : tensor<4xi16>
+}
+
+// -----
+// Test: non-saturating f16->u8 sign crossing still clamps negatives; keep.
+// CHECK-LABEL: func.func @keepTwoCastMixedNegToUnsigned
+// CHECK-SAME: (%[[arg0:.*]]: tensor<4xi8>)
+// CHECK-COUNT-2: hfusion.cast
+// CHECK: return
+func.func @keepTwoCastMixedNegToUnsigned(%arg0: tensor<4xi8>) -> tensor<4xi8> {
+  %e0 = tensor.empty() : tensor<4xf16>
+  %e1 = tensor.empty() : tensor<4xi8>
+  %t0 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<4xi8>) outs(%e0 : tensor<4xf16>) -> tensor<4xf16>
+  %t1 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<trunc>, unsigned_mode = #hfusion.unsigned_mode<ui2ui>} ins(%t0 : tensor<4xf16>) outs(%e1 : tensor<4xi8>) -> tensor<4xi8>
+  return %t1 : tensor<4xi8>
+}
