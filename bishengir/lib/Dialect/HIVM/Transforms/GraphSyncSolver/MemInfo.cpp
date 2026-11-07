@@ -294,11 +294,24 @@ static bool checkSubviewConflict(const MemInfo &memInfo1,
                                     memInfo2.subviewInfo.value());
 }
 
+std::optional<PoolSlotInfo> PoolSlotInfo::tryGet(Value value) {
+  if (auto binding = value.getDefiningOp<PoolSlotOp>())
+    return PoolSlotInfo(binding);
+  return {};
+}
+
 bool MemInfo::checkConflict(
     const MemInfo &memInfo1, const MemInfo &memInfo2,
     std::optional<int64_t> lcmLen, std::optional<int64_t> eventIdNum,
     std::optional<std::pair<int64_t, int64_t>> offsetPair,
     bool enableSubviewConflictRefinement) {
+  if (memInfo1.poolSlotInfo || memInfo2.poolSlotInfo) {
+    // Explicit slots do not rotate with the enclosing loop counter, even when
+    // only one side of the conflict is an independent access.
+    lcmLen.reset();
+    eventIdNum.reset();
+    offsetPair.reset();
+  }
   return checkUnderlyingMemoryConflict(memInfo1, memInfo2, lcmLen, eventIdNum,
                                        offsetPair) &&
          (!enableSubviewConflictRefinement ||
@@ -321,6 +334,15 @@ MemInfo MemInfo::getMemInfo(Value value, std::optional<PIPE> pipe,
     // against non-pool accesses. Allocation identity is not disjointness.
     MemInfo info = getMemInfo(pool, pipe, coreType);
     info.poolInfo = PoolInfo{address};
+    return info;
+  }
+  if (auto poolSlotInfo = PoolSlotInfo::tryGet(value)) {
+    MemInfo info(value, pipe, coreType);
+    info.poolSlotInfo = poolSlotInfo;
+    info.pointerLikeInfo =
+        PointerLikeInfo::tryGet(poolSlotInfo->binding.getSource());
+    if (info.pointerLikeInfo)
+      info.pointerLikeInfo->parentLoop = nullptr;
     return info;
   }
   if (auto funcArgInfo = FuncArgInfo::tryGet(value)) {
