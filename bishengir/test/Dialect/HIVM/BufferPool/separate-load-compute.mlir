@@ -5,9 +5,13 @@
 // RUN: bishengir-opt %t/unchanged.mlir -hivm-separate-load-compute -hivm-mark-buffer-pool -o %t/after.mlir
 // RUN: diff %t/before.mlir %t/after.mlir
 
+// RUN: bishengir-opt %t/while.mlir -hacc-append-device-spec=target=Ascend950PR_950z -hivm-separate-load-compute -hivm-mark-buffer-pool -o %t/while-marked.mlir
+// RUN: FileCheck %t/while.mlir --check-prefix=WHILEMARK < %t/while-marked.mlir
 
 // RUN: bishengir-opt %t/ssbuffer-stages.mlir -hivm-separate-load-compute -o %t/separated.mlir
 // RUN: FileCheck %t/ssbuffer-stages.mlir --check-prefix=STAGE --implicit-check-not=hivm.mempool < %t/separated.mlir
+// RUN: sed 's/, ssbuffer.if = [0-9][0-9]* : i32//' %t/separated.mlir | bishengir-opt -hacc-append-device-spec=target=Ascend950PR_950z -hivm-mark-buffer-pool -o %t/marked.mlir
+// RUN: FileCheck %t/ssbuffer-stages.mlir --check-prefixes=POOL,STAGE --implicit-check-not=ssbuffer.if < %t/marked.mlir
 
 //--- candidates.mlir
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
