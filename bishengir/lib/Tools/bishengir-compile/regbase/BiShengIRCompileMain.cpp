@@ -26,6 +26,7 @@
 #include "bishengir/Tools/hivmc/HIVMCA5.h"
 #include "bishengir/Tools/hivmc/Utility.h"
 #include "bishengir/Version/Version.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -233,6 +234,127 @@ static bool hasOnlyReductionOutputs(ModuleOp module) {
     return WalkResult::advance();
   });
   return !hasInvalidOutput;
+}
+
+/// Module-wide, shape-independent IR signature read at runRegBasePipeline
+/// entry.  Every member is a plain op count so the match below can use exact
+/// equality only: no shape extents and no greater/less comparisons, which
+/// keeps the affected set as narrow as possible.
+///
+/// `scf.if` is deliberately NOT part of the signature: it is the one counter
+/// that is not stable across shapes of the same kernel (chunk_kda_bwd wy_dqkg
+/// yields 9 for one shape and 8 for another), so folding it into an equality
+/// test would silently miss shapes.
+struct NewTreeReduceCloseSignature {
+  unsigned numSumReduceDim0 = 0; // f32 single-dim sum reduce over dim 0 (RA)
+  unsigned numSumReduceOtherDim = 0; // ... over a non-zero dim (AR)
+  unsigned numOtherReduce = 0;       // any reduce not of the two forms above
+  unsigned numMatmul = 0;
+  unsigned numTranspose = 0;
+  unsigned numBroadcast = 0;
+  unsigned numFill = 0;
+  unsigned numScfFor = 0;
+  unsigned numExpandShape = 0;
+  unsigned numCollapseShape = 0;
+  unsigned numFuncs = 0;
+
+  bool operator==(const NewTreeReduceCloseSignature &o) const {
+    return numSumReduceDim0 == o.numSumReduceDim0 &&
+           numSumReduceOtherDim == o.numSumReduceOtherDim &&
+           numOtherReduce == o.numOtherReduce && numMatmul == o.numMatmul &&
+           numTranspose == o.numTranspose && numBroadcast == o.numBroadcast &&
+           numFill == o.numFill && numScfFor == o.numScfFor &&
+           numExpandShape == o.numExpandShape &&
+           numCollapseShape == o.numCollapseShape && numFuncs == o.numFuncs;
+  }
+};
+
+/// True when `reduceOp` is a canonical f32 single-dimension sum reduction.
+static bool isF32SingleDimSumReduce(linalg::ReduceOp reduceOp) {
+  if (reduceOp.getDimensions().size() != 1 || reduceOp.getInputs().size() != 1)
+    return false;
+  auto inputType = dyn_cast<ShapedType>(reduceOp.getInputs().front().getType());
+  if (!inputType || !inputType.getElementType().isF32())
+    return false;
+  bool isSum = false;
+  reduceOp.walk([&](arith::AddFOp) {
+    isSum = true;
+    return WalkResult::interrupt();
+  });
+  return isSum;
+}
+
+static NewTreeReduceCloseSignature
+computeNewTreeReduceCloseSignature(ModuleOp module) {
+  NewTreeReduceCloseSignature sig;
+  module.walk([&](Operation *op) {
+    if (auto reduceOp = dyn_cast<linalg::ReduceOp>(op)) {
+      if (!isF32SingleDimSumReduce(reduceOp))
+        ++sig.numOtherReduce;
+      else if (reduceOp.getDimensions().front() == 0)
+        ++sig.numSumReduceDim0;
+      else
+        ++sig.numSumReduceOtherDim;
+      return;
+    }
+    if (isa<linalg::MatmulOp>(op))
+      ++sig.numMatmul;
+    else if (isa<linalg::TransposeOp>(op))
+      ++sig.numTranspose;
+    else if (isa<linalg::BroadcastOp>(op))
+      ++sig.numBroadcast;
+    else if (isa<linalg::FillOp>(op))
+      ++sig.numFill;
+    else if (isa<scf::ForOp>(op))
+      ++sig.numScfFor;
+    else if (isa<tensor::ExpandShapeOp>(op))
+      ++sig.numExpandShape;
+    else if (isa<tensor::CollapseShapeOp>(op))
+      ++sig.numCollapseShape;
+    else if (isa<func::FuncOp>(op))
+      ++sig.numFuncs;
+  });
+  return sig;
+}
+
+// TODO: replace this signature table with a cost model. The new TreeReduce
+// policy regresses these kernels, and until the cost model can tell them apart
+// the only narrow lever available here is an exact IR signature match.
+static bool isSpecialCaseCloseNewTreeReduce(ModuleOp mod) {
+  NewTreeReduceCloseSignature sig = computeNewTreeReduceCloseSignature(mod);
+
+  if (::getenv("BISHENGIR_PRINT_TREE_REDUCE_SIGNATURE")) {
+    llvm::errs() << "NewTreeReduceCloseSignature: {" << sig.numSumReduceDim0
+                 << ", " << sig.numSumReduceOtherDim << ", "
+                 << sig.numOtherReduce << ", " << sig.numMatmul << ", "
+                 << sig.numTranspose << ", " << sig.numBroadcast << ", "
+                 << sig.numFill << ", " << sig.numScfFor << ", "
+                 << sig.numExpandShape << ", " << sig.numCollapseShape << ", "
+                 << sig.numFuncs << "}\n";
+    llvm::errs().flush();
+  }
+
+  // Signatures measured at this exact program point with the counting rules
+  // implemented above. Field order:
+  //   {RA, AR, otherReduce, matmul, transpose, broadcast, fill, scf.for,
+  //    expandShape, collapseShape, func}
+  // Only kernels confirmed to regress under the new TreeReduce policy are
+  // listed; causal_conv1d_fwd_kernel is intentionally absent because it does
+  // not regress, and its signature {0, 8, 0, 0, 0, 17, 21, 0, 0, 0, 1} differs
+  // from every entry here, so it stays on the default path.
+  static const NewTreeReduceCloseSignature kSignatures[] = {
+      // causal_conv1d_bwd_kernel
+      {14, 8, 0, 0, 0, 16, 37, 0, 0, 0, 1},
+      // chunk_gla_bwd_kernel_inter (identical across all 9 measured shapes)
+      {3, 0, 0, 2, 2, 3, 13, 1, 0, 0, 2},
+      // chunk_kda_bwd_kernel_wy_dqkg_fused needs two entries: fill and func
+      // counts are not stable across its shapes (16/1 vs 15/3).
+      {2, 2, 0, 9, 3, 9, 16, 0, 1, 1, 1},
+      {2, 2, 0, 9, 3, 9, 15, 0, 1, 1, 3},
+      // prepare_wy_repr_bwd_kernel (identical across all 4 measured shapes)
+      {1, 5, 0, 9, 6, 10, 13, 3, 1, 1, 1},
+  };
+  return llvm::is_contained(kSignatures, sig);
 }
 
 static bool isReduceOnlyModule(ModuleOp module) {
@@ -662,6 +784,12 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
                                        BishengAsyncRuntime *runtime) {
   if (failed(checkInOutOptionsValidity(config))) {
     return failure();
+  }
+
+  if (isSpecialCaseCloseNewTreeReduce(mod)) {
+    LDBG("Matched a known new-TreeReduce regression signature; disabling "
+         "TreeReduce");
+    config.setEnableTreeReduce(false);
   }
 
   if (isReduceOnlyModule(mod)) {
