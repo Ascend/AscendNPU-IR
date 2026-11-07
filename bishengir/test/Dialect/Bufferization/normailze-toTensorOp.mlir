@@ -1,5 +1,9 @@
-// RUN: bishengir-opt %s -normalize-to-tensor -split-input-file -verify-diagnostics | FileCheck %s
-// RUN: bishengir-opt %s -normalize-to-tensor -hivm-decompose-alloc-tensor-copy -one-shot-bufferize="allow-return-allocs-from-loops bufferize-function-boundaries analysis-heuristic=top-down function-boundary-type-conversion=identity-layout-map unknown-type-conversion=identity-layout-map" -split-input-file | FileCheck %s --check-prefix=CHECK-ONE-SHOT
+// RUN: split-file %s %t
+// RUN: bishengir-opt %t/normal.mlir -normalize-to-tensor -split-input-file -verify-diagnostics | FileCheck %t/normal.mlir
+// RUN: bishengir-opt %t/normal.mlir -normalize-to-tensor -hivm-decompose-alloc-tensor-copy -one-shot-bufferize="allow-return-allocs-from-loops bufferize-function-boundaries analysis-heuristic=top-down function-boundary-type-conversion=identity-layout-map unknown-type-conversion=identity-layout-map" -split-input-file | FileCheck %t/normal.mlir --check-prefix=CHECK-ONE-SHOT
+// RUN: bishengir-opt %t/load-scopes.mlir -normalize-to-tensor -split-input-file | FileCheck %t/load-scopes.mlir
+
+//--- normal.mlir
 
 func.func @test_to_tensorOp(%arg0: i32, %arg1 : memref<256xf16>,
                                       %arg2 : tensor<256xf16>) -> tensor<256xf16> {
@@ -127,4 +131,61 @@ func.func @func_arg_write_after_to_tensor(%arg0: memref<5x20x16x16xf16>, %arg1: 
   %e = tensor.empty() : tensor<5x20x16x16xf16>
   %r = hivm.hir.load ins(%t : tensor<5x20x16x16xf16>) outs(%e : tensor<5x20x16x16xf16>) -> tensor<5x20x16x16xf16>
   return %r : tensor<5x20x16x16xf16>
+}
+
+//--- load-scopes.mlir
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+// CHECK-LABEL: func.func @marked
+func.func @marked(%src: memref<16xf32, #hivm.address_space<gm>>, %condition: i1) -> tensor<16xf32> {
+  %buffer = memref.alloc() : memref<16xf32>
+  scope.scope : () -> () {
+    hivm.hir.load ins(%src : memref<16xf32, #hivm.address_space<gm>>) outs(%buffer : memref<16xf32>)
+    scope.return
+  } {hivm.load_preload = 1 : i32, no_inline}
+  // CHECK: bufferization.to_tensor {{.*}}write_exposed
+  // CHECK: bufferization.alloc_tensor() copy({{.*}}) {to_be_replaced}
+  %tensor = bufferization.to_tensor %buffer restrict writable : memref<16xf32>
+  return %tensor : tensor<16xf32>
+}
+}
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+// CHECK-LABEL: func.func @ordinary_scope
+func.func @ordinary_scope(%src: memref<16xf32, #hivm.address_space<gm>>, %condition: i1) -> tensor<16xf32> {
+  %buffer = memref.alloc() : memref<16xf32>
+  scope.scope : () -> () {
+    hivm.hir.load ins(%src : memref<16xf32, #hivm.address_space<gm>>) outs(%buffer : memref<16xf32>)
+    scope.return
+  } {no_inline}
+  // CHECK-NOT: write_exposed
+  // CHECK-NOT: bufferization.alloc_tensor
+  %tensor = bufferization.to_tensor %buffer restrict writable : memref<16xf32>
+  // CHECK: return
+  return %tensor : tensor<16xf32>
+}
+}
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+// CHECK-LABEL: func.func @conditional_write
+func.func @conditional_write(%src: memref<16xf32, #hivm.address_space<gm>>, %condition: i1) -> tensor<16xf32> {
+  %buffer = memref.alloc() : memref<16xf32>
+  scope.scope : () -> () {
+    scf.if %condition {
+      hivm.hir.load ins(%src : memref<16xf32, #hivm.address_space<gm>>) outs(%buffer : memref<16xf32>)
+    }
+    scope.return
+  } {hivm.load_preload = 1 : i32, no_inline}
+  // CHECK-NOT: write_exposed
+  // CHECK-NOT: bufferization.alloc_tensor
+  %tensor = bufferization.to_tensor %buffer restrict writable : memref<16xf32>
+  // CHECK: return
+  return %tensor : tensor<16xf32>
+}
 }
