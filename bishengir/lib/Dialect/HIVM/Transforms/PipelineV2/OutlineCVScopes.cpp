@@ -740,6 +740,17 @@ LogicalResult CVScopeOutliner::traceWorkItem(Value output, Operation *seedOp,
     } else if (isa<memref::AllocOp, AllocWorkspaceOp>(currOp)) {
       if (!expandAllocSubnet(currOp))
         return failure();
+    } else if (auto loadOp = dyn_cast<memref::LoadOp>(currOp)) {
+      if (auto alloca = loadOp.getMemRef().getDefiningOp<memref::AllocaOp>();
+          alloca && alloca->hasAttr(kNormalizeMatmulCounterAttr) &&
+          !loopOp->isProperAncestor(alloca)) {
+        for (Operation *user : alloca->getUsers()) {
+          if (auto storeOp = dyn_cast<memref::StoreOp>(user);
+              storeOp && storeOp.getMemRef() == alloca.getResult() &&
+              loopOp->isProperAncestor(storeOp))
+            queueOp(storeOp);
+        }
+      }
     }
   }
 
