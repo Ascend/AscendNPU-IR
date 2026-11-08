@@ -1,5 +1,5 @@
-// RUN: bishengir-opt %s -pipeline-staging -split-input-file | FileCheck %s
-// RUN: bishengir-opt %s -pipeline-staging -wrap-cv-preload-scopes -split-input-file | FileCheck %s --check-prefix=WRAP
+// RUN: bishengir-opt %s -pipeline-staging="max-pipeline-multibuffer=3" -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -pipeline-staging="max-pipeline-multibuffer=3" -wrap-cv-preload-scopes -split-input-file | FileCheck %s --check-prefix=WRAP
 
 // CHECK-LABEL: func.func @copy_to_l1
 // CHECK:       scf.for
