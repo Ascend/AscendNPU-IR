@@ -85,10 +85,12 @@ private:
   static bool isViewLikeMemRefOp(Operation *op);
   static Operation *getRootAlloc(Value memref);
   static bool isGMTarget(Value dst);
-  static bool isStoreFixpipeCopyND2NZWriter(Operation *usr, Value memrefVal);
+  static bool isStoreFixpipeCopyWriter(Operation *usr, Value memrefVal);
+  static bool isLoadOrND2NZWriter(Operation *usr, Value memrefVal);
   static bool walkAllocUsers(Operation *rootAlloc,
                              llvm::function_ref<bool(OpOperand &)> visitUse);
-  static bool isAllocTargetOfStoreFixpipeCopyND2NZ(Operation *rootAlloc);
+  static bool isAllocTargetOfStoreFixpipeCopy(Operation *rootAlloc);
+  static bool isAllocTargetOfMultiUserLoadOrND2NZ(Operation *rootAlloc);
 
   bool hasLoopLocalToTensor(Value memref);
   bool isStoppingToTensor(Operation *tracedOp, Value startOutput);
@@ -212,11 +214,19 @@ bool CVScopeOutliner::isGMTarget(Value dst) {
   return false;
 }
 
-bool CVScopeOutliner::isStoreFixpipeCopyND2NZWriter(Operation *usr,
-                                                    Value memrefVal) {
+bool CVScopeOutliner::isStoreFixpipeCopyWriter(Operation *usr,
+                                               Value memrefVal) {
   if (auto copyOp = dyn_cast<memref::CopyOp>(usr))
     return copyOp.getTarget() == memrefVal;
-  if (!isa<StoreOp, FixpipeOp, CopyOp, ND2NZOp>(usr))
+  if (!isa<StoreOp, FixpipeOp, CopyOp>(usr))
+    return false;
+  auto dps = dyn_cast<DestinationStyleOpInterface>(usr);
+  return dps && llvm::any_of(dps.getDpsInits(),
+                             [&](Value init) { return init == memrefVal; });
+}
+
+bool CVScopeOutliner::isLoadOrND2NZWriter(Operation *usr, Value memrefVal) {
+  if (!isa<LoadOp, ND2NZOp>(usr))
     return false;
   auto dps = dyn_cast<DestinationStyleOpInterface>(usr);
   return dps && llvm::any_of(dps.getDpsInits(),
@@ -246,10 +256,30 @@ bool CVScopeOutliner::walkAllocUsers(
   return false;
 }
 
-bool CVScopeOutliner::isAllocTargetOfStoreFixpipeCopyND2NZ(
-    Operation *rootAlloc) {
+bool CVScopeOutliner::isAllocTargetOfStoreFixpipeCopy(Operation *rootAlloc) {
   return walkAllocUsers(rootAlloc, [](OpOperand &use) {
-    return isStoreFixpipeCopyND2NZWriter(use.getOwner(), use.get());
+    return isStoreFixpipeCopyWriter(use.getOwner(), use.get());
+  });
+}
+
+bool CVScopeOutliner::isAllocTargetOfMultiUserLoadOrND2NZ(
+    Operation *rootAlloc) {
+  bool hasLoadOrND2NZ = walkAllocUsers(rootAlloc, [](OpOperand &use) {
+    return isLoadOrND2NZWriter(use.getOwner(), use.get());
+  });
+  if (!hasLoadOrND2NZ)
+    return false;
+  unsigned numToTensorUses = 0;
+  return walkAllocUsers(rootAlloc, [&](OpOperand &use) {
+    auto toTensor = dyn_cast<bufferization::ToTensorOp>(use.getOwner());
+    if (!toTensor)
+      return false;
+    for (OpOperand &tensorUse : toTensor.getResult().getUses()) {
+      (void)tensorUse;
+      if (++numToTensorUses > 1)
+        return true;
+    }
+    return false;
   });
 }
 
@@ -268,8 +298,9 @@ bool CVScopeOutliner::isStoppingToTensor(Operation *tracedOp,
   auto toTensor = dyn_cast_or_null<bufferization::ToTensorOp>(tracedOp);
   if (!toTensor || toTensor.getResult() == startOutput)
     return false;
-  return isAllocTargetOfStoreFixpipeCopyND2NZ(
-      getRootAlloc(toTensor.getOperand()));
+  Operation *rootAlloc = getRootAlloc(toTensor.getOperand());
+  return isAllocTargetOfStoreFixpipeCopy(rootAlloc) ||
+         isAllocTargetOfMultiUserLoadOrND2NZ(rootAlloc);
 }
 
 TCoreType CVScopeOutliner::determineCoreType(Value output) {
@@ -466,8 +497,9 @@ void CVScopeOutliner::collectLocalOutputs() {
 
   loopOp->walk([&](Operation *op) {
     if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op)) {
-      if (isAllocTargetOfStoreFixpipeCopyND2NZ(
-              getRootAlloc(toTensor.getOperand())))
+      Operation *rootAlloc = getRootAlloc(toTensor.getOperand());
+      if (isAllocTargetOfStoreFixpipeCopy(rootAlloc) ||
+          isAllocTargetOfMultiUserLoadOrND2NZ(rootAlloc))
         addLocalOutput(toTensor.getResult());
       return;
     }
@@ -1058,7 +1090,8 @@ void CVScopeOutliner::computeHoistedOps(WorkItem *item) {
         if (item->hoistedOps.contains(tOp))
           continue;
         bool isAlloc = isa<memref::AllocOp, AllocWorkspaceOp>(tOp) &&
-                       isAllocTargetOfStoreFixpipeCopyND2NZ(tOp);
+                       (isAllocTargetOfStoreFixpipeCopy(tOp) ||
+                        isAllocTargetOfMultiUserLoadOrND2NZ(tOp));
         bool isCast = isa<memref::MemorySpaceCastOp, annotation::MarkOp,
                           bufferization::ToTensorOp, memref::CastOp>(tOp);
         if (!isAlloc && !isCast)

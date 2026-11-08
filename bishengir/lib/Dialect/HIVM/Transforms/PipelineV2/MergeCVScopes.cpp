@@ -19,6 +19,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
@@ -104,6 +105,13 @@ public:
   explicit LoopScopeMerger(scf::ForOp loopOp) : loopOp(loopOp) {}
 
   void run(ArrayRef<MergeRuleFn> rules);
+  scf::ForOp getLoopOp() const { return loopOp; }
+
+  // Rule 0: Clone/merge scalar-only `CUBE_AND_VECTOR` scopes that generate
+  // loop-carried-dependency results used by other `CUBE` or `VECTOR` scopes
+  // into every user scope, giving each merged scope its own loop `iter_arg`
+  // and erasing the original scalar-only scope.
+  void applyScalarLoopCarriedDepRule();
 
   // Rule 1: Group scopes connected by loop-carried dependencies into an outer
   // `{cv_merged_scope}` wrapper scope, keeping member scopes nested inside so
@@ -126,6 +134,7 @@ public:
   void applyGraphSameCoreRule();
 
 private:
+  static bool isScalarOnlyCubeAndVectorScope(ScopeOp scope);
   static bool isCrossCoreTransferOp(Operation *op);
   static bool hasCrossCoreTransfer(ScopeOp scope);
   static bool isEligibleForCoreMerge(ScopeOp scope);
@@ -537,6 +546,167 @@ wrapGroupInScope(scf::ForOp loop, ArrayRef<Operation *> members) {
 //===----------------------------------------------------------------------===//
 // LoopScopeMerger Implementation
 //===----------------------------------------------------------------------===//
+
+bool LoopScopeMerger::isScalarOnlyCubeAndVectorScope(ScopeOp scope) {
+  if (!scope || scope->hasAttr(kCVMergedScopeAttrName) ||
+      getScopeCoreType(scope) != TCoreType::CUBE_AND_VECTOR)
+    return false;
+  return !scope
+              ->walk([](Operation *op) {
+                return isCoreOp(op) ? WalkResult::interrupt()
+                                    : WalkResult::advance();
+              })
+              .wasInterrupted();
+}
+
+void LoopScopeMerger::applyScalarLoopCarriedDepRule() {
+  while (true) {
+    Block *body = loopOp.getBody();
+    auto yieldOp = cast<scf::YieldOp>(body->getTerminator());
+
+    ScopeOp targetScalarScope;
+    unsigned targetArgIdx = 0;
+    SmallVector<ScopeOp> targetUserScopes;
+
+    for (ScopeOp scalarScope : body->getOps<ScopeOp>()) {
+      if (!isScalarOnlyCubeAndVectorScope(scalarScope) ||
+          scalarScope.getNumResults() != 1)
+        continue;
+
+      Value res = scalarScope.getResult(0);
+      std::optional<unsigned> foundArgIdx;
+      for (auto [idx, opnd] : llvm::enumerate(yieldOp.getOperands())) {
+        if (opnd == res) {
+          if (foundArgIdx) {
+            foundArgIdx.reset();
+            break;
+          }
+          foundArgIdx = static_cast<unsigned>(idx);
+        }
+      }
+      if (!foundArgIdx || *foundArgIdx >= loopOp.getNumRegionIterArgs())
+        continue;
+
+      unsigned argIdx = *foundArgIdx;
+      BlockArgument origIterArg = loopOp.getRegionIterArg(argIdx);
+
+      SmallPtrSet<Operation *, 8> seenUserScopes;
+      bool hasUnsupportedIterArgUse = false;
+      for (OpOperand &use : origIterArg.getUses()) {
+        Operation *anc = body->findAncestorOpInBlock(*use.getOwner());
+        if (!anc || anc == scalarScope.getOperation())
+          continue;
+        auto userScope = dyn_cast<ScopeOp>(anc);
+        auto userCore = userScope ? getScopeCoreType(userScope) : std::nullopt;
+        if (!userScope || userScope->hasAttr(kCVMergedScopeAttrName) ||
+            (userCore != TCoreType::CUBE && userCore != TCoreType::VECTOR)) {
+          hasUnsupportedIterArgUse = true;
+          break;
+        }
+        seenUserScopes.insert(userScope.getOperation());
+      }
+      if (hasUnsupportedIterArgUse || seenUserScopes.empty())
+        continue;
+
+      bool hasUnsupportedResUse =
+          llvm::any_of(res.getUses(), [&](OpOperand &use) {
+            if (use.getOwner() == yieldOp.getOperation() &&
+                use.getOperandNumber() == argIdx)
+              return false;
+            Operation *anc = body->findAncestorOpInBlock(*use.getOwner());
+            return !anc || !seenUserScopes.contains(anc);
+          });
+      if (hasUnsupportedResUse)
+        continue;
+
+      SmallVector<ScopeOp> userScopes;
+      for (ScopeOp s : body->getOps<ScopeOp>()) {
+        if (seenUserScopes.contains(s.getOperation()))
+          userScopes.push_back(s);
+      }
+
+      bool canCloneToAllUsers = true;
+      scalarScope.walk([&](Operation *op) {
+        for (Value opnd : op->getOperands()) {
+          Operation *def = opnd.getDefiningOp();
+          if (!def || scalarScope->isProperAncestor(def))
+            continue;
+          Operation *ancDef = body->findAncestorOpInBlock(*def);
+          if (!ancDef)
+            continue;
+          for (ScopeOp userScope : userScopes) {
+            if (ancDef != userScope.getOperation() &&
+                !ancDef->isBeforeInBlock(userScope)) {
+              canCloneToAllUsers = false;
+              return;
+            }
+          }
+        }
+      });
+      if (!canCloneToAllUsers)
+        continue;
+
+      targetScalarScope = scalarScope;
+      targetArgIdx = argIdx;
+      targetUserScopes = std::move(userScopes);
+      break;
+    }
+
+    if (!targetScalarScope)
+      return;
+
+    unsigned privateBase = 0;
+    if (targetUserScopes.size() > 1) {
+      SmallVector<Value> newInits(targetUserScopes.size() - 1,
+                                  loopOp.getInitArgs()[targetArgIdx]);
+      FailureOr<unsigned> baseOr =
+          hivm::appendPassThroughIterArgs(loopOp, newInits);
+      if (failed(baseOr))
+        return;
+      privateBase = *baseOr;
+    }
+
+    body = loopOp.getBody();
+    yieldOp = cast<scf::YieldOp>(body->getTerminator());
+    BlockArgument origIterArg = loopOp.getRegionIterArg(targetArgIdx);
+    Value res = targetScalarScope.getResult(0);
+
+    for (size_t idx = 0; idx < targetUserScopes.size(); ++idx) {
+      ScopeOp userScope = targetUserScopes[idx];
+      unsigned userArgIdx =
+          (idx == 0) ? targetArgIdx
+                     : (privateBase + static_cast<unsigned>(idx) - 1);
+      BlockArgument userIterArg = loopOp.getRegionIterArg(userArgIdx);
+
+      if (userIterArg != origIterArg) {
+        origIterArg.replaceUsesWithIf(userIterArg, [&](OpOperand &use) {
+          return userScope->isProperAncestor(use.getOwner());
+        });
+      }
+
+      OpBuilder builder(targetScalarScope->isBeforeInBlock(userScope)
+                            ? userScope.getOperation()
+                            : userScope->getNextNode());
+      IRMapping mapping;
+      mapping.map(origIterArg, userIterArg);
+      auto clonedScalarScope = cast<ScopeOp>(
+          builder.clone(*targetScalarScope.getOperation(), mapping));
+      Value clonedRes = clonedScalarScope.getResult(0);
+
+      res.replaceUsesWithIf(clonedRes, [&](OpOperand &use) {
+        return userScope->isProperAncestor(use.getOwner());
+      });
+      yieldOp.setOperand(userArgIdx, clonedRes);
+
+      ScopeOp merged = mergeScopes(clonedScalarScope, userScope, userScope);
+      assert(merged && "expected scalar-only CUBE_AND_VECTOR scope to merge");
+    }
+
+    assert(targetScalarScope.use_empty() &&
+           "expected scalar-only scope to have no remaining uses");
+    targetScalarScope.erase();
+  }
+}
 
 void LoopScopeMerger::applyLoopCarriedDepGroupingRule() {
   ScopeDependenceGraph graph(loopOp);
@@ -970,6 +1140,7 @@ void LoopScopeMerger::run(ArrayRef<MergeRuleFn> rules) {
 
 void MergeCVScopesPass::runOnOperation() {
   static constexpr LoopScopeMerger::MergeRuleFn kDefaultRuleOrder[] = {
+      &LoopScopeMerger::applyScalarLoopCarriedDepRule,
       &LoopScopeMerger::applyLoopCarriedDepGroupingRule,
       &LoopScopeMerger::applyMergedScopeSameCoreRule,
       &LoopScopeMerger::applyCrossCoreTransferBackwardRule,
@@ -982,9 +1153,10 @@ void MergeCVScopesPass::runOnOperation() {
       targetLoops.push_back(forOp);
   });
 
-  for (scf::ForOp forOp : targetLoops) {
+  for (scf::ForOp &forOp : targetLoops) {
     LoopScopeMerger merger(forOp);
     merger.run(kDefaultRuleOrder);
+    forOp = merger.getLoopOp();
   }
 
   LLVM_DEBUG({
