@@ -887,3 +887,53 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   }
 }
 
+// -----
+
+// When a normalize_matmul_counter alloca is defined outside the pipelined loop,
+// its increment and store inside the loop are absorbed into the consuming CUBE
+// scope so the scope returns only the tensor result.
+// CHECK-LABEL: func.func @outline_external_normalize_matmul_counter
+// CHECK: %[[COUNTER:.*]] = memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%[[ACC:.*]] = %{{.*}}) -> (tensor<1x1x16x16xf32>)
+// CHECK-NEXT: %[[VEC:.*]] = scope.scope : () -> tensor<1x1x16x16xf16> {
+// CHECK: hivm.hir.copy
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: %[[CUBE:.*]] = scope.scope : () -> tensor<1x1x16x16xf32> {
+// CHECK-NEXT: %[[LOAD:.*]] = memref.load %[[COUNTER]][]
+// CHECK-NEXT: %[[COND:.*]] = arith.cmpi eq, %[[LOAD]],
+// CHECK-NEXT: %[[MMAD:.*]] = hivm.hir.mmadL1 ins(%{{.*}}, %[[VEC]], %[[COND]], {{.*}}) outs(%[[ACC]] : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
+// CHECK-NEXT: %[[INC:.*]] = arith.addi %[[LOAD]],
+// CHECK-NEXT: memref.store %[[INC]], %[[COUNTER]][]
+// CHECK-NEXT: scope.return %[[MMAD]] : tensor<1x1x16x16xf32>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT: scf.yield %[[CUBE]] : tensor<1x1x16x16xf32>
+// CHECK-NEXT: } {hivm.cv_pipelined_loop}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @outline_external_normalize_matmul_counter(
+      %a: tensor<1x1x16x16xf16>, %x: tensor<16x16xf16>, %ub: i32) -> tensor<1x1x16x16xf32>
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    %c16 = arith.constant 16 : index
+    %counter = memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
+    memref.store %c0, %counter[] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
+    %init = tensor.empty() : tensor<1x1x16x16xf32>
+    %res = scf.for %i = %c0 to %ub step %c1 iter_args(%acc = %init) -> (tensor<1x1x16x16xf32>) : i32 {
+      %exp_init = tensor.empty() : tensor<16x16xf16>
+      %exp = hivm.hir.vexp ins(%x : tensor<16x16xf16>) outs(%exp_init : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %exp_4d = tensor.expand_shape %exp [[0, 1, 2], [3]] output_shape [1, 1, 16, 16] : tensor<16x16xf16> into tensor<1x1x16x16xf16>
+      %cbuf = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+      %b = bufferization.to_tensor %cbuf restrict writable : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+      hivm.hir.copy ins(%exp_4d : tensor<1x1x16x16xf16>) outs(%cbuf : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>) {"hivm.inserted-copy"}
+      %before = memref.load %counter[] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
+      %clear = arith.cmpi eq, %before, %c0 : i32
+      %dot = hivm.hir.mmadL1 ins(%a, %b, %clear, %c16, %c16, %c16 : tensor<1x1x16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%acc : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
+      %inc = arith.addi %before, %c1 : i32
+      memref.store %inc, %counter[] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
+      scf.yield %dot : tensor<1x1x16x16xf32>
+    }
+    return %res : tensor<1x1x16x16xf32>
+  }
+}
+
