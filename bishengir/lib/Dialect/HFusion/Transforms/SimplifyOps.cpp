@@ -202,8 +202,7 @@ static bool hasSaturatingCast(ArrayRef<CastOp> castChain) {
 // explicit unsigned_mode when it is non-default; otherwise the cast kind
 // describes the conversion.
 static bool isUnsignedOutput(CastOp castOp) {
-  Type outputType =
-      getElementTypeOrSelf(castOp.getOutputs().front().getType());
+  Type outputType = getElementTypeOrSelf(castOp.getOutputs().front().getType());
   if (outputType.isInteger()) {
     UnsignedMode mode = castOp.getUnsignedMode();
     if (mode != UnsignedMode::SI2SI)
@@ -217,8 +216,7 @@ static bool isUnsignedOutput(CastOp castOp) {
 // cast kind tells whether the source is sign- or zero-extended.
 static bool isUnsignedSource(CastOp castOp) {
   Type inputType = getElementTypeOrSelf(castOp.getInputs().front().getType());
-  Type outputType =
-      getElementTypeOrSelf(castOp.getOutputs().front().getType());
+  Type outputType = getElementTypeOrSelf(castOp.getOutputs().front().getType());
   if (inputType.isInteger() && outputType.isInteger()) {
     UnsignedMode mode = castOp.getUnsignedMode();
     if (mode != UnsignedMode::SI2SI)
