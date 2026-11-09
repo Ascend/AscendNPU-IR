@@ -6,20 +6,19 @@
 // RUN: bishengir-opt %s -hivm-reposition-preload-work="enable-preload=true set-workspace-multibuffer=0" | FileCheck %s --check-prefix=OFF --implicit-check-not=hivm.independent_preload_prefix
 
 // Check the shared pass gate with registered prefixes and a decorated name.
-// The independent multiply hoists; the cube-dependent add stays with its use.
+// The independent multiply is the only vector op in its chain (count = 1),
+// below the three-op hoist threshold; the VECTOR scope stays intact.
 // CHECK-LABEL: func.func @{{.*}}_registry
-// CHECK: scope.scope
-// CHECK: hivm.hir.fixpipe
-// CHECK: %[[CUBE:.*]] = bufferization.to_tensor
-// CHECK: scope.scope
-// CHECK: hivm.hir.vmul
-// CHECK: scope.return
-// CHECK: } {{.*}}hivm.independent_preload_prefix{{.*}}hivm.preload_num = 2
-// CHECK: scope.scope
-// CHECK: hivm.hir.vadd ins(%[[CUBE]]
-// CHECK: hivm.hir.vsub
-// CHECK-NOT: hivm.hir.vmul
-// CHECK: } {{.*}}hivm.preload_num = 2
+// CHECK-NOT:     hivm.independent_preload_prefix
+// CHECK:         scope.scope
+// CHECK:           hivm.hir.fixpipe
+// CHECK:         } {{.*}}hivm.preload_num = 3
+// CHECK:         %[[CUBE:.*]] = bufferization.to_tensor
+// CHECK:         scope.scope
+// CHECK:           hivm.hir.vadd ins(%[[CUBE]]
+// CHECK:           hivm.hir.vmul
+// CHECK:           hivm.hir.vsub
+// CHECK:         } {{.*}}hivm.preload_num = 2
 // OFF-LABEL: func.func @{{.*}}_registry
 // OFF: hivm.hir.vadd
 // OFF: hivm.hir.vmul
