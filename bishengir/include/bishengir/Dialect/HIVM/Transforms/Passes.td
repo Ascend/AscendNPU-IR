@@ -379,7 +379,8 @@ def GraphSyncSolver : HIVMPass<"hivm-graph-sync-solver", "func::FuncOp"> {
        ListOption<"syncTesterOptions", "sync-tester-options", "int64_t",
                   "Sync-tester options (num_runs, init_seed, "
                   "num_ops, num_ptrs, enable-multibuffer, "
-                  "enable-cross-core[, performance-only=0])">,
+                  "enable-cross-core[, performance-only=0[, "
+                  "preload-mode=0]])">,
   ];
 }
 

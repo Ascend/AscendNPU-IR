@@ -35,6 +35,13 @@ namespace mlir::hivm::syncsolver {
 constexpr int max_depth = 4;
 constexpr int loop_preload_max_num = 4;
 
+constexpr int preload_shape_min_stages = 2;
+constexpr int preload_shape_max_stages = 6;
+
+constexpr int preload_shape_single = 1;
+constexpr int preload_shape_nested = 2;
+constexpr int preload_shape_all = preload_shape_single | preload_shape_nested;
+
 constexpr int loop_unrolling_num = 3;
 constexpr int read_write_vals_max_num = 2;
 constexpr int function_blocks_max_num = 5;
@@ -50,7 +57,7 @@ constexpr int multi_function_blocks_prob_a = 1;
 constexpr int multi_function_blocks_prob_b = 10;
 constexpr int scope_in_prob_a = 1;
 constexpr int scope_in_prob_b = 5;
-constexpr int preload_loop_prob_a = 0;
+constexpr int preload_loop_prob_a = 1;
 constexpr int preload_loop_prob_b = 5;
 constexpr int unlikely_cond_prob_a = 1;
 constexpr int unlikely_cond_prob_b = 10;
@@ -75,6 +82,7 @@ private:
   int numPointers{10};
   bool enableMultiBuffer{false};
   bool performanceOnly{false};
+  int preloadMode{0};
   SyncMode syncMode{SyncMode::TEST_INTRA_CORE_MODE};
   // Solver switches the pass was given; the tester picks its own sync mode and
   // architecture, so test() only carries these over.
@@ -83,6 +91,18 @@ private:
                                   /*isRegBasedArch=*/false};
   std::unique_ptr<std::mt19937> randGenerator;
   llvm::DenseMap<Scope *, int> countersMap;
+
+  struct PreloadBuffer {
+    llvm::SmallVector<int64_t> addrs;
+    int firstStage{0};
+    int lastStage{0};
+  };
+  struct PreloadStageInfo {
+    Loop *loopOp{nullptr};
+    const llvm::SmallVector<PreloadBuffer> *buffers{nullptr};
+    int stage{0};
+  };
+  std::optional<PreloadStageInfo> preloadStageInfo;
 
   int idx{0};
   llvm::DenseMap<CorePipeInfo,
@@ -93,9 +113,11 @@ private:
 public:
   SyncTester(int numOperations, int numPointers, bool enableMultiBuffer,
              bool enableCrossCoreMode, const SyncSolverOptions &solverOptions,
-             std::optional<int64_t> seed = {}, bool performanceOnly = false)
+             std::optional<int64_t> seed = {}, bool performanceOnly = false,
+             int preloadMode = 0)
       : numOperations(numOperations), numPointers(numPointers),
         enableMultiBuffer(enableMultiBuffer), performanceOnly(performanceOnly),
+        preloadMode(preloadMode),
         syncMode(enableCrossCoreMode ? SyncMode::TEST_CROSS_CORE_MODE
                                      : SyncMode::TEST_INTRA_CORE_MODE),
         solverOptions(solverOptions) {
@@ -113,8 +135,9 @@ public:
 
   // Required: num_runs, init_seed, num_ops, num_ptrs, multibuffer, cross-core.
   // Optional 7th: performance-only (default 0).
+  // Optional 8th: preload-mode, a mask of preload_shape_* (default 0).
   static size_t getMinOptionsNum() { return 6; }
-  static size_t getMaxOptionsNum() { return 7; }
+  static size_t getMaxOptionsNum() { return 8; }
 
   // Helper to toggle running as test mode (external use).
   static void runTestMode(const SmallVector<int64_t> &options,
@@ -164,6 +187,18 @@ private:
                         const llvm::SmallVector<hivm::PIPE> &pipesVec,
                         int &remOpNum, int depth, Scope *counterScope = nullptr,
                         std::optional<hivm::TCoreType> scopeCoreType = {});
+
+  void generatePreloadLoop(Scope *scopeOp, const std::vector<int> &pointerOps,
+                           const llvm::SmallVector<hivm::PIPE> &pipesVec,
+                           int &remOpNum, int depth);
+
+  llvm::SmallVector<PreloadBuffer>
+  buildPreloadBuffers(const std::vector<int> &pointerOps, int numStages);
+
+  bool generatePreloadStageOp(Scope *scopeOp,
+                              const llvm::SmallVector<hivm::PIPE> &pipesVec,
+                              int &remOpNum, Scope *counterScope,
+                              hivm::TCoreType coreType);
 
   // Walk the generated IR and place operations into pipeline queues for
   // simulation.

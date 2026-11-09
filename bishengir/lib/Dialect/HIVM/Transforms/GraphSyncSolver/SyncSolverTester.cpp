@@ -46,10 +46,16 @@ void SyncTester::generateRandTest(
   scopeOp->body.push_back(std::move(blockBeginPlaceHolderOp));
   bool empty = true;
   while (remOpNum > 0) {
-    if (!scopeCoreType.has_value() && depth + 1 < max_depth &&
+    bool genPreloadLoop =
+        !scopeCoreType.has_value() && depth + 1 < max_depth &&
         pointerOps.size() >= read_write_vals_max_num * 2 &&
         remOpNum >= loop_preload_max_num &&
-        isTrueWithProbability(preload_loop_prob_a, preload_loop_prob_b)) {
+        isTrueWithProbability(preload_loop_prob_a, preload_loop_prob_b);
+    if (genPreloadLoop && preloadMode != 0 &&
+        syncMode == SyncMode::TEST_CROSS_CORE_MODE) {
+      generatePreloadLoop(scopeOp, pointerOps, pipesVec, remOpNum, depth);
+      empty = false;
+    } else if (genPreloadLoop) {
 
       auto loopOp = std::make_unique<Loop>(nullptr, scopeOp);
       loopOp->haveCounter = true;
@@ -184,6 +190,12 @@ void SyncTester::generateRandTest(
       conditionOp->setFalseScope(std::move(falseBlock));
       scopeOp->body.push_back(std::move(conditionOp));
       empty = false;
+    } else if (preloadStageInfo.has_value()) {
+      assert(scopeCoreType.has_value());
+      if (generatePreloadStageOp(scopeOp, pipesVec, remOpNum, counterScope,
+                                 scopeCoreType.value())) {
+        empty = false;
+      }
     } else {
       hivm::PIPE pipeRead =
           pipesVec[getRand() % static_cast<int>(pipesVec.size())];
@@ -239,6 +251,164 @@ void SyncTester::generateRandTest(
   auto blockEndPlaceHolderOp = std::make_unique<PlaceHolder>(nullptr, scopeOp);
   blockEndPlaceHolderOp->scopeEnd = scopeOp;
   scopeOp->body.push_back(std::move(blockEndPlaceHolderOp));
+}
+
+llvm::SmallVector<SyncTester::PreloadBuffer>
+SyncTester::buildPreloadBuffers(const std::vector<int> &pointerOps,
+                                int numStages) {
+  std::vector<int> pointers(pointerOps);
+  for (int i = static_cast<int>(pointers.size()) - 1; i > 0; --i) {
+    std::swap(pointers[i], pointers[getRand(0, i)]);
+  }
+
+  llvm::SmallVector<PreloadBuffer> buffers;
+  int next = 0;
+  int pointersNum = static_cast<int>(pointers.size());
+  while (next < pointersNum) {
+    int buffersNum = getRand(1, std::min(numStages, pointersNum - next));
+    int stagesNum = getRand(1, buffersNum);
+    PreloadBuffer buffer;
+    buffer.firstStage = getRand(0, numStages - stagesNum);
+    buffer.lastStage = buffer.firstStage + stagesNum - 1;
+    buffer.addrs.append(pointers.begin() + next,
+                        pointers.begin() + next + buffersNum);
+    next += buffersNum;
+    buffers.push_back(std::move(buffer));
+  }
+  return buffers;
+}
+
+bool SyncTester::generatePreloadStageOp(
+    Scope *scopeOp, const llvm::SmallVector<hivm::PIPE> &pipesVec,
+    int &remOpNum, Scope *counterScope, hivm::TCoreType coreType) {
+  assert(preloadStageInfo.has_value());
+  const auto &stageInfo = preloadStageInfo.value();
+  hivm::PIPE pipe = pipesVec[getRand() % static_cast<int>(pipesVec.size())];
+  remOpNum--;
+
+  bool atStageLevel = counterScope == stageInfo.loopOp;
+  llvm::SmallVector<const PreloadBuffer *> candidates;
+  for (const auto &buffer : *stageInfo.buffers) {
+    if (buffer.firstStage <= stageInfo.stage &&
+        stageInfo.stage <= buffer.lastStage &&
+        (atStageLevel || buffer.firstStage == buffer.lastStage)) {
+      candidates.push_back(&buffer);
+    }
+  }
+  if (candidates.empty()) {
+    return false;
+  }
+
+  auto pickMemInfos = [&]() {
+    llvm::SmallVector<MemInfo, 0> memInfos;
+    int candidatesNum = static_cast<int>(candidates.size());
+    int num = getRand(1, std::min(read_write_vals_max_num, candidatesNum));
+    for (auto i : getNDifferentRandNums(num, candidatesNum)) {
+      memInfos.push_back(
+          MemInfo::getMemInfo(counterScope, candidates[i]->addrs));
+    }
+    return memInfos;
+  };
+  auto readMemInfo = pickMemInfos();
+  auto writeMemInfo = pickMemInfos();
+
+  scopeOp->body.push_back(std::make_unique<RWOperation>(
+      nullptr, scopeOp, coreType, pipe, pipe, readMemInfo, writeMemInfo));
+  return true;
+}
+
+void SyncTester::generatePreloadLoop(
+    Scope *scopeOp, const std::vector<int> &pointerOps,
+    const llvm::SmallVector<hivm::PIPE> &pipesVec, int &remOpNum, int depth) {
+  llvm::SmallVector<int> shapes;
+  for (int shapeBit : {preload_shape_single, preload_shape_nested}) {
+    if (preloadMode & shapeBit) {
+      shapes.push_back(shapeBit);
+    }
+  }
+  assert(!shapes.empty());
+  int shape = shapes[getRand() % static_cast<int>(shapes.size())];
+  int numStages = getRand(preload_shape_min_stages,
+                          std::min(preload_shape_max_stages, remOpNum));
+
+  auto loopOp = std::make_unique<Loop>(nullptr, scopeOp);
+  loopOp->haveCounter = true;
+  loopOp->isCVPreloadingLoop = true;
+  loopOp->loopPreloadNum = numStages;
+  auto loopBody = std::make_unique<Scope>();
+  loopBody->parentOp = loopOp.get();
+
+  auto buffers = buildPreloadBuffers(pointerOps, numStages);
+
+  auto createStageScope = [&](int stage) {
+    auto stageScope = std::make_unique<Scope>();
+    stageScope->parentOp = loopBody.get();
+    stageScope->preloadNum = numStages - stage - 1;
+    stageScope->maxPreloadNum = numStages;
+    stageScope->haveCounter = true;
+    return stageScope;
+  };
+  auto fillScope = [&](Scope *scope, int opNum, hivm::TCoreType coreType) {
+    int curRemOpNum = opNum;
+    generateRandTest(scope, pointerOps, pipesVec, curRemOpNum, depth + 1,
+                     loopOp.get(), coreType);
+    remOpNum -= opNum - curRemOpNum;
+  };
+  auto createScope = [](Scope *parentScope) {
+    auto scope = std::make_unique<Scope>();
+    scope->parentOp = parentScope;
+    return scope;
+  };
+
+  int stageOpNum = remOpNum / numStages;
+  for (int stage = 0; stage < numStages; stage++) {
+    preloadStageInfo = PreloadStageInfo{loopOp.get(), &buffers, stage};
+    hivm::TCoreType coreTypes[2];
+    coreTypes[0] =
+        (getRand() % 2) ? hivm::TCoreType::CUBE : hivm::TCoreType::VECTOR;
+    coreTypes[1] = getOppositeCoreType(coreTypes[0]);
+    int firstOpNum = getRand(0, stageOpNum);
+    int opNums[2] = {firstOpNum, stageOpNum - firstOpNum};
+
+    if (shape == preload_shape_single) {
+      auto stageScope = createStageScope(stage);
+      auto stageBody = createScope(stageScope.get());
+      fillScope(stageBody.get(), stageOpNum, coreTypes[0]);
+      stageScope->body.push_back(std::move(stageBody));
+      loopBody->body.push_back(std::move(stageScope));
+    } else {
+      assert(shape == preload_shape_nested);
+      auto stageScope = createStageScope(stage);
+      auto stageBody = createScope(stageScope.get());
+      auto beginPlaceHolderOp =
+          std::make_unique<PlaceHolder>(nullptr, stageBody.get());
+      beginPlaceHolderOp->scopeBegin = stageBody.get();
+      stageBody->body.push_back(std::move(beginPlaceHolderOp));
+      for (int i = 0; i < 2; i++) {
+        auto coreScope = createScope(stageBody.get());
+        fillScope(coreScope.get(), opNums[i], coreTypes[i]);
+        stageBody->body.push_back(std::move(coreScope));
+      }
+      auto endPlaceHolderOp =
+          std::make_unique<PlaceHolder>(nullptr, stageBody.get());
+      endPlaceHolderOp->scopeEnd = stageBody.get();
+      stageBody->body.push_back(std::move(endPlaceHolderOp));
+      stageScope->body.push_back(std::move(stageBody));
+      loopBody->body.push_back(std::move(stageScope));
+    }
+  }
+  preloadStageInfo.reset();
+
+  loopOp->body.push_back(std::move(loopBody));
+  auto beforePlaceHolderOp =
+      std::make_unique<PlaceHolder>(nullptr, loopOp->parentOp);
+  beforePlaceHolderOp->beforeOp = loopOp.get();
+  auto afterPlaceHolderOp =
+      std::make_unique<PlaceHolder>(nullptr, loopOp->parentOp);
+  afterPlaceHolderOp->afterOp = loopOp.get();
+  scopeOp->body.push_back(std::move(beforePlaceHolderOp));
+  scopeOp->body.push_back(std::move(loopOp));
+  scopeOp->body.push_back(std::move(afterPlaceHolderOp));
 }
 
 std::unique_ptr<OperationBase> SyncTester::getGeneratedRandomTest() {
@@ -307,15 +477,11 @@ void SyncTester::fillPipelines(OperationBase *op, Scope *counterScope) {
       assert(loopOp->loopPreloadNum.has_value());
 
       int numIter = loopOp->loopPreloadNum.value() * 2 + 3;
-      auto &loopCounter = countersMap[loopOp];
       for (int i = 0; i < numIter; i++) {
         for (auto &outerScope : loopOp->body) {
           for (auto &innerOp : cast<Scope>(outerScope.get())->body) {
             if (auto innerScope = dyn_cast<Scope>(innerOp.get())) {
               if (innerScope->preloadNum.has_value()) {
-                if (i == 0) {
-                  countersMap[innerScope] = 0;
-                }
                 assert(innerScope->haveCounter);
                 // loopPreloadNum-scopePreloadNum <= i
                 // < (numIter-scopePreloadNum)
@@ -330,7 +496,7 @@ void SyncTester::fillPipelines(OperationBase *op, Scope *counterScope) {
             fillPipelines(innerOp.get(), loopOp);
           }
         }
-        loopCounter++;
+        countersMap[loopOp]++;
       }
       return;
     }
@@ -347,13 +513,12 @@ void SyncTester::fillPipelines(OperationBase *op, Scope *counterScope) {
       numIter = enableMultiBuffer ? loop_unrolling_num : 1;
     }
 
-    auto &loopCounter = countersMap[loopOp];
     for (int i = 0; i < numIter; i++) {
       for (auto &op : loopOp->body) {
         assert(isa<Scope>(op));
         fillPipelines(op.get(), loopOp);
       }
-      loopCounter++;
+      countersMap[loopOp]++;
     }
     // if (loopOp->body.size() > 1) {
     //   fillPipelines(loopOp->body.front().get(), loopCnt + 1,
@@ -883,6 +1048,13 @@ void SyncTester::runTestMode(const SmallVector<int64_t> &options,
   // Optional trailing flag; default off so existing 6-option invocations stay
   // on the full dump + simulation path.
   bool performanceOnly = options.size() > 6 && options[6] != 0;
+  int64_t preloadMode = options.size() > 7 ? options[7] : 0;
+  if (preloadMode < 0 || preloadMode > preload_shape_all) {
+    llvm::report_fatal_error(("Expected sync-tester preload-mode in [0, " +
+                              std::to_string(preload_shape_all) + "]")
+                                 .c_str());
+    return;
+  }
 
   llvm::outs() << "tester-options:"
                << " seed(" << initSeed << ")"
@@ -890,14 +1062,17 @@ void SyncTester::runTestMode(const SmallVector<int64_t> &options,
                << " num_ptrs(" << numPointers << ")"
                << " multibuffer(" << enableMultiBuffer << ")"
                << " enableCrossCoreMode(" << enableCrossCoreMode << ")"
-               << " performanceOnly(" << performanceOnly << ")"
-               << " solverVersion("
+               << " performanceOnly(" << performanceOnly << ")";
+  if (preloadMode != 0) {
+    llvm::outs() << " preloadMode(" << preloadMode << ")";
+  }
+  llvm::outs() << " solverVersion("
                << (static_cast<int>(solverOptions.solverVersion) + 1) << ")"
                << "\n";
 
   SyncTester tester(numOperations, numPointers, enableMultiBuffer,
                     enableCrossCoreMode, solverOptions, initSeed,
-                    performanceOnly);
+                    performanceOnly, preloadMode);
 
   llvm::LogicalResult result = llvm::success();
   for (int64_t runI = 0; runI < numRuns; ++runI) {
