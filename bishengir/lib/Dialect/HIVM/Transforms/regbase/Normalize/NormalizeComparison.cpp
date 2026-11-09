@@ -196,7 +196,9 @@ struct HIVMIsNanTraits : public HIVMIsInfNanNormalizeTraitsBase {
 using NormalizeIsInfOp =
     mlir::NormalizeIsInfOpTemplate<VIsInfOp, HIVMIsInfTraits>;
 
-/// Normalizes `hivm.hir.visnan(x)` to `compare(x, x, ne)`.
+/// Normalizes `hivm.hir.visnan` to existing HIVM primitive ops:
+///   bitcast -> vand(sign_mask) -> vadd(-inf_bits) -> vmin(1) -> vmax(0)
+///   -> vcast -> vcmp(eq, 0) -> vnot
 using NormalizeIsNanOp =
     mlir::NormalizeIsNanOpTemplate<VIsNanOp, HIVMIsNanTraits>;
 
