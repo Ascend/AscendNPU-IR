@@ -22,6 +22,7 @@
 #include "bishengir/Dialect/HIVM/IR/CustomOp/CustomOpUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/BubbleUpUtils.h"
+#include "bishengir/Dialect/HIVM/Transforms/HIVMTilingInterfaceImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -36,16 +37,19 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/AffineExprVisitor.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SetOperations.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -2159,99 +2163,163 @@ FixpipeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
 // Custom-like templates below). Both `iterator_types` and `indexing_map` must
 // be present so the slice can be projected from the consumed result back to
 // each shaped operand via the affine maps.
-// Complex affine expressions (transpose, reshape, mod, ...) are rejected in
-// isSupportedOperation so execute can rely on the two-shape-of-expr contract.
+// Recover one iteration window across all results, then project it to operands.
+// Direct axes and contiguous linearized axes use the same slice/rebuild flow.
 
 namespace {
 
-struct SliceParams {
-  SmallVector<OpFoldResult> offsets;
-  SmallVector<OpFoldResult> sizes;
-  SmallVector<OpFoldResult> strides;
+// Recognize a contiguous linearization with all inner dimensions kept whole.
+static std::optional<int64_t> getPartitionScale(AffineExpr expr,
+                                                unsigned parallel,
+                                                ArrayRef<int64_t> bounds,
+                                                bool requireContiguous = true) {
+  SimpleAffineExprFlattener flattener(bounds.size(), 0);
+  if (failed(flattener.walkPostOrder(expr)))
+    return std::nullopt;
+  ArrayRef<int64_t> coefficients = flattener.operandExprStack.back();
+  if (llvm::any_of(coefficients.drop_front(bounds.size()),
+                   [](int64_t value) { return value != 0; }))
+    return std::nullopt;
+  int64_t scale = coefficients[parallel];
+  SmallVector<std::pair<int64_t, int64_t>> inner;
+  for (unsigned i = 0; i < bounds.size(); ++i) {
+    int64_t value = coefficients[i];
+    if (value < 0)
+      return std::nullopt;
+    if (i != parallel && value)
+      inner.emplace_back(value, bounds[i]);
+  }
+  if (!requireContiguous)
+    return scale;
+  llvm::sort(inner);
+  int64_t extent = 1;
+  for (auto [coefficient, bound] : inner) {
+    if (bound <= 0 || coefficient != extent)
+      return std::nullopt;
+    extent *= bound;
+  }
+  return scale == extent ? std::optional<int64_t>(scale) : std::nullopt;
+}
+
+static AffineExpr getPartitionOffsetDifference(OpFoldResult lhs,
+                                               int64_t lhsScale,
+                                               OpFoldResult rhs,
+                                               int64_t rhsScale,
+                                               MLIRContext *context) {
+  SmallVector<Value> operands;
+  auto expr = [&](OpFoldResult value) -> AffineExpr {
+    if (auto constant = getConstantIntValue(value))
+      return getAffineConstantExpr(*constant, context);
+    operands.push_back(cast<Value>(value));
+    return getAffineSymbolExpr(operands.size() - 1, context);
+  };
+  auto left = expr(lhs), right = expr(rhs);
+  auto map =
+      AffineMap::get(0, operands.size(), left * lhsScale - right * rhsScale);
+  affine::fullyComposeAffineMapAndOperands(&map, &operands);
+  affine::canonicalizeMapAndOperands(&map, &operands);
+  return simplifyAffineMap(map).getResult(0);
+}
+
+struct IterationSlice {
+  SmallVector<std::optional<OpFoldResult>> iterOff, iterSz, iterSt;
+  SmallVector<int64_t> divisors;
+  SmallVector<int64_t> bounds;
+
+  explicit IterationSlice(unsigned rank)
+      : iterOff(rank), iterSz(rank), iterSt(rank), divisors(rank, 1),
+        bounds(rank, ShapedType::kDynamic) {}
 };
 
-/// Recover the iteration-space slice from the result slice through the result's
-/// indexing map. Supported map results are:
-///   - AffineDimExpr(d_j): bind iteration dimension d_j to the result slice's
-///     offset, size, and stride at the corresponding result dimension. Repeated
-///     bindings are supported only when all three slice parameters are equal.
-///   - AffineConstantExpr(0): bind no iteration dimension, as the result
-///     dimension is indexed by a constant.
-/// Contradictory repeated bindings and all other affine expressions (such as
-/// add, mul, mod, floorDiv, or ceilDiv) are unsupported and return failure.
-static LogicalResult recoverIterSpaceFromResultSlice(
-    AffineMap mRes, ArrayRef<OpFoldResult> offsR, ArrayRef<OpFoldResult> szR,
-    ArrayRef<OpFoldResult> strR,
-    SmallVectorImpl<std::optional<OpFoldResult>> &iterOff,
-    SmallVectorImpl<std::optional<OpFoldResult>> &iterSz,
-    SmallVectorImpl<std::optional<OpFoldResult>> &iterSt) {
-  for (unsigned k = 0, e = mRes.getNumResults(); k < e; ++k) {
-    AffineExpr expr = mRes.getResult(k);
-    if (auto d = dyn_cast<AffineDimExpr>(expr)) {
-      unsigned j = d.getPosition();
-      if (iterOff[j].has_value()) {
-        if (!isEqualConstantIntOrValue(*iterOff[j], offsR[k]) ||
-            !isEqualConstantIntOrValue(*iterSz[j], szR[k]) ||
-            !isEqualConstantIntOrValue(*iterSt[j], strR[k]))
-          return failure();
-      } else {
-        iterOff[j] = offsR[k];
-        iterSz[j] = szR[k];
-        iterSt[j] = strR[k];
-      }
-    } else if (auto c = dyn_cast<AffineConstantExpr>(expr)) {
-      // c == 0: result dim is a constant index; isSupportedOperation has
-      // restricted constants to 0 already. Nothing to bind on iter side.
-      (void)c;
-      continue;
-    } else {
-      return failure();
-    }
-  }
+static bool equalSliceOffset(OpFoldResult lhs, int64_t lhsDivisor,
+                             OpFoldResult rhs, int64_t rhsDivisor,
+                             MLIRContext *context) {
+  auto difference = dyn_cast<AffineConstantExpr>(
+      getPartitionOffsetDifference(lhs, rhsDivisor, rhs, lhsDivisor, context));
+  return difference && difference.getValue() == 0;
+}
+
+static LogicalResult bindIterationSlice(IterationSlice &window, unsigned loop,
+                                        OpFoldResult offset, OpFoldResult size,
+                                        OpFoldResult stride, int64_t divisor,
+                                        Builder &builder) {
+  if (window.iterOff[loop])
+    return success(equalSliceOffset(*window.iterOff[loop],
+                                    window.divisors[loop], offset, divisor,
+                                    builder.getContext()) &&
+                   isEqualConstantIntOrValue(*window.iterSz[loop], size) &&
+                   equalSliceOffset(*window.iterSt[loop], 1, stride, 1,
+                                    builder.getContext()));
+  window.iterOff[loop] = offset;
+  window.iterSz[loop] = size;
+  window.iterSt[loop] = stride;
+  window.divisors[loop] = divisor;
   return success();
 }
 
-/// Project the iteration-space slice onto a shaped CustomOp operand through its
-/// indexing map. Supported map results are:
-///   - AffineDimExpr(d_j): reuse d_j's recovered slice when it is bound;
-///     otherwise take the operand dimension's full static extent (for example,
-///     a reduction-only or input-only iteration dimension).
-///   - AffineConstantExpr(0): take the operand dimension's full static extent,
-///     which represents a broadcast dimension.
-/// Dynamic full extents and all other affine expressions (such as add, mul,
-/// mod, floorDiv, or ceilDiv) are unsupported and return failure.
+static bool isFullSlice(OpFoldResult offset, OpFoldResult size,
+                        OpFoldResult stride, int64_t extent, Builder &builder) {
+  return extent >= 0 && getConstantIntValue(size) == extent &&
+         getConstantIntValue(stride) == 1 &&
+         equalSliceOffset(offset, 1, builder.getIndexAttr(0), 1,
+                          builder.getContext());
+}
+
+// Direct dimensions retain their window; a contiguous linearization binds its
+// outer dimension and keeps the inner dimensions whole.
 static LogicalResult
-projectIterSpaceToOperand(AffineMap mOp, ShapedType opType,
-                          ArrayRef<std::optional<OpFoldResult>> iterOff,
-                          ArrayRef<std::optional<OpFoldResult>> iterSz,
-                          ArrayRef<std::optional<OpFoldResult>> iterSt,
-                          Builder &builder, SliceParams &out) {
-  ArrayRef<int64_t> shape = opType.getShape();
-  for (unsigned k = 0, e = mOp.getNumResults(); k < e; ++k) {
-    AffineExpr expr = mOp.getResult(k);
-    if (auto d = dyn_cast<AffineDimExpr>(expr)) {
-      unsigned j = d.getPosition();
-      if (iterOff[j].has_value()) {
-        out.offsets.push_back(*iterOff[j]);
-        out.sizes.push_back(*iterSz[j]);
-        out.strides.push_back(*iterSt[j]);
-      } else {
-        if (ShapedType::isDynamic(shape[k]))
-          return failure();
-        out.offsets.push_back(builder.getIndexAttr(0));
-        out.sizes.push_back(builder.getIndexAttr(shape[k]));
-        out.strides.push_back(builder.getIndexAttr(1));
-      }
-    } else if (auto c = dyn_cast<AffineConstantExpr>(expr)) {
-      // Constant index (broadcast): take the operand's full extent.
-      (void)c;
-      if (ShapedType::isDynamic(shape[k]))
+recoverIterSpaceFromResultSlice(tensor::ExtractSliceOp sliceOp, AffineMap map,
+                                ArrayRef<IteratorType> iterTypes,
+                                IterationSlice &window, Builder &builder) {
+  auto shape = sliceOp.getSourceType().getShape();
+  auto offsets = sliceOp.getMixedOffsets();
+  auto sizes = sliceOp.getMixedSizes();
+  auto strides = sliceOp.getMixedStrides();
+  auto zero = builder.getIndexAttr(0), one = builder.getIndexAttr(1);
+  for (auto [dim, expr] : llvm::enumerate(map.getResults())) {
+    bool full = isFullSlice(offsets[dim], sizes[dim], strides[dim], shape[dim],
+                            builder);
+    if (auto direct = dyn_cast<AffineDimExpr>(expr)) {
+      unsigned loop = direct.getPosition();
+      if ((getConstantIntValue(sizes[dim]) != shape[dim] &&
+           iterTypes[loop] != IteratorType::kParallel) ||
+          failed(bindIterationSlice(window, loop, offsets[dim], sizes[dim],
+                                    strides[dim], 1, builder)))
         return failure();
-      out.offsets.push_back(builder.getIndexAttr(0));
-      out.sizes.push_back(builder.getIndexAttr(shape[k]));
-      out.strides.push_back(builder.getIndexAttr(1));
-    } else {
-      return failure();
+      continue;
+    }
+    std::optional<unsigned> outer;
+    if (!full) {
+      if (getConstantIntValue(strides[dim]) != 1)
+        return failure();
+      for (auto [loop, type] : llvm::enumerate(iterTypes)) {
+        if (type != IteratorType::kParallel)
+          continue;
+        auto scale = getPartitionScale(expr, loop, window.bounds);
+        auto size = getConstantIntValue(sizes[dim]);
+        if (!scale || !size || *size <= 0 || *size % *scale ||
+            !getPartitionOffsetDifference(offsets[dim], 1, zero, 1,
+                                          builder.getContext())
+                 .isMultipleOf(*scale))
+          continue;
+        if (failed(bindIterationSlice(window, loop, offsets[dim],
+                                      builder.getIndexAttr(*size / *scale), one,
+                                      *scale, builder)))
+          return failure();
+        outer = loop;
+        break;
+      }
+      if (!outer)
+        return failure();
+    }
+    for (unsigned loop = 0; loop < window.bounds.size(); ++loop) {
+      if (outer == loop || !expr.isFunctionOfDim(loop))
+        continue;
+      if (window.bounds[loop] < 0 ||
+          failed(bindIterationSlice(window, loop, zero,
+                                    builder.getIndexAttr(window.bounds[loop]),
+                                    one, 1, builder)))
+        return failure();
     }
   }
   return success();
@@ -2260,311 +2328,232 @@ projectIterSpaceToOperand(AffineMap mOp, ShapedType opType,
 } // namespace
 
 namespace {
-template <typename OpT> static bool isSafeToDuplicateCustomLike(OpT customOp) {
-  if (!customOp.getNoSideEffect())
-    return false;
-  if (!customOp.getTempBuffers().empty() ||
-      !customOp.getExtraBuffersInfo().empty())
-    return false;
+using InputSliceParams = llvm::DenseMap<OpOperand *, linalg::SliceParameters>;
 
-  if constexpr (std::is_same_v<OpT, hivm::CustomOp>) {
-    return !customOp.isBuiltin();
-  } else {
-    return customOp.getSyncEventSlots().empty() &&
-           customOp.getSyncRelatedArgs().empty();
-  }
-}
-
-template <typename OpT> static bool hasSliceableCustomInputs(OpT customOp) {
-  return llvm::none_of(customOp.getInputs(), [](Value input) {
-    Type type = input.getType();
-    if (isa<BaseMemRefType>(type))
-      return true;
-    auto shapedType = dyn_cast<ShapedType>(type);
-    return shapedType && !shapedType.hasRank();
+template <typename OpT> static bool hasSliceableCustomInputs(OpT op) {
+  return llvm::none_of(op.getInputs(), [](Value input) {
+    auto type = input.getType();
+    auto shaped = dyn_cast<ShapedType>(type);
+    return isa<BaseMemRefType>(type) || (shaped && !shaped.hasRank());
   });
 }
 
+// Resource and synchronization admission is independent of slice geometry.
 template <typename OpT>
-static bool hasSupportedExplicitIndexingMaps(OpT customOp,
-                                             ArrayRef<IteratorType> iterTypes,
-                                             ArrayRef<AffineMap> indexingMaps) {
-  unsigned nIn = customOp.getInputs().size();
-  unsigned nOut = customOp.getOutputs().size();
-  unsigned nTmp = customOp.getTempBuffers().size();
-  if (indexingMaps.size() != nIn + nOut &&
-      indexingMaps.size() != nIn + nOut + nTmp)
+static bool isSupportedCustomLike(tensor::ExtractSliceOp sliceOp, OpT op) {
+  if (!customOpHasExplicitSemantics(op) || isDynamicSlice(sliceOp) ||
+      !hasSliceableCustomInputs(op) || !op.getTempBuffers().empty() ||
+      !op.getExtraBuffersInfo().empty() ||
+      op.getNumResults() != op.getOutputs().size() ||
+      !llvm::all_of(op.getOutputs(), [](Value value) {
+        return isa<RankedTensorType>(value.getType());
+      }))
     return false;
-
-  for (unsigned i = 0, e = indexingMaps.size(); i < e; ++i) {
-    AffineMap m = indexingMaps[i];
-    if (m.getNumDims() != iterTypes.size())
+  if constexpr (std::is_same_v<OpT, CustomOp>) {
+    auto gmArgs = op.getGMAddrArgsIndices();
+    if ((!op.isBuiltin() && !op.getNoSideEffect()) ||
+        (op.isBuiltin() && gmArgs && !gmArgs->empty()))
       return false;
-    Value opVal = customOp.getOperation()->getOperand(i);
-    if (auto opType = dyn_cast<ShapedType>(opVal.getType())) {
-      if (!opType.hasRank())
-        return false;
-      if (m.getNumResults() != static_cast<unsigned>(opType.getRank()))
-        return false;
-    }
-    llvm::SmallSet<unsigned, 4> seen;
-    int64_t lastDimPos = -1;
-    for (AffineExpr expr : m.getResults()) {
-      if (auto d = dyn_cast<AffineDimExpr>(expr)) {
-        // Duplicate dimensions in one map imply a one-to-many projection.
-        if (!seen.insert(d.getPosition()).second)
-          return false;
-        // Increasing dim positions admit identity/broadcast/reduction but
-        // reject transpose permutations such as (d0, d1) -> (d1, d0).
-        if (static_cast<int64_t>(d.getPosition()) < lastDimPos)
-          return false;
-        lastDimPos = d.getPosition();
-        continue;
-      }
-      if (auto c = dyn_cast<AffineConstantExpr>(expr)) {
-        if (c.getValue() == 0)
-          continue;
-      }
-      return false;
-    }
+  } else if (!op.getNoSideEffect() || !op.getSyncEventSlots().empty() ||
+             !op.getSyncRelatedArgs().empty()) {
+    return false;
   }
-  return true;
-}
-
-template <typename OpT>
-static bool slicesOnlyParallelDimensions(tensor::ExtractSliceOp sliceOp,
-                                         OpT customOp,
-                                         ArrayRef<IteratorType> iterTypes) {
-  auto resultVal = dyn_cast<OpResult>(sliceOp.getSource());
-  auto srcType = dyn_cast<RankedTensorType>(sliceOp.getSource().getType());
-  auto dstType = dyn_cast<RankedTensorType>(sliceOp.getType());
-  if (!resultVal || resultVal.getOwner() != customOp.getOperation() ||
-      !srcType || !dstType)
+  auto iterTypes = op.getIteratorTypesArray();
+  auto maps = op.getIndexingMapsArray();
+  if (maps.size() != op->getNumOperands())
     return false;
-  AffineMap mRes = customOp.getIndexingMapMatchingResult(resultVal);
-  ArrayRef<int64_t> srcShape = srcType.getShape();
-  ArrayRef<int64_t> dstShape = dstType.getShape();
-  if (srcShape.size() != dstShape.size() ||
-      mRes.getNumResults() != srcShape.size())
-    return false;
-  for (unsigned k = 0, e = dstShape.size(); k < e; ++k) {
-    if (dstShape[k] == srcShape[k])
-      continue;
-    auto d = dyn_cast<AffineDimExpr>(mRes.getResult(k));
-    if (!d)
-      return false;
-    if (iterTypes[d.getPosition()] != IteratorType::kParallel)
+  for (auto [operand, map] : llvm::zip(op->getOperands(), maps)) {
+    auto type = dyn_cast<RankedTensorType>(operand.getType());
+    if (map.getNumDims() != iterTypes.size() ||
+        compressUnusedSymbols(map).getNumSymbols() ||
+        map.getNumResults() != (type ? type.getRank() : 0))
       return false;
   }
   return true;
 }
 
-template <typename OpT>
-static bool hasAlignedOutputInits(tensor::ExtractSliceOp sliceOp,
-                                  OpT customOp) {
-  auto resultVal = dyn_cast<OpResult>(sliceOp.getSource());
-  auto srcType = dyn_cast<RankedTensorType>(sliceOp.getSource().getType());
-  if (!resultVal || resultVal.getOwner() != customOp.getOperation() || !srcType)
-    return false;
-
-  // createCustomOutputSlices indexes resultSlices with the physical output
-  // position and always creates tensor.extract_slice. Only admit the 1:1
-  // ranked-tensor DPS form that those assumptions support.
-  if (customOp.getOutputs().size() != customOp.getNumResults())
-    return false;
-  if (!llvm::all_of(customOp.getResultTypes(),
-                    [](Type type) { return isa<RankedTensorType>(type); }))
-    return false;
-
-  AffineMap resultMap = customOp.getIndexingMapMatchingResult(resultVal);
-  for (OpOperand &outOp : customOp.getOutputsMutable()) {
-    auto outputType = dyn_cast<RankedTensorType>(outOp.get().getType());
-    if (!outputType)
-      return false;
-    if (outputType.getShape() != srcType.getShape())
-      return false;
-    if (customOp.getMatchingIndexingMap(&outOp) != resultMap)
-      return false;
-  }
-  return true;
-}
-
-// Checks whether a CustomOp-like operation can be safely rebuilt on the tile
-// represented by sliceOp. The current conservative contract requires:
-//   - execution safety: the op is side-effect free and uses no temp/extra
-//     buffers; CustomOp must be non-builtin, while CustomMacroOp must have no
-//     sync metadata;
-//   - sliceability: sliceOp is static, tensor inputs can be sliced, scalar
-//     inputs can be passed through unchanged, and memref inputs are absent;
-//   - complete indexing semantics: iterator_types and indexing_map are both
-//     present and structurally match the operands;
-//   - projectable affine maps: map results contain only ordered, non-repeated
-//     AffineDimExpr values or constant zero (broadcast); transpose and other
-//     affine expressions are rejected;
-//   - precision safety: every result dimension reduced by sliceOp maps to a
-//     parallel iterator, never to a reduction iterator;
-//   - DPS consistency: each tensor output init has the same shape and indexing
-//     map as the corresponding result, so it can reuse that result's slice.
-// Unsupported cases return false and keep the original operation untiled. Some
-// resource and sync restrictions can be relaxed later once per-sub-block
-// ownership and event semantics are defined.
-template <typename OpT>
-static bool isSupportedCustomLike(tensor::ExtractSliceOp sliceOp,
-                                  OpT customOp) {
-  if (!isSafeToDuplicateCustomLike(customOp) || isDynamicSlice(sliceOp) ||
-      !hasSliceableCustomInputs(customOp))
-    return false;
-
-  if (!customOpHasExplicitSemantics(customOp))
-    return false;
-
-  auto iterTypes = customOp.getIteratorTypesArray();
-  auto indexingMaps = customOp.getIndexingMapsArray();
-  return hasSupportedExplicitIndexingMaps(customOp, iterTypes, indexingMaps) &&
-         slicesOnlyParallelDimensions(sliceOp, customOp, iterTypes) &&
-         hasAlignedOutputInits(sliceOp, customOp);
-}
-
-using InputSliceParams = llvm::DenseMap<OpOperand *, SliceParams>;
-
-/// Computes every tensor input's slice without mutating the IR.
 template <typename OpT>
 static FailureOr<InputSliceParams>
-computeCustomInputSliceParams(tensor::ExtractSliceOp sliceOp, OpT customOp,
-                              OpResult resultVal, Builder &builder) {
-  InputSliceParams inputParams;
-  auto sliceOffsets = sliceOp.getMixedOffsets();
-  auto sliceSizes = sliceOp.getMixedSizes();
-  auto sliceStrides = sliceOp.getMixedStrides();
-
-  if (customOpHasExplicitSemantics(customOp)) {
-    AffineMap mRes = customOp.getIndexingMapMatchingResult(resultVal);
-    unsigned nDims = mRes.getNumDims();
-    SmallVector<std::optional<OpFoldResult>> iterOff(nDims), iterSz(nDims),
-        iterSt(nDims);
-    if (failed(recoverIterSpaceFromResultSlice(mRes, sliceOffsets, sliceSizes,
-                                               sliceStrides, iterOff, iterSz,
-                                               iterSt)))
-      return failure();
-
-    for (OpOperand &operand : customOp.getInputsMutable()) {
-      auto st = dyn_cast<RankedTensorType>(operand.get().getType());
-      if (!st)
-        continue;
-      AffineMap mOp = customOp.getMatchingIndexingMap(&operand);
-      SliceParams p;
-      if (failed(projectIterSpaceToOperand(mOp, st, iterOff, iterSz, iterSt,
-                                           builder, p)))
-        return failure();
-      inputParams[&operand] = std::move(p);
-    }
-    return inputParams;
-  }
-
-  return failure();
-}
-
-/// Collects the marked slice corresponding to every CustomOp result.
-template <typename OpT>
-static FailureOr<SmallVector<tensor::ExtractSliceOp>>
-collectCustomResultSlices(tensor::ExtractSliceOp sliceOp, OpT customOp,
-                          OpResult resultVal) {
-  for (Value res : customOp.getResults()) {
-    for (Operation *user : res.getUsers()) {
-      auto userSlice = dyn_cast<tensor::ExtractSliceOp>(user);
-      // FIXME: Direct annotation.mark users belong to the unsupported leaf or
-      // multi-user path. Keep rejecting them until leaf CustomOp tiling owns a
-      // tiling-dimension candidate and can safely transfer those annotations.
-      if (!userSlice || !hivm::isMarkedExtractSliceOp(userSlice))
-        return failure();
-    }
-  }
-
-  unsigned tiledIdx = resultVal.getResultNumber();
-  SmallVector<tensor::ExtractSliceOp> resultSlices(customOp.getNumResults(),
-                                                   nullptr);
-  resultSlices[tiledIdx] = sliceOp;
-  for (unsigned i = 0, e = customOp.getNumResults(); i < e; ++i) {
-    if (i == tiledIdx)
+computeCustomSliceParams(OpT op, PatternRewriter &rewriter) {
+  auto structured = cast<HIVMStructuredOp>(op.getOperation());
+  auto iterTypes = op.getIteratorTypesArray();
+  IterationSlice window(iterTypes.size());
+  for (OpOperand &operand : op->getOpOperands()) {
+    auto type = dyn_cast<RankedTensorType>(operand.get().getType());
+    if (!type)
       continue;
-    for (Operation *user : customOp.getResult(i).getUsers()) {
-      if (auto userSlice = dyn_cast<tensor::ExtractSliceOp>(user);
-          userSlice && hivm::isMarkedExtractSliceOp(userSlice)) {
-        // BubbleUpPattern guarantees the consumed result has exactly one
-        // marked slice; be defensive for the other results.
-        if (resultSlices[i])
-          return failure();
-        resultSlices[i] = userSlice;
+    auto map = op.getMatchingIndexingMap(&operand);
+    for (auto [dim, expr] : llvm::enumerate(map.getResults()))
+      if (auto direct = dyn_cast<AffineDimExpr>(expr);
+          direct && !type.isDynamicDim(dim))
+        window.bounds[direct.getPosition()] = type.getDimSize(dim);
+  }
+
+  SmallVector<tensor::ExtractSliceOp> requests;
+  for (Value result : op.getResults()) {
+    auto type = cast<RankedTensorType>(result.getType());
+    auto map = op.getIndexingMapMatchingResult(cast<OpResult>(result));
+    for (Operation *user : result.getUsers()) {
+      if (std::is_same_v<OpT, CustomOp> && isa<annotation::MarkOp>(user))
+        continue;
+      auto slice = dyn_cast<tensor::ExtractSliceOp>(user);
+      if (!slice || isDynamicSlice(slice) ||
+          slice.getType().getRank() != type.getRank() ||
+          failed(recoverIterSpaceFromResultSlice(slice, map, iterTypes, window,
+                                                 rewriter)))
+        return failure();
+      requests.push_back(slice);
+    }
+  }
+
+  SmallVector<bool> tiled(iterTypes.size(), false);
+  for (unsigned loop = 0; loop < tiled.size(); ++loop)
+    tiled[loop] =
+        window.iterOff[loop] &&
+        !isFullSlice(*window.iterOff[loop], *window.iterSz[loop],
+                     *window.iterSt[loop], window.bounds[loop], rewriter);
+  for (AffineMap map : op.getIndexingMapsArray()) {
+    for (AffineExpr expr : map.getResults()) {
+      bool supported = true;
+      expr.walk([&](AffineExpr nested) {
+        if (auto binary = dyn_cast<AffineBinaryOpExpr>(nested);
+            binary && binary.getKind() == AffineExprKind::Mul) {
+          auto coefficient = dyn_cast<AffineConstantExpr>(binary.getRHS());
+          supported &= coefficient && coefficient.getValue() > 0;
+        }
+      });
+      for (unsigned loop = 0; loop < tiled.size(); ++loop) {
+        if (!tiled[loop] || !expr.isFunctionOfDim(loop) ||
+            isa<AffineDimExpr>(expr))
+          continue;
+        supported &=
+            getConstantIntValue(*window.iterSt[loop]) == 1 &&
+            getPartitionScale(expr, loop, window.bounds, false).has_value();
+        for (unsigned inner = 0; inner < tiled.size(); ++inner)
+          if (!tiled[inner] && expr.isFunctionOfDim(inner))
+            supported &= window.bounds[inner] >= 0;
+      }
+      if (!supported)
+        return failure();
+    }
+  }
+
+  SmallVector<AffineMap> offsetMaps(tiled.size());
+  DominanceInfo dominance;
+  for (unsigned loop = 0; loop < tiled.size(); ++loop) {
+    if (!tiled[loop])
+      continue;
+    offsetMaps[loop] = AffineMap::get(
+        1, 0, rewriter.getAffineDimExpr(0).floorDiv(window.divisors[loop]));
+    for (auto [value, map] :
+         {std::pair{*window.iterOff[loop], offsetMaps[loop]},
+          std::pair{*window.iterSt[loop], rewriter.getDimIdentityMap()}}) {
+      SmallVector<Value> operands;
+      if (auto dynamic = dyn_cast<Value>(value))
+        operands.push_back(dynamic);
+      else
+        continue;
+      affine::fullyComposeAffineMapAndOperands(&map, &operands);
+      if (llvm::any_of(operands, [&](Value operand) {
+            return !dominance.properlyDominates(operand, op);
+          }))
+        return failure();
+    }
+  }
+
+  rewriter.setInsertionPoint(op);
+  Operation *previous = op->getPrevNode();
+  auto rollback = llvm::make_scope_exit([&] {
+    while (op->getPrevNode() != previous)
+      rewriter.eraseOp(op->getPrevNode());
+  });
+  SmallVector<OpFoldResult> offsets(tiled.size(), rewriter.getIndexAttr(0));
+  SmallVector<OpFoldResult> sizes(tiled.size(), rewriter.getIndexAttr(0));
+  SmallVector<OpFoldResult> strides(tiled.size(), rewriter.getIndexAttr(1));
+  SmallVector<OpFoldResult> bounds;
+  SmallVector<OpFoldResult> ivs;
+  for (unsigned loop = 0; loop < tiled.size(); ++loop) {
+    bounds.push_back(
+        rewriter.getIndexAttr(std::max<int64_t>(window.bounds[loop], 0)));
+    if (!tiled[loop])
+      continue;
+    offsets[loop] = affine::makeComposedFoldedAffineApply(
+        rewriter, op.getLoc(), offsetMaps[loop], *window.iterOff[loop]);
+    strides[loop] = affine::makeComposedFoldedAffineApply(
+        rewriter, op.getLoc(), rewriter.getDimIdentityMap(),
+        *window.iterSt[loop]);
+    sizes[loop] = rewriter.getIndexAttr(
+        std::max<int64_t>(*getConstantIntValue(*window.iterSz[loop]), 1));
+    ivs.push_back(offsets[loop]);
+  }
+  SmallVector<Value> operands(op->getOperands());
+  auto projected = tiling_helper::computeAllSliceParameters(
+      rewriter, op.getLoc(), structured, operands, ivs, sizes, bounds,
+      /*omitPartialTileCheck=*/true);
+  InputSliceParams params;
+  for (auto [operand, slice] : llvm::zip(op->getOpOperands(), projected)) {
+    if (!slice)
+      continue;
+    auto map = op.getMatchingIndexingMap(&operand);
+    for (auto [dim, expr] : llvm::enumerate(map.getResults())) {
+      if (auto direct = dyn_cast<AffineDimExpr>(expr);
+          direct && tiled[direct.getPosition()]) {
+        unsigned loop = direct.getPosition();
+        slice->offsets[dim] = offsets[loop];
+        slice->sizes[dim] = *window.iterSz[loop];
+        slice->strides[dim] = strides[loop];
       }
     }
+    params[&operand] = std::move(*slice);
   }
-
-  for (unsigned i = 0, e = customOp.getNumResults(); i < e; ++i) {
-    if (!resultSlices[i])
-      return failure();
-    if (resultSlices[i].getResult().getType() != sliceOp.getResult().getType())
-      return failure();
+  for (auto request : requests) {
+    auto requestOffsets = request.getMixedOffsets();
+    auto requestSizes = request.getMixedSizes();
+    auto requestStrides = request.getMixedStrides();
+    auto result = cast<OpResult>(request.getSource());
+    auto &slice = params[op.getDpsInitOperand(result.getResultNumber())];
+    for (unsigned dim = 0; dim < slice.offsets.size(); ++dim)
+      if (!equalSliceOffset(slice.offsets[dim], 1, requestOffsets[dim], 1,
+                            rewriter.getContext()) ||
+          !isEqualConstantIntOrValue(slice.sizes[dim], requestSizes[dim]) ||
+          !equalSliceOffset(slice.strides[dim], 1, requestStrides[dim], 1,
+                            rewriter.getContext()))
+        return failure();
   }
-  return resultSlices;
+  rollback.release();
+  return params;
 }
 
-template <typename OpT>
 static SmallVector<Value>
-createCustomInputSlices(OpT customOp, const InputSliceParams &inputParams,
-                        PatternRewriter &rewriter) {
+createCustomSlices(MutableOperandRange operands, const InputSliceParams &params,
+                   PatternRewriter &rewriter,
+                   std::optional<Location> loc = std::nullopt) {
   SmallVector<Value> values;
-  values.reserve(customOp.getInputs().size());
-  for (OpOperand &operand : customOp.getInputsMutable()) {
-    auto it = inputParams.find(&operand);
-    if (it == inputParams.end()) {
+  values.reserve(operands.size());
+  for (OpOperand &operand : operands) {
+    auto it = params.find(&operand);
+    if (it == params.end()) {
       values.push_back(operand.get());
       continue;
     }
-    const SliceParams &p = it->second;
-    auto inputSlice = rewriter.create<tensor::ExtractSliceOp>(
-        operand.get().getLoc(), operand.get(), p.offsets, p.sizes, p.strides);
-    markCreatedExtractSliceOp(rewriter, inputSlice);
-    values.push_back(inputSlice.getResult());
-  }
-  return values;
-}
-
-template <typename OpT>
-static SmallVector<Value>
-createCustomOutputSlices(OpT customOp,
-                         ArrayRef<tensor::ExtractSliceOp> resultSlices,
-                         PatternRewriter &rewriter) {
-  // Eligibility guarantees each DPS init has the same shape and indexing map
-  // as its tied result, so the result slice parameters apply directly.
-  SmallVector<Value> values;
-  values.reserve(customOp.getOutputs().size());
-  for (OpOperand &operand : customOp.getOutputsMutable()) {
-    if (!isa<ShapedType>(operand.get().getType())) {
-      values.push_back(operand.get());
-      continue;
-    }
-    unsigned outputIdx =
-        operand.getOperandNumber() - customOp.getInputs().size();
-    tensor::ExtractSliceOp resultSlice = resultSlices[outputIdx];
-    auto initSlice = rewriter.create<tensor::ExtractSliceOp>(
-        operand.get().getLoc(), operand.get(), resultSlice.getMixedOffsets(),
-        resultSlice.getMixedSizes(), resultSlice.getMixedStrides());
-    markCreatedExtractSliceOp(rewriter, initSlice);
-    values.push_back(initSlice.getResult());
+    const linalg::SliceParameters &p = it->second;
+    auto slice = rewriter.create<tensor::ExtractSliceOp>(
+        loc.value_or(operand.get().getLoc()), operand.get(), p.offsets, p.sizes,
+        p.strides);
+    markCreatedExtractSliceOp(rewriter, slice);
+    values.push_back(slice.getResult());
   }
   return values;
 }
 
 /// Rebuilds a CustomOp or CustomMacroOp with tile-local operands and results.
 template <typename OpT>
-static Operation *
-createTiledCustomLike(OpT customOp, ValueRange newInputs, ValueRange newOutputs,
-                      ArrayRef<tensor::ExtractSliceOp> resultSlices,
-                      PatternRewriter &rewriter) {
+static Operation *createTiledCustomLike(OpT customOp, ValueRange newInputs,
+                                        ValueRange newOutputs,
+                                        PatternRewriter &rewriter) {
   SmallVector<Type> newResultTypes;
-  newResultTypes.reserve(customOp.getNumResults());
-  for (tensor::ExtractSliceOp resultSlice : resultSlices)
-    newResultTypes.push_back(resultSlice.getResult().getType());
+  for (Value output : newOutputs)
+    newResultTypes.push_back(output.getType());
 
   SmallVector<Value> newOperands;
   newOperands.append(newInputs.begin(), newInputs.end());
@@ -2610,31 +2599,38 @@ static LogicalResult executeCustomLike(tensor::ExtractSliceOp sliceOp,
   if (!resultVal)
     return failure();
 
-  // Complete every fallible check before creating slices. A failed rewrite
-  // must not leave partially materialized IR behind.
-  FailureOr<InputSliceParams> inputParams =
-      computeCustomInputSliceParams(sliceOp, customOp, resultVal, rewriter);
-  if (failed(inputParams))
-    return failure();
+  auto maps = customOp.getIndexingMapsArray();
+  auto normalized = llvm::map_to_vector(
+      maps, [](AffineMap map) { return compressUnusedSymbols(map); });
+  if (maps != normalized) {
+    rewriter.modifyOpInPlace(customOp, [&] {
+      customOp->setAttr("indexing_map",
+                        rewriter.getAffineMapArrayAttr(normalized));
+    });
+    return success();
+  }
 
-  FailureOr<SmallVector<tensor::ExtractSliceOp>> resultSlices =
-      collectCustomResultSlices(sliceOp, customOp, resultVal);
-  if (failed(resultSlices))
+  auto params = computeCustomSliceParams(customOp, rewriter);
+  if (failed(params))
     return failure();
 
   rewriter.setInsertionPoint(customOp);
   SmallVector<Value> newInputs =
-      createCustomInputSlices(customOp, *inputParams, rewriter);
-  SmallVector<Value> newOutputs =
-      createCustomOutputSlices(customOp, *resultSlices, rewriter);
-  Operation *newOp = createTiledCustomLike(customOp, newInputs, newOutputs,
-                                           *resultSlices, rewriter);
+      createCustomSlices(customOp.getInputsMutable(), *params, rewriter);
+  SmallVector<Value> newOutputs = createCustomSlices(
+      customOp.getOutputsMutable(), *params, rewriter, customOp.getLoc());
+  Operation *newOp =
+      createTiledCustomLike(customOp, newInputs, newOutputs, rewriter);
 
-  // Replace all result slices with the new op's results and erase them.
-  for (unsigned i = 0, e = customOp.getNumResults(); i < e; ++i) {
-    rewriter.replaceAllUsesWith((*resultSlices)[i].getResult(),
-                                newOp->getResult(i));
-    rewriter.eraseOp((*resultSlices)[i]);
+  for (auto [i, result] : llvm::enumerate(customOp.getResults())) {
+    Value replacement = newOp->getResult(i);
+    for (OpOperand &use : llvm::make_early_inc_range(result.getUses())) {
+      Operation *user = use.getOwner();
+      if (auto slice = dyn_cast<tensor::ExtractSliceOp>(user))
+        rewriter.replaceOp(slice, replacement);
+      else
+        rewriter.modifyOpInPlace(user, [&] { use.set(replacement); });
+    }
   }
 
   if (customOp->use_empty())
