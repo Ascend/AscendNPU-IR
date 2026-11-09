@@ -1,4 +1,3 @@
-// RUN: bishengir-opt --hacc-append-device-spec=target=Ascend950PR_950z --hfusion-normalize-ops="use-regbase=true" %s -split-input-file | FileCheck %s --check-prefix=NAN-REG
 // RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true" %s -split-input-file -verify-diagnostics | FileCheck %s
 
 // CHECK-LABEL: func.func @test_NormalizeXor_xori
@@ -396,15 +395,25 @@ func.func @test_NormalizeIsInf_isinf_bf16() -> tensor<128xi1> {
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeIsNan_isnan
+// CHECK: %[[ZERO:.*]] = arith.constant 0 : i32
+// CHECK: %[[POSONE:.*]] = arith.constant 1 : i32
+// CHECK: %[[NEGINF:.*]] = arith.constant -2139095040 : i32
+// CHECK: %[[MASKVAL:.*]] = arith.constant 2147483647 : i32
 // CHECK: %[[INPUT:.*]] = tensor.empty() : tensor<8192xf32>
-// CHECK: %[[EQ:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[INPUT]], %[[INPUT]] : tensor<8192xf32>, tensor<8192xf32>)
-// CHECK: %[[RESULT:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[EQ]] : tensor<8192xi1>)
-// CHECK: return %[[RESULT]]
-// NAN-REG-LABEL: func.func @test_NormalizeIsNan_isnan
-// NAN-REG: %[[INPUT:.*]] = tensor.empty() : tensor<8192xf32>
-// NAN-REG-NOT: hfusion.bitcast
-// NAN-REG: %[[RESULT:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vne>} ins(%[[INPUT]], %[[INPUT]] : tensor<8192xf32>, tensor<8192xf32>)
-// NAN-REG: return %[[RESULT]]
+// CHECK: %[[MASKRES:.*]] = tensor.empty() : tensor<8192xi32>
+// CHECK: %[[VDUPOP:.*]] = linalg.fill ins(%[[MASKVAL]] : i32) outs(%[[MASKRES]] : tensor<8192xi32>) -> tensor<8192xi32>
+// CHECK: %[[BITCASTEMPTY:.*]] = tensor.empty() : tensor<8192xi32>
+// CHECK: %[[BITCASTINPUT:.*]] = hfusion.bitcast ins(%[[INPUT]] : tensor<8192xf32>) outs(%[[BITCASTOUT:.*]] : tensor<8192xi32>) -> tensor<8192xi32>
+// CHECK: %[[VANDOP:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%[[BITCASTINPUT]], %[[VDUPOP]] : tensor<8192xi32>, tensor<8192xi32>) outs(%[[VANDOUTPUT:.*]] : tensor<8192xi32>) -> tensor<8192xi32>
+// CHECK: %[[VADDOP:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VANDOP]], %[[NEGINF]] : tensor<8192xi32>, i32) outs(%[[VADDRES:.*]] : tensor<8192xi32>) -> tensor<8192xi32>
+// CHECK: %[[VMINOP:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<min_signed>} ins(%[[VADDOP]], %[[POSONE]] : tensor<8192xi32>, i32) outs(%[[VADDOP]] : tensor<8192xi32>) -> tensor<8192xi32>
+// CHECK: %[[VMAXOP:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<max_signed>} ins(%[[VMINOP]], %[[ZERO]] : tensor<8192xi32>, i32) outs(%[[VMINOP]] : tensor<8192xi32>) -> tensor<8192xi32>
+// CHECK: %[[TMPF:.*]] = tensor.empty() : tensor<8192xf32>
+// CHECK: %[[CASTF:.*]] = hfusion.cast {{.*}} ins(%[[VMAXOP]] : tensor<8192xi32>) outs(%[[TMPF]] : tensor<8192xf32>) -> tensor<8192xf32>
+// CHECK: %[[OUT1:.*]] = tensor.empty() : tensor<8192xi1>
+// CHECK: %[[OUT2:.*]] = tensor.empty() : tensor<8192xi1>
+// CHECK: %[[RES:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[CASTF]], %[[CST0:.*]] : tensor<8192xf32>, f32) outs(%[[OUT2]] : tensor<8192xi1>) -> tensor<8192xi1>
+// CHECK: %[[RES2:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[RES]] : tensor<8192xi1>) outs(%[[OUT1]] : tensor<8192xi1>) -> tensor<8192xi1>
 func.func @test_NormalizeIsNan_isnan() -> tensor<8192xi1> {
   %0 = tensor.empty() : tensor<8192xf32>
   %2 = hfusion.isnan %0 : tensor<8192xf32> -> tensor<8192xi1>
@@ -414,15 +423,20 @@ func.func @test_NormalizeIsNan_isnan() -> tensor<8192xi1> {
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeIsNan_isnan_f16
+// CHECK: %[[ZERO:.*]] = arith.constant 0 : i16
+// CHECK: %[[POSONE:.*]] = arith.constant 1 : i16
+// CHECK: %[[NEGINF:.*]] = arith.constant -31744 : i16
+// CHECK: %[[MASKVAL:.*]] = arith.constant 32767 : i16
 // CHECK: %[[INPUT:.*]] = tensor.empty() : tensor<256xf16>
-// CHECK: %[[EQ:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[INPUT]], %[[INPUT]] : tensor<256xf16>, tensor<256xf16>)
-// CHECK: %[[RESULT:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[EQ]] : tensor<256xi1>)
-// CHECK: return %[[RESULT]]
-// NAN-REG-LABEL: func.func @test_NormalizeIsNan_isnan_f16
-// NAN-REG: %[[INPUT:.*]] = tensor.empty() : tensor<256xf16>
-// NAN-REG-NOT: hfusion.bitcast
-// NAN-REG: %[[RESULT:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vne>} ins(%[[INPUT]], %[[INPUT]] : tensor<256xf16>, tensor<256xf16>)
-// NAN-REG: return %[[RESULT]]
+// CHECK: %[[VDUPOP:.*]] = linalg.fill ins(%[[MASKVAL]] : i16) outs(%[[MASKRES:.*]] : tensor<256xi16>) -> tensor<256xi16>
+// CHECK: %[[BITCASTINPUT:.*]] = hfusion.bitcast ins(%[[INPUT]] : tensor<256xf16>) outs(%[[BITCASTOUT:.*]] : tensor<256xi16>) -> tensor<256xi16>
+// CHECK: %[[VANDOP:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%[[BITCASTINPUT]], %[[VDUPOP]] : tensor<256xi16>, tensor<256xi16>) outs(%[[VANDOUTPUT:.*]] : tensor<256xi16>) -> tensor<256xi16>
+// CHECK: %[[VADDOP:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VANDOP]], %[[NEGINF]] : tensor<256xi16>, i16) outs(%[[VADDRES:.*]] : tensor<256xi16>) -> tensor<256xi16>
+// CHECK: %[[VMINOP:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<min_signed>} ins(%[[VADDOP]], %[[POSONE]] : tensor<256xi16>, i16) outs(%[[MINOUT:.*]] : tensor<256xi16>) -> tensor<256xi16>
+// CHECK: %[[VMAXOP:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<max_signed>} ins(%[[VMINOP]], %[[ZERO]] : tensor<256xi16>, i16) outs(%[[MAXOUT:.*]] : tensor<256xi16>) -> tensor<256xi16>
+// CHECK: %[[CASTF:.*]] = hfusion.cast {{.*}} ins(%[[VMAXOP]] : tensor<256xi16>) outs(%[[TMPF:.*]] : tensor<256xf16>) -> tensor<256xf16>
+// CHECK: %[[RES:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[CASTF]], %[[CST0:.*]] : tensor<256xf16>, f16) outs(%[[OUT2:.*]] : tensor<256xi1>) -> tensor<256xi1>
+// CHECK: %[[RES2:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[RES]] : tensor<256xi1>) outs(%[[OUT1:.*]] : tensor<256xi1>) -> tensor<256xi1>
 func.func @test_NormalizeIsNan_isnan_f16() -> tensor<256xi1> {
   %0 = tensor.empty() : tensor<256xf16>
   %1 = hfusion.isnan %0 : tensor<256xf16> -> tensor<256xi1>
@@ -432,15 +446,17 @@ func.func @test_NormalizeIsNan_isnan_f16() -> tensor<256xi1> {
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeIsNan_isnan_bf16
+// CHECK: %[[ZERO:.*]] = arith.constant 0 : i16
+// CHECK: %[[POSONE:.*]] = arith.constant 1 : i16
+// CHECK: %[[NEGINF:.*]] = arith.constant -31744 : i16
+// CHECK: %[[MASKVAL:.*]] = arith.constant 32767 : i16
 // CHECK: %[[INPUT:.*]] = tensor.empty() : tensor<128xbf16>
-// CHECK: %[[EQ:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[INPUT]], %[[INPUT]] : tensor<128xbf16>, tensor<128xbf16>)
-// CHECK: %[[RESULT:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[EQ]] : tensor<128xi1>)
-// CHECK: return %[[RESULT]]
-// NAN-REG-LABEL: func.func @test_NormalizeIsNan_isnan_bf16
-// NAN-REG: %[[INPUT:.*]] = tensor.empty() : tensor<128xbf16>
-// NAN-REG-NOT: hfusion.bitcast
-// NAN-REG: %[[RESULT:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vne>} ins(%[[INPUT]], %[[INPUT]] : tensor<128xbf16>, tensor<128xbf16>)
-// NAN-REG: return %[[RESULT]]
+// CHECK: %[[VDUPOP:.*]] = linalg.fill ins(%[[MASKVAL]] : i16) outs(%[[MASKRES:.*]] : tensor<128xi16>) -> tensor<128xi16>
+// CHECK: %[[BITCASTINPUT:.*]] = hfusion.bitcast ins(%[[INPUT]] : tensor<128xbf16>) outs(%[[BITCASTOUT:.*]] : tensor<128xi16>) -> tensor<128xi16>
+// CHECK: %[[VADDOP:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%{{.*}}, %[[NEGINF]] : tensor<128xi16>, i16) outs(%[[VADDRES:.*]] : tensor<128xi16>) -> tensor<128xi16>
+// CHECK: %[[VMINOP:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<min_signed>} ins(%[[VADDOP]], %[[POSONE]] : tensor<128xi16>, i16) outs(%[[MINOUT:.*]] : tensor<128xi16>) -> tensor<128xi16>
+// CHECK: %[[VMAXOP:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<max_signed>} ins(%[[VMINOP]], %[[ZERO]] : tensor<128xi16>, i16) outs(%[[MAXOUT:.*]] : tensor<128xi16>) -> tensor<128xi16>
+// CHECK: return %[[RES:.*]] : tensor<128xi1>
 func.func @test_NormalizeIsNan_isnan_bf16() -> tensor<128xi1> {
   %0 = tensor.empty() : tensor<128xbf16>
   %1 = hfusion.isnan %0 : tensor<128xbf16> -> tensor<128xi1>
