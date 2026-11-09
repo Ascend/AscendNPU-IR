@@ -1581,6 +1581,44 @@ func.func @bubble_up_parallel_loop_column_tile(%arg0 : memref<?xf32>) {
 
 // -----
 
+// fused_moe-style: the load dest is a nested dynamic column subview of the
+// row view. Dim 1 is dynamic so it looks like an extract of the tiled axis,
+// but the loop IV still indexes rows. Retiling the row loop from the column
+// tile empties sub-block 1 and leaves a full-width GM source.
+// CHECK-LABEL:   func.func @bubble_up_parallel_loop_nested_dynamic_column_tile(
+// CHECK-DAG:       %[[C0:.*]] = arith.constant 0 : index
+// CHECK-DAG:       %[[C1:.*]] = arith.constant 1 : index
+// CHECK-DAG:       %[[C2:.*]] = arith.constant 2 : index
+// CHECK-DAG:       %[[C16:.*]] = arith.constant 16 : index
+// CHECK:           scf.for %[[SB:.*]] = %[[C0]] to %[[C2]] step %[[C1]] {
+// CHECK:             memref.alloc() : memref<16x64xf32>
+// CHECK:             scf.for %[[ROW:.*]] = %[[C0]] to %[[C16]] step %[[C1]] {
+// CHECK:               hivm.hir.load ins(%{{[^ ]*}} : memref<1x?xf32, strided<[128, 1], offset: ?>>) outs(%{{[^ ]*}} : memref<1x?xf32, strided<[64, 1], offset: ?>>)
+// CHECK:             } {ExtractedLoadOrStore, hivm.parallel_loop}
+func.func @bubble_up_parallel_loop_nested_dynamic_column_tile(%arg0 : memref<?xf32>, %len : index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c16 = arith.constant 16 : index
+  scf.for %sb = %c0 to %c2 step %c1 {
+    %col = affine.apply affine_map<()[s0] -> (s0 * 64)>()[%sb]
+    %alloc = memref.alloc() : memref<16x128xf32>
+    scf.for %row = %c0 to %c16 step %c1 {
+      %src = memref.reinterpret_cast %arg0 to offset: [%c0], sizes: [1, 128], strides: [128, 1] : memref<?xf32> to memref<1x128xf32, strided<[128, 1], offset: ?>>
+      %dst_row = memref.subview %alloc[%row, 0] [1, 128] [1, 1] : memref<16x128xf32> to memref<1x128xf32, strided<[128, 1], offset: ?>>
+      %src_dyn = memref.subview %src[0, 0] [1, %len] [1, 1] : memref<1x128xf32, strided<[128, 1], offset: ?>> to memref<1x?xf32, strided<[128, 1], offset: ?>>
+      %dst_dyn = memref.subview %dst_row[0, 0] [1, %len] [1, 1] : memref<1x128xf32, strided<[128, 1], offset: ?>> to memref<1x?xf32, strided<[128, 1], offset: ?>>
+      hivm.hir.load ins(%src_dyn : memref<1x?xf32, strided<[128, 1], offset: ?>>) outs(%dst_dyn : memref<1x?xf32, strided<[128, 1], offset: ?>>) eviction_policy = <EvictFirst> core_type = <VECTOR>
+    } {ExtractedLoadOrStore, hivm.parallel_loop}
+    %tensor = bufferization.to_tensor %alloc restrict writable : memref<16x128xf32>
+    %slice = tensor.extract_slice %tensor[0, %col] [16, 64] [1, 1] {to_be_bubbled_slice} : tensor<16x128xf32> to tensor<16x64xf32>
+    annotation.mark %slice : tensor<16x64xf32>
+  } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+  return
+}
+
+// -----
+
 // CHECK-LABEL:   func.func @bubble_up_gather_load(
 // CHECK:           %[[NEWGATHER:.*]] = hivm.hir.gather_load
 // CHECK-SAME:        outs({{.*}} : tensor<32x16xf16>)
