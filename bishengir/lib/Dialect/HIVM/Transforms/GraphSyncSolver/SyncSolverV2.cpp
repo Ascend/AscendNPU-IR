@@ -434,7 +434,8 @@ void SyncSolverV2::processOrder(Occurrence *occ1, Occurrence *occ2,
   if (checkImpossibleOccPair(occ1, occ2) || checkAlreadySynced(occ1, occ2) ||
       skipMMad1DecomposedLoopOpt(occ1, occ2) ||
       checkSkipParallelLoop(occ1, occ2) || checkSkipCrossCorePair(occ1, occ2) ||
-      checkSkipAutoBlockifyDMAPair(occ1, occ2)) {
+      checkSkipAutoBlockifyDMAPair(occ1, occ2) ||
+      checkSkipPoolManagedFixPair(occ1, occ2)) {
     this->perfInfo.failedInitialChecksNum += 1;
     return;
   }
@@ -478,7 +479,8 @@ bool SyncSolverV2::processOrder(ProcessingOrderV2 processingOrder) {
   if (checkImpossibleOccPair(occ1, occ2) || checkAlreadySynced(occ1, occ2) ||
       skipMMad1DecomposedLoopOpt(occ1, occ2) ||
       checkSkipParallelLoop(occ1, occ2) ||
-      checkSkipAutoBlockifyDMAPair(occ1, occ2)) {
+      checkSkipAutoBlockifyDMAPair(occ1, occ2) ||
+      checkSkipPoolManagedFixPair(occ1, occ2)) {
     this->perfInfo.failedInitialChecksNum += 1;
     return false;
   }
