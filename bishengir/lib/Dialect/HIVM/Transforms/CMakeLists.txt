@@ -178,6 +178,8 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   DEPENDS
   BiShengIRHIVMTransformsIncGen
   BiShengIRNPUArchitectureFeaturesIncGen
+  BiShengIRMmadCapabilityIncGen
+  BiShengIRMmadCapabilityBindingIncGen
   BiShengIRFixpipeCapabilityIncGen
   BiShengIRFixpipeCapabilityBindingIncGen
   BiShengIRCubeLoadCapabilityIncGen
@@ -197,6 +199,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MLIRDialectUtils
   BiShengIRHACCUtils
   BiShengIRHACCDialect
+  BiShengIRNPUMmadCapability
   BiShengIRNPUFixpipeCapability
   BiShengIRHIVMAnalysis
   BiShengIRHIVMDialect
