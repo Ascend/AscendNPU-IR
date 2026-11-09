@@ -264,6 +264,7 @@ if (BISHENGIR_BUILD_STANDALONE_IR_ONLY)
   Scope
   Symbol
   Tensor
+  TensorView
   )
   foreach(d IN LISTS STANDALONE_IR_BUILD_DIALECT)
     add_subdirectory(bishengir/include/bishengir/Dialect/${d})

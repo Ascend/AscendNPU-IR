@@ -17,6 +17,7 @@
 
 #include "bishengir/Conversion/FixCallUnknownLoc/FixCallUnknownLoc.h"
 #include "bishengir/Conversion/Passes.h"
+#include "bishengir/Conversion/TensorViewToHIVM/TensorViewToHIVM.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/Arith/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
@@ -513,6 +514,7 @@ void buildOptimizeHIVMPipeline(OpPassManager &pm,
   if (!options.disableHIVMTensorCompile) {
     hivmPreBufferizationOptimizationPipeline(pm, options);
     bufferizationPipeline(pm, options);
+    pm.addPass(createTensorViewToHIVMConversionPass());
     // Self-gated: only rewrites guards whose get_sub_block_idx carries the
     // partition provenance stamp; a no-op in non-partitioned modules.
     pm.addPass(createSubBlockGuardCleanupPass());
