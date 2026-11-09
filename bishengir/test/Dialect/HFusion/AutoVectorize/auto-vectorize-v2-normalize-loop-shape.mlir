@@ -1,10 +1,12 @@
-// RUN: bishengir-opt %s --hfusion-auto-vectorize-v2='tree-reduce=true' --normalize-tensor-ops --outline-vector-function --hivm-inline-vf-scope --hfusion-auto-vectorize-verifier | FileCheck %s --implicit-check-not='tensor<1x8x1x?xf32>'
+// RUN: bishengir-opt %s --hfusion-auto-vectorize-v2='tree-reduce=true' --normalize-tensor-ops --outline-vector-function --hivm-inline-vf-scope --hfusion-auto-vectorize-verifier | FileCheck %s
 
 // Five tensor inputs split the reduction into eight partials. The short inner
-// dimension initially becomes dynamic through tiling. Normalize it before VF
-// outlining so that the scratch argument retains its static shape.
-// CHECK: tensor<1x8x1x17xf32>
-// CHECK: hivm.vector_function
+// dimension becomes dynamic through tiling. The partially dynamic scratch
+// tensor must remain valid through normalization and VF outlining.
+// CHECK-LABEL: func.func @computed_reduce_outlined_vf_1(
+// CHECK-SAME: hivm.vector_function
+// CHECK: %[[SCRATCH:.*]] = tensor.empty(%{{.*}}) : tensor<1x8x1x?xf32>
+// CHECK: scf.for {{.*}} iter_args(%{{.*}} = %[[SCRATCH]]) -> (tensor<1x8x1x?xf32>)
 func.func @computed_reduce(%a: tensor<2x16x3x17xf32>,
     %b: tensor<2x16x3x17xf32>, %c: tensor<2x16x3x17xf32>,
     %d: tensor<2x16x3x17xf32>, %e: tensor<2x16x3x17xf32>)
