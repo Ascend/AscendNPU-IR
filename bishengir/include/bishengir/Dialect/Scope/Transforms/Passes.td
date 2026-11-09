@@ -138,4 +138,24 @@ def InlineScope : Pass<"inline-scope", "mlir::ModuleOp"> {
   ];
 }
 
+def InlineFuncToScope : Pass<"inline-func-to-scope", "mlir::ModuleOp"> {
+  let summary = "Inline function calls into scope.scope ops.";
+  let description = [{
+    Replace `func.call` operations whose callee is accepted by a filter
+    supplied by the pass creator (the command-line pass accepts every
+    callee) with a `scope.scope` holding an inlined copy of the callee
+    body. Callee arguments map to the call operands; the callee's
+    function-level attributes are transferred to the scope, call-site
+    attributes are recorded in an `call_attrs_vec` dictionary, and the callee
+    name is recorded in `sym_func_name` for restoration by outline-scope.
+    Intended to run before one-shot-bufferize so that the scope region is
+    bufferized without a function boundary and buffer layouts stay precise at
+    the former call site. A subsequent outline-scope pass restores the
+    function form, now with an exact signature.
+  }];
+  let constructor = "mlir::scope::createInlineFuncToScopePass()";
+  let dependentDialects = ["mlir::func::FuncDialect",
+                           "mlir::scope::ScopeDialect"];
+}
+
 #endif // BISHENGIR_DIALECT_SCOPE_TRANSFORMS_PASSES_TD

@@ -69,9 +69,6 @@ using namespace mlir::hivm;
 
 #define PASS_NAME "convert-hivm-to-llvm"
 
-// Discardable marker placed on the problematic memref.cast by One-Shot Bufferize.
-static constexpr llvm::StringLiteral kFoldOffsetMarker = "fold_offset_into_ptr";
-
 //===----------------------------------------------------------------------===//
 // Pass Definition
 //===----------------------------------------------------------------------===//
@@ -298,76 +295,6 @@ struct BitcastOpLowering : public ConvertOpToLLVMPattern<hivm::BitcastOp> {
   }
 };
 
-//===----------------------------------------------------------------------===//
-// Marked memref.cast Lowering (fold a dynamic offset into the base pointer)
-//===----------------------------------------------------------------------===//
-struct FoldOffsetIntoPtrCastOpLowering
-    : public ConvertOpToLLVMPattern<memref::CastOp> {
-  explicit FoldOffsetIntoPtrCastOpLowering(LLVMTypeConverter &converter)
-      : ConvertOpToLLVMPattern<memref::CastOp>(converter, /*benefit=*/2) {}
-
-  LogicalResult
-  matchAndRewrite(memref::CastOp castOp, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    // Only act on casts the producer explicitly marked.
-    if (!castOp->hasAttr(kFoldOffsetMarker))
-      return failure();
-
-    Location loc = castOp.getLoc();
-
-    auto resultMemRefType = dyn_cast<MemRefType>(castOp.getType());
-    if (!resultMemRefType)
-      return failure();
-
-    Type resultDescType = typeConverter->convertType(resultMemRefType);
-    if (!resultDescType)
-      return failure();
-
-    Value srcStruct = adaptor.getSource();
-    if (!isa<LLVM::LLVMStructType>(srcStruct.getType()))
-      return failure();
-
-    MemRefDescriptor srcDesc(srcStruct);
-    Value allocatedPtr = srcDesc.allocatedPtr(rewriter, loc);
-    Value alignedPtr = srcDesc.alignedPtr(rewriter, loc);
-    Value offset = srcDesc.offset(rewriter, loc);
-
-    // The single pointer add: aligned_ptr + offset, scaled by sizeof(element).
-    Type elementType =
-        typeConverter->convertType(resultMemRefType.getElementType());
-
-    auto alloPtrType = cast<LLVM::LLVMPointerType>(allocatedPtr.getType());
-    Value newAllocatedPtr = rewriter.create<LLVM::GEPOp>(
-        loc, alloPtrType, elementType, allocatedPtr, ValueRange{offset});
-
-    auto alignPtrType = cast<LLVM::LLVMPointerType>(alignedPtr.getType());
-    Value newAlignedPtr = rewriter.create<LLVM::GEPOp>(
-        loc, alignPtrType, elementType, alignedPtr, ValueRange{offset});
-
-    // Bare-pointer convention
-    if (isa<LLVM::LLVMPointerType>(resultDescType)) {
-      rewriter.replaceOp(castOp, {newAlignedPtr});
-      return success();
-    }
-
-    // Descriptor convention: rebuild with the advanced pointer and offset = 0,
-    // copying sizes/strides unchanged.
-    auto resultDesc = MemRefDescriptor::undef(rewriter, loc, resultDescType);
-    resultDesc.setAllocatedPtr(rewriter, loc, newAllocatedPtr);
-    resultDesc.setAlignedPtr(rewriter, loc, newAlignedPtr);
-    resultDesc.setOffset(
-        rewriter, loc,
-        createIndexAttrConstant(rewriter, loc, getIndexType(), 0));
-    for (unsigned i = 0; i < resultMemRefType.getRank(); ++i) {
-      resultDesc.setSize(rewriter, loc, i, srcDesc.size(rewriter, loc, i));
-      resultDesc.setStride(rewriter, loc, i, srcDesc.stride(rewriter, loc, i));
-    }
-
-    rewriter.replaceOp(castOp, {resultDesc});
-    return success();
-  }
-};
-
 void mlir::hivm::populateHIVMToLLVMConversionPatterns(
     LLVMTypeConverter &converter, RewritePatternSet &patterns,
     bool isRegBased) {
@@ -380,7 +307,6 @@ void mlir::hivm::populateHIVMToLLVMConversionPatterns(
   mlir::ub::populateUBToLLVMConversionPatterns(converter, patterns);
   patterns.add<PointerCastOpLowering>(converter);
   patterns.add<BitcastOpLowering>(converter);
-  patterns.add<FoldOffsetIntoPtrCastOpLowering>(converter);
   populateFinalizeMemRefToLLVMConversionPatterns(converter, patterns);
 
   // Func dialect related conversion patterns.

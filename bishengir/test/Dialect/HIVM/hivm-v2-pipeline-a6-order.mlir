@@ -18,7 +18,8 @@
 // PRE: hivm-normalize-matmul
 // FULL: hivm-vectorize{{[[:space:]]*$}}
 // FULL: hfusion-simplify-vf-arg
-// FULL: one-shot-bufferize
+// FULL: tensor-copy-insertion
+// FULL: bufferize-module-op
 // FULL: hivm-cross-core-gss
 // FULL: hivm-v2-split-kernel
 

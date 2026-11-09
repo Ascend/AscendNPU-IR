@@ -143,7 +143,6 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   OptimizeTransposePlacement/RootReachability.cpp
   OptimizeTransposePlacement/Utils.cpp
   OutlineAllocInVF.cpp
-  OutlineCopyInVF.cpp
   PlanMemory.cpp
   RecognizeDeinterleaveOp.cpp
   RecognizeDiscontiguousStore.cpp
@@ -165,6 +164,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   TritonGlobalKernelArgsToHIVMOp.cpp
   UnitFlagInfoBase.cpp
   VerifyCapability.cpp
+  VerifyVectorFunctionTopLevelCopy.cpp
   VFOperandSubstitution.cpp
   AnalyzeArithVectorMask.cpp
   WriteBackShared.cpp

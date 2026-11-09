@@ -508,8 +508,8 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     // Eliminate VFFusion outline
     pm.addPass(mlir::createInlinerPass());
   }
-  // Run after Inliner so VFFusion can pull cross-scope extract_slices into VF.
-  pm.addPass(createPullSliceIntoVectorFunctionPass());
+  // Run after Inliner so constant fills can be pulled into the VF callee.
+  pm.addPass(createPullFillIntoVectorFunctionPass());
   pm.addPass(createSimplifyVFArgsPass());
   pm.addPass(createLoopInvariantSubsetHoistingPass());
   canonicalizationPipeline(pm, hfusionOptions);

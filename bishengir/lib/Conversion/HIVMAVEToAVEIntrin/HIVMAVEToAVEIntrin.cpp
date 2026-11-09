@@ -3864,13 +3864,9 @@ static Value getStoreRoot(Value value) {
   while (true) {
     if (auto metadata = value.getDefiningOp<memref::ExtractStridedMetadataOp>())
       value = metadata.getSource();
-    else if (auto cast = value.getDefiningOp<memref::CastOp>()) {
-      // This project-specific cast folds the source offset into the pointer.
-      // It cannot be peeled like an ordinary descriptor-preserving cast.
-      if (cast->hasAttr(mlir::utils::KFoldOffsetMarker))
-        return value;
+    else if (auto cast = value.getDefiningOp<memref::CastOp>())
       value = cast.getSource();
-    } else if (auto view = value.getDefiningOp<memref::ReinterpretCastOp>())
+    else if (auto view = value.getDefiningOp<memref::ReinterpretCastOp>())
       value = view.getSource();
     else
       return value;

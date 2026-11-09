@@ -109,9 +109,9 @@ static bool isAffineExprKnownMultipleOf(AffineExpr expr, ValueRange operands,
     AffineExpr rhs = binaryExpr.getRHS();
     // For lhs * rhs to be a multiple, a constant factor can satisfy all or part
     // of the requested factor; the other side must satisfy the rest.
-    auto proveConstMul =
-        [operands, numDims, factor](AffineExpr maybeConst,
-                                    AffineExpr other) -> std::optional<bool> {
+    auto proveConstMul = [operands, numDims,
+                          factor](AffineExpr maybeConst,
+                                  AffineExpr other) -> std::optional<bool> {
       auto constExpr = dyn_cast<AffineConstantExpr>(maybeConst);
       if (!constExpr)
         return std::nullopt;
@@ -122,8 +122,7 @@ static bool isAffineExprKnownMultipleOf(AffineExpr expr, ValueRange operands,
           return false;
         constantFactor = -constantFactor;
       }
-      if (constantFactor == 0 ||
-          isIntegerMultipleOf(constantFactor, factor))
+      if (constantFactor == 0 || isIntegerMultipleOf(constantFactor, factor))
         return true;
       if (factor % constantFactor != 0)
         return false;
@@ -241,48 +240,6 @@ bool static isOffsetAligned(Value memrefVal,
   return true;
 }
 
-static bool hasUnalignedFoldOffsetCast(BlockArgument blockArg,
-                                       int64_t hwAlignBits, int64_t elemBits) {
-  auto funcOp = cast<func::FuncOp>(blockArg.getOwner()->getParentOp());
-  auto checkCall = [blockArg, elemBits, funcOp,
-                    hwAlignBits](func::CallOp callOp) {
-    func::FuncOp callee =
-        mlir::utils::getCalledFunction<func::FuncOp, func::CallOp>(callOp);
-    if (callee == funcOp) {
-      auto castOp = callOp.getOperand(blockArg.getArgNumber())
-                        .getDefiningOp<memref::CastOp>();
-      if (castOp && castOp->hasAttr(mlir::utils::KFoldOffsetMarker)) {
-        // The marker guarantees that the source has a dynamic offset and a
-        // valid static-stride layout.
-        auto sourceType = cast<MemRefType>(castOp.getSource().getType());
-        SmallVector<int64_t> strides;
-        int64_t offset;
-        LogicalResult layoutResult =
-            getStridesAndOffset(sourceType, strides, offset);
-        assert(succeeded(layoutResult) &&
-               offset == ShapedType::kDynamic && !strides.empty());
-        (void)layoutResult;
-
-        bool aligned;
-        if (strides.size() == 1) {
-          int64_t size = sourceType.getDimSize(0);
-          aligned = !ShapedType::isDynamic(size) &&
-                    (size * elemBits) % hwAlignBits == 0;
-        } else {
-          aligned = llvm::all_of(
-              llvm::drop_end(strides), [elemBits, hwAlignBits](int64_t stride) {
-                return (stride * elemBits) % hwAlignBits == 0;
-              });
-        }
-        if (!aligned)
-          return WalkResult::interrupt();
-      }
-    }
-    return WalkResult::advance();
-  };
-  return funcOp->getParentOfType<ModuleOp>().walk(checkCall).wasInterrupted();
-}
-
 // Analyze whether the starting address of the memref object meets the alignment
 // requirements.
 static bool isMemrefAligned(Value memrefVal, int64_t hwAlignBits,
@@ -294,11 +251,6 @@ static bool isMemrefAligned(Value memrefVal, int64_t hwAlignBits,
     defOp = memrefVal.getDefiningOp();
   }
   if (dyn_cast<func::FuncOp>(defOp)) {
-    // Check whether the memref object is a function parameter.
-    if (hasUnalignedFoldOffsetCast(cast<BlockArgument>(memrefVal), hwAlignBits,
-                                   elemBits))
-      return false;
-
     MemRefType memRefTy = cast<MemRefType>(memrefVal.getType());
     SmallVector<int64_t> strides(memRefTy.getRank());
     int64_t offset = 0;
@@ -547,9 +499,10 @@ Value hivmave::createMaskByPGE(VectorType vecTy, PatternRewriter &rewriter,
       hivmave::PgePatternAttr::get(rewriter.getContext(), pgePattern));
   mask = maskOp->getResult(0);
   if (vecTy.getElementTypeBitWidth() == 1 && vecTy != maskType)
-    mask = rewriter
-               .create<UnrealizedConversionCastOp>(loc, vecTy, maskOp.getResult())
-               ->getResult(0);
+    mask =
+        rewriter
+            .create<UnrealizedConversionCastOp>(loc, vecTy, maskOp.getResult())
+            ->getResult(0);
   return mask;
 }
 
@@ -793,9 +746,10 @@ Value hivmave::sparseByIntlv(Value src, RewriterBase &rewriter,
 
 Value hivmave::denseByDIntlv(Value src, RewriterBase &rewriter,
                              const Location &loc) {
-  hivmave::VFDeInterleaveOp deionOp = rewriter.create<hivmave::VFDeInterleaveOp>(
-      loc, ArrayRef<Type>({src.getType(), src.getType()}),
-      ValueRange{src, src});
+  hivmave::VFDeInterleaveOp deionOp =
+      rewriter.create<hivmave::VFDeInterleaveOp>(
+          loc, ArrayRef<Type>({src.getType(), src.getType()}),
+          ValueRange{src, src});
   return deionOp.getResult(0);
 }
 

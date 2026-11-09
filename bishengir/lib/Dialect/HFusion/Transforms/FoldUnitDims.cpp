@@ -1903,7 +1903,8 @@ void HFusionFoldUnitDimsPass::runOnOperation() {
       return false;
     }
 
-    if (scopeOp->hasAttr("vector_mode") && scopeOp->hasAttr("outline")) {
+    if (scopeOp->hasAttr("vector_mode") &&
+        scopeOp->hasAttr(scope::OutlineAttr::getMnemonic())) {
       return true;
     }
 

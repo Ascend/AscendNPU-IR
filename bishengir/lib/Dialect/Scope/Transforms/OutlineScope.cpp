@@ -56,6 +56,16 @@ public:
   void runOnOperation() final;
 };
 
+/// Copy the call-site attributes recorded by inline-func-to-scope (e.g.
+/// ptc_simdvf) from `scopeOp` onto the recreated `callOp`; they belong on the
+/// call, not on the outlined function.
+static void copyCallSiteAttrs(ScopeOp scopeOp, Operation *callOp) {
+  if (auto callAttrs =
+          scopeOp->getAttrOfType<CallAttrsVecAttr>(CallAttrsVecAttr::name))
+    for (NamedAttribute attr : callAttrs.getAttrs())
+      callOp->setAttr(attr.getName(), attr.getValue());
+}
+
 class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
   static bool isExternalToScope(ScopeOp scopeOp, Value val) {
     if (auto blockArg = dyn_cast<BlockArgument>(val))
@@ -122,14 +132,20 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
     OpBuilder::InsertionGuard insGuard(rewriter);
     rewriter.setInsertionPoint(parF);
 
-    const std::string prefixFunctionName =
-        scopeOp->getParentOfType<func::FuncOp>().getSymName().str() + "_scope";
+    const std::string prefixFunctionName = parF.getSymName().str() + "_scope";
 
     FunctionType funcTy = FunctionType::get(
         moduleOp.getContext(), TypeRange(inputs), scopeOp->getResultTypes());
 
     func::FuncOp newFuncOp = rewriter.create<func::FuncOp>(
         moduleOp->getLoc(), prefixFunctionName, funcTy, scopeOp->getAttrs());
+    // Drop the bookkeeping attributes of the scope: `outline` is only the
+    // marker selecting the scope to outline, `sym_func_name` is a temporary
+    // naming hint and `call_attrs_vec` holds call-site attributes restored on
+    // the recreated call below.
+    newFuncOp->removeAttr(OutlineAttr::getMnemonic());
+    newFuncOp->removeAttr(SymFuncNameAttr::name);
+    newFuncOp->removeAttr(CallAttrsVecAttr::name);
     // Transfer layout attribute from the defining op of an input to the
     // outlined function argument, if present.
     for (auto [idx, input] : llvm::enumerate(inputs)) {
@@ -146,10 +162,19 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
     }
 
     SymbolTable symbolTable(moduleOp);
-    FailureOr<StringAttr> scopeFuncName =
-        symbolTable.renameToUnique(newFuncOp, SmallVector<SymbolTable *>());
-    if (failed(scopeFuncName))
-      return failure();
+    auto symFuncName =
+        scopeOp->getAttrOfType<SymFuncNameAttr>(SymFuncNameAttr::name);
+    // renameToUnique always appends a numeric suffix. A scope created by
+    // inline-func-to-scope records the original VF name in `sym_func_name`;
+    // restore it when no other symbol holds it so the inline/outline round
+    // trip keeps the original symbol name.
+    if (symFuncName && !symbolTable.lookup(symFuncName.getName())) {
+      if (failed(symbolTable.rename(newFuncOp, symFuncName.getName())))
+        return failure();
+    } else {
+      if (failed(symbolTable.renameToUnique(newFuncOp, {})))
+        return failure();
+    }
 
     // Create function body
     Block *entryBB = newFuncOp.addEntryBlock();
@@ -231,12 +256,13 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
                                              cond, /*withElseRegion=*/false);
       ifOp->setAttr("limit_sub_block_id0", rewriter.getUnitAttr());
       rewriter.setInsertionPointToStart(ifOp.thenBlock());
-      rewriter.create<func::CallOp>(loc, funcOp, inputs);
-
+      func::CallOp callOp = rewriter.create<func::CallOp>(loc, funcOp, inputs);
+      copyCallSiteAttrs(scopeOp, callOp);
       // Replace scope op with if op results
       rewriter.replaceOp(scopeOp, ifOp.getResults());
     } else {
       func::CallOp callOp = rewriter.create<func::CallOp>(loc, funcOp, inputs);
+      copyCallSiteAttrs(scopeOp, callOp);
       if (Attribute attr = scopeOp->getAttr(hivm::VectorFunctionAttr::name))
         callOp->setAttr(hivm::VectorFunctionAttr::name, attr);
       LDBG("created callOp: " << callOp);
@@ -253,7 +279,8 @@ public:
 
   LogicalResult matchAndRewrite(scope::ScopeOp scopeOp,
                                 PatternRewriter &rewriter) const override {
-    if (outlineMarkedScopesOnly && !scopeOp->hasAttr("outline"))
+    if (outlineMarkedScopesOnly &&
+        !scopeOp->hasAttr(OutlineAttr::getMnemonic()))
       return failure();
     SmallVector<Value> inputs = getInputs(scopeOp);
     FailureOr<func::FuncOp> newFuncOp = outlineScope(scopeOp, inputs, rewriter);

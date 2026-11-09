@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 // For function inliner support
@@ -25,6 +26,9 @@
 
 // For function inliner support
 #include "mlir/Transforms/InliningUtils.h"
+
+#define GET_ATTRDEF_CLASSES
+#include "bishengir/Dialect/Scope/IR/ScopeAttrs.cpp.inc"
 
 #define GET_OP_CLASSES
 #include "bishengir/Dialect/Scope/IR/ScopeOps.cpp.inc"
@@ -55,6 +59,11 @@ struct ScopeInlinerInterface : public mlir::DialectInlinerInterface {
 } // namespace
 
 void mlir::scope::ScopeDialect::initialize() {
+  addAttributes<
+#define GET_ATTRDEF_LIST
+#include "bishengir/Dialect/Scope/IR/ScopeAttrs.cpp.inc"
+      >();
+
   addOperations<
 #define GET_OP_LIST
 #include "bishengir/Dialect/Scope/IR/ScopeOps.cpp.inc"

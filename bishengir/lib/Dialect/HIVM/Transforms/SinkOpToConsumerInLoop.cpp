@@ -71,7 +71,8 @@ public:
       // vbrcOp) are vectorized, so we can't sink these ops into scopeOp. See
       // more details in issue !1199.
       auto scopeParent = user->template getParentOfType<scope::ScopeOp>();
-      if (scopeParent && scopeParent->hasAttr("outline"))
+      if (scopeParent &&
+          scopeParent->hasAttr(scope::OutlineAttr::getMnemonic()))
         return rewriter.notifyMatchFailure(op, "can't sink op into manual VF");
 
       // If op is sinked into loop but not fused into vf, we will have a
