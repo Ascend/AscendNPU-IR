@@ -440,6 +440,22 @@ static Value sliceExtractSource(Value source, int64_t dim,
   return sliceOp;
 }
 
+/// handleParallelLoop rewrites the parent scf.for bounds from the tile. That
+/// is only valid when the tiled-axis offset is the loop IV itself (typically
+/// `subview %alloc[%iv, 0]`). A nested dynamic column subview uses a constant
+/// 0 offset on that axis and must take the generic path.
+static bool subviewIndexesTilingDimWithLoopIV(memref::SubViewOp subViewOp,
+                                              scf::ForOp loop,
+                                              int64_t tilingDim) {
+  if (tilingDim < 0)
+    return false;
+  auto offsets = subViewOp.getMixedOffsets();
+  if (static_cast<size_t>(tilingDim) >= offsets.size())
+    return false;
+  Value offsetVal = dyn_cast<Value>(offsets[tilingDim]);
+  return offsetVal && offsetVal == loop.getInductionVar();
+}
+
 static LogicalResult handleParallelLoop(scf::ForOp parallelLoopOp,
                                         memref::SubViewOp subViewOp,
                                         UnrealizedConversionCastOp propagateOp,
@@ -529,7 +545,7 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownSubView(
   auto [tilingDim, tiledOffset, tiledSize] = getTilingDimInfo(propagateOp);
   if (auto parallelLoopOp = dyn_cast<scf::ForOp>(subViewOp->getParentOp());
       parallelLoopOp && parallelLoopOp->hasAttr(hivm::ParallelLoopAttr::name) &&
-      getExtractOrInsertDim(subViewOp).contains(tilingDim)) {
+      subviewIndexesTilingDimWithLoopIV(subViewOp, parallelLoopOp, tilingDim)) {
     return handleParallelLoop(parallelLoopOp, subViewOp, propagateOp, rewriter);
   }
 
