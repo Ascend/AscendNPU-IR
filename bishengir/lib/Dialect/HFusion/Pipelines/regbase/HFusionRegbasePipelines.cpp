@@ -127,6 +127,8 @@ static void convertAllToHFusion(OpPassManager &pm,
     pm.addPass(createSymbolDCEPass());
     pm.addPass(createGPUToHFusionConversionPass());
     pm.addPass(createAdaptTritonKernelPass());
+    pm.nest<func::FuncOp>().addPass(
+        createLegalizeNarrowFloatKernelArgumentsPass());
     pm.addPass(createSymbolDCEPass());
   }
   pm.addPass(createTensorToHFusionConversionPass());
