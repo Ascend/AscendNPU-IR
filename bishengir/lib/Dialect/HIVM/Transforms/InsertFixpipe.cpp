@@ -22,6 +22,7 @@
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/DMA/Fixpipe/FixpipeCapabilityBinding.h"
 #include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
@@ -296,9 +297,20 @@ static bool tryInsertFractalOutputFixpipe(PatternRewriter &rewriter,
   if (!convert)
     return false;
   Type elemType = getElementTypeOrSelf(result.getType());
-  // C220 has no f32→f32 NZ2NZ Native row; refuse and fall back to NZ2ND.
-  if (!isNativeFixpipeCreate(insertAfterOp, elemType, elemType,
-                             FixpipeDMAMode::NZ2NZ))
+  // Check whether NZ2NZ is Native on the target.
+  using bishengir::npu::FixpipeCapabilityRequestBuilder;
+  auto builder = FixpipeCapabilityRequestBuilder::create(
+      elemType, AddressSpace::L0C, elemType, AddressSpace::L1,
+      FixpipeDMAMode::NZ2NZ, FixpipePreQuantMode::NO_QUANT,
+      FixpipePreReluMode::NO_RELU, /*channelSplit=*/false,
+      /*quantScalePresent=*/false);
+  std::optional<bishengir::npu::NPUArchitectureKind> architecture =
+      lookupModuleArchitecture(insertAfterOp);
+  if (!architecture)
+    return false;
+  auto storage = builder.build();
+  if (bishengir::npu::queryNativeSupport(*architecture, storage.getRequest()) !=
+      bishengir::npu::NativeSupport::Native)
     return false;
   rewriter.setInsertionPointAfter(insertAfterOp);
   Value dst = utils::createEmptyOp(rewriter, insertAfterOp->getLoc(),
