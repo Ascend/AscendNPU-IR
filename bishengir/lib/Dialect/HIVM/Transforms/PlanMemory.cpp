@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AllocToPointerCast.h"
 #include "bishengir/Dialect/HIVM/Transforms/MemoryDisplay.h"
+#include "bishengir/Dialect/HIVM/Transforms/TcbPoolPlan.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExtImpl.h"
@@ -1645,6 +1646,11 @@ void MemPlan::EmitPlanMemoryFailureInfo() {
     func_.emitError() << error;
     errorInfo[space] = error;
   }
+}
+
+bool MemPlan::failedOnlyInUB() const {
+  return failApplyBufferInfo.size() == 1 &&
+         failApplyBufferInfo.count(AddressSpace::UB);
 }
 
 // Plan Memory algorithm.
@@ -3290,28 +3296,45 @@ PlanMemoryPass::planMemoryForFuncOp(
   // Each retry stage owns one fallback, which is applied once when the stage
   // starts and stays in effect for all later stages. Within a stage, planning
   // is retried with different shuffle seeds.
-  SmallVector<std::function<void(func::FuncOp &)>> retryStageFallbacks = {
-      // Stage 0: no fallback, only retry with different shuffle seeds.
-      [](func::FuncOp &) {},
-  };
+  SmallVector<std::function<LogicalResult(func::FuncOp &)>>
+      retryStageFallbacks = {
+          // Stage 0: no fallback, only retry with different shuffle seeds.
+          [](func::FuncOp &) { return success(); },
+      };
   auto moduleOp = getOperation();
   // Only AIV functions in mix (CV) modules can drop multi-buffering.
   if (isMixModule(moduleOp) &&
       queryFuncCoreType(funcOp) == TFuncCoreType::AIV) {
-    retryStageFallbacks.push_back(
-        [this](func::FuncOp &funcOp) { disableAIVMultibuffer(funcOp); });
+    retryStageFallbacks.push_back([this](func::FuncOp &funcOp) {
+      disableAIVMultibuffer(funcOp);
+      return success();
+    });
   }
   // Disable the VF reachable check on reg-based arch AIV functions as the
   // last resort, to allow more aggressive reuse of VF buffers.
   if (hacc::utils::isRegBasedArch(moduleOp) &&
       queryFuncCoreType(funcOp) == TFuncCoreType::AIV) {
-    retryStageFallbacks.push_back(
-        [this](func::FuncOp &funcOp) { this->disableVFReachableCheck = true; });
+    retryStageFallbacks.push_back([this](func::FuncOp &) {
+      this->disableVFReachableCheck = true;
+      return success();
+    });
   }
 
+  TcbPoolPlan tcbPoolPlan;
+  const int nativeStageCount = retryStageFallbacks.size();
+  const bool enablePoolFallback =
+      memMode == MemPlanMode::LOCAL_MEM_PLAN && TcbPoolPlan::canTryPool(funcOp);
+  if (enablePoolFallback)
+    retryStageFallbacks.push_back([&](func::FuncOp &funcOp) {
+      return tcbPoolPlan.prepareAttempt(funcOp, 0);
+    });
+
   constexpr int singleTrytime = 3;
+  constexpr int kPoolRetryCount = 1;
   int retryOptionsNum = retryStageFallbacks.size();
-  int kPlanRetryCount = singleTrytime * retryOptionsNum;
+  int nativeRetryCount = singleTrytime * nativeStageCount;
+  int kPlanRetryCount =
+      nativeRetryCount + (enablePoolFallback ? kPoolRetryCount : 0);
   // The current plan-memory algorithm is sensitive to the order in which
   // some candidate buffers are considered. We retry planning with different
   // deterministic shuffle seeds to improve the chance of finding a valid
@@ -3321,16 +3344,21 @@ PlanMemoryPass::planMemoryForFuncOp(
   // The outer loop walks the fallback stages; the inner loop retries the
   // current stage with different shuffle seeds.
   for (int stage = 0; stage < retryOptionsNum; ++stage) {
-    retryStageFallbacks[stage](funcOp);
-    for (int trial = 0; trial < singleTrytime; ++trial) {
+    if (failed(retryStageFallbacks[stage](funcOp)))
+      return std::nullopt;
+    const bool usePoolFallback = stage == nativeStageCount;
+    const int trials = usePoolFallback ? kPoolRetryCount : singleTrytime;
+    for (int trial = 0; trial < trials; ++trial) {
       const int attempt = stage * singleTrytime + trial;
       LDBG("Memory planning attempt " << attempt + 1 << "/" << kPlanRetryCount
                                       << "\n");
 
-      MemLivenessAnalysis memLiveness(funcOp, this->memMode,
-                                      this->disableTightlyCoupledBufferReuse,
-                                      /*randomSeed=*/attempt);
+      MemLivenessAnalysis memLiveness(
+          funcOp, this->memMode, this->disableTightlyCoupledBufferReuse,
+          /*randomSeed=*/usePoolFallback ? 0 : attempt);
       memLiveness.build();
+      if (usePoolFallback && failed(tcbPoolPlan.adaptLiveness(memLiveness)))
+        return std::nullopt;
 
       MemPlan memPlan(this->memMode, this->enableGlobalReuse,
                       this->enableMemoryDisplay, this->restrictInplaceAsISA,
@@ -3351,8 +3379,11 @@ PlanMemoryPass::planMemoryForFuncOp(
       memPlan.SetPreloadBufferReuseableInfo(
           memLiveness.preloadBufferReuseableInfo);
 
+      const bool isLastNativeAttempt = attempt == nativeRetryCount - 1;
       const bool isLastAttempt = attempt == kPlanRetryCount - 1;
-      if (succeeded(memPlan.plan(/*emitErrors=*/isLastAttempt))) {
+      if (succeeded(memPlan.plan(/*emitErrors=*/false))) {
+        if (usePoolFallback)
+          tcbPoolPlan.recordPlan(moduleOp);
         if (memPlan.enableMemoryDisplay) {
           SmallVector<MemoryDisplayInfo> memoryDisplayInfoList;
           // Collect plan success memory info for memory display tools.
@@ -3365,7 +3396,13 @@ PlanMemoryPass::planMemoryForFuncOp(
                               memPlan.GetPreloadLocalBuffers());
       }
 
-      if (isLastAttempt && memPlan.enableMemoryDisplay) {
+      if (!usePoolFallback && !isLastNativeAttempt)
+        continue;
+      if (!isLastAttempt && memPlan.failedOnlyInUB())
+        continue;
+
+      memPlan.EmitPlanMemoryFailureInfo();
+      if (memPlan.enableMemoryDisplay) {
         SmallVector<MemoryDisplayInfo> memoryDisplayInfoList;
         // Collect plan fail memory info for memory display tools.
         collectMemoryInfoForDebug(
@@ -3379,6 +3416,7 @@ PlanMemoryPass::planMemoryForFuncOp(
                                   memPlan.errorInfo, false);
         createJsonForMemoryDisplay(funcOp, memoryDisplayInfoList);
       }
+      return std::nullopt;
     }
   }
   return std::nullopt;
