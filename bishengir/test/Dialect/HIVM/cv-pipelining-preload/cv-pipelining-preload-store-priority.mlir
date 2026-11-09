@@ -1,4 +1,6 @@
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true" %s | FileCheck %s
+// TODO: Temporary transition measure: pass bypass-shape-registry=true while
+// ShapeRegistry is emptied; remove once ShapeRegistry is retired.
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true bypass-shape-registry=true" %s | FileCheck %s
 
 // The first function uses a registered LIT name plus `--enable-preload`
 // so store-priority is on without `--bypass-shape-registry` (bypass would

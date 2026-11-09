@@ -1725,8 +1725,15 @@ LogicalResult CVScopeOutliner::run() {
 
 void OutlineCVScopesPass::runOnOperation() {
   SmallVector<Operation *> loopQueue;
-  getOperation().walk<WalkOrder::PostOrder>(
-      [&](scf::ForOp forOp) { loopQueue.push_back(forOp); });
+  getOperation().walk<WalkOrder::PostOrder>([&](scf::ForOp forOp) {
+    // TODO: Temporary transition measure: skip loops already pipelined by
+    // legacy CVPipelining.
+    for (Operation *curr = forOp; curr != nullptr; curr = curr->getParentOp()) {
+      if (curr->hasAttr(LegacyCVPipelineAttr::name))
+        return;
+    }
+    loopQueue.push_back(forOp);
+  });
 
   for (Operation *loopOp : loopQueue) {
     CVScopeOutliner outliner(loopOp);
@@ -1736,7 +1743,8 @@ void OutlineCVScopesPass::runOnOperation() {
 
   LLVM_DEBUG({
     getOperation().walk([&](scf::ForOp forOp) {
-      if (forOp->hasAttr(CVPipelinedLoopAttr::name))
+      if (forOp->hasAttr(CVPipelinedLoopAttr::name) &&
+          !forOp->hasAttr(LegacyCVPipelineAttr::name))
         writeScopeDependenceGraphToDotFile(forOp, "outlined");
     });
   });

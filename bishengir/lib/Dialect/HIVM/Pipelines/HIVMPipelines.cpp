@@ -38,10 +38,12 @@
 namespace mlir {
 namespace hivm {
 
+// TODO: Temporary transition measure disabling ShapeRegistry-dependent preload
+// passes while migrating to PipelineV2. Remove ShapeRegistry altogether later.
 static bool
 enableRegisteredPreloadHeuristics(const HIVMPipelineOptions &pipelineOpts) {
-  return pipelineOpts.enablePreload &&
-         pipelineOpts.setWorkspaceMultibuffer != 0;
+  (void)pipelineOpts;
+  return false;
 }
 
 static ConstantizeBufferSizeOptions

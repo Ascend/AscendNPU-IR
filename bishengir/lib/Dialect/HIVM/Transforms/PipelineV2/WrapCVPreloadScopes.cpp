@@ -126,6 +126,10 @@ struct WrapCVPreloadScopesPass
   void runOnOperation() override {
     SmallVector<LoopLikeOpInterface> loops;
     getOperation().walk<WalkOrder::PreOrder>([&](LoopLikeOpInterface loop) {
+      // TODO: Temporary transition measure: skip loops already pipelined by
+      // legacy CVPipelining.
+      if (loop->hasAttr(LegacyCVPipelineAttr::name))
+        return WalkResult::skip();
       if (!loop->hasAttr(CVPipelinedLoopAttr::name))
         return WalkResult::advance();
       loops.push_back(loop);

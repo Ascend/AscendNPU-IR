@@ -1,6 +1,8 @@
 // RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew enable-preload=true bypass-shape-registry=true" -inline-scope -hivm-mark-multi-buffer="enable-auto=false enable-preload=true" | FileCheck %s
 // RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew enable-preload=true bypass-shape-registry=true" -inline-scope -hivm-inline-vf-scope | FileCheck %s --check-prefix=INLINE-VF
-// RUN: sed 's/@early_copy/@_swa_bwd_dkdv_kernel/g' %s > %t && bishengir-opt %t -cv-pipelining="pipeline-mode=skew enable-preload=true" | FileCheck %t --check-prefix=REGISTRY
+// TODO: Temporary transition measure: pass bypass-shape-registry=true while
+// ShapeRegistry is emptied; remove once ShapeRegistry is retired.
+// RUN: sed 's/@early_copy/@_swa_bwd_dkdv_kernel/g' %s > %t && bishengir-opt %t -cv-pipelining="pipeline-mode=skew enable-preload=true bypass-shape-registry=true" | FileCheck %t --check-prefix=REGISTRY
 // RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew enable-preload=true" | FileCheck %s --check-prefix=SAME --implicit-check-not='= scope.scope'
 // RUN: sed 's/, %dp :/, %qk :/' %s | bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true bypass-shape-registry=true" | FileCheck %s --check-prefix=SAME --implicit-check-not='= scope.scope'
 // RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=unroll enable-preload=false bypass-shape-registry=true" | FileCheck %s --check-prefix=UNROLL --implicit-check-not=scope.scope

@@ -1716,6 +1716,9 @@ LogicalResult CVPipelineImpl::createNewLoops() {
   newLoop =
       builder.create<scf::ForOp>(loc, lb, ub, newStep, pipelineLoop.getInits());
   newLoop->setAttr(hivm::CVPipelinedLoopAttr::name, builder.getUnitAttr());
+  // TODO: Temporary transition measure so PipelineV2 ignores loops already
+  // pipelined by legacy CVPipelining.
+  newLoop->setAttr(hivm::LegacyCVPipelineAttr::name, builder.getUnitAttr());
   newLoop->setAttr(hivm::kCVUnrolledLoopName, builder.getUnitAttr());
   if (newLoop->getNumResults() == 0)
     newLoop.getBody()->getTerminator()->erase();
@@ -2790,6 +2793,10 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
       newLoop->getParentOfType<func::FuncOp>()->dump();
   });
   pipelineLoop->setAttr(hivm::CVPipelinedLoopAttr::name, builder.getUnitAttr());
+  // TODO: Temporary transition measure so PipelineV2 ignores loops already
+  // pipelined by legacy CVPipelining.
+  pipelineLoop->setAttr(hivm::LegacyCVPipelineAttr::name,
+                        builder.getUnitAttr());
   checkpoint->erase();
   return success();
 }

@@ -1794,6 +1794,10 @@ def CombineOptimizedConvertLayout
       "Fold some convert layout patterns and change it into optimized form";
   let constructor = "mlir::hivm::createCombineOptimizedConvertLayoutPass()";
   let dependentDialects = ["hivm::HIVMDialect", ];
+  let options =
+      [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+              /*default=*/"false",
+              "Bypass shape registry check for duplicate inserted L1 staging">];
 }
 
 def MarkPreloadBuffers : HIVMPass<"hivm-mark-preload-buffers", "ModuleOp"> {

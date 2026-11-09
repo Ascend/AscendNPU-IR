@@ -3,7 +3,9 @@
 // RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=0" -allow-unregistered-dialect | FileCheck %s
 // RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=unroll enable-preload=true set-depth-in-unroll-mode=2" -allow-unregistered-dialect | FileCheck %s
 // The registered gated kernel keeps same-iteration scopes.
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2" -allow-unregistered-dialect -split-input-file %s | FileCheck %s --check-prefix=BYPASS --implicit-check-not="hivm.preload_num = 1"
+// TODO: Temporary transition measure: pass bypass-shape-registry=true while
+// ShapeRegistry is emptied; remove once ShapeRegistry is retired.
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2 bypass-shape-registry=true" -allow-unregistered-dialect -split-input-file %s | FileCheck %s --check-prefix=BYPASS --implicit-check-not="hivm.preload_num = 1"
 // Registry bypass: every work item is LCD, so there is no
 // independent stage to skew against. Scopes are still formed, each pinned
 // to preload_num 0.
