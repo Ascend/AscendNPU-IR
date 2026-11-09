@@ -1214,6 +1214,37 @@ func.func @bubble_up_extract_of_insert_same_dim_dynamic(
 }
 
 // -----
+// Extract/insert with a non-zero offset must be rewritten into the tiled
+// coordinate space. Keeping the original offset on the tiled tensor is OOB.
+// CHECK-LABEL:   func.func @bubble_up_extract_of_insert_same_dim_dynamic_offset(
+// CHECK-SAME:           %[[SRC:.*]]: tensor<16xf32>, %[[DST:.*]]: tensor<16xf32>, %[[OFF:.*]]: index, %[[SIZE:.*]]: index, %[[TILE:.*]]: index)
+// CHECK:           %[[C8:.*]] = arith.constant 8 : index
+// CHECK:           %[[TSRC:.*]] = tensor.extract_slice %[[SRC]]{{\[}}%[[TILE]]] [8] [1] {to_be_bubbled_slice} : tensor<16xf32> to tensor<8xf32>
+// CHECK:           %[[TILE_UB:.*]] = arith.addi %[[TILE]], %[[C8]] : index
+// CHECK:           %[[CUR_UB:.*]] = arith.addi %[[OFF]], %[[SIZE]] : index
+// CHECK:           %[[LB:.*]] = arith.maxsi %[[OFF]], %[[TILE]] : index
+// CHECK:           %[[UB:.*]] = arith.minsi %[[CUR_UB]], %[[TILE_UB]] : index
+// CHECK:           %[[CLAMPED:.*]] = arith.maxsi %[[LB]], %[[UB]] : index
+// CHECK:           %[[LOCAL_SIZE:.*]] = arith.subi %[[CLAMPED]], %[[LB]] : index
+// CHECK:           %[[LOCAL_OFF:.*]] = arith.subi %[[LB]], %[[TILE]] : index
+// CHECK:           %[[EXT:.*]] = tensor.extract_slice %[[TSRC]]{{\[}}%[[LOCAL_OFF]]] {{\[}}%[[LOCAL_SIZE]]] [1] : tensor<8xf32> to tensor<?xf32>
+// CHECK:           %[[TDST:.*]] = tensor.extract_slice %[[DST]]{{\[}}%[[TILE]]] [8] [1] {to_be_bubbled_slice} : tensor<16xf32> to tensor<8xf32>
+// CHECK:           %[[INS:.*]] = tensor.insert_slice %[[EXT]] into %[[TDST]]{{\[}}%[[LOCAL_OFF]]] {{\[}}%[[LOCAL_SIZE]]] [1] : tensor<?xf32> into tensor<8xf32>
+// CHECK:           return %[[INS]] : tensor<8xf32>
+// CHECK:         }
+func.func @bubble_up_extract_of_insert_same_dim_dynamic_offset(
+    %arg0: tensor<16xf32>, %arg1: tensor<16xf32>, %off: index, %size: index,
+    %tile: index) -> tensor<8xf32> {
+  %0 = tensor.extract_slice %arg0[%off] [%size] [1]
+      : tensor<16xf32> to tensor<?xf32>
+  %1 = tensor.insert_slice %0 into %arg1[%off] [%size] [1]
+      : tensor<?xf32> into tensor<16xf32>
+  %2 = tensor.extract_slice %1[%tile] [8] [1] {to_be_bubbled_slice}
+      : tensor<16xf32> to tensor<8xf32>
+  return %2 : tensor<8xf32>
+}
+
+// -----
 // ExtractSliceBubbleUpStrategy: Extract→Extract different dim
 // Parent extracts on dim0, to_be_bubbled_slice extracts on dim1 (no overlap)
 // After bubble-up: swap extraction order, extract dim1 first then dim0

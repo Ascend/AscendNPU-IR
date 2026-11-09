@@ -1064,27 +1064,21 @@ handleExtractInsertExtractCase(tensor::ExtractSliceOp sliceOp,
       sliceOp.getMixedStrides());
   markCreatedExtractSliceOp(rewriter, newSrcSrc);
 
+  // Rewrite the inner extract/insert into the tiled coordinate space.
+  // Clipping only the size while keeping the original (global) offsets
+  // produces out-of-bounds slices on the tiled tensor.
+  auto offsets = srcExtractOp.getMixedOffsets();
   auto sizes = srcExtractOp.getMixedSizes();
-  auto offsetVal = getValueOrCreateConstantIndexOp(
-      rewriter, sliceOp.getLoc(), sliceOp.getMixedOffsets()[tilingDim]);
-  auto sizeVal = getValueOrCreateConstantIndexOp(rewriter, sliceOp.getLoc(),
-                                                 sizes[tilingDim]);
-  auto tilingSize = getValueOrCreateConstantIndexOp(
-      rewriter, sliceOp.getLoc(), sliceOp.getMixedSizes()[tilingDim]);
-  offsetVal =
-      rewriter.create<arith::MinSIOp>(offsetVal.getLoc(), offsetVal, sizeVal);
-  sizeVal =
-      rewriter.create<arith::SubIOp>(sizeVal.getLoc(), sizeVal, offsetVal);
-  sizeVal =
-      rewriter.create<arith::MinSIOp>(sizeVal.getLoc(), sizeVal, tilingSize);
-  sizes[tilingDim] = sizeVal;
+  handleExtractOfExtract(offsets[tilingDim], sizes[tilingDim],
+                         sliceOp.getMixedOffsets()[tilingDim],
+                         sliceOp.getMixedSizes()[tilingDim], sliceOp.getLoc(),
+                         rewriter);
 
   srcExtractOp = rewriter.replaceOpWithNewOp<tensor::ExtractSliceOp>(
-      srcExtractOp, newSrcSrc, srcExtractOp.getMixedOffsets(), sizes,
-      srcExtractOp.getMixedStrides());
+      srcExtractOp, newSrcSrc, offsets, sizes, srcExtractOp.getMixedStrides());
   rewriter.setInsertionPoint(parentInsertOp);
   rewriter.replaceOpWithNewOp<tensor::InsertSliceOp>(
-      sliceOp, srcExtractOp, newDst, parentInsertOp.getMixedOffsets(), sizes,
+      sliceOp, srcExtractOp, newDst, offsets, sizes,
       parentInsertOp.getMixedStrides());
   rewriter.eraseOp(parentInsertOp);
   return success();
