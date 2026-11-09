@@ -34,6 +34,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -80,10 +81,10 @@ struct DecomposeAllocTensorCopyPass
 } // namespace
 
 void DecomposeAllocTensorCopyPass::runOnOperation() {
-  ModuleOp moduleOp = getOperation();
+  func::FuncOp funcOp = getOperation();
   RewritePatternSet patterns(&getContext());
   patterns.add<DecomposeAllocTensorCopyPattern>(&getContext());
-  if (failed(applyPatternsGreedily(moduleOp, std::move(patterns))))
+  if (failed(applyPatternsGreedily(funcOp, std::move(patterns))))
     return signalPassFailure();
 }
 
