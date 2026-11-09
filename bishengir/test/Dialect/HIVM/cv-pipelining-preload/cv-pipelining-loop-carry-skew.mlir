@@ -1,5 +1,7 @@
 // Registered LCD names: preload + non-zero workspace depth enable LCD backup.
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
+// TODO: Temporary transition measure: pass bypass-shape-registry=true while
+// ShapeRegistry is emptied; remove once ShapeRegistry is retired.
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2 bypass-shape-registry=true" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
 
 // Test 1: Cross-core loop carry (CUBE producer -> VECTOR consumer) whose
 // transitive consumer chain spans both candidate work items. Every work item

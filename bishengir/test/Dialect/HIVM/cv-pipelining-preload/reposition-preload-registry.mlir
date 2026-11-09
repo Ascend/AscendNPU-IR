@@ -1,6 +1,8 @@
-// RUN: bishengir-opt %s -hivm-reposition-preload-work="enable-preload=true set-workspace-multibuffer=2" | FileCheck %s
-// RUN: sed 's/kernel_sdpa_bwd_q/parallel_path_fwd_kernel/g' %s | bishengir-opt -hivm-reposition-preload-work="enable-preload=true set-workspace-multibuffer=2" | FileCheck %s
-// RUN: sed 's/kernel_sdpa_bwd_q/chunk_gated_delta_product_fwd_kernel_h_blockdim64/g' %s | bishengir-opt -hivm-reposition-preload-work="enable-preload=true set-workspace-multibuffer=2" | FileCheck %s
+// TODO: Temporary transition measure: pass bypass-shape-registry=true while
+// ShapeRegistry is emptied; remove once ShapeRegistry is retired.
+// RUN: bishengir-opt %s -hivm-reposition-preload-work="enable-preload=true set-workspace-multibuffer=2 bypass-shape-registry=true" | FileCheck %s
+// RUN: sed 's/kernel_sdpa_bwd_q/parallel_path_fwd_kernel/g' %s | bishengir-opt -hivm-reposition-preload-work="enable-preload=true set-workspace-multibuffer=2 bypass-shape-registry=true" | FileCheck %s
+// RUN: sed 's/kernel_sdpa_bwd_q/chunk_gated_delta_product_fwd_kernel_h_blockdim64/g' %s | bishengir-opt -hivm-reposition-preload-work="enable-preload=true set-workspace-multibuffer=2 bypass-shape-registry=true" | FileCheck %s
 // RUN: sed 's/kernel_sdpa_bwd_q/off/g' %s | bishengir-opt -hivm-reposition-preload-work="enable-preload=true set-workspace-multibuffer=2" | FileCheck %s --check-prefix=OFF --implicit-check-not=hivm.independent_preload_prefix
 // RUN: bishengir-opt %s -hivm-reposition-preload-work="enable-preload=false set-workspace-multibuffer=2" | FileCheck %s --check-prefix=OFF --implicit-check-not=hivm.independent_preload_prefix
 // RUN: bishengir-opt %s -hivm-reposition-preload-work="enable-preload=true set-workspace-multibuffer=0" | FileCheck %s --check-prefix=OFF --implicit-check-not=hivm.independent_preload_prefix

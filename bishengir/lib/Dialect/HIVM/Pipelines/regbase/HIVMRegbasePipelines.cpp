@@ -36,10 +36,13 @@ namespace mlir {
 namespace hivm {
 namespace regbase {
 
+// TODO: Temporary transition measure disabling ShapeRegistry-dependent preload
+// passes while migrating to PipelineV2. Remove ShapeRegistry and its dependent
+// passes altogether later.
 static bool
 enableRegisteredPreloadHeuristics(const HIVMPipelineOptions &pipelineOpts) {
-  return pipelineOpts.enablePreload &&
-         pipelineOpts.setWorkspaceMultibuffer != 0;
+  (void)pipelineOpts;
+  return false;
 }
 
 static ConstantizeBufferSizeOptions
@@ -354,7 +357,8 @@ static void buildCVPipelineV2(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(createOutlineCVScopesPass());
   pm.nest<func::FuncOp>().addPass(createMergeCVScopesPass());
   PipelineStagingOptions options;
-  options.maxPipelineMultibuffer = hivmPipelineOptions.setMaxPipelineMultibuffer;
+  options.maxPipelineMultibuffer =
+      hivmPipelineOptions.setMaxPipelineMultibuffer;
   pm.nest<func::FuncOp>().addPass(createPipelineStagingPass(options));
   pm.nest<func::FuncOp>().addPass(createWrapCVPreloadScopesPass());
 }
@@ -474,7 +478,8 @@ static void hivmPreBufferizationOptimizationPipeline(
     // Registered kernels skip the early marking pass. Mark coupled buffers
     // before counting the slots needed between the newly assigned stages.
     pm.nest<func::FuncOp>().addPass(createMarkTightlyCoupledBufferPass());
-    pm.addNestedPass<func::FuncOp>(createMarkMultiBufferPass(multiBufferOptions));
+    pm.addNestedPass<func::FuncOp>(
+        createMarkMultiBufferPass(multiBufferOptions));
   } else if (hivmPipelineOptions.enableMixedCV) {
     // Software pipelining Cube and Vector operations
     if (hivmPipelineOptions.setCVPipelineMode != CVPipelineMode::Off) {
@@ -484,13 +489,13 @@ static void hivmPreBufferizationOptimizationPipeline(
       pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
       pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
       pipelineOptions.enablePreload = hivmPipelineOptions.enablePreload;
-      if (hivmPipelineOptions.setCVPipelineMode == CVPipelineMode::Skew) {
-        pm.nest<func::FuncOp>().addPass(
-            std::make_unique<PrepareRegisteredSkewTCBPass>(
-                hivmPipelineOptions.enablePreload,
-                hivmPipelineOptions.setWorkspaceMultibuffer));
-      }
+      // TODO: Temporary transition measure: PrepareRegisteredSkewTCBPass is
+      // disabled and PipelineV2 is run after CVPipeliningPass for loops not
+      // handled by legacy CVPipelining. Remove ShapeRegistry altogether later.
       pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
+      if (hivmPipelineOptions.enablePreload) {
+        buildCVPipelineV2(pm, hivmPipelineOptions);
+      }
       // Before the second MarkMultiBuffer so buffer-count marking sees the
       // split scopes. Registered kernels only.
       if (enableRegisteredPreloadHeuristics(hivmPipelineOptions)) {

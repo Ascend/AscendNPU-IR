@@ -137,7 +137,7 @@ public:
   // Rule 4: Merge same-core scopes connected by an intra-iteration edge or
   // sharing a predecessor or successor in the loop body.
   void applyGraphSameCoreRule();
-  
+
   // Rule 5: Starting from a Cube-and-Vector scope with an alloca inside,
   // trace downward to find its users and sink the alloca, initialization, and
   // loads into the user cube and/or vector scopes.
@@ -165,8 +165,7 @@ private:
   static void sinkStoresToUserScopes(
       ArrayRef<ScopeOp> allocaScopes,
       DenseMap<ScopeOp, AllocaAccesses> &accessesByAllocaScope);
-  static void sinkAllocasToUserScopes(
-      ArrayRef<ScopeOp> allocaScopes);
+  static void sinkAllocasToUserScopes(ArrayRef<ScopeOp> allocaScopes);
 
   SetVector<ScopeOp> getIntraIterScopeDeps(ScopeOp scope);
   ScopeOp mergeScopeGroup(SmallPtrSetImpl<Operation *> &group);
@@ -1159,7 +1158,7 @@ void LoopScopeMerger::applyGraphSameCoreRule() {
 
 void LoopScopeMerger::collectAllocaScopes(scf::ForOp &loopOp,
                                           SmallVector<ScopeOp> &allocaScopes) {
-  for(ScopeOp scope : loopOp.getOps<ScopeOp>()) {
+  for (ScopeOp scope : loopOp.getOps<ScopeOp>()) {
     if (getScopeCoreType(scope) != TCoreType::CUBE_AND_VECTOR)
       continue;
 
@@ -1209,7 +1208,7 @@ void LoopScopeMerger::collectAllocaAccesses(
             ownerScope.getRegion().front().getTerminator());
         if (load->hasOneUse() && *(load->getUsers().begin()) == returnOp) {
           for (auto [index, returnedValue] :
-              llvm::enumerate(returnOp.getOperands())) {
+               llvm::enumerate(returnOp.getOperands())) {
             if (returnedValue == load.getResult()) {
               initialLoad = {ownerScope, ownerScope.getResult(index)};
               break;
@@ -1289,8 +1288,9 @@ void LoopScopeMerger::sinkLoadsToUserScopes(
     if (!retVal.use_empty())
       continue;
 
-    if(loadScope.getNumResults() == 1 &&
-          loadScope.getRegion().front().getOperations().size() == dependencies.size() + 1){
+    if (loadScope.getNumResults() == 1 &&
+        loadScope.getRegion().front().getOperations().size() ==
+            dependencies.size() + 1) {
       loadScope.erase();
       continue;
     }
@@ -1388,8 +1388,7 @@ void LoopScopeMerger::sinkStoresToUserScopes(
   }
 }
 
-void LoopScopeMerger::sinkAllocasToUserScopes(
-    ArrayRef<ScopeOp> allocaScopes) {
+void LoopScopeMerger::sinkAllocasToUserScopes(ArrayRef<ScopeOp> allocaScopes) {
   for (ScopeOp scope : allocaScopes) {
     Value retVal = scope.getResult(0);
     ScopeOp firstScope;
@@ -1409,7 +1408,8 @@ void LoopScopeMerger::sinkAllocasToUserScopes(
 
     auto alloca = cast<memref::AllocaOp>(&scope.getRegion().front().front());
 
-    OpBuilder builder = OpBuilder::atBlockBegin(&firstScope.getRegion().front());
+    OpBuilder builder =
+        OpBuilder::atBlockBegin(&firstScope.getRegion().front());
     auto clonedAlloca = cast<memref::AllocaOp>(builder.clone(*alloca));
     retVal.replaceUsesWithIf(clonedAlloca.getResult(), [&](OpOperand &use) {
       return firstScope->isProperAncestor(use.getOwner());
@@ -1428,13 +1428,12 @@ void LoopScopeMerger::sinkAllocasToUserScopes(
     returnOperands.push_back(clonedAlloca.getResult());
     ScopeOp newScope = recreateScope(firstScope, returnOperands);
     for (auto [oldResult, newResult] : llvm::zip(
-              firstScope.getResults(),
-              newScope.getResults().take_front(firstScope.getNumResults())))
+             firstScope.getResults(),
+             newScope.getResults().take_front(firstScope.getNumResults())))
       oldResult.replaceAllUsesWith(newResult);
-    retVal.replaceUsesWithIf(
-        newScope.getResults().back(), [&](OpOperand &use) {
-          return use.getOwner()->getParentOfType<ScopeOp>() != firstScope;
-        });
+    retVal.replaceUsesWithIf(newScope.getResults().back(), [&](OpOperand &use) {
+      return use.getOwner()->getParentOfType<ScopeOp>() != firstScope;
+    });
     firstScope.erase();
   }
 
@@ -1473,12 +1472,14 @@ void MergeCVScopesPass::runOnOperation() {
       &LoopScopeMerger::applyMergedScopeSameCoreRule,
       &LoopScopeMerger::applyCrossCoreTransferBackwardRule,
       &LoopScopeMerger::applyGraphSameCoreRule,
-      &LoopScopeMerger::applySinkAllocaInCAVScopeRule
-  };
+      &LoopScopeMerger::applySinkAllocaInCAVScopeRule};
 
   SmallVector<scf::ForOp> targetLoops;
   getOperation().walk<WalkOrder::PostOrder>([&](scf::ForOp forOp) {
-    if (forOp->hasAttr(CVPipelinedLoopAttr::name))
+    // TODO: Temporary transition measure: skip loops already pipelined by
+    // legacy CVPipelining.
+    if (forOp->hasAttr(CVPipelinedLoopAttr::name) &&
+        !forOp->hasAttr(LegacyCVPipelineAttr::name))
       targetLoops.push_back(forOp);
   });
 

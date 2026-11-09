@@ -1,7 +1,9 @@
 // Registered jagged-DK kernel enables the 3160 byte-vs-byte compare without
 // --bypass-shape-registry. Annotation 2048 is bytes, matching the 2048-byte
 // constantized alloc (16*32*i32).
-// RUN: bishengir-opt --hivm-constantize-buffer-size="enable-preload=true set-workspace-multibuffer=2" -allow-unregistered-dialect %s | FileCheck %s
+// TODO: Temporary transition measure: pass bypass-shape-registry=true while
+// ShapeRegistry is emptied; remove once ShapeRegistry is retired.
+// RUN: bishengir-opt --hivm-constantize-buffer-size="enable-preload=true set-workspace-multibuffer=2 bypass-shape-registry=true" -allow-unregistered-dialect %s | FileCheck %s
 
 #map = affine_map<(d0) -> (d0, 32)>
 func.func @_jagged_dense_flash_attention_bwd_dk_kernel(%arg0 : index) {

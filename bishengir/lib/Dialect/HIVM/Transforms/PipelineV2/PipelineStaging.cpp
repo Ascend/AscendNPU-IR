@@ -58,14 +58,17 @@ struct PipelineStagingPass
 
 static void collectCVPipelinedLoops(func::FuncOp &funcOp,
                                     SmallVector<scf::ForOp> &loops) {
-  funcOp.walk<WalkOrder::PreOrder>(
-      [&](scf::ForOp loopOp) -> WalkResult {
-        if (loopOp->hasAttr(hivm::CVPipelinedLoopAttr::name)) {
-          loops.push_back(loopOp);
-          return WalkResult::skip();
-        }
-        return WalkResult::advance();
-      });
+  funcOp.walk<WalkOrder::PreOrder>([&](scf::ForOp loopOp) -> WalkResult {
+    // TODO: Temporary transition measure: skip loops already pipelined by
+    // legacy CVPipelining.
+    if (loopOp->hasAttr(hivm::LegacyCVPipelineAttr::name))
+      return WalkResult::skip();
+    if (loopOp->hasAttr(hivm::CVPipelinedLoopAttr::name)) {
+      loops.push_back(loopOp);
+      return WalkResult::skip();
+    }
+    return WalkResult::advance();
+  });
 }
 
 static void stageScopesNaively(SmallVector<scope::ScopeOp> &scopeOps) {
@@ -84,8 +87,7 @@ static void stageScopesNaively(SmallVector<scope::ScopeOp> &scopeOps) {
   }
 }
 
-static void stageScopes(scf::ForOp &loopOp,
-                        int maxPipelineMultibuffer) {
+static void stageScopes(scf::ForOp &loopOp, int maxPipelineMultibuffer) {
   for (Region &region : loopOp->getRegions()) {
     SmallVector<scope::ScopeOp> scopes;
     for (scope::ScopeOp scopeOp : region.getOps<scope::ScopeOp>())
@@ -351,18 +353,15 @@ static void hoistAllocAndToTensor(scope::ScopeOp &scopeOp) {
   DenseMap<unsigned, Value> replacementResults;
   DenseSet<Operation *> moveBeforeSet;
   DenseSet<Operation *> moveAfterSet;
-  for (auto [index, returnOperand] :
-        llvm::enumerate(returnOp->getOperands())) {
-    auto toTensorOp =
-        returnOperand.getDefiningOp<bufferization::ToTensorOp>();
+  for (auto [index, returnOperand] : llvm::enumerate(returnOp->getOperands())) {
+    auto toTensorOp = returnOperand.getDefiningOp<bufferization::ToTensorOp>();
     if (!toTensorOp || toTensorOp->getBlock() != &body)
       continue;
 
     Value operand = toTensorOp.getOperand();
     auto castOp = operand.getDefiningOp<memref::MemorySpaceCastOp>();
-    auto allocOp = castOp
-                        ? castOp.getSource().getDefiningOp<memref::AllocOp>()
-                        : operand.getDefiningOp<memref::AllocOp>();
+    auto allocOp = castOp ? castOp.getSource().getDefiningOp<memref::AllocOp>()
+                          : operand.getDefiningOp<memref::AllocOp>();
     if (!allocOp || allocOp->getBlock() != &body ||
         (castOp && castOp->getBlock() != &body))
       continue;
@@ -382,8 +381,8 @@ static void hoistAllocAndToTensor(scope::ScopeOp &scopeOp) {
 
     SmallVector<Operation *> moveBefore{allocOp};
     SmallVector<Operation *> moveAfter;
-    
-    if(shouldSinkToTensor)
+
+    if (shouldSinkToTensor)
       moveAfter.push_back(toTensorOp);
 
     if (castOp)
@@ -411,7 +410,7 @@ static void hoistAllocAndToTensor(scope::ScopeOp &scopeOp) {
         Operation *def = value.getDefiningOp();
         if (def && scopeOp->isAncestor(def) &&
             (!movingOps.contains(def) ||
-              (beforeScope && !llvm::is_contained(moveBefore, def))))
+             (beforeScope && !llvm::is_contained(moveBefore, def))))
           return false;
       }
       return true;
@@ -424,7 +423,7 @@ static void hoistAllocAndToTensor(scope::ScopeOp &scopeOp) {
         }))
       continue;
 
-    if(shouldSinkToTensor)
+    if (shouldSinkToTensor)
       replacementResults[index] = returnOperand;
     moveBeforeSet.insert(moveBefore.begin(), moveBefore.end());
     moveAfterSet.insert(moveAfter.begin(), moveAfter.end());
@@ -488,9 +487,10 @@ void PipelineStagingPass::runOnOperation() {
       writeScopeDependenceGraphToDotFile(loopOp, "staged");
   });
 
-  funcOp->walk<WalkOrder::PostOrder>([&](scope::ScopeOp scopeOp){
-    hoistAllocAndToTensor(scopeOp);
-  });
+  for (scf::ForOp loopOp : cvPipelinedLoops) {
+    loopOp->walk<WalkOrder::PostOrder>(
+        [&](scope::ScopeOp scopeOp) { hoistAllocAndToTensor(scopeOp); });
+  }
 }
 
 std::unique_ptr<Pass>

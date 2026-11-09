@@ -1,6 +1,8 @@
 // Registered jagged-DK kernel enables 3160 TCB-view rematerialize without
 // --bypass-shape-registry.
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2" -allow-unregistered-dialect %s | FileCheck %s
+// TODO: Temporary transition measure: pass bypass-shape-registry=true while
+// ShapeRegistry is emptied; remove once ShapeRegistry is retired.
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2 bypass-shape-registry=true" -allow-unregistered-dialect %s | FileCheck %s
 
 // CHECK-LABEL: func.func @_jagged_dense_flash_attention_bwd_dk_kernel
 // CHECK: %[[TCB_STORAGE:.*]] = memref.alloc() : memref<65536xi8, #hivm.address_space<ub>>
