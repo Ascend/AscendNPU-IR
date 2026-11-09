@@ -4432,9 +4432,8 @@ public:
                     ? dyn_cast<linalg::FillOp>(defOp).getInputs()[0]
                     : dyn_cast<linalg::BroadcastOp>(defOp).getInput();
 
-    auto castedVal =
-        getCastedValue(rewriter, loc, cst, srcTy, dstTy, roundMode,
-                       castOp.getCast());
+    auto castedVal = getCastedValue(rewriter, loc, cst, srcTy, dstTy, roundMode,
+                                    castOp.getCast());
     if (!castedVal.has_value())
       return rewriter.notifyMatchFailure(
           castOp, "either round mode or datatype is not supported!");
