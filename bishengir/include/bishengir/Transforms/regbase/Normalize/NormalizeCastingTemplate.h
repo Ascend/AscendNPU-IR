@@ -201,8 +201,8 @@ public:
         !isa<ShapedType>(input.getType()))
       return rewriter.notifyMatchFailure(
           castOp, "either round mode or datatype is not supported!");
-    auto castType = Traits::mapCastSignKind(CastSignKind::Preserve,
-                                            castOp.getCast());
+    auto castType =
+        Traits::mapCastSignKind(CastSignKind::Preserve, castOp.getCast());
     Value castedVal = Traits::createCastOp(
         rewriter, castOp.getLoc(), input, getElementTypeOrSelf(dstTy),
         castOp.getRoundMode(), castType, Traits::getCastUnsignedMode(castOp));
@@ -265,8 +265,8 @@ public:
                                         pointSrcTensorType);
     Value pointTensor =
         Traits::createFillOp(rewriter, castOp.getLoc(), input, pointSrcTensor);
-    auto castType = Traits::mapCastSignKind(CastSignKind::Preserve,
-                                            castOp.getCast());
+    auto castType =
+        Traits::mapCastSignKind(CastSignKind::Preserve, castOp.getCast());
     Value castedVal = Traits::createCastOp(
         rewriter, castOp.getLoc(), pointTensor, getElementTypeOrSelf(dstTy),
         castOp.getRoundMode(), castType, Traits::getCastUnsignedMode(castOp));
