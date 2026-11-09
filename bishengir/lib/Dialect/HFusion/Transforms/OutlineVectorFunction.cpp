@@ -9,6 +9,7 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
+#include "bishengir/Dialect/SCF/Utils/Utils.h"
 #include "bishengir/Dialect/Transform/IR/TransformOps.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -19,8 +20,6 @@
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Transforms/RegionUtils.h"
-#include "llvm/ADT/APInt.h"
-#include "llvm/Support/Debug.h"
 
 namespace mlir {
 #define GEN_PASS_DEF_OUTLINEVECTORFUNCTION
@@ -28,8 +27,6 @@ namespace mlir {
 } // namespace mlir
 
 #define DEBUG_TYPE "outline-vector-function"
-#define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
-#define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 using namespace mlir;
 using namespace mlir::hfusion;
@@ -153,93 +150,6 @@ static void duplicateReusedValuesForInnerSCFForOp(scf::ForOp loop,
 /// chunk stays in the same VF, with a representable hardware loop count.
 static constexpr int64_t kMaxVFLoopTrip = 65535;
 
-/// Split a constant-bound, signed-comparison loop into sequential loops of at
-/// most maxTripCount iterations. The caller must prove lb/ub/step match the
-/// loop's operands. Bounds and step are materialized in the original type;
-/// absolute indices, attributes and loop-carried values are preserved.
-/// Small or empty loops are left unchanged. Splitting erases forOp and its
-/// nested operations. The caller filters unsigned loops and nonpositive steps.
-static LogicalResult splitForOpByTripCount(OpBuilder &builder, scf::ForOp forOp,
-                                           int64_t lb, int64_t ub, int64_t step,
-                                           uint64_t maxTripCount) {
-  assert(maxTripCount && step > 0 &&
-         "expected positive splitting limits and step");
-  // Widen before subtracting or multiplying: signed 64-bit bounds can span
-  // more than INT64_MAX iterations even when each individual bound fits.
-  llvm::APInt lower(128, lb, true), upper(128, ub, true);
-  llvm::APInt stride(128, step, true);
-  if (upper.sle(lower))
-    return success();
-  const uint64_t trip =
-      (upper - lower + stride - 1).udiv(stride).getZExtValue();
-  if (trip <= maxTripCount)
-    return success();
-  LDBG("splitting loop with trip count "
-       << trip << " into " << (trip / maxTripCount + (trip % maxTripCount != 0))
-       << " chunks of at most " << maxTripCount << " iterations");
-  OpBuilder::InsertionGuard guard(builder);
-  builder.setInsertionPoint(forOp);
-  Location loc = forOp.getLoc();
-  scf::YieldOp origYield = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
-
-  // Chunk bounds keep the source loop's bound type: scf.for requires
-  // lowerBound/upperBound/step to share one type (AllTypesMatch), and the
-  // cloned body consumes the original bound type. Interior chunk bounds are
-  // strictly below ub, so every value fits the source type's range.
-  Type boundType = forOp.getLowerBound().getType();
-  auto createBound = [&](int64_t value) -> Value {
-    if (isa<IndexType>(boundType))
-      return builder.create<arith::ConstantIndexOp>(loc, value);
-    return builder.create<arith::ConstantOp>(
-        loc, builder.getIntegerAttr(boundType, value));
-  };
-
-  SmallVector<Value> inits(forOp.getInitArgs());
-  scf::ForOp lastChunk = nullptr;
-  // Materialize the original upper-bound value for the last chunk. Rounding
-  // it up to lb + trip * step could expose an out-of-range bound to later
-  // analyses.
-  SmallVector<std::pair<Value, Value>> chunkBounds;
-  for (uint64_t loIt = 0; loIt < trip;) {
-    const uint64_t hiIt = loIt + std::min(maxTripCount, trip - loIt);
-    const int64_t lo = (lower + llvm::APInt(128, loIt) * stride).getSExtValue();
-    const int64_t hi =
-        hiIt == trip ? ub
-                     : (lower + llvm::APInt(128, hiIt) * stride).getSExtValue();
-    chunkBounds.emplace_back(createBound(lo), createBound(hi));
-    loIt = hiIt;
-  }
-  Value constantStep = createBound(step);
-  for (auto &[loVal, hiVal] : chunkBounds) {
-    scf::ForOp chunk = builder.create<scf::ForOp>(
-        loc, loVal, hiVal, constantStep, inits,
-        [&](OpBuilder &b, Location bodyLoc, Value iv, ValueRange iterArgs) {
-          IRMapping mapping;
-          mapping.map(forOp.getStep(), constantStep);
-          mapping.map(forOp.getInductionVar(), iv);
-          for (auto [oldArg, newArg] :
-               llvm::zip(forOp.getRegionIterArgs(), iterArgs))
-            mapping.map(oldArg, newArg);
-          for (Operation &op : forOp.getBody()->without_terminator())
-            b.clone(op, mapping);
-          SmallVector<Value> mappedYields;
-          for (Value v : origYield.getOperands())
-            mappedYields.push_back(mapping.lookupOrDefault(v));
-          b.create<scf::YieldOp>(bodyLoc, mappedYields);
-        });
-    for (NamedAttribute attr : forOp->getAttrs())
-      chunk->setAttr(attr.getName(), attr.getValue());
-    inits = SmallVector<Value>(chunk.getResults());
-    lastChunk = chunk;
-  }
-  assert(lastChunk && "large trip count guarantees at least one chunk");
-  for (auto [oldRes, newRes] :
-       llvm::zip(forOp.getResults(), lastChunk->getResults()))
-    oldRes.replaceAllUsesWith(newRes);
-  forOp.erase();
-  return success();
-}
-
 /// Record the unique direct call to each VF. A null entry means multiple
 /// call sites; missing entries have no direct calls. Neither is handled here.
 static DenseMap<Operation *, func::CallOp> collectVFCalls(ModuleOp module) {
@@ -295,9 +205,12 @@ static LogicalResult splitLargeTripOutlinedLoops(func::FuncOp func,
           << "16-bit launch count was not checked";
       continue;
     }
-    if (failed(splitForOpByTripCount(builder, loop, *lb, *ub, *step,
-                                     kMaxVFLoopTrip)))
+    if (failed(scf::utils::splitForOpByTripCount(builder, loop, *lb, *ub, *step,
+                                                 kMaxVFLoopTrip))) {
+      loop.emitError("failed to split the VF loop by trip count to satisfy ")
+          << "the 16-bit launch limit";
       return failure();
+    }
   }
   return success();
 }
