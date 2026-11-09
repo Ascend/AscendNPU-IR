@@ -943,6 +943,8 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       static constexpr StringLiteral kBuiltinIndirectAtomicName = "__builtin_indirect_atomic";
       static constexpr StringLiteral kBuiltinOnlineSoftmaxNZName = "__builtin_online_softmax_nz";
       static constexpr StringLiteral kBuiltinHistogramName = "__builtin_histogram";
+      static constexpr StringLiteral kBuiltinSparseGatherLoadToL1BufferName =
+          "__builtin_sparse_gather_load_to_L1buffer";
       static constexpr StringLiteral kBuiltinProtonGetSysCntName =
           "__builtin_proton_get_sys_cnt";
       static constexpr StringLiteral kBuiltinProtonCircularStoreName =
@@ -1014,7 +1016,8 @@ def CustomOp : HIVM_CustomOp<"custom", [
     struct BuiltinInfo {
       TCoreType coreType;
       PIPE pipe;
-      VFMode vfMode;
+      // std::nullopt for cube-core builtins, which have no VF mode.
+      std::optional<VFMode> vfMode;
       const SmallVector<size_t> gmAddrArgsIndices;
       std::optional<InlineMode> inlineMode = std::nullopt;
     };
@@ -1400,7 +1403,8 @@ def CustomMacroOp : HIVM_CustomOp<"custom_macro", [MacroOpTrait, CustomLikeOpInt
       TCoreType coreType;
       PIPE inPipe;
       PIPE outPipe;
-      VFMode vfMode;
+      // std::nullopt for cube-core builtins, which have no VF mode.
+      std::optional<VFMode> vfMode;
       const SmallVector<size_t> gmAddrArgsIndices;
     };
 

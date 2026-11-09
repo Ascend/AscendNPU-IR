@@ -2133,10 +2133,10 @@ class CustomOpToLibraryCallPattern : public OpRewritePattern<CustomOpT> {
     } else {
       libParams.assign(op.getOperands().begin(), op.getOperands().end());
     }
-    replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation())
-                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       libParams, op.getResultTypes());
+    auto libCallName = cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    replaceWithLibCall(rewriter, op, libCallName, libParams,
+                       op.getResultTypes());
     return success();
   }
 };

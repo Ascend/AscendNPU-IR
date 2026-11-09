@@ -65,6 +65,17 @@ const DenseMap<StringRef, CustomOp::BuiltinInfo> CustomOp::kBuiltins{
                                               InlineMode::AlwaysInline}},
     {kBuiltinHistogramName,
      BuiltinInfo{TCoreType::VECTOR, PIPE::PIPE_V, VFMode::SIMT, {}}},
+    // Cube-core MTE2 path with no VF mode ({}); operands 0 and 1 (gathered
+    // tensor and region metadata) are GM addresses. Must be inlined: across a
+    // call the cube caller keeps the destination L1 address live in X0-X4,
+    // which the template overwrites, so the following L1 -> L0A load would read
+    // a corrupted address.
+    {kBuiltinSparseGatherLoadToL1BufferName,
+     BuiltinInfo{TCoreType::CUBE,
+                 PIPE::PIPE_MTE2,
+                 {},
+                 {0, 1},
+                 InlineMode::AlwaysInline}},
     {kBuiltinProtonGetSysCntName,
      BuiltinInfo{TCoreType::VECTOR, PIPE::PIPE_S, VFMode::SIMD, {}}},
     {kBuiltinProtonCircularStoreName,
@@ -503,7 +514,7 @@ template <typename CustomOpT> LogicalResult verifyBuiltins(CustomOpT op) {
                             << op.getName() << "'s core type.";
 
   const auto &vfMode = op.getVFMode();
-  if (vfMode && *vfMode != builtinInfo.vfMode)
+  if (vfMode && builtinInfo.vfMode && *vfMode != *builtinInfo.vfMode)
     return op.emitOpError() << "Specified vf mode conflict with "
                             << op.getName() << "'s vf mode.";
 
