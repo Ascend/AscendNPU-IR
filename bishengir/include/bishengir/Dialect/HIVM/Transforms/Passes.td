@@ -760,6 +760,26 @@ def MarkTightlyCoupledBuffer
            "Workspace multibuffer count used by the registered-kernel skip">];
 }
 
+def HoistLoopInvariantDmaLoad
+    : HIVMPass<"hivm-hoist-loop-invariant-dma-load", "func::FuncOp"> {
+  let summary =
+      "Hoist loop-invariant GM->UB load clusters out of scf.for loops.";
+  let description = [{
+    A masked `tl.load` materializes as a cluster: a `memref.alloc` for the dst
+    buffer, a guarded zero-fill `scf.if`, the `hivm.hir.load` DMA and a
+    `to_tensor` view. Every op in that cluster carries memory effects, so the
+    generic per-op LICM (`isMemoryEffectFree` && `isSpeculatable`) can never
+    hoist it. This pass treats the cluster as one unit and moves it before
+    the loop when no cluster operand is defined inside the loop, the dst
+    buffers have no other in-loop user, and no in-loop op may write the
+    loaded GM source. Only runs for Ascend950 (RegBase) targets.
+  }];
+  let constructor = "mlir::hivm::createHoistLoopInvariantDmaLoadPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
+                           "memref::MemRefDialect",
+                           "bufferization::BufferizationDialect"];
+}
+
 def HoistTightlyCoupledAlloc
     : HIVMPass<"hivm-hoist-tightly-coupled-alloc",
                "func::FuncOp", [MixKernel, PureAicKernel]> {
