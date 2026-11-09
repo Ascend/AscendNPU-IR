@@ -201,4 +201,3 @@ func.func @hoist_sunk_with_scf_if(%src: memref<16xf32>, %cond: i1) {
   return
 }
 }
-
