@@ -226,10 +226,16 @@ static bool isUnsignedSource(CastOp castOp) {
 }
 
 // A signedness reinterpretation changes the numeric value even when the output
-// type can hold the original range: a signed i16 value -1 becomes 65535 when
-// the next cast reads the same i16 as unsigned. Keep the chain when a consumer
-// reads its integer input with a different signedness than the producer wrote
-// it, and when a float-to-int step changes the sign of the float value.
+// type can hold the original range. Example:
+//
+//   i8 --si2si--> i16 --ui2fp--> f32 --si2si--> i8
+//
+// `si2si` writes a signed i16 (-1); `ui2fp` reads the same bits as unsigned
+// (65535.0), which is outside i8's range even though every output type's range
+// contains i8. Keep the chain when a consumer reads its integer input with a
+// different signedness than the producer wrote it, and when a float-to-int
+// step changes the sign of the float value. This is a per-hop check; the final
+// range check alone cannot see an intermediate reinterpretation.
 static bool isSignednessPreservingCastChain(ArrayRef<CastOp> castChain) {
   for (size_t index = 0; index + 1 < castChain.size(); ++index) {
     CastOp consumer = castChain[index];
@@ -287,6 +293,9 @@ static bool isRangePreservingCastChain(ArrayRef<CastOp> castChain) {
   auto sourceInt = dyn_cast<IntegerType>(sourceType);
   if (!sourceInt)
     return false;
+  // The output-range check alone misses an intermediate signedness
+  // reinterpretation (see the si2si -> ui2fp example above), so check it hop
+  // by hop first.
   if (!isSignednessPreservingCastChain(castChain))
     return false;
 
