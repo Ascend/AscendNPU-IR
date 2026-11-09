@@ -83,6 +83,7 @@ public:
 private:
   // Core classification & predicates
   static bool isViewLikeMemRefOp(Operation *op);
+  static bool isViewLikeTensorOp(Operation *op);
   static Operation *getRootAlloc(Value memref);
   static bool isGMTarget(Value dst);
   static bool isStoreFixpipeCopyWriter(Operation *usr, Value memrefVal);
@@ -155,10 +156,18 @@ protected:
 //===----------------------------------------------------------------------===//
 
 bool CVScopeOutliner::isViewLikeMemRefOp(Operation *op) {
-  return op && isa<ViewLikeOpInterface, memref::SubViewOp, memref::ViewOp,
-                   memref::CastOp, memref::ReinterpretCastOp,
-                   memref::MemorySpaceCastOp, memref::CollapseShapeOp,
-                   memref::ExpandShapeOp>(op);
+  return op &&
+         isa<ViewLikeOpInterface, memref::SubViewOp, memref::ViewOp,
+             memref::CastOp, memref::ReinterpretCastOp,
+             memref::MemorySpaceCastOp, memref::CollapseShapeOp,
+             memref::ExpandShapeOp, memref::ReshapeOp>(op) &&
+         llvm::none_of(op->getResultTypes(), llvm::IsaPred<TensorType>);
+}
+
+bool CVScopeOutliner::isViewLikeTensorOp(Operation *op) {
+  return op &&
+         isa<tensor::ExpandShapeOp, tensor::CollapseShapeOp,
+             tensor::ExtractSliceOp, tensor::ReshapeOp, tensor::CastOp>(op);
 }
 
 Operation *CVScopeOutliner::getRootAlloc(Value memref) {
@@ -220,6 +229,11 @@ bool CVScopeOutliner::isStoreFixpipeCopyWriter(Operation *usr,
     return copyOp.getTarget() == memrefVal;
   if (!isa<StoreOp, FixpipeOp, CopyOp>(usr))
     return false;
+  if (isa<FixpipeOp>(usr)) {
+    if (auto space = GetBufferSpaceAttr(memrefVal);
+        space && space->getAddressSpace() == AddressSpace::L1)
+      return false;
+  }
   auto dps = dyn_cast<DestinationStyleOpInterface>(usr);
   return dps && llvm::any_of(dps.getDpsInits(),
                              [&](Value init) { return init == memrefVal; });
@@ -274,10 +288,22 @@ bool CVScopeOutliner::isAllocTargetOfMultiUserLoadOrND2NZ(
     auto toTensor = dyn_cast<bufferization::ToTensorOp>(use.getOwner());
     if (!toTensor)
       return false;
-    for (OpOperand &tensorUse : toTensor.getResult().getUses()) {
-      (void)tensorUse;
-      if (++numToTensorUses > 1)
-        return true;
+    SmallVector<Value, 8> queue = {toTensor.getResult()};
+    SmallPtrSet<Value, 8> visited = {toTensor.getResult()};
+    while (!queue.empty()) {
+      Value curr = queue.pop_back_val();
+      for (OpOperand &tensorUse : curr.getUses()) {
+        Operation *usr = tensorUse.getOwner();
+        if (isViewLikeTensorOp(usr)) {
+          for (Value res : usr->getResults()) {
+            if (visited.insert(res).second)
+              queue.push_back(res);
+          }
+          continue;
+        }
+        if (++numToTensorUses > 1)
+          return true;
+      }
     }
     return false;
   });
@@ -330,29 +356,28 @@ TCoreType CVScopeOutliner::determineCoreType(Operation *defOp) {
   SmallVector<Operation *> stack = {defOp};
   SmallPtrSet<Operation *, 16> visited = {defOp};
 
-  if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(defOp)) {
-    std::optional<TCoreType> foundCore;
-    walkAllocUsers(getRootAlloc(toTensor.getOperand()), [&](OpOperand &use) {
-      Operation *usr = use.getOwner();
-      if (!isCoreOp(usr))
-        return false;
-      if (auto ct = queryConcreteCoreType(usr)) {
-        foundCore = *ct;
-        return true;
-      }
-      if (visited.insert(usr).second)
-        stack.push_back(usr);
-      return false;
-    });
-    if (foundCore)
-      return *foundCore;
-  }
-
   while (!stack.empty()) {
     Operation *curr = stack.pop_back_val();
     if (isCoreOp(curr)) {
       if (auto ct = queryConcreteCoreType(curr))
         return *ct;
+    }
+    if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(curr)) {
+      std::optional<TCoreType> foundCore;
+      walkAllocUsers(getRootAlloc(toTensor.getOperand()), [&](OpOperand &use) {
+        Operation *usr = use.getOwner();
+        if (!isCoreOp(usr))
+          return false;
+        if (auto ct = queryConcreteCoreType(usr)) {
+          foundCore = *ct;
+          return true;
+        }
+        if (visited.insert(usr).second)
+          stack.push_back(usr);
+        return false;
+      });
+      if (foundCore)
+        return *foundCore;
     }
     auto pushDefs = [&](ValueRange vals) {
       for (Value opnd : vals) {
@@ -387,7 +412,7 @@ bool CVScopeOutliner::canCloneOpInWorkItem(Operation *op,
   if (isViewLikeMemRefOp(op) && op->getNumOperands() > 0 &&
       getRootAlloc(op->getOperand(0)))
     return false;
-  return isa<tensor::EmptyOp>(op) ||
+  return isa<tensor::EmptyOp>(op) || isViewLikeTensorOp(op) ||
          llvm::none_of(op->getResultTypes(), llvm::IsaPred<TensorType>);
 }
 
@@ -589,23 +614,34 @@ LogicalResult CVScopeOutliner::traceWorkItem(Value output, Operation *seedOp,
       return false;
     if (localOutputs.contains(res) || valToOutputAlias.contains(res))
       return true;
-    for (OpOperand &use : res.getUses()) {
-      Operation *usr = use.getOwner();
-      if (!loopOp->isProperAncestor(usr))
-        continue;
-      if (isa<scf::YieldOp>(usr)) {
-        if (usr->getParentOp() == loopOp)
-          return true;
-        if (auto yieldIf = dyn_cast<scf::IfOp>(usr->getParentOp())) {
-          unsigned resIdx = use.getOperandNumber();
-          if (resIdx < yieldIf.getNumResults() &&
-              !acceptedIfResults.contains(yieldIf.getResult(resIdx)))
-            return true;
+    SmallVector<Value, 8> worklist = {res};
+    SmallPtrSet<Value, 8> visitedVals = {res};
+    while (!worklist.empty()) {
+      Value curr = worklist.pop_back_val();
+      for (OpOperand &use : curr.getUses()) {
+        Operation *usr = use.getOwner();
+        if (!loopOp->isProperAncestor(usr))
           continue;
+        if (isa<scf::YieldOp>(usr)) {
+          if (usr->getParentOp() == loopOp)
+            return true;
+          if (auto yieldIf = dyn_cast<scf::IfOp>(usr->getParentOp())) {
+            unsigned resIdx = use.getOperandNumber();
+            if (resIdx < yieldIf.getNumResults() &&
+                !acceptedIfResults.contains(yieldIf.getResult(resIdx)))
+              return true;
+            continue;
+          }
+        }
+        if (!item.ops.contains(usr))
+          return true;
+        if (isViewLikeTensorOp(usr)) {
+          for (Value usrRes : usr->getResults()) {
+            if (visitedVals.insert(usrRes).second)
+              worklist.push_back(usrRes);
+          }
         }
       }
-      if (!item.ops.contains(usr))
-        return true;
     }
     return false;
   };
@@ -1103,8 +1139,12 @@ void CVScopeOutliner::computeHoistedOps(WorkItem *item) {
         bool isAlloc = isa<memref::AllocOp, AllocWorkspaceOp>(tOp) &&
                        (isAllocTargetOfStoreFixpipeCopy(tOp) ||
                         isAllocTargetOfMultiUserLoadOrND2NZ(tOp));
-        bool isCast = isa<memref::MemorySpaceCastOp, annotation::MarkOp,
-                          bufferization::ToTensorOp, memref::CastOp>(tOp);
+        bool isCast =
+            (isViewLikeMemRefOp(tOp) || isViewLikeTensorOp(tOp) ||
+             isa<annotation::MarkOp, bufferization::ToTensorOp>(tOp)) &&
+            llvm::any_of(tOp->getOperands(), [&](Value opnd) {
+              return item->hoistedOps.contains(opnd.getDefiningOp());
+            });
         if (!isAlloc && !isCast)
           continue;
         bool operandsAvailable =
