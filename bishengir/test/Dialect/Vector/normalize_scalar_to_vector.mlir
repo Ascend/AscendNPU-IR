@@ -137,3 +137,28 @@ func.func @test_scalar_bitcast_chain_via_select(%arg0: f32, %arg1: i32, %arg2: i
   vector.transfer_write %7, %arg6[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
   return
 }
+
+// -----
+// Constant side operands of a scalar chain must be broadcast, not left as
+// unrealized_conversion_cast (which cannot be lowered to LLVM).
+func.func @test_scalar_chain_with_constants(%arg0: f32, %arg1: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0xFF800000 : f32
+  %c_mask = arith.constant 2147483647 : i32
+  %c_off = arith.constant -2139095040 : i32
+  %c1 = arith.constant 1 : i32
+  %c0_i32 = arith.constant 0 : i32
+  // CHECK-LABEL: @test_scalar_chain_with_constants
+  // CHECK-NOT: unrealized_conversion_cast
+  // CHECK: arith.select {{.*}} : vector<64xi1>, vector<64xf32>
+  %0 = arith.bitcast %arg0 : f32 to i32
+  %1 = arith.andi %0, %c_mask : i32
+  %2 = arith.addi %1, %c_off : i32
+  %3 = arith.minsi %2, %c1 : i32
+  %4 = arith.maxsi %3, %c0_i32 : i32
+  %5 = arith.cmpi ne, %4, %c0_i32 : i32
+  %6 = arith.select %5, %cst, %arg0 : f32
+  %7 = vector.broadcast %6 : f32 to vector<64xf32>
+  vector.transfer_write %7, %arg1[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+  return
+}

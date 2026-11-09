@@ -358,37 +358,6 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
         }
       }
     }
-    // A successful legacy choice is unchanged. Otherwise allow optional
-    // stores/copies to remain untiled and compare UB-related dimensions.
-    if (selectedTilingCandGroupMap.contains(groupIndex))
-      continue;
-    auto numRequiredUb = requiredUbCounts.lookup(groupIndex);
-    if (numRequiredUb == 0)
-      continue;
-    int64_t bestGroup = -1;
-    for (const auto &[candGroup, candidate] : candidatesByCandGroup) {
-      int64_t numUbCandidates = 0;
-      for (auto [value, dim] : candidate) {
-        auto indices = getValueDimIndices(value);
-        auto parent = structuralDsu_->find(indices[dim]);
-        if (requiredUbBuffers[groupIndex].contains(parent))
-          ++numUbCandidates;
-      }
-      if (numUbCandidates < numRequiredUb)
-        continue;
-      if (bestGroup == -1 ||
-          candidateGroupSize[candGroup] > candidateGroupSize[bestGroup])
-        bestGroup = candGroup;
-    }
-    if (bestGroup != -1) {
-      selectedTilingCandGroupMap[groupIndex] = bestGroup;
-      for (auto [store, dim] : candidatesByCandGroup[bestGroup])
-        tilingDim_[store] = dim;
-      LDBG("UB TCB fallback selected "
-           << bestGroup << " in group " << groupIndex << " covering "
-           << candidateGroupSize[bestGroup] << " of " << numStoreOp
-           << " operations");
-    }
   }
   LDBG("Selected independent tiling dims: "
        << selectedTilingCandGroupMap.size());

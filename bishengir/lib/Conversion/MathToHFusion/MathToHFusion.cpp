@@ -15,7 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <cstdlib>
+#include <cmath>
 #include <string>
 
 #include "RegBase/SIMTTrigCommon.h"
@@ -53,13 +53,6 @@ using namespace mlir::hfusion;
 static bool operateOnTensors(Operation *op) {
   return llvm::all_of(op->getOperandTypes(),
                       [](Type type) { return isa<RankedTensorType>(type); });
-}
-
-// A/B measurement switch: when BISHENGIR_SIN_NORMALIZE is set, f32 sin
-// keeps the legacy HFusion Normalize lowering instead of the template-library
-// intrinsic (sin_fp32_simt_<rank>d).
-static bool useNormalizeSin() {
-  return std::getenv("BISHENGIR_SIN_NORMALIZE") != nullptr;
 }
 
 template <typename UnaryOp, linalg::UnaryFn linalgFn>
@@ -127,10 +120,10 @@ struct ElementwiseOpToHFusionUnary : public OpRewritePattern<UnaryOp> {
 };
 
 /// Highest memref rank that has a template-library SIMT entry point
-/// (`_mlir_ciface_sin_fp32_simt_<rank>d` in RegBase/Vector/Sin.cpp). Keep in
-/// sync with SIN_SIMT_MAX_RANK in Template/lib/Template/include/RegBase/
-/// SIMTTrigCommon.h.
-static constexpr int64_t kMaxTemplateLibTrigRank = SIN_SIMT_MAX_RANK;
+/// (`_mlir_ciface_{sin,cos}_fp32_simt_<rank>d` in
+/// RegBase/Vector/{Sin,Cos}.cpp). Keep in sync with SIMT_TRIG_MAX_RANK in
+/// Template/lib/Template/include/ RegBase/SIMTTrigCommon.h.
+static constexpr int64_t kMaxTemplateLibTrigRank = SIMT_TRIG_MAX_RANK;
 
 /// True if `value` (an f32 tensor) is only a widening view/cast of an f16
 /// tensor, with no arithmetic in between that could leave the f16 range. For
@@ -202,27 +195,27 @@ static bool isNarrowedToF16(Value value) {
   }
 }
 
-/// True if the f32 sin is bracketed by f16 casts: the input is a widening of
-/// f16 data and the result is narrowed back to f16. Then the low-precision
+/// True if the f32 trig op is bracketed by f16 casts: the input is a widening
+/// of f16 data and the result is narrowed back to f16. Then the low-precision
 /// Normalize recipe (pi reduction + Taylor degree 9) is enough, and the
 /// Payne-Hanek table can be skipped entirely.
-static bool isF16Bracketed(Value input, Operation *sinOp) {
+static bool isF16Bracketed(Value input, Operation *op) {
   if (!isF16Derived(input))
     return false;
-  if (sinOp->getNumResults() == 0)
+  if (op->getNumResults() == 0)
     return false;
-  return isNarrowedToF16(sinOp->getResult(0));
+  return isNarrowedToF16(op->getResult(0));
 }
 
 /// Lower f32 `math.sin` on regbase to the template-library implementation via
 /// a `hivm.custom` call whose symbol resolves to
-/// `_mlir_ciface_sin_fp32_simt_<rank>d` (RegBase/Vector/Sin.cpp). This keeps
-/// sin away from the HFusion Normalize expansion and lets the template-lib
-/// SIMT algorithm be used.
+/// `_mlir_ciface_{sin,cos}_fp32_simt_<rank>d` (RegBase/Vector/{Sin,Cos}.cpp).
+/// This keeps the trig op away from the HFusion Normalize expansion and lets
+/// the template-lib SIMT algorithm be used.
 ///
 /// Everything the template library cannot handle - f16/bf16 inputs and ranks
 /// above kMaxTemplateLibTrigRank - falls back to the HFusion Normalize
-/// expansion here, so this pattern is also the fallback for math.sin.
+/// expansion here, so this pattern is also the fallback for math.sin/math.cos.
 template <typename MathOp>
 struct MathTrigToTemplateLib : public OpRewritePattern<MathOp> {
   using OpRewritePattern<MathOp>::OpRewritePattern;
@@ -240,26 +233,47 @@ struct MathTrigToTemplateLib : public OpRewritePattern<MathOp> {
       // Normalize recipe inline (pi reduction + Taylor degree 9). The f16
       // accuracy budget makes it more than enough, and it avoids the
       // Payne-Hanek table entirely.
-      if (std::is_same_v<MathOp, math::SinOp> && isF16Bracketed(inner, op)) {
+      if (isF16Bracketed(inner, op)) {
         Location loc = op.getLoc();
         Value empty = utils::createEmptyOp(rewriter, loc, inner);
-        Value roundedPiMultiple =
-            buildRoundedPiMultiple<hfusion::NormalizeTraitsBase>(
-                rewriter, loc, inner, rewriter.getF32Type());
-        Value rangeReducedInput =
-            buildRangeReducedTrigInput<hfusion::NormalizeTraitsBase>(
-                rewriter, loc, inner, roundedPiMultiple, kPiApproximations,
-                0.0);
-        Value sinApproximation =
-            buildTaylorApproximation<hfusion::NormalizeTraitsBase>(
-                rewriter, loc, rangeReducedInput,
-                getTaylorSeriesCoefficients(mlir::TaylerMode::SIN, 5));
-        Value sinSign = buildSinParitySign<hfusion::NormalizeTraitsBase>(
-            rewriter, loc, roundedPiMultiple);
-        Value result = hfusion::NormalizeTraitsBase::createBinaryOp(
-            rewriter, loc, sinApproximation, sinSign, empty, BinaryKind::Mul);
-        rewriter.replaceOp(op, result);
-        return success();
+        if constexpr (std::is_same_v<MathOp, math::SinOp>) {
+          Value roundedPiMultiple =
+              buildRoundedPiMultiple<hfusion::NormalizeTraitsBase>(
+                  rewriter, loc, inner, rewriter.getF32Type());
+          Value rangeReducedInput =
+              buildRangeReducedTrigInput<hfusion::NormalizeTraitsBase>(
+                  rewriter, loc, inner, roundedPiMultiple, kPiApproximations,
+                  0.0);
+          Value approximation =
+              buildTaylorApproximation<hfusion::NormalizeTraitsBase>(
+                  rewriter, loc, rangeReducedInput,
+                  getTaylorSeriesCoefficients(mlir::TaylerMode::SIN, 5));
+          Value sign = buildSinParitySign<hfusion::NormalizeTraitsBase>(
+              rewriter, loc, roundedPiMultiple);
+          Value result = hfusion::NormalizeTraitsBase::createBinaryOp(
+              rewriter, loc, approximation, sign, empty, BinaryKind::Mul);
+          rewriter.replaceOp(op, result);
+          return success();
+        } else if constexpr (std::is_same_v<MathOp, math::CosOp>) {
+          // cos(x) = sin(x - k * pi + pi / 2) with k = round(x / pi + 0.5).
+          Value roundedPiMultiple =
+              buildRoundedPiMultiple<hfusion::NormalizeTraitsBase>(
+                  rewriter, loc, inner, rewriter.getF32Type(), 0.5);
+          Value rangeReducedInput =
+              buildRangeReducedTrigInput<hfusion::NormalizeTraitsBase>(
+                  rewriter, loc, inner, roundedPiMultiple, kPiApproximations,
+                  M_PI / 2);
+          Value approximation =
+              buildTaylorApproximation<hfusion::NormalizeTraitsBase>(
+                  rewriter, loc, rangeReducedInput,
+                  getTaylorSeriesCoefficients(mlir::TaylerMode::SIN, 5));
+          Value sign = buildSinParitySign<hfusion::NormalizeTraitsBase>(
+              rewriter, loc, roundedPiMultiple);
+          Value result = hfusion::NormalizeTraitsBase::createBinaryOp(
+              rewriter, loc, approximation, sign, empty, BinaryKind::Mul);
+          rewriter.replaceOp(op, result);
+          return success();
+        }
       }
 
       SmallVector<Value> dsts;
@@ -469,9 +483,6 @@ populateMathToHFusionConversionPatterns_regbase(RewritePatternSet &patterns,
       ElementwiseOpToHFusionUnary<math::TanhOp, hfusion::UnaryFn::tanh>,
       ElementwiseOpToHFusionUnary<math::AtanOp, hfusion::UnaryFn::atan>,
       ElementwiseOpToHFusionUnary<math::TanOp, hfusion::UnaryFn::tan>,
-      // cos still uses the HFusion Normalize expansion for now (no cos wrapper
-      // in the template library yet).
-      ElementwiseOpToHFusionUnary<math::CosOp, hfusion::UnaryFn::cos>,
       ElementwiseOpToHFusionUnary<math::CoshOp, hfusion::UnaryFn::cosh>,
       ElementwiseOpToHFusionUnary<math::RoundEvenOp,
                                   hfusion::UnaryFn::nearbyint>,
@@ -484,16 +495,12 @@ populateMathToHFusionConversionPatterns_regbase(RewritePatternSet &patterns,
       ElementwiseOpToHFusionUnary<math::ExpM1Op, hfusion::UnaryFn::expm1>,
       ElementwiseOpToHFusionUnary<mathExt::IlogbOp, hfusion::UnaryFn::ilogb>>(
       patterns.getContext());
-  if (useNormalizeSin()) {
-    // A/B measurement switch: legacy HFusion Normalize lowering.
-    patterns
-        .add<ElementwiseOpToHFusionUnary<math::SinOp, hfusion::UnaryFn::sin>>(
-            patterns.getContext());
-  } else {
-    // f32 sin with rank <= kMaxTemplateLibTrigRank goes to the template-lib
-    // SIMT kernel; everything else falls back to Normalize inside the pattern.
-    patterns.add<MathTrigToTemplateLib<math::SinOp>>(patterns.getContext());
-  }
+  // f32 sin with rank <= kMaxTemplateLibTrigRank goes to the template-lib
+  // SIMT kernel; everything else falls back to Normalize inside the pattern.
+  patterns.add<MathTrigToTemplateLib<math::SinOp>>(patterns.getContext());
+  // f32 cos with rank <= kMaxTemplateLibTrigRank goes to the template-lib
+  // SIMT kernel; everything else falls back to Normalize inside the pattern.
+  patterns.add<MathTrigToTemplateLib<math::CosOp>>(patterns.getContext());
   patterns.add<MathFmaLowering>(patterns.getContext(), enableFma);
 }
 

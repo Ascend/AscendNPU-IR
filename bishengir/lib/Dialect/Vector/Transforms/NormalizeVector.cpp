@@ -60,12 +60,13 @@ getDenseAttrForSelect(VectorType srcType, PatternRewriter &rewriter,
   Type elemTy = srcType.getElementType();
   DenseElementsAttr denseAttr;
   if (elemTy.isF32() || elemTy.isF16()) {
-    const llvm::fltSemantics &semantics = mlir::cast<FloatType>(elemTy).getFloatSemantics();
+    const llvm::fltSemantics &semantics =
+        mlir::cast<FloatType>(elemTy).getFloatSemantics();
     llvm::APFloat initVal(semantics);
     switch (reduceKind) {
     case vector::CombiningKind::MAXNUMF:
     case vector::CombiningKind::MAXIMUMF:
-      initVal = llvm::APFloat::getInf(semantics, /*Negative*/true);
+      initVal = llvm::APFloat::getInf(semantics, /*Negative*/ true);
       break;
     case vector::CombiningKind::MINNUMF:
     case vector::CombiningKind::MINIMUMF:
@@ -149,8 +150,8 @@ createMaskDropNonScalableUnitDims(PatternRewriter &rewriter, Location loc,
       .getResult();
 }
 
-static SmallVector<int64_t>
-getNonOneReductionShape(ArrayAttr reductionDimsAttr, VectorType vecType) {
+static SmallVector<int64_t> getNonOneReductionShape(ArrayAttr reductionDimsAttr,
+                                                    VectorType vecType) {
   auto vecShape = vecType.getShape();
   auto values = reductionDimsAttr.getAsRange<IntegerAttr>();
   SmallVector<int64_t> reductionDims;
@@ -249,7 +250,8 @@ struct OneDimAccMultiReductionToReduction
     Location loc = multiReductionOp.getLoc();
     Type elemType = srcType.getElementType();
 
-    VectorType castedSrcType = VectorType::get({srcType.getNumElements()}, elemType);
+    VectorType castedSrcType =
+        VectorType::get({srcType.getNumElements()}, elemType);
     Value castedSrc =
         rewriter.create<vector::ShapeCastOp>(loc, castedSrcType, src);
     Value castedAcc =
@@ -526,9 +528,9 @@ struct UnitDimMultiReductionToReduction
           rewriter, loc);
       res = mlir::vector::maskOperation(rewriter, reductionOp, vectorMask);
     }
-    if(utils::isScalarLike(dstBrc)){
+    if (utils::isScalarLike(dstBrc)) {
       auto dstUcc = rewriter.create<UnrealizedConversionCastOp>(
-        loc, dstBrc.getResultVectorType(), res->getResult(0));
+          loc, dstBrc.getResultVectorType(), res->getResult(0));
       rewriter.replaceAllUsesWith(dstBrc.getResult(), dstUcc->getResult(0));
     } else {
       auto dstUcc = rewriter.create<UnrealizedConversionCastOp>(
@@ -1055,7 +1057,8 @@ struct FixBitTypeBroadcastTransferReadPattern
   //   %sel    = arith.select %read, %one, %zero0 : vector<...xf16>
   //   %bcast  = vector.broadcast %sel : vector<...xf16> to vector<...xf16>
   //   %zero   = arith.constant dense<0.0> : vector<...xf16>
-  //   %r      = arith.cmpf une %bcast, %zero : vector<...xf16> -> vector<...xi1>
+  //   %r      = arith.cmpf une %bcast, %zero : vector<...xf16> ->
+  //   vector<...xi1>
   LogicalResult matchAndRewrite(vector::TransferReadOp op,
                                 PatternRewriter &rewriter) const override {
     // Skip transfer_reads inside vector.mask 鈥?replacing a single op with
@@ -1098,34 +1101,34 @@ struct FixBitTypeBroadcastTransferReadPattern
       if (isNonBroadcastDim[i])
         intermediateShape[i] = resultVecType.getDimSize(i);
 
-    auto intermediateVecType =
-        VectorType::get(intermediateShape, elemType);
+    auto intermediateVecType = VectorType::get(intermediateShape, elemType);
     auto intermediateVecTypeF16 =
         VectorType::get(intermediateShape, rewriter.getF16Type());
     auto targetVecTypeF16 =
         VectorType::get(resultVecType.getShape(), rewriter.getF16Type());
 
     auto read = rewriter.create<vector::TransferReadOp>(
-        op.getLoc(), intermediateVecType, op.getSource(),
-        op.getIndices(), map, op.getPadding(),
+        op.getLoc(), intermediateVecType, op.getSource(), op.getIndices(), map,
+        op.getPadding(),
         /*mask=*/Value(), op.getInBoundsAttr());
 
     auto oneVec = rewriter.create<arith::ConstantOp>(
         op.getLoc(), intermediateVecTypeF16,
-        DenseElementsAttr::get(intermediateVecTypeF16,
-                               rewriter.getFloatAttr(rewriter.getF16Type(), 1.0)));
+        DenseElementsAttr::get(
+            intermediateVecTypeF16,
+            rewriter.getFloatAttr(rewriter.getF16Type(), 1.0)));
     auto zeroVec = rewriter.create<arith::ConstantOp>(
         op.getLoc(), intermediateVecTypeF16,
         rewriter.getZeroAttr(intermediateVecTypeF16));
 
-    auto sel = rewriter.create<arith::SelectOp>(op.getLoc(), read, oneVec, zeroVec);
+    auto sel =
+        rewriter.create<arith::SelectOp>(op.getLoc(), read, oneVec, zeroVec);
 
-    auto bcast = rewriter.create<vector::BroadcastOp>(
-        op.getLoc(), targetVecTypeF16, sel);
+    auto bcast = rewriter.create<vector::BroadcastOp>(op.getLoc(),
+                                                      targetVecTypeF16, sel);
 
     auto zero = rewriter.create<arith::ConstantOp>(
-        op.getLoc(), targetVecTypeF16,
-        rewriter.getZeroAttr(targetVecTypeF16));
+        op.getLoc(), targetVecTypeF16, rewriter.getZeroAttr(targetVecTypeF16));
 
     auto cmp = rewriter.create<arith::CmpFOp>(
         op.getLoc(), arith::CmpFPredicate::UNE, bcast, zero);
@@ -1552,8 +1555,9 @@ class TransferReadToGatheringLoadPattern
       padding = rewriter.create<arith::ConstantOp>(padding.getLoc(), resultType,
                                                    passthru);
     } else {
-      llvm::report_fatal_error("TODO support non-constant padding value for "
-                       "vector.transfer_read -> vector.gather transform");
+      llvm::report_fatal_error(
+          "TODO support non-constant padding value for "
+          "vector.transfer_read -> vector.gather transform");
     }
     return padding;
   }
@@ -1656,9 +1660,8 @@ class TransferReadToGatheringLoadPattern
     }
 
     if (destType.getRank() > 1) {
-      finalResult =
-          rewriter.create<vector::ShapeCastOp>(readop.getLoc(), destType,
-                                               finalResult);
+      finalResult = rewriter.create<vector::ShapeCastOp>(readop.getLoc(),
+                                                         destType, finalResult);
     }
     rewriter.replaceOp(readop, finalResult);
     return success();
@@ -1674,22 +1677,22 @@ struct TruncfScalarToVector : public OpRewritePattern<arith::TruncFOp> {
       return failure();
     auto *user = *truncResult.user_begin();
     auto broadcastOp = dyn_cast<vector::BroadcastOp>(user);
-    if(!broadcastOp)
+    if (!broadcastOp)
       return failure();
     Value truncInput = op.getOperand();
     Type truncInputType = truncInput.getType();
     if (isa<ShapedType>(truncInputType))
       return failure();
     VectorType broadcastResultType = broadcastOp.getResultVectorType();
-    if(!broadcastResultType.getElementType().isBF16())
+    if (!broadcastResultType.getElementType().isBF16())
       return failure();
     Location loc = op.getLoc();
-    VectorType intermediateType = VectorType::get(
-      broadcastResultType.getShape(),truncInputType);
-    Value broadcastScalar = rewriter.create<vector::BroadcastOp>(
-      loc, intermediateType, truncInput);
-    Value newTrunc = rewriter.create<arith::TruncFOp>(
-      loc, broadcastResultType, broadcastScalar);
+    VectorType intermediateType =
+        VectorType::get(broadcastResultType.getShape(), truncInputType);
+    Value broadcastScalar =
+        rewriter.create<vector::BroadcastOp>(loc, intermediateType, truncInput);
+    Value newTrunc = rewriter.create<arith::TruncFOp>(loc, broadcastResultType,
+                                                      broadcastScalar);
     rewriter.replaceOp(broadcastOp, newTrunc);
     if (op->use_empty()) {
       rewriter.eraseOp(op);
@@ -1697,6 +1700,20 @@ struct TruncfScalarToVector : public OpRewritePattern<arith::TruncFOp> {
     return success();
   }
 };
+
+/// Materialize `scalar` as a vector of type `vecType` for the scalar-to-vector
+/// patterns below. Block arguments and `arith.constant`s have no vector
+/// producer for a conversion cast to fold with, so they are broadcast
+/// (a constant broadcast folds to a splat constant). Any other scalar is the
+/// cast-back of an already vectorized op, and a conversion cast folds with it.
+static Value materializeScalarAsVector(PatternRewriter &rewriter, Location loc,
+                                       Value scalar, VectorType vecType) {
+  if (isa<BlockArgument>(scalar) ||
+      isa_and_nonnull<arith::ConstantOp>(scalar.getDefiningOp()))
+    return rewriter.create<vector::BroadcastOp>(loc, vecType, scalar);
+  return rewriter.create<UnrealizedConversionCastOp>(loc, vecType, scalar)
+      .getResult(0);
+}
 
 /// Before conversion:
 /// ```mlir
@@ -1711,7 +1728,8 @@ struct TruncfScalarToVector : public OpRewritePattern<arith::TruncFOp> {
 template <typename BinaryOpType>
 struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
   using OpRewritePattern<BinaryOpType>::OpRewritePattern;
-  LogicalResult matchAndRewrite(BinaryOpType op, PatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(BinaryOpType op,
+                                PatternRewriter &rewriter) const override {
     if (isa<VectorType>(op.getResult().getType()))
       return failure();
     auto lhs = op.getLhs();
@@ -1719,7 +1737,8 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
     Type lhsType = lhs.getType();
     Type rhsType = rhs.getType();
     Type resultType = op.getType();
-    if (!((lhsType.isF32() && rhsType.isF32()) || (lhsType.isInteger(1) && rhsType.isInteger(1))))
+    if (!((lhsType.isF32() && rhsType.isF32()) ||
+          (lhsType.isInteger(1) && rhsType.isInteger(1))))
       return failure();
     int numOperands = static_cast<int>(op.getNumOperands());
     if (numOperands != 2)
@@ -1735,13 +1754,13 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
       VectorType cmpVecType = VectorType::get({64}, rewriter.getF32Type());
       if constexpr (std::is_same_v<BinaryOpType, arith::CmpFOp>) {
         arith::CmpFPredicate predicate = op.getPredicate();
-        auto lhsVec =
-            rewriter.create<UnrealizedConversionCastOp>(loc, cmpVecType, lhs);
+        Value lhsVec =
+            materializeScalarAsVector(rewriter, loc, lhs, cmpVecType);
         auto rhsVec =
             rewriter.create<vector::BroadcastOp>(loc, cmpVecType, rhs);
         auto vectorCmp = rewriter.create<BinaryOpType>(
-            loc, cmpVecType.clone(rewriter.getI1Type()), predicate,
-            lhsVec.getResult(0), rhsVec.getResult());
+            loc, cmpVecType.clone(rewriter.getI1Type()), predicate, lhsVec,
+            rhsVec.getResult());
         rewriter.replaceOp(op, vectorCmp);
         return success();
       } else if constexpr (std::is_same_v<BinaryOpType, mathExt::DivFHPOp> ||
@@ -1749,11 +1768,10 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
                            std::is_same_v<BinaryOpType, arith::XOrIOp> ||
                            std::is_same_v<BinaryOpType, arith::MulFOp> ||
                            std::is_same_v<BinaryOpType, arith::SubFOp>) {
-        auto lhsVec =
-          rewriter.create<UnrealizedConversionCastOp>(loc, vecType, lhs);
+        Value lhsVec = materializeScalarAsVector(rewriter, loc, lhs, vecType);
         auto rhsVec = rewriter.create<vector::BroadcastOp>(loc, vecType, rhs);
-        auto vecResult = rewriter.create<BinaryOpType>(
-            loc, vecType, lhsVec.getResult(0), rhsVec.getResult());
+        auto vecResult = rewriter.create<BinaryOpType>(loc, vecType, lhsVec,
+                                                       rhsVec.getResult());
         rewriter.replaceOp(op, vecResult);
         return success();
       }
@@ -1761,13 +1779,13 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
       if constexpr (std::is_same_v<BinaryOpType, arith::CmpFOp>) {
         VectorType cmpVecType = VectorType::get({64}, rewriter.getF32Type());
         arith::CmpFPredicate predicate = op.getPredicate();
-        auto rhsVec =
-            rewriter.create<UnrealizedConversionCastOp>(loc, cmpVecType, rhs);
+        Value rhsVec =
+            materializeScalarAsVector(rewriter, loc, rhs, cmpVecType);
         auto lhsVec =
             rewriter.create<vector::BroadcastOp>(loc, cmpVecType, lhs);
         auto vectorCmp = rewriter.create<BinaryOpType>(
             loc, cmpVecType.clone(rewriter.getI1Type()), predicate,
-            lhsVec.getResult(), rhsVec.getResult(0));
+            lhsVec.getResult(), rhsVec);
         rewriter.replaceOp(op, vectorCmp);
         return success();
       } else if constexpr (std::is_same_v<BinaryOpType, mathExt::DivFHPOp> ||
@@ -1775,40 +1793,37 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
                            std::is_same_v<BinaryOpType, arith::XOrIOp> ||
                            std::is_same_v<BinaryOpType, arith::MulFOp> ||
                            std::is_same_v<BinaryOpType, arith::SubFOp>) {
-        auto rhsVec =
-            rewriter.create<UnrealizedConversionCastOp>(loc, vecType, rhs);
+        Value rhsVec = materializeScalarAsVector(rewriter, loc, rhs, vecType);
         auto lhsVec = rewriter.create<vector::BroadcastOp>(loc, vecType, lhs);
         auto vecResult = rewriter.create<BinaryOpType>(
-            loc, vecType, lhsVec.getResult(), rhsVec.getResult(0));
+            loc, vecType, lhsVec.getResult(), rhsVec);
         rewriter.replaceOp(op, vecResult);
         return success();
-    }
+      }
     } else if (!leftBlockArg && !rightBlockArg) {
       if constexpr (std::is_same_v<BinaryOpType, arith::CmpFOp>) {
         VectorType cmpVecType = VectorType::get({64}, rewriter.getF32Type());
         arith::CmpFPredicate predicate = op.getPredicate();
-        auto lhsVec =
-              rewriter.create<UnrealizedConversionCastOp>(loc, cmpVecType, lhs);
-        auto rhsVec =
-              rewriter.create<UnrealizedConversionCastOp>(loc, cmpVecType, rhs);
+        Value lhsVec =
+            materializeScalarAsVector(rewriter, loc, lhs, cmpVecType);
+        Value rhsVec =
+            materializeScalarAsVector(rewriter, loc, rhs, cmpVecType);
         auto vectorCmp = rewriter.create<BinaryOpType>(
-              loc, cmpVecType.clone(rewriter.getI1Type()), predicate,
-              lhsVec.getResult(0), rhsVec.getResult(0));
+            loc, cmpVecType.clone(rewriter.getI1Type()), predicate, lhsVec,
+            rhsVec);
         rewriter.replaceOp(op, vectorCmp);
         return success();
       } else if constexpr (std::is_same_v<BinaryOpType, mathExt::DivFHPOp> ||
-                            std::is_same_v<BinaryOpType, arith::AndIOp> ||
-                            std::is_same_v<BinaryOpType, arith::XOrIOp> ||
-                            std::is_same_v<BinaryOpType, arith::MulFOp> ||
-                            std::is_same_v<BinaryOpType, arith::SubFOp>) {
-      auto lhsVec =
-          rewriter.create<UnrealizedConversionCastOp>(loc, vecType, lhs);
-      auto rhsVec =
-            rewriter.create<UnrealizedConversionCastOp>(loc, vecType, rhs);
-      auto vecResult = rewriter.create<BinaryOpType>(
-            loc, vecType, lhsVec.getResult(0), rhsVec.getResult(0));
-      rewriter.replaceOp(op, vecResult);
-      return success();
+                           std::is_same_v<BinaryOpType, arith::AndIOp> ||
+                           std::is_same_v<BinaryOpType, arith::XOrIOp> ||
+                           std::is_same_v<BinaryOpType, arith::MulFOp> ||
+                           std::is_same_v<BinaryOpType, arith::SubFOp>) {
+        Value lhsVec = materializeScalarAsVector(rewriter, loc, lhs, vecType);
+        Value rhsVec = materializeScalarAsVector(rewriter, loc, rhs, vecType);
+        auto vecResult =
+            rewriter.create<BinaryOpType>(loc, vecType, lhsVec, rhsVec);
+        rewriter.replaceOp(op, vecResult);
+        return success();
       }
     } else {
       if constexpr (std::is_same_v<BinaryOpType, arith::CmpFOp>) {
@@ -1834,7 +1849,7 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
             loc, vecType, lhsVec.getResult(), rhsVec.getResult());
         rewriter.replaceOp(op, vecResult);
         return success();
-       }
+      }
     }
     return failure();
   }
@@ -1864,7 +1879,6 @@ struct UnaryScalarOpToVectorPattern : public OpRewritePattern<UnaryOpType> {
     }
     VectorType vectorType = VectorType::get({64}, operandType);
     Location loc = op.getLoc();
-    auto blockArg = dyn_cast<BlockArgument>(operand);
 
     // Reject if any user is neither a broadcast, a conversion cast inserted
     // by sibling patterns, nor an op this pass will vectorize: the cast-back
@@ -1883,15 +1897,8 @@ struct UnaryScalarOpToVectorPattern : public OpRewritePattern<UnaryOpType> {
     }
 
     // Create vector operand
-    Value vecOperand;
-    if (blockArg) {
-      vecOperand =
-          rewriter.create<vector::BroadcastOp>(loc, vectorType, operand);
-    } else {
-      vecOperand =
-          rewriter.create<UnrealizedConversionCastOp>(loc, vectorType, operand)
-              .getResult(0);
-    }
+    Value vecOperand =
+        materializeScalarAsVector(rewriter, loc, operand, vectorType);
 
     // Create vector unary op
     auto vecOp = rewriter.create<UnaryOpType>(loc, vecOperand);
@@ -1912,7 +1919,8 @@ struct UnaryScalarOpToVectorPattern : public OpRewritePattern<UnaryOpType> {
   }
 
   // Whether `user` is rewritten to vector form by this pass, so the cast-back
-  // feeding it folds. Mirrors the op list in NormalizeVectorPass::runOnOperation.
+  // feeding it folds. Mirrors the op list in
+  // NormalizeVectorPass::runOnOperation.
   static bool isVectorizableByThisPass(Operation *user) {
     if (isa<math::AbsFOp, math::LogOp, math::RoundOp>(user))
       return true;
@@ -1948,9 +1956,8 @@ struct FmaOpScalarToVectorPattern : public OpRewritePattern<math::FmaOp> {
                                 PatternRewriter &rewriter) const override {
     auto opTypes = op.getOperandTypes();
 
-    bool nonVecArgsAreF32 = std::all_of(opTypes.begin(), opTypes.end(), [](Type t) {
-        return t.isF32();
-    });
+    bool nonVecArgsAreF32 = std::all_of(opTypes.begin(), opTypes.end(),
+                                        [](Type t) { return t.isF32(); });
 
     if (!nonVecArgsAreF32) {
       return failure();
@@ -1961,21 +1968,16 @@ struct FmaOpScalarToVectorPattern : public OpRewritePattern<math::FmaOp> {
     auto vectorType = VectorType::get({64}, operandType);
 
     SmallVector<vector::BroadcastOp, 4> broadCastUsers;
-    for (auto user: op->getUsers()) {
+    for (auto user : op->getUsers()) {
       if (auto bcUser = dyn_cast<vector::BroadcastOp>(user)) {
         broadCastUsers.push_back(bcUser);
       }
     }
 
     SmallVector<Value, 3> vOperands;
-    for (auto operand: op->getOperands()) {
-      Value vOperand;
-      if (isa<BlockArgument>(operand)) {
-        vOperand = rewriter.create<vector::BroadcastOp>(loc, vectorType, operand);
-      } else {
-        vOperand = rewriter.create<UnrealizedConversionCastOp>(
-            loc, vectorType, operand).getResult(0);
-      }
+    for (auto operand : op->getOperands()) {
+      Value vOperand =
+          materializeScalarAsVector(rewriter, loc, operand, vectorType);
       vOperands.push_back(vOperand);
     }
 
@@ -2036,18 +2038,11 @@ struct ScalarChainBroadcastToVectorPattern
 
     Location loc = brcOp.getLoc();
     VectorType rootVecType = VectorType::get({64}, cur.getType());
-    Value curVec = isa<BlockArgument>(cur)
-                       ? (Value)rewriter.create<vector::BroadcastOp>(
-                             loc, rootVecType, cur)
-                       : rewriter
-                             .create<UnrealizedConversionCastOp>(
-                                 loc, rootVecType, cur)
-                             .getResult(0);
+    Value curVec = materializeScalarAsVector(rewriter, loc, cur, rootVecType);
 
     for (auto it = chain.rbegin(), e = chain.rend(); it != e; ++it) {
       Operation *op = *it;
-      VectorType opVecType =
-          VectorType::get({64}, op->getResult(0).getType());
+      VectorType opVecType = VectorType::get({64}, op->getResult(0).getType());
       if (auto bc = dyn_cast<arith::BitcastOp>(op)) {
         curVec = rewriter.create<arith::BitcastOp>(loc, opVecType, curVec);
       } else if (auto andi = dyn_cast<arith::AndIOp>(op)) {
@@ -2113,10 +2108,7 @@ private:
 
   static Value broadcastOrCast(PatternRewriter &rewriter, Location loc,
                                Value scalar, VectorType vecType) {
-    if (isa<BlockArgument>(scalar))
-      return rewriter.create<vector::BroadcastOp>(loc, vecType, scalar);
-    return rewriter.create<UnrealizedConversionCastOp>(loc, vecType, scalar)
-        .getResult(0);
+    return materializeScalarAsVector(rewriter, loc, scalar, vecType);
   }
 };
 
@@ -2142,29 +2134,28 @@ void NormalizeVectorPass::runOnOperation() {
   vector::populateVectorTransferDropUnitDimsPatterns(patterns);
   vector::populateFlattenVectorOpsPattern(patterns);
 
-  patterns
-      .add<OneDimAccMultiReductionToReduction,
-           DropUnitDimFromMulExtendedOp<arith::MulSIExtendedOp>,
-           DropUnitDimFromMulExtendedOp<arith::MulUIExtendedOp>,
-           ShapeCastDropUnitDimsForMultiDimVectorPattern,
-           UnitDimMultiReductionToReduction, utils::ForOpLegalization<true>,
-           ShapeCastUnitDimsForBrc, UnitDimsVecTransposeNormalize,
-           ConvertCreateMaskTo1D, ConvertConstantMaskTo1D, TruncfScalarToVector,
-           FixBitTypeBroadcastTransferReadPattern>(
-          patterns.getContext());
+  patterns.add<OneDimAccMultiReductionToReduction,
+               DropUnitDimFromMulExtendedOp<arith::MulSIExtendedOp>,
+               DropUnitDimFromMulExtendedOp<arith::MulUIExtendedOp>,
+               ShapeCastDropUnitDimsForMultiDimVectorPattern,
+               UnitDimMultiReductionToReduction, utils::ForOpLegalization<true>,
+               ShapeCastUnitDimsForBrc, UnitDimsVecTransposeNormalize,
+               ConvertCreateMaskTo1D, ConvertConstantMaskTo1D,
+               TruncfScalarToVector, FixBitTypeBroadcastTransferReadPattern>(
+      patterns.getContext());
   if (funcOp->hasAttr(hivm::VectorFunctionAttr::name))
-    patterns.add<UnaryScalarOpToVectorPattern<math::AbsFOp>,
-                 UnaryScalarOpToVectorPattern<math::LogOp>,
-                 UnaryScalarOpToVectorPattern<math::RoundOp>,
-                 BinaryScalarOpToVectorPattern<mathExt::DivFHPOp>,
-                 BinaryScalarOpToVectorPattern<arith::AndIOp>,
-                 BinaryScalarOpToVectorPattern<arith::XOrIOp>,
-                 BinaryScalarOpToVectorPattern<arith::MulFOp>,
-                 BinaryScalarOpToVectorPattern<arith::SubFOp>,
-                 BinaryScalarOpToVectorPattern<arith::CmpFOp>,
-                 FmaOpScalarToVectorPattern,
-                 ScalarChainBroadcastToVectorPattern>(
-        patterns.getContext());
+    patterns
+        .add<UnaryScalarOpToVectorPattern<math::AbsFOp>,
+             UnaryScalarOpToVectorPattern<math::LogOp>,
+             UnaryScalarOpToVectorPattern<math::RoundOp>,
+             BinaryScalarOpToVectorPattern<mathExt::DivFHPOp>,
+             BinaryScalarOpToVectorPattern<arith::AndIOp>,
+             BinaryScalarOpToVectorPattern<arith::XOrIOp>,
+             BinaryScalarOpToVectorPattern<arith::MulFOp>,
+             BinaryScalarOpToVectorPattern<arith::SubFOp>,
+             BinaryScalarOpToVectorPattern<arith::CmpFOp>,
+             FmaOpScalarToVectorPattern, ScalarChainBroadcastToVectorPattern>(
+            patterns.getContext());
   patterns.add<TransferReadToGatheringLoadPattern>(patterns.getContext());
   vector::ExtractOp::getCanonicalizationPatterns(patterns, ctx);
   vector::ShapeCastOp::getCanonicalizationPatterns(patterns, ctx);
