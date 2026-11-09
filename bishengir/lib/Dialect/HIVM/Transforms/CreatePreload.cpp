@@ -1205,7 +1205,8 @@ static scf::ForOp preprocessPreloadLoop(scf::ForOp forOp) {
   return activeForOp;
 }
 
-static void getUserScopes(scope::ScopeOp source, llvm::SmallSet<scope::ScopeOp, 16> &userScopes) {
+static void getUserScopes(scope::ScopeOp source,
+                          llvm::SmallSet<scope::ScopeOp, 16> &userScopes) {
   scope::ScopeOp useScope;
   for (Operation *user : source->getUsers()) {
     auto *ancestor = source->getBlock()->findAncestorOpInBlock(*user);
@@ -1378,14 +1379,13 @@ static void eraseDeadScopesAndReStage(scf::ForOp forOp,
         preloadNum - llvm::count_if(erasedScopeNums, [&](int64_t erasedNum) {
           return erasedNum < preloadNum;
         });
-    scopeOp->setAttr(
-        hivm::PreloadNumAttr::name,
-        IntegerAttr::get(preloadNumAttr.getType(), newPreloadNum));
+    scopeOp->setAttr(hivm::PreloadNumAttr::name,
+                     IntegerAttr::get(preloadNumAttr.getType(), newPreloadNum));
     maxPreloadNum = std::max(maxPreloadNum, newPreloadNum + 1);
   }
   for (scope::ScopeOp scopeOp : forOp.getOps<scope::ScopeOp>()) {
-    if (auto maxPreloadNumAttr = scopeOp->getAttrOfType<IntegerAttr>(
-            hivm::MaxPreloadNumAttr::name))
+    if (auto maxPreloadNumAttr =
+            scopeOp->getAttrOfType<IntegerAttr>(hivm::MaxPreloadNumAttr::name))
       scopeOp->setAttr(
           hivm::MaxPreloadNumAttr::name,
           IntegerAttr::get(maxPreloadNumAttr.getType(), maxPreloadNum));
@@ -1434,12 +1434,9 @@ static LogicalResult mergeCounterLoops(func::FuncOp funcOp) {
     auto erasedScopeNums = originalPreloadNums.lookup(forOp);
     eraseDeadScopesAndReStage(forOp, erasedScopeNums);
   }
-  
-  LLVM_DEBUG(
-    for (scf::ForOp forOp : loops) {
-      DBGS() << "After merge:" << forOp << "\n";
-    }
-  );
+
+  LLVM_DEBUG(for (scf::ForOp forOp
+                    : loops) { DBGS() << "After merge:" << forOp << "\n"; });
   return success();
 }
 
@@ -1453,7 +1450,7 @@ void CreatePreloadPass::runOnOperation() {
     signalPassFailure();
     return;
   }
-  
+
   SmallVector<scf::ForOp> candidateLoops;
   DenseSet<Operation *> seenCandidateLoops;
   moduleOp->walk([&](scope::ScopeOp scopeOp) {
