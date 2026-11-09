@@ -776,6 +776,14 @@ def VxorXInstrOp : ElementwiseBinaryAnyInstrOp<"hivm.vxor.x"> {
     ```
   }];
 }
+def VselrInstrOp : HIVMRegbaseIntrins_Op<"hivm.vselr", [0], [],
+    [Pure, AllTypesMatch<["src", "index", "res"]>]> {
+  let summary = "Bitwise register gather using the integer intrinsic overload";
+  let arguments = (ins VectorOfRankAndType<[1], [I8, I16, I32]>:$src,
+                       VectorOfRankAndType<[1], [I8, I16, I32]>:$index);
+  let results = (outs VectorOfRankAndType<[1], [I8, I16, I32]>:$res);
+}
+
 def VselInstrOp : ElementwiseBinaryInstrOp<"hivm.vsel"> {
     // add traits for type constraint
   let summary = "HIVM vector select operation";

@@ -35,6 +35,38 @@ convertHIVMRegbaseIntrinsic(Operation &opInst, llvm::IRBuilderBase &builder,
       builder, moduleTranslation, &opInst, intrinsic, numResults,
       overloadedResults, overloadedOperands, /*immArgPositions=*/{},
       /*immArgAttrNames=*/{});
+  auto function = opInst.getParentOfType<LLVM::LLVMFuncOp>();
+  bool hasScatter =
+      function &&
+      function
+          .walk([](Operation *op) {
+            return isa<hivm_regbaseintrins::VScatterV64S32InstrOp>(op)
+                       ? WalkResult::interrupt()
+                       : WalkResult::advance();
+          })
+          .wasInterrupted();
+  if (hasScatter && inst->onlyReadsMemory()) {
+    // CANN 9.2 can reuse a pre-scatter vector load despite VST_VLD.
+    // Forget pointer invariance for reads in this VF, including loop reads
+    // and aliases. This is a compiler compatibility measure, not a fence;
+    // the AVE program must still provide the required hardware ordering.
+    llvm::IRBuilderBase::InsertPointGuard guard(builder);
+    builder.SetInsertPoint(inst);
+    for (unsigned i = 0; i < inst->arg_size(); ++i)
+      if (auto *type =
+              dyn_cast<llvm::PointerType>(inst->getArgOperand(i)->getType());
+          type && type->getAddressSpace() == 6)
+        inst->setArgOperand(
+            i, builder.CreateLaunderInvariantGroup(inst->getArgOperand(i)));
+  }
+  if (isa<hivm_regbaseintrins::VScatterV64S32InstrOp>(opInst)) {
+    // Older LLVM definitions mark the scatter destination readonly.
+    auto *callee = inst->getCalledFunction();
+    callee->removeParamAttr(1, llvm::Attribute::ReadOnly);
+    callee->addParamAttr(1, llvm::Attribute::WriteOnly);
+    inst->removeParamAttr(1, llvm::Attribute::ReadOnly);
+    inst->addParamAttr(1, llvm::Attribute::WriteOnly);
+  }
   if (numResults != 0)
     moduleTranslation.mapValue(opInst.getResult(0), inst);
 }
