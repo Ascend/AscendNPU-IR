@@ -319,7 +319,36 @@ void TritonGlobalKernelArgsToLLVM::runOnOperation() {
   patterns.insert<ReplaceGlobalKernelArgsToLLVM>(patterns.getContext());
   if (failed(applyPatternsGreedily(op, std::move(patterns)))) {
     signalPassFailure();
+    return;
   }
+  auto module = dyn_cast<ModuleOp>(op);
+  if (!module ||
+      !module.lookupSymbol<LLVM::LLVMFuncOp>("proton_scope_boundary"))
+    return;
+  // Emit the final drain after blockification loops and generated waits.
+  module.walk([&](LLVM::LLVMFuncOp function) {
+    if (function.isExternal() || !hacc::utils::isDeviceEntry(function) ||
+        function->hasAttr("proton.instrumentation_epilogue"))
+      return;
+    bool instrumented = false;
+    function.walk([&](LLVM::CallOp call) {
+      instrumented |= call.getCallee().value_or("") == "proton_scope_boundary";
+    });
+    if (!instrumented)
+      return;
+    SmallVector<LLVM::ReturnOp> returns;
+    function.walk([&](LLVM::ReturnOp ret) { returns.push_back(ret); });
+    for (auto ret : returns) {
+      OpBuilder builder(ret);
+      auto flag = builder.create<LLVM::ConstantOp>(
+          ret.getLoc(), builder.getI32Type(), 0x10000);
+      builder.create<LLVM::CallOp>(
+          ret.getLoc(), TypeRange{},
+          FlatSymbolRefAttr::get(builder.getContext(), "proton_scope_boundary"),
+          ValueRange{flag});
+    }
+    function->setAttr("proton.instrumentation_epilogue", UnitAttr::get(&getContext()));
+  });
 }
 
 std::unique_ptr<Pass> mlir::createTritonGlobalKernelArgsToLLVMPass() {

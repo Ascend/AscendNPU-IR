@@ -160,10 +160,11 @@ ProtonScopePlan::analyzeRecord(mlir::triton::proton::RecordOp record,
         })) {
       return record.emitError("scope name '") << name << "' is already active";
     }
-    if (scopes.size() >= hivm::proton::kMaxScopeCount) {
+    // Higher IDs are reserved for the experimental collector drain protocol.
+    if (scopes.size() >= 0x188) {
       return record.emitError(
-          "too many A5 Proton scopes; 10-bit logical region IDs allow at "
-          "most 1024 scopes per module");
+          "too many A5 Proton scopes; the experimental drain protocol allows "
+          "at most 392 scopes per module");
     }
 
     uint32_t logicalId = static_cast<std::uint32_t>(scopes.size());
@@ -217,7 +218,7 @@ void attachMetadata(ModuleOp module, ArrayRef<ScopeDescriptor> scopes) {
   module->setAttr(
       "proton.metadata",
       builder.getDictionaryAttr(
-          {builder.getNamedAttr("format_version", builder.getI32IntegerAttr(1)),
+          {builder.getNamedAttr("format_version", builder.getI32IntegerAttr(2)),
            builder.getNamedAttr("scopes", builder.getArrayAttr(scopeAttrs))}));
 }
 
@@ -249,15 +250,23 @@ void ConvertProtonToHIVMPass::runOnOperation() {
 
   for (auto record : records) {
     OpBuilder builder{record};
-    Value regionId = builder.create<arith::ConstantIntOp>(
-        record.getLoc(), static_cast<int64_t>(plan->getRegionId(record)), 32);
-    auto boundary = builder.create<hivm::CustomOp>(
-        record.getLoc(), hivm::CustomOp::kBuiltinProtonScopeBoundaryName,
-        ValueRange{regionId}, ValueRange{});
-    boundary.setCoreType(hivm::TCoreType::CUBE_OR_VECTOR);
-    boundary.setPipe(hivm::PIPE::PIPE_S);
-    boundary.setVFMode(hivm::VFMode::SIMD);
-    boundary.setInlineMode(hivm::InlineMode::AlwaysInline);
+    uint32_t boundaryId = plan->getRegionId(record);
+    auto emitBoundary = [&](uint32_t id) {
+      Value regionId = builder.create<arith::ConstantIntOp>(
+          record.getLoc(), static_cast<int64_t>(id), 32);
+      auto boundary = builder.create<hivm::CustomOp>(
+          record.getLoc(), hivm::CustomOp::kBuiltinProtonScopeBoundaryName,
+          ValueRange{regionId}, ValueRange{});
+      boundary.setCoreType(hivm::TCoreType::CUBE_OR_VECTOR);
+      boundary.setPipe(hivm::PIPE::PIPE_S);
+      boundary.setVFMode(hivm::VFMode::SIMD);
+      boundary.setInlineMode(hivm::InlineMode::AlwaysInline);
+    };
+    emitBoundary(boundaryId);
+    // The template consumes this reserved control value without emitting it.
+    if (!record.getIsStart() &&
+        plan->getScopes()[boundaryId & 0x3ff].parentId < 0)
+      emitBoundary(0xfff);
     record->erase();
   }
 
