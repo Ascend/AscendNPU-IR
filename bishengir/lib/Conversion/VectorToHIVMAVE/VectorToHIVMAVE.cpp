@@ -254,28 +254,78 @@ restoreSourceMaskBounds(AffineMap permutationMap,
   return bounds;
 }
 
-static SmallVector<int64_t> getConstantMaskBounds(Value mask,
-                                                  VectorType maskType,
-                                                  AffineMap permutationMap) {
+// Recover the rectangle in the producer's own shape.
+static SmallVector<int64_t> getMaskBoundsInProducerShape(Value mask) {
+  SmallVector<int64_t> bounds;
+  if (auto constMask = mask.getDefiningOp<vector::ConstantMaskOp>()) {
+    for (Attribute dimSize : constMask.getMaskDimSizes())
+      bounds.push_back(cast<IntegerAttr>(dimSize).getInt());
+  } else if (auto createMask = mask.getDefiningOp<vector::CreateMaskOp>()) {
+    for (auto [operand, size] :
+         llvm::zip(createMask.getOperands(), createMask.getType().getShape())) {
+      auto bound = getConstantIntValue(operand);
+      if (!bound)
+        return {};
+      bounds.push_back(std::clamp<int64_t>(*bound, 0, size));
+    }
+  }
+  return bounds;
+}
+
+// Preserve the enabled positions when reshaping a rectangular mask. Return
+// empty bounds if the result cannot be represented as a rectangle exactly.
+static SmallVector<int64_t> reshapeMaskBounds(ArrayRef<int64_t> bounds,
+                                              ArrayRef<int64_t> originalShape,
+                                              ArrayRef<int64_t> targetShape) {
+  // An empty rectangle remains empty under every shape cast.
+  if (llvm::is_contained(bounds, 0))
+    return SmallVector<int64_t>(targetShape.size(), 0);
+
+  // Once multiple coordinates are enabled, all inner dimensions must be
+  // full to form a contiguous prefix. For example, [2, 8] in 4x16 has holes.
+  int64_t enabledLanes = 1;
+  for (auto [bound, size] : llvm::zip(bounds, originalShape)) {
+    if (enabledLanes > 1 && bound != size)
+      return {};
+    enabledLanes *= bound;
+  }
+
+  SmallVector<int64_t> reshapedBounds(targetShape.size(), 0);
+  int64_t innerExtent = 1;
+  for (int64_t dim = targetShape.size(); dim-- > 0;) {
+    // A prefix ending within a later row is not a rectangle in this shape.
+    if (enabledLanes > innerExtent && enabledLanes % innerExtent != 0)
+      return {};
+    reshapedBounds[dim] = std::min<int64_t>(
+        llvm::divideCeil(enabledLanes, innerExtent), targetShape[dim]);
+    innerExtent *= targetShape[dim];
+  }
+  return reshapedBounds;
+}
+
+static SmallVector<int64_t>
+getMaskBoundsInSourceShape(Value mask, VectorType maskType,
+                           AffineMap permutationMap) {
+  if (!mask || !maskType || maskType.isScalable())
+    return {};
   mask = unwrapMaskShapeCasts(mask, maskType);
   if (!mask)
     return {};
-  auto constMask = mask.getDefiningOp<vector::ConstantMaskOp>();
-  if (!constMask)
+  auto producerType = dyn_cast<VectorType>(mask.getType());
+  if (!producerType || producerType.isScalable() ||
+      producerType.getNumElements() != maskType.getNumElements())
     return {};
-  int64_t enabledLanes = 1;
-  for (Attribute dimSize : constMask.getMaskDimSizes())
-    enabledLanes *= cast<IntegerAttr>(dimSize).getInt();
-  SmallVector<int64_t> maskBounds(maskType.getRank());
-  int64_t innerExtent = 1;
-  for (int64_t dim = maskType.getRank() - 1; dim >= 0; --dim) {
-    int64_t lanesAlongDim =
-        static_cast<int64_t>(llvm::divideCeil(enabledLanes, innerExtent));
-    maskBounds[dim] = std::min(lanesAlongDim, maskType.getDimSize(dim));
-    innerExtent *= maskType.getDimSize(dim);
-  }
 
-  return restoreSourceMaskBounds(permutationMap, maskBounds);
+  auto bounds = getMaskBoundsInProducerShape(mask);
+  if (bounds.empty())
+    return {};
+  if (producerType != maskType) {
+    bounds =
+        reshapeMaskBounds(bounds, producerType.getShape(), maskType.getShape());
+    if (bounds.empty())
+      return {};
+  }
+  return restoreSourceMaskBounds(permutationMap, bounds);
 }
 
 // Check whether it's possible to read the non-identity permutation map
@@ -284,7 +334,8 @@ static SmallVector<int64_t> getConstantMaskBounds(Value mask,
 static bool isUnitDimBroadcastPermutation(AffineMap permMap,
                                           ArrayRef<int64_t> vectorShape,
                                           MemRefType srcType,
-                                          ArrayRef<int64_t> maskBounds) {
+                                          ArrayRef<int64_t> maskBounds,
+                                          bool allowMaskedUnitDimExpansion) {
   ArrayRef<int64_t> srcShape = srcType.getShape();
   if (permMap.getNumSymbols() != 0 ||
       permMap.getNumResults() != vectorShape.size() ||
@@ -307,7 +358,8 @@ static bool isUnitDimBroadcastPermutation(AffineMap permMap,
         // A unit source dimension is only skippable if the vector does not
         // step over it either, otherwise the read strides through memory
         if (vectorShape[idx] != 1) {
-          if (dim >= static_cast<int64_t>(maskBounds.size()) ||
+          if (!allowMaskedUnitDimExpansion ||
+              dim >= static_cast<int64_t>(maskBounds.size()) ||
               maskBounds[dim] != 1)
             return false;
         }
@@ -457,10 +509,18 @@ static bool isPlainLoadableTransferRead(vector::TransferReadOp readOp) {
   if (permMap.isIdentity() || vecType.getNumElements() <= 1 ||
       singleElementSource)
     return true;
-  auto maskBounds =
-      getConstantMaskBounds(readOp.getMask(), readOp.getMaskType(), permMap);
+  auto maskBounds = getMaskBoundsInSourceShape(readOp.getMask(),
+                                               readOp.getMaskType(), permMap);
+  Value maskProducer =
+      unwrapMaskShapeCasts(readOp.getMask(), readOp.getMaskType());
+  // Preserve the existing constant_mask exception, but do not extend it to
+  // create_mask: an unmasked load cannot implement masked unit-dimension
+  // expansion, including its padding and result layout. Other create_mask
+  // reads still use the regular plain-load legality checks.
+  bool allowMaskedUnitDimExpansion =
+      !maskProducer || !maskProducer.getDefiningOp<vector::CreateMaskOp>();
   return isUnitDimBroadcastPermutation(permMap, vecType.getShape(), srcType,
-                                       maskBounds);
+                                       maskBounds, allowMaskedUnitDimExpansion);
 }
 
 struct TransferReadOpPattern : public OpRewritePattern<vector::TransferReadOp> {
@@ -791,6 +851,14 @@ struct VecBroadcastOpPattern : public OpRewritePattern<vector::BroadcastOp> {
   }
 };
 
+namespace {
+// A supported constant mask is either a true prefix or explicit lane bits.
+struct ConstantMaskInfo {
+  int64_t extent = -1;
+  DenseIntElementsAttr bits;
+};
+} // namespace
+
 struct VecGatherOpPattern : public OpRewritePattern<vector::GatherOp> {
   using OpRewritePattern<vector::GatherOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(vector::GatherOp op,
@@ -856,42 +924,48 @@ struct VecGatherOpPattern : public OpRewritePattern<vector::GatherOp> {
   }
 
 private:
-  // A supported constant mask is either a true prefix or explicit lane bits.
-  struct ConstantMaskInfo {
-    int64_t extent = -1;
-    DenseIntElementsAttr bits;
-  };
+  static FailureOr<ConstantMaskInfo> getPgeMaskInfo(Value mask,
+                                                    int64_t numLanes) {
+    auto pge = mask.getDefiningOp<hivmave::VFPgeOp>();
+    if (!pge)
+      return failure();
+    // H depends on the predicate width, which must already be known.
+    if (pge.getPattern() == hivmave::PgePattern::H &&
+        hivmave::getBitWidthFromAttr(pge) == -1)
+      return failure();
+    int64_t extent = hivmave::getNumfromPgePattern(pge);
+    if (extent > numLanes)
+      return failure();
+    return ConstantMaskInfo{extent, {}};
+  }
 
   static FailureOr<ConstantMaskInfo> getConstantMaskInfo(Value mask) {
     auto maskType = dyn_cast<VectorType>(mask.getType());
     if (!maskType || maskType.getRank() != 1)
       return failure();
-    ConstantMaskInfo info;
+    int64_t numLanes = maskType.getNumElements();
+
     if (auto constantMask = mask.getDefiningOp<vector::ConstantMaskOp>()) {
-      info.extent =
+      int64_t extent =
           cast<IntegerAttr>(constantMask.getMaskDimSizes()[0]).getInt();
-    } else if (auto constant = mask.getDefiningOp<arith::ConstantOp>()) {
-      info.bits = dyn_cast<DenseIntElementsAttr>(constant.getValue());
-      if (!info.bits)
+      return ConstantMaskInfo{extent, {}};
+    }
+
+    if (auto constant = mask.getDefiningOp<arith::ConstantOp>()) {
+      auto bits = dyn_cast<DenseIntElementsAttr>(constant.getValue());
+      if (!bits)
         return failure();
-    } else if (auto plt = mask.getDefiningOp<hivmave::VFPltOp>()) {
+      return ConstantMaskInfo{-1, bits};
+    }
+
+    if (auto plt = mask.getDefiningOp<hivmave::VFPltOp>()) {
       auto bound = plt.getTrueShape().getDefiningOp<arith::ConstantIndexOp>();
       if (!bound)
         return failure();
-      info.extent = std::min<int64_t>(bound.value(), maskType.getNumElements());
-    } else if (auto pge = mask.getDefiningOp<hivmave::VFPgeOp>()) {
-      // H requires an explicit predicate width
-      if (pge.getPattern() == hivmave::PgePattern::H &&
-          hivmave::getBitWidthFromAttr(pge) == -1)
-        return failure();
-      info.extent = hivmave::getNumfromPgePattern(pge);
-      if (info.extent > maskType.getNumElements())
-        return failure();
-    } else {
-      return failure();
+      return ConstantMaskInfo{std::min<int64_t>(bound.value(), numLanes), {}};
     }
 
-    return info;
+    return getPgeMaskInfo(mask, numLanes);
   }
 
   static Value createHalfMask(PatternRewriter &rewriter, Location loc,
@@ -940,52 +1014,49 @@ private:
                           createHalfMask(rewriter, loc, *info, 1));
   }
 
+  // Extract the low byte of each 16-bit gather lane. Float8 values keep the
+  // same bits; only their interpretation changes after packing.
+  static Value packGatherBytes(PatternRewriter &rewriter, Location loc,
+                               Value gathered, Type elementType) {
+    auto byteType = VectorType::get({256}, rewriter.getI8Type());
+    constexpr int32_t kVpackPartLower = 0;
+    Value packed = rewriter
+                       .create<hivmave::VFVpackOp>(
+                           loc, byteType, gathered,
+                           rewriter.getI32IntegerAttr(kVpackPartLower))
+                       .getRes();
+    if (isa<Float8E4M3FNType, Float8E5M2Type>(elementType)) {
+      auto packedType = VectorType::get({256}, elementType);
+      packed = rewriter.create<arith::BitcastOp>(loc, packedType, packed);
+    }
+    return packed;
+  }
+
   static Value createDualGather(PatternRewriter &rewriter, Location loc,
                                 VectorType resultType, Value base,
-                                ValueRange indices, Value indexVec,
+                                ValueRange indices, Value evenIndices,
                                 const std::pair<Value, Value> &masks,
-                                DenseElementsAttr secondaryIndexAttr) {
-    auto secondaryIndexConstant =
-        rewriter.create<arith::ConstantOp>(loc, secondaryIndexAttr);
-    Value secondaryIndexVec = secondaryIndexConstant.getResult();
+                                DenseElementsAttr oddIndexAttr) {
+    Value oddIndices = rewriter.create<arith::ConstantOp>(loc, oddIndexAttr);
+    const auto &[evenMask, oddMask] = masks;
 
-    auto resDtype = resultType.getElementType();
-    VectorType resVecType = VectorType::get({256}, resDtype);
-    VectorType i8VecType = VectorType::get({256}, rewriter.getI8Type());
-    VectorType i16VecType = VectorType::get({128}, rewriter.getI16Type());
+    // Each native B8 gather places a byte in the low half of a 16-bit lane.
+    auto gatherType = VectorType::get({128}, rewriter.getI16Type());
+    Value evenGather = rewriter.create<hivmave::VFGatherOp>(
+        loc, gatherType, base, indices, evenIndices, evenMask);
+    Value oddGather = rewriter.create<hivmave::VFGatherOp>(
+        loc, gatherType, base, indices, oddIndices, oddMask);
 
-    // The native b8 gather is a 128-lane, 16-bit-index instruction,
-    // zero-extended up to a 256-lane result: each requested byte lands in
-    // the low 8 bits of its own 16-bit lane, the high 8 bits are always zero.
-    auto gather1 = rewriter.create<hivmave::VFGatherOp>(
-        loc, i16VecType, base, indices, indexVec, masks.first);
-    auto gather2 = rewriter.create<hivmave::VFGatherOp>(
-        loc, i16VecType, base, indices, secondaryIndexVec, masks.second);
-    Value gather1Result = gather1.getResult();
-    Value gather2Result = gather2.getResult();
+    Type elementType = resultType.getElementType();
+    Value evenBytes = packGatherBytes(rewriter, loc, evenGather, elementType);
+    Value oddBytes = packGatherBytes(rewriter, loc, oddGather, elementType);
 
-    constexpr int32_t kVpackPartLower = 0;
-    auto packDenseHalf = [&](Value gatherResult) -> Value {
-      Value packed = rewriter
-                         .create<hivmave::VFVpackOp>(
-                             loc, i8VecType, gatherResult,
-                             rewriter.getI32IntegerAttr(kVpackPartLower))
-                         .getRes();
-      if (isa<Float8E4M3FNType>(resDtype) || isa<Float8E5M2Type>(resDtype))
-        packed = rewriter.create<arith::BitcastOp>(loc, resVecType, packed);
-      return packed;
-    };
-    Value resEven = packDenseHalf(gather1Result);
-    Value resOdd = packDenseHalf(gather2Result);
-
-    // Interleaving the even and odd halves puts result element i in lane i,
-    // so the first resultType lanes of the interleaved register are exactly
-    // the requested elements
-    auto res = rewriter.create<hivmave::VFInterleaveOp>(
-        loc, resultType, resultType, resEven, resOdd);
-    Value finalResult = res.getResult(0);
-
-    return finalResult;
+    // Restore logical lane order: even[0], odd[0], even[1], odd[1], ... .
+    // The first result contains the requested number of elements.
+    return rewriter
+        .create<hivmave::VFInterleaveOp>(loc, resultType, resultType, evenBytes,
+                                         oddBytes)
+        .getResult(0);
   }
 };
 
