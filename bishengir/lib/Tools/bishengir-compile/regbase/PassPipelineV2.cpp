@@ -50,10 +50,6 @@ void setupV2PipelineOptions(const BiShengIRCompileMainConfig &config,
   v2Options.target = hacc::stringifyTargetDeviceEnum(config.getTarget()).str();
   v2Options.enablePreload = hivmOptions.enablePreload;
   v2Options.enableMultiBuffer = config.getEnableAutoMultiBuffer();
-  v2Options.enableCrossCoreGSS = config.getEnableHIVMGraphSyncSolver();
-  v2Options.useBlockAllSync = config.getEnableHIVMInjectBlockAllSync();
-  v2Options.setTargetSpec = false;
-  v2Options.ghostSplitMix = false;
 }
 
 enum class V2Stage { Tensor, Final };
@@ -81,7 +77,7 @@ void appendV2Pipeline(OpPassManager &pm,
     hivm::v2::buildV2BufferizationPhase(pm, v2Options);
   } else {
     hivm::v2::buildV2PostBufferizationPhase(pm, v2Options);
-    hivm::v2::buildV2PerCoreTail(pm, v2Options);
+    hivm::v2::buildV2PerCoreTail(pm);
   }
 }
 

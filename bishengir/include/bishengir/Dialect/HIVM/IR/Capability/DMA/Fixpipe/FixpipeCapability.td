@@ -26,20 +26,26 @@ include "bishengir/Dialect/HIVM/IR/Capability/DMA/Common.td"
 include "bishengir/Dialect/HIVM/IR/HIVMAttrs.td"
 include "bishengir/Target/Capability/CapabilityBase.td"
 
-// Address space, layout, shape, and quant_scale presence are not fields.
-// Those facts are not observable on this early execution request.
+// Layout and shape are not fields. Address space and quant_scale presence are.
 // Parameters reuse the Fixpipe ODS attributes. Their domains are the enum
 // cases already declared for the IR, not a second value list.
 def DmaMode : EnumAttrCapabilityParameter<HIVM_FixpipeDMAModeAttr>;
 def PreQuantMode : EnumAttrCapabilityParameter<HIVM_FixpipePreQuantModeAttr>;
 def PreRelu : EnumAttrCapabilityParameter<HIVM_FixpipePreReluModeAttr>;
 def ChannelSplit : BoolAttrCapabilityParameter<>;
+// True when the optional quant_scale operand is present. This is not a
+// numeric scale value.
+def QuantScalePresent
+    : BoolAttrCapabilityParameter<"QuantScalePresent", "quant_scale_present">;
 
 def FixpipeSchema
-    : RequestSchema<[Src, Dst], [DmaMode, PreQuantMode, PreRelu, ChannelSplit]>;
+    : RequestSchema<[Src, Dst],
+                    [DmaMode, PreQuantMode, PreRelu, ChannelSplit,
+                     QuantScalePresent]>;
 def Fixpipe : CapabilityKey<FixpipeSchema> {
-  let DocNote = "Address space, layout, shape, and quant_scale presence "
-                "are outside this schema.";
+  let DocNote = "Layout and shape are outside this schema. "
+                "A missing src or dst memory scope is Unknown until the query "
+                "sets it.";
 }
 
 // Pairs stay whole. A later row that allows f32 -> f16 does not allow f32 ->
@@ -49,5 +55,10 @@ def FixpipeI32ToI32 : TypeSignature<[SrcType, DstType], [I32, I32]>;
 def FixpipeF32ToF16 : TypeSignature<[SrcType, DstType], [F32, F16]>;
 def FixpipeF32ToBF16 : TypeSignature<[SrcType, DstType], [F32, BF16]>;
 def FixpipeI32ToI8 : TypeSignature<[SrcType, DstType], [I32, I8]>;
+def FixpipeI32ToI16 : TypeSignature<[SrcType, DstType], [I32, I16]>;
+def FixpipeI32ToF16 : TypeSignature<[SrcType, DstType], [I32, F16]>;
+def FixpipeI32ToU8 : TypeSignature<[SrcType, DstType], [I32, UI8]>;
+def FixpipeF32ToI8 : TypeSignature<[SrcType, DstType], [F32, I8]>;
+def FixpipeF32ToU8 : TypeSignature<[SrcType, DstType], [F32, UI8]>;
 
 #endif // BISHENGIR_DIALECT_HIVM_IR_CAPABILITY_DMA_FIXPIPE_FIXPIPECAPABILITY_TD

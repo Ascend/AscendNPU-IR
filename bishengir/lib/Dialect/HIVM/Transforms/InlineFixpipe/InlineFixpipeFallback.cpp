@@ -98,7 +98,9 @@ collectFallbackStoreChain(PatternRewriter &rewriter, Operation *notifyOp,
     }
 
     if (isa<hivm::VTransposeOp>(user)) {
-      if (!isUserTransposeInlinable(fixpipe, user))
+      // Structural only: cast/pre_quant may still be outside the fixpipe.
+      // Native is checked later by the greedy transpose fusion pattern.
+      if (!isUserTransposeStructurallyInlinable(fixpipe, user))
         return rewriter.notifyMatchFailure(
             user, "fallback_not_exec vtranspose is not inlinable into fixpipe");
       auto transposeOp = cast<hivm::VTransposeOp>(user);

@@ -20,6 +20,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/Support/Debug.h"
 
 namespace mlir {
 #define GEN_PASS_DEF_OUTLINEVECTORFUNCTION
@@ -27,6 +28,8 @@ namespace mlir {
 } // namespace mlir
 
 #define DEBUG_TYPE "outline-vector-function"
+#define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
+#define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 using namespace mlir;
 using namespace mlir::hfusion;
@@ -150,22 +153,16 @@ static void duplicateReusedValuesForInnerSCFForOp(scf::ForOp loop,
 /// chunk stays in the same VF, with a representable hardware loop count.
 static constexpr int64_t kMaxVFLoopTrip = 65535;
 
-/// Per-source-loop code size budget. Splitting clones the body; cap expansion
-/// independently of the VF's total loop count or later buffer allocation.
-static constexpr int64_t kMaxChunks = 32;
-
 /// Split a constant-bound, signed-comparison loop into sequential loops of at
 /// most maxTripCount iterations. The caller must prove lb/ub/step match the
 /// loop's operands. Bounds and step are materialized in the original type;
 /// absolute indices, attributes and loop-carried values are preserved.
-/// Small or empty loops are left unchanged. Exceeding maxChunks emits a
-/// diagnostic and fails without changing IR. Splitting erases forOp and its
+/// Small or empty loops are left unchanged. Splitting erases forOp and its
 /// nested operations. The caller filters unsigned loops and nonpositive steps.
 static LogicalResult splitForOpByTripCount(OpBuilder &builder, scf::ForOp forOp,
                                            int64_t lb, int64_t ub, int64_t step,
-                                           uint64_t maxTripCount,
-                                           uint64_t maxChunks) {
-  assert(maxTripCount && maxChunks && step > 0 &&
+                                           uint64_t maxTripCount) {
+  assert(maxTripCount && step > 0 &&
          "expected positive splitting limits and step");
   // Widen before subtracting or multiplying: signed 64-bit bounds can span
   // more than INT64_MAX iterations even when each individual bound fits.
@@ -177,13 +174,9 @@ static LogicalResult splitForOpByTripCount(OpBuilder &builder, scf::ForOp forOp,
       (upper - lower + stride - 1).udiv(stride).getZExtValue();
   if (trip <= maxTripCount)
     return success();
-  const uint64_t numChunks = trip / maxTripCount + (trip % maxTripCount != 0);
-  if (numChunks > maxChunks) {
-    forOp.emitError("loop with trip count ")
-        << trip << " needs " << numChunks << " chunks (limit " << maxChunks
-        << "); refusing to exceed the loop splitting budget";
-    return failure();
-  }
+  LDBG("splitting loop with trip count "
+       << trip << " into " << (trip / maxTripCount + (trip % maxTripCount != 0))
+       << " chunks of at most " << maxTripCount << " iterations");
   OpBuilder::InsertionGuard guard(builder);
   builder.setInsertionPoint(forOp);
   Location loc = forOp.getLoc();
@@ -303,7 +296,7 @@ static LogicalResult splitLargeTripOutlinedLoops(func::FuncOp func,
       continue;
     }
     if (failed(splitForOpByTripCount(builder, loop, *lb, *ub, *step,
-                                     kMaxVFLoopTrip, kMaxChunks)))
+                                     kMaxVFLoopTrip)))
       return failure();
   }
   return success();

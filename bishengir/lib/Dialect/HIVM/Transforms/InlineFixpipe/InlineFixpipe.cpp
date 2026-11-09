@@ -26,6 +26,7 @@
 #include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/FixpipeCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/Transforms/FixpipeUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/InlineFixpipe/InlineFixpipeFallback.h"
 #include "bishengir/Dialect/HIVM/Transforms/InlineFixpipe/InlineFixpipeFusion.h"
@@ -137,7 +138,9 @@ private:
     if (isInsideVectorScope(curOp))
       return failure();
 
-    if (isOnRegBasedArch(op) && op.getDmaMode() != FixpipeDMAMode::NZ2NZ) {
+    // An L1 cube consumer wants NZ2NZ. Query that destination: C220 rows
+    // are GM-only, so the candidate is not Native and the mode stays nz2nd.
+    if (op.getDmaMode() != FixpipeDMAMode::NZ2NZ) {
       if (all_of(op->getUsers(), [](auto *user) {
             if (isa<annotation::MarkOp>(user))
               return true;
@@ -146,9 +149,10 @@ private:
 #include "bishengir/Dialect/HIVM/IR/HIVMMacroOps.cpp.inc"
                 >(user);
           })) {
-
-        convertNz2NdFixpipeToNz2Nz(rewriter, op);
-        return success();
+        FixpipeOp converted = convertNz2NdFixpipeToNz2Nz(rewriter, op);
+        // Capability miss leaves the op unchanged; do not claim a rewrite.
+        if (converted.getDmaMode() == FixpipeDMAMode::NZ2NZ)
+          return success();
       }
     }
 
@@ -158,7 +162,7 @@ private:
     auto castOp = dyn_cast_if_present<hivm::VCastOp>(curOp);
     if (op.getFixpipeState() <= op.needFixpipePreFuse() && castOp) {
       SmallVector<hivm::VCastOp> castChain = collectVCastChain(castOp);
-      if (getQuantModeForCastChain(castChain, op.getPreQuant()).has_value()) {
+      if (canInlineFixpipeWithQuant(op, castChain)) {
         matched = true;
         inlineFixpipeWithQuant(rewriter, loc, op, castChain,
                                op.getDpsInputOperand(0)->get());
@@ -166,9 +170,11 @@ private:
     } else if (op.getFixpipeState() <= op.needFixpipePreFuse() &&
                isActivationOp(curOp)) {
       // 2. relu and other activation function
-      matched = true;
       auto reluOp = llvm::dyn_cast_if_present<hivm::VReluOp>(curOp);
-      inlineFixpipeWithRelu(rewriter, loc, op, reluOp);
+      if (reluOp && canInlineFixpipeWithRelu(op, reluOp)) {
+        matched = true;
+        inlineFixpipeWithRelu(rewriter, loc, op, reluOp);
+      }
     } else if (auto storeOp = llvm::dyn_cast_if_present<hivm::StoreOp>(curOp)) {
       //   3. store or layout
       if (failed(matchFixpipeStoreInlinable(rewriter, op, storeOp)))
@@ -177,7 +183,7 @@ private:
       inlineFixpipeWithStore(rewriter, loc, op, storeOp,
                              op.getDpsInputOperand(0)->get());
     } else if (auto vMulOp = dyn_cast<hivm::VMulOp>(curOp);
-               vMulOp && isOnRegBasedArch(op) &&
+               vMulOp &&
                (inlineQuantScale || hasQuantScaleCompileHint(vMulOp)) &&
                isUserQuantScaleInlinable(op, vMulOp)) {
       matched = true;
@@ -189,13 +195,9 @@ private:
                    dyn_cast_if_present<tensor::ExtractSliceOp>(curOp);
                isUserSliceSwappable(op, extractSliceOp)) {
       // change to fixpipe op + extract_slice to extract_slice + fixpipe op
-      if (op->getBlock() == extractSliceOp->getBlock()) {
-        // only swap when fixpipe op and extract slice op are in same block,
-        // otherwise, extract slice op may be in sub block loop and fixpipe
-        // cannot be fused into.
+      if (op->getBlock() == extractSliceOp->getBlock() &&
+          swapFixpipeWithExtractSlice(rewriter, loc, op, extractSliceOp))
         matched = true;
-        swapFixpipeWithExtractSlice(rewriter, loc, op, extractSliceOp);
-      }
     } else if (isa<scf::YieldOp>(curOp) &&
                isa<scf::ForOp>(curOp->getParentOp()) &&
                !op->getAttr(fixpipeDoNotMoveOutOfScfFor) &&
@@ -245,6 +247,8 @@ void eraseInlinableQuantScaleMarkOps(Operation *op) {
 }
 
 void InlineFixpipe::runOnOperation() {
+  ModuleTargetAnalysis &targets = getAnalysis<ModuleTargetAnalysis>();
+  ModuleTargetAnalysisScope targetScope(targets);
   RewritePatternSet patterns(&getContext());
   populateInlineFixpipePatterns(patterns, inlineQuantScale);
   if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
@@ -253,6 +257,7 @@ void InlineFixpipe::runOnOperation() {
   }
 
   eraseInlinableQuantScaleMarkOps(getOperation());
+  markAnalysesPreserved<ModuleTargetAnalysis>();
 }
 
 std::unique_ptr<Pass>

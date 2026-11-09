@@ -118,11 +118,7 @@ static LogicalResult splitMixKernel(func::FuncOp func) {
 }
 
 struct V2SplitKernelPass : public impl::V2SplitKernelBase<V2SplitKernelPass> {
-  using Base::Base;
   void runOnOperation() override {
-    if (ghost)
-      return;
-
     SmallVector<func::FuncOp> mixFunctions;
     getOperation().walk([&](func::FuncOp func) {
       if (isMixFunction(func))
@@ -136,7 +132,6 @@ struct V2SplitKernelPass : public impl::V2SplitKernelBase<V2SplitKernelPass> {
 };
 } // namespace
 
-std::unique_ptr<Pass>
-mlir::hivm::createV2SplitKernelPass(const V2SplitKernelOptions &options) {
-  return std::make_unique<V2SplitKernelPass>(options);
+std::unique_ptr<Pass> mlir::hivm::createV2SplitKernelPass() {
+  return std::make_unique<V2SplitKernelPass>();
 }

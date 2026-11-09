@@ -854,12 +854,12 @@ func.func @test_fixpipe_pre_quant_s322i8_wrong_dst() {
 
 // -----
 
-// NO_QUANT requires identical src/dst element types.
+// NO_QUANT allows the registered signatures. f32 -> i32 is not one of them.
 // CHECK-LABEL: test_fixpipe_pre_quant_no_quant_mismatch
 func.func @test_fixpipe_pre_quant_no_quant_mismatch() {
   %src = tensor.empty() : tensor<16x16xf32>
   %dst = tensor.empty() : tensor<16x16xi32>
-  // expected-error@+1 {{pre_quant mode 'NO_QUANT' requires one of [32-bit float -> 32-bit float, 32-bit signless integer -> 32-bit signless integer], but got 'f32' -> 'i32'}}
+  // expected-error@+1 {{pre_quant mode 'NO_QUANT' requires one of [32-bit float -> 32-bit float, 32-bit signless integer -> 32-bit signless integer, 32-bit signless integer -> 16-bit signless integer, 32-bit signless integer -> 16-bit float, 32-bit signless integer -> 8-bit unsigned integer, 32-bit float -> 8-bit signless integer, 32-bit float -> 8-bit unsigned integer], but got 'f32' -> 'i32'}}
   %r = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<NO_QUANT>} ins(%src : tensor<16x16xf32>) outs(%dst : tensor<16x16xi32>) -> tensor<16x16xi32>
   return
 }

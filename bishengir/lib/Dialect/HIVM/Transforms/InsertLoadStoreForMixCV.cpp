@@ -24,6 +24,7 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/FixpipeCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/InsertPropagation.h"
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/PropagateOp.h"
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/ResolvePropagation.h"
@@ -1187,39 +1188,6 @@ static FailureOr<uint64_t> getBlockElemsFor32BAlign(Type elemType) {
   return kAlignBytes / elemBytes;
 }
 
-static void ensureAllocInUbAddressSpaceIfNeeded(PatternRewriter &rewriter,
-                                                memref::AllocOp allocOp) {
-  auto oldType = dyn_cast<MemRefType>(allocOp.getMemref().getType());
-  if (!oldType)
-    return;
-  auto maybeSpace = mlir::hivm::getOptionalHIVMAddressSpace(oldType);
-  if (maybeSpace.has_value())
-    return;
-
-  MLIRContext *ctx = rewriter.getContext();
-  auto ubSpaceAttr = hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::UB);
-  auto newType =
-      mlir::MemRefType::get(oldType.getShape(), oldType.getElementType(),
-                            oldType.getLayout(), ubSpaceAttr);
-
-  SmallVector<OpOperand *> originalUses;
-  for (OpOperand &use : allocOp.getMemref().getUses())
-    originalUses.push_back(&use);
-
-  OpBuilder::InsertionGuard guard(rewriter);
-  rewriter.modifyOpInPlace(allocOp,
-                           [&]() { allocOp.getMemref().setType(newType); });
-
-  rewriter.setInsertionPointAfter(allocOp);
-  Value replacement = allocOp.getMemref();
-  if (replacement.getType() != oldType) {
-    replacement = rewriter.create<memref::MemorySpaceCastOp>(
-        allocOp.getLoc(), oldType, replacement);
-  }
-  for (OpOperand *use : originalUses)
-    use->set(replacement);
-}
-
 /// pattern2
 /// %53 = hivm.hir.vcast ins(%42 : tensor<16x16xf32>) outs(%19 : ...) -> ...
 /// %54 = tensor.empty() : tensor<16x16xf32>
@@ -1803,6 +1771,9 @@ InsertLoadStoreForMixCVPass::setOperationsCoreType(OpBuilder builder,
 }
 
 void InsertLoadStoreForMixCVPass::runOnOperation() {
+  ModuleTargetAnalysis &targets = getAnalysis<ModuleTargetAnalysis>();
+  ModuleTargetAnalysisScope targetScope(targets);
+  markAnalysesPreserved<ModuleTargetAnalysis>();
   OpBuilder builder(&getContext());
   auto *ctx = &getContext();
   auto funcOp = getOperation();

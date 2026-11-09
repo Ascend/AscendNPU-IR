@@ -16,7 +16,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/DMA/Fixpipe/FixpipeCapabilityBinding.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/FixpipeCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -34,8 +36,28 @@
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 using namespace llvm;
+using bishengir::npu::FixpipeCapabilityRequestBuilder;
 
 namespace mlir::hivm {
+
+void ensureAllocInUbAddressSpaceIfNeeded(PatternRewriter &rewriter,
+                                         memref::AllocOp allocOp) {
+  auto oldType = allocOp.getType();
+  if (getOptionalHIVMAddressSpace(oldType))
+    return;
+
+  auto ubSpace = rewriter.getAttr<AddressSpaceAttr>(AddressSpace::UB);
+  auto newType = MemRefType::Builder(oldType).setMemorySpace(ubSpace);
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.modifyOpInPlace(allocOp,
+                           [&]() { allocOp.getMemref().setType(newType); });
+
+  // Preserve view and region-argument types until memory-scope inference.
+  rewriter.setInsertionPointAfter(allocOp);
+  auto cast = rewriter.create<memref::MemorySpaceCastOp>(
+      allocOp.getLoc(), oldType, allocOp.getMemref());
+  rewriter.replaceAllUsesExcept(allocOp.getMemref(), cast.getResult(), cast);
+}
 
 bool isConstZero(Value v) {
   auto type = getElementTypeOrSelf(v);
@@ -664,6 +686,28 @@ hivm::FixpipeOp insertFixpipe(Value value, Location loc,
   auto fixpipeOp = rewriter.create<hivm::FixpipeOp>(loc, TypeRange(tensorType),
                                                     value, emptyOp);
   auto dmaMode = getInsertedFixpipeDmaMode(value, emptyOp, inferFixpipeDmaMode);
+  std::optional<FixpipeCapabilityRequestBuilder> builder =
+      FixpipeCapabilityRequestBuilder::from(fixpipeOp);
+  bool native = false;
+  if (builder) {
+    builder->dmaMode(dmaMode);
+    builder->srcAddressSpace(AddressSpace::L0C);
+    builder->dstAddressSpace(addressSpace);
+    const ModuleTargetAnalysis *targets = ModuleTargetAnalysisScope::current();
+    std::optional<CachedModuleTarget> cached =
+        targets ? targets->lookup(fixpipeOp) : std::nullopt;
+    if (cached) {
+      auto storage = builder->build();
+      native = bishengir::npu::queryNativeSupport(cached->architecture,
+                                                  storage.getRequest()) ==
+               bishengir::npu::NativeSupport::Native;
+    }
+  }
+  if (!native) {
+    fixpipeOp.emitError("inserted fixpipe is not Native for dma_mode ")
+        << stringifyFixpipeDMAMode(dmaMode);
+    llvm::report_fatal_error("inserted fixpipe is not Native");
+  }
   auto dmaModeAttr = FixpipeDMAModeAttr::get(rewriter.getContext(), dmaMode);
   fixpipeOp.setDmaModeAttr(dmaModeAttr);
   fixpipeOp->setAttr(hivm::kInsertedFixpipeAttr::name, rewriter.getUnitAttr());
