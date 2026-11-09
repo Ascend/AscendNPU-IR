@@ -1447,87 +1447,93 @@ class TcbPoolOp<string mnemonic, list<Trait> traits = []>
 }
 
 def TcbPoolInitOp : TcbPoolOp<"tcb_pool_init", [CubeCoreTypeTrait]> {
-  let summary = "Initialize TCB pool metadata on Cube";
+  let summary = "Initialize the shared TCB pool and reserved synchronization IDs";
   let description = [{
-    Initialize the occupied-slot bitmap in metadata word zero. Start-slot
-    entries need no initialization: allocation writes them before publication.
-    Queue entry ranges and depths are supplied by the caller. Cube is the sole writer.
-    Initialize once per pool lifetime, after all prior users have completed.
-    The caller orders initialization and metadata publication before AIV get.
-    This op reserves no memory and performs no synchronization.
+    Initialize the shared pool metadata in SSBUF. slot_bytes specifies the
+    size of each UB slot in bytes, and slot_count specifies the number of slots.
+    slots_per_buffer contains the number of contiguous slots required by each
+    of the two queues. search_begin and search_end specify each queue's
+    half-open search range in slot indices. Full-pool ranges provide shared
+    allocation; disjoint ranges provide partitioned allocation.
+
+    Each set bit in flag_mask reserves the corresponding ID in [0,15]. The
+    release queue depth is popcount(flag_mask), and each address queue has
+    depth three. Initialization marks all slots and reserved IDs free and
+    resets the release counters and the address indices for Cube and both AIVs.
+    The caller completes previous pool users before initialization and makes
+    the initialized metadata visible to both AIVs before use.
   }];
-  let arguments = (ins MemRefRankOf<[I32], [1]>:$metadata);
+  let arguments = (ins MemRefRankOf<[I32], [1]>:$metadata,
+                       I32Attr:$slot_bytes, I32Attr:$slot_count,
+                       DenseI32ArrayAttr:$slots_per_buffer,
+                       DenseI32ArrayAttr:$search_begin,
+                       DenseI32ArrayAttr:$search_end,
+                       I32Attr:$flag_mask);
   let assemblyFormat = "$metadata attr-dict `:` type($metadata)";
+
 }
 
 def TcbPoolAllocOp : TcbPoolOp<"tcb_pool_alloc", [CubeCoreTypeTrait]> {
-  let summary = "Try to allocate a FIFO entry and contiguous UB slots once";
+  let summary = "Allocate contiguous UB slots and a synchronization ID";
   let description = [{
-    Attempt allocation once without reclaiming or modifying completed entries.
-    Return the absolute UB byte address on success, or UINT64_MAX on failure.
-    Address zero is valid. Failure leaves metadata unchanged.
-    The caller must check success before issuing the associated FIX output.
-    pool is a single-address pointer_cast of a static contiguous i8 UB buffer
-    containing 1..32 whole slots. entry_offset and queue_depth select the start-slot words; slots specifies this
-    queue's fixed slot demand. seq is the cumulative allocation sequence.
-    The caller must check allocated - released < queue_depth before allocation, advance
-    its allocation count only on success, and provision sufficient event credits.
-    This op stores the slot start at metadata[entry_offset + seq % queue_depth]; it stores no counters.
-    Configuration must remain identical throughout the pool lifetime.
-    Publication of the FIFO entry does not imply FIX completion. The caller
-    provides visibility ordering and guarantees u32 counters do not wrap.
-    This op contains no spinning wait or pipe synchronization.
+    Allocate contiguous slots within the search range of segment 0 or 1 and
+    reserve a free synchronization ID. Reclaim allocations in AIV0 feedback
+    order as needed. Return the absolute UB byte address and ID, write
+    {startSlot, id} to the segment's address queue, and advance Cube's index.
+
+    pool is a planned contiguous i8 UB pointer_cast. Its slot geometry and
+    queue search ranges are configured by tcb_pool_init. The caller protects
+    each address entry until both AIVs have read it and publishes allocation
+    progress after issuing FIX and the FIX-to-Vector notification with the
+    returned ID.
   }];
   let arguments = (ins MemRefRankOf<[I32], [1]>:$metadata,
-                       MemRefRankOf<[I8], [1]>:$pool, I32:$seq,
-                       I32Attr:$entry_offset, I32Attr:$queue_depth,
-                       I32Attr:$slot_bytes,
-                       I32Attr:$slots);
-  let results = (outs I64:$address);
+                       MemRefRankOf<[I8], [1]>:$pool,
+                       I32Attr:$segment);
+  let results = (outs I64:$address, I32:$id);
   let assemblyFormat = [{
-    $metadata `,` $pool `seq` `(` $seq `)` attr-dict `:` type($metadata) `,` type($pool) `->` type($address)
+    $metadata `,` $pool attr-dict `:` type($metadata) `,` type($pool) `->` `(` type($address) `,` type($id) `)`
   }];
 }
 
 def TcbPoolGetOp : TcbPoolOp<"tcb_pool_get", [VectorCoreTypeTrait]> {
-  let summary = "Read the address of an explicitly numbered FIFO entry";
+  let summary = "Read a TCB descriptor and publish AIV0 issue feedback";
   let description = [{
-    Read metadata[entry_offset + seq % queue_depth] without modifying metadata. seq is this AIV's
-    zero-based cumulative issue sequence for the queue over the pool lifetime,
-    not the polling-loop iteration. Each AIV gets entries once in FIFO order.
-    The caller guarantees released[queue] <= seq < allocated[queue], metadata
-    visibility and readiness of the corresponding FIX result. This op does
-    not wait for readiness and does not advance any shared cursor.
-    pool has the same constraints as tcb_pool_alloc.
+    Read the next address entry for segment 0 or 1 and return the absolute UB
+    byte address and synchronization ID. Each AIV advances its own index for
+    the segment. AIV0 also appends {segment, startSlot, id} to the release queue
+    and advances its tail; AIV1 updates only its address index.
+
+    The caller invokes get after Cube publishes the corresponding allocation.
+    Each AIV uses the returned ID for the FIX-to-Vector data synchronization
+    and the Vector-to-FIX completion notification. Release feedback records
+    descriptor consumption; completion is tracked by these notifications.
   }];
   let arguments = (ins MemRefRankOf<[I32], [1]>:$metadata,
-                       MemRefRankOf<[I8], [1]>:$pool, I32:$seq,
-                       I32Attr:$entry_offset, I32Attr:$queue_depth,
-                       I32Attr:$slot_bytes);
-  let results = (outs I64:$address);
+                       MemRefRankOf<[I8], [1]>:$pool,
+                       I32Attr:$segment);
+  let results = (outs I64:$address, I32:$id);
   let assemblyFormat = [{
-    $metadata `,` $pool `seq` `(` $seq `)` attr-dict
-    `:` type($metadata) `,` type($pool) `->` type($address)
+    $metadata `,` $pool attr-dict `:` type($metadata) `,` type($pool) `->` `(` type($address) `,` type($id) `)`
   }];
 }
 
 def TcbPoolReleaseOp : TcbPoolOp<"tcb_pool_release", [CubeCoreTypeTrait]> {
-  let summary = "Free the explicitly numbered FIFO head slots on Cube";
+  let summary = "Release all remaining TCB allocations";
   let description = [{
-    Free metadata[entry_offset + seq % queue_depth] for the next FIFO entry. seq is the
-    cumulative release sequence, maintained by the caller. The caller
-    must first consume completion notifications from BOTH AIVs for that entry,
-    ordered after their last buffer accesses. This op always succeeds under
-    that precondition. Clear the entry's occupied bits immediately; the caller
-    then increments its release count. No counters are stored in metadata.
-    slots is in [1, 32] and must match this queue's allocation demand.
-    Alloc and release execute on the same Cube Scalar stream. This op does not
-    wait; the caller drains completion notifications before pool reset/teardown.
+    Reclaim all remaining allocations in AIV0 feedback order, including
+    feedback published by subsequent gets. For each allocation, enqueue FIX
+    synchronization for both AIV completion notifications, mark its slots
+    free, and return its ID to the free bitmap. Finish when all reserved IDs
+    have been returned.
+
+    The caller stops allocation before release and keeps the remaining gets
+    eligible to execute. Release enqueues completion synchronization on FIX;
+    the caller completes the pipeline before resetting the pool metadata.
+    Release counters remain within their range for one pool lifetime.
   }];
-  let arguments = (ins MemRefRankOf<[I32], [1]>:$metadata, I32:$seq, I32Attr:$entry_offset,
-                       I32Attr:$queue_depth,
-                       I32Attr:$slots);
-  let assemblyFormat = "$metadata `seq` `(` $seq `)` attr-dict `:` type($metadata)";
+  let arguments = (ins MemRefRankOf<[I32], [1]>:$metadata);
+  let assemblyFormat = "$metadata attr-dict `:` type($metadata)";
 }
 
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMOPS_TD
