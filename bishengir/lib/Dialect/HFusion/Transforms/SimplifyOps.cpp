@@ -227,6 +227,38 @@ static bool isUnsignedSource(CastOp castOp) {
   return castOp.getCast() == TypeFn::cast_unsigned;
 }
 
+// A signedness reinterpretation changes the numeric value even when the output
+// type can hold the original range: a signed i16 value -1 becomes 65535 when
+// the next cast reads the same i16 as unsigned. Keep the chain when a consumer
+// reads its integer input with a different signedness than the producer wrote
+// it, and when a float-to-int step changes the sign of the float value.
+static bool isSignednessPreservingCastChain(ArrayRef<CastOp> castChain) {
+  for (size_t index = 0; index + 1 < castChain.size(); ++index) {
+    CastOp consumer = castChain[index];
+    CastOp producer = castChain[index + 1];
+    Type inputType =
+        getElementTypeOrSelf(consumer.getInputs().front().getType());
+    if (inputType.isInteger()) {
+      if (isUnsignedOutput(producer) != isUnsignedSource(consumer))
+        return false;
+      continue;
+    }
+
+    if (!isa<FloatType>(inputType) ||
+        !getElementTypeOrSelf(consumer.getOutputs().front().getType())
+             .isInteger())
+      continue;
+
+    // float -> int: the float sign is fixed by the producer's integer source.
+    if (!getElementTypeOrSelf(producer.getInputs().front().getType())
+             .isInteger())
+      return false;
+    if (isUnsignedSource(producer) != isUnsignedOutput(consumer))
+      return false;
+  }
+  return true;
+}
+
 // Does the exact value range of `outputType` contain every value of a
 // `sourceWidth`-bit integer with the given signedness?
 static bool containsIntegerRange(Type outputType, bool outputUnsigned,
@@ -256,6 +288,8 @@ static bool isRangePreservingCastChain(ArrayRef<CastOp> castChain) {
   Type sourceType = getCastChainSourceType(castChain);
   auto sourceInt = dyn_cast<IntegerType>(sourceType);
   if (!sourceInt)
+    return false;
+  if (!isSignednessPreservingCastChain(castChain))
     return false;
 
   bool sourceUnsigned = isUnsignedSource(castChain.back());

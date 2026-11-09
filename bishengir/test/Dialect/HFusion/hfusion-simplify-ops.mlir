@@ -1097,6 +1097,24 @@ func.func @keepTwoCastMixedI16F16(%arg0: tensor<4xi16>) -> tensor<4xi16> {
 }
 
 // -----
+// Test: a sign-extending i8->i16 followed by an unsigned i16->f32
+// reinterpretation changes the value (-1 becomes 65535.0); keep the chain even
+// though every output type's range contains i8.
+// CHECK-LABEL: func.func @keepSignednessReinterpretedThroughF32
+// CHECK-SAME: (%[[arg0:.*]]: tensor<4xi8>)
+// CHECK-COUNT-3: hfusion.cast
+// CHECK: return
+func.func @keepSignednessReinterpretedThroughF32(%arg0: tensor<4xi8>) -> tensor<4xi8> {
+  %e0 = tensor.empty() : tensor<4xi16>
+  %e1 = tensor.empty() : tensor<4xf32>
+  %e2 = tensor.empty() : tensor<4xi8>
+  %t0 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%arg0 : tensor<4xi8>) outs(%e0 : tensor<4xi16>) -> tensor<4xi16>
+  %t1 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<rint>} ins(%t0 : tensor<4xi16>) outs(%e1 : tensor<4xf32>) -> tensor<4xf32>
+  %t2 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<truncwithoverflow>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%t1 : tensor<4xf32>) outs(%e2 : tensor<4xi8>) -> tensor<4xi8>
+  return %t2 : tensor<4xi8>
+}
+
+// -----
 // Test: non-saturating f16->u8 sign crossing still clamps negatives; keep.
 // CHECK-LABEL: func.func @keepTwoCastMixedNegToUnsigned
 // CHECK-SAME: (%[[arg0:.*]]: tensor<4xi8>)
