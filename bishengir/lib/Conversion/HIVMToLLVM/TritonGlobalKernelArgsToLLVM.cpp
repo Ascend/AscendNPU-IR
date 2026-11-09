@@ -37,6 +37,7 @@
 #include "bishengir/Conversion/HIVMToLLVM/TritonGlobalKernelArgsToLLVM.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMProtonOps.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
@@ -223,7 +224,8 @@ public:
 
     // eliminate [%offset, %size, %stride] from func arguments by replacing
     // users with constant value
-    auto [eliminateIdxVec, eliminateIdx2ArgIdxVec] = getEliminateIdxVector(attr);
+    auto [eliminateIdxVec, eliminateIdx2ArgIdxVec] =
+        getEliminateIdxVector(attr);
     LLVM_DEBUG({
       llvm::dbgs() << "eliminateIdxVec: [";
       llvm::interleaveComma(eliminateIdxVec, llvm::dbgs());
@@ -341,13 +343,14 @@ void TritonGlobalKernelArgsToLLVM::runOnOperation() {
     for (auto ret : returns) {
       OpBuilder builder(ret);
       auto flag = builder.create<LLVM::ConstantOp>(
-          ret.getLoc(), builder.getI32Type(), 0x10000);
+          ret.getLoc(), builder.getI32Type(), hivm::proton::kKernelExitDrain);
       builder.create<LLVM::CallOp>(
           ret.getLoc(), TypeRange{},
           FlatSymbolRefAttr::get(builder.getContext(), "proton_scope_boundary"),
           ValueRange{flag});
     }
-    function->setAttr("proton.instrumentation_epilogue", UnitAttr::get(&getContext()));
+    function->setAttr("proton.instrumentation_epilogue",
+                      UnitAttr::get(&getContext()));
   });
 }
 

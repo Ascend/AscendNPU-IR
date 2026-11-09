@@ -161,7 +161,7 @@ ProtonScopePlan::analyzeRecord(mlir::triton::proton::RecordOp record,
       return record.emitError("scope name '") << name << "' is already active";
     }
     // Higher IDs are reserved for the experimental collector drain protocol.
-    if (scopes.size() >= 0x188) {
+    if (scopes.size() >= hivm::proton::kMaxInstrumentedScopeCount) {
       return record.emitError(
           "too many A5 Proton scopes; the experimental drain protocol allows "
           "at most 392 scopes per module");
@@ -218,7 +218,10 @@ void attachMetadata(ModuleOp module, ArrayRef<ScopeDescriptor> scopes) {
   module->setAttr(
       "proton.metadata",
       builder.getDictionaryAttr(
-          {builder.getNamedAttr("format_version", builder.getI32IntegerAttr(2)),
+          {builder.getNamedAttr(
+               "format_version",
+               builder.getI32IntegerAttr(
+                   hivm::proton::kInstrumentationFormatVersion)),
            builder.getNamedAttr("scopes", builder.getArrayAttr(scopeAttrs))}));
 }
 
@@ -265,8 +268,9 @@ void ConvertProtonToHIVMPass::runOnOperation() {
     emitBoundary(boundaryId);
     // The template consumes this reserved control value without emitting it.
     if (!record.getIsStart() &&
-        plan->getScopes()[boundaryId & 0x3ff].parentId < 0)
-      emitBoundary(0xfff);
+        plan->getScopes()[boundaryId & (hivm::proton::kMaxScopeCount - 1)]
+                .parentId < 0)
+      emitBoundary(hivm::proton::kOuterScopeDrain);
     record->erase();
   }
 
