@@ -93,29 +93,6 @@ std::optional<CachedModuleTarget> findEnclosingModuleTarget(Operation *op);
 std::optional<bishengir::npu::NPUArchitectureKind>
 lookupModuleArchitecture(Operation *op);
 
-/// Query a candidate that does not exist as IR yet. Either address space left
-/// unset makes the result Unknown.
-bishengir::npu::NativeSupport queryFixpipeCreate(
-    Operation *anchor, Type srcElementType, Type dstElementType,
-    FixpipeDMAMode dmaMode,
-    FixpipePreQuantMode preQuantMode = FixpipePreQuantMode::NO_QUANT,
-    FixpipePreReluMode preRelu = FixpipePreReluMode::NO_RELU,
-    bool channelSplit = false,
-    std::optional<AddressSpace> srcAddressSpace = std::nullopt,
-    std::optional<AddressSpace> dstAddressSpace = std::nullopt,
-    bool quantScalePresent = false);
-
-/// True when `queryFixpipeCreate` returns Native.
-bool isNativeFixpipeCreate(
-    Operation *anchor, Type srcElementType, Type dstElementType,
-    FixpipeDMAMode dmaMode,
-    FixpipePreQuantMode preQuantMode = FixpipePreQuantMode::NO_QUANT,
-    FixpipePreReluMode preRelu = FixpipePreReluMode::NO_RELU,
-    bool channelSplit = false,
-    std::optional<AddressSpace> srcAddressSpace = std::nullopt,
-    std::optional<AddressSpace> dstAddressSpace = std::nullopt,
-    bool quantScalePresent = false);
-
 /// Attributes that are not part of the Fixpipe execution schema but can
 /// interact with a candidate dma_mode change. Non-default values refuse the
 /// NZ2DN transpose pilot until those relations are modeled.
