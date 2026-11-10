@@ -3534,6 +3534,11 @@ PlanMemoryPass::planMemoryForFuncOp(func::FuncOp &funcOp) {
                            /*attemptCount=*/1});
   }
 
+  // TLA mode requires a deterministic plan: disable the fallback stages and
+  // the shuffle-seed retries, and plan exactly once.
+  if (this->enableTLAmode)
+    retryStages = {{[](func::FuncOp &) {}, /*attemptCount=*/1}};
+
   int totalAttemptCount = 0;
   for (const PlanRetryStage &stage : retryStages)
     totalAttemptCount += stage.attemptCount;
