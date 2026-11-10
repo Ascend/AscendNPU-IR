@@ -1533,7 +1533,20 @@ def CVPipelining
               "CV-pipelining heuristics">,
        Option<"enablePreload", "enable-preload", "bool",
               /*default=*/"false",
-              "Enable registered-kernel CV-pipelining heuristics">];
+              "Enable registered-kernel CV-pipelining heuristics">,
+       Option<"schedulerMode", "scheduler", "CVSchedulerMode",
+              "CVSchedulerMode::Default",
+              "Scheduler mode for CV-pipelining partition.",
+              [{::llvm::cl::values(
+               clEnumValN(CVSchedulerMode::Default, "default",
+                          "Default WorklistBuilder-based partitioning"),
+               clEnumValN(CVSchedulerMode::Sms, "sms",
+                          "SMS stage-level scheduling partitioning"))}]>,
+       Option<"smsFailOnFallback", "sms-fail-on-fallback", "bool",
+              /*default=*/"false",
+              "When true, treat SMS scheduler failure as a compilation error "
+              "instead of silently falling back to the default scheduler. "
+              "Useful for batch testing SMS enablement rates.">];
 }
 
 def OutlineCVScopes

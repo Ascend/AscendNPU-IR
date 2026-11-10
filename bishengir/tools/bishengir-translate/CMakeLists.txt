@@ -23,6 +23,9 @@ llvm_update_compile_flags(bishengir-translate)
 
 target_include_directories(bishengir-translate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-target_link_libraries(bishengir-translate PRIVATE ${LIBS})
+target_link_libraries(bishengir-translate PRIVATE
+  "-Wl,--start-group"
+  ${LIBS}
+  "-Wl,--end-group")
 
 mlir_check_link_libraries(bishengir-translate)

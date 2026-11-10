@@ -16,13 +16,19 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/PreloadProtocolVerifier.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsDagBuilder.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsPartitioner.h"
 #include "bishengir/Dialect/HIVM/Transforms/TightlyCoupledBufferUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/CostModel/MSCostModel.h"
 #include "bishengir/Dialect/HIVM/Utils/HIVMAliasAnalysis.h"
 #include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/Alg/Sms/SmsScheduler.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
 #include "bishengir/Dialect/HIVM/Utils/WorklistBuilder.h"
@@ -87,12 +93,28 @@ static bool computeAllowShapeHeuristics(bool bypass, bool enablePreload,
   return bypass;
 }
 
+//===----------------------------------------------------------------------===//
+// FixedProductionLatencyProvider — deterministic P0 cost model
+//===----------------------------------------------------------------------===//
+
+/// Production latency provider for SMS mode.  Returns a fixed positive
+/// latency for every op, ensuring deterministic scheduling independent of
+/// hardware.  The P0 strategy assigns unit latency/issue-time; a future
+/// hardware-aware provider can replace this without touching the integration.
+struct FixedProductionLatencyProvider : public LatencyProvider {
+  int getLatency(Operation *) const override { return 2; }
+  int getIssueTime(Operation *) const override { return 2; }
+};
+
 struct CVPipelineImpl {
   CVPipelineImpl(LoopLikeOpInterface loop, int multibuffer,
                  CVPipelineMode pipelineMode, bool enableLazyLoading,
-                 bool bypassShapeRegistry = false, bool enablePreload = false)
+                 CVSchedulerMode schedulerMode,
+                 bool bypassShapeRegistry = false, bool enablePreload = false,
+                 bool msFailOnFallback = false)
       : pipelineLoop(loop), newLoop(nullptr), builder(loop->getContext()),
         numMultibuffer(multibuffer), pipelineMode(pipelineMode),
+        schedulerMode(schedulerMode), msFailOnFallback(msFailOnFallback),
         allowShapeHeuristics(
             computeAllowShapeHeuristics(bypassShapeRegistry, enablePreload,
                                         multibuffer, loop.getOperation())),
@@ -105,6 +127,12 @@ struct CVPipelineImpl {
   }
 
   LogicalResult run();
+
+  /// True when this loop entered the SMS scheduler and hit the fallback
+  /// convergence point in run(). Lets the pass distinguish an actual SMS
+  /// fallback from pre-SMS (worklist build) or post-SMS failures under
+  /// sms-fail-on-fallback.
+  bool sawMsFallback() const { return msFallbackSeen; }
 
 private:
   void collectAtomicEffects();
@@ -154,6 +182,19 @@ private:
   /// before any IR mutation, so `run()` can bail and leave the loop
   /// un-pipelined instead of crashing.
   LogicalResult checkWorkItemDependencies();
+
+  /// msCoordinateMap lookup from a const WorkItem *. The map is keyed by the
+  /// mutable pointer because every other user holds one; this wrapper keeps
+  /// the cast in a single place for the analysis code that holds a const
+  /// pointer. Returns 0 for an unmapped item, like DenseMap::lookup.
+  int32_t lookupMsCoordinate(const WorkItem *item) const {
+    return msCoordinateMap.lookup(const_cast<WorkItem *>(item));
+  }
+
+  /// Install the SMS schedule coordinates and pipeline depth onto the
+  /// authoritative Default WorkItems.  Never replaces ownership,
+  /// output/workspace state, or the worklist itself.
+  LogicalResult installMsPartition(const MsPartitionResult &partition);
 
   LogicalResult expandOutputInits(WorkItem *item);
   LogicalResult expandOutputInitsForPreload(WorkItem *item);
@@ -215,6 +256,22 @@ private:
 
   // Pipeline mode for CV-pipelining.
   CVPipelineMode pipelineMode;
+
+  // Scheduler mode: Default (WorklistBuilder) or Sms (SMS stage-level).
+  CVSchedulerMode schedulerMode;
+
+  // When true, SMS failure returns pass failure instead of falling back.
+  bool msFailOnFallback;
+
+  // Set at the SMS fallback convergence point in run().
+  bool msFallbackSeen = false;
+
+  // SMS state: per-WorkItem preload coordinate and loop-level depth.
+  // Populated by installMsPartition() and consumed by
+  // createNewLoopsForPreloadWithScopes(). Both are reset when SMS falls
+  // back to the Default scheduler.
+  DenseMap<WorkItem *, int32_t> msCoordinateMap;
+  int32_t msPipelineDepth = 0;
 
   // True when the parent function is registered, preload is on, and
   // workspace multibuffer is non-zero, or LIT bypass is on.
@@ -1253,8 +1310,13 @@ LogicalResult CVPipelineImpl::markOutputs() {
         // Cross-iteration independence alone cannot justify reversing a RAW,
         // WAR or WAW dependence within an iteration. Region-internal ordering
         // and repeated copies of the same access remain conservative.
-        // A loop-carried stage is pinned to preload 0; a later independent
-        // stage would execute the same iteration before it.
+        // The hasLoopCarriedDep clause guards the one case where block order
+        // stops implying preload order: a stage pinned to preload 0 followed
+        // by a stage with a higher preload, which would execute the same
+        // iteration first. Under the SMS scheduler the DAG builder rejects
+        // loop-carried recurrences outright, and SMS assigns preload numbers
+        // non-increasing in block order, so the clause degenerates to the
+        // block-order test there.
         bool preservesOrder =
             aTop != bTop && aTop->isBeforeInBlock(bTop) &&
             (!a.item->hasLoopCarriedDep || b.item->hasLoopCarriedDep);
@@ -2286,6 +2348,25 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     if (isa<SetAtomicOp>(op))
       toErase.insert(&op);
 
+  // SMS mode: preload coordinates come from the verified partition and
+  // override the Default loop-carried heuristic below.  Default mode keeps
+  // the loop-carried-aware scheme untouched.
+  const bool useSms = (schedulerMode == CVSchedulerMode::Sms);
+
+  // SMS: validate coordinate map completeness before creating any scope, so
+  // that a missing coordinate fails this loop instead of silently emitting a
+  // zero preload number.
+  if (useSms) {
+    for (const auto &item : worklist) {
+      if (!msCoordinateMap.count(item.get())) {
+        DEBUG_WITH_TYPE("ms-preload-scheduler",
+                        dbgs() << "[ms] WorkItem #" << item->id
+                               << " has no coordinate in msCoordinateMap\n");
+        return failure();
+      }
+    }
+  }
+
   bool hasAnyLoopCarriedItem = llvm::any_of(
       worklist, [](const auto &item) { return item->hasLoopCarriedDep; });
   unsigned numIndependent = llvm::count_if(
@@ -2295,6 +2376,8 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
                               : static_cast<int32_t>(worklist.size());
   if (pinAllPreloadNumToZero)
     maxPreloadNum = 1;
+  if (useSms)
+    maxPreloadNum = msPipelineDepth;
   int32_t preloadNum = maxPreloadNum - 1;
   for (auto &item : worklist) {
     // Reset insertion point after we're done with this item
@@ -2323,7 +2406,9 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     newScopeOp.setNoInline(true);
     newScopeOp->setAttr(kPipelinedLoopCoreTypeAttrName,
                         TCoreTypeAttr::get(builder.getContext(), item->core));
-    int32_t itemPreloadNum = item->hasLoopCarriedDep ? 0 : preloadNum;
+    int32_t itemPreloadNum = useSms
+                                 ? msCoordinateMap.lookup(item.get())
+                                 : (item->hasLoopCarriedDep ? 0 : preloadNum);
     newScopeOp->setAttr(
         hivm::PreloadNumAttr::name,
         IntegerAttr::get(IntegerType::get(newScopeOp->getContext(), 32),
@@ -2333,7 +2418,13 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
         hivm::MaxPreloadNumAttr::name,
         IntegerAttr::get(IntegerType::get(newScopeOp->getContext(), 32),
                          maxPreloadNum));
-    if (item->hasLoopCarriedDep)
+    // hivm.has_loop_carried_dep is Default-scheduler semantics: the bit marks
+    // the forward closure Default pins to preload 0, which extends to the end
+    // of the worklist. SMS never pins that closure (the DAG builder rejects
+    // loop-carried recurrences outright), so the attr is stamped on the
+    // Default path only.
+    bool markLoopCarriedDep = !useSms && item->hasLoopCarriedDep;
+    if (markLoopCarriedDep)
       newScopeOp->setAttr("hivm.has_loop_carried_dep", builder.getUnitAttr());
 
     Region &region = newScopeOp.getRegion();
@@ -2819,6 +2910,53 @@ void CVPipelineImpl::revert() {
   expandedWorkspaceOps.clear();
 }
 
+//===----------------------------------------------------------------------===//
+// installMsPartition — install SMS partition into CVPipelineImpl state
+//===----------------------------------------------------------------------===//
+
+LogicalResult
+CVPipelineImpl::installMsPartition(const MsPartitionResult &partition) {
+  // The partition result carries the SAME Default worklist / owner map
+  // (shared_ptr identity) already installed by run(); ownership and
+  // output/workspace state are NOT replaced here.  Only schedule
+  // coordinates, pipeline depth, and transfer metadata are installed.
+  msPipelineDepth = partition.pipelineDepth;
+  numMultibuffer = partition.pipelineDepth;
+
+  // Build the WorkItem → verified preload coordinate map from stages.
+  msCoordinateMap.clear();
+  for (const auto &stage : partition.stages) {
+    for (WorkItem *wi : stage.workItems) {
+      if (!wi) {
+        DEBUG_WITH_TYPE("ms-preload-scheduler",
+                        dbgs() << "[ms] null WorkItem in stage "
+                               << stage.stageOrdinal << "\n");
+        return failure();
+      }
+      auto [it, inserted] =
+          msCoordinateMap.try_emplace(wi, stage.preloadCoordinate);
+      if (!inserted) {
+        DEBUG_WITH_TYPE("ms-preload-scheduler",
+                        dbgs()
+                            << "[ms] duplicate WorkItem in stage mapping\n");
+        return failure();
+      }
+    }
+  }
+
+  // Validate that every worklist item has a coordinate.
+  for (const auto &wi : worklist) {
+    if (!msCoordinateMap.count(wi.get())) {
+      DEBUG_WITH_TYPE("ms-preload-scheduler",
+                      dbgs() << "[ms] WorkItem #" << wi->id
+                             << " missing coordinate\n");
+      return failure();
+    }
+  }
+
+  return success();
+}
+
 LogicalResult CVPipelineImpl::preprocessCounterAllocas() {
   Block *body = pipelineLoop.getBody();
   // (1) Collect marked counter allocas. They live directly in the loop body,
@@ -3096,25 +3234,172 @@ LogicalResult CVPipelineImpl::run() {
     revert();
     return failure();
   }
+
+  // ---- Authoritative WorkItem partition (Default WorklistBuilder) ----
+  // Always run the Default WorklistBuilder first.  Its result is the
+  // authoritative partition — SMS scheduling overlays timing coordinates onto
+  // these WorkItems but never creates, splits, or merges them.
+  //
+  // Running the builder unconditionally also avoids a redundant re-build when
+  // SMS falls back to Default: the result is already in place.
   wlBuilder.setCounterClones(counterCloneMap);
-  auto buildResult = wlBuilder.build();
-  if (failed(buildResult)) {
+  auto defaultBuild = wlBuilder.build();
+  if (failed(defaultBuild)) {
     revert();
     return failure();
   }
-  worklist = buildResult->worklist;
-  opToWorkItemMap = buildResult->opToWorkItemMap;
-  outputMemrefMap = buildResult->outputMemrefMap;
-  numMultibuffer = buildResult->resolvedMultibuffer;
-  workspaceAllocs = buildResult->workspaceAllocs;
+  worklist = defaultBuild->worklist;
+  opToWorkItemMap = defaultBuild->opToWorkItemMap;
+  outputMemrefMap = defaultBuild->outputMemrefMap;
+  numMultibuffer = defaultBuild->resolvedMultibuffer;
+  workspaceAllocs = defaultBuild->workspaceAllocs;
 
+  // ---- SMS scheduling overlay (optional) ----
+  // All SMS phases (DAG build, SMS, materialization, verification,
+  // coordinate installation) are read-only with respect to the IR and the
+  // Default ownership state.  Any failure falls back to the Default
+  // scheduler using the result already installed above.
+  //
+  // [ms] debug prints use the unified "ms-preload-scheduler" type (the
+  // same channel as the SMS component files); the rest of this file stays
+  // in the "cv-pipelining" channel.
+  if (schedulerMode == CVSchedulerMode::Sms) {
+    auto parentModule = pipelineLoop->getParentOfType<ModuleOp>();
+    if (!hacc::utils::isRegBasedArch(parentModule)) {
+      DEBUG_WITH_TYPE("ms-preload-scheduler",
+                      dbgs() << "[ms] SMS scheduler is only supported on "
+                                "reg-based (A5) architectures; "
+                                "falling back to default\n");
+      schedulerMode = CVSchedulerMode::Default;
+    }
+  }
+
+  if (schedulerMode == CVSchedulerMode::Sms) {
+    StringRef msFailReason;
+    auto msParentFunc = pipelineLoop->getParentOfType<func::FuncOp>();
+    StringRef msFuncName =
+        msParentFunc ? msParentFunc.getName() : StringRef("unknown");
+    auto tryMsScheduler = [&]() -> LogicalResult {
+      DEBUG_WITH_TYPE("ms-preload-scheduler",
+                      dbgs() << "[ms] trying SMS scheduler on loop at "
+                             << pipelineLoop.getLoc() << "\n");
+
+      // Emit attempt status to stderr for batch SMS enablement testing.
+      llvm::errs() << "[MS_STATUS] status=attempt"
+                   << " function=" << msFuncName
+                   << " loop=" << pipelineLoop.getLoc() << "\n";
+      llvm::errs().flush();
+
+      if (pipelineMode != CVPipelineMode::Skew) {
+        DEBUG_WITH_TYPE("ms-preload-scheduler",
+                        dbgs() << "[ms] scheduler=sms requires "
+                                  "pipeline-mode=skew"
+                               << "\n");
+        msFailReason = "unsupported-pipeline-mode";
+        return failure();
+      }
+
+      // 1. Build DAG1/DAG2/DAG3 from Default WorkItems.
+      FixedProductionLatencyProvider latencyProvider;
+      costmodel::MSCostModel costModel;
+      MsDagBuilder dagBuilder(pipelineLoop, latencyProvider, counterCloneMap,
+                               *defaultBuild, &costModel);
+      auto dagResult = dagBuilder.build();
+      if (failed(dagResult)) {
+        DEBUG_WITH_TYPE("ms-preload-scheduler",
+                        dbgs() << "[ms] DAG build failed\n");
+        msFailReason = dagBuilder.failedDueToLoopCarriedDependency()
+                            ? "LoopCarriedDep"
+                            : "dag-build-failure";
+        return failure();
+      }
+
+      // 2. Run SMS scheduler.
+      auto schedule = sms::smsSchedule(dagResult->ddg);
+      if (!schedule) {
+        DEBUG_WITH_TYPE("ms-preload-scheduler",
+                        dbgs()
+                            << "[ms] SMS schedule failed (no feasible II)\n");
+        msFailReason = "no-feasible-ii";
+        return failure();
+      }
+
+      // 3. Materialize the schedule onto the Default WorkItems.
+      MsPartitioner partitioner(pipelineLoop, *dagResult, *schedule);
+      auto partResult = partitioner.partition();
+      if (failed(partResult)) {
+        DEBUG_WITH_TYPE("ms-preload-scheduler",
+                        dbgs() << "[ms] schedule materialization failed\n");
+        msFailReason = "partition-failure";
+        return failure();
+      }
+
+      // 4. Verify before installation.
+      PreloadProtocolVerifier verifier(pipelineLoop, *dagResult, *partResult);
+      if (failed(verifier.verify())) {
+        DEBUG_WITH_TYPE("ms-preload-scheduler",
+                        dbgs() << "[ms] protocol verification failed\n");
+        msFailReason = "verification-failure";
+        return failure();
+      }
+
+      // 5. Install coordinates/depth (no ownership mutation).
+      if (failed(installMsPartition(*partResult))) {
+        DEBUG_WITH_TYPE("ms-preload-scheduler",
+                        dbgs() << "[ms] coordinate installation failed\n");
+        msFailReason = "installation-failure";
+        return failure();
+      }
+
+      // Emit success status to stderr for batch SMS enablement testing.
+      llvm::errs() << "[MS_STATUS] status=success"
+                   << " function=" << msFuncName
+                   << " loop=" << pipelineLoop.getLoc() << "\n";
+      llvm::errs().flush();
+
+      return success();
+    };
+
+    if (!succeeded(tryMsScheduler())) {
+      DEBUG_WITH_TYPE("ms-preload-scheduler",
+                      dbgs() << "[ms] falling back to default scheduler on "
+                             << "loop " << pipelineLoop.getLoc() << "\n");
+
+      // Emit fallback status to stderr for batch SMS enablement testing.
+      llvm::errs() << "[MS_STATUS] status=fallback"
+                   << " function=" << msFuncName
+                   << " loop=" << pipelineLoop.getLoc()
+                   << " reason=" << msFailReason << "\n";
+      llvm::errs().flush();
+
+      msFallbackSeen = true;
+
+      // Discard any partially installed SMS coordinate state and restore
+      // the Default multibuffer resolution.
+      msCoordinateMap.clear();
+      msPipelineDepth = 0;
+      numMultibuffer = defaultBuild->resolvedMultibuffer;
+
+      if (msFailOnFallback) {
+        revert();
+        return failure();
+      }
+
+      schedulerMode = CVSchedulerMode::Default;
+      // Default result is already in worklist / opToWorkItemMap / etc.
+    }
+  }
+
+  // ---- Common post-partition pipeline ----
   if (failed(absorbMergerOpsIntoWorkItems())) {
     revert();
     return failure();
   }
   if (pipelineMode == CVPipelineMode::Skew &&
-      failed(collectWorkspaceAllocsForPreload()))
+      failed(collectWorkspaceAllocsForPreload())) {
+    revert();
     return failure();
+  }
   if (failed(markOutputs())) {
     revert();
     return failure();
@@ -3225,8 +3510,9 @@ void CVPipeliningPass::runOnOperation() {
 
     auto parentLoop = loop->getParentOfType<scf::ForOp>();
     CVPipelineImpl impl(loop, this->setDepthInUnrollMode, this->pipelineMode,
-                        this->enableLazyLoading, this->bypassShapeRegistry,
-                        this->enablePreload);
+                        this->enableLazyLoading, this->schedulerMode,
+                        this->bypassShapeRegistry, this->enablePreload,
+                        this->msFailOnFallback);
 
     // Mark all parent loops to not attempt pipelining to save compile time
     if (impl.run().succeeded())
@@ -3234,6 +3520,10 @@ void CVPipeliningPass::runOnOperation() {
         pipelinedNest.insert(parentLoop);
         parentLoop = parentLoop->getParentOfType<scf::ForOp>();
       }
+    else if (this->msFailOnFallback && impl.sawMsFallback()) {
+      signalPassFailure();
+      return;
+    }
   }
 
   removeWorkspaceMultiBufferMarks(func);

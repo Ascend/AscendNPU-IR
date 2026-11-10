@@ -10,6 +10,12 @@ file(GLOB INSERT_LOAD_STORE_FOR_MIX_CV ${CMAKE_CURRENT_SOURCE_DIR}/InsertLoadSto
 file(GLOB NDDMA CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/NDDMA/*.cpp)
 file(GLOB TILING ${CMAKE_CURRENT_SOURCE_DIR}/Tiling/*.cpp)
 file(GLOB NORMALIZE ${CMAKE_CURRENT_SOURCE_DIR}/regbase/Normalize/*.cpp)
+file(GLOB SMS_ALG_UTILS CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/../Utils/PipeSchedule/Alg/Sms/*.cpp)
+file(GLOB MS_COST_MODEL_UTILS CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/../Utils/PipeSchedule/CostModel/*.cpp)
+file(GLOB MS_UTILS CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/../Utils/PipeSchedule/*.cpp)
 set(TILE_AND_BIND_SUB_BLOCK
     ${CMAKE_CURRENT_SOURCE_DIR}/TileAndBindSubBlock/Helper.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/TileAndBindSubBlock/TileUtils.cpp)
@@ -31,6 +37,9 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ${PARTITION_AND_BIND_SUB_BLOCK}
   ${PIPELINE_V2}
   ${NORMALIZE}
+  ${SMS_ALG_UTILS}
+  ${MS_COST_MODEL_UTILS}
+  ${MS_UTILS}
   AddFFTSToSyncBlockSetOp.cpp
   AllocExtraBuffer.cpp
   AllocToAlloca.cpp

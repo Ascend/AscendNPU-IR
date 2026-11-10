@@ -674,6 +674,19 @@ llvm::cl::values(
   }];
 }
 
+def EnableSmsScheduler
+    : HIVMOptimizationControlOptions<
+          "Enable SMS (swing modulo scheduling) stage-level scheduler for "
+          "CV-pipelining partitioning (skew mode only).",
+          "bool", "false">;
+
+def SmsFailOnFallback
+    : HIVMOptimizationControlOptions<
+          "When true, treat SMS scheduler failure as a compilation error "
+          "instead of silently falling back to the default scheduler. "
+          "Useful for batch testing SMS enablement rates.",
+          "bool", "false">;
+
 def EnablePreload : BiShengIRCompileOpt<
   "Enable preload (skew mode) for CV-pipelining.",
   "bool",
