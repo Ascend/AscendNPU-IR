@@ -19,6 +19,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -249,6 +250,21 @@ getReshapedLoadSourceType(MemRefType srcType, ArrayRef<int64_t> dstShape,
   return result;
 }
 
+/// Shape-only print branches can keep a separate copy of the loaded snapshot.
+static bool isUsedOnlyForPrint(Value value) {
+  if (value.use_empty())
+    return false;
+  return llvm::all_of(value.getUsers(), [value](Operation *user) {
+    if (isa<hfusion::PrintOp>(user))
+      return true;
+    if (isa<tensor::ReshapeOp, tensor::ExpandShapeOp, tensor::CollapseShapeOp,
+            tensor::CastOp>(user) &&
+        user->getOperand(0) == value)
+      return isUsedOnlyForPrint(user->getResult(0));
+    return false;
+  });
+}
+
 /// Fold a memref load followed by tensor.reshape or tensor.collapse_shape into
 /// a load with the final logical shape:
 ///   src_view -> copy -> alloc -> to_tensor -> reshape/collapse
@@ -267,9 +283,11 @@ getReshapedLoadSourceType(MemRefType srcType, ArrayRef<int64_t> dstShape,
 /// checks, retaining a collapse_shape operation's explicit reassociation.
 ///
 /// Safety requirements:
-/// - The tensor has one use; the alloc is used only by its initializing copy
-///   and to_tensor. memref.copy has no results, so use_empty(copy) cannot prove
-///   that the destination buffer has no other consumers.
+/// - The tensor has one use, or the folded branch serves only prints. The
+///   alloc is used only by its initializing copy and to_tensor. Shared
+///   tensor users keep the original load until its last reshape is folded.
+///   memref.copy has no results, so use_empty(copy) cannot prove that the
+///   destination buffer has no other consumers.
 /// - Alloc, copy, to_tensor, and reshape are ordered in one block. Insert each
 ///   replacement at its original operation to preserve dominance and ordering
 ///   relative to intervening memory effects.
@@ -294,11 +312,10 @@ foldMemrefLoadReshape(Value tensorSrc, RankedTensorType srcType,
       srcType.getElementType() != dstType.getElementType())
     return failure();
 
-  // Sole consumer: otherwise erasing/rewriting the load chain would drop or
-  // corrupt data for other users of to_tensor.
-  if (!tensorSrc.hasOneUse())
-    return rewriter.notifyMatchFailure(
-        reshapeLikeOp, "to_tensor / reshape source has multiple consumers");
+  if (!tensorSrc.hasOneUse() &&
+      !isUsedOnlyForPrint(reshapeLikeOp->getResult(0)))
+    return rewriter.notifyMatchFailure(reshapeLikeOp,
+                                       "shared non-print reshape source");
 
   auto toTensor = tensorSrc.getDefiningOp<bufferization::ToTensorOp>();
   if (!toTensor || toTensor.getResult() != tensorSrc)
@@ -412,12 +429,15 @@ foldMemrefLoadReshape(Value tensorSrc, RankedTensorType srcType,
 
   rewriter.replaceOp(reshapeLikeOp, newToTensor);
 
-  // Sole-use was required above, so the old chain is now dead.
-  rewriter.eraseOp(toTensor);
-  rewriter.eraseOp(copyOp);
-  rewriter.eraseOp(alloc);
-  if (reinterp->use_empty())
-    rewriter.eraseOp(reinterp);
+  // Other logical views still observe the original snapshot. Each new copy
+  // stays at the original transfer point, before any intervening GM writes.
+  if (toTensor->use_empty()) {
+    rewriter.eraseOp(toTensor);
+    rewriter.eraseOp(copyOp);
+    rewriter.eraseOp(alloc);
+    if (reinterp->use_empty())
+      rewriter.eraseOp(reinterp);
+  }
   return success();
 }
 
@@ -435,6 +455,21 @@ public:
       return failure();
     return foldMemrefLoadReshape(reshapeOp.getSource(), srcType, dstType, {},
                                  rewriter, reshapeOp);
+  }
+};
+
+class FoldLoadExpand : public OpRewritePattern<tensor::ExpandShapeOp> {
+public:
+  explicit FoldLoadExpand(MLIRContext *context)
+      : OpRewritePattern(context, /*benefit=*/10) {}
+
+  LogicalResult matchAndRewrite(tensor::ExpandShapeOp op,
+                                PatternRewriter &rewriter) const override {
+    // A shared print may leave the original flat load's other view expanded.
+    if (op.getSrcType().getRank() != 1)
+      return failure();
+    return foldMemrefLoadReshape(op.getSrc(), op.getSrcType(),
+                                 op.getResultType(), {}, rewriter, op);
   }
 };
 
@@ -511,7 +546,7 @@ void CanonicalizeTensorReshape::runOnOperation() {
   RewritePatternSet patterns(context);
   // Prefer folding load+reshape/collapse into a final-shaped load before
   // decomposing reshape into collapse/expand pairs.
-  patterns.insert<FoldLoadReshape, FoldLoadCollapse>(context);
+  patterns.insert<FoldLoadReshape, FoldLoadExpand, FoldLoadCollapse>(context);
   patterns.insert<CanonicalizeTensorReshapeOpPattern>(patterns.getContext());
   patterns.insert<FoldReshape>(patterns.getContext());
   // This pattern decomposes `tensor.reshape` into a one-dimensional tensor using collapse and then expands it.
