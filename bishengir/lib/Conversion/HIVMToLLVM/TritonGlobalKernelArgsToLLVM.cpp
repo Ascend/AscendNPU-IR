@@ -320,8 +320,12 @@ void TritonGlobalKernelArgsToLLVM::runOnOperation() {
   patterns.insert<ReplaceGlobalKernelArgsToLLVM>(patterns.getContext());
   if (failed(applyPatternsGreedily(op, std::move(patterns))))
     return signalPassFailure();
+  auto module = dyn_cast<ModuleOp>(op);
+  if (!module ||
+      !module.lookupSymbol<LLVM::LLVMFuncOp>("proton_scope_boundary"))
+    return;
   // Emit the final drain after blockification loops and generated waits.
-  op->walk([&](LLVM::LLVMFuncOp function) {
+  module.walk([&](LLVM::LLVMFuncOp function) {
     if (function.isExternal() || !hacc::utils::isDeviceEntry(function) ||
         function->hasAttr("proton.instrumentation_epilogue"))
       return;
