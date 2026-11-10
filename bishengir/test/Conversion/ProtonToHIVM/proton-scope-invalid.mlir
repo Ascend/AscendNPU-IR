@@ -1,4 +1,8 @@
 // RUN: bishengir-opt %s -convert-proton-to-hivm -split-input-file -verify-diagnostics
+// RUN: %python -c 'print("module attributes {hacc.target = #hacc.target<\"Ascend910_9589\">} {func.func @limit() {" + "proton.record start \"s\" proton.record end \"s\" " * 392 + "return}}")' > %t
+// RUN: bishengir-opt %t -convert-proton-to-hivm -o /dev/null
+// RUN: sed 's/return/proton.record start "overflow" return/' %t | not bishengir-opt -convert-proton-to-hivm 2>&1 | FileCheck %s --check-prefix=LIMIT
+// LIMIT: at most 392 scopes per module
 
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   func.func @crossed() {

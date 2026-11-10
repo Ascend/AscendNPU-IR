@@ -253,24 +253,23 @@ void ConvertProtonToHIVMPass::runOnOperation() {
 
   for (auto record : records) {
     OpBuilder builder{record};
-    uint32_t boundaryId = plan->getRegionId(record);
-    auto emitBoundary = [&](uint32_t id) {
-      Value regionId = builder.create<arith::ConstantIntOp>(
-          record.getLoc(), static_cast<int64_t>(id), 32);
-      auto boundary = builder.create<hivm::CustomOp>(
-          record.getLoc(), hivm::CustomOp::kBuiltinProtonScopeBoundaryName,
-          ValueRange{regionId}, ValueRange{});
-      boundary.setCoreType(hivm::TCoreType::CUBE_OR_VECTOR);
-      boundary.setPipe(hivm::PIPE::PIPE_S);
-      boundary.setVFMode(hivm::VFMode::SIMD);
-      boundary.setInlineMode(hivm::InlineMode::AlwaysInline);
-    };
-    emitBoundary(boundaryId);
-    // The template consumes this reserved control value without emitting it.
-    if (!record.getIsStart() &&
-        plan->getScopes()[boundaryId & (hivm::proton::kMaxScopeCount - 1)]
-                .parentId < 0)
-      emitBoundary(hivm::proton::kOuterScopeDrain);
+    Value regionId = builder.create<arith::ConstantIntOp>(
+        record.getLoc(), static_cast<int64_t>(plan->getRegionId(record)), 32);
+    auto boundary = builder.create<hivm::CustomOp>(
+        record.getLoc(), hivm::CustomOp::kBuiltinProtonScopeBoundaryName,
+        ValueRange{regionId}, ValueRange{});
+    boundary.setCoreType(hivm::TCoreType::CUBE_OR_VECTOR);
+    boundary.setPipe(hivm::PIPE::PIPE_S);
+    boundary.setVFMode(hivm::VFMode::SIMD);
+    boundary.setInlineMode(hivm::InlineMode::AlwaysInline);
+    auto scopeId =
+        plan->getRegionId(record) & (hivm::proton::kMaxScopeCount - 1);
+    // The validated plan assigns every record a logical ID within scopes.
+    if (!record.getIsStart() && plan->getScopes()[scopeId].parentId < 0) {
+      Value drain = builder.create<arith::ConstantIntOp>(
+          record.getLoc(), hivm::proton::kOuterScopeDrain, 32);
+      builder.clone(*boundary)->setOperand(0, drain);
+    }
     record->erase();
   }
 

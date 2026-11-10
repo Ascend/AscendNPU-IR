@@ -224,8 +224,7 @@ public:
 
     // eliminate [%offset, %size, %stride] from func arguments by replacing
     // users with constant value
-    auto [eliminateIdxVec, eliminateIdx2ArgIdxVec] =
-        getEliminateIdxVector(attr);
+    auto [eliminateIdxVec, eliminateIdx2ArgIdxVec] = getEliminateIdxVector(attr);
     LLVM_DEBUG({
       llvm::dbgs() << "eliminateIdxVec: [";
       llvm::interleaveComma(eliminateIdxVec, llvm::dbgs());
@@ -319,16 +318,10 @@ void TritonGlobalKernelArgsToLLVM::runOnOperation() {
   RewritePatternSet patterns(&getContext());
 
   patterns.insert<ReplaceGlobalKernelArgsToLLVM>(patterns.getContext());
-  if (failed(applyPatternsGreedily(op, std::move(patterns)))) {
-    signalPassFailure();
-    return;
-  }
-  auto module = dyn_cast<ModuleOp>(op);
-  if (!module ||
-      !module.lookupSymbol<LLVM::LLVMFuncOp>("proton_scope_boundary"))
-    return;
+  if (failed(applyPatternsGreedily(op, std::move(patterns))))
+    return signalPassFailure();
   // Emit the final drain after blockification loops and generated waits.
-  module.walk([&](LLVM::LLVMFuncOp function) {
+  op->walk([&](LLVM::LLVMFuncOp function) {
     if (function.isExternal() || !hacc::utils::isDeviceEntry(function) ||
         function->hasAttr("proton.instrumentation_epilogue"))
       return;
@@ -338,17 +331,13 @@ void TritonGlobalKernelArgsToLLVM::runOnOperation() {
     });
     if (!instrumented)
       return;
-    SmallVector<LLVM::ReturnOp> returns;
-    function.walk([&](LLVM::ReturnOp ret) { returns.push_back(ret); });
-    for (auto ret : returns) {
+    function.walk([&](LLVM::ReturnOp ret) {
       OpBuilder builder(ret);
       auto flag = builder.create<LLVM::ConstantOp>(
           ret.getLoc(), builder.getI32Type(), hivm::proton::kKernelExitDrain);
-      builder.create<LLVM::CallOp>(
-          ret.getLoc(), TypeRange{},
-          FlatSymbolRefAttr::get(builder.getContext(), "proton_scope_boundary"),
-          ValueRange{flag});
-    }
+      builder.create<LLVM::CallOp>(ret.getLoc(), TypeRange{},
+                                   "proton_scope_boundary", ValueRange{flag});
+    });
     function->setAttr("proton.instrumentation_epilogue",
                       UnitAttr::get(&getContext()));
   });
