@@ -475,12 +475,10 @@ static void hivmPreBufferizationOptimizationPipeline(
       pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
       pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
       pipelineOptions.enablePreload = hivmPipelineOptions.enablePreload;
-      // Bridge the top-level --enable-sms-scheduler flag to the CVPipelining
+      // Bridge the top-level --enable-scheduler-alg flag to the CVPipelining
       // scheduler mode. SMS only supports Skew mode; the pass reverts to the
       // default WorklistBuilder path otherwise.
-      pipelineOptions.schedulerMode = hivmPipelineOptions.enableSmsScheduler
-                                          ? CVSchedulerMode::Sms
-                                          : CVSchedulerMode::Default;
+      pipelineOptions.schedulerMode = hivmPipelineOptions.enableSchedulerAlg;
       pipelineOptions.smsFailOnFallback = hivmPipelineOptions.smsFailOnFallback;
       if (hivmPipelineOptions.setCVPipelineMode == CVPipelineMode::Skew) {
         pm.nest<func::FuncOp>().addPass(

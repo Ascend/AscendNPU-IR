@@ -674,11 +674,20 @@ llvm::cl::values(
   }];
 }
 
-def EnableSmsScheduler
+def EnableSchedulerAlg
     : HIVMOptimizationControlOptions<
-          "Enable SMS (swing modulo scheduling) stage-level scheduler for "
-          "CV-pipelining partitioning (skew mode only).",
-          "bool", "false">;
+          "Select the CV-pipelining scheduler algorithm (skew mode only).",
+          "CVSchedulerMode",
+          "CVSchedulerMode::Default"> {
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(CVSchedulerMode::Default, "default",
+             "Default WorklistBuilder-based partitioning"),
+  clEnumValN(CVSchedulerMode::Sms, "sms",
+             "SMS stage-level scheduling partitioning")
+)
+  }];
+}
 
 def SmsFailOnFallback
     : HIVMOptimizationControlOptions<
