@@ -29,6 +29,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
@@ -1282,6 +1283,34 @@ std::string NoMaxRankExternalModel<BatchMmadL1Op>::getOpLibraryCallName(
          suffix;
 }
 
+// Symbol token of one packed MatmulMx dataformat enumerator, shared by the
+// lhs and rhs symbol parts.  The tokens agree with the a_format/b_format
+// tokens used by the template registrations in LocalMmadUtils.h: cases 1-4
+// cover the legacy packed formats (A5 mmadmx), and the native enumerators
+// FP8E4M3_T(2)/FP16_T(5)/BF16_T(6) cover the Ascend960 heterogeneous forms
+// where the lhs token must equal the A element's template token.
+static std::optional<std::string>
+getMxFormatToken(std::optional<llvm::APInt> format) {
+  if (!format)
+    return std::nullopt;
+  switch (format->getSExtValue()) {
+  case 1:
+    return "fp8_e5m2_t";
+  case 2:
+    return "fp8_e4m3_t";
+  case 3:
+    return "fp4x2_e2m1_t";
+  case 4:
+    return "fp4_hif4_t";
+  case 5:
+    return "fp16";
+  case 6:
+    return "bf16";
+  default:
+    llvm_unreachable("unsupported Dataformat");
+  }
+}
+
 //===----------------------------------------------------------------------===//
 // MmadMxL1Op
 //===----------------------------------------------------------------------===//
@@ -1318,44 +1347,23 @@ std::string NoMaxRankExternalModel<MmadMxL1Op>::getOpLibraryCallName(
     finalName += "_tb";
 
   auto lhsFmt = concreteOp.getLhsFormat();
-  if (!lhsFmt || elemAType != i8Type || elemBType != i8Type)
-    return finalName;
-
-  std::string lhsFmtStr;
-  switch (lhsFmt->getSExtValue()) {
-  case 1:
-    lhsFmtStr = "fp8_e5m2_t";
-    break;
-  case 2:
-    lhsFmtStr = "fp8_e4m3_t";
-    break;
-  case 3:
-    lhsFmtStr = "fp4x2_e2m1_t";
-    break;
-  default:
-    llvm_unreachable("unsupported Dataformat");
-  }
-
   auto rhsFmt = concreteOp.getRhsFormat();
-  if (!rhsFmt)
-    return finalName;
+  bool legacyInt8Format = elemAType == i8Type && elemBType == i8Type;
+  // Both symbol tokens come from the format attributes.  For a native A the
+  // lhsFormat carries the matching native enumerator (FP8E4M3_T/FP16_T/
+  // BF16_T), so the token equals the A element type's template token.
+  std::optional<std::string> lhsFmtStr = getMxFormatToken(lhsFmt);
+  std::optional<std::string> rhsFmtStr = getMxFormatToken(rhsFmt);
 
-  std::string rhsFmtStr;
-  switch (rhsFmt->getSExtValue()) {
-  case 1:
-    rhsFmtStr = "fp8_e5m2_t";
-    break;
-  case 2:
-    rhsFmtStr = "fp8_e4m3_t";
-    break;
-  case 3:
-    rhsFmtStr = "fp4x2_e2m1_t";
-    break;
-  default:
-    llvm_unreachable("unsupported Dataformat");
+  if (!lhsFmtStr || !rhsFmtStr)
+    return finalName;
+  if (!legacyInt8Format) {
+    auto moduleOp = op->getParentOfType<ModuleOp>();
+    if (!moduleOp || !hacc::utils::isAscend960(moduleOp))
+      return finalName;
   }
 
-  return finalName + "_lhs_format_" + lhsFmtStr + "_rhs_format_" + rhsFmtStr;
+  return finalName + "_lhs_format_" + *lhsFmtStr + "_rhs_format_" + *rhsFmtStr;
 }
 
 //===----------------------------------------------------------------------===//

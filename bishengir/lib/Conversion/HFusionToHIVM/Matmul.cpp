@@ -920,11 +920,12 @@ struct MatmulOpToHIVMMatmulOp<hfusion::MatMulMxOp>
 
     Operation *newResult =
         rewriter
-            .create<hivm::MmadMxL1Op>(
-                op->getLoc(), op->getResultTypes(), inputA, inputB,
-                op.getScaleA(), op.getScaleB(), info.getInitCondition(),
-                zeroCst, zeroCst, zeroCst, info.getC(), lhsAttr, rhsAttr,
-                transposeA, transposeB, /*per_channel_bias=*/Value{})
+            .create<hivm::MmadMxL1Op>(op->getLoc(), op->getResultTypes(),
+                                      inputA, inputB, op.getScaleA(),
+                                      op.getScaleB(), info.getInitCondition(),
+                                      zeroCst, zeroCst, zeroCst, info.getC(),
+                                      lhsAttr, rhsAttr, transposeA, transposeB,
+                                      /*per_channel_bias=*/Value{})
             .getOperation();
 
     rewriter.replaceOp(op, newResult);
