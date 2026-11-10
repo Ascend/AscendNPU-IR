@@ -79,6 +79,7 @@ def EnableTlaMode : FeatureControlOptions<
   "false"
 > {
   let optionScope = ["A5_ONLY"];
+  let passGroup = ["HIVM"];
 }
 
 def EnableUbufSaving : FeatureControlOptions<

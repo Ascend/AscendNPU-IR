@@ -329,6 +329,9 @@ def PlanMemory : HIVMPass<"hivm-plan-memory", "ModuleOp"> {
        Option<"disableVFReachableCheck", "disable-vf-reachable-check", "bool",
               /*default=*/"false",
               "Disable VF reachable check, default : false">,
+       Option<"enableTLAmode", "enable-tla-mode", "bool",
+              /*default=*/"false",
+              "Enable TLA mode and plan memory only once, default : false">,
   ];
 }
 
