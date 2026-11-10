@@ -788,6 +788,12 @@ void EnableStrideAlignPass::runOnOperation() {
     }
 
     IRRewriter rewriter(context);
+    // Every allocation has now been widened, so the type-equality joins that
+    // were visited too early - while a sibling operand was still a plain
+    // buffer - can be retried with all the casts in place. Must run before
+    // handlePropagateFailure, whose fallback would otherwise hand each
+    // remaining failing use a private buffer.
+    retryDeferredPropagation(rewriter, funcOp);
     handlePropagateFailure(rewriter, funcOp);
     if (archIsRegbased)
       materializeRemainingStaticUBLayoutCasts(rewriter, funcOp);

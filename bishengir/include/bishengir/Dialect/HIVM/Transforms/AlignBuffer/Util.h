@@ -123,6 +123,17 @@ calculateAlignedShape(OpBuilder &b, const Location loc,
                       const SmallVector<OpFoldResult> &shape,
                       const SmallVector<int> &alignUnits);
 
+/// Re-attempt propagation for uses that were deferred with
+/// propagateFailureName, until a round resolves nothing.
+///
+/// Allocations are widened one at a time, so a type-equality join (such as
+/// `arith.select`, or an `scf.yield` whose sibling branch is not widened yet)
+/// is first visited while only one of its operands carries a cast, and that
+/// visit legitimately fails. Once every allocation has had its turn the join
+/// can succeed, so it has to be retried. Must run after all allocations are
+/// rewritten and before handlePropagateFailure. Returns the number of casts
+/// whose deferred uses were resolved.
+unsigned retryDeferredPropagation(RewriterBase &rewriter, func::FuncOp funcOp);
 /// Handle ops marked with propagateFailureName after allocation processing.
 void handlePropagateFailure(RewriterBase &rewriter, func::FuncOp &funcOp);
 /// Materialize final static UB layout-changing casts created by stride-align.
