@@ -244,6 +244,7 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
       auto inType = getElementTypeOrSelf(concreteOp.getIn().getType());
       auto outType = getElementTypeOrSelf(concreteOp.getOut().getType());
 
+      const bool isI1ToI8 = inType.isInteger(1) && outType.isInteger(8);
       const bool isI1ToI16 = inType.isInteger(1) && outType.isInteger(16);
       const bool isI1ToI32 = inType.isInteger(1) && outType.isInteger(32);
       const bool isI1ToI64 = inType.isInteger(1) && outType.isInteger(64);
@@ -256,7 +257,7 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
       [[maybe_unused]] const bool isI32ToI64 =
           inType.isInteger(32) && outType.isInteger(64);
       const bool isInTypeI1 =
-          isI1ToI16 || isI1ToI32 || isI1ToI64 || isI1ToFloat;
+          isI1ToI8 || isI1ToI16 || isI1ToI32 || isI1ToI64 || isI1ToFloat;
       [[maybe_unused]] const bool isInTypeI8 =
           isI8ToI16 || isI8ToI32 || isI8ToI64;
       const bool isInTypeI16 = isI16ToI32 || isI16ToI64;
