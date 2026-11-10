@@ -70,13 +70,16 @@
 
 // Check the affinity split before optional device-code generation.
 // DRIVER: IR Dump After V2SplitKernel (hivm-v2-split-kernel)
+// DRIVER: func.func @attention_stages_scope_0(
+// DRIVER: ave.hir.vload
+// DRIVER: ave.hir.store_with_stride
 // DRIVER: func.func @attention_stages_mix_aic(
 // DRIVER: hivm.hir.mmadL1
 // DRIVER: hivm.hir.fixpipe
 // DRIVER-NOT: ave.hir
 // DRIVER: func.func @attention_stages_mix_aiv(
-// DRIVER: ave.hir.vload
-// DRIVER: ave.hir.store_with_stride
+// DRIVER: func.call @attention_stages_scope_0
+// DRIVER-SAME: hivm.vector_function
 // DRIVER: hivm.hir.copy
 // DRIVER: hivm.hir.store
 
