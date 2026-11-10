@@ -461,18 +461,22 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
     extraOpts.push_back("-cce-aicore-dcci-insert-for-scalar=false");
     // 6. -enable-module-inliner (manual -mllvm)
     extraOpts.push_back("-enable-module-inliner");
-    // 7. -cce-vf-aa-between-iters=true + -cce-vf-enable-loop-fusion=false
+    // 7. keep Triton loops iterative: IndVarSimplify can introduce an i65
+    //    multiply that ccec lowers to unsupported __multi3.
+    if (config.shouldCompileTriton())
+      extraOpts.push_back("-replexitval=unusedindvarinloop");
+    // 8. -cce-vf-aa-between-iters=true + -cce-vf-enable-loop-fusion=false
     //    (manual -mllvm, dav-c310 / dav-920r1 only)
     if (isDavC310) {
       extraOpts.push_back("-cce-vf-aa-between-iters=true");
       extraOpts.push_back("-cce-vf-enable-loop-fusion=false");
     }
-    // 8. --cce-disable-asc-reserved-ubuf translates to -user-reserved-ub-size=0
+    // 9. --cce-disable-asc-reserved-ubuf translates to -user-reserved-ub-size=0
     extraOpts.push_back("-user-reserved-ub-size=0");
-    // 9. -cce-vf-stack-size=0x2000 (manual -mllvm, overrides table 0x1800)
+    // 10. -cce-vf-stack-size=0x2000 (manual -mllvm, overrides table 0x1800)
     extraOpts.push_back("-cce-vf-stack-size=0x2000");
-    // 10. --cce-simd-vf-fusion=false translation (dav-c310 vec+cube: 7 -mllvm).
-    //     last-wins: -cce-vf-enable-loop-fusion=false repeats step 7's value
+    // 11. --cce-simd-vf-fusion=false translation (dav-c310 vec+cube: 7 -mllvm).
+    //     last-wins: -cce-vf-enable-loop-fusion=false repeats step 8's value
     //     (harmless) and -cce-vf-auto-sync=off overrides step 2's setting.
     if (config.shouldEnableVFFusion() && isDavC310) {
       extraOpts.push_back("-cce-vf-enable-vf-fusion=false");
@@ -483,7 +487,7 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
       extraOpts.push_back("-cce-vf-auto-sync=off");
       extraOpts.push_back("-cce-vf-enable-vf-ifelse-extender=false");
     }
-    // 11. appendBishengOptions: extract -mllvm <value> pairs as extraOpts;
+    // 12. appendBishengOptions: extract -mllvm <value> pairs as extraOpts;
     //     warn on driver flags (Native mode skips the driver, so it cannot
     //     translate driver flags like --cce-simd-vf-fusion=false — the user
     //     must pass the equivalent -mllvm form via -mllvm -<option>=<value>).
@@ -507,7 +511,7 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
         // non-flag positional tokens are ignored (not aux paths, not -mllvm).
       }
     }
-    // 12. -cce-simt-fpmath-combine=false (manual -mllvm, shouldDisableFMA)
+    // 13. -cce-simt-fpmath-combine=false (manual -mllvm, shouldDisableFMA)
     if (config.shouldDisableFMA())
       extraOpts.push_back("-cce-simt-fpmath-combine=false");
 
