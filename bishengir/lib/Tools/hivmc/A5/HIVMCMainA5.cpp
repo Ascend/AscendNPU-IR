@@ -229,7 +229,7 @@ computeFinalDeltaAuxA5(const SmallVector<ModuleOp, 2> &modules,
 }
 
 llvm::Expected<std::string>
-compileDeviceKernel(StringRef bishengPath, llvm::Module *llvmModule,
+compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
                     const std::string &llvmirFilepath,
                     const std::string &outputBinFilepath,
                     SubCoreTarget coreType, const HIVMCMainConfig &config,
@@ -894,7 +894,7 @@ translateDeviceKernelToLLVM(const SmallVector<ModuleOp, 2> &modulesToLower,
       m->setAttr(hivm_regbaseintrins::kDavinciV2IntrinsicsModuleAttrName,
                  mlir::UnitAttr::get(m->getContext()));
     std::unique_ptr<llvm::Module> llvmModule =
-        translateModuleToLLVMIR(m, llvmContext);
+        translateModuleToLegacyLLVMIR(m, llvmContext);
     if (!llvmModule) {
       m->emitError(
           "Failed to translate module from LLVM Dialect IR to BiShengLIR\n");
@@ -1453,7 +1453,7 @@ LogicalResult runHostBiShengLIRCompile(
   llvm::LLVMContext llvmContext;
   LDBG("Translating host module from LLVM Dialect IR to BiShengLIR");
   std::unique_ptr<llvm::Module> llvmModule =
-      translateModuleToLLVMIR(mod, llvmContext);
+      translateModuleToLegacyLLVMIR(mod, llvmContext);
   if (!llvmModule)
     return mod->emitError(
         "Failed to translate host module from LLVM Dialect IR to BiShengLIR\n");
