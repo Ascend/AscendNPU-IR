@@ -416,6 +416,13 @@ def HIVM_AllowFlattenAttr : HIVM_Attr<"AllowFlatten", "allow_flatten"> {
 //===----------------------------------------------------------------------===//
 
 // No padding
+def HIVM_PadAnchorDst : I32EnumAttrCase<"Dst", 0, "dst">;
+def HIVM_PadAnchorSpan : I32EnumAttrCase<"Span", 1, "span">;
+def HIVM_PadAnchorEnum : HIVM_I32Enum<"PadAnchor", "Load padding origin", [
+  HIVM_PadAnchorDst, HIVM_PadAnchorSpan
+]>;
+def HIVM_PadAnchorAttr : HIVM_I32EnumAttr<"pad_anchor", HIVM_PadAnchorEnum>;
+
 def HIVM_PadNull : I32EnumAttrCase<"PadNull", 0>;
 // Pad using the first element
 def HIVM_PadFirstElem : I32EnumAttrCase<"PadFirstElem", 1>;

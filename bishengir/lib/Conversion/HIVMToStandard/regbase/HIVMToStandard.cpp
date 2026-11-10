@@ -1102,6 +1102,8 @@ public:
             .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
 
     if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>) {
+      if (op.getPadAnchor() == PadAnchor::Span)
+        fnName += "_span";
       if (op->hasAttr(kDisableDCacheAttr) &&
           getHIVMAddressSpace(op.getSrc().getType()) == AddressSpace::GM &&
           getHIVMAddressSpace(op.getDst().getType()) == AddressSpace::UB)
@@ -1172,6 +1174,8 @@ private:
             : rewriter.create<arith::ConstantIndexOp>(op->getLoc(), 0)
                   .getResult();
     inputOperands.push_back(leftPaddingNum);
+    if (op.getPadAnchor() == PadAnchor::Span)
+      inputOperands.push_back(op.getRightPaddingNum());
   }
   void addPadOperands(PatternRewriter &rewriter, CopyOpType op,
                       SmallVector<Value> &inputOperands,
@@ -1194,9 +1198,23 @@ private:
       padValue = op.getPadValue();
       Type elemType = getElementTypeOrSelf(op.getSrc().getType());
       if (isa<Float8E4M3FNType>(elemType) || isa<Float8E5M2Type>(elemType)) {
-        auto constantOp = rewriter.create<arith::ConstantOp>(
-            op.getLoc(), rewriter.getFloatAttr(rewriter.getF32Type(), 0.0));
-        padValue = constantOp.getResult();
+        bool isSpan = false;
+        if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>)
+          isSpan = op.getPadAnchor() == PadAnchor::Span;
+        if (isSpan) {
+          // Preserve the already-converted FP8 value in the existing f32
+          // bit carrier. Do not numerically extend it or replace it with zero.
+          Value byte = rewriter.create<arith::BitcastOp>(
+              op.getLoc(), rewriter.getIntegerType(8), padValue);
+          Value bits = rewriter.create<arith::ExtUIOp>(
+              op.getLoc(), rewriter.getI32Type(), byte);
+          padValue = rewriter.create<arith::BitcastOp>(
+              op.getLoc(), rewriter.getF32Type(), bits);
+        } else {
+          // Default-anchor and non-span targets retain their existing ABI.
+          padValue = rewriter.create<arith::ConstantOp>(
+              op.getLoc(), rewriter.getF32FloatAttr(0.0));
+        }
       }
     } else {
       Type elemType = getElementTypeOrSelf(op.getSrc().getType());
@@ -1269,6 +1287,15 @@ private:
       }
       if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>) {
         addEvictionOperands(rewriter, op, inputOperands);
+        if (op.getPadAnchor() == PadAnchor::Span) {
+          uint32_t axes = 0;
+          if (auto attr = op.getBroadcastAxesAttr())
+            for (int64_t axis : attr.asArrayRef())
+              axes |= 1u << axis;
+          inputOperands.push_back(
+              this->constantI32(rewriter, op.getLoc(), axes));
+
+        }
       }
     }
     if constexpr (std::is_same_v<CopyOpType, hivm::StoreOp>) {

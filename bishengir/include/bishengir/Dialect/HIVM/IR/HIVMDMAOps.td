@@ -84,10 +84,96 @@ def LoadOp : HIVM_DmaOp<"load", [
     ```
 
     Constraints:
-    - `src` and `dst` are expected to have the same element type.
-    - If `pad_mode` is not set, `src` and `dst` shape should be the same.
-    - Supports both left and right padding.
-    - `pad_value` should have the same element type as `src` and `dst`.
+    - `src` and `dst` have the same element type and the same rank.
+    - `pad_value`, if set, has the same element type as `src` and `dst`.
+    - `src` and `dst` agree on every axis that is neither listed in
+      `broadcast_axes` nor the padded last destination axis.
+    - A listed `broadcast_axes` axis has extent 1 in `src` and may be larger
+      in `dst`.
+    - With `pad_anchor = span` the destination row is `lp + W + rp` elements
+      and only has to fit the destination row stride,
+      `lp + W + rp <= dst.stride(rank - 1)`; neither count is tied to a 32-byte
+      boundary, so the row may end anywhere.
+    - With `pad_anchor = dst` the padding exists only to align a row that
+      starts at `dst.offset` to a 32-byte block, with
+      `block = 32 / sizeof(elem)`:
+      `lp = dst.offset % block` and
+      `rp = (block - (lp + W) % block) % block`, which is 0 when the row
+      already ends on the boundary. Neither count is caller-chosen.
+    - `pad_anchor = span` requires both `left_padding_num` and
+      `right_padding_num`; neither is derived.
+
+    ### Attributes
+    #### `broadcast_axes`
+    Fuses the "load the unit source, then replicate it" pair into one
+    transfer: `src` has extent 1 on every listed axis and `dst` is larger
+    there, all other axes match. It is a descriptor property, not a shape
+    relaxation, so `src` keeps a legal layout and no zero stride is built.
+    Rank-2/3 memref GM->UB on an explicit A6 target; i8/i16/i32, f16/bf16/f32
+    and the FP8 carriers. Rows and planes must not overlap, the last axis is
+    contiguous, offsets are nonnegative, and dynamic extents need bounded
+    static-backed views. A padded `dst` load cannot carry it; a span load can,
+    on non-last axes.
+
+    #### `pad_anchor`
+    Selects how the last destination axis is padded. The two modes differ in
+    who decides the counts and in where the row is written.
+
+    `dst` (default, legacy) is 32-byte block oriented: the transfer starts at
+    `dst.offset - lp`, so `lp` must be `dst.offset % (32 / sizeof(elem))`, and
+    the template derives `rp` to finish the block, silently dropping the
+    operand. It cannot carry `broadcast_axes`, does not exist for 3-D, and
+    normalises an FP8 pad value to 0.0. For f32 with `dst.offset = 13` and
+    W = 16: lp = 5, rp = 3, write origin 8, 3 blocks of 32 bytes.
+
+        [pad pad pad pad pad a0 a1 a2][a3 ... a10][a11 ... a15 pad pad pad]
+         <--------- 32B ------------> <-- 32B --> <--------- 32B ---------->
+    ```mlir
+    hivm.hir.load ins(%src : memref<1x16xf32, #hivm.address_space<gm>>)
+                  outs(%dst : memref<1x24xf32, #hivm.address_space<ub>>)
+                  pad_mode = <PadValue> pad_value = %pad : f32
+                  left_padding_num = %lp : index
+    ```
+
+    `span` (A6) is row oriented from the destination view origin, with
+    D = lp + W + rp; both operands are required and never derived. Rank 2 or 3,
+    GM -> UB, combinable with `broadcast_axes` on non-last axes, an FP8 pad
+    value keeps its bit pattern, and a row need not end on a 32-byte boundary.
+    Dynamic metadata is checked by the template; valid memref allocation
+    bounds remain a caller obligation, as for memref.load/store.
+
+    ```mlir
+    hivm.hir.load ins(%src : memref<1x3xf32, #hivm.address_space<gm>>)
+                  outs(%dst : memref<1x6xf32, #hivm.address_space<ub>>)
+                  {pad_anchor = #hivm.pad_anchor<span>}
+                  pad_mode = <PadValue> pad_value = %pad : f32
+                  left_padding_num = %lp : index
+                  right_padding_num = %rp : index
+    ```
+
+    With lp = 2, rp = 1 and W = 3, the source row `[a0 a1 a2]` becomes
+    `[pad pad a0 a1 a2 pad]`.
+
+    The two attributes are orthogonal, so four cases exist:
+
+    1. neither: a plain rank-2/3 GM -> UB transfer, `[1, 16] -> [1, 16]`.
+    2. `broadcast_axes` only: `[1, 1, 16] -> [1, 4, 16]` with
+       `broadcast_axes = [1]`; axis 1 is replicated, nothing is padded.
+    3. `pad_anchor = span` only: `[1, 3] -> [1, 6]` with lp = 2, rp = 1; the
+       last axis is padded, no axis is replicated.
+    4. both: `[1, 1, 3] -> [1, 4, 6]` with `broadcast_axes = [1]`, lp = 2 and
+       rp = 1; axis 1 is replicated first, `[1, 1, 3] -> [1, 4, 3]`, and the
+       last axis is then padded, `[1, 4, 3] -> [1, 4, 6]`.
+    ```mlir
+    // case 4
+    hivm.hir.load ins(%src : memref<1x1x3xf32, #hivm.address_space<gm>>)
+                  outs(%dst : memref<1x4x6xf32, #hivm.address_space<ub>>)
+                  {pad_anchor = #hivm.pad_anchor<span>}
+                  pad_mode = <PadValue> pad_value = %pad : f32
+                  left_padding_num = %lp : index
+                  right_padding_num = %rp : index
+                  broadcast_axes = [1]
+    ```
   }];
   let arguments = (ins TensorOrMemref:$src,
                        TensorOrMemref:$dst,
@@ -99,6 +185,8 @@ def LoadOp : HIVM_DmaOp<"load", [
                        Optional<AnyType>:$init_condition,
                        DefaultValuedOptionalAttr<BoolAttr, "false">:$may_implicit_transpose_with_last_axis,
                        OptionalAttr<HIVM_EvictionPolicyAttr>:$eviction_policy,
+                       OptionalAttr<DenseI64ArrayAttr>:$broadcast_axes,
+                       DefaultValuedOptionalAttr<HIVM_PadAnchorAttr, "::mlir::hivm::PadAnchor::Dst">:$pad_anchor,
                        DefaultValuedOptionalAttr<HIVM_TCoreTypeAttr, "::mlir::hivm::TCoreType::CUBE_OR_VECTOR">:$tcoretype
   );
   let results = (outs Optional<AnyRankedTensor>:$result_tensor);
@@ -145,6 +233,7 @@ def LoadOp : HIVM_DmaOp<"load", [
     (`init_condition` `=` $init_condition^ `:` type($init_condition))?
     (`may_implicit_transpose_with_last_axis` `=` $may_implicit_transpose_with_last_axis^ )?
     (`eviction_policy` `=` $eviction_policy^)?
+    (`broadcast_axes` `=` $broadcast_axes^)?
     (`core_type` `=` $tcoretype^ )?
     (`->` type($result_tensor)^)?
   }];

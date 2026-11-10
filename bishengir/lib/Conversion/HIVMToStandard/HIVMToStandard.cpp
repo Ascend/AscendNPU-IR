@@ -903,6 +903,10 @@ public:
     auto opWithLibCall = cast<OpWithLibraryFunction>(op.getOperation());
     assert(op.hasPureBufferSemantics() &&
            "Operating on tensor, please bufferize.");
+    if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>) {
+      if (op.getPadAnchor() == hivm::PadAnchor::Span)
+        return op.emitOpError("span padding requires the A6 regbase lowering");
+    }
     MemRefType srcType = dyn_cast<MemRefType>(op.getSrcOperandType());
 
     int64_t rank = srcType.getRank();
