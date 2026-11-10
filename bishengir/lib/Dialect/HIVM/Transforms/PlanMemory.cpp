@@ -1001,6 +1001,10 @@ bool MemLivenessAnalysis::ProcessMarkOpForTightlyCoupledCV(
   it->second.cvMixId = attr.getId().value();
   auto addressSpace = getHIVMAddressSpace(allocValue.getType());
   auto funcType = queryFuncCoreType(func_);
+  if (disableTightlyCoupledBufferReuse && funcType == TFuncCoreType::MIX) {
+    it->second.memoryUnique = true;
+  }
+
   if ((funcType == TFuncCoreType::AIC && addressSpace == AddressSpace::UB) ||
       (funcType == TFuncCoreType::AIV && addressSpace == AddressSpace::L1)) {
     skipMemPlan.insert(allocValue);
@@ -1009,10 +1013,6 @@ bool MemLivenessAnalysis::ProcessMarkOpForTightlyCoupledCV(
   if ((funcType == TFuncCoreType::AIV && addressSpace == AddressSpace::UB) ||
       (funcType == TFuncCoreType::AIC && addressSpace == AddressSpace::L1)) {
     if (disableTightlyCoupledBufferReuse) {
-      auto *it = bufferInfos.find(allocValue);
-      if (it == bufferInfos.end()) {
-        llvm::report_fatal_error("Use allocOp before defined!");
-      }
       it->second.memoryUnique = true;
       LDBG(allocValue << "set memory unique\n");
     }
@@ -1121,20 +1121,21 @@ void MemLivenessAnalysis::GeneratePreloadBufferReuseableInfo() {
     auto &gen = it->second.gen;
     for (auto *iter = gen.begin(); iter != gen.end();) {
       auto buffer = *iter;
-      if (!preloadBufferReuseableInfo.contains(buffer)) {
+      auto infoIt = preloadBufferReuseableInfo.find(buffer);
+      if (infoIt == preloadBufferReuseableInfo.end()) {
         ++iter;
         continue;
       }
-      // Set genScopePreloadNum and save preload buffer genTime(line 7) to
-      // reuseableBufferLifeBeforeGen's freeTime
-      if (parentScope && preloadBufferReuseableInfo[buffer].genInfo == opInfo) {
+      // Unique buffers still need loop-wide liveness. Omit their reuse windows.
+      auto &info = infoIt->second;
+      if (parentScope && info.genInfo == opInfo &&
+          !bufferInfos.find(buffer)->second.memoryUnique) {
         std::unique_ptr<BufferLife> bufferLife =
             std::make_unique<BufferLife>(buffer);
         bufferLife->allocTime = scopeStart;
         bufferLife->freeTime = opInfo->index;
-        preloadBufferReuseableInfo[buffer].reuseableBufferLifeBeforeGen =
-            std::move(bufferLife);
-        preloadBufferReuseableInfo[buffer].genScopePreloadNum = preloadNum;
+        info.reuseableBufferLifeBeforeGen = std::move(bufferLife);
+        info.genScopePreloadNum = preloadNum;
       }
       // Reset buffer2status because it will be used when extending preload
       // buffer's lifetime.
@@ -1147,21 +1148,20 @@ void MemLivenessAnalysis::GeneratePreloadBufferReuseableInfo() {
     auto &kill = it->second.kill;
     for (auto *iter = kill.begin(); iter != kill.end();) {
       auto buffer = *iter;
-      if (!preloadBufferReuseableInfo.contains(buffer)) {
+      auto infoIt = preloadBufferReuseableInfo.find(buffer);
+      if (infoIt == preloadBufferReuseableInfo.end()) {
         iter++;
         continue;
       }
-      // Set killScopePerloadNum and save preload buffer killTime(line 14) to
-      // reuseableBufferLifeAfterKill's allocTime.
-      if (parentScope &&
-          preloadBufferReuseableInfo[buffer].killInfo == opInfo) {
+      auto &info = infoIt->second;
+      if (parentScope && info.killInfo == opInfo &&
+          !bufferInfos.find(buffer)->second.memoryUnique) {
         std::unique_ptr<BufferLife> bufferLife =
             std::make_unique<BufferLife>(buffer);
         bufferLife->allocTime = opInfo->index;
         killBuffers.push_back(buffer);
-        preloadBufferReuseableInfo[buffer].reuseableBufferLifeAfterKill =
-            std::move(bufferLife);
-        preloadBufferReuseableInfo[buffer].killScopePreloadNum = preloadNum;
+        info.reuseableBufferLifeAfterKill = std::move(bufferLife);
+        info.killScopePreloadNum = preloadNum;
       }
       // Remove preload buffer's killInfo from genKillMap because preload
       // buffer's lifetime will be extended to fill whole parent forOp.
@@ -2035,7 +2035,7 @@ void MemPlan::GeneratePreloadReuseableSE() {
       continue;
     }
     for (auto &e : StorageEntryVec) {
-      if (IsPreloadStorageEntry(e.get()) ||
+      if (e->bufInfo->memoryUnique || IsPreloadStorageEntry(e.get()) ||
           preloadBufferSE->bufInfo->bufferScope != e->bufInfo->bufferScope ||
           preloadBufferSE->bufInfo->constBits < e->bufInfo->constBits) {
         continue;
