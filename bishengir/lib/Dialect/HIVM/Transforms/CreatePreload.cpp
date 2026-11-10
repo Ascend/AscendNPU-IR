@@ -932,6 +932,70 @@ static void pruneUnusedScopeResultsInLoop(scf::ForOp forOp) {
   }
 }
 
+static bool isMemRefAliasOp(Operation *op) {
+  return isa_and_nonnull<ViewLikeOpInterface, memref::TransposeOp,
+                         memref::CollapseShapeOp, memref::ExpandShapeOp,
+                         hivm::BitcastOp, hivm::ConvertLayoutOp,
+                         UnrealizedConversionCastOp>(op);
+}
+
+static bool doesCallWriteToOperand(func::CallOp callOp, unsigned operandIdx,
+                                   DenseSet<Value> &visited);
+
+static bool doesOpWriteToValue(Operation *user, Value val, unsigned operandIdx,
+                               DenseSet<Value> &visited) {
+  if (isa<annotation::MarkOp>(user))
+    return false;
+  if (auto effects = dyn_cast<MemoryEffectOpInterface>(user))
+    return effects.getEffectOnValue<MemoryEffects::Write>(val).has_value();
+  if (auto callOp = dyn_cast<func::CallOp>(user))
+    return doesCallWriteToOperand(callOp, operandIdx, visited);
+  return false;
+}
+
+static bool doesValueHaveWriteEffect(Value rootVal, DenseSet<Value> &visited) {
+  SmallVector<Value> worklist = {rootVal};
+  while (!worklist.empty()) {
+    Value curr = worklist.pop_back_val();
+    if (!visited.insert(curr).second)
+      continue;
+    for (OpOperand &use : curr.getUses()) {
+      Operation *user = use.getOwner();
+      if (isMemRefAliasOp(user)) {
+        llvm::append_range(worklist, user->getResults());
+        continue;
+      }
+      if (auto forOp = dyn_cast<scf::ForOp>(user)) {
+        unsigned opNum = use.getOperandNumber();
+        unsigned numCtrl = forOp.getNumControlOperands();
+        if (opNum >= numCtrl)
+          worklist.push_back(forOp.getRegionIterArgs()[opNum - numCtrl]);
+        continue;
+      }
+      if (doesOpWriteToValue(user, curr, use.getOperandNumber(), visited))
+        return true;
+    }
+  }
+  return false;
+}
+
+static bool doesCallWriteToOperand(func::CallOp callOp, unsigned operandIdx,
+                                   DenseSet<Value> &visited) {
+  auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
+      callOp, callOp.getCalleeAttr());
+  if (!callee || operandIdx >= callee.getNumArguments())
+    return false;
+  if (auto memEffectAttr = callee.getArgAttrOfType<hivm::MemoryEffectAttr>(
+          operandIdx, hivm::MemoryEffectAttr::name)) {
+    hivm::MemoryEffect effect = memEffectAttr.getEffect();
+    return effect == hivm::MemoryEffect::WRITE ||
+           effect == hivm::MemoryEffect::READ_WRITE;
+  }
+  if (callee.isExternal())
+    return false;
+  return doesValueHaveWriteEffect(callee.getArgument(operandIdx), visited);
+}
+
 static LogicalResult exportCarriedLocalBuffers(scf::ForOp forOp) {
   for (OpOperand &yield : forOp.getBody()->getTerminator()->getOpOperands()) {
     unsigned index = yield.getOperandNumber();
@@ -944,17 +1008,27 @@ static LogicalResult exportCarriedLocalBuffers(scf::ForOp forOp) {
         yield.get().getDefiningOp<scope::ScopeOp>())
       continue;
     scope::ScopeOp writer;
-    for (Operation *user : (*local)->getUsers()) {
-      auto effects = dyn_cast<MemoryEffectOpInterface>(user);
-      if (!effects || isa<annotation::MarkOp>(user) ||
-          !effects.getEffectOnValue<MemoryEffects::Write>(yield.get()))
+    SmallVector<Value> worklist = {(*local).getResult()};
+    DenseSet<Value> visited;
+    while (!worklist.empty()) {
+      Value curr = worklist.pop_back_val();
+      if (!visited.insert(curr).second)
         continue;
-      auto scope = user->getParentOfType<scope::ScopeOp>();
-      if (!scope || scope->getParentOp() != forOp ||
-          (writer && writer != scope))
-        return forOp.emitError(
-            "expected one scope writing a carried preload buffer");
-      writer = scope;
+      for (OpOperand &use : curr.getUses()) {
+        Operation *user = use.getOwner();
+        if (isMemRefAliasOp(user)) {
+          llvm::append_range(worklist, user->getResults());
+          continue;
+        }
+        if (!doesOpWriteToValue(user, curr, use.getOperandNumber(), visited))
+          continue;
+        auto scope = user->getParentOfType<scope::ScopeOp>();
+        if (!scope || scope->getParentOp() != forOp ||
+            (writer && writer != scope))
+          return forOp.emitError(
+              "expected one scope writing a carried preload buffer");
+        writer = scope;
+      }
     }
     if (!writer)
       return forOp.emitError("missing writer of a carried preload buffer");
@@ -1435,8 +1509,9 @@ static LogicalResult mergeCounterLoops(func::FuncOp funcOp) {
     eraseDeadScopesAndReStage(forOp, erasedScopeNums);
   }
 
-  LLVM_DEBUG(for (scf::ForOp forOp
-                    : loops) { DBGS() << "After merge:" << forOp << "\n"; });
+  LLVM_DEBUG(for (scf::ForOp forOp : loops) {
+    DBGS() << "After merge:" << forOp << "\n";
+  });
   return success();
 }
 
