@@ -3,7 +3,6 @@ add_bishengir_unittest(BiShengIRHIVMMsTests
   MsDagBuilderTest.cpp
   MsPartitionerTest.cpp
   PreloadProtocolVerifierTest.cpp
-  BroadcastCostModelTest.cpp
   MSCostModelTest.cpp
 
   ../../../../lib/Dialect/HIVM/Utils/PipeSchedule/Alg/Sms/DDG.cpp

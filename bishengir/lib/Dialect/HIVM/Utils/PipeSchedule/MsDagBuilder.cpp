@@ -1531,50 +1531,6 @@ MsDagBuilder::buildCubeCostInput(const MsNode &sn) const {
   return input;
 }
 
-/// Real (unpadded) output shape of a tensor-form vbrc, for the broadcast
-/// cost model.  The vbrc DPS out is padded to a power of two per axis
-/// (pad(x) = 2^ceil(log2(x))); the trailing tensor.extract_slice consumer
-/// of the result — present exactly when padding occurred — carries the
-/// real extents in its result type.  Without such a consumer the result
-/// shape already IS the real shape.  nullopt when nothing is statically
-/// resolvable (the cost model then falls back to the generic billing).
-static std::optional<SmallVector<int64_t, costmodel::ShapeInlineCapacity>>
-resolveVbrcRealOutShape(Operation *op) {
-  if (op->getNumResults() != 1)
-    return std::nullopt;
-  auto resTy = dyn_cast<ShapedType>(op->getResult(0).getType());
-  if (!resTy || !resTy.hasStaticShape())
-    return std::nullopt;
-  ArrayRef<int64_t> padded = resTy.getShape();
-  for (Operation *user : op->getResult(0).getUsers()) {
-    auto slice = dyn_cast<tensor::ExtractSliceOp>(user);
-    if (!slice)
-      continue;
-    auto sliceTy = dyn_cast<ShapedType>(slice.getResult().getType());
-    // First well-formed slice wins (the CV form has exactly one);
-    // dynamic sizes or a rank mismatch keep the search going.
-    if (!sliceTy || !sliceTy.hasStaticShape() ||
-        sliceTy.getShape().size() != padded.size())
-      continue;
-    // Real extents: positive and never larger than the padded buffer.
-    ArrayRef<int64_t> sz = sliceTy.getShape();
-    bool usable = true;
-    for (size_t i = 0; i < padded.size(); ++i)
-      if (sz[i] <= 0 || sz[i] > padded[i]) {
-        usable = false;
-        break;
-      }
-    if (!usable)
-      continue;
-    return SmallVector<int64_t, costmodel::ShapeInlineCapacity>(sz.begin(),
-                                                                sz.end());
-  }
-  // No usable extract_slice consumer: no padding occurred — the result
-  // shape is the real shape (every axis a power of two).
-  return SmallVector<int64_t, costmodel::ShapeInlineCapacity>(padded.begin(),
-                                                              padded.end());
-}
-
 costmodel::VectorGroupCostInput
 MsDagBuilder::buildVectorGroupCostInput(const MsNode &sn) const {
   costmodel::VectorGroupCostInput input;
@@ -1608,11 +1564,6 @@ MsDagBuilder::buildVectorGroupCostInput(const MsNode &sn) const {
       else
         opDesc.outputs.push_back(std::move(desc));
     }
-    // vbrc: the recorded result shape is the PADDED DPS out; hand the
-    // broadcast cost model the real (unpadded) extents.
-    if (isa<VBrcOp>(op))
-      if (auto real = resolveVbrcRealOutShape(op))
-        opDesc.vbrcRealOutShape = std::move(*real);
     input.ops.push_back(std::move(opDesc));
   }
   return input;
@@ -1723,14 +1674,14 @@ LogicalResult MsDagBuilder::assignCosts() {
              << cost.note;
     }
     if (!cost.note.empty() && sn.kind == MsNodeKind::VectorGroup) {
-      // Vector ops outside the multiplier tables — the only anomaly that
-      // does not fail the build.  The latency already counted via the
-      // fallback multipliers; the note lists every fallback op name so one
-      // warning covers the whole group (no per-op name matching, which
-      // could misfire on substring-equal names).
+      // Vector ops whose dtype is outside the dtype table — the only
+      // anomaly that does not fail the build.  The latency already counted
+      // via the fallback multiplier; the note lists every fallback op name
+      // so one warning covers the whole group (no per-op name matching,
+      // which could misfire on substring-equal names).
       Operation *anchor = sn.ops.empty() ? scopeOp : sn.ops.front();
-      anchor->emitWarning("[ms-cost-model] vector op(s) not in accept list, "
-                          "using fallback param: ")
+      anchor->emitWarning("[ms-cost-model] vector op(s) with uncalibrated "
+                          "dtype, using fallback param: ")
           << cost.note;
     }
 

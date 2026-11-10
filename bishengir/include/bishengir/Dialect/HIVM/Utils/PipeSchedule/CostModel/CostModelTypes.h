@@ -137,27 +137,18 @@ struct CubeCostInput {
 /// likewise.  Scalar / non-shaped operands (index, i1, ...) never enter
 /// the lists.
 struct VectorOpDesc {
-  /// Owner op.  Diagnostics only: the model reads just its op name (to
-  /// assemble the "op not in list" fallback note); the cost formula never
-  /// dereferences it otherwise.
+  /// Owner op.  The model reads its op name twice: to match the ignore
+  /// list (non-vector plumbing ops carry no latency) and to assemble the
+  /// dtype fallback note.  The cost formula never dereferences it
+  /// otherwise — op KIND does not enter the billing.
   Operation *op = nullptr;
 
   /// All shaped inputs of this op, in operand order.
   SmallVector<ShapedOperandDesc, InputsInlineCapacity> inputs;
 
-  /// All shaped outputs (results) of this op, in result order.  Read by the
-  /// dedicated per-op models (vcast's destination dtype, varange's output
-  /// element count) and kept for diagnostics.
+  /// All shaped outputs (results) of this op, in result order.  Kept for
+  /// diagnostics; the cost formula is driven by the inputs alone.
   SmallVector<ShapedOperandDesc, OutputsInlineCapacity> outputs;
-
-  /// hivm.hir.vbrc only: the REAL (unpadded) output shape.  The vbrc DPS
-  /// out is padded to a power of two per axis; MsDagBuilder resolves the
-  /// real extents from the trailing tensor.extract_slice consumer (equal
-  /// to the result shape when no padding occurred) so the broadcast cost
-  /// model is driven by logical dims.  Empty for every other op, and for
-  /// vbrc when the shape is not statically resolvable — the model then
-  /// falls back to the generic vector billing.
-  SmallVector<int64_t, ShapeInlineCapacity> vbrcRealOutShape;
 };
 
 /// Vector-group query input: the group's ops in block order.  Op boundaries
@@ -181,8 +172,8 @@ struct TransferCostInput {
 };
 
 /// Result of one cost query.  Queries never return failure(): apart from
-/// vector ops missing from the accept list (warning + fallback computation,
-/// still a positive result), every anomaly is expressed as
+/// vector ops whose dtype is outside the dtype table (warning + fallback
+/// computation, still a positive result), every anomaly is expressed as
 /// costTime = -1 plus a note carrying the specifics; the caller
 /// (MsDagBuilder::assignCosts) prints the note and fails the build.
 struct CostResult {
@@ -203,10 +194,10 @@ struct CostResult {
   ///     dynamic", "transfer (mte3, UB_to_UB) not in param table"; the
   ///     caller prints it and fails the build;
   ///   - > 0 (success): diagnostic note.  The only current source is
-  ///     vector ops outside the multiplier tables (the op names that hit
-  ///     a fallback multiplier; the caller emits a warning but the
-  ///     computation completed and scheduling continues).  Empty string
-  ///     means "no note".
+  ///     vector ops whose dtype is outside the dtype table (the op names
+  ///     that hit the fallback multiplier; the caller emits a warning but
+  ///     the computation completed and scheduling continues).  Empty
+  ///     string means "no note".
   /// The note never participates in any computation.
   std::string note;
 };

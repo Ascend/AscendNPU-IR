@@ -71,9 +71,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     // numbering, and expected-* is a plain substring match (no regex).
     // expected-warning@+1 {{(mte2, GM_to_UB) missing data node metadata}}
     scf.for %i = %c0 to %bound step %step : i32 {
-      // scf.if is outside the vector multiplier tables, so the group cost
-      // query reports it via the fallback note.
-      // expected-warning@+1 {{[ms-cost-model] vector op(s) not in accept list, using fallback param: fallback ops: scf.if}}
+      // No vector cost-model warning here: op kind no longer selects a
+      // multiplier, so scf.if bills like any other op in the group.
       %vector_init = tensor.empty() : tensor<16x16xf32>
       // expected-warning@+1 {{expected to_tensor for non-tensor-empty output}}
       %selected = scf.if %cond -> tensor<16x16xf32> {

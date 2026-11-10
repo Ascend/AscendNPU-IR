@@ -17,7 +17,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Utils/PipeSchedule/CostModel/MSCostModel.h"
-#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/CostModel/BroadcastCostModel.h"
 
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Types.h"
@@ -31,8 +30,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <functional>
-#include <iterator>
 #include <optional>
 #include <string>
 
@@ -115,121 +112,6 @@ CostResult evalLinear(LinParam param, int64_t x, StringRef what) {
     return CostResult{-1, what.str() + " y = " + formatDouble(y) +
                               " after eval, expect >= 0"};
   return CostResult{normalizeCostTime(y), std::string()};
-}
-
-// ===== vcast conversion graph: 7 dtype nodes, 23 directed edges ===========
-//
-// Node names and their indices; kVCastNodes is the single source of truth
-// for the node set (i1 and f64 are deliberately NOT vcast nodes — as a
-// DESTINATION (or in f64's case either side) a pair falls back per §9.4
-// of the design doc; an i1 SOURCE is remapped onto the i8 node by
-// vcastPairMultiplier per the 1019 calibration).
-constexpr llvm::StringLiteral kVCastNodes[] = {"i8",  "i16",  "i32", "i64",
-                                               "f16", "bf16", "f32"};
-constexpr int kVCastNodeCount = static_cast<int>(std::size(kVCastNodes));
-
-/// Node index of a dtype NAME; -1 when outside the 7 vcast dtypes.
-int vcastNodeIdxOf(StringRef name) {
-  for (int i = 0; i < kVCastNodeCount; ++i)
-    if (kVCastNodes[i] == name)
-      return i;
-  return -1;
-}
-
-/// Whether `ty` is the i1 integer type (the vcast i1-source special case).
-bool isI1Type(Type ty) {
-  auto intTy = dyn_cast_if_present<IntegerType>(ty);
-  return intTy && intTy.getWidth() == 1;
-}
-
-/// Node index of an MLIR dtype; -1 when outside the 7 vcast dtypes.
-int vcastNodeId(Type elementType) {
-  llvm::StringRef name;
-  if (auto intTy = dyn_cast_if_present<IntegerType>(elementType)) {
-    switch (intTy.getWidth()) {
-    case 8:
-      name = "i8";
-      break;
-    case 16:
-      name = "i16";
-      break;
-    case 32:
-      name = "i32";
-      break;
-    case 64:
-      name = "i64";
-      break;
-    default:
-      return -1;
-    }
-  } else if (isa<BFloat16Type>(elementType)) {
-    name = "bf16";
-  } else if (isa<Float16Type>(elementType)) {
-    name = "f16";
-  } else if (isa<Float32Type>(elementType)) {
-    name = "f32";
-  } else {
-    return -1;
-  }
-  return vcastNodeIdxOf(name);
-}
-
-/// Per-op cost of hivm.hir.vbrc through the dedicated broadcast model.
-/// nullopt when the op is not one of the five calibrated patterns (or its
-/// dtype/metadata is not covered) — the caller then keeps the generic
-/// vector billing.  A returned -1 CostResult means a RECOGNIZED pattern
-/// with invalid dims (overflow): fatal for the whole group.
-std::optional<CostResult> vbrcBroadcastCost(const VectorOpDesc &opDesc) {
-  // Real (unpadded) output shape, resolved by MsDagBuilder; without it
-  // (memref form / dynamic shapes) the model cannot be driven — generic
-  // fallback.
-  if (opDesc.outputs.empty() || opDesc.vbrcRealOutShape.empty())
-    return std::nullopt;
-  Type elemType = opDesc.outputs.front().getElementType();
-  if (!broadcast::dtypeOf(elemType))
-    return std::nullopt; // i1/i16/i64/f64/f8 — no broadcast calibration.
-  ArrayRef<int64_t> real = opDesc.vbrcRealOutShape;
-
-  // Scalar source: a bare scalar never enters inputs (a 0-D source tensor
-  // has an empty shape) — the pattern is the real output rank alone.
-  if (opDesc.inputs.empty() || opDesc.inputs.front().getShape().empty()) {
-    if (real.size() == 1) {
-      LLVM_DEBUG(dbgs() << "[ms-cost-model] vbrc scalar1d n=" << real[0]
-                        << "\n");
-      return broadcast::getScalar1dCost(elemType, real[0]);
-    }
-    if (real.size() == 2) {
-      LLVM_DEBUG(dbgs() << "[ms-cost-model] vbrc scalar2d " << real[0] << "x"
-                        << real[1] << "\n");
-      return broadcast::getScalar2dCost(elemType, real[0], real[1]);
-    }
-    return std::nullopt;
-  }
-
-  // Vector source: (d0,1) inner / (1,d1) outer / (d0,1,d2) middle — the
-  // broadcast axis is the 1-sized input dim, every other dim passes
-  // through unchanged (a mismatch means a form the tables do not cover).
-  ArrayRef<int64_t> in = opDesc.inputs.front().getShape();
-  if (in.size() == 2 && real.size() == 2) {
-    if (in[1] == 1 && in[0] == real[0]) {
-      LLVM_DEBUG(dbgs() << "[ms-cost-model] vbrc inner " << real[0] << "x"
-                        << real[1] << "\n");
-      return broadcast::getInnerCost(elemType, real[0], real[1]);
-    }
-    if (in[0] == 1 && in[1] == real[1]) {
-      LLVM_DEBUG(dbgs() << "[ms-cost-model] vbrc outer " << real[0] << "x"
-                        << real[1] << "\n");
-      return broadcast::getOuterCost(elemType, real[0], real[1]);
-    }
-    return std::nullopt;
-  }
-  if (in.size() == 3 && real.size() == 3 && in[1] == 1 && in[0] == real[0] &&
-      in[2] == real[2]) {
-    LLVM_DEBUG(dbgs() << "[ms-cost-model] vbrc middle " << real[0] << "x"
-                      << real[1] << "x" << real[2] << "\n");
-    return broadcast::getMiddleCost(elemType, real[0], real[1]);
-  }
-  return std::nullopt;
 }
 
 } // namespace
@@ -376,7 +258,7 @@ CostResult MSCostModel::getCubeCost(const CubeCostInput &input) const {
 }
 
 //===----------------------------------------------------------------------===//
-// Vector multiplier lookups (b1 dtype / b2 input-count / b4 op type)
+// Vector dtype multiplier lookup
 //===----------------------------------------------------------------------===//
 
 std::optional<CostMultiplier>
@@ -406,160 +288,8 @@ mlir::hivm::costmodel::vectorDtypeMultiplierFor(Type elementType) {
   return std::nullopt;
 }
 
-std::optional<double>
-mlir::hivm::costmodel::vectorInputCountCoeffFor(Type elementType) {
-  if (auto intTy = dyn_cast_if_present<IntegerType>(elementType)) {
-    switch (intTy.getWidth()) {
-    case 1:
-      return VectorInputCountCoeff_I1;
-    case 8:
-      return VectorInputCountCoeff_I8;
-    case 16:
-      return VectorInputCountCoeff_I16;
-    case 32:
-      return VectorInputCountCoeff_I32;
-    case 64:
-      return VectorInputCountCoeff_I64;
-    default:
-      return std::nullopt;
-    }
-  }
-  if (isa<BFloat16Type>(elementType))
-    return VectorInputCountCoeff_BF16;
-  if (isa<Float16Type>(elementType))
-    return VectorInputCountCoeff_F16;
-  if (isa<Float32Type>(elementType))
-    return VectorInputCountCoeff_F32;
-  return std::nullopt;
-}
-
-std::optional<CostMultiplier>
-mlir::hivm::costmodel::lookupVectorOpTypeMultiplier(StringRef opName) {
-  // Linear scan: the table is short and looked up once per op.
-  for (const auto &[name, mult] : VectorOpTypeMultiplierList)
-    if (opName == name)
-      return mult;
-  return std::nullopt;
-}
-
 //===----------------------------------------------------------------------===//
-// vcast: minimum-hop, minimum-slope-sum conversion path
-//===----------------------------------------------------------------------===//
-
-FailureOr<CostMultiplier>
-mlir::hivm::costmodel::vcastPairMultiplier(Type srcDtype, Type dstDtype) {
-  // ---- ⓪ i1 source (1019): i1→i8 widens with no vector time at all; any
-  // other i1→X pair bills exactly like an i8 source (the i1 payload rides
-  // the i8 datapath).  i1 as DESTINATION keeps the fallback semantics —
-  // only the source side is covered by the calibration.
-  bool srcIsI1 = isI1Type(srcDtype);
-  if (srcIsI1) {
-    auto dstInt = dyn_cast_if_present<IntegerType>(dstDtype);
-    if (dstInt && dstInt.getWidth() == 8)
-      return VCastPairMultiplier_I1_to_I8;
-  }
-
-  // ---- ① dtype → node index (outside the 7 dtypes → failure; the caller
-  // applies VCastPairMultiplier_Fallback and records the op in the note).
-  int src = srcIsI1 ? vcastNodeIdxOf("i8") : vcastNodeId(srcDtype);
-  int dst = vcastNodeId(dstDtype);
-  if (src < 0 || dst < 0)
-    return failure();
-
-  // Identity conversion (e.g. f16→f16 rounding): {1.×base, 1.}.
-  if (src == dst)
-    return CostMultiplier{VCastSlopeBaseFactor * 1., 1.};
-
-  // ---- Adjacency lists in VCastDirectPairList enumeration order — that
-  // order is the tie-break rule (design §9.2 rule 3), so it must survive
-  // into the DFS traversal order.
-  const int edgeCount = static_cast<int>(std::size(VCastDirectPairList));
-  SmallVector<SmallVector<int, 6>, 8> adj(kVCastNodeCount);
-  SmallVector<int, 24> edgeDst(edgeCount, -1);
-  for (int e = 0; e < edgeCount; ++e) {
-    int from = vcastNodeIdxOf(VCastDirectPairList[e].src);
-    int to = vcastNodeIdxOf(VCastDirectPairList[e].dst);
-    if (from < 0 || to < 0)
-      continue; // malformed table row — skip defensively; never traversed.
-    adj[from].push_back(e);
-    edgeDst[e] = to;
-  }
-
-  // ---- ② BFS: minimum hop count from src to every node.  Hops are the
-  // hardware conversion command count — the first-priority path rule.
-  SmallVector<int, 8> hops(kVCastNodeCount, -1);
-  SmallVector<int, 8> queue;
-  queue.push_back(src);
-  hops[src] = 0;
-  for (size_t qi = 0; qi < queue.size(); ++qi) {
-    int u = queue[qi];
-    for (int e : adj[u]) {
-      int v = edgeDst[e];
-      if (hops[v] == -1) {
-        hops[v] = hops[u] + 1;
-        queue.push_back(v);
-      }
-    }
-  }
-  if (hops[dst] == -1)
-    return failure(); // unreachable — defensive; the graph is strongly
-                      // connected, so this cannot trigger with the current
-                      // table.
-
-  // ---- ③ DFS: enumerate all simple paths of exactly hops[dst] edges;
-  // smallest slope sum wins, first-enumerated breaks remaining ties (the
-  // strict `<` keeps the earliest path among equals).  Every minimum-hop
-  // walk is necessarily simple (a repeated node would imply a shorter
-  // path, contradicting BFS), so the onPath check is belt-and-braces.
-  SmallVector<int, 4> path; // edge indices along the current path
-  SmallVector<char, 8> onPath(kVCastNodeCount, 0);
-  onPath[src] = 1;
-  bool found = false;
-  double bestSlopeSum = 0.;
-  double bestInterceptSum = 0.;
-  SmallVector<int, 4> bestPath;
-  std::function<void(int, double, double)> dfs = [&](int node, double slopeSum,
-                                                     double interceptSum) {
-    if (static_cast<int>(path.size()) == hops[dst]) {
-      if (node == dst && (!found || slopeSum < bestSlopeSum)) {
-        found = true;
-        bestSlopeSum = slopeSum;
-        bestInterceptSum = interceptSum;
-        bestPath = path;
-      }
-      return;
-    }
-    for (int e : adj[node]) {
-      int next = edgeDst[e];
-      if (onPath[next])
-        continue;
-      onPath[next] = 1;
-      path.push_back(e);
-      dfs(next, slopeSum + VCastDirectPairList[e].slope,
-          interceptSum + VCastDirectPairList[e].intercept);
-      path.pop_back();
-      onPath[next] = 0;
-    }
-  };
-  dfs(src, 0., 0.);
-  if (!found)
-    return failure(); // defensive: BFS promised a path at this hop count.
-
-  LLVM_DEBUG({
-    dbgs() << "[ms-cost-model] vcast path " << kVCastNodes[src];
-    for (int e : bestPath)
-      dbgs() << "->" << kVCastNodes[edgeDst[e]];
-    dbgs() << " slope_sum=" << bestSlopeSum
-           << " intercept_sum=" << bestInterceptSum << "\n";
-  });
-
-  // ---- ④ slope: Σ per-hop slopes × base factor; intercept: Σ per-hop
-  // intercepts (= hop count; every edge intercept is 1. today).
-  return CostMultiplier{VCastSlopeBaseFactor * bestSlopeSum, bestInterceptSum};
-}
-
-//===----------------------------------------------------------------------===//
-// Vector: per-op multiplier chain, summed, times VF-factor
+// Vector: per-op dtype × CV billing, summed over the group
 //===----------------------------------------------------------------------===//
 
 CostResult
@@ -567,8 +297,8 @@ MSCostModel::getVectorGroupCost(const VectorGroupCostInput &input) const {
   double sum = 0.0;
   SmallVector<std::string, 4> fallbackOps;
 
-  // An op can miss several tables at once (op type + dtype); record each
-  // op once so the note stays readable.
+  // The same op can appear several times in a group; record each name once
+  // so the note stays readable.
   auto noteFallback = [&fallbackOps](StringRef opName) {
     if (!llvm::is_contained(fallbackOps, opName))
       fallbackOps.push_back(opName.str());
@@ -578,8 +308,11 @@ MSCostModel::getVectorGroupCost(const VectorGroupCostInput &input) const {
     StringRef opName = opDesc.op ? opDesc.op->getName().getStringRef()
                                  : StringRef("<unknown>");
 
-    // ---- ① Ignore list: dialect-prefix match (tensor. / memref. /
-    // bufferization.).  A hit is skipped outright — no warning, no latency.
+    // ---- ① Billability filter: dialect-prefix match (tensor. / memref. /
+    // bufferization.).  A hit is skipped outright — no warning, no
+    // latency: those ops are buffer/tensor plumbing rather than vector
+    // instructions, so even a bare intercept would inflate the group.
+    // This is the ONLY point at which op kind influences the cost.
     if (llvm::any_of(VectorOpIgnoreList, [opName](StringRef prefix) {
           return opName.starts_with(prefix);
         })) {
@@ -587,93 +320,21 @@ MSCostModel::getVectorGroupCost(const VectorGroupCostInput &input) const {
       continue;
     }
 
-    // ---- ② varange: dedicated output-driven model (1019).  varange's
-    // only shaped operand is the DPS dst (offset/strides are Index
-    // scalars that never enter the inputs list), so the generic
-    // input-driven x below would always be 0; the calibration drives the
-    // cost by the OUTPUT element count N instead.  A dedicated model is
-    // not a table miss — no op-type lookup, no fallback note when the
-    // output metadata is present.  Missing outputs (bufferized memref
-    // form) → x = 0 + note, mirroring the vcast missing-metadata
-    // philosophy (non-fatal fallback).
-    if (opName == "hivm.hir.varange") {
-      int64_t n = 0;
-      bool outputMissing = opDesc.outputs.empty();
-      if (!outputMissing) {
-        FailureOr<int64_t> elems = opDesc.outputs.front().getTotalElements();
-        if (failed(elems)) {
-          if (hasDynamicDim(opDesc.outputs.front().getShape())) {
-            LLVM_DEBUG(
-                dbgs()
-                << "[ms-cost-model] vec skipped dynamic op=" << opName
-                << " output #0 has "
-                << shapeFailReason(opDesc.outputs.front().getShape()) << "\n");
-            continue;
-          }
-          return CostResult{
-              -1, "vector op hivm.hir.varange output #0 has " +
-                      shapeFailReason(opDesc.outputs.front().getShape())};
-        }
-        n = *elems;
-      } else {
-        noteFallback(opName);
-      }
-      // The CV slope factor applies here as well — the single application
-      // point shared with step ⑦ below (vbrc applies the factor inside its
-      // own model; the intercept is unaffected, exactly like every other
-      // op).
-      double aEff = VarangeParam.a * VectorCVSlopeFactor;
-      double yOp = aEff * static_cast<double>(n) + VarangeParam.b;
-      sum += yOp;
-      LLVM_DEBUG(dbgs() << "[ms-cost-model] varange x=" << n << " y_op=" << yOp
-                        << (outputMissing ? " [fallback]" : "") << "\n");
-      continue;
-    }
-
-    // ---- ③ vbrc: dedicated broadcast model (1019).  The five CV
-    // patterns are recognized from the input shape plus the REAL output
-    // shape the builder resolved (vbrcRealOutShape — the recorded result
-    // shape is the padded DPS out).  Forms outside the five patterns,
-    // uncalibrated dtypes, and missing metadata fall through to the
-    // generic billing below (the op-type miss records the fallback note),
-    // preserving the pre-1019 behavior as the fallback path.
-    if (opName == "hivm.hir.vbrc") {
-      if (std::optional<CostResult> r = vbrcBroadcastCost(opDesc)) {
-        if (r->costTime == -1)
-          return *r; // recognized pattern, invalid dims — group failure.
-        sum += static_cast<double>(r->costTime) / CostTimeUnitScale;
-        LLVM_DEBUG(dbgs() << "[ms-cost-model] vbrc y_op=" << r->costTime
-                          << "ns\n");
-        continue;
-      }
-    }
-
-    // ---- ④ Op-type multiplier (b4): table lookup; a miss uses the
-    // fallback multiplier and lands the op in the note.
-    std::optional<CostMultiplier> opTypeMult =
-        lookupVectorOpTypeMultiplier(opName);
-    bool fellBack = !opTypeMult;
-    if (fellBack) {
-      noteFallback(opName);
-      opTypeMult = VectorOpTypeMultiplier_Fallback;
-    }
-
-    // ---- ⑤ Input element statistics: x = max element count over the
-    // op's real inputs (elementwise inputs are same-shaped; a broadcast
-    // takes the largest, matching the output — prefer overestimate).
+    // ---- ② Input element statistics: x = max element count over the
+    // op's inputs (elementwise inputs are same-shaped; a broadcast takes
+    // the largest, matching the output — prefer overestimate).
     // Dynamic inputs are skipped (the op contributes zero cost) so that
     // ops like stride_load whose GM source is naturally dynamic do not
     // fail the entire group.  Non-dynamic invalid inputs (non-positive
     // dims, overflow) still fail the group.
     int64_t x = 0;
-    const size_t nInput = opDesc.inputs.size();
     bool skippedDynamic = false;
-    for (size_t i = 0; i < nInput; ++i) {
+    for (size_t i = 0, e = opDesc.inputs.size(); i < e; ++i) {
       FailureOr<int64_t> elements = opDesc.inputs[i].getTotalElements();
       if (failed(elements)) {
         if (hasDynamicDim(opDesc.inputs[i].getShape())) {
-          LLVM_DEBUG(
-              dbgs() << "[ms-cost-model] vec skipped dynamic op=" << opName
+          LLVM_DEBUG(dbgs()
+                     << "[ms-cost-model] vec skipped dynamic op=" << opName
                      << " input #" << i << " has "
                      << shapeFailReason(opDesc.inputs[i].getShape()) << "\n");
           skippedDynamic = true;
@@ -688,97 +349,44 @@ MSCostModel::getVectorGroupCost(const VectorGroupCostInput &input) const {
     if (skippedDynamic)
       continue;
 
-    // ---- ⑥ Assemble the multiplier chain.
-    double slopeMult = 1.;
-    double interceptMult = 1.;
-    if (opName == "hivm.hir.vcast") {
-      // vcast: dedicated conversion multiplier (design §9) — outside the
-      // b1 dtype / b2 input-count dimensions; the pair multiplier already
-      // contains the 2. base factor.  CV 0.5 is applied uniformly below.
-      // Fallback composition (§5.8): the 2. base factor still applies,
-      // only the pair multiplier falls back to 1.
-      CostMultiplier pair{VCastSlopeBaseFactor *
-                              VCastPairMultiplier_Fallback.slope,
-                          VCastPairMultiplier_Fallback.intercept};
-      bool pairFellBack = true;
-      // src dtype = first real input, dst dtype = first recorded output;
-      // missing metadata (no inputs / no outputs) → fallback + note.
-      if (!opDesc.inputs.empty() && !opDesc.outputs.empty()) {
-        FailureOr<CostMultiplier> m =
-            vcastPairMultiplier(opDesc.inputs.front().getElementType(),
-                                opDesc.outputs.front().getElementType());
-        if (succeeded(m)) {
-          pair = *m;
-          pairFellBack = false;
-        }
-      }
-      if (pairFellBack)
+    // ---- ③ dtype multiplier, read from the FIRST input's dtype.  A miss
+    // (f64 etc.) is non-fatal — {1., 1.} plus the op name in the note,
+    // unlike cube, which refuses to fabricate a latency.  An op with no
+    // shaped input keeps {1., 1.} and x = 0, i.e. it bills one bare
+    // intercept.
+    CostMultiplier dtypeMult{1., 1.};
+    if (!opDesc.inputs.empty()) {
+      Type dtype = opDesc.inputs.front().getElementType();
+      if (std::optional<CostMultiplier> dm = vectorDtypeMultiplierFor(dtype))
+        dtypeMult = *dm;
+      else
         noteFallback(opName);
-      fellBack = fellBack || pairFellBack;
-      slopeMult = pair.slope;
-      interceptMult = pair.intercept;
-      LLVM_DEBUG(dbgs() << "[ms-cost-model]   vcast x=" << x << " mult={"
-                        << pair.slope << "," << pair.intercept << "}"
-                        << (pairFellBack ? " [fallback]" : "") << "\n");
-    } else {
-      // b1 dtype (first real input's dtype): a miss (f64 etc.) is
-      // non-fatal — {1., 1.} + note, unlike cube (Q8 vs Q1).
-      CostMultiplier dtypeMult{1., 1.};
-      // b2 input count: slope = (n_input - 1)·c + 1.; a dtype miss uses
-      // c = 1.  n_input = 0 (degenerate op) → multiplier 1., x = 0.
-      double inCountSlope = 1.;
-      if (nInput > 0) {
-        Type dtype = opDesc.inputs.front().getElementType();
-        std::optional<CostMultiplier> dm = vectorDtypeMultiplierFor(dtype);
-        if (dm) {
-          dtypeMult = *dm;
-        } else {
-          noteFallback(opName);
-          fellBack = true;
-        }
-        std::optional<double> c = vectorInputCountCoeffFor(dtype);
-        if (!c)
-          c = 1.; // dtype miss already recorded above.
-        inCountSlope = (static_cast<double>(nInput) - 1.) * *c + 1.;
-      }
-      // b3 shape (TODO placeholder) × b4 op type.
-      slopeMult = dtypeMult.slope * inCountSlope * VectorShapeMultiplier.slope *
-                  opTypeMult->slope;
-      interceptMult = dtypeMult.intercept * VectorShapeMultiplier.intercept *
-                      opTypeMult->intercept;
-      LLVM_DEBUG(dbgs() << "[ms-cost-model]   dtype_mult={" << dtypeMult.slope
-                        << "," << dtypeMult.intercept << "}"
-                        << " in_count=" << inCountSlope << " shape_mult={"
-                        << VectorShapeMultiplier.slope << ","
-                        << VectorShapeMultiplier.intercept << "}"
-                        << " op_type={" << opTypeMult->slope << ","
-                        << opTypeMult->intercept << "}"
-                        << " cv=" << VectorCVSlopeFactor
-                        << (fellBack ? " [fallback]" : "") << "\n");
     }
 
-    // ---- ⑦ Per-op contribution: ONE intercept per op (v2 semantics —
-    // v1 added b per input); the CV slope factor is applied here for
-    // every op on this path, vcast included (vbrc applies the factor
-    // inside its own model; single application point per path, Q3).
-    double aEff = VectorBaseParam.a * slopeMult * VectorCVSlopeFactor;
-    double bEff = VectorBaseParam.b * interceptMult;
-    sum += aEff * static_cast<double>(x) + bEff;
+    // ---- ④ Per-op contribution: ONE intercept per op (not per input);
+    // the CV slope factor is applied here, the single application point
+    // shared by every op on this path.  Op kind does not participate.
+    double aEff = VectorBaseParam.a * dtypeMult.slope * VectorCVSlopeFactor;
+    double bEff = VectorBaseParam.b * dtypeMult.intercept;
+    double yOp = aEff * static_cast<double>(x) + bEff;
+    sum += yOp;
     LLVM_DEBUG(dbgs() << "[ms-cost-model] vec op=" << opName << " x=" << x
-                      << " n_input=" << nInput << " y_op="
-                      << aEff * static_cast<double>(x) + bEff << "\n");
+                      << " dtype_mult={" << dtypeMult.slope << ","
+                      << dtypeMult.intercept << "}"
+                      << " cv=" << VectorCVSlopeFactor << " y_op=" << yOp
+                      << "\n");
   }
 
-  // ---- ⑧ Group level: VF factor + normalization (v1 semantics).
-  double y = sum * VectorVF_Factor;
-  if (!std::isfinite(y) || y < 0.0)
-    return CostResult{-1, "vector group y = " + formatDouble(y) +
+  // ---- ⑤ Group level: the plain per-op sum, then normalization.  An
+  // empty (or fully ignored) group yields sum = 0, which clamps to the
+  // minimum cost 1 rather than failing.
+  if (!std::isfinite(sum) || sum < 0.0)
+    return CostResult{-1, "vector group y = " + formatDouble(sum) +
                               " after eval, expect >= 0"};
-  int64_t costTime = normalizeCostTime(y);
+  int64_t costTime = normalizeCostTime(sum);
 
-  LLVM_DEBUG(dbgs() << "[ms-cost-model] vector group sum=" << sum
-                    << " y=sum*vf=" << y << "us costTime=" << costTime
-                    << "ns\n");
+  LLVM_DEBUG(dbgs() << "[ms-cost-model] vector group y=sum=" << sum
+                    << "us costTime=" << costTime << "ns\n");
 
   std::string note;
   if (!fallbackOps.empty())
@@ -797,8 +405,7 @@ CostResult MSCostModel::getTransferCost(const TransferCostInput &input) const {
     if (failed(input.data.getTotalElements())) {
       if (hasDynamicDim(input.data.getShape())) {
         LLVM_DEBUG(dbgs() << "[ms-cost-model] transfer skipped dynamic data ("
-                          << input.pipeline << ", " << input.storageTag
-                          << "): "
+                          << input.pipeline << ", " << input.storageTag << "): "
                           << shapeFailReason(input.data.getShape()) << "\n");
         return CostResult{1, "transfer data has dynamic shape, skipped"};
       }

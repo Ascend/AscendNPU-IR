@@ -18,9 +18,9 @@
 // The MS (Modulo-Schedule) cost model: per-module linear formulas
 // y = a·x + b read exclusively from MSCostParams.h.  This class contains
 // no numeric literals, never touches the DDG or MLIR IR (VectorOpDesc::op
-// is only read for its op name in notes/diagnostics), and never emits
-// diagnostics itself — errors surface as CostResult{-1, note} and the
-// caller prints them.
+// is only read for its op name in the ignore-list match and in
+// notes/diagnostics), and never emits diagnostics itself — errors surface
+// as CostResult{-1, note} and the caller prints them.
 //
 //===----------------------------------------------------------------------===//
 #ifndef BISHENGIR_DIALECT_HIVM_UTILS_COSTMODEL_MSCOSTMODEL_H
@@ -41,11 +41,12 @@ public:
   /// f32).  Shape/dtype anomalies → CostResult{-1, note}.
   CostResult getCubeCost(const CubeCostInput &input) const override;
 
-  /// Vector group: per-op x = max element count of the op's inputs,
-  /// summed over ops then multiplied by the VF-factor.  Ops missing from
-  /// the multiplier tables count via the fallback multipliers and land in
-  /// the note; input shape anomalies fail the whole group with
-  /// CostResult{-1, note}.
+  /// Vector group: per-op x = max element count of the op's inputs, billed
+  /// with the dtype multiplier and the CV factor, then summed over the
+  /// group.  Op kind only selects whether an op is billable at all
+  /// (VectorOpIgnoreList).  Ops whose dtype is missing from the dtype
+  /// table count via the fallback multiplier and land in the note; input
+  /// shape anomalies fail the whole group with CostResult{-1, note}.
   CostResult
   getVectorGroupCost(const VectorGroupCostInput &input) const override;
 

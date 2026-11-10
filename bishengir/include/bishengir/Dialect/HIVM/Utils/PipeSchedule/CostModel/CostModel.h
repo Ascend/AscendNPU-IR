@@ -36,17 +36,18 @@ public:
   /// computed they return CostResult{costTime = -1, note = specifics} (see
   /// CostModelTypes.h); the caller checks costTime == -1, prints the note,
   /// and fails the build.  The only anomaly that does NOT go through the
-  /// -1 sentinel is a vector op outside the accept list: the result is a
-  /// normal positive value whose note records the op names so the caller
-  /// can emit a warning (§4.4.2 of the design doc).
+  /// -1 sentinel is a vector op whose dtype is outside the dtype table:
+  /// the result is a normal positive value whose note records the op names
+  /// so the caller can emit a warning.
 
   /// Cube compute cost: dispatch on dtype class, x = sm·sn·sk.
   virtual CostResult getCubeCost(const CubeCostInput &input) const = 0;
 
-  /// Vector-group cost: sum the per-op latencies then multiply by the
-  /// VF-factor.  Ops outside the multiplier tables: the note records the
-  /// op names (the caller emits a warning) and the latency still counts
-  /// via the fallback multipliers — the group does not fail.
+  /// Vector-group cost: the plain sum of the per-op latencies.  Op kind
+  /// does not enter the billing — only the dtype multiplier and the CV
+  /// factor do.  Ops whose dtype is outside the dtype table: the note
+  /// records the op names (the caller emits a warning) and the latency
+  /// still counts via the fallback multiplier — the group does not fail.
   virtual CostResult
   getVectorGroupCost(const VectorGroupCostInput &input) const = 0;
 
