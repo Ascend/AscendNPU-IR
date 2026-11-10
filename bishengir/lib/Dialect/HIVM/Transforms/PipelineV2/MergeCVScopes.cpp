@@ -143,6 +143,9 @@ public:
   // loads into the user cube and/or vector scopes.
   void applySinkAllocaInCAVScopeRule();
 
+  // Run Rule 5 early for normalized matmul counters.
+  void applySinkNormalizedCounterInCAVScopeRule();
+
 private:
   static bool isScalarOnlyCubeAndVectorScope(ScopeOp scope);
   struct AllocaAccesses {
@@ -166,6 +169,7 @@ private:
       ArrayRef<ScopeOp> allocaScopes,
       DenseMap<ScopeOp, AllocaAccesses> &accessesByAllocaScope);
   static void sinkAllocasToUserScopes(ArrayRef<ScopeOp> allocaScopes);
+  void sinkAllocasInCAVScopes(bool onlyNormalizedCounters);
 
   SetVector<ScopeOp> getIntraIterScopeDeps(ScopeOp scope);
   ScopeOp mergeScopeGroup(SmallPtrSetImpl<Operation *> &group);
@@ -1097,6 +1101,19 @@ void LoopScopeMerger::applyCrossCoreTransferBackwardRule() {
   }
 }
 
+static bool isNormalizedCounterLoad(Operation *op) {
+  auto load = dyn_cast<memref::LoadOp>(op);
+  if (!load)
+    return false;
+  Value counter = load.getMemRef();
+  while (auto scope = counter.getDefiningOp<ScopeOp>()) {
+    auto returnOp = cast<scope::ReturnOp>(scope.getBody()->getTerminator());
+    counter = returnOp.getOperand(cast<OpResult>(counter).getResultNumber());
+  }
+  auto alloca = counter.getDefiningOp<memref::AllocaOp>();
+  return alloca && alloca->hasAttr(kNormalizeMatmulCounterAttr);
+}
+
 void LoopScopeMerger::applyGraphSameCoreRule() {
   while (true) {
     ScopeDependenceGraph graph(loopOp, /*withCarriedEdges=*/false);
@@ -1106,9 +1123,28 @@ void LoopScopeMerger::applyGraphSameCoreRule() {
       if (!isEligibleForCoreMerge(firstScope) ||
           !isEligibleForCoreMerge(secondScope))
         return false;
-      auto core = getScopeCoreType(firstScope);
-      if ((*core != TCoreType::CUBE && *core != TCoreType::VECTOR) ||
-          core != getScopeCoreType(secondScope))
+      auto firstCore = getScopeCoreType(firstScope);
+      auto secondCore = getScopeCoreType(secondScope);
+      bool sameCore =
+          (*firstCore == TCoreType::CUBE || *firstCore == TCoreType::VECTOR) &&
+          firstCore == secondCore;
+      bool counterSelection =
+          *firstCore == TCoreType::CUBE_AND_VECTOR &&
+          (*secondCore == TCoreType::CUBE ||
+           *secondCore == TCoreType::VECTOR) &&
+          firstScope.getNumResults() == 1 &&
+          llvm::any_of(
+              firstScope.getBody()->without_terminator(),
+              [](Operation &op) { return isNormalizedCounterLoad(&op); }) &&
+          llvm::all_of(firstScope->getUsers(),
+                       [&](Operation *user) {
+                         return secondScope->isProperAncestor(user);
+                       }) &&
+          llvm::all_of(
+              firstScope.getBody()->without_terminator(), [](Operation &op) {
+                return isMemoryEffectFree(&op) || isNormalizedCounterLoad(&op);
+              });
+      if (!sameCore && !counterSelection)
         return false;
 
       SmallVector<Operation *> members{firstScope, secondScope};
@@ -1264,12 +1300,17 @@ void LoopScopeMerger::sinkLoadsToUserScopes(
       continue;
 
     SetVector<ScopeOp> userScopes;
+    bool isNormalizedCounter =
+        cast<memref::AllocaOp>(&scope.getRegion().front().front())
+            ->hasAttr(kNormalizeMatmulCounterAttr);
     for (Operation *user : retVal.getUsers()) {
       auto userScope = user->getParentOfType<ScopeOp>();
       if (userScope && userScope->getBlock() == loadScope->getBlock() &&
           loadScope->isBeforeInBlock(userScope) &&
           (getScopeCoreType(userScope) == TCoreType::CUBE ||
-           getScopeCoreType(userScope) == TCoreType::VECTOR))
+           getScopeCoreType(userScope) == TCoreType::VECTOR ||
+           (isNormalizedCounter &&
+            getScopeCoreType(userScope) == TCoreType::CUBE_AND_VECTOR)))
         userScopes.insert(userScope);
     }
 
@@ -1443,9 +1484,14 @@ void LoopScopeMerger::sinkAllocasToUserScopes(ArrayRef<ScopeOp> allocaScopes) {
   }
 }
 
-void LoopScopeMerger::applySinkAllocaInCAVScopeRule() {
+void LoopScopeMerger::sinkAllocasInCAVScopes(bool onlyNormalizedCounters) {
   SmallVector<ScopeOp> allocaScopes;
   collectAllocaScopes(loopOp, allocaScopes);
+  if (onlyNormalizedCounters)
+    llvm::erase_if(allocaScopes, [](ScopeOp scope) {
+      auto alloca = cast<memref::AllocaOp>(&scope.getRegion().front().front());
+      return !alloca->hasAttr(kNormalizeMatmulCounterAttr);
+    });
   if (allocaScopes.empty())
     return;
 
@@ -1454,6 +1500,14 @@ void LoopScopeMerger::applySinkAllocaInCAVScopeRule() {
   sinkLoadsToUserScopes(allocaScopes, accessesByAllocaScope);
   sinkStoresToUserScopes(allocaScopes, accessesByAllocaScope);
   sinkAllocasToUserScopes(allocaScopes);
+}
+
+void LoopScopeMerger::applySinkAllocaInCAVScopeRule() {
+  sinkAllocasInCAVScopes(/*onlyNormalizedCounters=*/false);
+}
+
+void LoopScopeMerger::applySinkNormalizedCounterInCAVScopeRule() {
+  sinkAllocasInCAVScopes(/*onlyNormalizedCounters=*/true);
 }
 
 void LoopScopeMerger::run(ArrayRef<MergeRuleFn> rules) {
@@ -1467,6 +1521,7 @@ void LoopScopeMerger::run(ArrayRef<MergeRuleFn> rules) {
 
 void MergeCVScopesPass::runOnOperation() {
   static constexpr LoopScopeMerger::MergeRuleFn kDefaultRuleOrder[] = {
+      &LoopScopeMerger::applySinkNormalizedCounterInCAVScopeRule,
       &LoopScopeMerger::applyScalarLoopCarriedDepRule,
       &LoopScopeMerger::applyLoopCarriedDepGroupingRule,
       &LoopScopeMerger::applyMergedScopeSameCoreRule,
