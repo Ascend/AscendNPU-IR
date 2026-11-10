@@ -2908,6 +2908,113 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
       offset(%offset_i32 : i32)
       strides([%stride_i32, %stride_i32, %stride_i32 : i32, i32, i32])
       numels([%numel2_i32, %numel0_i32, %numel1_i32 : i32, i32, i32])
+     return
+  }
+}
+
+
+// -----
+// CHECK-LABEL: func @test_stride_store_fp8
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func @test_stride_store_fp8(
+      %dst_e4m3: memref<?xf8E4M3FN>, %src1d_e4m3: memref<8xf8E4M3FN>,
+      %src2d_e4m3: memref<4x8xf8E4M3FN>, %src3d_e4m3: memref<2x4x8xf8E4M3FN>,
+      %dst_e5m2: memref<?xf8E5M2>, %src1d_e5m2: memref<8xf8E5M2>,
+      %src2d_e5m2: memref<4x8xf8E5M2>, %src3d_e5m2: memref<2x4x8xf8E5M2>) {
+    %offset_i64 = arith.constant 0 : i64
+    %stride_i64 = arith.constant 2 : i64
+    %numel0_i64 = arith.constant 4 : i64
+    %numel1_i64 = arith.constant 8 : i64
+    %numel2_i64 = arith.constant 2 : i64
+    // CHECK: call @stride_store_1d_float8_e4m3_t_int64_t
+    hivm.hir.stride_store
+      ins(%src1d_e4m3 : memref<8xf8E4M3FN>)
+      outs(%dst_e4m3 : memref<?xf8E4M3FN>)
+      offset(%offset_i64 : i64)
+      strides([%stride_i64 : i64])
+      numels([%numel1_i64 : i64])
+    // CHECK: call @stride_store_1d_float8_e5m2_t_int64_t
+    hivm.hir.stride_store
+      ins(%src1d_e5m2 : memref<8xf8E5M2>)
+      outs(%dst_e5m2 : memref<?xf8E5M2>)
+      offset(%offset_i64 : i64)
+      strides([%stride_i64 : i64])
+      numels([%numel1_i64 : i64])
+    // CHECK: call @stride_store_2d_float8_e4m3_t_int64_t
+    hivm.hir.stride_store
+      ins(%src2d_e4m3 : memref<4x8xf8E4M3FN>)
+      outs(%dst_e4m3 : memref<?xf8E4M3FN>)
+      offset(%offset_i64 : i64)
+      strides([%stride_i64, %stride_i64 : i64, i64])
+      numels([%numel0_i64, %numel1_i64 : i64, i64])
+    // CHECK: call @stride_store_2d_float8_e5m2_t_int64_t
+    hivm.hir.stride_store
+      ins(%src2d_e5m2 : memref<4x8xf8E5M2>)
+      outs(%dst_e5m2 : memref<?xf8E5M2>)
+      offset(%offset_i64 : i64)
+      strides([%stride_i64, %stride_i64 : i64, i64])
+      numels([%numel0_i64, %numel1_i64 : i64, i64])
+    // CHECK: call @stride_store_3d_float8_e4m3_t_int64_t
+    hivm.hir.stride_store
+      ins(%src3d_e4m3 : memref<2x4x8xf8E4M3FN>)
+      outs(%dst_e4m3 : memref<?xf8E4M3FN>)
+      offset(%offset_i64 : i64)
+      strides([%stride_i64, %stride_i64, %stride_i64 : i64, i64, i64])
+      numels([%numel2_i64, %numel0_i64, %numel1_i64 : i64, i64, i64])
+    // CHECK: call @stride_store_3d_float8_e5m2_t_int64_t
+    hivm.hir.stride_store
+      ins(%src3d_e5m2 : memref<2x4x8xf8E5M2>)
+      outs(%dst_e5m2 : memref<?xf8E5M2>)
+      offset(%offset_i64 : i64)
+      strides([%stride_i64, %stride_i64, %stride_i64 : i64, i64, i64])
+      numels([%numel2_i64, %numel0_i64, %numel1_i64 : i64, i64, i64])
+    %offset_i32 = arith.constant 0 : i32
+    %stride_i32 = arith.constant 2 : i32
+    %numel0_i32 = arith.constant 4 : i32
+    %numel1_i32 = arith.constant 8 : i32
+    %numel2_i32 = arith.constant 2 : i32
+    // CHECK: call @stride_store_1d_float8_e4m3_t_int32_t
+    hivm.hir.stride_store
+      ins(%src1d_e4m3 : memref<8xf8E4M3FN>)
+      outs(%dst_e4m3 : memref<?xf8E4M3FN>)
+      offset(%offset_i32 : i32)
+      strides([%stride_i32 : i32])
+      numels([%numel1_i32 : i32])
+    // CHECK: call @stride_store_1d_float8_e5m2_t_int32_t
+    hivm.hir.stride_store
+      ins(%src1d_e5m2 : memref<8xf8E5M2>)
+      outs(%dst_e5m2 : memref<?xf8E5M2>)
+      offset(%offset_i32 : i32)
+      strides([%stride_i32 : i32])
+      numels([%numel1_i32 : i32])
+    // CHECK: call @stride_store_2d_float8_e4m3_t_int32_t
+    hivm.hir.stride_store
+      ins(%src2d_e4m3 : memref<4x8xf8E4M3FN>)
+      outs(%dst_e4m3 : memref<?xf8E4M3FN>)
+      offset(%offset_i32 : i32)
+      strides([%stride_i32, %stride_i32 : i32, i32])
+      numels([%numel0_i32, %numel1_i32 : i32, i32])
+    // CHECK: call @stride_store_2d_float8_e5m2_t_int32_t
+    hivm.hir.stride_store
+      ins(%src2d_e5m2 : memref<4x8xf8E5M2>)
+      outs(%dst_e5m2 : memref<?xf8E5M2>)
+      offset(%offset_i32 : i32)
+      strides([%stride_i32, %stride_i32 : i32, i32])
+      numels([%numel0_i32, %numel1_i32 : i32, i32])
+    // CHECK: call @stride_store_3d_float8_e4m3_t_int32_t
+    hivm.hir.stride_store
+      ins(%src3d_e4m3 : memref<2x4x8xf8E4M3FN>)
+      outs(%dst_e4m3 : memref<?xf8E4M3FN>)
+      offset(%offset_i32 : i32)
+      strides([%stride_i32, %stride_i32, %stride_i32 : i32, i32, i32])
+      numels([%numel2_i32, %numel0_i32, %numel1_i32 : i32, i32, i32])
+    // CHECK: call @stride_store_3d_float8_e5m2_t_int32_t
+    hivm.hir.stride_store
+      ins(%src3d_e5m2 : memref<2x4x8xf8E5M2>)
+      outs(%dst_e5m2 : memref<?xf8E5M2>)
+      offset(%offset_i32 : i32)
+      strides([%stride_i32, %stride_i32, %stride_i32 : i32, i32, i32])
+      numels([%numel2_i32, %numel0_i32, %numel1_i32 : i32, i32, i32])
     return
   }
 }
