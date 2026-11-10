@@ -102,11 +102,16 @@ llvm::StringRef getAscendPath();
 /// Modify the ir string for downgrade the llvm version
 std::string modifyForVersionMismatch(std::string src);
 
-/// Serialize an LLVM Module to the IR string fed to the device compiler:
-/// Temporarily use legacy debug intrinsics before printing and applying the
-/// remaining version adaptations. The module's debug format is restored on
-/// return. Both Native and Process backends use this serializer.
-std::string moduleToIrString(llvm::Module &module);
+/// Translate for the vendor compiler, which requires legacy debug intrinsics.
+/// Normalize while the caller has exclusive access to the LLVM context, before
+/// launching parallel compilation or serialization of its modules.
+std::unique_ptr<llvm::Module>
+translateModuleToLegacyLLVMIR(mlir::Operation *module,
+                              llvm::LLVMContext &context);
+
+/// Serialize a normalized module and apply the remaining version adaptations.
+/// Both Native and Process backends use this read-only serializer.
+std::string moduleToIrString(const llvm::Module &module);
 
 std::string tryReplaceExtension(llvm::StringRef path,
                                 llvm::StringRef newExtension);

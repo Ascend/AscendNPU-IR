@@ -10,6 +10,7 @@ add_bishengir_library(BiShengIRHIVMCLib
     ${BISHENGIR_MAIN_INCLUDE_DIR}/bishengir/Tools/hivmc
 
     LINK_LIBS PUBLIC
+    MLIRTargetLLVMIRExport
     BiShengIRHIVMCLibA3
     BiShengIRHIVMCLibA5
     BiShengIRVersionLib

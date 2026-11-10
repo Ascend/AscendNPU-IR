@@ -8,9 +8,10 @@
 
 #include "bishengir/Tools/hivmc/Utility.h"
 #include "mlir/Parser/Parser.h"
+#include "mlir/Target/LLVMIR/Export.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/IR/DebugProgramInstruction.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/ManagedStatic.h"
@@ -283,10 +284,16 @@ std::optional<std::pair<ModuleOp, ModuleOp>> splitMixModule(ModuleOp mod) {
   return std::make_pair(aicModule, aivModule);
 }
 
-std::string moduleToIrString(llvm::Module &module) {
-  // The device compiler uses LLVM 15 debug intrinsics. Convert structurally
-  // before printing: record operands can contain commas and nested expressions.
-  llvm::ScopedDbgInfoFormatSetter legacyDebugInfo(module, false);
+std::unique_ptr<llvm::Module>
+translateModuleToLegacyLLVMIR(mlir::Operation *module,
+                              llvm::LLVMContext &context) {
+  auto llvmModule = mlir::translateModuleToLLVMIR(module, context);
+  if (llvmModule)
+    llvmModule->setIsNewDbgInfoFormat(false);
+  return llvmModule;
+}
+
+std::string moduleToIrString(const llvm::Module &module) {
   std::string moduleStr;
   llvm::raw_string_ostream rso(moduleStr);
   module.print(rso, nullptr);
