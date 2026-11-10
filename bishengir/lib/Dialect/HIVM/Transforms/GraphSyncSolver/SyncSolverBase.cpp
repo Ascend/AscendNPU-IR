@@ -2859,8 +2859,11 @@ bool SyncSolverBase::checkMergeable(Scope *scopeOp, CorePipeInfo corePipeSrc,
   if (auto *conditionOp = llvm::dyn_cast<Condition>(scopeOp)) {
     return checkMergeable(conditionOp->getTrueScope(), corePipeSrc, corePipeDst,
                           eventId, true) &&
-           checkMergeable(conditionOp->getFalseScope(), corePipeSrc,
-                          corePipeDst, eventId, true);
+           // for { if (cond) { inner loop } } with no else branch.
+           ((conditionOp->isFalseScopeSynthetic && conditionOp->parentOp &&
+             isa_and_present<Loop>(conditionOp->parentOp->parentOp)) ||
+            checkMergeable(conditionOp->getFalseScope(), corePipeSrc,
+                           corePipeDst, eventId, true));
   }
   if (auto *loopOp = llvm::dyn_cast<Loop>(scopeOp)) {
     for (auto &childOp : loopOp->body) {
