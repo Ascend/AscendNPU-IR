@@ -175,6 +175,9 @@ std::unique_ptr<Pass> createAllocExtraBufferPass();
 /// Create a pass to outline memref.alloc with static shape in VF
 std::unique_ptr<Pass> createOutlineAllocInVFPass();
 
+/// Create a pass to outline hivm.load in VF by rewriting it to hivm.copy.
+std::unique_ptr<Pass> createOutlineCopyInVFPass();
+
 /// Create a pass that promotes temporary tensor buffers inside vector
 /// functions into enclosing loop iter_args.
 std::unique_ptr<Pass> createNormalizeTmpBufferInVfPass();

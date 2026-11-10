@@ -631,6 +631,14 @@ def OutlineAllocInVF : HIVMPass<"hivm-outline-alloc-in-VF", "ModuleOp"> {
                            "memref::MemRefDialect"];
 }
 
+def OutlineCopyInVF : HIVMPass<"hivm-outline-copy-in-VF", "ModuleOp"> {
+  let summary =
+      "rewrite hivm.load to hivm.copy in VF when operands are VF args";
+  let constructor = "mlir::hivm::createOutlineCopyInVFPass()";
+  let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
+                           "memref::MemRefDialect", "vector::VectorDialect"];
+}
+
 def NormalizeTmpBufferInVf
     : HIVMPass<"hivm-normalize-tmp-buffer-in-vf", "func::FuncOp"> {
   let summary = "Normalize temporary tensor buffers in vector functions.";
