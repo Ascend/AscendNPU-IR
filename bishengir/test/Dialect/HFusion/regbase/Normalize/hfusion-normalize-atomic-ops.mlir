@@ -274,6 +274,38 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 
 // -----
 
+// CAS result is the GM value loaded before the swap. The spin-lock compare
+// reads that tensor after the existing critical section.
+//
+// CHECK-LABEL: func.func @test_NormalizeAtomicOps_CAS_atomic_cas_return
+// CHECK: hivm.hir.sync_block_lock {{.*}}lock_var(%[[LOCK:.*]] : memref<1xi64>)
+// CHECK: memref.copy %arg2, %[[BUF:.*]] : memref<1xi32> to memref<1xi32>
+// CHECK: %[[LOADED:.*]] = bufferization.to_tensor %[[BUF]] restrict writable : memref<1xi32>
+// CHECK: hfusion.compare
+// CHECK: hfusion.select
+// CHECK: bufferization.materialize_in_destination
+// CHECK: hivm.hir.sync_block_unlock {{.*}}lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: %[[OLD:.*]] = tensor.extract %[[LOADED]][%{{.*}}] : tensor<1xi32>
+// CHECK: return %[[OLD]] : i32
+// CHECK-NOT: hfusion.atomic_cas
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_NormalizeAtomicOps_CAS_atomic_cas_return(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<1xi32>, %arg3: memref<1xi32>, %arg4: memref<1xi32>) -> i32 attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "aiv", parallel_mode = "simd"} {
+    %c0 = arith.constant 0 : index
+    %cmp_tensor = bufferization.to_tensor %arg3 restrict writable : memref<1xi32>
+    %store_tensor = bufferization.to_tensor %arg4 restrict writable : memref<1xi32>
+    %cmp = bufferization.to_memref %cmp_tensor : memref<1xi32>
+    %store = bufferization.to_memref %store_tensor : memref<1xi32>
+    %lock = hivm.hir.create_sync_block_lock : memref<1xi64>
+    hivm.hir.sync_block_lock lock_var(%lock : memref<1xi64>)
+    %old = hfusion.atomic_cas {already_sync} ins(%cmp, %store : memref<1xi32>, memref<1xi32>) outs(%arg2 : memref<1xi32>) -> tensor<1xi32>
+    hivm.hir.sync_block_unlock lock_var(%lock : memref<1xi64>)
+    %extracted = tensor.extract %old[%c0] : tensor<1xi32>
+    return %extracted : i32
+  }
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_NormalizeAtomicOps_XCHG_atomic_xchg_2d_i16
 // CHECK: scope.scope : () -> () {
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
