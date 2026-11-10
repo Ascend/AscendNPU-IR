@@ -1098,6 +1098,11 @@ void AutoVectorizeV2::tileAndFuseSiblingForLeafNodes(
         }
       }
     }
+    // Establish the slice boundary before the first global cleanup. Reuse the
+    // node label that is preserved when the sibling loops are fused.
+    for (Value loop : tiledLoopHandles)
+      builder.create<transform::AnnotateOp>(loc, loop, node->getLabel(),
+                                            nullptr);
     assert(!std::empty(tiledLoopHandles) && "Should fuse more than one loops");
     applyCleanUp(builder, seqOp);
     Value fusedLoopHandle = tiledLoopHandles.front();
@@ -1180,6 +1185,7 @@ void AutoVectorizeV2::fuseProducersIntoConsumers(
       builder.create<transform::ApplyRegisteredPassOp>(
           loc, builder.getType<transform::AnyOpType>(), funcHandle,
           builder.getStringAttr("eliminate-single-iteration-scf-for"));
+      // Re-match all loops after the pass instead of reusing erased handles.
       applyCleanUp(builder, seqOp);
     }
 }
@@ -1269,7 +1275,7 @@ void AutoVectorizeV2::applyCleanUp(OpBuilder &builder,
                                  ArrayAttr(), loopLikeAttr, DictionaryAttr(),
                                  DictionaryAttr{}, TypeAttr{}, ArrayAttr{})
                              .getResults();
-  builder.create<transform::ApplyLoopInvariantCodeMotionOp>(
+  builder.create<transform::ApplyLoopInvariantCodeMotionWithSliceBoundaryOp>(
       loopLikeHandle.getLoc(), loopLikeHandle);
 
   Value funcHandle = builder.create<transform::MatchOp>(
