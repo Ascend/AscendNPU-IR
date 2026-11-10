@@ -126,6 +126,71 @@ static std::string getEffectiveName(const Record *record) {
   return mnemonic ? mnemonic->str() : std::string();
 }
 
+static bool isValidCppIdentifier(StringRef name);
+
+// A catalogue with no CapabilityEmissionScope stays in bishengir::npu and
+// keeps the original include guards. A scope puts that catalogue in
+// bishengir::npu::<CppNamespace> so another catalogue can link beside it.
+struct CapabilityEmissionScope {
+  std::string extraNamespace;
+  std::string declGuard = "BISHENGIR_TARGET_CAPABILITY_H";
+  std::string bindingGuard = "BISHENGIR_TARGET_CAPABILITY_BINDING_H";
+};
+
+static bool parseEmissionScope(const RecordKeeper &records,
+                               CapabilityEmissionScope &scope) {
+  auto defs = records.getAllDerivedDefinitions("CapabilityEmissionScope");
+  if (defs.empty())
+    return false;
+  if (defs.size() != 1) {
+    PrintFatalError(defs.front()->getLoc(),
+                    "expected at most one CapabilityEmissionScope");
+    return true;
+  }
+  const Record *def = defs.front();
+  scope.extraNamespace = def->getValueAsString("CppNamespace").str();
+  scope.declGuard = def->getValueAsString("DeclGuard").str();
+  scope.bindingGuard = def->getValueAsString("BindingGuard").str();
+  if (!isValidCppIdentifier(scope.extraNamespace) || scope.declGuard.empty() ||
+      scope.bindingGuard.empty()) {
+    PrintFatalError(def->getLoc(),
+                    "CapabilityEmissionScope requires an identifier namespace "
+                    "and both include guards");
+    return true;
+  }
+  return false;
+}
+
+static void emitIncludeGuardOpen(raw_ostream &os, StringRef guard) {
+  os << "\n#ifndef " << guard << "\n#define " << guard << "\n";
+}
+
+static void emitNamespaceOpen(raw_ostream &os,
+                              const CapabilityEmissionScope &scope,
+                              bool declareArchitecture) {
+  os << "\nnamespace bishengir {\nnamespace npu {\n";
+  // The definition header included by the .cpp fragment may already have
+  // defined this enum. Only the declaration header forward-declares it, and
+  // it stays in bishengir::npu when an extra catalogue namespace is used.
+  if (declareArchitecture)
+    os << "enum class NPUArchitectureKind;\n";
+  if (!scope.extraNamespace.empty())
+    os << "namespace " << scope.extraNamespace << " {\n";
+  os << "\n";
+}
+
+static void emitNamespaceClose(raw_ostream &os,
+                               const CapabilityEmissionScope &scope) {
+  os << "\n";
+  if (!scope.extraNamespace.empty())
+    os << "} // namespace " << scope.extraNamespace << "\n";
+  os << "} // namespace npu\n} // namespace bishengir\n";
+}
+
+static void emitIncludeGuardClose(raw_ostream &os, StringRef guard) {
+  os << "\n#endif // " << guard << "\n";
+}
+
 static bool isValidCppIdentifier(StringRef name) {
   if (name.empty() || (!llvm::isAlpha(name.front()) && name.front() != '_') ||
       name.contains("__") ||
@@ -1004,6 +1069,7 @@ struct ResolvedBinding {
   const Record *capability = nullptr;
   std::string className;
   std::string opClass;
+  bool verify = true;
   SmallVector<BoundField, 0> fields;
 };
 
@@ -1360,6 +1426,7 @@ static bool resolveBinding(const Record *binding, ResolvedBinding &out) {
   out.capability = capability;
   out.className = className;
   out.opClass = op.getQualCppClassName();
+  out.verify = binding->getValueAsBit("Verify");
   StringSet<> methodNames;
   for (const ExpectedSchemaField &field : expected) {
     const auto found = extractors.find(field.key);
@@ -1373,7 +1440,8 @@ static bool resolveBinding(const Record *binding, ResolvedBinding &out) {
     if (bindExtractor(found->getValue(), op, field.display, bound))
       return true;
     if (!isValidCppIdentifier(bound.methodName) || bound.methodName == "from" ||
-        bound.methodName == "create" || bound.methodName == "build") {
+        bound.methodName == "create" || bound.methodName == "build" ||
+        bound.methodName == "hasUnsetAddressSpace") {
       PrintError(found->getValue()->getLoc(),
                  "capability binding: invalid builder method '" +
                      bound.methodName + "'");
@@ -1538,6 +1606,23 @@ static void emitBindingClass(raw_ostream &os, const ResolvedBinding &binding) {
         "builder.\n"
      << "  /// mlir::Type handles remain valid with their MLIRContext.\n"
      << "  CapabilityRequestStorage build() const;\n\n"
+     << "  /// True when an address-space field was not read from the "
+        "operation.\n"
+     << "  /// build() would store a sentinel instead of a real scope.\n"
+     << "  bool hasUnsetAddressSpace() const {\n    return ";
+  bool anyAddressSpace = false;
+  for (const BoundField &field : binding.fields) {
+    if (field.projection != BindingProjection::AddressSpace ||
+        !field.optionalStorage)
+      continue;
+    if (anyAddressSpace)
+      os << " || ";
+    anyAddressSpace = true;
+    os << "!" << field.methodName << "_";
+  }
+  if (!anyAddressSpace)
+    os << "false";
+  os << ";\n  }\n\n"
      << "private:\n"
      << "  " << className << "() = default;\n";
   for (const BoundField &field : binding.fields) {
@@ -1598,27 +1683,88 @@ static bool emitTargetCapabilityBindings(const RecordKeeper &records,
   if (validateCapabilityRecords(records) || validateCapabilityBindings(records))
     return true;
 
+  CapabilityEmissionScope scope;
+  if (parseEmissionScope(records, scope))
+    return true;
+
   emitSourceFileHeader("Target Capability Bindings", os, records);
-  os << R"(
-#ifndef BISHENGIR_TARGET_CAPABILITY_BINDING_H
-#define BISHENGIR_TARGET_CAPABILITY_BINDING_H
-
-namespace bishengir {
-namespace npu {
-
-)";
+  emitIncludeGuardOpen(os, scope.bindingGuard);
+  emitNamespaceOpen(os, scope, false);
+  SmallVector<ResolvedBinding, 4> bindings;
   for (const Record *binding : getDefinitions(records, "CapabilityBinding")) {
     ResolvedBinding resolved;
     if (resolveBinding(binding, resolved))
       return true;
-    emitBindingClass(os, resolved);
+    bindings.push_back(std::move(resolved));
   }
-  os << R"(
-} // namespace npu
-} // namespace bishengir
+  for (const ResolvedBinding &binding : bindings)
+    emitBindingClass(os, binding);
 
-#endif // BISHENGIR_TARGET_CAPABILITY_BINDING_H
-)";
+  os << "inline void visitBoundCapabilityOps(\n"
+        "    ::mlir::Operation *root,\n"
+        "    ::llvm::function_ref<void(\n"
+        "        ::mlir::Operation *op, bool bindingFailed, bool "
+        "missingAddressSpace,\n"
+        "        ::std::optional<CapabilityRequestStorage> request)> visit) {\n"
+        "  if (!root)\n"
+        "    return;\n";
+  for (const ResolvedBinding &binding : bindings) {
+    if (!binding.verify)
+      continue;
+    os << "  root->walk([&](" << binding.opClass << " op) {\n"
+       << "    auto builder = " << binding.className << "::from(op);\n"
+       << "    if (!builder) {\n"
+       << "      visit(op.getOperation(), true, false, ::std::nullopt);\n"
+       << "      return;\n"
+       << "    }\n"
+       << "    if (builder->hasUnsetAddressSpace()) {\n"
+       << "      visit(op.getOperation(), false, true, ::std::nullopt);\n"
+       << "      return;\n"
+       << "    }\n"
+       << "    visit(op.getOperation(), false, false, builder->build());\n"
+       << "  });\n";
+  }
+  os << "}\n\n"
+        "struct CapabilityCatalogue {\n"
+        "  using RequestStorage = CapabilityRequestStorage;\n"
+        "  using Request = CapabilityRequest;\n"
+        "  using Support = NativeSupport;\n"
+        "  using Completeness = ProfileCompleteness;\n"
+        "  using Architecture = ::bishengir::npu::NPUArchitectureKind;\n"
+        "  using PropertyKind = CapabilitySlotPropertyKind;\n"
+        "  using ParameterKind = CapabilityParameterKind;\n"
+        "  using FieldValue = CapabilityFieldValue;\n"
+        "  using StoredValue = CapabilityValue;\n"
+        "  using FieldKind = CapabilityRequestFieldKind;\n"
+        "\n"
+        "  template <typename Fn>\n"
+        "  static void visit(::mlir::Operation *root, Fn &&fn) {\n"
+        "    visitBoundCapabilityOps(root, std::forward<Fn>(fn));\n"
+        "  }\n"
+        "  static Support query(Architecture architecture, const Request "
+        "&request) {\n"
+        "    return queryNativeSupport(architecture, request);\n"
+        "  }\n"
+        "  static const ArchitectureCapabilityProfileDesc *\n"
+        "  profile(Architecture architecture) {\n"
+        "    return lookupArchitectureCapabilityProfile(architecture);\n"
+        "  }\n"
+        "  static ::llvm::StringRef completeness(Completeness value) {\n"
+        "    return stringifyProfileCompleteness(value);\n"
+        "  }\n"
+        "  static ::llvm::StringRef property(PropertyKind kind) {\n"
+        "    return stringifyCapabilitySlotPropertyKind(kind);\n"
+        "  }\n"
+        "  static ::llvm::StringRef parameter(ParameterKind kind) {\n"
+        "    return stringifyCapabilityParameterKind(kind);\n"
+        "  }\n"
+        "  static ::std::optional<::llvm::StringRef> value(StoredValue stored) "
+        "{\n"
+        "    return stringifyCapabilityValue(stored);\n"
+        "  }\n"
+        "};\n\n";
+  emitNamespaceClose(os, scope);
+  emitIncludeGuardClose(os, scope.bindingGuard);
   return false;
 }
 
@@ -1636,11 +1782,13 @@ static bool emitTargetCapabilityDecls(const RecordKeeper &records,
   auto completenesses =
       asConstRecords(records.getAllDerivedDefinitions("ProfileCompleteness"));
 
-  emitSourceFileHeader("Target Capability Declarations", os, records);
-  os << R"(
-#ifndef BISHENGIR_TARGET_CAPABILITY_H
-#define BISHENGIR_TARGET_CAPABILITY_H
+  CapabilityEmissionScope scope;
+  if (parseEmissionScope(records, scope))
+    return true;
 
+  emitSourceFileHeader("Target Capability Declarations", os, records);
+  emitIncludeGuardOpen(os, scope.declGuard);
+  os << R"(
 #include "mlir/IR/Types.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
@@ -1649,11 +1797,8 @@ static bool emitTargetCapabilityDecls(const RecordKeeper &records,
 #include <cstdint>
 #include <optional>
 #include <variant>
-
-namespace bishengir {
-namespace npu {
-
 )";
+  emitNamespaceOpen(os, scope, true);
 
   emitEnum(os, "CapabilityValueDomainKind", valueDomains);
   emitEnum(os, "CapabilitySlotPropertyKind", properties);
@@ -1734,8 +1879,6 @@ struct ArchitectureCapabilityCoverageDesc {
   ::llvm::ArrayRef<SupportCaseDesc> cases;
 };
 
-enum class NPUArchitectureKind;
-
 struct ArchitectureCapabilityProfileDesc {
   ::bishengir::npu::NPUArchitectureKind architecture;
   ::llvm::ArrayRef<ArchitectureCapabilityCoverageDesc> capabilities;
@@ -1807,12 +1950,9 @@ NativeSupport resolveNativeSupport(
     const CapabilityRequest &request,
     ::llvm::ArrayRef<CapabilityRequestSchemaFieldDesc> schema);
 } // namespace detail
-
-} // namespace npu
-} // namespace bishengir
-
-#endif // BISHENGIR_TARGET_CAPABILITY_H
 )";
+  emitNamespaceClose(os, scope);
+  emitIncludeGuardClose(os, scope.declGuard);
   return false;
 }
 
@@ -1825,6 +1965,10 @@ static std::string getRecordSymbol(const Record *record) {
 static bool emitTargetCapabilityDefs(const RecordKeeper &records,
                                      raw_ostream &os) {
   if (validateCapabilityRecords(records) || validateCapabilityBindings(records))
+    return true;
+
+  CapabilityEmissionScope scope;
+  if (parseEmissionScope(records, scope))
     return true;
 
   auto valueDomains = getCapabilityValueDomains(records);
@@ -1849,11 +1993,8 @@ static bool emitTargetCapabilityDefs(const RecordKeeper &records,
 #include "llvm/Support/ErrorHandling.h"
 #include "mlir/IR/BuiltinTypes.h"
 
-
-namespace bishengir {
-namespace npu {
-
 )";
+  emitNamespaceOpen(os, scope, false);
 
   emitStringifyDef(os, "CapabilityValueDomainKind", valueDomains);
   emitStringifyDef(os, "CapabilitySlotPropertyKind", properties);
@@ -2222,10 +2363,8 @@ NativeSupport queryNativeSupport(::bishengir::npu::NPUArchitectureKind architect
       lookupArchitectureCapabilityProfile(architecture), request,
       getCapabilityRequestSchema(request.capability));
 }
-
-} // namespace npu
-} // namespace bishengir
 )";
+  emitNamespaceClose(os, scope);
   return false;
 }
 
