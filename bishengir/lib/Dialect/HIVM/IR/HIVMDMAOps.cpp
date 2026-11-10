@@ -135,7 +135,7 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         /*init_out_buffer=*/false, /*init_condition=*/nullptr,
         /*may_implicit_transpose_with_last_axis=*/false,
         /*eviction_policy=*/nullptr, /*broadcast_axes=*/nullptr,
-        /*pad_anchor=*/PadAnchor::Dst, /*tcoretype=*/nullptr);
+        /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -147,7 +147,7 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         /*init_condition=*/nullptr,
         /*may_implicit_transpose_with_last_axis=*/false,
         /*eviction_policy=*/nullptr, /*broadcast_axes=*/nullptr,
-        /*pad_anchor=*/PadAnchor::Dst, /*tcoretype=*/nullptr);
+        /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -159,7 +159,7 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         /*init_condition=*/nullptr,
         /*may_implicit_transpose_with_last_axis=*/false,
         /*eviction_policy=*/nullptr, /*broadcast_axes=*/nullptr,
-        /*pad_anchor=*/PadAnchor::Dst, /*tcoretype=*/nullptr);
+        /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -170,7 +170,7 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         /*init_out_buffer=*/false, /*init_condition=*/nullptr,
         /*may_implicit_transpose_with_last_axis=*/false,
         /*eviction_policy=*/nullptr, /*broadcast_axes=*/nullptr,
-        /*pad_anchor=*/PadAnchor::Dst, /*tcoretype=*/nullptr);
+        /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -182,7 +182,7 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         /*init_condition=*/nullptr,
         /*may_implicit_transpose_with_last_axis=*/false,
         /*eviction_policy=*/nullptr, /*broadcast_axes=*/nullptr,
-        /*pad_anchor=*/PadAnchor::Dst, /*tcoretype=*/nullptr);
+        /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -194,7 +194,7 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         /*init_condition=*/nullptr,
         /*may_implicit_transpose_with_last_axis=*/false,
         /*eviction_policy=*/nullptr, /*broadcast_axes=*/nullptr,
-        /*pad_anchor=*/PadAnchor::Dst, /*tcoretype=*/nullptr);
+        /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -205,7 +205,7 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         left_padding_num, /*right_padding_num=*/nullptr, init_out_buffer,
         init_condition, /*may_implicit_transpose_with_last_axis=*/false,
         /*eviction_policy=*/nullptr, /*broadcast_axes=*/nullptr,
-        /*pad_anchor=*/PadAnchor::Dst, /*tcoretype=*/nullptr);
+        /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -217,7 +217,7 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         /*init_out_buffer=*/false, /*init_condition=*/nullptr,
         /*may_implicit_transpose_with_last_axis=*/false, eviction_policy,
         /*broadcast_axes=*/nullptr,
-        /*pad_anchor=*/PadAnchor::Dst, /*tcoretype=*/nullptr);
+        /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -230,7 +230,7 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         /*init_out_buffer=*/false, /*init_condition=*/nullptr,
         /*may_implicit_transpose_with_last_axis=*/false, eviction_policy,
         /*broadcast_axes=*/nullptr,
-        /*pad_anchor=*/PadAnchor::Dst, /*tcoretype=*/nullptr);
+        /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -244,7 +244,21 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         /*may_implicit_transpose_with_last_axis=*/
         may_implicit_transpose_with_last_axis,
         /*eviction_policy=*/nullptr, /*broadcast_axes=*/nullptr,
-        /*pad_anchor=*/PadAnchor::Dst, /*tcoretype=*/nullptr);
+        /*tcoretype=*/nullptr);
+}
+
+/// Pad modes and pad values are paired by contract: PadValue needs a value,
+/// PadFirstElem takes none, and an unpadded load carries none either.
+static LogicalResult verifyPadValueContract(LoadOp op, PadMode mode) {
+  auto padValue = op.getPadValue();
+  if (mode == PadMode::PadValue && !padValue)
+    return op.emitOpError("if padmode is PadValue, pad_value is required!");
+  if (mode == PadMode::PadFirstElem && padValue)
+    return op.emitOpError(
+        "if padmode is PadFirstElem, pad_value should not be set!");
+  if (mode == PadMode::PadNull && padValue)
+    return op.emitOpError("pad_mode unset or PadNull: pad_value must not be set!");
+  return success();
 }
 
 static LogicalResult verifyPadMode(LoadOp op) {
@@ -252,6 +266,14 @@ static LogicalResult verifyPadMode(LoadOp op) {
   ShapedType dstOperType = op.getDstOperandType();
   auto srcShape = srcOperType.getShape();
   auto dstShape = dstOperType.getShape();
+  // Rank-0 has no last dimension to pad, so the shape checks below cannot run
+  // (they use back() and drop_back()), but the pad mode and pad value stay
+  // paired on every target.
+  if (srcShape.empty() || dstShape.empty()) {
+    auto padModeAttr = op.getPadMode();
+    return verifyPadValueContract(
+        op, padModeAttr ? padModeAttr->getPadmode() : PadMode::PadNull);
+  }
 
   auto padModeAttr = op.getPadMode();
   if (!padModeAttr || padModeAttr->getPadmode() == PadMode::PadNull) {
@@ -260,13 +282,17 @@ static LogicalResult verifyPadMode(LoadOp op) {
     if (!op.getBroadcastAxesAttr() &&
         failed(verifyCompatibleShape(srcShape, dstShape))) {
       return op.emitOpError(
-          "if pad_mode is not set, src and dst shape should be the same!");
+          "pad_mode unset or PadNull: src and dst shapes must match!");
     }
 
     if (op.getPadValue()) {
       return op.emitOpError(
-          "if pad_mode is not set, pad_value should not be set!");
+          "pad_mode unset or PadNull: pad_value must not be set!");
     }
+
+    // PadNull and an absent pad_mode mean the same thing, so neither reaches
+    // the padded-shape checks below.
+    return success();
   }
 
   auto padval = op.getPadValue();
@@ -308,14 +334,26 @@ static LogicalResult verifyBroadcastAxes(LoadOp &op) {
   if (!broadcastAxes)
     return success();
 
-  if (op.getPadMode() || op.getPadValue() || op.getLeftPaddingNum() ||
-      op.getRightPaddingNum())
+  // The in-row padded form returns from verify() before this function runs,
+  // so reaching here means the legacy templates will be used. They carry
+  // neither an axis mask nor a right count, so the combination cannot lower.
+  auto padMode = op.getPadMode();
+  const bool padded =
+      (padMode && padMode->getPadmode() != PadMode::PadNull) ||
+      op.getPadValue() || op.getLeftPaddingNum() || op.getRightPaddingNum();
+  if (padded)
     return op.emitOpError(
-        "broadcast_axes cannot be combined with a padded load yet");
+        "broadcast_axes cannot be combined with padding in the legacy load "
+        "form");
 
   if (op.getInitOutBuffer() || op.getInitCondition())
     return op.emitOpError(
         "broadcast_axes cannot be combined with initialization yet");
+
+  if (op.getMayImplicitTransposeWithLastAxis())
+    return op.emitOpError(
+        "broadcast_axes does not support the implicit transpose with the "
+        "last axis");
 
   ShapedType srcOperType = op.getSrcOperandType();
   ShapedType dstOperType = op.getDstOperandType();
@@ -329,6 +367,10 @@ static LogicalResult verifyBroadcastAxes(LoadOp &op) {
   if (!isa<MemRefType>(srcOperType) || !isa<MemRefType>(dstOperType))
     return op.emitOpError("broadcast_axes only supports a GM -> UB transfer");
 
+  ArrayRef<int64_t> axes = broadcastAxes.asArrayRef();
+  if (axes.empty())
+    return op.emitOpError("broadcast_axes expects at least one axis");
+
   // The legacy memref ABI has no allocation length. Admit dynamic extents
   // only when existing view SSA proves they stay inside a static backing
   // allocation; the template separately guards descriptor/address arithmetic.
@@ -339,9 +381,6 @@ static LogicalResult verifyBroadcastAxes(LoadOp &op) {
     return op.emitOpError("dynamic broadcast requires a bounded static-backed "
                           "view; allocation length is unavailable in the legacy ABI");
 
-  ArrayRef<int64_t> axes = broadcastAxes.asArrayRef();
-  if (axes.empty())
-    return op.emitOpError("broadcast_axes expects at least one axis");
   SmallVector<bool> isBroadcast(rank, false);
   for (int64_t axis : axes) {
     if (axis < 0 || axis >= rank)
@@ -360,15 +399,11 @@ static LogicalResult verifyBroadcastAxes(LoadOp &op) {
                << srcShape[dim] << " and dst " << dstShape[dim];
       continue;
     }
+    // A dynamic extent is compared by the template at run time, which traps
+    // when the two sides disagree; the verifier does not try to prove it.
     if (ShapedType::isDynamic(srcShape[dim]) ||
-        ShapedType::isDynamic(dstShape[dim])) {
-      auto srcExtent = nddma::getBroadcastExtent(op.getSrc(), dim);
-      auto dstExtent = nddma::getBroadcastExtent(op.getDst(), dim);
-      if (!srcExtent || !dstExtent ||
-          !isEqualConstantIntOrValue(srcExtent, dstExtent))
-        return op.emitOpError("dynamic non-broadcast dimensions must share an extent");
+        ShapedType::isDynamic(dstShape[dim]))
       continue;
-    }
     if (srcShape[dim] != dstShape[dim])
       return op.emitOpError("non-broadcast axis ")
              << dim << " must have the same extent on src and dst, got src "
@@ -396,37 +431,6 @@ static LogicalResult verifyBroadcastAxes(LoadOp &op) {
       srcSpace.getAddressSpace() != AddressSpace::GM ||
       dstSpace.getAddressSpace() != AddressSpace::UB)
     return op.emitOpError("broadcast_axes only supports a GM -> UB transfer");
-  for (auto type : {srcMemref, dstMemref}) {
-    SmallVector<int64_t> strides;
-    int64_t offset;
-    if (failed(getStridesAndOffset(type, strides, offset)) ||
-        (!ShapedType::isDynamic(offset) && offset < 0) ||
-        strides.back() != 1)
-      return op.emitOpError("broadcast_axes requires nonnegative offsets and "
-                            "contiguous nonoverlapping rows");
-    int64_t span = 1;
-    for (int64_t axis = rank - 1; axis >= 0; --axis) {
-      int64_t size = type.getDimSize(axis);
-      if (ShapedType::isDynamic(size)) {
-        Value value = type == srcMemref ? op.getSrc() : op.getDst();
-        auto bound = nddma::getBroadcastExtentBound(
-            nddma::getBroadcastExtent(value, axis));
-        if (!bound)
-          return op.emitOpError("dynamic broadcast extent has no proven bound");
-        size = *bound;
-      }
-      if (ShapedType::isDynamic(strides[axis]))
-        break; // Remaining layout relations are guarded before template access.
-      if (size <= 0 || strides[axis] < span ||
-          size - 1 > (INT64_MAX - span) / strides[axis])
-        return op.emitOpError("broadcast_axes requires nonnegative offsets and "
-                              "contiguous nonoverlapping rows");
-      span += (size - 1) * strides[axis];
-    }
-    if (!ShapedType::isDynamic(offset) && offset > INT64_MAX - span)
-      return op.emitOpError("broadcast address span overflows");
-  }
-
   ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
   if (!moduleOp || !hacc::utils::hasTargetAttr(moduleOp) ||
       !hacc::utils::isAscend960(moduleOp))
@@ -462,9 +466,14 @@ static LogicalResult verifySpanLoad(LoadOp op) {
       !op.getPadValue() || op.getPadValue().getType() != elem)
     return op.emitOpError(
         "span padding requires PadValue and a matching value");
-  if (!op.getLeftPaddingNum() || !op.getRightPaddingNum() ||
-      !op.getRightPaddingNum().getType().isIndex())
-    return op.emitOpError("span padding requires explicit index lp and rp");
+  // A left count that is absent is the same as zero, so only the right count
+  // has to be present; both are index-typed when they appear.
+  if (!op.getRightPaddingNum() ||
+      !op.getRightPaddingNum().getType().isIndex() ||
+      (op.getLeftPaddingNum() && !op.getLeftPaddingNum().getType().isIndex()))
+    return op.emitOpError(
+        "span padding requires an index right count and an optional index "
+        "left count");
   if (op.getInitOutBuffer() || op.getInitCondition() ||
       op.getMayImplicitTransposeWithLastAxis())
     return op.emitOpError(
@@ -472,6 +481,8 @@ static LogicalResult verifySpanLoad(LoadOp op) {
   const int64_t rank = src.getRank();
   SmallVector<bool> axes(rank, false);
   if (auto attr = op.getBroadcastAxesAttr()) {
+    if (attr.asArrayRef().empty())
+      return op.emitOpError("broadcast_axes expects at least one axis");
     for (int64_t axis : attr.asArrayRef()) {
       if (axis < 0 || axis >= rank - 1 || axes[axis])
         return op.emitOpError(
@@ -492,6 +503,8 @@ static LogicalResult verifySpanLoad(LoadOp op) {
     }
   }
   auto lp = getConstantIntValue(op.getLeftPaddingNum());
+  if (!op.getLeftPaddingNum())
+    lp = 0;  // an absent left count reads as zero
   auto rp = getConstantIntValue(op.getRightPaddingNum());
   if ((lp && *lp < 0) || (rp && *rp < 0))
     return op.emitOpError("span padding counts must be nonnegative");
@@ -504,7 +517,8 @@ static LogicalResult verifySpanLoad(LoadOp op) {
     SmallVector<int64_t> strides;
     int64_t offset;
     if (failed(getStridesAndOffset(type, strides, offset)) ||
-        strides.back() != 1 || (!ShapedType::isDynamic(offset) && offset < 0))
+        (!ShapedType::isDynamic(strides.back()) && strides.back() != 1) ||
+        (!ShapedType::isDynamic(offset) && offset < 0))
       return op.emitOpError(
           "span requires contiguous rows and nonnegative offsets");
     // Accumulate the exact touched extent, not size*stride (which includes
@@ -575,6 +589,27 @@ static LogicalResult verifySpanLoad(LoadOp op) {
   return success();
 }
 
+bool LoadOp::isSpanPaddedLoad() {
+  // Only A6 has the span templates; the A5 path keeps the legacy padding.
+  auto module = getOperation()->template getParentOfType<ModuleOp>();
+  if (!module || !hacc::utils::isAscend960(module))
+    return false;
+
+  auto isNonDefault = [](Value value) {
+    if (!value)
+      return false;
+    if (auto constant = getConstantIntValue(value))
+      return *constant != 0;
+    // A dynamic count may be zero at run time, but only the span contract
+    // carries a variable padding count, so treat it as span.
+    return true;
+  };
+  // An explicit zero right count is the same as no right count: the in-row
+  // form is selected by a right padding that is actually present, so a
+  // canonicalization that drops the zero operand cannot change the form.
+  return isNonDefault(getRightPaddingNum());
+}
+
 LogicalResult LoadOp::verify() {
   // check element type of src and dst
   ShapedType srcOperType = getSrcOperandType();
@@ -603,7 +638,11 @@ LogicalResult LoadOp::verify() {
     return emitOpError("src and dst should have the same dimensions!");
   }
 
-  if (getPadAnchor() == PadAnchor::Span)
+
+  // The in-row form owns its whole contract: the legacy padding and
+  // broadcast rules below describe the destination-anchored form and must
+  // not be applied to it.
+  if (isSpanPaddedLoad())
     return verifySpanLoad(*this);
 
   if (failed(verifyPadMode(*this)))
@@ -611,6 +650,7 @@ LogicalResult LoadOp::verify() {
 
   if (failed(verifyBroadcastAxes(*this)))
     return failure();
+
 
   // check mem space in case of memref
   if (hasPureBufferSemantics()) {

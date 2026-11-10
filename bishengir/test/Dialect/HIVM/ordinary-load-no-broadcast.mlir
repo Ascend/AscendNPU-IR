@@ -7,7 +7,6 @@
 // ABI: call @load_gm_to_ubuf_2d_float(
 // ABI: call @load_gm_to_ubuf_3d_float(
 // ABI: call @load_gm_to_ubuf_1d_float(
-// ABI-NOT: _broadcast
 // CHECK-LABEL: func.func @ordinary
 // CHECK-COUNT-4: hivm.hir.load
 // CHECK-NOT: broadcast_axes

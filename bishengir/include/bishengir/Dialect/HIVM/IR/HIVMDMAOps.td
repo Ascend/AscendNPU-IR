@@ -90,18 +90,28 @@ def LoadOp : HIVM_DmaOp<"load", [
       `broadcast_axes` nor the padded last destination axis.
     - A listed `broadcast_axes` axis has extent 1 in `src` and may be larger
       in `dst`.
-    - With `pad_anchor = span` the destination row is `lp + W + rp` elements
-      and only has to fit the destination row stride,
-      `lp + W + rp <= dst.stride(rank - 1)`; neither count is tied to a 32-byte
-      boundary, so the row may end anywhere.
-    - With `pad_anchor = dst` the padding exists only to align a row that
-      starts at `dst.offset` to a 32-byte block, with
-      `block = 32 / sizeof(elem)`:
-      `lp = dst.offset % block` and
-      `rp = (block - (lp + W) % block) % block`, which is 0 when the row
-      already ends on the boundary. Neither count is caller-chosen.
-    - `pad_anchor = span` requires both `left_padding_num` and
-      `right_padding_num`; neither is derived.
+    - `left_padding_num` and `right_padding_num` are nonnegative; in the
+      in-row form `lp + W + rp` must equal the last destination extent.
+    - Padding written inside the row is only lowered by the A6 templates;
+      every other padded load keeps the legacy destination-anchored form.
+
+    ### Padding forms
+    The two forms differ in where the pad elements go and in who decides the
+    counts.
+
+    Legacy, any architecture: the pad elements are written outside the
+    destination view. `left_padding_num` moves the write origin back to
+    `dst.offset - lp`, so it also has to pull that origin onto a 32-byte block,
+    and the right padding is derived from the alignment of the row end. The
+    destination extent does not include either pad, so it may stay equal to the
+    source extent or be wider; the side without an operand absorbs the
+    difference.
+
+    In-row, A6 only: the pad elements are part of the destination row, so
+    `D = lp + W + rp`. The row is written exactly as declared and its end does
+    not have to fall on a 32-byte boundary. This form is selected when the
+    target is A6 and `right_padding_num` is present with a value that is not
+    zero; a left count that is omitted reads as zero.
 
     ### Attributes
     #### `broadcast_axes`
@@ -109,71 +119,42 @@ def LoadOp : HIVM_DmaOp<"load", [
     transfer: `src` has extent 1 on every listed axis and `dst` is larger
     there, all other axes match. It is a descriptor property, not a shape
     relaxation, so `src` keeps a legal layout and no zero stride is built.
-    Rank-2/3 memref GM->UB on an explicit A6 target; i8/i16/i32, f16/bf16/f32
-    and the FP8 carriers. Rows and planes must not overlap, the last axis is
-    contiguous, offsets are nonnegative, and dynamic extents need bounded
-    static-backed views. A padded `dst` load cannot carry it; a span load can,
-    on non-last axes.
+    Rank-2/3 memref GM->UB transfers; i8/i16/i32, f16/bf16/f32 and the FP8
+    carriers. Rows and planes must not overlap, the last axis is contiguous,
+    offsets are nonnegative, and dynamic extents need bounded static-backed
+    views.
 
-    #### `pad_anchor`
-    Selects how the last destination axis is padded. The two modes differ in
-    who decides the counts and in where the row is written.
+    #### `left_padding_num`
+    Legacy form: the distance the write origin is moved back,
+    `dst.offset - lp`, so the pad lands outside the view and the origin stays
+    block aligned. In-row form: the number of pad elements at the start of the
+    row. Both accept a nonnegative index operand, and an omitted left count
+    reads as zero in the in-row form.
 
-    `dst` (default, legacy) is 32-byte block oriented: the transfer starts at
-    `dst.offset - lp`, so `lp` must be `dst.offset % (32 / sizeof(elem))`, and
-    the template derives `rp` to finish the block, silently dropping the
-    operand. It cannot carry `broadcast_axes`, does not exist for 3-D, and
-    normalises an FP8 pad value to 0.0. For f32 with `dst.offset = 13` and
-    W = 16: lp = 5, rp = 3, write origin 8, 3 blocks of 32 bytes.
+    #### `right_padding_num`
+    Only the in-row form uses it, where it closes the row,
+    `D = lp + W + rp`. A padded load without this operand is lowered by the
+    legacy templates and derives its right padding from the row-end alignment.
 
-        [pad pad pad pad pad a0 a1 a2][a3 ... a10][a11 ... a15 pad pad pad]
-         <--------- 32B ------------> <-- 32B --> <--------- 32B ---------->
     ```mlir
+    // legacy: lp moves the origin back, right padding is derived
     hivm.hir.load ins(%src : memref<1x16xf32, #hivm.address_space<gm>>)
-                  outs(%dst : memref<1x24xf32, #hivm.address_space<ub>>)
+                  outs(%dst : memref<1x16xf32, #hivm.address_space<ub>>)
                   pad_mode = <PadValue> pad_value = %pad : f32
                   left_padding_num = %lp : index
     ```
 
-    `span` (A6) is row oriented from the destination view origin, with
-    D = lp + W + rp; both operands are required and never derived. Rank 2 or 3,
-    GM -> UB, combinable with `broadcast_axes` on non-last axes, an FP8 pad
-    value keeps its bit pattern, and a row need not end on a 32-byte boundary.
-    Dynamic metadata is checked by the template; valid memref allocation
-    bounds remain a caller obligation, as for memref.load/store.
-
     ```mlir
+    // in-row on A6: D = lp + W + rp
     hivm.hir.load ins(%src : memref<1x3xf32, #hivm.address_space<gm>>)
                   outs(%dst : memref<1x6xf32, #hivm.address_space<ub>>)
-                  {pad_anchor = #hivm.pad_anchor<span>}
                   pad_mode = <PadValue> pad_value = %pad : f32
                   left_padding_num = %lp : index
                   right_padding_num = %rp : index
     ```
 
-    With lp = 2, rp = 1 and W = 3, the source row `[a0 a1 a2]` becomes
-    `[pad pad a0 a1 a2 pad]`.
-
-    The two attributes are orthogonal, so four cases exist:
-
-    1. neither: a plain rank-2/3 GM -> UB transfer, `[1, 16] -> [1, 16]`.
-    2. `broadcast_axes` only: `[1, 1, 16] -> [1, 4, 16]` with
-       `broadcast_axes = [1]`; axis 1 is replicated, nothing is padded.
-    3. `pad_anchor = span` only: `[1, 3] -> [1, 6]` with lp = 2, rp = 1; the
-       last axis is padded, no axis is replicated.
-    4. both: `[1, 1, 3] -> [1, 4, 6]` with `broadcast_axes = [1]`, lp = 2 and
-       rp = 1; axis 1 is replicated first, `[1, 1, 3] -> [1, 4, 3]`, and the
-       last axis is then padded, `[1, 4, 3] -> [1, 4, 6]`.
-    ```mlir
-    // case 4
-    hivm.hir.load ins(%src : memref<1x1x3xf32, #hivm.address_space<gm>>)
-                  outs(%dst : memref<1x4x6xf32, #hivm.address_space<ub>>)
-                  {pad_anchor = #hivm.pad_anchor<span>}
-                  pad_mode = <PadValue> pad_value = %pad : f32
-                  left_padding_num = %lp : index
-                  right_padding_num = %rp : index
-                  broadcast_axes = [1]
-    ```
+    With lp = 2, rp = 1 and W = 3 the destination row becomes
+    `[pad pad a0 a1 a2 pad]`, because `D = 2 + 3 + 1 = 6`.
   }];
   let arguments = (ins TensorOrMemref:$src,
                        TensorOrMemref:$dst,
@@ -186,7 +167,6 @@ def LoadOp : HIVM_DmaOp<"load", [
                        DefaultValuedOptionalAttr<BoolAttr, "false">:$may_implicit_transpose_with_last_axis,
                        OptionalAttr<HIVM_EvictionPolicyAttr>:$eviction_policy,
                        OptionalAttr<DenseI64ArrayAttr>:$broadcast_axes,
-                       DefaultValuedOptionalAttr<HIVM_PadAnchorAttr, "::mlir::hivm::PadAnchor::Dst">:$pad_anchor,
                        DefaultValuedOptionalAttr<HIVM_TCoreTypeAttr, "::mlir::hivm::TCoreType::CUBE_OR_VECTOR">:$tcoretype
   );
   let results = (outs Optional<AnyRankedTensor>:$result_tensor);
@@ -240,7 +220,14 @@ def LoadOp : HIVM_DmaOp<"load", [
   let hasFolder = 1;
   let hasCanonicalizer = 1;
   let hasVerifier = 1; // verify parameter according to hardware version
-  let extraClassDeclaration = DmaOpBaseDecl;
+  let extraClassDeclaration = DmaOpBaseDecl # [{
+    /// True when the load pads inside the destination row, which is what the
+    /// A6 templates implement. That form is selected on A6 when
+    /// `right_padding_num` is present and not zero; an omitted left count
+    /// reads as zero, and every other padded load uses the legacy
+    /// destination-anchored form.
+    bool isSpanPaddedLoad();
+  }];
 }
 
 def StoreOp : HIVM_DmaOp<"store", [

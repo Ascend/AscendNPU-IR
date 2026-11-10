@@ -62,26 +62,6 @@ inline std::optional<int64_t> getBroadcastExtentBound(OpFoldResult size) {
   return std::nullopt;
 }
 
-inline OpFoldResult getBroadcastExtent(Value value, int64_t axis) {
-  auto type = cast<MemRefType>(value.getType());
-  if (!type.isDynamicDim(axis))
-    return IntegerAttr::get(IndexType::get(value.getContext()),
-                            type.getDimSize(axis));
-  if (auto view = value.getDefiningOp<memref::SubViewOp>()) {
-    if (view.getSourceType().getRank() == type.getRank())
-      return normalizeBroadcastExtent(view.getMixedSizes()[axis]);
-  }
-  if (auto cast = value.getDefiningOp<memref::CastOp>())
-    return getBroadcastExtent(cast.getSource(), axis);
-  if (auto expand = value.getDefiningOp<memref::ExpandShapeOp>()) {
-    unsigned dynamicIndex = 0;
-    for (int64_t i = 0; i < axis; ++i)
-      dynamicIndex += type.isDynamicDim(i);
-    return normalizeBroadcastExtent(expand.getOutputShape()[dynamicIndex]);
-  }
-  return {};
-}
-
 inline bool isBoundedBroadcastView(Value value, bool requireAllocation) {
   auto type = cast<MemRefType>(value.getType());
   // Follow static intermediate views too: layout planning can introduce a

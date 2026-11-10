@@ -220,7 +220,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
         return;
       }
     }
-    load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst, axes);
+    load_gm_to_ubuf_3d_by_scalar_brc_pad<T, DisableDCache>(src, dst, axes);
     return;
   }
 #endif

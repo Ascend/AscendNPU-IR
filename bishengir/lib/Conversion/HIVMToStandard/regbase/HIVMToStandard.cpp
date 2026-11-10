@@ -1102,8 +1102,29 @@ public:
             .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
 
     if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>) {
-      if (op.getPadAnchor() == PadAnchor::Span)
+      if (!op.isSpanPaddedLoad() && op.getBroadcastAxesAttr() &&
+          ((op.getPadMode() &&
+            op.getPadModeAttr().getPadmode() != PadMode::PadNull) ||
+           op.getPadValue() || op.getLeftPaddingNum() ||
+           op.getRightPaddingNum()))
+        return op.emitOpError(
+            "broadcast_axes cannot be combined with padding in the legacy load form");
+      if (op.isSpanPaddedLoad()) {
+        // The span templates are instantiated for rank 2/3 only, and the
+        // element-type set they register excludes 64-bit types.
+        Type elementType = srcType.getElementType();
+        bool supportedType = elementType.isInteger(8) ||
+                             elementType.isInteger(16) ||
+                             elementType.isInteger(32) || elementType.isF16() ||
+                             elementType.isBF16() || elementType.isF32() ||
+                             elementType.isFloat8E4M3FN() ||
+                             elementType.isFloat8E5M2();
+        if ((rank != 2 && rank != 3) || !supportedType)
+          return op.emitOpError(
+              "span padding is only available for rank 2/3 loads of the "
+              "registered element types");
         fnName += "_span";
+      }
       if (op->hasAttr(kDisableDCacheAttr) &&
           getHIVMAddressSpace(op.getSrc().getType()) == AddressSpace::GM &&
           getHIVMAddressSpace(op.getDst().getType()) == AddressSpace::UB)
@@ -1174,7 +1195,7 @@ private:
             : rewriter.create<arith::ConstantIndexOp>(op->getLoc(), 0)
                   .getResult();
     inputOperands.push_back(leftPaddingNum);
-    if (op.getPadAnchor() == PadAnchor::Span)
+    if (op.isSpanPaddedLoad())
       inputOperands.push_back(op.getRightPaddingNum());
   }
   void addPadOperands(PatternRewriter &rewriter, CopyOpType op,
@@ -1200,7 +1221,7 @@ private:
       if (isa<Float8E4M3FNType>(elemType) || isa<Float8E5M2Type>(elemType)) {
         bool isSpan = false;
         if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>)
-          isSpan = op.getPadAnchor() == PadAnchor::Span;
+          isSpan = op.isSpanPaddedLoad();
         if (isSpan) {
           // Preserve the already-converted FP8 value in the existing f32
           // bit carrier. Do not numerically extend it or replace it with zero.
@@ -1287,7 +1308,7 @@ private:
       }
       if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>) {
         addEvictionOperands(rewriter, op, inputOperands);
-        if (op.getPadAnchor() == PadAnchor::Span) {
+        if (op.isSpanPaddedLoad()) {
           uint32_t axes = 0;
           if (auto attr = op.getBroadcastAxesAttr())
             for (int64_t axis : attr.asArrayRef())

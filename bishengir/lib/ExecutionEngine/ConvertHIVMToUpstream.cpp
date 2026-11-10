@@ -1064,8 +1064,6 @@ struct RewriteLoadOp : public OpRewritePattern<hivm::LoadOp> {
 
   LogicalResult matchAndRewrite(hivm::LoadOp op,
                                 PatternRewriter &rewriter) const final {
-    if (op.getPadAnchor() == hivm::PadAnchor::Span)
-      return op.emitOpError("span padding is not supported by ExecutionEngine");
     // A broadcast descriptor has no upstream (linalg) equivalent here: the
     // shapes differ, so it must not silently degrade to linalg.copy.
     if (op.getBroadcastAxesAttr())
@@ -1711,10 +1709,6 @@ struct ConvertHIVMToUpstream
 
     // Diagnose before the EE type conversion strips GM/UB memory spaces.
     WalkResult unsupportedCheck = getOperation()->walk([](hivm::LoadOp load) {
-      if (load.getPadAnchor() == hivm::PadAnchor::Span) {
-        load.emitOpError("span padding is not supported by ExecutionEngine");
-        return WalkResult::interrupt();
-      }
       if (load.getBroadcastAxesAttr()) {
         load.emitOpError(
             "broadcast_axes is not supported by ExecutionEngine");

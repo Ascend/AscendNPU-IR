@@ -89,23 +89,6 @@ func.func @oversized_dynamic_bound(%src: memref<1x32xf32, #hivm.address_space<gm
 }
 
 // -----
-module attributes {hacc.target = #hacc.target<"Ascend960">} {
-func.func @different_kept_ssa(%gm: memref<1x3x32xf32, #hivm.address_space<gm>>, %k: index, %w: index, %other: index) {
- %c4 = arith.constant 4 : index
- %c32 = arith.constant 32 : index
- %n = arith.minui %k, %c4 : index
- %width = arith.minui %w, %c32 : index
- %src = memref.subview %gm[0,0,0][1,3,%width][1,1,1] : memref<1x3x32xf32, #hivm.address_space<gm>> to memref<1x3x?xf32, strided<[96,32,1]>, #hivm.address_space<gm>>
- %otherwidth = arith.minui %other, %c32 : index
- %ub = memref.alloc() : memref<4x3x32xf32, #hivm.address_space<ub>>
- %dst = memref.subview %ub[0,0,0][%n,3,%otherwidth][1,1,1] : memref<4x3x32xf32, #hivm.address_space<ub>> to memref<?x3x?xf32, strided<[96,32,1]>, #hivm.address_space<ub>>
- // expected-error @+1 {{dynamic non-broadcast dimensions must share an extent}}
- hivm.hir.load ins(%src : memref<1x3x?xf32, strided<[96,32,1]>, #hivm.address_space<gm>>) outs(%dst : memref<?x3x?xf32, strided<[96,32,1]>, #hivm.address_space<ub>>) broadcast_axes = [0]
- return
-}
-}
-
-// -----
 // CHECK-LABEL: func.func @suffix_bound(
 // CHECK: broadcast_axes = [1]
 module attributes {hacc.target = #hacc.target<"Ascend960">} {

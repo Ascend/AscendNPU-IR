@@ -217,7 +217,7 @@ func.func @hivm_load_type(%src: tensor<16x16xf16>, %dst: tensor<16x16xf32>) {
 // -----
 // CHECK-LABEL: hivm_load_dim
 func.func @hivm_load_dim(%src: tensor<16x16xf16>, %dst: tensor<16x32xf16>) {
-  // expected-error@+1 {{'hivm.hir.load' op if pad_mode is not set, src and dst shape should be the same!}}
+  // expected-error@+1 {{'hivm.hir.load' op pad_mode unset or PadNull: src and dst shapes must match!}}
   %res = hivm.hir.load ins(%src : tensor<16x16xf16>)
                 outs(%dst : tensor<16x32xf16>) -> tensor<16x32xf16>
   return

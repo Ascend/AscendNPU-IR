@@ -27,7 +27,7 @@ module attributes {hacc.target = #hacc.target<"Ascend960">} {
   %d = arith.constant 32 : index
   %rp = arith.subi %d, %w : index
   %p = arith.constant 7.0 : f32
-  hivm.hir.load ins(%v : memref<1x?xf32, strided<[?, 1], offset: ?>, #hivm.address_space<gm>>) outs(%dst : memref<4x32xf32, #hivm.address_space<ub>>) {pad_anchor = #hivm.pad_anchor<span>} pad_mode = <PadValue> pad_value = %p : f32 left_padding_num = %z : index right_padding_num = %rp : index broadcast_axes = [0]
+  hivm.hir.load ins(%v : memref<1x?xf32, strided<[?, 1], offset: ?>, #hivm.address_space<gm>>) outs(%dst : memref<4x32xf32, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %p : f32 left_padding_num = %z : index right_padding_num = %rp : index broadcast_axes = [0]
   return
  }
  func.func @span_subview(%src: memref<?xf32, #hivm.address_space<gm>>, %off: i32, %width: i32, %step: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, func_dyn_memref_args = dense<[true, false, false, false]> : vector<4xi1>} {
@@ -41,7 +41,7 @@ module attributes {hacc.target = #hacc.target<"Ascend960">} {
   %d = arith.constant 32 : index
   %rp = arith.subi %d, %w : index
   %p = arith.constant 7.0 : f32
-  hivm.hir.load ins(%sv : memref<1x?xf32, strided<[?, 1], offset: ?>, #hivm.address_space<gm>>) outs(%dst : memref<4x32xf32, #hivm.address_space<ub>>) {pad_anchor = #hivm.pad_anchor<span>} pad_mode = <PadValue> pad_value = %p : f32 left_padding_num = %z : index right_padding_num = %rp : index broadcast_axes = [0]
+  hivm.hir.load ins(%sv : memref<1x?xf32, strided<[?, 1], offset: ?>, #hivm.address_space<gm>>) outs(%dst : memref<4x32xf32, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %p : f32 left_padding_num = %z : index right_padding_num = %rp : index broadcast_axes = [0]
   return
  }
  func.func @span_mix_aic(%src: memref<?xf32, #hivm.address_space<gm>>, %off: i32, %width: i32, %step: i32) attributes {hivm.part_of_mix, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, func_dyn_memref_args = dense<[true, false, false, false]> : vector<4xi1>} {
@@ -58,7 +58,7 @@ module attributes {hacc.target = #hacc.target<"Ascend960">} {
   %d = arith.constant 32 : index
   %rp = arith.subi %d, %w : index
   %p = arith.constant 7.0 : f32
-  hivm.hir.load ins(%v : memref<1x?xf32, strided<[?, 1], offset: ?>, #hivm.address_space<gm>>) outs(%dst : memref<4x32xf32, #hivm.address_space<ub>>) {pad_anchor = #hivm.pad_anchor<span>} pad_mode = <PadValue> pad_value = %p : f32 left_padding_num = %z : index right_padding_num = %rp : index broadcast_axes = [0]
+  hivm.hir.load ins(%v : memref<1x?xf32, strided<[?, 1], offset: ?>, #hivm.address_space<gm>>) outs(%dst : memref<4x32xf32, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %p : f32 left_padding_num = %z : index right_padding_num = %rp : index broadcast_axes = [0]
   return
  }
 }

@@ -13,7 +13,7 @@ module attributes {hacc.target = #hacc.target<"Ascend960">} {
   %p = arith.truncf %value : f32 to f8E4M3FN
   %lp = arith.constant 2 : index
   %rp = arith.constant 3 : index
-  hivm.hir.load ins(%src : memref<1x4xf8E4M3FN, #hivm.address_space<gm>>) outs(%dst : memref<2x9xf8E4M3FN, #hivm.address_space<ub>>) {pad_anchor = #hivm.pad_anchor<span>} pad_mode = <PadValue> pad_value = %p : f8E4M3FN left_padding_num = %lp : index right_padding_num = %rp : index broadcast_axes = [0]
+  hivm.hir.load ins(%src : memref<1x4xf8E4M3FN, #hivm.address_space<gm>>) outs(%dst : memref<2x9xf8E4M3FN, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %p : f8E4M3FN left_padding_num = %lp : index right_padding_num = %rp : index broadcast_axes = [0]
   return
  }
 // CHECK-LABEL: func.func @span_f8E4M3FN_3(
@@ -27,7 +27,7 @@ module attributes {hacc.target = #hacc.target<"Ascend960">} {
   %p = arith.truncf %value : f32 to f8E4M3FN
   %lp = arith.constant 2 : index
   %rp = arith.constant 3 : index
-  hivm.hir.load ins(%src : memref<1x1x4xf8E4M3FN, #hivm.address_space<gm>>) outs(%dst : memref<2x2x9xf8E4M3FN, #hivm.address_space<ub>>) {pad_anchor = #hivm.pad_anchor<span>} pad_mode = <PadValue> pad_value = %p : f8E4M3FN left_padding_num = %lp : index right_padding_num = %rp : index broadcast_axes = [0, 1]
+  hivm.hir.load ins(%src : memref<1x1x4xf8E4M3FN, #hivm.address_space<gm>>) outs(%dst : memref<2x2x9xf8E4M3FN, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %p : f8E4M3FN left_padding_num = %lp : index right_padding_num = %rp : index broadcast_axes = [0, 1]
   return
  }
 // CHECK-LABEL: func.func @span_f8E5M2_2(
@@ -41,7 +41,7 @@ module attributes {hacc.target = #hacc.target<"Ascend960">} {
   %p = arith.truncf %value : f32 to f8E5M2
   %lp = arith.constant 2 : index
   %rp = arith.constant 3 : index
-  hivm.hir.load ins(%src : memref<1x4xf8E5M2, #hivm.address_space<gm>>) outs(%dst : memref<2x9xf8E5M2, #hivm.address_space<ub>>) {pad_anchor = #hivm.pad_anchor<span>} pad_mode = <PadValue> pad_value = %p : f8E5M2 left_padding_num = %lp : index right_padding_num = %rp : index broadcast_axes = [0]
+  hivm.hir.load ins(%src : memref<1x4xf8E5M2, #hivm.address_space<gm>>) outs(%dst : memref<2x9xf8E5M2, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %p : f8E5M2 left_padding_num = %lp : index right_padding_num = %rp : index broadcast_axes = [0]
   return
  }
 // CHECK-LABEL: func.func @span_f8E5M2_3(
@@ -55,7 +55,7 @@ module attributes {hacc.target = #hacc.target<"Ascend960">} {
   %p = arith.truncf %value : f32 to f8E5M2
   %lp = arith.constant 2 : index
   %rp = arith.constant 3 : index
-  hivm.hir.load ins(%src : memref<1x1x4xf8E5M2, #hivm.address_space<gm>>) outs(%dst : memref<2x2x9xf8E5M2, #hivm.address_space<ub>>) {pad_anchor = #hivm.pad_anchor<span>} pad_mode = <PadValue> pad_value = %p : f8E5M2 left_padding_num = %lp : index right_padding_num = %rp : index broadcast_axes = [0, 1]
+  hivm.hir.load ins(%src : memref<1x1x4xf8E5M2, #hivm.address_space<gm>>) outs(%dst : memref<2x2x9xf8E5M2, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %p : f8E5M2 left_padding_num = %lp : index right_padding_num = %rp : index broadcast_axes = [0, 1]
   return
  }
 }

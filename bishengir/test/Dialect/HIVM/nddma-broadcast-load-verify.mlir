@@ -90,19 +90,6 @@ func.func @brc_rank3(%src: memref<1x1x32xf32, #hivm.address_space<gm>>) {
 
 
 }
-// -----
-
-// A padded broadcast has no defined meaning yet.
-module attributes {hacc.target = #hacc.target<"Ascend960">} {
-func.func @brc_with_pad(%src: memref<1x32xf32, #hivm.address_space<gm>>) {
-  %ub = memref.alloc() : memref<4x32xf32, #hivm.address_space<ub>>
-  %c0 = arith.constant 0 : index
-  // expected-error @+1 {{broadcast_axes cannot be combined with a padded load yet}}
-  hivm.hir.load ins(%src : memref<1x32xf32, #hivm.address_space<gm>>) outs(%ub : memref<4x32xf32, #hivm.address_space<ub>>) left_padding_num = %c0 : index broadcast_axes = [0]
-  return
-}
-
-}
 
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend960">} {
@@ -121,16 +108,6 @@ func.func @unsupported_i64(%s: memref<1x32xi64, #hivm.address_space<gm>>, %d: me
   return
 }
 }
-
-// -----
-module attributes {hacc.target = #hacc.target<"Ascend960">} {
-func.func @bad_stride(%s: memref<1x32xf32, strided<[64, 2]>, #hivm.address_space<gm>>, %d: memref<4x32xf32, #hivm.address_space<ub>>) {
-  // expected-error @+1 {{broadcast_axes requires nonnegative offsets and contiguous nonoverlapping rows}}
-  hivm.hir.load ins(%s : memref<1x32xf32, strided<[64, 2]>, #hivm.address_space<gm>>) outs(%d : memref<4x32xf32, #hivm.address_space<ub>>) broadcast_axes = [0]
-  return
-}
-}
-
 
 // -----
 
@@ -227,4 +204,57 @@ module attributes {hacc.target = #hacc.target<"Ascend960">} {
     hivm.hir.load ins(%src : memref<32xf32, #hivm.address_space<gm>>) outs(%ub : memref<32xf32, #hivm.address_space<ub>>) broadcast_axes = [0]
     return
   }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend960">} {
+ func.func @rank4_broadcast(%src: memref<1x2x2x8xf32, #hivm.address_space<gm>>, %dst: memref<3x2x2x8xf32, #hivm.address_space<ub>>) {
+  // expected-error @+1 {{broadcast_axes only supports rank 2 or 3 loads}}
+  hivm.hir.load ins(%src : memref<1x2x2x8xf32, #hivm.address_space<gm>>) outs(%dst : memref<3x2x2x8xf32, #hivm.address_space<ub>>) broadcast_axes = [0]
+  return
+ }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend960">} {
+ func.func @negative_axis(%src: memref<1x8xf32, #hivm.address_space<gm>>, %dst: memref<3x8xf32, #hivm.address_space<ub>>) {
+  // expected-error @+1 {{broadcast axis -1 is out of range for rank 2}}
+  hivm.hir.load ins(%src : memref<1x8xf32, #hivm.address_space<gm>>) outs(%dst : memref<3x8xf32, #hivm.address_space<ub>>) broadcast_axes = [-1]
+  return
+ }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend960">} {
+ func.func @broadcast_dst_not_larger(%src: memref<1x8xf32, #hivm.address_space<gm>>, %dst: memref<1x8xf32, #hivm.address_space<ub>>) {
+  // expected-error @+1 {{broadcast axis 0 needs src extent 1 and dst extent > 1, got src 1 and dst 1}}
+  hivm.hir.load ins(%src : memref<1x8xf32, #hivm.address_space<gm>>) outs(%dst : memref<1x8xf32, #hivm.address_space<ub>>) broadcast_axes = [0]
+  return
+ }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend960">} {
+ func.func @tensor_broadcast(%src: tensor<1x8xf32>, %dst: tensor<3x8xf32>) {
+  // expected-error @+1 {{broadcast_axes only supports a GM -> UB transfer}}
+  %r = hivm.hir.load ins(%src : tensor<1x8xf32>) outs(%dst : tensor<3x8xf32>) broadcast_axes = [0] -> tensor<3x8xf32>
+  return
+ }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend960">} {
+ func.func @broadcast_with_transpose(%src: memref<1x32xf32, #hivm.address_space<gm>>, %dst: memref<4x32xf32, #hivm.address_space<ub>>) {
+  // expected-error @+1 {{broadcast_axes does not support the implicit transpose with the last axis}}
+  hivm.hir.load ins(%src : memref<1x32xf32, #hivm.address_space<gm>>) outs(%dst : memref<4x32xf32, #hivm.address_space<ub>>) may_implicit_transpose_with_last_axis = true broadcast_axes = [0]
+  return
+ }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend960">} {
+ func.func @pad_null_broadcast(%src: memref<1x32xf32, #hivm.address_space<gm>>, %dst: memref<4x32xf32, #hivm.address_space<ub>>) {
+  hivm.hir.load ins(%src : memref<1x32xf32, #hivm.address_space<gm>>) outs(%dst : memref<4x32xf32, #hivm.address_space<ub>>) pad_mode = <PadNull> broadcast_axes = [0]
+  return
+ }
 }

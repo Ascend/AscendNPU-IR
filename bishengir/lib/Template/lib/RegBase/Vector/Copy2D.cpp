@@ -97,10 +97,9 @@ isBroadcastLoad2dValid(const memref_t<__gm__ T, 2> *src,
                        const memref_t<__ubuf__ T, 2> *dst,
                        AtomicKind atomic_kind, bool axis0, bool axis1) {
   return sizeof(T) <= 4 && atomic_kind == AtomicKind::None &&
-         (!axis0 || dst->sizes[0] <= 0xfffff) &&
-         (!axis1 || dst->sizes[1] <= 0xfffff) &&
-         (axis0 || src->sizes[0] == dst->sizes[0]) &&
-         (axis1 || src->sizes[1] == dst->sizes[1]) && src->sizes[0] > 0 &&
+         (!axis0 || (src->sizes[0] == 1 && dst->sizes[0] <= 0xfffff)) &&
+         (!axis1 || (src->sizes[1] == 1 && dst->sizes[1] <= 0xfffff)) &&
+         src->sizes[0] > 0 &&
          src->sizes[1] > 0 && dst->sizes[0] > 0 && dst->sizes[1] > 0 &&
          src->strides[1] == 1 && dst->strides[1] == 1 &&
          src->strides[0] >= src->sizes[1] && dst->strides[0] >= dst->sizes[1] &&
@@ -160,10 +159,13 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     return;
   // Carry verified unit-source broadcast geometry through the existing ABI,
   // before ordinary alignment checks and source-sized fallbacks.
-  const bool axis0 =
-      src->sizes[0] == 1 && dst->sizes[0] != 1;
-  const bool axis1 =
-      src->sizes[1] == 1 && dst->sizes[1] != 1;
+  // Any extent difference enters the broadcast contract, mirroring the 3D
+  // path: a differing axis is legal only when the source extent is 1, and the
+  // validity check traps otherwise. Inferring the axes from
+  // 'src == 1 && dst != 1' alone would skip the check when the destination
+  // broadcast axis happens to be 1 at run time.
+  const bool axis0 = src->sizes[0] != dst->sizes[0];
+  const bool axis1 = src->sizes[1] != dst->sizes[1];
   if (pad_mode == PadMode::Null && left_padding_num == 0 && (axis0 || axis1)) {
     const bool valid =
         isBroadcastLoad2dValid<T>(src, dst, atomic_kind, axis0, axis1);
@@ -186,7 +188,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
       }
     }
     // Reuse the ordinary scalar cache reads and MTE2/S event protocol.
-    load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst, axes);
+    load_gm_to_ubuf_2d_by_scalar_brc_pad<T, DisableDCache>(src, dst, axes);
     return;
   }
 #endif
