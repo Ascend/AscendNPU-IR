@@ -20,15 +20,14 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
-#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/PreloadProtocolVerifier.h"
-#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsDagBuilder.h"
-#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsPartitioner.h"
 #include "bishengir/Dialect/HIVM/Transforms/TightlyCoupledBufferUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
-#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/CostModel/MSCostModel.h"
 #include "bishengir/Dialect/HIVM/Utils/HIVMAliasAnalysis.h"
-#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/HIVM/Utils/PipeSchedule/Alg/Sms/SmsScheduler.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/CostModel/MSCostModel.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsDagBuilder.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsPartitioner.h"
+#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
 #include "bishengir/Dialect/HIVM/Utils/WorklistBuilder.h"
@@ -2937,8 +2936,7 @@ CVPipelineImpl::installMsPartition(const MsPartitionResult &partition) {
           msCoordinateMap.try_emplace(wi, stage.preloadCoordinate);
       if (!inserted) {
         DEBUG_WITH_TYPE("ms-preload-scheduler",
-                        dbgs()
-                            << "[ms] duplicate WorkItem in stage mapping\n");
+                        dbgs() << "[ms] duplicate WorkItem in stage mapping\n");
         return failure();
       }
     }
@@ -2947,9 +2945,9 @@ CVPipelineImpl::installMsPartition(const MsPartitionResult &partition) {
   // Validate that every worklist item has a coordinate.
   for (const auto &wi : worklist) {
     if (!msCoordinateMap.count(wi.get())) {
-      DEBUG_WITH_TYPE("ms-preload-scheduler",
-                      dbgs() << "[ms] WorkItem #" << wi->id
-                             << " missing coordinate\n");
+      DEBUG_WITH_TYPE("ms-preload-scheduler", dbgs()
+                                                  << "[ms] WorkItem #" << wi->id
+                                                  << " missing coordinate\n");
       return failure();
     }
   }
@@ -3255,8 +3253,8 @@ LogicalResult CVPipelineImpl::run() {
   workspaceAllocs = defaultBuild->workspaceAllocs;
 
   // ---- SMS scheduling overlay (optional) ----
-  // All SMS phases (DAG build, SMS, materialization, verification,
-  // coordinate installation) are read-only with respect to the IR and the
+  // All SMS phases (DAG build, SMS, checked materialization, and coordinate
+  // installation) are read-only with respect to the IR and the
   // Default ownership state.  Any failure falls back to the Default
   // scheduler using the result already installed above.
   //
@@ -3303,14 +3301,14 @@ LogicalResult CVPipelineImpl::run() {
       FixedProductionLatencyProvider latencyProvider;
       costmodel::MSCostModel costModel;
       MsDagBuilder dagBuilder(pipelineLoop, latencyProvider, counterCloneMap,
-                               *defaultBuild, &costModel);
+                              *defaultBuild, &costModel);
       auto dagResult = dagBuilder.build();
       if (failed(dagResult)) {
         DEBUG_WITH_TYPE("ms-preload-scheduler",
                         dbgs() << "[ms] DAG build failed\n");
         msFailReason = dagBuilder.failedDueToLoopCarriedDependency()
-                            ? "LoopCarriedDep"
-                            : "dag-build-failure";
+                           ? "LoopCarriedDep"
+                           : "dag-build-failure";
         return failure();
       }
 
@@ -3334,16 +3332,7 @@ LogicalResult CVPipelineImpl::run() {
         return failure();
       }
 
-      // 4. Verify before installation.
-      PreloadProtocolVerifier verifier(pipelineLoop, *dagResult, *partResult);
-      if (failed(verifier.verify())) {
-        DEBUG_WITH_TYPE("ms-preload-scheduler",
-                        dbgs() << "[ms] protocol verification failed\n");
-        msFailReason = "verification-failure";
-        return failure();
-      }
-
-      // 5. Install coordinates/depth (no ownership mutation).
+      // 4. Install checked coordinates/depth (no ownership mutation).
       if (failed(installMsPartition(*partResult))) {
         DEBUG_WITH_TYPE("ms-preload-scheduler",
                         dbgs() << "[ms] coordinate installation failed\n");

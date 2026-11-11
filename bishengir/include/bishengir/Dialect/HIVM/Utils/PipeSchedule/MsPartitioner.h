@@ -15,32 +15,16 @@
 // limitations under the License.
 //
 //
-// Materializes an SMS schedule onto the authoritative Default WorkItems.
-//
-// MsPartitioner is a schedule MATERIALIZER, not a partitioner: the WorkItem
-// partition comes from the Default WorklistBuilder (via MsDagBuildResult's
-// defaultWorklist) and is never created, split, merged, or re-owned here.
-//
-// Flow:
-//   1. Validates the schedule against the DAG (all nodes scheduled, II > 0).
-//   2. Maps each DAG1 compute node's SMS stage back to its owning WorkItem.
-//   3. Dense-reindexes raw SMS stages and assigns preload coordinates.
-//   4. Records synthetic DAG2 transfer schedules as independent metadata
-//      (transfers are NOT inserted into WorkItem::ops).
-//
-// Invariants:
-//   - result.worklist and result.opToWorkItemMap are the SAME objects as the
-//     Default build (shared_ptr identity preserved).
-//   - Each WorkItem gets exactly one preload coordinate; multiple WorkItems
-//     may share a coordinate.
-//   - Multi-owner ops (Default lazy-load semantics) are preserved.
-//
+// Checks an SMS schedule and maps it onto the authoritative Default WorkItems.
+// WorkItems and their ownership are never changed. Stages are shifted to start
+// at zero, preserving gaps; synthetic transfer schedules remain independent.
+
 //===----------------------------------------------------------------------===//
 #ifndef BISHENGIR_DIALECT_HIVM_TRANSFORMS_MSPARTITIONER_H
 #define BISHENGIR_DIALECT_HIVM_TRANSFORMS_MSPARTITIONER_H
 
-#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsDagBuilder.h"
 #include "bishengir/Dialect/HIVM/Utils/PipeSchedule/Alg/Sms/SmsScheduler.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsDagBuilder.h"
 #include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/DenseMap.h"
@@ -50,7 +34,7 @@ namespace mlir {
 namespace hivm {
 
 //===----------------------------------------------------------------------===//
-// MaterializedStage — one logical pipeline stage after dense renumbering
+// MaterializedStage — one stage slot after shifting the minimum stage to zero
 //===----------------------------------------------------------------------===//
 
 struct MaterializedStage {
@@ -88,17 +72,17 @@ struct MsPartitionResult {
   /// The authoritative Default ownership map (may contain multi-owner ops).
   DenseMap<Operation *, SmallVector<WorkItem *>> opToWorkItemMap;
 
-  /// Dense-renumbered stages with preload coordinates.
+  /// All normalized stage slots, including empty slots, with preload
+  /// coordinates.
   SmallVector<MaterializedStage> stages;
 
-  /// Per-op SMS schedule metadata (cycle/stage of the owning compute node).
-  /// Sanity-check data only — not an authoritative schedule source.  An op
-  /// owned by several WorkItems lands in several compute nodes, so these
-  /// single-valued tables record just one of its owners (whichever
-  /// mapWorkItemStages writes last).  The authoritative schedule is
-  /// WorkItem-level: `stages` plus the WorkItem's preload coordinate.
-  DenseMap<Operation *, int> opToMsCycle;
-  DenseMap<Operation *, int> opToMsStage;
+  /// Unique compute node and its original algorithm schedule.
+  struct WorkItemSchedule {
+    int ddgIndex = -1;
+    int cycle = -1;
+    int rawStage = -1;
+  };
+  DenseMap<WorkItem *, WorkItemSchedule> workItemSchedules;
 
   /// Schedules for synthetic DAG2 transfer nodes (no WorkItem membership).
   SmallVector<MsTransferSchedule> transferSchedules;
@@ -114,19 +98,20 @@ struct MsPartitionResult {
 class MsPartitioner {
 public:
   MsPartitioner(scf::ForOp loop, const MsDagBuildResult &dagResult,
-                 const sms::ScheduleResult &schedule);
+                const sms::ScheduleResult &schedule);
 
   FailureOr<MsPartitionResult> partition();
 
 private:
   LogicalResult validateSchedule();
 
-  /// Map each DAG1 compute node's SMS stage/cycle back to its WorkItem and
-  /// populate opToMsCycle/opToMsStage for all member ops.
-  LogicalResult mapWorkItemStages();
+  /// Map each WorkItem to exactly one compute node's original schedule.
+  LogicalResult mapWorkItemSchedules();
 
-  /// Dense-reindex raw stages and assign preload coordinates
-  /// (coordinate = depth - 1 - ordinal).
+  LogicalResult verifyWorkItemOrdering();
+
+  /// Shift stages to start at zero without removing gaps, then assign
+  /// coordinate = depth - 1 - normalized stage.
   LogicalResult assignCoordinates();
 
   /// Record synthetic DAG2 transfer node schedules as metadata.
@@ -137,9 +122,6 @@ private:
   const sms::ScheduleResult &schedule;
 
   MsPartitionResult result;
-
-  /// WorkItem → raw SMS stage of its compute node.
-  DenseMap<WorkItem *, int> workItemToRawStage;
 };
 
 } // namespace hivm
