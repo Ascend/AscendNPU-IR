@@ -1,7 +1,7 @@
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
 
-// Registered LIT shape without bypass: vcast-of-load is delayed and bundled
-// with the consumer VECTOR work item.
+// A previously registered name follows ordinary load handling: each core
+// loads its own input, and the cast stays with the Vector accumulator.
 // CHECK-LABEL: func.func @cross_core_loop_carry_skew
 // CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%[[ITER_ARG:.*]] = %{{.*}}) -> (tensor<16x16xf32>)
 // CHECK:   scope.scope : () -> () {

@@ -76,15 +76,8 @@ public:
   /// `enableLazyLoading=true` permits the same LoadOp or ND2NZOp (and its
   /// backing to_tensor) to be pulled into multiple consuming WorkItems instead
   /// of being shared through expanded multi-buffered tensors.
-  /// `allowPreferredLoopHeuristics` enables LCD backup extraction (and the
-  /// WI0-into-WI1 merge), vcast/upcast/vbrc delay, load-like vcast bundling,
-  /// walking region DPS / memref.copy for LCD, and collecting
-  /// `loopCarriedDependentOps` during standard extraction so the 3530
-  /// same-stage cross-WI check can pin LCD work items. Block-mode
-  /// construction leaves this false.
   WorklistBuilder(scf::ForOp loop, int numMultibuffer,
-                  bool enableLazyLoading = false,
-                  bool allowPreferredLoopHeuristics = false);
+                  bool enableLazyLoading = false);
 
   /// Block mode: partition a block's operations for if-else splitting.
   explicit WorklistBuilder(Block *block);
@@ -158,12 +151,6 @@ private:
   void mapOpToItem(Operation &op, WorkItem &item);
   LogicalResult populateDependencies(Operation &separator);
   void populateLoopCarriedDependencies();
-  /// Collect core ops that transitively depend on loop-carried iter_args
-  /// (following SSA results, DPS memref writes, and dependence-map
-  /// successors) into `loopCarriedDependentOps`. This drives
-  /// `WorkItem::hasLoopCarriedDep`. Called for LCD backup always, and for
-  /// standard extraction only when `allowPreferredLoopHeuristics` is set.
-  void collectLoopCarriedDependentOps();
   LogicalResult extractAvailableOps(SmallVector<Operation *> &extractedOps,
                                     TCoreType &core);
   LogicalResult runRoundExtraction();
@@ -190,18 +177,6 @@ private:
   /// Non-fatal.
   void diagnoseLazyLoadHints();
 
-  /// Determine whether a core op should be delayed from being extracted as a
-  /// seed.
-  bool shouldDelayCoreOp(Operation *op);
-
-  /// True when a vcast-of-load should be treated as load-like for delay,
-  /// lazy clone, and fallback extraction.
-  bool shouldTreatAsDelayedLoadLike(Operation *op);
-
-  /// Check whether the input vcast casts a load from a GM buffer that also has
-  /// a StoreOp within the current scope.
-  bool hasStoreToSameBuffer(VCastOp vcast);
-
   // Block to scan for ops.
   Block *targetBlock = nullptr;
   // Scope anchor for ancestor / parent checks:
@@ -213,8 +188,6 @@ private:
   bool isLoopMode = false;
   int numMultibuffer = -1;
   bool enableLazyLoading = false;
-  bool allowPreferredLoopHeuristics = false;
-  bool useLcdBackup = false;
 
   DenseSet<Operation *> toBePipelined;
   SmallVector<Operation *> separators;
@@ -228,7 +201,6 @@ private:
   DenseMap<Operation *, std::unique_ptr<DenseSet<Operation *>>> dependenceMap;
   DenseMap<Operation *, std::unique_ptr<DenseSet<Operation *>>>
       loopCarriedDependenceMap;
-  DenseSet<Operation *> loopCarriedDependentOps;
   SetVector<Value> yieldedVals;
 
   DenseMap<Operation *, SmallVector<WorkItem *>> opToWorkItemMap;

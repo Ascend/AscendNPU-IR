@@ -1,5 +1,5 @@
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew bypass-shape-registry=true" -allow-unregistered-dialect %s | FileCheck %s
-// RUN: bishengir-opt -cv-pipelining="bypass-shape-registry=true" -allow-unregistered-dialect %s | FileCheck %s
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew" -allow-unregistered-dialect %s | FileCheck %s
+// RUN: bishengir-opt -cv-pipelining -allow-unregistered-dialect %s | FileCheck %s
 
 // CHECK-LABEL: func.func @a5_preload_workspace
 // CHECK-DAG: %[[WS0:.*]] = memref_ext.alloc_workspace() from %arg0 : from memref<?xi8> to memref<4x16x16xf32>
@@ -123,25 +123,26 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return
   }
 
-  // A constantized dynamic TCB has byte storage plus a logical memref.view.
-  // The physical storage must bypass the producer scope result while the
-  // logical view is rebuilt inside the VECTOR consumer scope.
+  // A dynamic view over byte storage cannot use the ordinary TCB mapping.
+  // Preserve the logical tensor and its nested consumers for PipelineV2.
   // CHECK-LABEL: func.func @preload_tcb_dynamic_view
+  // CHECK-NOT: scope.scope
   // CHECK: scf.for
+  // CHECK-NOT: scope.scope
   // CHECK: %[[TCB_STORAGE:.*]] = memref.alloc() : memref<65536xi8, #hivm.address_space<ub>>
-  // CHECK: scope.scope : () -> () {
   // CHECK: annotation.mark %[[TCB_STORAGE]] {{.*}}hivm.tightly_coupled_buffer
-  // CHECK: hivm.hir.fixpipe
-  // CHECK: scope.return
-  // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>
-  // CHECK-NOT: bufferization.to_tensor %[[TCB_STORAGE]]
-  // CHECK: scope.scope
   // CHECK: %[[TCB_VIEW:.*]] = memref.view %[[TCB_STORAGE]]
   // CHECK: %[[TCB_CAST:.*]] = memref.memory_space_cast %[[TCB_VIEW]]
   // CHECK: %[[TCB_TENSOR:.*]] = bufferization.to_tensor %[[TCB_CAST]] restrict writable
+  // CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {{.*}} outs(%[[TCB_TENSOR]] : tensor<?x128xf32>)
+  // CHECK-NOT: scope.scope
   // CHECK: scf.if
-  // CHECK: hivm.hir.load ins(%[[TCB_TENSOR]] : tensor<?x128xf32>)
-  // CHECK: hivm.hir.load ins(%[[TCB_TENSOR]] : tensor<?x128xf32>)
+  // CHECK: hivm.hir.load ins(%[[FIX]] : tensor<?x128xf32>)
+  // CHECK: hivm.hir.load ins(%[[FIX]] : tensor<?x128xf32>)
+  // CHECK: %[[SUM:.*]] = hivm.hir.vadd
+  // CHECK-NEXT: scf.yield %[[SUM]] : tensor<?x128xf32>
+  // CHECK-NOT: hivm.legacy-cv-pipeline
+  // CHECK: return
   func.func @preload_tcb_dynamic_view(
       %rows: index,
       %arg0: tensor<8x8x16x16xf16>,
@@ -190,8 +191,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return
   }
 
-  // View offsets and sizes used only by the producer must be recomputed in
-  // each consumer scope, not captured from inside the producer scope.
+  // Declining pipelining must also preserve producer-local view offsets and
+  // sizes, and the fixpipe-to-load dependency using the logical tensor type.
   // CHECK-LABEL: func.func @preload_tcb_local_view_operands
   // CHECK-SAME: %[[ROWS:[^:]+]]: index
   // CHECK-DAG: %[[TWO:.*]] = arith.constant 2 : index
@@ -199,11 +200,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-DAG: %[[LIMIT:.*]] = arith.constant 128 : index
   // CHECK: scf.for %[[IV:[^ ]+]] =
   // CHECK: %[[STORAGE:.*]] = memref.alloc() : memref<66048xi8, #hivm.address_space<ub>>
-  // CHECK: scope.scope : () -> () {
-  // CHECK: hivm.hir.fixpipe
-  // CHECK: scope.return
-  // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>
-  // CHECK: scope.scope
+  // CHECK-NOT: scope.scope
   // CHECK: %[[INDEX:.*]] = arith.index_cast %[[IV]] : i32 to index
   // CHECK: %[[SLOT:.*]] = arith.remui %[[INDEX]], %[[TWO]] : index
   // CHECK: %[[OFFSET:.*]] = arith.muli %[[SLOT]], %[[BYTES]] : index
@@ -211,9 +208,13 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK: %[[VIEW:.*]] = memref.view %[[STORAGE]][%[[OFFSET]]][%[[SIZE]]]
   // CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[VIEW]]
   // CHECK: %[[TENSOR:.*]] = bufferization.to_tensor %[[CAST]] restrict writable
-  // CHECK: hivm.hir.load ins(%[[TENSOR]] : tensor<?x128xf32>)
-  // CHECK: hivm.hir.vexp
-  // CHECK: hivm.loop_core_type = #hivm.tcore_type<VECTOR>
+  // CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {{.*}} outs(%[[TENSOR]] : tensor<?x128xf32>)
+  // CHECK: hivm.hir.load ins(%[[FIX]] : tensor<?x128xf32>)
+  // CHECK: %[[EXP:.*]] = hivm.hir.vexp
+  // CHECK-NEXT: scf.yield %[[EXP]] : tensor<?x128xf32>
+  // CHECK-NOT: scope.scope
+  // CHECK-NOT: hivm.legacy-cv-pipeline
+  // CHECK: return
   func.func @preload_tcb_local_view_operands(
       %rows: index,
       %arg0: tensor<8x8x16x16xf16>,

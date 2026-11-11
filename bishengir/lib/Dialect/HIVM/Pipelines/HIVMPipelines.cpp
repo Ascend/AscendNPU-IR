@@ -266,7 +266,6 @@ static void hivmPreBufferizationOptimizationPipeline(
           hivmPipelineOptions.setWorkspaceMultibuffer;
       pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
       pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
-      pipelineOptions.enablePreload = hivmPipelineOptions.enablePreload;
       // Workspace allocation with dyn size, requires setbuffersize pass to get
       // fixed size. Infer buffer size upper bounds first so setbuffersize can
       // consume them.

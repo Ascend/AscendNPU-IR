@@ -1,25 +1,24 @@
-// Registered LCD names: preload + non-zero workspace depth enable LCD backup.
-// TODO: Temporary transition measure: pass bypass-shape-registry=true while
-// ShapeRegistry is emptied; remove once ShapeRegistry is retired.
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2 bypass-shape-registry=true" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew set-depth-in-unroll-mode=2" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
 
-// Test 1: Cross-core loop carry (CUBE producer -> VECTOR consumer) whose
-// transitive consumer chain spans both candidate work items. Every work item
-// is loop-carried-dependent, so no independent stage remains to skew against.
-// Preload stays enabled: each scope is pinned to preload_num 0, which does
-// not overlap the next iteration.
+// Test 1: A cross-core carry spans every work item. Legacy pipelining must
+// preserve the original loop for PipelineV2, even for a registered name.
 
 // CHECK-LABEL: func.func @cross_core_loop_carry_skew
+// CHECK-NOT: scope.scope
 // CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%[[ITER_ARG:.*]] = %{{.*}}) -> (tensor<2x2xf32>)
-// CHECK: scope.scope
+// CHECK-NOT: scope.scope
 // CHECK: tensor.insert_slice %[[ITER_ARG]]
-// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 1 : i32, hivm.preload_num = 0 : i32, no_inline}
-// CHECK: scope.scope
+// CHECK-NOT: scope.scope
 // CHECK: hivm.hir.mmadL1
+// CHECK-NOT: scope.scope
+// CHECK: %[[CARRY:.*]] = bufferization.to_tensor
 // CHECK: hivm.hir.fixpipe
-// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 1 : i32, hivm.preload_num = 0 : i32, no_inline}
-// CHECK: scf.yield
-// CHECK-NOT: hivm.preload_num = {{[1-9]}}
+// CHECK-NOT: scope.scope
+// CHECK: scf.yield %[[CARRY]] : tensor<2x2xf32>
+// CHECK-NOT: scope.scope
+// CHECK-NOT: hivm.legacy-cv-pipeline
+// CHECK: return
+
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @cross_core_loop_carry_skew(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg6: i32, %arg7: i32, %arg8: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, true, true, true, false, false, false]> : vector<9xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix", parallel_mode = "simd"} {
     %cst = arith.constant 0.000000e+00 : f32
