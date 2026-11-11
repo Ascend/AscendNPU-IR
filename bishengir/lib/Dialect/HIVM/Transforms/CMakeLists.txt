@@ -84,7 +84,6 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   HIVMOptSinglePoint.cpp
   HIVMVectorize.cpp
   HIVMVectorizeLowering.cpp
-  HoistLoopInvariantDmaLoad.cpp
   HoistTightlyCoupledAlloc.cpp
   InferFuncCoreType.cpp
   InferHIVMDataLayout.cpp
@@ -210,7 +209,6 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MLIRMathDialect
   MLIRMemRefDialect
   MLIRMemRefTransforms
-  MLIRTransformUtils
   MLIRVectorDialect
   BiShengIRMemRefExtDialect
   BiShengIRDialectUtils
