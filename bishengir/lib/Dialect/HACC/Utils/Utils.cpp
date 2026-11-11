@@ -621,13 +621,6 @@ ModuleOp filterFuncsInModule(ModuleOp &op,
   return module;
 }
 
-bool isEntry(Operation *func) {
-  if (!func)
-    return false;
-  return func->hasAttr(
-      hacc::stringifyEnum(hacc::HACCToLLVMIRTranslateAttr::ENTRY));
-}
-
 bool isMixEntry(Operation *func) {
   if (!func)
     return false;
