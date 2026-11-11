@@ -172,7 +172,8 @@ llvm::SmallVector<Value> IRTranslator::tracebackMemVals(Value val) {
     if (options.enableSubviewConflictRefinement && options.isIntraCoreMode() &&
         curVal == val) {
       if (auto subviewOp = curVal.getDefiningOp<memref::SubViewOp>()) {
-        if (subviewOp.getViewSource().getDefiningOp<hivm::PointerCastOp>()) {
+        if (subviewOp.getViewSource().getDefiningOp<hivm::PointerCastOp>() &&
+            !getTcbPoolAddressSource(subviewOp.getViewSource())) {
           collectedValsSet.insert(curVal);
           continue;
         }

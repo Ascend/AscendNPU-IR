@@ -664,6 +664,50 @@ SyncSolverBase::checkUnitFlagPatterns(Occurrence *occ1, Occurrence *occ2) {
   return {};
 }
 
+// Different dynamic allocations may reuse the same UB pool slots. Pool
+// alloc/release reclaim entries in AIV0 feedback order and enqueue FIX waits
+// for both AIVs' V-to-FIX completion notifications before recycling slots/IDs.
+// These notifications follow the consumers' last buffer accesses; feedback
+// alone does not imply completion. Subsequent FIX writes follow the enqueued
+// waits on PIPE_FIX, so the pool protocol orders writes to recycled slots.
+// Skip only pairs whose entire conflict set consists of these destination
+// WAWs; FIX source accesses and other memory still require normal analysis.
+bool SyncSolverBase::checkSkipPoolManagedFixPair(Occurrence *occ1,
+                                                 Occurrence *occ2) {
+  if (!options.isIntraCoreMode())
+    return false;
+  auto *rwOp1 = dyn_cast<RWOperation>(occ1->op);
+  auto *rwOp2 = dyn_cast<RWOperation>(occ2->op);
+  if (!rwOp1 || !rwOp2 || !isa_and_present<hivm::FixpipeOp>(rwOp1->op) ||
+      !isa_and_present<hivm::FixpipeOp>(rwOp2->op))
+    return false;
+  auto conflicts = getMemInfoConflict(rwOp1, rwOp2);
+  auto writes1 = llvm::make_pointer_range(rwOp1->writeMemInfo);
+  auto writes2 = llvm::make_pointer_range(rwOp2->writeMemInfo);
+  return !conflicts.empty() && llvm::all_of(conflicts, [&](const auto &pair) {
+    const MemInfo *first = pair.first;
+    const MemInfo *second = pair.second;
+    if (!llvm::is_contained(writes1, first) ||
+        !llvm::is_contained(writes2, second) || !first->poolInfo ||
+        !second->poolInfo)
+      return false;
+    auto alloc1 =
+        first->poolInfo->address.getDefiningOp<hivm::TcbPoolAllocOp>();
+    auto alloc2 =
+        second->poolInfo->address.getDefiningOp<hivm::TcbPoolAllocOp>();
+    if (!alloc1 || !alloc2 || alloc1.getPool() != alloc2.getPool() ||
+        alloc1.getMetadata() != alloc2.getMetadata())
+      return false;
+    if (alloc1 != alloc2)
+      return true;
+    // Two writes using the same allocation are not ordered by reclamation.
+    // Across iterations, the allocation must execute again in the LCA loop.
+    auto *loop = getBackwardLCALoop(occ1, occ2);
+    auto allocationLoop = alloc1->getParentOfType<LoopLikeOpInterface>();
+    return loop && allocationLoop && loop->op == allocationLoop.getOperation();
+  });
+}
+
 bool SyncSolverBase::checkMemInfoConflict(
     RWOperation *rwOp1, RWOperation *rwOp2, const MemInfo &memInfo1,
     const MemInfo &memInfo2, std::optional<int64_t> lcmLen,
