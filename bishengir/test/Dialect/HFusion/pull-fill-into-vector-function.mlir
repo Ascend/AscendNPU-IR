@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s --hfusion-pull-slice-into-vector-function --split-input-file --verify-each | FileCheck %s
+// RUN: bishengir-opt %s --hfusion-pull-fill-into-vector-function --split-input-file --verify-each | FileCheck %s
 
 // Preserve the output argument and all function/call/argument/result attributes.
 // A public symbol is normal for an outlined, compiler-internal VF.

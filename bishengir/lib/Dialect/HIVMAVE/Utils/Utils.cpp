@@ -109,9 +109,9 @@ static bool isAffineExprKnownMultipleOf(AffineExpr expr, ValueRange operands,
     AffineExpr rhs = binaryExpr.getRHS();
     // For lhs * rhs to be a multiple, a constant factor can satisfy all or part
     // of the requested factor; the other side must satisfy the rest.
-    auto proveConstMul =
-        [operands, numDims, factor](AffineExpr maybeConst,
-                                    AffineExpr other) -> std::optional<bool> {
+    auto proveConstMul = [operands, numDims,
+                          factor](AffineExpr maybeConst,
+                                  AffineExpr other) -> std::optional<bool> {
       auto constExpr = dyn_cast<AffineConstantExpr>(maybeConst);
       if (!constExpr)
         return std::nullopt;
@@ -122,8 +122,7 @@ static bool isAffineExprKnownMultipleOf(AffineExpr expr, ValueRange operands,
           return false;
         constantFactor = -constantFactor;
       }
-      if (constantFactor == 0 ||
-          isIntegerMultipleOf(constantFactor, factor))
+      if (constantFactor == 0 || isIntegerMultipleOf(constantFactor, factor))
         return true;
       if (factor % constantFactor != 0)
         return false;
@@ -259,8 +258,8 @@ static bool hasUnalignedFoldOffsetCast(BlockArgument blockArg,
         int64_t offset;
         LogicalResult layoutResult =
             getStridesAndOffset(sourceType, strides, offset);
-        assert(succeeded(layoutResult) &&
-               offset == ShapedType::kDynamic && !strides.empty());
+        assert(succeeded(layoutResult) && offset == ShapedType::kDynamic &&
+               !strides.empty());
         (void)layoutResult;
 
         bool aligned;
@@ -547,9 +546,10 @@ Value hivmave::createMaskByPGE(VectorType vecTy, PatternRewriter &rewriter,
       hivmave::PgePatternAttr::get(rewriter.getContext(), pgePattern));
   mask = maskOp->getResult(0);
   if (vecTy.getElementTypeBitWidth() == 1 && vecTy != maskType)
-    mask = rewriter
-               .create<UnrealizedConversionCastOp>(loc, vecTy, maskOp.getResult())
-               ->getResult(0);
+    mask =
+        rewriter
+            .create<UnrealizedConversionCastOp>(loc, vecTy, maskOp.getResult())
+            ->getResult(0);
   return mask;
 }
 
@@ -793,9 +793,10 @@ Value hivmave::sparseByIntlv(Value src, RewriterBase &rewriter,
 
 Value hivmave::denseByDIntlv(Value src, RewriterBase &rewriter,
                              const Location &loc) {
-  hivmave::VFDeInterleaveOp deionOp = rewriter.create<hivmave::VFDeInterleaveOp>(
-      loc, ArrayRef<Type>({src.getType(), src.getType()}),
-      ValueRange{src, src});
+  hivmave::VFDeInterleaveOp deionOp =
+      rewriter.create<hivmave::VFDeInterleaveOp>(
+          loc, ArrayRef<Type>({src.getType(), src.getType()}),
+          ValueRange{src, src});
   return deionOp.getResult(0);
 }
 

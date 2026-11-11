@@ -1016,6 +1016,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
         auto conditionOp = std::make_unique<Condition>(
             &op, parScope, std::move(trueScope), std::move(falseScope));
         conditionOp->isUnlikely = isUnlikelyCondition(conditionOp.get());
+        conditionOp->isFalseScopeSynthetic = ifOp.getElseRegion().empty();
         if (!skipEmptyScopes || !isEmptyScope(conditionOp.get())) {
           parScope->body.push_back(std::move(conditionOp));
         }

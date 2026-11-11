@@ -43,7 +43,8 @@ struct OutlinedCopyInfo {
   unsigned dstArgNumber;
 };
 
-static std::optional<unsigned> getFuncArgNumber(Value value, func::FuncOp funcOp) {
+static std::optional<unsigned> getFuncArgNumber(Value value,
+                                                func::FuncOp funcOp) {
   auto blockArg = dyn_cast<BlockArgument>(value);
   if (!blockArg || blockArg.getOwner() != &funcOp.getFunctionBody().front())
     return std::nullopt;
@@ -156,8 +157,9 @@ static scf::ForOp createLoopsNest(IRRewriter &rewriter, Location loc,
                          steps.drop_front(), inductionVars);
 }
 
-static Value createTransferMask(IRRewriter &rewriter, Location loc, Value memref,
-                                ValueRange shape, ValueRange indices,
+static Value createTransferMask(IRRewriter &rewriter, Location loc,
+                                Value memref, ValueRange shape,
+                                ValueRange indices,
                                 ArrayRef<int64_t> tileSizes) {
   auto maskType = VectorType::get(tileSizes, rewriter.getI1Type());
   SmallVector<Value> trueValues;
@@ -172,8 +174,9 @@ static Value createTransferMask(IRRewriter &rewriter, Location loc, Value memref
   return rewriter.create<vector::CreateMaskOp>(loc, maskType, trueValues);
 }
 
-static void insertTransferPairToLoop(IRRewriter &rewriter, Location loc, Value src,
-                                     Value dst, SmallVector<Value> shape,
+static void insertTransferPairToLoop(IRRewriter &rewriter, Location loc,
+                                     Value src, Value dst,
+                                     SmallVector<Value> shape,
                                      SmallVector<Value> indices,
                                      SmallVector<int64_t> tileSizes,
                                      scf::ForOp loop) {
@@ -184,12 +187,15 @@ static void insertTransferPairToLoop(IRRewriter &rewriter, Location loc, Value s
   AffineMap map = rewriter.getMultiDimIdentityMap(tileSizes.size());
   Value padding = rewriter.create<arith::ConstantOp>(
       loc, elemType, rewriter.getZeroAttr(elemType));
-  Value mask = createTransferMask(rewriter, loc, src, shape, indices, tileSizes);
-  auto inBounds = rewriter.getBoolArrayAttr(SmallVector<bool>(tileSizes.size(), false));
+  Value mask =
+      createTransferMask(rewriter, loc, src, shape, indices, tileSizes);
+  auto inBounds =
+      rewriter.getBoolArrayAttr(SmallVector<bool>(tileSizes.size(), false));
   auto readOp = rewriter.create<vector::TransferReadOp>(
       loc, vectorType, src, indices, map, padding, mask, inBounds);
-  rewriter.create<vector::TransferWriteOp>(
-      loc, readOp.getResult(), dst, indices, AffineMapAttr::get(map), mask, inBounds);
+  rewriter.create<vector::TransferWriteOp>(loc, readOp.getResult(), dst,
+                                           indices, AffineMapAttr::get(map),
+                                           mask, inBounds);
 }
 
 static void tileCopyUsingForAndTransferPair(IRRewriter &rewriter,

@@ -203,7 +203,7 @@
 
 # vf simplification.
 /bishengir/**/RemoveMaskFromUnalignedReductionLoop.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
-/bishengir/**/PullSliceIntoVectorFunction.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/PullFillIntoVectorFunction.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
 /bishengir/**/SimplifyVFArgs.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
 /bishengir/**/LoopInvariantPromotion.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
 /bishengir/**/UnrollAndForward.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun

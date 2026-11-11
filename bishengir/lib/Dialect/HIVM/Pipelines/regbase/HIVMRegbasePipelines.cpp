@@ -8,6 +8,7 @@
 
 #include "bishengir/Conversion/ArithToAffine/ArithToAffine.h"
 #include "bishengir/Conversion/LowerMemRefExt/LowerMemRefExt.h"
+#include "bishengir/Conversion/TensorViewToHIVM/TensorViewToHIVM.h"
 #include "bishengir/Dialect/Arith/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
@@ -792,6 +793,7 @@ void buildLowerHIVMPipelines(OpPassManager &pm,
                              const HIVMPipelineOptions &hivmPipelineOptions) {
   registerKernelKindPassesForRegbase();
   bufferizationPipeline(pm, hivmPipelineOptions);
+  pm.addPass(createTensorViewToHIVMConversionPass());
   // Self-gated: only rewrites guards whose get_sub_block_idx carries the
   // partition provenance stamp
   pm.addPass(createSubBlockGuardCleanupPass());

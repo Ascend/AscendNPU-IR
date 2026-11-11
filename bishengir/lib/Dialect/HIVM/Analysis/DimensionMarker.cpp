@@ -586,11 +586,20 @@ void DimensionAnalyzer::processCustomOpLike(T op, Value current) {
     return;
   }
 
+  auto dps = cast<DestinationStyleOpInterface>(opOp);
+  for (OpOperand &init : dps.getDpsInitsMutable()) {
+    if (!isa<RankedTensorType>(init.get().getType()))
+      continue;
+    auto result = dps.getTiedOpResult(&init);
+    createDummyRefIfNotExist({init.get(), result});
+    processValue(init.get(), result);
+  }
+
   SmallVector<int64_t> parallelDims;
   cast<HIVMStructuredOp>(opOp).getParallelLoopDims(parallelDims);
 
   auto joinAcrossDimExpr = [&](AffineMap m, Value v, int64_t parDim,
-                               int &firstRef) {
+                               int &firstRef, AffineExpr &firstExpr) {
     if (!isa<ShapedType>(v.getType()))
       return;
     createDummyRefIfNotExist({v});
@@ -600,32 +609,31 @@ void DimensionAnalyzer::processCustomOpLike(T op, Value current) {
     if (m.getNumResults() != refs.size())
       return;
     for (unsigned k = 0, e = m.getNumResults(); k < e; ++k) {
-      auto d = dyn_cast<AffineDimExpr>(m.getResult(k));
-      if (!d || static_cast<int64_t>(d.getPosition()) != parDim)
+      AffineExpr expr = m.getResult(k);
+      if (!expr.isFunctionOfDim(parDim))
         continue;
-      if (firstRef < 0)
+      if (firstRef < 0) {
         firstRef = refs[k];
-      else
+        firstExpr = expr;
+      } else if (expr == firstExpr) {
         joinShape(firstRef, refs[k]);
+      } else {
+        joinCollapser(firstRef, refs[k]);
+      }
     }
   };
 
   for (int64_t parDim : parallelDims) {
     int firstRef = -1;
+    AffineExpr firstExpr;
     for (unsigned i = 0; i < nIn + nOut; ++i)
-      joinAcrossDimExpr(idxMaps[i], opOp->getOperand(i), parDim, firstRef);
-    for (Value resV : opOp->getResults()) {
-      auto resR = dyn_cast<OpResult>(resV);
-      if (!resR)
-        continue;
-      // Non-DPS results have no output indexing map.
-      unsigned resultNo = resR.getResultNumber();
-      if (resultNo >= nOut)
-        continue;
-      unsigned resultMapIdx = nIn + resultNo;
-      if (resultMapIdx >= idxMaps.size())
-        continue;
-      joinAcrossDimExpr(idxMaps[resultMapIdx], resV, parDim, firstRef);
+      joinAcrossDimExpr(idxMaps[i], opOp->getOperand(i), parDim, firstRef,
+                        firstExpr);
+    // Tensor results are already associated with their DPS init above.
+    for (auto [result, init] : llvm::zip(opOp->getResults(), op.getOutputs())) {
+      if (!isa<RankedTensorType>(init.getType()))
+        joinAcrossDimExpr(idxMaps[nIn + result.getResultNumber()], result,
+                          parDim, firstRef, firstExpr);
     }
   }
 }

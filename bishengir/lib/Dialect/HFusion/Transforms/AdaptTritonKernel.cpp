@@ -1152,9 +1152,27 @@ void setCustomOpBuiltinGMArgAttrs(Operation *op) {
           customOp->template getAttrOfType<DenseI32ArrayAttr>(
               kGMAddrArgIndicesAttrName)) {
     for (int32_t i : indicesAttr.asArrayRef()) {
-      const size_t funcArgIdx = static_cast<size_t>(
-          utils::getArgumentIndex(customOp.getOperand(static_cast<size_t>(i))));
-      funcOp.setArgAttr(funcArgIdx, hacc::KernelArgTypeAttr::name,
+      Value operand = customOp.getOperand(static_cast<size_t>(i));
+      // A GM pointer reaches the op either directly as a kernel argument or as
+      // a view of one: folding an offset into it, as in `k_ptr + group *
+      // stride`, makes it a memref.reinterpret_cast of the argument. Both name
+      // the same argument, so resolve the view chain before asking which
+      // argument it is -- getArgumentIndex itself only answers for a value that
+      // is already a block argument.
+      if (isa<OpResult>(operand) && isa<BaseMemRefType>(operand.getType()))
+        operand = utils::tracebackMemRef(operand);
+      const int64_t funcArgIdx = utils::getArgumentIndex(operand);
+      // Fails only for an operand not rooted in a kernel argument at all, which
+      // no GM address should be; leave those unmarked rather than indexing the
+      // argument attribute list out of bounds.
+      if (funcArgIdx < 0 ||
+          funcArgIdx >= static_cast<int64_t>(funcOp.getNumArguments())) {
+        customOp->emitWarning("gm_addr_args_indices names operand ")
+            << i << ", which does not resolve to a kernel argument";
+        continue;
+      }
+      funcOp.setArgAttr(static_cast<unsigned>(funcArgIdx),
+                        hacc::KernelArgTypeAttr::name,
                         hacc::KernelArgTypeAttr::get(
                             op->getContext(), hacc::KernelArgType::kGMAddr));
     }

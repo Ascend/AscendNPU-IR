@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hfusion-auto-vectorize -hfusion-pull-slice-into-vector-function | FileCheck %s
+// RUN: bishengir-opt %s -hfusion-auto-vectorize -hfusion-pull-fill-into-vector-function | FileCheck %s
 
 module {
   // Passthrough pull is not supported: VF still pulls the full tensor as

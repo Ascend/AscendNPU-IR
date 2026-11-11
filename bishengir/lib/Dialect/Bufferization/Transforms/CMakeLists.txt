@@ -1,5 +1,6 @@
 add_bishengir_dialect_library(BiShengIRBufferizationTransforms
   BufferizationTilingInterfaceImpl.cpp
+  BufferizeModuleOp.cpp
   FuncBufferizableOpInterfaceImpl.cpp
   NormalizeToTensorOp.cpp
   TensorCopyInsertion.cpp

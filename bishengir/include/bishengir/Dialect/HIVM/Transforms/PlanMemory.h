@@ -634,6 +634,10 @@ public:
         planMemoryStrategy(planMemoryStrategy), vfInplaceReuseInfo(nullptr) {}
 
   LogicalResult plan(bool emitErrors = true);
+  /// Report whether allocation failed only in UB.
+  bool failedOnlyInUB() const;
+  /// Emit final allocation diagnostics and populate memory-display errors.
+  void EmitPlanMemoryFailureInfo();
 
   /// Get buffer2Offsets
   inline Buffer2Offsets GetBuffer2Offsets() { return buffer2Offsets; }
@@ -778,9 +782,6 @@ private:
 
   /// Obtain buffer space size and alignment information.
   std::pair<size_t, size_t> GetBufferSpaceInfo(hivm::AddressSpace &space) const;
-
-  /// Emit buffer applied failure message.
-  void EmitPlanMemoryFailureInfo();
 
   /// Multi level plan strategy.
   LogicalResult MultiSpecPlan(SpecInfo &si, MemBoundList &outline,

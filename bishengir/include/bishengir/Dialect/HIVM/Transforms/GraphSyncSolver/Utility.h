@@ -177,6 +177,8 @@ struct SetWaitPairInfo {
   bool setWaitInside{false};
   Occurrence *setIfOcc{nullptr};
   Occurrence *waitIfOcc{nullptr};
+  Occurrence *setPreloadScopeOcc{nullptr};
+  Occurrence *waitPreloadScopeOcc{nullptr};
 };
 
 class UnitFlagInfo : public UnitFlagInfoBase {
@@ -391,8 +393,6 @@ struct ConflictPair {
   Occurrence *waitIfOcc{nullptr};
   Occurrence *mirrorSetIfOcc{nullptr};
   Occurrence *mirrorWaitIfOcc{nullptr};
-
-
 
   // Backward-sync classification + hoist target
   bool isOccBackwardPair{false};

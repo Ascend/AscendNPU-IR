@@ -912,6 +912,7 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
       return {wrapThis(FunctionType::NONE,
                        {{mask, State::B16}, {index, State::B16}})};
     case COMB_CASE(16, State::B16_2VL):
+    case COMB_CASE(16, State::B8_4VL):
       return {wrapThis(FunctionType::INTLV2,
                        {{mask, State::B16}, {index, State::B16}}),
               wrapThis(FunctionType::NONE,

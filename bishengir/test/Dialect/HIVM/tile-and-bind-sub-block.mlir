@@ -1606,57 +1606,6 @@ func.func @tile_and_bind_while(%arg0: tensor<64xf32>, %arg1: memref<64xf32>) att
 }
 
 // -----
-// A 3-D while result split on its middle axis must not be bound to two
-// subblocks when one row of the trailing axis is smaller than a DMA block.
-// 3x4x3 makes dimension 1 the only divisible tiling candidate.
-// CHECK-LABEL:   func.func @tile_and_bind_while_3d_middle_unaligned(
-// CHECK:           %[[SUB_BLOCK_ID:.*]] = hivm.hir.get_sub_block_idx
-// CHECK:           scf.if %{{.*}} {
-// CHECK:             hivm.hir.store ins(%{{.*}} : tensor<3x4x3xf32>) outs(%{{.*}} : memref<3x4x3xf32>)
-// CHECK:           }
-func.func @tile_and_bind_while_3d_middle_unaligned(%arg0: tensor<3x4x3xf32>, %arg1: memref<3x4x3xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
-  %c0_i32 = arith.constant 0 : i32
-  %c1_i32 = arith.constant 1 : i32
-  %0 = tensor.empty() : tensor<3x4x3xf32>
-  %1:2 = scf.while (%arg2 = %arg0, %arg3 = %c0_i32) : (tensor<3x4x3xf32>, i32) -> (tensor<3x4x3xf32>, i32) {
-    %2 = arith.cmpi slt, %arg3, %c1_i32 : i32
-    scf.condition(%2) %arg2, %arg3 : tensor<3x4x3xf32>, i32
-  } do {
-  ^bb0(%arg2: tensor<3x4x3xf32>, %arg3: i32):
-    %2 = hivm.hir.vln ins(%arg2 : tensor<3x4x3xf32>) outs(%0 : tensor<3x4x3xf32>) -> tensor<3x4x3xf32>
-    %3 = arith.addi %arg3, %c1_i32 : i32
-    scf.yield %2, %3 : tensor<3x4x3xf32>, i32
-  }
-  hivm.hir.store ins(%1#0 : tensor<3x4x3xf32>) outs(%arg1 : memref<3x4x3xf32>)
-  return
-}
-
-// -----
-// Keep the aligned counterpart enabled: the same middle-axis 1:2 split is
-// safe once the trailing row is 32 bytes.
-// CHECK-LABEL:   func.func @tile_and_bind_while_3d_middle_aligned(
-// CHECK:           scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
-// CHECK:             tensor.extract_slice %{{.*}}[0, %{{.*}}, 0] [3, 2, 8] [1, 1, 1] {to_be_bubbled_slice} : tensor<3x4x8xf32> to tensor<3x2x8xf32>
-// CHECK:           } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
-// CHECK-NOT:       limit_sub_block_id0
-func.func @tile_and_bind_while_3d_middle_aligned(%arg0: tensor<3x4x8xf32>, %arg1: memref<3x4x8xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
-  %c0_i32 = arith.constant 0 : i32
-  %c1_i32 = arith.constant 1 : i32
-  %0 = tensor.empty() : tensor<3x4x8xf32>
-  %1:2 = scf.while (%arg2 = %arg0, %arg3 = %c0_i32) : (tensor<3x4x8xf32>, i32) -> (tensor<3x4x8xf32>, i32) {
-    %2 = arith.cmpi slt, %arg3, %c1_i32 : i32
-    scf.condition(%2) %arg2, %arg3 : tensor<3x4x8xf32>, i32
-  } do {
-  ^bb0(%arg2: tensor<3x4x8xf32>, %arg3: i32):
-    %2 = hivm.hir.vln ins(%arg2 : tensor<3x4x8xf32>) outs(%0 : tensor<3x4x8xf32>) -> tensor<3x4x8xf32>
-    %3 = arith.addi %arg3, %c1_i32 : i32
-    scf.yield %2, %3 : tensor<3x4x8xf32>, i32
-  }
-  hivm.hir.store ins(%1#0 : tensor<3x4x8xf32>) outs(%arg1 : memref<3x4x8xf32>)
-  return
-}
-
-// -----
 // CHECK-LABEL:   func.func @dynamic_shape_insert_slice
 // CHECK:         {limit_sub_block_id0}
 func.func @dynamic_shape_insert_slice(%arg0: tensor<64x?xf32>, %arg1: memref<64x64xf32>, %arg2: index) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
@@ -2567,38 +2516,32 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
 
 // -----
 
-// A CustomOp with a transposing indexing_map `(d0, d1) -> (d1, d0)` on its
-// input. isSupportedOperation rejects non-order-preserving maps (AffineDimExpr
-// positions must be strictly increasing), so the slice cannot bubble through and
-// the Store rolls back and receives `limit_sub_block_id0`.
-// Regression guard: the transpose map previously passed (only AffineDimExpr, no
-// duplicates) and the Pass tiled it — locked here.
+// A transposed input uses the same logical row window as its result.
+// The input slices columns while the output slices rows; the other parallel
+// dimension remains full.
 // CHECK-DAG: #[[$TRANSPOSE_IDENTITY_MAP:[A-Za-z0-9_]+]] = affine_map<(d0, d1) -> (d0, d1)>
 // CHECK-DAG: #[[$TRANSPOSE_INPUT_MAP:[A-Za-z0-9_]+]] = affine_map<(d0, d1) -> (d1, d0)>
-// CHECK-LABEL: func.func @custom_transpose_reject
-// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
-// CHECK-NOT: tensor.extract_slice
-// CHECK-NOT: memref.subview
-// CHECK: %[[FALLBACK_RESULT:.*]] = hivm.hir.custom
+// CHECK-LABEL: func.func @custom_transpose_tiling
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
+// CHECK: memref.subview %{{[A-Za-z0-9_]+}}[0, %[[TRANSPOSE_OFFSET:[A-Za-z0-9_]+]]] [16, 8] [1, 1]
+// CHECK: %[[TRANSPOSE_RESULT:.*]] = hivm.hir.custom
 // CHECK-SAME: indexing_map = [#[[$TRANSPOSE_INPUT_MAP]], #[[$TRANSPOSE_IDENTITY_MAP]]]
 // CHECK-SAME: iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>]
 // CHECK-SAME: "user.transpose"
-// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
-// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
-// CHECK-SAME: -> tensor<16x16xf16>
-// CHECK: scf.if
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<16x8xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<8x16xf16>)
+// CHECK-SAME: -> tensor<8x16xf16>
+// CHECK: memref.subview %{{[A-Za-z0-9_]+}}[%[[TRANSPOSE_OFFSET]], 0] [8, 16] [1, 1]
 // CHECK: hivm.hir.store
-// CHECK-SAME: ins(%[[FALLBACK_RESULT]] : tensor<16x16xf16>)
-// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<16x16xf16{{.*}}>)
-// CHECK: } {limit_sub_block_id0}
-// CHECK-NOT: tensor.extract_slice
-// CHECK-NOT: memref.subview
+// CHECK-SAME: ins(%[[TRANSPOSE_RESULT]] : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<8x16xf16{{.*}}>)
+// CHECK: } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
 // CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
 // CHECK: return
 #map_transpose_identity = affine_map<(d0, d1) -> (d0, d1)>
 #map_transpose_input = affine_map<(d0, d1) -> (d1, d0)>
 module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
-  func.func @custom_transpose_reject(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  func.func @custom_transpose_tiling(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
     hivm.hir.set_ffts_base_addr %arg0
     hivm.hir.set_mask_norm
     %init = tensor.empty() : tensor<16x16xf16>

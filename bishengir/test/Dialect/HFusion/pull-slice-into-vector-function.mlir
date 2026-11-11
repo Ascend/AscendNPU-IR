@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s --hfusion-pull-slice-into-vector-function -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s --hfusion-pull-fill-into-vector-function -split-input-file | FileCheck %s
 
 // -----
 

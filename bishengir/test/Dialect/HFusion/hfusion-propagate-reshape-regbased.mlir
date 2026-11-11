@@ -415,7 +415,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
       %7 = scope.scope : () -> tensor<1x64xf32> {
         %8 = linalg.elemwise_unary {fun = #linalg.unary_fn<exp>} ins(%6 : tensor<1x64xf32>) outs(%2 : tensor<1x64xf32>) -> tensor<1x64xf32>
         scope.return %8 : tensor<1x64xf32>
-      } {noinline, outline = true, vector_mode = "simd"}
+      } {noinline, outline, vector_mode = "simd"}
       %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [64], strides: [1] : memref<?xf32> to memref<64xf32, strided<[1]>>
       %collapsed = tensor.collapse_shape %7 [[0, 1]] : tensor<1x64xf32> into tensor<64xf32>
       bufferization.materialize_in_destination %collapsed in writable %reinterpret_cast : (tensor<64xf32>, memref<64xf32, strided<[1]>>) -> ()

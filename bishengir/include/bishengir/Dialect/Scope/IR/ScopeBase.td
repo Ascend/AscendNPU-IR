@@ -33,6 +33,7 @@ def Scope_Dialect : Dialect {
   }];
   let cppNamespace = "::mlir::scope";
   let dependentDialects = [];
+  let useDefaultAttributePrinterParser = 1;
 }
 
 //===----------------------------------------------------------------------===//

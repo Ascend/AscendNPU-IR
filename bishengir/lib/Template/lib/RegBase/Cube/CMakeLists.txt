@@ -12,6 +12,7 @@ set(A5_REGBASE_CUBE_SOURCES
     nchw2nc1hwc0.cpp
     nd2nz.cpp
     set2d.cpp
+    SparseGatherLoadToL1Buffer.cpp
 )
 
 compile_cpp_to_bc("aic" "Ascend910D" ${A5_REGBASE_CUBE_SOURCES})

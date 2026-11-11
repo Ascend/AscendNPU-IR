@@ -313,6 +313,8 @@ public:
 
   bool hasFalseScope() const { return this->falseScope != nullptr; }
 
+  bool isFalseScopeSynthetic{false};
+
   static bool classof(const OperationBase *e) {
     return e->opType == OpType::CONDITION;
   }

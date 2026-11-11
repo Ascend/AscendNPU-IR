@@ -15,6 +15,7 @@
 #include "bishengir/Dialect/HIVM/Pipelines/v2/TargetUtils.h"
 
 #include "bishengir/Conversion/LowerMemRefExt/LowerMemRefExt.h"
+#include "bishengir/Conversion/TensorViewToHIVM/TensorViewToHIVM.h"
 #include "bishengir/Dialect/HACC/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Pipelines/HIVMBufferizationPipeline.h"
@@ -109,6 +110,7 @@ void buildV2BufferizationPhase(OpPassManager &pm,
 
   // The v2 pipeline only supports reg-based targets.
   bufferizationPipelineBase(pm, /*isRegBased=*/true);
+  pm.addPass(createTensorViewToHIVMConversionPass());
   canonicalizationHIVMPipeline(pm);
   pm.addPass(createConvertToHIVMOpPass());
   pm.addPass(bufferization::createDropEquivalentBufferResultsPass());

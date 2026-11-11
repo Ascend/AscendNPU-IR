@@ -69,7 +69,8 @@ using namespace mlir::hivm;
 
 #define PASS_NAME "convert-hivm-to-llvm"
 
-// Discardable marker placed on the problematic memref.cast by One-Shot Bufferize.
+// Discardable marker placed on the problematic memref.cast by One-Shot
+// Bufferize.
 static constexpr llvm::StringLiteral kFoldOffsetMarker = "fold_offset_into_ptr";
 
 //===----------------------------------------------------------------------===//

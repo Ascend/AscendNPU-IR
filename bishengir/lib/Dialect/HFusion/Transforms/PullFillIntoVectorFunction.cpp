@@ -1,4 +1,4 @@
-//===- PullSliceIntoVectorFunction.cpp - Pull slice/fill ops into VF -===//
+//===- PullFillIntoVectorFunction.cpp - Pull fill ops into VF -------------===//
 //
 // Part of the BiShengIR Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -6,12 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This pass pulls tensor.extract_slice (and optionally tensor.insert_slice)
-// into Vector Function (VF) callees to help one-shot-bufferize reduce copies.
-// Applied when a CallOp operand is produced by extract_slice with non-standard
-// stride (stride != 1 or shape change).
-// Also rematerializes constant 0-rank tensor linalg.fill operations that
-// haven't been outlined inside SIMD VFs and are passed as arguments.
+// This pass pulls tensor slice operations and matching result insertions into
+// SIMD Vector Functions (VFs) to reduce buffer copies, and rematerializes
+// constant 0-rank tensor linalg.fill operations that haven't been outlined
+// inside SIMD VFs and are passed as call arguments.
 //
 //===----------------------------------------------------------------------===//
 
@@ -35,7 +33,7 @@
 #include <limits>
 
 namespace mlir {
-#define GEN_PASS_DEF_PULLSLICEINTOVECTORFUNCTION
+#define GEN_PASS_DEF_PULLFILLINTOVECTORFUNCTION
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h.inc"
 } // namespace mlir
 
@@ -1181,9 +1179,8 @@ static void preProcessShapeChangeAfterExtractSlice(MLIRContext *ctx,
   (void)applyPatternsGreedily(op, std::move(patterns));
 }
 
-struct PullSliceIntoVectorFunction
-    : public impl::PullSliceIntoVectorFunctionBase<
-          PullSliceIntoVectorFunction> {
+struct PullFillIntoVectorFunction
+    : public impl::PullFillIntoVectorFunctionBase<PullFillIntoVectorFunction> {
   void runOnOperation() override {
     preProcessShapeChangeAfterExtractSlice(&getContext(), getOperation());
 
@@ -1201,6 +1198,6 @@ struct PullSliceIntoVectorFunction
 
 } // namespace
 
-std::unique_ptr<Pass> mlir::hfusion::createPullSliceIntoVectorFunctionPass() {
-  return std::make_unique<PullSliceIntoVectorFunction>();
+std::unique_ptr<Pass> mlir::hfusion::createPullFillIntoVectorFunctionPass() {
+  return std::make_unique<PullFillIntoVectorFunction>();
 }
