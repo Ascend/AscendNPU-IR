@@ -201,3 +201,92 @@ func.func @hoist_sunk_with_scf_if(%src: memref<16xf32>, %cond: i1) {
   return
 }
 }
+
+// -----
+
+// CHECK-LABEL: func.func @store_to_workspace
+// CHECK:       scf.for
+// CHECK:         %[[WS:.*]] = memref_ext.alloc_workspace() from %{{.*}} : from memref<?xi8> to memref<1xi32>
+// CHECK-NEXT:    annotation.mark %[[WS]] {hivm.multi_buffer = 2 : i32}
+// CHECK-NEXT:    scope.scope : () -> () {
+// CHECK:           hivm.hir.store ins(%{{.*}} : tensor<1xi32>) outs(%[[WS]] : memref<1xi32>)
+// CHECK:           scope.return
+// CHECK-NEXT:    } {{.*}}
+// CHECK-NEXT:    %[[WST:.*]] = bufferization.to_tensor %[[WS]] restrict writable : memref<1xi32>
+// CHECK-NEXT:    scope.scope : () -> () {
+// CHECK:           tensor.extract %[[WST]]
+// CHECK:           scope.return
+// CHECK-NEXT:    } {{.*}}
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @store_to_workspace(%ws_arg: memref<?xi8>, %src: tensor<1xi32>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  scf.for %i = %c0 to %c1 step %c1 {
+    %wst = scope.scope : () -> tensor<1xi32> {
+      %ws = memref_ext.alloc_workspace() from %ws_arg : from memref<?xi8> to memref<1xi32>
+      annotation.mark %ws {hivm.multi_buffer = 2 : i32} : memref<1xi32>
+      hivm.hir.store ins(%src : tensor<1xi32>) outs(%ws : memref<1xi32>) {"hivm.inserted-store"}
+      %t = bufferization.to_tensor %ws restrict writable : memref<1xi32>
+      scope.return %t : tensor<1xi32>
+    }
+    scope.scope : () -> () {
+      %v = tensor.extract %wst[%c0] : tensor<1xi32>
+      scope.return
+    }
+  } {hivm.cv_pipelined_loop}
+  return
+}
+}
+
+// -----
+
+// CHECK-LABEL: func.func @mark_vector_scope_ifs
+// CHECK:       scf.for
+// CHECK:         scope.scope : () -> i32 {
+// CHECK:           scf.if %{{.*}} -> (tensor<16xf32>) {
+// CHECK:           } else {
+// CHECK:           } {hivm.vec_only}
+// CHECK:           scf.if %{{.*}} {
+// CHECK:             memref.store
+// CHECK-NEXT:      }{{ *$}}
+// CHECK:           %[[ESC:.*]] = scf.if %{{.*}} -> (i32) {
+// CHECK:           } else {
+// CHECK:           }{{ *$}}
+// CHECK:           scope.return %[[ESC]] : i32
+// CHECK-NEXT:    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @mark_vector_scope_ifs(%cond: i1, %init: tensor<16xf32>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c0_i32 = arith.constant 0 : i32
+  %c1_i32 = arith.constant 1 : i32
+  %cnt = memref.alloca() : memref<i32>
+  scf.for %i = %c0 to %c1 step %c1 {
+    %res = scope.scope : () -> i32 {
+      %t = scf.if %cond -> (tensor<16xf32>) {
+        %out = tensor.empty() : tensor<16xf32>
+        %add = hivm.hir.vadd ins(%init, %init : tensor<16xf32>, tensor<16xf32>) outs(%out : tensor<16xf32>) -> tensor<16xf32>
+        scf.yield %add : tensor<16xf32>
+      } else {
+        scf.yield %init : tensor<16xf32>
+      }
+      scf.if %cond {
+        memref.store %c1_i32, %cnt[] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
+      }
+      %esc = scf.if %cond -> (i32) {
+        scf.yield %c1_i32 : i32
+      } else {
+        scf.yield %c0_i32 : i32
+      }
+      scope.return %esc : i32
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    scope.scope : () -> () {
+      %sum = arith.addi %res, %c1_i32 : i32
+      scope.return
+    }
+  } {hivm.cv_pipelined_loop}
+  return
+}
+}

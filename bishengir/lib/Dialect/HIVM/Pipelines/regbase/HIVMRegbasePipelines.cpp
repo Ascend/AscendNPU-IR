@@ -354,6 +354,7 @@ static void convertTensorToTightCoupledBuffer(OpPassManager &pm) {
 
 static void buildCVPipelineV2(OpPassManager &pm,
                               const HIVMPipelineOptions &hivmPipelineOptions) {
+  pm.nest<func::FuncOp>().addPass(createNormalizeWorkspaceStorePass());
   pm.nest<func::FuncOp>().addPass(createOutlineCVScopesPass());
   pm.nest<func::FuncOp>().addPass(createMergeCVScopesPass());
   PipelineStagingOptions options;

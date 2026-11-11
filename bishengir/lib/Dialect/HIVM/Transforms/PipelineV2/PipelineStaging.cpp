@@ -18,7 +18,9 @@
 #include "Util.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -251,6 +253,15 @@ static bool isFixpipeToUB(Operation *op) {
   return memSpaceAttr.getAddressSpace() == AddressSpace::UB;
 }
 
+static bool isStoreToWorkspace(Operation *op) {
+  auto store = dyn_cast<StoreOp>(op);
+  if (!store)
+    return false;
+  Value root = traceValueDef(store.getDst());
+  return root && isa_and_nonnull<bishengir::memref_ext::AllocWorkspaceOp>(
+                     root.getDefiningOp());
+}
+
 static bool hasWriteEffectOnAlias(Operation *op, Value root) {
   auto effectInterface = dyn_cast<MemoryEffectOpInterface>(op);
   if (!effectInterface)
@@ -345,7 +356,8 @@ static void hoistAllocAndToTensor(scope::ScopeOp &scopeOp) {
       return nullptr;
 
     Operation *write = writes[0];
-    if (isFixpipeToUB(write) || isCrossCoreCopy(write))
+    if (isFixpipeToUB(write) || isCrossCoreCopy(write) ||
+        isStoreToWorkspace(write))
       return write;
     return nullptr;
   };
@@ -360,13 +372,15 @@ static void hoistAllocAndToTensor(scope::ScopeOp &scopeOp) {
 
     Value operand = toTensorOp.getOperand();
     auto castOp = operand.getDefiningOp<memref::MemorySpaceCastOp>();
-    auto allocOp = castOp ? castOp.getSource().getDefiningOp<memref::AllocOp>()
-                          : operand.getDefiningOp<memref::AllocOp>();
-    if (!allocOp || allocOp->getBlock() != &body ||
-        (castOp && castOp->getBlock() != &body))
+    Value allocSource = castOp ? castOp.getSource() : operand;
+    Operation *allocOp = allocSource.getDefiningOp();
+    if (!isa_and_nonnull<memref::AllocOp,
+                         bishengir::memref_ext::AllocWorkspaceOp>(allocOp) ||
+        allocOp->getBlock() != &body || (castOp && castOp->getBlock() != &body))
       continue;
 
-    Operation *writeOp = onlyWrittenToOnceByCrossCore(allocOp);
+    Value allocResult = allocOp->getResult(0);
+    Operation *writeOp = onlyWrittenToOnceByCrossCore(allocResult);
     Operation *writeInBody =
         writeOp ? body.findAncestorOpInBlock(*writeOp) : nullptr;
     if (!writeInBody || !allocOp->isBeforeInBlock(writeInBody))
@@ -398,7 +412,7 @@ static void hoistAllocAndToTensor(scope::ScopeOp &scopeOp) {
       }
       return true;
     };
-    if (!collectUsers(allocOp, /*valueInMoveBefore=*/true) ||
+    if (!collectUsers(allocResult, /*valueInMoveBefore=*/true) ||
         (castOp && !collectUsers(castOp, castUsedByWrite)))
       continue;
 
@@ -472,6 +486,72 @@ static void hoistAllocAndToTensor(scope::ScopeOp &scopeOp) {
   scopeOp.erase();
 }
 
+// TODO: Temporary workaround until PlanMemory properly handles dead/writer-less
+// local allocations (or cross-scope scalar tensor allocations) left behind on
+// the opposite core after SplitMixKernel. Without `hivm.vec_only`,
+// SplitMixKernel retains the empty `scf.if` skeleton (and its nested
+// delayed-GSS anchors) on AIC, keeping condition `tensor.extract`/`memref.load`
+// reads alive against DCE while stripping all Vector writers, which triggers
+// `"error: read before first write"` in PlanMemory / walkAllocToPointerCast.
+static void markVectorScopeIfs(scope::ScopeOp scopeOp) {
+  if (getScopeCoreType(scopeOp) != TCoreType::VECTOR)
+    return;
+
+  auto returnOp =
+      cast<scope::ReturnOp>(scopeOp.getRegion().front().getTerminator());
+
+  // Collect values inside `scopeOp` that feed scalar `scope.return` operands.
+  // `SplitMixKernel` preserves scalar scope results on AIC for shared loop
+  // counters (`shouldKeepScopeResult`); erasing an `scf.if` that computes one
+  // would stub that scalar result to 0 on AIC.
+  DenseSet<Value> escapingScalarSlice;
+  SmallVector<Value> worklist;
+  for (auto [retOperand, scopeResult] :
+       llvm::zip(returnOp.getOperands(), scopeOp.getResults())) {
+    if (!scopeResult.use_empty() && !isa<ShapedType>(scopeResult.getType())) {
+      if (escapingScalarSlice.insert(retOperand).second)
+        worklist.push_back(retOperand);
+    }
+  }
+  while (!worklist.empty()) {
+    Value val = worklist.pop_back_val();
+    Operation *def = val.getDefiningOp();
+    if (!def || !scopeOp->isProperAncestor(def))
+      continue;
+    for (Value operand : def->getOperands()) {
+      if (escapingScalarSlice.insert(operand).second)
+        worklist.push_back(operand);
+    }
+  }
+
+  UnitAttr unitAttr = UnitAttr::get(scopeOp.getContext());
+  for (Region &region : scopeOp->getRegions()) {
+    region.walk([&](scf::IfOp ifOp) {
+      if (ifOp->hasAttr(kCubeOnlyAttrName) || ifOp->hasAttr(kVecOnlyAttrName))
+        return;
+
+      if (llvm::any_of(ifOp.getResults(), [&](Value res) {
+            return escapingScalarSlice.contains(res);
+          }))
+        return;
+
+      WalkResult nonVecCheck = ifOp->walk([&](Operation *nested) {
+        if (nested == ifOp.getOperation())
+          return WalkResult::advance();
+        FailureOr<TCoreType> core = getCoreType(nested);
+        if (failed(core) || *core == TCoreType::CUBE ||
+            *core == TCoreType::CUBE_AND_VECTOR)
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      });
+      if (nonVecCheck.wasInterrupted())
+        return;
+
+      ifOp->setAttr(kVecOnlyAttrName, unitAttr);
+    });
+  }
+}
+
 void PipelineStagingPass::runOnOperation() {
   func::FuncOp funcOp = getOperation();
   SmallVector<scf::ForOp> cvPipelinedLoops;
@@ -490,6 +570,7 @@ void PipelineStagingPass::runOnOperation() {
   for (scf::ForOp loopOp : cvPipelinedLoops) {
     loopOp->walk<WalkOrder::PostOrder>(
         [&](scope::ScopeOp scopeOp) { hoistAllocAndToTensor(scopeOp); });
+    loopOp->walk([&](scope::ScopeOp scopeOp) { markVectorScopeIfs(scopeOp); });
   }
 }
 
