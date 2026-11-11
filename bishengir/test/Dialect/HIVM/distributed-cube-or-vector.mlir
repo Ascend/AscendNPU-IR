@@ -3,7 +3,7 @@
 // RUN: bishengir-opt %s -hivm-split-mix-kernel | FileCheck %s --check-prefix=DIRECT
 
 // Flexible distributed ops follow the inferred function without forcing MIX.
-// Explicit core types and non-distributed custom ops remain unchanged.
+// Explicit core types remain unchanged; non-distributed ops also resolve.
 
 // INFER-LABEL: func.func @scalar(
 // INFER-SAME: hivm.func_core_type = #hivm.func_core_type<AIV>
@@ -56,7 +56,7 @@ func.func @mixed(%a: memref<64x64xf16>, %b: memref<64x64xf16>, %c: memref<64x64x
 // INFER: hivm.tcore_type = #hivm.tcore_type<CUBE>, symbol = "cube"
 // INFER: hivm.tcore_type = #hivm.tcore_type<VECTOR>, symbol = "vector"
 // INFER: hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>, symbol = "both"
-// INFER: hivm.tcore_type = #hivm.tcore_type<CUBE_OR_VECTOR>, symbol = "unrelated"
+// INFER: hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>, symbol = "unrelated"
 func.func @explicit_and_unrelated() {
   hivm.hir.custom {hivm.is_distributed, hivm.pipe = #hivm.pipe<PIPE_S>, hivm.tcore_type = #hivm.tcore_type<CUBE>, symbol = "cube"} "dist.cube"
   hivm.hir.custom {hivm.is_distributed, hivm.pipe = #hivm.pipe<PIPE_S>, hivm.tcore_type = #hivm.tcore_type<VECTOR>, symbol = "vector"} "dist.vector"
