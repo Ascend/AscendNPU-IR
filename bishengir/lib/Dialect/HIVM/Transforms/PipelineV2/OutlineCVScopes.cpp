@@ -20,6 +20,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
@@ -2715,6 +2716,47 @@ LogicalResult CVScopeOutliner::run() {
 // OutlineCVScopesPass Implementation
 //===----------------------------------------------------------------------===//
 
+// Legacy CVPipelining can hoist a TCB allocation out of a scope while leaving
+// its mark inside. Keep this allocation metadata with the allocation so that
+// splitting the mixed kernel cannot leave an annotation-only scope behind.
+static void moveTCBMarksToAllocations(func::FuncOp funcOp) {
+  SmallVector<annotation::MarkOp> marks;
+  funcOp.walk([&](annotation::MarkOp markOp) {
+    if (markOp->hasAttr(HIVMTightlyCoupledBufferAttr::name))
+      marks.push_back(markOp);
+  });
+
+  DominanceInfo dominance(funcOp);
+  DenseMap<Operation *, Operation *> insertionTails;
+  for (annotation::MarkOp markOp : marks) {
+    auto allocOp = markOp.getSrc().getDefiningOp<memref::AllocOp>();
+    if (!allocOp || markOp->getBlock() == allocOp->getBlock())
+      continue;
+
+    // Cross only unconditional scopes. In particular, do not change whether a
+    // mark executes or how many times it executes by crossing an if or a loop.
+    Operation *parent = markOp->getParentOp();
+    while (parent && parent->getBlock() != allocOp->getBlock() &&
+           isa<scope::ScopeOp>(parent))
+      parent = parent->getParentOp();
+    if (!parent || parent->getBlock() != allocOp->getBlock() ||
+        !isa<scope::ScopeOp>(parent))
+      continue;
+
+    Operation *tail = insertionTails.lookup(allocOp);
+    if (!tail)
+      tail = allocOp;
+    // Dynamic annotation values must also be available at the destination.
+    if (!llvm::all_of(markOp->getOperands(), [&](Value operand) {
+          return dominance.dominates(operand, tail->getNextNode());
+        }))
+      continue;
+
+    markOp->moveAfter(tail);
+    insertionTails[allocOp] = markOp;
+  }
+}
+
 void OutlineCVScopesPass::runOnOperation() {
   SmallVector<Operation *> loopQueue;
   getOperation().walk<WalkOrder::PostOrder>([&](scf::ForOp forOp) {
@@ -2732,6 +2774,9 @@ void OutlineCVScopesPass::runOnOperation() {
     if (failed(outliner.run()))
       continue;
   }
+
+  // Also repair loops skipped above because they were already legacy-pipelined.
+  moveTCBMarksToAllocations(getOperation());
 
   LLVM_DEBUG({
     getOperation().walk([&](scf::ForOp forOp) {
