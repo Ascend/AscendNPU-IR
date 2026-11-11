@@ -1,4 +1,4 @@
-//===- MsPartitioner.cpp - SMS schedule → WorkItem coordinates -----------===//
+//===- MsPartitioner.cpp - SMS schedule to WorkItem coordinates -----------===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,28 +15,18 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Materializes an SMS schedule onto the authoritative Default WorkItems.
-//
-// Flow:
-//   validateSchedule()        – reject malformed / incomplete schedules
-//   mapWorkItemStages()       – map DAG1 compute node stages onto WorkItems
-//   assignCoordinates()       – dense-reindex stages, set preload coordinates
-//   recordTransferSchedules() – save synthetic transfer schedules as metadata
-//
-// Rejection rules:
-//   - Non-positive II, missing node schedules, or unknown node indices
-//   - DAG result without Default WorkItem linkage (legacy DAG path)
-//   - A WorkItem whose compute nodes land in different stages (cannot give
-//     one WorkItem two coordinates)
+// Checks node schedules and unique WorkItem linkage before assigning preload
+// coordinates. Only the leading stage offset is removed; internal gaps remain.
+// WorkItem contents and ownership are trusted and never changed.
 //
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsPartitioner.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/Debug.h"
-#include <set>
+#include <algorithm>
+#include <limits>
 
-// Unified debug channel for the MS preload scheduler pipeline; the message
-// prefix identifies the producing component.
 #define DEBUG_TYPE "ms-preload-scheduler"
 
 using llvm::dbgs;
@@ -44,237 +34,163 @@ using llvm::dbgs;
 namespace mlir {
 namespace hivm {
 
-//===----------------------------------------------------------------------===//
-// Constructor
-//===----------------------------------------------------------------------===//
-
 MsPartitioner::MsPartitioner(scf::ForOp loop, const MsDagBuildResult &dagResult,
                              const sms::ScheduleResult &schedule)
     : pipelineLoop(loop), dagResult(dagResult), schedule(schedule) {}
-
-//===----------------------------------------------------------------------===//
-// validateSchedule — reject malformed schedules
-//===----------------------------------------------------------------------===//
 
 LogicalResult MsPartitioner::validateSchedule() {
   if (schedule.ii <= 0)
     return pipelineLoop->emitWarning(
         "[ms-partitioner] non-positive II in schedule");
-
   if (schedule.stageCount <= 0)
     return pipelineLoop->emitWarning(
         "[ms-partitioner] non-positive stage count in schedule");
-
   int ddgSize = dagResult.ddg.size();
   if (ddgSize == 0)
     return pipelineLoop->emitWarning("[ms-partitioner] empty DAG");
 
-  // Every DDG node must have a schedule entry.
   for (int i = 0; i < ddgSize; ++i) {
-    if (schedule.nodeToCycle.find(i) == schedule.nodeToCycle.end())
+    auto cycle = schedule.nodeToCycle.find(i);
+    auto stage = schedule.nodeToStage.find(i);
+    if (cycle == schedule.nodeToCycle.end() ||
+        stage == schedule.nodeToStage.end())
       return pipelineLoop->emitWarning(
-                 "[ms-partitioner] missing cycle entry for DDG node ")
+                 "[ms-partitioner] missing schedule entry for DDG node ")
              << i;
-    if (schedule.nodeToStage.find(i) == schedule.nodeToStage.end())
+    if (cycle->second < 0 || stage->second < 0)
       return pipelineLoop->emitWarning(
-                 "[ms-partitioner] missing stage entry for DDG node ")
-             << i;
-
-    int stage = schedule.nodeToStage.at(i);
-    int cycle = schedule.nodeToCycle.at(i);
-    if (stage < 0)
-      return pipelineLoop->emitWarning(
-                 "[ms-partitioner] negative stage for DDG node ")
-             << i;
-    if (cycle < 0)
-      return pipelineLoop->emitWarning(
-                 "[ms-partitioner] negative cycle for DDG node ")
+                 "[ms-partitioner] negative cycle or stage for DDG node ")
              << i;
   }
-
-  // No extraneous schedule entries.
-  for (auto &[nodeIdx, _] : schedule.nodeToCycle) {
+  for (const auto &[nodeIdx, cycle] : schedule.nodeToCycle) {
     if (nodeIdx < 0 || nodeIdx >= ddgSize)
       return pipelineLoop->emitWarning(
-                 "[ms-partitioner] schedule entry for out-of-range DDG node ")
-             << nodeIdx;
+          "[ms-partitioner] out-of-range cycle entry");
   }
-  for (auto &[nodeIdx, _] : schedule.nodeToStage) {
+  for (const auto &[nodeIdx, stage] : schedule.nodeToStage) {
     if (nodeIdx < 0 || nodeIdx >= ddgSize)
       return pipelineLoop->emitWarning(
-                 "[ms-partitioner] stage entry for out-of-range DDG node ")
-             << nodeIdx;
+          "[ms-partitioner] out-of-range stage entry");
   }
-
-  // The materializer requires Default WorkItem linkage.
   if (dagResult.defaultWorklist.empty())
     return pipelineLoop->emitWarning(
-        "[ms-partitioner] DAG result has no Default WorkItems; the "
-        "schedule materializer requires the WorkItem-based DAG path");
-
+        "[ms-partitioner] DAG result has no Default WorkItems");
   return success();
 }
 
-//===----------------------------------------------------------------------===//
-// mapWorkItemStages — map DAG1 compute node stages onto WorkItems
-//===----------------------------------------------------------------------===//
-
-LogicalResult MsPartitioner::mapWorkItemStages() {
-  // Adopt the authoritative Default containers (shared_ptr identity).
+LogicalResult MsPartitioner::mapWorkItemSchedules() {
   result.worklist = dagResult.defaultWorklist;
   result.opToWorkItemMap = dagResult.defaultOpToWorkItemMap;
 
-  for (const MsNode &sn : dagResult.nodes) {
-    if (sn.isSynthetic)
-      continue; // Transfer schedules handled separately.
-    if (!sn.workItem)
-      continue; // Non-WorkItem node (should not happen in the DAG1 path).
-
-    int stage = schedule.nodeToStage.at(sn.ddgIndex);
-    int cycle = schedule.nodeToCycle.at(sn.ddgIndex);
-
-    // One coordinate per WorkItem: if the WorkItem already has a stage from
-    // another node, take the max (later stage wins — the WorkItem cannot be
-    // issued before all its nodes are ready).
-    auto [it, inserted] = workItemToRawStage.try_emplace(sn.workItem, stage);
-    if (!inserted)
-      it->second = std::max(it->second, stage);
-
-    // Record per-op schedule metadata for all member ops.
-    for (Operation *op : sn.ops) {
-      result.opToMsCycle[op] = cycle;
-      result.opToMsStage[op] = stage;
-    }
+  DenseSet<WorkItem *> workItems;
+  for (const auto &item : result.worklist) {
+    if (!item || !workItems.insert(item.get()).second)
+      return pipelineLoop->emitWarning(
+          "[ms-partitioner] null or duplicate Default WorkItem");
   }
 
-  // Every Default WorkItem must have received a stage.
+  DenseSet<int> nodeIndices;
+  for (const MsNode &node : dagResult.nodes) {
+    if (node.ddgIndex < 0 || node.ddgIndex >= dagResult.ddg.size() ||
+        !nodeIndices.insert(node.ddgIndex).second)
+      return pipelineLoop->emitWarning(
+          "[ms-partitioner] invalid or duplicate DDG node index");
+    if (node.isSynthetic)
+      continue;
+    if (!node.workItem || !workItems.contains(node.workItem))
+      return pipelineLoop->emitWarning(
+          "[ms-partitioner] compute node has no Default WorkItem owner");
+
+    MsPartitionResult::WorkItemSchedule timing;
+    timing.ddgIndex = node.ddgIndex;
+    timing.cycle = schedule.nodeToCycle.at(node.ddgIndex);
+    timing.rawStage = schedule.nodeToStage.at(node.ddgIndex);
+    if (!result.workItemSchedules.try_emplace(node.workItem, timing).second)
+      return pipelineLoop->emitWarning(
+          "[ms-partitioner] WorkItem has multiple compute nodes");
+  }
+  if (nodeIndices.size() != static_cast<size_t>(dagResult.ddg.size()))
+    return pipelineLoop->emitWarning(
+        "[ms-partitioner] missing DDG node record");
   for (const auto &item : result.worklist) {
-    if (!workItemToRawStage.contains(item.get()))
+    if (!result.workItemSchedules.contains(item.get()))
       return pipelineLoop->emitWarning(
           "[ms-partitioner] Default WorkItem has no scheduled DAG node");
   }
-
-  LLVM_DEBUG({
-    dbgs() << "[ms-partitioner] WorkItem stages:\n";
-    for (size_t i = 0; i < result.worklist.size(); ++i) {
-      WorkItem *wi = result.worklist[i].get();
-      dbgs() << "  [" << i
-             << "] core=" << (wi->core == TCoreType::CUBE ? "CUBE" : "VECTOR")
-             << " rawStage=" << workItemToRawStage[wi]
-             << " ops=" << wi->ops.size() << "\n";
-    }
-  });
-
   return success();
 }
 
-//===----------------------------------------------------------------------===//
-// assignCoordinates — dense-reindex raw stages, set preload coordinates
-//===----------------------------------------------------------------------===//
+LogicalResult MsPartitioner::verifyWorkItemOrdering() {
+  DenseMap<int, size_t> nodeToPosition;
+  for (size_t i = 0; i < result.worklist.size(); ++i)
+    nodeToPosition[result.workItemSchedules.lookup(result.worklist[i].get())
+                       .ddgIndex] = i;
+
+  for (const sms::DDGEdge &edge : dagResult.ddg.getEdges()) {
+    auto src = nodeToPosition.find(edge.src);
+    auto dst = nodeToPosition.find(edge.dst);
+    // Synthetic transfer endpoints have no WorkItem position.
+    if (src == nodeToPosition.end() || dst == nodeToPosition.end())
+      continue;
+    if (src->second > dst->second)
+      return pipelineLoop->emitWarning(
+          "[ms-partitioner] DDG edge violates WorkItem forward ordering");
+  }
+  return success();
+}
 
 LogicalResult MsPartitioner::assignCoordinates() {
-  // Collect distinct raw stages in ascending order.
-  std::set<int> rawStages;
-  for (auto &[wi, stage] : workItemToRawStage)
-    rawStages.insert(stage);
-
-  int n = static_cast<int>(rawStages.size());
-  if (n == 0)
+  int minStage = std::numeric_limits<int>::max();
+  int maxStage = 0;
+  for (const auto &entry : result.workItemSchedules) {
+    minStage = std::min(minStage, entry.second.rawStage);
+    maxStage = std::max(maxStage, entry.second.rawStage);
+  }
+  int64_t depth = static_cast<int64_t>(maxStage) - minStage + 1;
+  if (depth <= 0 || depth > std::numeric_limits<int32_t>::max())
     return pipelineLoop->emitWarning(
-        "[ms-partitioner] no stages to materialize");
+        "[ms-partitioner] pipeline depth is not representable");
 
-  result.pipelineDepth = n;
+  result.pipelineDepth = static_cast<int32_t>(depth);
   result.ii = schedule.ii;
-
-  // Build raw stage → dense ordinal map.
-  DenseMap<int, int> rawToOrdinal;
-  int ordinal = 0;
-  for (int raw : rawStages)
-    rawToOrdinal[raw] = ordinal++;
-
-  // Create MaterializedStage records.
-  result.stages.resize(n);
-  for (auto &[raw, ord] : rawToOrdinal) {
-    auto &ms = result.stages[ord];
-    ms.rawMsStage = raw;
-    ms.stageOrdinal = ord;
-    ms.preloadCoordinate = n - 1 - ord;
+  result.stages.resize(result.pipelineDepth);
+  for (int32_t stage = 0; stage < result.pipelineDepth; ++stage) {
+    auto &slot = result.stages[stage];
+    slot.rawMsStage = minStage + stage;
+    slot.stageOrdinal = stage;
+    slot.preloadCoordinate = result.pipelineDepth - 1 - stage;
   }
-
-  // Associate each WorkItem with its MaterializedStage, preserving the
-  // Default worklist order within each stage.
   for (const auto &item : result.worklist) {
-    WorkItem *wi = item.get();
-    int ord = rawToOrdinal[workItemToRawStage[wi]];
-    result.stages[ord].workItems.push_back(wi);
+    int stage = result.workItemSchedules.lookup(item.get()).rawStage - minStage;
+    result.stages[stage].workItems.push_back(item.get());
   }
-
-  LLVM_DEBUG({
-    dbgs() << "[ms-partitioner] Dense coordinates (pipelineDepth=" << n
-           << "):\n";
-    for (auto &ms : result.stages) {
-      dbgs() << "  stage " << ms.rawMsStage << " → ordinal " << ms.stageOrdinal
-             << " → preload " << ms.preloadCoordinate << " ("
-             << ms.workItems.size() << " WorkItems)\n";
-    }
-  });
-
   return success();
 }
-
-//===----------------------------------------------------------------------===//
-// recordTransferSchedules — save synthetic transfer schedules as metadata
-//===----------------------------------------------------------------------===//
 
 LogicalResult MsPartitioner::recordTransferSchedules() {
-  for (const MsNode &sn : dagResult.nodes) {
-    if (!sn.isSynthetic)
+  for (const MsNode &node : dagResult.nodes) {
+    if (!node.isSynthetic)
       continue;
-
-    MsTransferSchedule ts;
-    ts.ddgIndex = sn.ddgIndex;
-    ts.cycle = schedule.nodeToCycle.at(sn.ddgIndex);
-    ts.stage = schedule.nodeToStage.at(sn.ddgIndex);
-    ts.pipeline = sn.pipeline;
-    ts.storageTag = sn.storageTag;
-    result.transferSchedules.push_back(std::move(ts));
+    MsTransferSchedule timing;
+    timing.ddgIndex = node.ddgIndex;
+    timing.cycle = schedule.nodeToCycle.at(node.ddgIndex);
+    timing.stage = schedule.nodeToStage.at(node.ddgIndex);
+    timing.pipeline = node.pipeline;
+    timing.storageTag = node.storageTag;
+    result.transferSchedules.push_back(std::move(timing));
   }
-
-  LLVM_DEBUG({
-    dbgs() << "[ms-partitioner] Transfer schedules recorded: "
-           << result.transferSchedules.size() << "\n";
-  });
-
   return success();
 }
 
-//===----------------------------------------------------------------------===//
-// partition() — top-level orchestrator
-//===----------------------------------------------------------------------===//
-
 FailureOr<MsPartitionResult> MsPartitioner::partition() {
-  if (validateSchedule().failed())
+  if (failed(validateSchedule()) || failed(mapWorkItemSchedules()) ||
+      failed(verifyWorkItemOrdering()) || failed(assignCoordinates()) ||
+      failed(recordTransferSchedules()))
     return failure();
 
-  if (mapWorkItemStages().failed())
-    return failure();
-
-  if (assignCoordinates().failed())
-    return failure();
-
-  if (recordTransferSchedules().failed())
-    return failure();
-
-  LLVM_DEBUG({
-    dbgs() << "[ms-partitioner] Materialization complete:\n"
-           << "  worklist size: " << result.worklist.size() << "\n"
-           << "  pipeline depth: " << result.pipelineDepth << "\n"
-           << "  II: " << result.ii << "\n"
-           << "  stages: " << result.stages.size() << "\n"
-           << "  transfer schedules: " << result.transferSchedules.size()
-           << "\n";
-  });
-
+  LLVM_DEBUG(dbgs() << "[ms-partitioner] Materialization complete: "
+                    << result.worklist.size() << " WorkItems, depth="
+                    << result.pipelineDepth << ", II=" << result.ii << "\n");
   return std::move(result);
 }
 

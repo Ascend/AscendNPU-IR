@@ -27,7 +27,6 @@
 #include "bishengir/Dialect/HIVM/Utils/PipeSchedule/CostModel/MSCostModel.h"
 #include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsDagBuilder.h"
 #include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsPartitioner.h"
-#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/PreloadProtocolVerifier.h"
 #include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
@@ -3254,8 +3253,8 @@ LogicalResult CVPipelineImpl::run() {
   workspaceAllocs = defaultBuild->workspaceAllocs;
 
   // ---- SMS scheduling overlay (optional) ----
-  // All SMS phases (DAG build, SMS, materialization, verification,
-  // coordinate installation) are read-only with respect to the IR and the
+  // All SMS phases (DAG build, SMS, checked materialization, and coordinate
+  // installation) are read-only with respect to the IR and the
   // Default ownership state.  Any failure falls back to the Default
   // scheduler using the result already installed above.
   //
@@ -3333,16 +3332,7 @@ LogicalResult CVPipelineImpl::run() {
         return failure();
       }
 
-      // 4. Verify before installation.
-      PreloadProtocolVerifier verifier(pipelineLoop, *dagResult, *partResult);
-      if (failed(verifier.verify())) {
-        DEBUG_WITH_TYPE("ms-preload-scheduler",
-                        dbgs() << "[ms] protocol verification failed\n");
-        msFailReason = "verification-failure";
-        return failure();
-      }
-
-      // 5. Install coordinates/depth (no ownership mutation).
+      // 4. Install checked coordinates/depth (no ownership mutation).
       if (failed(installMsPartition(*partResult))) {
         DEBUG_WITH_TYPE("ms-preload-scheduler",
                         dbgs() << "[ms] coordinate installation failed\n");
