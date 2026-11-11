@@ -368,6 +368,28 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>, hacc.tar
 }
 
 // -----
+func.func private @use(memref<32x128xf32>)
+// CHECK-LABEL: llvm.func @fold_marked
+// CHECK:         llvm.getelementptr
+func.func @fold_marked(%arg0: memref<32x128xf32, strided<[128, 1], offset: ?>>) {
+  %0 = memref.cast %arg0 {fold_offset_into_ptr}
+      : memref<32x128xf32, strided<[128, 1], offset: ?>> to memref<32x128xf32>
+  func.call @use(%0) : (memref<32x128xf32>) -> ()
+  return
+}
+
+// -----
+func.func private @use(memref<32x128xf32>)
+// CHECK-LABEL: llvm.func @no_fold_unmarked
+// CHECK-NOT:     llvm.getelementptr
+func.func @no_fold_unmarked(%arg0: memref<32x128xf32, strided<[128, 1], offset: ?>>) {
+  %0 = memref.cast %arg0
+      : memref<32x128xf32, strided<[128, 1], offset: ?>> to memref<32x128xf32>
+  func.call @use(%0) : (memref<32x128xf32>) -> ()
+  return
+}
+
+// -----
 module {
   // CHECK-LABEL: llvm.func @test_ssbuf_to_llvm
   // CHECK-SAME: (%[[ARG0:.*]]: i64)
