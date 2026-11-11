@@ -1,20 +1,24 @@
-// Registered jagged-DK kernel enables 3160 TCB-view rematerialize without
-// --bypass-shape-registry.
-// TODO: Temporary transition measure: pass bypass-shape-registry=true while
-// ShapeRegistry is emptied; remove once ShapeRegistry is retired.
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2 bypass-shape-registry=true" -allow-unregistered-dialect %s | FileCheck %s
+// RUN: bishengir-opt %s -allow-unregistered-dialect > %t.before
+// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew set-depth-in-unroll-mode=2" -allow-unregistered-dialect > %t.after
+// RUN: diff %t.before %t.after
+// RUN: FileCheck %s --implicit-check-not=scope.scope --implicit-check-not=hivm.legacy-cv-pipeline < %t.after
+
+// A byte-storage TCB view cannot be replaced by a tensor of its physical
+// allocation type. Decline legacy pipelining and preserve the entire input,
+// including nested consumers, without any kernel-name-specific rebuilding.
 
 // CHECK-LABEL: func.func @_jagged_dense_flash_attention_bwd_dk_kernel
-// CHECK: %[[TCB_STORAGE:.*]] = memref.alloc() : memref<65536xi8, #hivm.address_space<ub>>
-// CHECK: scope.scope : () -> () {
-// CHECK: hivm.hir.fixpipe
-// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>
-// CHECK-NOT: bufferization.to_tensor %[[TCB_STORAGE]]
-// CHECK: scope.scope
-// CHECK: %[[TCB_VIEW:.*]] = memref.view %[[TCB_STORAGE]]
-// CHECK: %[[TCB_CAST:.*]] = memref.memory_space_cast %[[TCB_VIEW]]
-// CHECK: %[[TCB_TENSOR:.*]] = bufferization.to_tensor %[[TCB_CAST]] restrict writable
-// CHECK: hivm.hir.load ins(%[[TCB_TENSOR]] : tensor<?x128xf32>)
+// CHECK: scf.for
+// CHECK: %[[STORAGE:.*]] = memref.alloc() : memref<65536xi8, #hivm.address_space<ub>>
+// CHECK: %[[VIEW:.*]] = memref.view %[[STORAGE]]
+// CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[VIEW]]
+// CHECK: %[[TENSOR:.*]] = bufferization.to_tensor %[[CAST]] restrict writable
+// CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {{.*}} outs(%[[TENSOR]] : tensor<?x128xf32>)
+// CHECK: scf.if
+// CHECK: hivm.hir.load ins(%[[FIX]] : tensor<?x128xf32>)
+// CHECK: hivm.hir.load ins(%[[FIX]] : tensor<?x128xf32>)
+// CHECK: scf.yield
+
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @_jagged_dense_flash_attention_bwd_dk_kernel(
       %rows: index,

@@ -1556,14 +1556,7 @@ def CVPipelining
        Option<"enableLazyLoading", "enable-lazy-loading", "bool",
               /*default=*/"false",
               "Allow load ops to be cloned into multiple work items "
-              "to reduce intermediate buffer expansion">,
-       Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
-              /*default=*/"false",
-              "Bypass shape registry check for registered-kernel "
-              "CV-pipelining heuristics">,
-       Option<"enablePreload", "enable-preload", "bool",
-              /*default=*/"false",
-              "Enable registered-kernel CV-pipelining heuristics">];
+              "to reduce intermediate buffer expansion">];
 }
 
 def NormalizeWorkspaceStore

@@ -1,34 +1,28 @@
-// TODO: Temporary transition measure: pass bypass-shape-registry=true while
-// ShapeRegistry is emptied; remove once ShapeRegistry is retired.
-// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2 bypass-shape-registry=true" | FileCheck %s
-// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew enable-preload=false set-depth-in-unroll-mode=2" | FileCheck %s --check-prefix=OFF
-// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=0" | FileCheck %s --check-prefix=OFF
-// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=unroll enable-preload=true set-depth-in-unroll-mode=2" | FileCheck %s --check-prefix=OFF
-// RUN: sed 's/parallel_path_fwd_kernel_stage_zero/off_registry/g' %s | bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2" | FileCheck %s --check-prefix=OFF
+// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew set-depth-in-unroll-mode=2" | FileCheck %s --implicit-check-not=hivm.preload_num
+// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew set-depth-in-unroll-mode=0" | FileCheck %s --implicit-check-not=hivm.preload_num
+// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=unroll set-depth-in-unroll-mode=2" | FileCheck %s --implicit-check-not=hivm.preload_num
+// RUN: sed 's/parallel_path_fwd_kernel_stage_zero/off_registry/g' %s > %t
+// RUN: bishengir-opt %t -cv-pipelining="pipeline-mode=skew set-depth-in-unroll-mode=2" | FileCheck %t --implicit-check-not=hivm.preload_num
 
-// OFF: scf.for
-// OFF-NOT: scope.scope
-// OFF: hivm.hir.mmadL1
-// OFF-NOT: scope.scope
-// OFF: return
-
-// Test 1: Cross-core loop carry (CUBE producer -> VECTOR consumer) whose
-// transitive consumer chain spans both candidate work items. Every work item
-// is loop-carried-dependent, so no independent stage remains to skew against.
-// Preload stays enabled: each scope is pinned to preload_num 0, which does
-// not overlap the next iteration.
+// A cross-core carry spans every work item. Leave the loop for PipelineV2
+// instead of pinning all scopes to stage zero, regardless of the kernel name.
 
 // CHECK-LABEL: func.func @parallel_path_fwd_kernel_stage_zero
+// CHECK-NOT: scope.scope
 // CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%[[ITER_ARG:.*]] = %{{.*}}) -> (tensor<2x2xf32>)
-// CHECK: scope.scope
+// CHECK-NOT: scope.scope
 // CHECK: tensor.insert_slice %[[ITER_ARG]]
-// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 1 : i32, hivm.preload_num = 0 : i32, no_inline}
-// CHECK: scope.scope
+// CHECK-NOT: scope.scope
 // CHECK: hivm.hir.mmadL1
+// CHECK-NOT: scope.scope
+// CHECK: %[[CARRY:.*]] = bufferization.to_tensor
 // CHECK: hivm.hir.fixpipe
-// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 1 : i32, hivm.preload_num = 0 : i32, no_inline}
-// CHECK: scf.yield
-// CHECK-NOT: hivm.preload_num = {{[1-9]}}
+// CHECK-NOT: scope.scope
+// CHECK: scf.yield %[[CARRY]] : tensor<2x2xf32>
+// CHECK-NOT: scope.scope
+// CHECK-NOT: hivm.legacy-cv-pipeline
+// CHECK: return
+
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @parallel_path_fwd_kernel_stage_zero(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg6: i32, %arg7: i32, %arg8: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, true, true, true, false, false, false]> : vector<9xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix", parallel_mode = "simd"} {
     %cst = arith.constant 0.000000e+00 : f32

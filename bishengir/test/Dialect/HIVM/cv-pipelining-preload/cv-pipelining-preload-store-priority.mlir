@@ -1,29 +1,19 @@
-// TODO: Temporary transition measure: pass bypass-shape-registry=true while
-// ShapeRegistry is emptied; remove once ShapeRegistry is retired.
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true bypass-shape-registry=true" %s | FileCheck %s
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew" %s | FileCheck %s
 
-// The first function uses a registered LIT name plus `--enable-preload`
-// so store-priority is on without `--bypass-shape-registry` (bypass would
-// also enable other registry heuristics on the later negative cases).
-// The GM output and the transpose read the same tensor. Prioritize the
-// independent CBUF write consumed by the next CUBE scope over the GM stores,
-// while preserving the order between those stores. Also sink past the trailing
-// pure VECTOR computation so later vector-scope merging preserves the
-// priority of the CBUF write. The second output is an unranked GM function
-// argument reached through a ranked memref.cast.
+// Preserve the original GM-store / CBUF-copy order even for a previously
+// registered name. Both GM stores still precede the transpose and copy;
+// the atomic, aliasing-load and UB-copy cases below keep their ordering too.
+
 // CHECK-LABEL: func.func @cross_core_loop_carry_skew
 // CHECK: %[[RANKED_OUTPUT:.*]] = memref.cast {{.*}} : memref<*xf16, #hivm.address_space<gm>> to memref<16x16xf16, #hivm.address_space<gm>>
 // CHECK: scope.scope
 // CHECK: %[[CAST:.*]] = hivm.hir.vcast
 // CHECK: %[[SLICE:.*]] = tensor.extract_slice %[[CAST]]
-// CHECK-NOT: hivm.hir.store
-// CHECK: hivm.hir.vtranspose
-// CHECK-NOT: hivm.hir.store
-// CHECK: hivm.hir.copy
-// CHECK-NOT: hivm.hir.store
-// CHECK: %[[SCALED:.*]] = hivm.hir.vmul
-// CHECK-NEXT: hivm.hir.store ins(%[[SLICE]] : tensor<16x16xf16>)
+// CHECK: hivm.hir.store ins(%[[SLICE]] : tensor<16x16xf16>)
 // CHECK-NEXT: hivm.hir.store ins(%[[CAST]] : tensor<16x16xf16>) outs(%[[RANKED_OUTPUT]] : memref<16x16xf16, #hivm.address_space<gm>>)
+// CHECK: hivm.hir.vtranspose
+// CHECK: hivm.hir.copy
+// CHECK: %[[SCALED:.*]] = hivm.hir.vmul
 // CHECK-NEXT: scope.return %[[SCALED]]
 // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>
 // CHECK: scope.scope

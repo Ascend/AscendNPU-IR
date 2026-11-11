@@ -489,7 +489,6 @@ static void hivmPreBufferizationOptimizationPipeline(
           hivmPipelineOptions.setWorkspaceMultibuffer;
       pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
       pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
-      pipelineOptions.enablePreload = hivmPipelineOptions.enablePreload;
       // TODO: Temporary transition measure: PrepareRegisteredSkewTCBPass is
       // disabled and PipelineV2 is run after CVPipeliningPass for loops not
       // handled by legacy CVPipelining. Remove ShapeRegistry altogether later.
