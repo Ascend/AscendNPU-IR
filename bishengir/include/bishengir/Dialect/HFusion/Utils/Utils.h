@@ -20,7 +20,6 @@
 
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -30,22 +29,6 @@
 #include <optional>
 
 namespace mlir {
-namespace utils {
-
-/// Selects allowed predicates. If predicate is not supported by current
-/// lowering pipeline, then returns failure.
-FailureOr<hfusion::CompareFn> selectPredicate(arith::CmpFOp op);
-
-/// Selects allowed predicates. If predicate is not supported by current
-/// lowering pipeline, then returns failure.
-FailureOr<hfusion::CompareFn> selectPredicate(arith::CmpIOp op);
-
-/// Selects allowed predicates. If predicate is not supported by current
-/// lowering pipeline, then returns failure.
-FailureOr<hfusion::CompareFn> selectI1Predicate(arith::CmpIOp op);
-
-} // namespace utils
-
 namespace hfusion {
 
 /// Create arith index cast op to cast value `v` to index type.

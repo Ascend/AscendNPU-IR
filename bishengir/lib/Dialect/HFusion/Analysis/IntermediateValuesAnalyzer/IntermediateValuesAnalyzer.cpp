@@ -8,7 +8,6 @@
 
 #include "bishengir/Dialect/HFusion/Analysis/IntermediateValuesAnalyzer.h"
 #include "bishengir/Dialect/HFusion/Utils/ScalarOptimizationsUtils.h"
-#include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 
@@ -29,21 +28,12 @@ namespace hfusion {
 namespace detail {
 
 bool isAllowedOp(Operation *op) {
-  // Lifting may broadcast any non-intermediate operand. Only promote types
-  // supported by both the AVE vector operations and scalar broadcast lowering.
-  // TODO: implement these type-constraints on the table-gen level
-  // and reuse generated predicate here.
-  auto isSupportedElementType = [](Type type) {
-    return type.isInteger(1) || type.isInteger(8) || type.isInteger(16) ||
-           type.isInteger(32) || type.isInteger(64) || type.isBF16() ||
-           type.isF16() || type.isF32();
-  };
+  auto isIntOrFloat = [](Type type) { return type.isIntOrFloat(); };
 
-  if (!llvm::all_of(op->getOperandTypes(), isSupportedElementType))
+  if (!llvm::all_of(op->getOperandTypes(), isIntOrFloat))
     return false;
 
-  if (op->getResults().empty() ||
-      !isSupportedElementType(op->getResult(0).getType()))
+  if (op->getResults().empty() || !isIntOrFloat(op->getResult(0).getType()))
     return false;
 
   // In case if operation has non-trivial rounding mode we should skip it,
@@ -57,38 +47,6 @@ bool isAllowedOp(Operation *op) {
     }
   }
 
-  // There is comparison predicates that supported only
-  // on scalar unit. We cant promote scalar comparison
-  // with such predicates
-
-  if (auto cmpOp = dyn_cast<arith::CmpFOp>(op)) {
-    switch (cmpOp.getPredicate()) {
-    case arith::CmpFPredicate::OEQ:
-    case arith::CmpFPredicate::UNE:
-    case arith::CmpFPredicate::OLE:
-    case arith::CmpFPredicate::OLT:
-    case arith::CmpFPredicate::OGE:
-    case arith::CmpFPredicate::OGT:
-      return succeeded(utils::selectPredicate(cmpOp));
-    default:
-      return false;
-    }
-  }
-
-  if (auto cmpOp = dyn_cast<arith::CmpIOp>(op)) {
-    // TODO: Currently i1 operations filtered
-    // out to avoid incorrect generation of
-    // VFCmpS with argument type i1.
-    if (cmpOp.getLhs().getType().isInteger(1))
-      return false;
-    return succeeded(utils::selectPredicate(cmpOp));
-  }
-
-  // TODO: For binary operations number of transfers inserted before operation
-  // isnt greater than before optimization.
-  // After adding SelectOp it is not true anymore, which might
-  // lead to a performance regression.
-  // However, experiments should be made to prove that there is regression
   if (isa<arith::AddFOp, arith::AddIOp, arith::SubFOp, arith::SubIOp,
           arith::MulFOp, arith::MulIOp, arith::DivUIOp, arith::MaxSIOp,
           arith::MaxUIOp, arith::MinSIOp, arith::MinUIOp, arith::NegFOp,
@@ -98,7 +56,7 @@ bool isAllowedOp(Operation *op) {
           arith::CeilDivSIOp, arith::CeilDivUIOp, math::ExpOp, math::LogOp,
           math::AbsFOp, arith::ExtFOp, arith::FPToSIOp, arith::FPToUIOp,
           arith::SIToFPOp, arith::UIToFPOp, arith::ExtSIOp, arith::ExtUIOp,
-          arith::TruncIOp, arith::TruncFOp, arith::SelectOp>(op))
+          arith::TruncIOp, arith::TruncFOp>(op))
     return true;
 
   return false;
