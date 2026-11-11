@@ -1,4 +1,5 @@
 // RUN: bishengir-opt -outline-cv-scopes -canonicalize -cse -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -outline-cv-scopes -verify-each -split-input-file %s | FileCheck %s --check-prefix=RESHAPE
 
 // CHECK-LABEL: func.func @outline_basic_and_fanout
 // CHECK: %[[FOR:.*]] = scf.for {{.*}} iter_args(%[[ACC:.*]] = {{.*}}) -> (tensor<16x16xf32>)
@@ -1437,5 +1438,58 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       scf.yield %next, %t1 : i64, tensor<16x16xf32>
     }
     return %res#0, %res#1 : i64, tensor<16x16xf32>
+  }
+}
+
+// -----
+
+// Check raw outlining before canonicalization folds reshapes of tensor.empty.
+// Only the empty is shared; the fallback expand_shape belongs inside else.
+// CHECK-LABEL: func.func @outline_expand_init_then
+// CHECK: } {hivm.cv_pipelined_loop}
+// RESHAPE-LABEL: func.func @outline_expand_init_then
+// RESHAPE: %[[SCOPE:.*]] = scope.scope : () -> tensor<64x1xf32> {
+// RESHAPE-NEXT: %[[EMPTY:.*]] = tensor.empty() : tensor<64xf32>
+// RESHAPE-NEXT: %[[IF:.*]] = scf.if %[[COND:.*]] -> (tensor<64x1xf32>) {
+// RESHAPE-NEXT: %[[ZEROS:.*]] = hivm.hir.vbrc {{.*}} outs(%[[EMPTY]] : tensor<64xf32>)
+// RESHAPE-NEXT: %[[INIT:.*]] = tensor.expand_shape %[[ZEROS]] {{.*}} : tensor<64xf32> into tensor<64x1xf32>
+// RESHAPE-NEXT: %[[SUM:.*]] = hivm.hir.vreduce <sum> {{.*}} outs(%[[INIT]] : tensor<64x1xf32>)
+// RESHAPE-NEXT: hivm.hir.store ins(%[[SUM]] : tensor<64x1xf32>)
+// RESHAPE-NEXT: scf.yield %[[SUM]] : tensor<64x1xf32>
+// RESHAPE-NEXT: } else {
+// RESHAPE-NEXT: %[[INACTIVE:.*]] = tensor.expand_shape %[[EMPTY]] {{.*}} : tensor<64xf32> into tensor<64x1xf32>
+// RESHAPE-NEXT: scf.yield %[[INACTIVE]] : tensor<64x1xf32>
+// RESHAPE-NEXT: }
+// RESHAPE-NEXT: scope.return %[[IF]] : tensor<64x1xf32>
+// RESHAPE: scf.if %[[COND]] {
+// RESHAPE: hivm.hir.vadd ins(%[[SCOPE]], %[[SCOPE]] : tensor<64x1xf32>, tensor<64x1xf32>)
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @outline_expand_init_then(
+      %x: tensor<64x64xf32>, %dst0: memref<64x1xf32>,
+      %dst1: memref<64x1xf32>, %cube_dst: memref<64x64xf32>,
+      %n: index, %cond: i1)
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %true = arith.constant true
+    %zero = arith.constant 0.0 : f32
+    scf.for %i = %c0 to %n step %c1 {
+      scf.if %cond {
+        %empty = tensor.empty() : tensor<64xf32>
+        %zeros = hivm.hir.vbrc ins(%zero : f32) outs(%empty : tensor<64xf32>) -> tensor<64xf32>
+        %init = tensor.expand_shape %zeros [[0, 1]] output_shape [64, 1] : tensor<64xf32> into tensor<64x1xf32>
+        %dot_init = tensor.empty() : tensor<64x64xf32>
+        %dot = hivm.hir.mmadL1 ins(%x, %x, %true, %c64, %c64, %c64 : tensor<64x64xf32>, tensor<64x64xf32>, i1, index, index, index) outs(%dot_init : tensor<64x64xf32>) -> tensor<64x64xf32>
+        hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%dot : tensor<64x64xf32>) outs(%cube_dst : memref<64x64xf32>)
+        %sum = hivm.hir.vreduce <sum> ins(%x : tensor<64x64xf32>) outs(%init : tensor<64x1xf32>) reduce_dims = [1] -> tensor<64x1xf32>
+        hivm.hir.store ins(%sum : tensor<64x1xf32>) outs(%dst0 : memref<64x1xf32>)
+        // Fanout makes the reduction result cross scope boundaries.
+        %next_init = tensor.empty() : tensor<64x1xf32>
+        %next = hivm.hir.vadd ins(%sum, %sum : tensor<64x1xf32>, tensor<64x1xf32>) outs(%next_init : tensor<64x1xf32>) -> tensor<64x1xf32>
+        hivm.hir.store ins(%next : tensor<64x1xf32>) outs(%dst1 : memref<64x1xf32>)
+      }
+    }
+    return
   }
 }

@@ -1969,18 +1969,31 @@ LogicalResult CVScopeOutliner::sortPopulatedWorkItems() {
   return success();
 }
 
-static Value getIntermediateInitValue(Value res) {
+static Value
+getIntermediateInitValue(Value res,
+                         SmallVectorImpl<Operation *> *reshapeOps = nullptr) {
   if (!isa<TensorType>(res.getType()))
     return nullptr;
   auto dpsOp = res.getDefiningOp<DestinationStyleOpInterface>();
   assert(dpsOp && "expected intermediate tensor value to be defined by DPS op");
   Value initVal = dpsOp.getTiedOpOperand(cast<OpResult>(res))->get();
-  // Preserve the broadcast padding on the active path, but reuse its backing
-  // empty tensor as the value for the inactive branch.
-  if (auto broadcast = initVal.getDefiningOp<VBrcOp>())
-    initVal = broadcast.getDst();
+  // Preserve broadcasts on the active path. The inactive path reuses their
+  // backing empty tensor, with the same reshapes as the original destination.
+  while (Operation *initOp = initVal.getDefiningOp()) {
+    if (auto broadcast = dyn_cast<VBrcOp>(initOp)) {
+      initVal = broadcast.getDst();
+    } else if (isa<tensor::ExpandShapeOp, tensor::CollapseShapeOp,
+                   tensor::ReshapeOp>(initOp)) {
+      if (reshapeOps)
+        reshapeOps->push_back(initOp);
+      initVal = initOp->getOperand(0);
+    } else {
+      break;
+    }
+  }
   assert(initVal.getDefiningOp<tensor::EmptyOp>() &&
-         "expected outs() of intermediate tensor value to be tensor.empty");
+         "expected outs() of intermediate tensor value to be rooted in "
+         "tensor.empty");
   return initVal;
 }
 
@@ -2292,6 +2305,34 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
         for (Operation *hOp : opsToHoist)
           builder.clone(*hOp, scopeMap);
 
+        // Fallbacks may be built after the opposite branch has been cloned.
+        // Only use mappings that are available before either branch.
+        const IRMapping initBaseMap(scopeMap);
+        auto getInitValue = [&](Value res) -> Value {
+          SmallVector<Operation *> reshapeOps;
+          Value init = getIntermediateInitValue(res, &reshapeOps);
+          if (!init)
+            return nullptr;
+          init = initBaseMap.lookupOrDefault(init);
+          // Use a separate mapping so the active branch still clones the
+          // original initialized destination, including its broadcasts.
+          IRMapping initMap(initBaseMap);
+          for (Operation *reshape : llvm::reverse(reshapeOps)) {
+            initMap.map(reshape->getOperand(0), init);
+            // A tensor.reshape shape (or an expand_shape extent) may be a
+            // constant defined in the active branch. Rematerialize it here.
+            for (Value operand : reshape->getOperands().drop_front()) {
+              Operation *def = operand.getDefiningOp();
+              if (!initMap.contains(operand) && def &&
+                  def->hasTrait<OpTrait::ConstantLike>() &&
+                  enclosingIf->isProperAncestor(def))
+                builder.clone(*def, initMap);
+            }
+            init = builder.clone(*reshape, initMap)->getResult(0);
+          }
+          return init;
+        };
+
         SmallVector<Value> ifThenYieldVals;
         SmallVector<Value> ifElseYieldVals;
         SmallVector<Value> ifOrigResultsToMap;
@@ -2335,7 +2376,7 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
           for (Value res : tOp->getResults()) {
             if (cOps.outputs.contains(res) && ifYieldSet.insert(res).second) {
               ifThenYieldVals.push_back(res);
-              ifElseYieldVals.push_back(getIntermediateInitValue(res));
+              ifElseYieldVals.push_back(nullptr);
               ifOrigResultsToMap.push_back(res);
             }
           }
@@ -2347,7 +2388,7 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
           for (Value res : eOp->getResults()) {
             if (!cOps.outputs.contains(res) || !ifYieldSet.insert(res).second)
               continue;
-            ifThenYieldVals.push_back(getIntermediateInitValue(res));
+            ifThenYieldVals.push_back(nullptr);
             ifElseYieldVals.push_back(res);
             ifOrigResultsToMap.push_back(res);
           }
@@ -2383,7 +2424,10 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
           builder.setInsertionPointToEnd(block);
           SmallVector<Value> operands;
           for (auto [idx, value] : llvm::enumerate(values)) {
-            Value mapped = value ? scopeMap.lookupOrDefault(value) : Value();
+            // Materialize a missing branch's destination here so its reshapes
+            // and shape constants execute only on the inactive path.
+            Value mapped = value ? scopeMap.lookupOrDefault(value)
+                                 : getInitValue(ifOrigResultsToMap[idx]);
             operands.push_back(getOrCreateElseYieldValue(
                 builder, loc, scopeMap.lookupOrDefault(ifOrigResultsToMap[idx]),
                 mapped));
