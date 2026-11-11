@@ -27,32 +27,6 @@ include "mlir/IR/OpBase.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
 //===----------------------------------------------------------------------===//
-// ApplyLoopInvariantCodeMotionWithSliceBoundaryOp
-//===----------------------------------------------------------------------===//
-
-def ApplyLoopInvariantCodeMotionWithSliceBoundaryOp :
-    Op<Transform_Dialect, "apply_licm_with_slice_boundary",
-       [DeclareOpInterfaceMethods<TransformOpInterface>,
-        DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
-        ReportTrackingListenerFailuresOpTrait]> {
-  let summary = "Run LICM within explicit slice boundaries";
-  let description = [{
-    Each target must be an scf.for that explicitly defines a slice boundary.
-    Walks its loop-like operations in post-order, applying ordinary LICM to
-    nested loops. At the target loop, tensor.extract_slice operations and
-    their dependent operations stay inside, while other invariant operations
-    use the usual LICM legality checks. Enclosing loops are not processed.
-
-    Targets must not contain one another, so that processing one boundary
-    cannot hoist slices across another. An empty target handle is a no-op.
-    This operation reads the target handle and modifies the payload.
-  }];
-  let arguments = (ins TransformHandleTypeInterface:$target);
-  let results = (outs);
-  let assemblyFormat = "`to` $target attr-dict `:` type($target)";
-}
-
-//===----------------------------------------------------------------------===//
 // GetFuncArgumentOp
 //===----------------------------------------------------------------------===//
 
