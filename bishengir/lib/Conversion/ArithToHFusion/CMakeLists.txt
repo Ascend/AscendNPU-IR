@@ -19,7 +19,6 @@ add_bishengir_conversion_library(BiShengIRArithToHFusion
   MLIRFuncDialect
   MLIRLinalgDialect
   BiShengIRHFusionDialect
-  BiShengIRHFusionUtils
   MLIRTransformUtils
   MLIRRewrite
   MLIRPass
