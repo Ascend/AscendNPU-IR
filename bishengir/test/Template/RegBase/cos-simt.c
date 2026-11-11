@@ -14,9 +14,6 @@
 //     and infinity,
 //   * the rank-specialized _mlir_ciface_cos_fp32_simt_<rank>d entries for
 //     ranks 1..5, including strided views and non-zero offsets.
-//
-// Sin.cpp is included solely to reuse its SIN_TWO_OVER_PI_TABLE constant for
-// the caller-staged UB table.
 
 #include <cmath>
 #include <cstdint>
@@ -101,8 +98,9 @@ static inline float npuir_test_fabsf(float x) { return std::fabs(x); }
 #define __fma(a, b, c) npuir_test_fma((a), (b), (c))
 #define __fabsf(x) npuir_test_fabsf(x)
 
+#include "RegBase/SIMTTrigCommon.h"
+
 #include "lib/Template/lib/RegBase/Vector/Cos.cpp"
-#include "lib/Template/lib/RegBase/Vector/Sin.cpp"
 
 static uint32_t gTable[320];
 static int gFailures = 0;
@@ -119,11 +117,14 @@ static double referenceCos(float x) {
   return std::cos(static_cast<double>(x));
 }
 
-static bool tableMatches() {
+static uint32_t tableChecksum() {
+  uint32_t hash = 2166136261u;
   for (int i = 0; i < 320; ++i)
-    if (gTable[i] != SIN_TWO_OVER_PI_TABLE[i])
-      return false;
-  return true;
+    for (int byte = 0; byte < 4; ++byte) {
+      hash ^= (SIMT_TWO_OVER_PI_TABLE[i] >> (8 * byte)) & 0xffu;
+      hash *= 16777619u;
+    }
+  return hash;
 }
 
 template <int Rank>
@@ -151,16 +152,16 @@ static void checkMemRef(const char *name, const float *src, const float *dst,
 
 int cos_simt_host() {
   for (int i = 0; i < 320; ++i)
-    gTable[i] = SIN_TWO_OVER_PI_TABLE[i];
+    gTable[i] = SIMT_TWO_OVER_PI_TABLE[i];
 
   std::printf("max-rank: %d\n", COS_SIMT_MAX_RANK);
   report(COS_SIMT_MAX_RANK == 5, "max-rank-default");
   std::printf("table-length: %d\n",
-              static_cast<int>(sizeof(SIN_TWO_OVER_PI_TABLE) /
-                               sizeof(SIN_TWO_OVER_PI_TABLE[0])));
-  report(tableMatches(), "table-staging");
-  report(SIN_TWO_OVER_PI_TABLE[129] == 0x00000001u, "table-first-limb");
-  report(SIN_TWO_OVER_PI_TABLE[319] == 0x9e21c820u, "table-tail");
+              static_cast<int>(sizeof(SIMT_TWO_OVER_PI_TABLE) /
+                               sizeof(SIMT_TWO_OVER_PI_TABLE[0])));
+  report(tableChecksum() == 0xddce4aa6u, "table-checksum");
+  report(SIMT_TWO_OVER_PI_TABLE[129] == 0x00000001u, "table-first-limb");
+  report(SIMT_TWO_OVER_PI_TABLE[319] == 0x9e21c820u, "table-tail");
 
   // Small and threshold angles: Cody-Waite path. The branch test is strict
   // (>), so the exact SIN_COS_THRESHOLD value stays on this path.
@@ -303,7 +304,7 @@ int main() { return cos_simt_host(); }
 // CHECK: max-rank: 5
 // CHECK: max-rank-default: PASS
 // CHECK: table-length: 320
-// CHECK: table-staging: PASS
+// CHECK: table-checksum: PASS
 // CHECK: table-first-limb: PASS
 // CHECK: table-tail: PASS
 // CHECK: keep-const-small: PASS
