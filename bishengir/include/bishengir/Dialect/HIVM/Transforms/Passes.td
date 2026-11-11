@@ -631,6 +631,14 @@ def OutlineAllocInVF : HIVMPass<"hivm-outline-alloc-in-VF", "ModuleOp"> {
                            "memref::MemRefDialect"];
 }
 
+def OutlineCopyInVF : HIVMPass<"hivm-outline-copy-in-VF", "ModuleOp"> {
+  let summary =
+      "rewrite hivm.load to hivm.copy in VF when operands are VF args";
+  let constructor = "mlir::hivm::createOutlineCopyInVFPass()";
+  let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
+                           "memref::MemRefDialect", "vector::VectorDialect"];
+}
+
 def NormalizeTmpBufferInVf
     : HIVMPass<"hivm-normalize-tmp-buffer-in-vf", "func::FuncOp"> {
   let summary = "Normalize temporary tensor buffers in vector functions.";
@@ -644,20 +652,6 @@ def NormalizeTmpBufferInVf
   let constructor = "mlir::hivm::createNormalizeTmpBufferInVfPass()";
   let dependentDialects = ["func::FuncDialect", "scf::SCFDialect",
                            "tensor::TensorDialect"];
-}
-
-def VerifyVectorFunctionTopLevelCopy
-    : HIVMPass<"hivm-verify-vector-function-top-level-copy", "func::FuncOp"> {
-  let summary = "Verify that vector functions have no top-level memref.copy";
-  let description = [{
-    Post-bufferization IR checkpoint for `hivm.vector_function` functions: a
-    `memref.copy` placed directly in the function's top-level block is not
-    supported by the downstream lowering pipeline. The pass emits an error and
-    fails when such a copy is found, instead of leaving it to fail later with
-    a less actionable error. The IR is never modified.
-  }];
-  let constructor = "mlir::hivm::createVerifyVectorFunctionTopLevelCopyPass()";
-  let dependentDialects = ["memref::MemRefDialect"];
 }
 
 def ConstantizeBufferSize

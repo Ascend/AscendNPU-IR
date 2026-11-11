@@ -240,6 +240,48 @@ bool static isOffsetAligned(Value memrefVal,
   return true;
 }
 
+static bool hasUnalignedFoldOffsetCast(BlockArgument blockArg,
+                                       int64_t hwAlignBits, int64_t elemBits) {
+  auto funcOp = cast<func::FuncOp>(blockArg.getOwner()->getParentOp());
+  auto checkCall = [blockArg, elemBits, funcOp,
+                    hwAlignBits](func::CallOp callOp) {
+    func::FuncOp callee =
+        mlir::utils::getCalledFunction<func::FuncOp, func::CallOp>(callOp);
+    if (callee == funcOp) {
+      auto castOp = callOp.getOperand(blockArg.getArgNumber())
+                        .getDefiningOp<memref::CastOp>();
+      if (castOp && castOp->hasAttr(mlir::utils::KFoldOffsetMarker)) {
+        // The marker guarantees that the source has a dynamic offset and a
+        // valid static-stride layout.
+        auto sourceType = cast<MemRefType>(castOp.getSource().getType());
+        SmallVector<int64_t> strides;
+        int64_t offset;
+        LogicalResult layoutResult =
+            getStridesAndOffset(sourceType, strides, offset);
+        assert(succeeded(layoutResult) && offset == ShapedType::kDynamic &&
+               !strides.empty());
+        (void)layoutResult;
+
+        bool aligned;
+        if (strides.size() == 1) {
+          int64_t size = sourceType.getDimSize(0);
+          aligned = !ShapedType::isDynamic(size) &&
+                    (size * elemBits) % hwAlignBits == 0;
+        } else {
+          aligned = llvm::all_of(
+              llvm::drop_end(strides), [elemBits, hwAlignBits](int64_t stride) {
+                return (stride * elemBits) % hwAlignBits == 0;
+              });
+        }
+        if (!aligned)
+          return WalkResult::interrupt();
+      }
+    }
+    return WalkResult::advance();
+  };
+  return funcOp->getParentOfType<ModuleOp>().walk(checkCall).wasInterrupted();
+}
+
 // Analyze whether the starting address of the memref object meets the alignment
 // requirements.
 static bool isMemrefAligned(Value memrefVal, int64_t hwAlignBits,
@@ -251,6 +293,11 @@ static bool isMemrefAligned(Value memrefVal, int64_t hwAlignBits,
     defOp = memrefVal.getDefiningOp();
   }
   if (dyn_cast<func::FuncOp>(defOp)) {
+    // Check whether the memref object is a function parameter.
+    if (hasUnalignedFoldOffsetCast(cast<BlockArgument>(memrefVal), hwAlignBits,
+                                   elemBits))
+      return false;
+
     MemRefType memRefTy = cast<MemRefType>(memrefVal.getType());
     SmallVector<int64_t> strides(memRefTy.getRank());
     int64_t offset = 0;

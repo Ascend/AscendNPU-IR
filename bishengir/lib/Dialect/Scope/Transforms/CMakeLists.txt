@@ -1,7 +1,6 @@
 add_bishengir_dialect_library(BiShengIRScopeTransforms
   BufferizableOpInterfaceImpl.cpp
   InlineScope.cpp
-  InlineFuncToScope.cpp
   OutlineScope.cpp
   PropagateSIMTMode.cpp
   TransformOpForSIMT.cpp

@@ -617,6 +617,8 @@ static void hivmPostBufferizationOptimizationPipeline(
     // make sure no alloc within vf and no value returned by vf,
     // so InferHIVMMemScope can work correctly
     pm.addPass(createOutlineAllocInVFPass());
+    // Move VF entry DMA on argument buffers to the caller before VF cleanup.
+    pm.addPass(createOutlineCopyInVFPass());
     pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
     // Late pipeline workaround for VFFusion/tree-reduce fusion helpers. This
     // recovery is separate from InlineScope's regular scope-unwrapping role.
@@ -701,6 +703,7 @@ static void hivmPostBufferizationOptimizationPipeline(
     // make sure no alloc within vf and no value returned by vf,
     // so InferHIVMMemScope can work correctly
     pm.addPass(createOutlineAllocInVFPass());
+    pm.addPass(createOutlineCopyInVFPass());
     pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
   }
   // Infer memory scope for newly allocated extra buffer
