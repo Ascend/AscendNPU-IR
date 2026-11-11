@@ -150,8 +150,8 @@ SmallVector<OpFoldResult> Flattener::getFlattenMixedSizes(Value res) const {
           }
         }
         if (auto recovered = tryGetOriginalSliceMixedSizes(res)) {
-            if (static_cast<int64_t>(recovered->size()) ==
-                static_cast<int64_t>(args.size()))
+          if (static_cast<int64_t>(recovered->size()) ==
+              static_cast<int64_t>(args.size()))
             return *recovered;
         }
         LDBG("[Parent not part of args, not reified size] " << res << " "
@@ -1727,15 +1727,6 @@ Flattener::tryGetOriginalSliceMixedSizes(Value value) const {
 
   // Walk back through replacement chain:
   // new collapsed value -> old pre-flatten value
-  for (auto it = valueReplacement.find(current); it != valueReplacement.end();
-       it = valueReplacement.find(current)) {
-    Value prev = it->second;
-    if (!visited.insert(prev).second) {
-      break;
-    }
-
-    current = prev;
-  }
 
   while (true) {
     if (auto replIt = valueReplacement.find(current);
