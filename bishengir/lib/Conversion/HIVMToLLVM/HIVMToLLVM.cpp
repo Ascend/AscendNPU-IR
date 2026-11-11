@@ -309,7 +309,9 @@ void mlir::hivm::populateHIVMToLLVMConversionPatterns(
   patterns.add<BitcastOpLowering>(converter);
   populateFinalizeMemRefToLLVMConversionPatterns(converter, patterns);
 
-  // Func dialect related conversion patterns.
+  // Populate Func dialect conversion patterns.
+  if (isRegBased)
+    bishengir::populateLegalizeFP8ScalarCallABIPatterns(patterns);
   if (converter.getOptions().onDemandBarePtrCallConv) {
     bishengir::populateFuncToLLVMFuncOpConversionPattern(converter, patterns);
   }
