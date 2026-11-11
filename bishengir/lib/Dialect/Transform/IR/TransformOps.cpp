@@ -151,7 +151,70 @@ FailureOr<Value> traceReshapeOrSliceSingleProducer(Value input) {
       getReshapeOrSliceSource(definingOp));
 }
 
+bool hasAttrWithPrefix(Operation *op, StringRef prefix) {
+  return llvm::any_of(op->getAttrs(), [&](NamedAttribute attr) {
+    return attr.getName().strref().starts_with(prefix);
+  });
+}
+
+bool isTiledSliceBoundary(LoopLikeOpInterface loop) {
+  return isa<scf::ForOp>(loop.getOperation()) &&
+         hasAttrWithPrefix(loop.getOperation(), "outlined-loop-target-");
+}
+
+// Existing AV2 target labels cover both fusion and vectorization candidates.
+// Include the root operation and nested operations when checking a move.
+bool hasPendingFusionOp(Operation *op) {
+  auto walker = [](Operation *nested) {
+    return hasAttrWithPrefix(nested, "hfusion-auto-vectorize-target-")
+               ? WalkResult::interrupt()
+               : WalkResult::advance();
+  };
+  return op->walk(walker).wasInterrupted();
+}
+
+bool hasExtractSlice(Operation *op) {
+  auto walker = [](tensor::ExtractSliceOp) { return WalkResult::interrupt(); };
+  return op->walk(walker).wasInterrupted();
+}
+
+// Check region operations as well: moving an entire region can otherwise carry
+// an extract_slice across the boundary without moving the slice individually.
+void moveLoopInvariantCodeWithSliceBoundary(LoopLikeOpInterface loop) {
+  moveLoopInvariantCode(
+      loop.getLoopRegions(),
+      [&](Value value, Region *) { return loop.isDefinedOutsideOfLoop(value); },
+      [&](Operation *op, Region *) {
+        // A region is also immovable if it contains an AV2 operation that is
+        // still tracked by the fusion/vectorization plan.
+        if (hasPendingFusionOp(op))
+          return false;
+        if (isTiledSliceBoundary(loop) && hasExtractSlice(op))
+          return false;
+        return isMemoryEffectFree(op) && isSpeculatable(op);
+      },
+      [&](Operation *op, Region *) { loop.moveOutOfLoop(op); });
+}
+
 } // namespace
+
+//===----------------------------------------------------------------------===//
+// ApplyLoopInvariantCodeMotionWithSliceBoundaryOp
+//===----------------------------------------------------------------------===//
+
+DiagnosedSilenceableFailure
+ApplyLoopInvariantCodeMotionWithSliceBoundaryOp::applyToOne(
+    TransformRewriter &rewriter, LoopLikeOpInterface target,
+    ApplyToEachResultList &results, TransformState &state) {
+  moveLoopInvariantCodeWithSliceBoundary(target);
+  return DiagnosedSilenceableFailure::success();
+}
+
+void ApplyLoopInvariantCodeMotionWithSliceBoundaryOp::getEffects(
+    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  onlyReadsHandle(getTargetMutable(), effects);
+  modifiesPayload(effects);
+}
 
 //===----------------------------------------------------------------------===//
 // GetFuncArgumentOp
