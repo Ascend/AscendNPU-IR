@@ -309,6 +309,54 @@ void moveOpToScope(Operation *op, ScopeOp target, bool insertAtEnd) {
   }
 }
 
+/// Check the complete motion before changing either fragment. A matching
+/// pipeline.if.cond identifies fragments of the same original conditional, but
+/// previous scope merges may have placed other computations between them.
+static bool canFuseIfFragments(scf::IfOp firstIf, scf::IfOp secondIf) {
+  Block *firstBlock = firstIf->getBlock();
+  auto hasUnavailableOperand = [&](Operation *op, bool allowIfResults) {
+    return op
+        ->walk([&](Operation *nested) {
+          for (Value operand : nested->getOperands()) {
+            Operation *def = operand.getDefiningOp();
+            if (!def)
+              continue;
+            Operation *ancestor = firstBlock->findAncestorOpInBlock(*def);
+            if (!ancestor || ancestor->isBeforeInBlock(firstIf))
+              continue;
+            // Direct uses of the first if's results in the second fragment's
+            // branches are replaced with the corresponding branch yields.
+            if (allowIfResults && def == firstIf.getOperation() &&
+                secondIf->isProperAncestor(nested))
+              continue;
+            return WalkResult::interrupt();
+          }
+          return WalkResult::advance();
+        })
+        .wasInterrupted();
+  };
+
+  // The second fragment will execute at firstIf's position. Do not cross
+  // intervening effects in the first scope, even without an SSA dependency.
+  for (Operation *op = firstIf->getNextNode();
+       op && !op->hasTrait<OpTrait::IsTerminator>(); op = op->getNextNode())
+    if (!isMemoryEffectFree(op))
+      return false;
+
+  bool firstIfIsPure = isMemoryEffectFree(firstIf);
+  for (Operation &op : *secondIf->getBlock()) {
+    if (&op == secondIf.getOperation())
+      break;
+    // Hoist the whole prefix in order or leave it untouched. Checking only
+    // direct operands and moving a partial prefix can strand transitive or
+    // region-captured dependencies after the fused conditional.
+    if (hasUnavailableOperand(&op, /*allowIfResults=*/false) ||
+        (!firstIfIsPure && !isMemoryEffectFree(&op)))
+      return false;
+  }
+  return !hasUnavailableOperand(secondIf, /*allowIfResults=*/true);
+}
+
 ScopeOp mergeScopes(ScopeOp scope1, ScopeOp scope2, Operation *at) {
   if (!scope1 || !scope2)
     return ScopeOp();
@@ -377,22 +425,14 @@ ScopeOp mergeScopes(ScopeOp scope1, ScopeOp scope2, Operation *at) {
     if (!idAttr)
       continue;
     scf::IfOp if1 = firstIfById.lookup(idAttr.getInt());
-    if (!if1)
+    if (!if1 || !canFuseIfFragments(if1, if2))
       continue;
 
-    // Move prerequisite ops preceding if2 in secondBlock before if1 if they do
-    // not depend on if1 or later ops in firstBlock.
+    // The preflight proved that every prerequisite can move before if1.
     for (Operation &op : llvm::make_early_inc_range(secondBlock)) {
       if (&op == if2.getOperation())
         break;
-      bool dependsOnIf1OrLater =
-          llvm::any_of(op.getOperands(), [&](Value opnd) {
-            Operation *def = opnd.getDefiningOp();
-            return def && def->getBlock() == &firstBlock &&
-                   !def->isBeforeInBlock(if1);
-          });
-      if (!dependsOnIf1OrLater)
-        op.moveBefore(if1);
+      op.moveBefore(if1);
     }
 
     // Redirect uses of if1's results inside if2's branches to if1's branch
