@@ -7,7 +7,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "Util.h"
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
@@ -49,6 +51,12 @@ static SetVector<Value> getWorkItemOperands(Operation *op) {
   SetVector<Value> operands(op->operand_begin(), op->operand_end());
   getUsedValuesDefinedAbove(op->getRegions(), operands);
   return operands;
+}
+
+static Operation *ancestorInBlock(Operation *op, Block *block) {
+  while (op && op->getBlock() != block)
+    op = op->getParentOp();
+  return op;
 }
 
 struct ConditionalOps {
@@ -102,6 +110,8 @@ private:
                              WorkItem *item) const;
 
   // Analysis steps
+  LogicalResult duplicateExtractScalarForCube();
+  Value getIfConditionForItem(scf::IfOp ifOp, const WorkItem *item) const;
   unsigned getOrAssignIfId(scf::IfOp ifOp);
   ConditionalOps &getOrCreateCondOps(WorkItem &item, scf::IfOp ifOp,
                                      Operation *branchOp = nullptr);
@@ -138,7 +148,9 @@ private:
   SmallVector<WorkItem *> sortedWorkItems;
   DenseMap<Operation *, WorkItem *> opToWorkItemMap;
   DenseMap<Value, WorkItem *> conditionalMergeOwners;
+  DenseMap<Operation *, Value> cubeIfConditions;
   SmallVector<Value> nestedCounters;
+  Operation *checkpointClone = nullptr;
   unsigned nextWorkItemId = 0;
   unsigned nextIfId = 0;
 };
@@ -432,6 +444,284 @@ bool CVScopeOutliner::isIfResultOwnedByItem(scf::IfOp ifOp, unsigned resIdx,
          (eDef && opToWorkItemMap.lookup(eDef) == item);
 }
 
+Value CVScopeOutliner::getIfConditionForItem(scf::IfOp ifOp,
+                                             const WorkItem *item) const {
+  if (item && item->coreType == TCoreType::CUBE) {
+    if (Value cubeCond = cubeIfConditions.lookup(ifOp.getOperation()))
+      return cubeCond;
+  }
+  return ifOp.getCondition();
+}
+
+LogicalResult CVScopeOutliner::duplicateExtractScalarForCube() {
+  static constexpr llvm::StringLiteral kReplacementLabel =
+      "DuplicateTensorExtractForCube::replacementLabel";
+  static constexpr llvm::StringLiteral kNewExtractLabel =
+      "DuplicateTensorExtractForCube::newExtractLabel";
+
+  SmallVector<annotation::MarkOp> replacementMarks;
+  loopOp->walk([&](annotation::MarkOp markOp) {
+    if (markOp->hasAttr(kReplacementLabel) && !markOp.getValues().empty())
+      replacementMarks.push_back(markOp);
+  });
+  if (replacementMarks.empty())
+    return success();
+
+  if (!checkpointClone)
+    checkpointClone = OpBuilder(loopOp).clone(*loopOp);
+
+  auto getNestedIfCores = [](scf::IfOp ifOp) -> std::pair<bool, bool> {
+    bool hasCube = false;
+    bool hasVec = false;
+    ifOp->walk([&](Operation *nested) {
+      if (nested == ifOp.getOperation())
+        return;
+      TCoreType ct = getCoreType(nested).value_or(TCoreType::CUBE_OR_VECTOR);
+      if (ct == TCoreType::CUBE_OR_VECTOR) {
+        if (auto concrete = queryConcreteCoreType(nested))
+          ct = *concrete;
+      }
+      hasCube |= (ct == TCoreType::CUBE);
+      hasVec |= (ct == TCoreType::VECTOR);
+    });
+    return {hasCube, hasVec};
+  };
+
+  OpBuilder builder(ctx);
+  for (annotation::MarkOp markOp : replacementMarks) {
+    Value original = markOp.getSrc();
+    Value replacement = markOp.getValues()[0];
+
+    Block *defBlock = nullptr;
+    if (Operation *defOp = original.getDefiningOp())
+      defBlock = defOp->getBlock();
+    else if (auto blkArg = dyn_cast<BlockArgument>(original))
+      defBlock = blkArg.getOwner();
+    if (!defBlock)
+      continue;
+
+    DenseSet<Operation *> tainted;
+    DenseSet<Operation *> cubeConsumers;
+    SetVector<scf::IfOp> mixedCubeIfs;
+    SetVector<Block *> taintedBranchBlocks;
+    DenseSet<Value> visitedValues;
+    SmallVector<Value> wl = {original};
+
+    while (!wl.empty()) {
+      Value v = wl.pop_back_val();
+      if (!visitedValues.insert(v).second)
+        continue;
+
+      for (auto &[ifOpPtr, prevCond] : cubeIfConditions) {
+        if (prevCond == v && ifOpPtr->getBlock() == defBlock)
+          mixedCubeIfs.insert(cast<scf::IfOp>(ifOpPtr));
+      }
+
+      for (OpOperand &use : v.getUses()) {
+        Operation *user = use.getOwner();
+        Operation *ancestor = ancestorInBlock(user, defBlock);
+        if (!ancestor || ancestor == markOp.getOperation())
+          continue;
+
+        if (auto ifOp = dyn_cast<scf::IfOp>(ancestor)) {
+          auto [hasCube, hasVec] = getNestedIfCores(ifOp);
+          if (hasCube && hasVec) {
+            if (user == ifOp.getOperation()) {
+              if (!cubeIfConditions.contains(ifOp.getOperation()))
+                mixedCubeIfs.insert(ifOp);
+              continue;
+            }
+            Block *branchBlock = user->getBlock();
+            Operation *branchAnc = ancestorInBlock(user, branchBlock);
+            if (!branchAnc || isa<scf::YieldOp>(branchAnc))
+              continue;
+            TCoreType bCore =
+                getCoreType(branchAnc).value_or(TCoreType::CUBE_OR_VECTOR);
+            if (bCore == TCoreType::CUBE) {
+              cubeConsumers.insert(branchAnc);
+              continue;
+            }
+            if (bCore == TCoreType::VECTOR)
+              continue;
+            if (tainted.insert(branchAnc).second) {
+              taintedBranchBlocks.insert(branchBlock);
+              for (Value res : branchAnc->getResults())
+                wl.push_back(res);
+            }
+            continue;
+          }
+          if (hasCube) {
+            cubeConsumers.insert(ifOp.getOperation());
+            continue;
+          }
+          if (hasVec)
+            continue;
+        }
+
+        TCoreType ancCore =
+            getCoreType(ancestor).value_or(TCoreType::CUBE_OR_VECTOR);
+        if (ancCore == TCoreType::CUBE) {
+          cubeConsumers.insert(ancestor);
+          continue;
+        }
+        if (ancCore == TCoreType::VECTOR)
+          continue;
+        if (tainted.insert(ancestor).second) {
+          for (Value res : ancestor->getResults())
+            wl.push_back(res);
+        }
+      }
+    }
+
+    DenseSet<Operation *> needed;
+    SmallVector<Operation *> seed;
+    for (Operation *op : tainted) {
+      bool reachesCube = false;
+      for (Value res : op->getResults()) {
+        for (Operation *u : res.getUsers()) {
+          if (llvm::any_of(cubeConsumers, [&](Operation *consumer) {
+                return consumer->isAncestor(u);
+              })) {
+            reachesCube = true;
+            break;
+          }
+        }
+        if (reachesCube)
+          break;
+      }
+      if (reachesCube)
+        seed.push_back(op);
+    }
+    for (scf::IfOp ifOp : mixedCubeIfs) {
+      Value cond = cubeIfConditions.lookup(ifOp.getOperation());
+      if (!cond)
+        cond = ifOp.getCondition();
+      if (Operation *condDef = cond.getDefiningOp();
+          condDef && tainted.contains(condDef))
+        seed.push_back(condDef);
+    }
+
+    while (!seed.empty()) {
+      Operation *op = seed.pop_back_val();
+      if (!needed.insert(op).second)
+        continue;
+      op->walk([&](Operation *nested) {
+        for (Value operand : nested->getOperands()) {
+          Operation *def = operand.getDefiningOp();
+          if (!def)
+            continue;
+          if (tainted.contains(def) && !needed.contains(def)) {
+            seed.push_back(def);
+            continue;
+          }
+          Operation *defAnc = ancestorInBlock(def, defBlock);
+          if (defAnc && tainted.contains(defAnc) && !needed.contains(defAnc))
+            seed.push_back(defAnc);
+        }
+      });
+    }
+
+    bool originalUsedDirectly = false;
+    for (Operation *consumer : cubeConsumers) {
+      consumer->walk([&](Operation *opIn) {
+        for (Value operand : opIn->getOperands()) {
+          if (operand == original) {
+            originalUsedDirectly = true;
+            return WalkResult::interrupt();
+          }
+        }
+        return WalkResult::advance();
+      });
+      if (originalUsedDirectly)
+        break;
+    }
+    if (!originalUsedDirectly) {
+      for (scf::IfOp ifOp : mixedCubeIfs) {
+        Value cond = cubeIfConditions.lookup(ifOp.getOperation());
+        if (!cond)
+          cond = ifOp.getCondition();
+        if (cond == original) {
+          originalUsedDirectly = true;
+          break;
+        }
+      }
+    }
+
+    if (needed.empty() && !originalUsedDirectly) {
+      bool escapesViaLoopYield = llvm::any_of(visitedValues, [&](Value val) {
+        return llvm::any_of(val.getUsers(), [&](Operation *usr) {
+          return isa<scf::YieldOp>(usr) && usr->getParentOp() == loopOp;
+        });
+      });
+      if (!escapesViaLoopYield) {
+        markOp->erase();
+        if (Operation *replDef = replacement.getDefiningOp();
+            replDef && replDef->hasAttr(kNewExtractLabel) &&
+            replDef->use_empty())
+          replDef->erase();
+      }
+      continue;
+    }
+
+    IRMapping irMap;
+    irMap.map(original, replacement);
+
+    builder.setInsertionPointAfter(markOp);
+    for (Operation &op : *defBlock) {
+      if (!needed.contains(&op))
+        continue;
+      Operation *cloned = builder.clone(op, irMap);
+      builder.setInsertionPointAfter(cloned);
+    }
+
+    for (Block *branchBlock : taintedBranchBlocks) {
+      for (Operation &op : llvm::make_early_inc_range(*branchBlock)) {
+        if (!needed.contains(&op))
+          continue;
+        builder.setInsertionPoint(&op);
+        builder.clone(op, irMap);
+      }
+    }
+
+    for (Operation *consumer : cubeConsumers) {
+      consumer->walk([&](Operation *opIn) {
+        for (OpOperand &operand : opIn->getOpOperands()) {
+          Value v = operand.get();
+          if (v == original) {
+            operand.set(replacement);
+            continue;
+          }
+          if (Value mapped = irMap.lookupOrNull(v))
+            operand.set(mapped);
+        }
+      });
+    }
+
+    for (scf::IfOp ifOp : mixedCubeIfs) {
+      Value prevCond = cubeIfConditions.lookup(ifOp.getOperation());
+      Value baseCond = prevCond ? prevCond : ifOp.getCondition();
+      Value cubeCond = (baseCond == original) ? replacement
+                                              : irMap.lookupOrDefault(baseCond);
+      cubeIfConditions[ifOp.getOperation()] = cubeCond;
+      if (prevCond && prevCond != cubeCond) {
+        for (Operation *def = prevCond.getDefiningOp();
+             def && def->getBlock() == defBlock && def->use_empty() &&
+             isMemoryEffectFree(def);) {
+          Operation *nextDef = def->getNumOperands() > 0
+                                   ? def->getOperand(0).getDefiningOp()
+                                   : nullptr;
+          def->erase();
+          def = nextDef;
+        }
+      }
+    }
+
+    markOp->erase();
+  }
+
+  return success();
+}
+
 unsigned CVScopeOutliner::getOrAssignIfId(scf::IfOp ifOp) {
   auto [it, inserted] = ifOpToId.try_emplace(ifOp.getOperation(), nextIfId);
   if (inserted)
@@ -445,7 +735,7 @@ ConditionalOps &CVScopeOutliner::getOrCreateCondOps(WorkItem &item,
   auto &cOps = item.condOps[ifOp];
   cOps.id = getOrAssignIfId(ifOp);
   cOps.ifOp = ifOp;
-  cOps.condition = ifOp.getCondition();
+  cOps.condition = getIfConditionForItem(ifOp, &item);
   if (branchOp) {
     if (branchOp->getBlock() == ifOp.thenBlock())
       cOps.thenOps.insert(branchOp);
@@ -658,7 +948,7 @@ LogicalResult CVScopeOutliner::traceWorkItem(Value output, Operation *seedOp,
       return false;
     }
     getOrCreateCondOps(item, enclosingIf, op);
-    traceValue(enclosingIf.getCondition());
+    traceValue(getIfConditionForItem(enclosingIf, &item));
     return !failedLoop;
   };
 
@@ -728,7 +1018,7 @@ LogicalResult CVScopeOutliner::traceWorkItem(Value output, Operation *seedOp,
       auto &pendingSet = pendingIfResults[ifOp];
       if (pendingSet.empty()) {
         getOrCreateCondOps(item, ifOp);
-        traceValue(ifOp.getCondition());
+        traceValue(getIfConditionForItem(ifOp, &item));
         if (failedLoop)
           return failure();
         continue;
@@ -745,7 +1035,7 @@ LogicalResult CVScopeOutliner::traceWorkItem(Value output, Operation *seedOp,
         }
         acceptedIfResults.insert(ifRes);
         getOrCreateCondOps(item, ifOp);
-        traceValue(ifOp.getCondition());
+        traceValue(getIfConditionForItem(ifOp, &item));
         auto [tVal, eVal] = getIfYieldedValues(ifOp, resIdx);
         traceValue(tVal);
         traceValue(eVal);
@@ -1215,7 +1505,8 @@ void CVScopeOutliner::populateWorkItemIO(Operation *origLoopTerminator) {
         producer->outputs.insert(val);
       }
       if (getOrCreateCondOps(*producer, ifOp).outputs.insert(val).second) {
-        worklist.push_back({ifOp.getCondition(), producer, nullptr});
+        worklist.push_back(
+            {getIfConditionForItem(ifOp, producer), producer, nullptr});
         auto [tVal, eVal] = getIfYieldedValues(ifOp, resIdx);
         if (tVal)
           worklist.push_back({tVal, producer, ifOp});
@@ -1234,7 +1525,8 @@ void CVScopeOutliner::populateWorkItemIO(Operation *origLoopTerminator) {
       if (defIf && loopOp->isAncestor(defIf) &&
           !producer->hoistedOps.contains(defOp) && consumerIf != defIf &&
           getOrCreateCondOps(*producer, defIf).outputs.insert(val).second)
-        worklist.push_back({defIf.getCondition(), producer, nullptr});
+        worklist.push_back(
+            {getIfConditionForItem(defIf, producer), producer, nullptr});
       return;
     }
 
@@ -1244,7 +1536,8 @@ void CVScopeOutliner::populateWorkItemIO(Operation *origLoopTerminator) {
         if (defIf && loopOp->isAncestor(defIf)) {
           getOrCreateCondOps(*consumer, defIf, defOp);
           if (!consumer->hoistedOps.contains(defOp))
-            worklist.push_back({defIf.getCondition(), consumer, nullptr});
+            worklist.push_back(
+                {getIfConditionForItem(defIf, consumer), consumer, nullptr});
         } else {
           defIf = nullptr;
         }
@@ -1261,7 +1554,8 @@ void CVScopeOutliner::populateWorkItemIO(Operation *origLoopTerminator) {
         defIf && loopOp->isAncestor(defIf) &&
         !producer->hoistedOps.contains(defOp) &&
         getOrCreateCondOps(*producer, defIf).outputs.insert(val).second)
-      worklist.push_back({defIf.getCondition(), producer, nullptr});
+      worklist.push_back(
+          {getIfConditionForItem(defIf, producer), producer, nullptr});
   };
 
   for (Value opnd : origLoopTerminator->getOperands())
@@ -1276,7 +1570,7 @@ void CVScopeOutliner::populateWorkItemIO(Operation *origLoopTerminator) {
           (!loopOp->isAncestor(enclosingIf) || item->hoistedOps.contains(op)))
         enclosingIf = nullptr;
       if (enclosingIf)
-        recordValueUse(enclosingIf.getCondition(), item, nullptr);
+        recordValueUse(getIfConditionForItem(enclosingIf, item), item, nullptr);
       for (Value opnd : getWorkItemOperands(op))
         recordValueUse(opnd, item, enclosingIf);
     }
@@ -1483,7 +1777,8 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
             elseOpsToClone.empty())
           continue;
 
-        Value cond = scopeMap.lookupOrDefault(enclosingIf.getCondition());
+        Value cond =
+            scopeMap.lookupOrDefault(getIfConditionForItem(enclosingIf, item));
         bool needElse = !elseOpsToClone.empty() || !ifOrigResultsToMap.empty();
 
         builder.setInsertionPointToEnd(scopeBlock);
@@ -1576,7 +1871,7 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
       Block *mergeBlock = builder.createBlock(&merge.getRegion());
       builder.setInsertionPointToStart(mergeBlock);
       IRMapping mergeMap(globalIRMap);
-      Value origCond = origIf.getCondition();
+      Value origCond = getIfConditionForItem(origIf, item);
       if (!mergeMap.contains(origCond)) {
         SmallVector<Operation *> condOps;
         SmallVector<Value> stack = {origCond};
@@ -1655,6 +1950,10 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
 
   newForOp->setAttr(CVPipelinedLoopAttr::name, builder.getUnitAttr());
   origForOp.replaceAllUsesWith(newForOp.getResults());
+  if (checkpointClone) {
+    checkpointClone->erase();
+    checkpointClone = nullptr;
+  }
   origForOp.erase();
   return success();
 }
@@ -1710,18 +2009,34 @@ LogicalResult CVScopeOutliner::run() {
   if (hasIllegalRegionedOp())
     return success();
 
+  auto revertCheckpoint = [&]() {
+    if (checkpointClone) {
+      loopOp->replaceAllUsesWith(checkpointClone->getResults());
+      loopOp->erase();
+      checkpointClone = nullptr;
+    }
+  };
+
+  if (failed(duplicateExtractScalarForCube())) {
+    revertCheckpoint();
+    return success();
+  }
+
   // Step 2.1: Collect loop-local outputs
   collectLocalOutputs();
 
   // Step 2.2: DFS up def chains for each output
-  if (failed(buildWorkItems()) || workItems.empty())
+  if (failed(buildWorkItems()) || workItems.empty()) {
+    revertCheckpoint();
     return success();
+  }
 
   // Step 3: Topologically sort work items
   if (failed(sortWorkItems())) {
     loopOp->emitWarning(
         "[OutlineCVScopes] cycle detected in work item dependency graph; "
         "skipping loop");
+    revertCheckpoint();
     return success();
   }
 
@@ -1745,8 +2060,10 @@ LogicalResult CVScopeOutliner::run() {
   });
 
   // Step 4: Map ops to work items (first-come, first-served)
-  if (failed(collectScalarState()))
+  if (failed(collectScalarState())) {
+    revertCheckpoint();
     return success();
+  }
   mapOpsToWorkItems();
 
   // Step 5: Final iteration for unmapped ops
@@ -1754,8 +2071,13 @@ LogicalResult CVScopeOutliner::run() {
   collectConditionalMerges();
 
   // Step 6: Create new loop with encapsulating scope.scope
-  if (auto forOp = dyn_cast<scf::ForOp>(loopOp))
-    return rewriteForOp(forOp);
+  if (auto forOp = dyn_cast<scf::ForOp>(loopOp)) {
+    LogicalResult res = rewriteForOp(forOp);
+    if (failed(res))
+      revertCheckpoint();
+    return res;
+  }
+  revertCheckpoint();
   return success();
 }
 

@@ -936,3 +936,147 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %res : tensor<1x1x16x16xf32>
   }
 }
+
+// -----
+
+// duplicateExtractScalarForCube clones the scalar chain feeding CUBE ops onto
+// the workspace re-extract while preserving the original scalar chain for
+// VECTOR ops and erasing the replacementLabel mark.
+// CHECK-LABEL: func.func @outline_duplicate_extract_scalar_for_cube
+// CHECK-NOT: DuplicateTensorExtractForCube::replacementLabel
+// CHECK: scf.for
+// CHECK: %[[VRED_SCOPE:.*]] = scope.scope : () -> tensor<1xf32> {
+// CHECK:   %[[RED:.*]] = hivm.hir.vreduce
+// CHECK:   scope.return %[[RED]] : tensor<1xf32>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK: %[[WS_SCOPE:.*]] = scope.scope : () -> tensor<1xf32> {
+// CHECK:   %[[WS:.*]] = memref_ext.alloc_workspace()
+// CHECK:   hivm.hir.store ins(%[[VRED_SCOPE]] : tensor<1xf32>) outs(%[[WS]] : memref<1xf32>)
+// CHECK:   %[[WST:.*]] = bufferization.to_tensor %[[WS]]
+// CHECK:   scope.return %[[WST]] : tensor<1xf32>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK: %[[CUBE_SCOPE:.*]] = scope.scope : () -> tensor<16x16xf16> {
+// CHECK:   %[[CEXT:.*]] = tensor.extract %[[WS_SCOPE]][%{{.*}}] {{.*}}DuplicateTensorExtractForCube::newExtractLabel{{.*}} : tensor<1xf32>
+// CHECK:   %[[KF:.*]] = arith.fptosi %[[CEXT]] : f32 to i32
+// CHECK:   %[[KIDX:.*]] = arith.index_cast %[[KF]] : i32 to index
+// CHECK:   hivm.hir.mmadL1 {{.*}} %[[KIDX]]
+// CHECK:   hivm.hir.fixpipe
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK: %[[VEC2_SCOPE:.*]] = scope.scope : () -> tensor<16x16xf16> {
+// CHECK:   %[[VEXT:.*]] = tensor.extract %[[VRED_SCOPE]][%{{.*}}] {"DuplicateTensorExtractForCube::visitedLabel" = 1 : i32} : tensor<1xf32>
+// CHECK:   %[[VF16:.*]] = arith.truncf %[[VEXT]] : f32 to f16
+// CHECK:   hivm.hir.vadd ins(%[[CUBE_SCOPE]], %[[VF16]] : tensor<16x16xf16>, f16)
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NOT: DuplicateTensorExtractForCube::replacementLabel
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @outline_duplicate_extract_scalar_for_cube(
+      %a: tensor<1x1x16x16xf16>, %b: tensor<1x1x16x16xf16>,
+      %svin: tensor<8xf32>, %vinit: tensor<16x16xf16>, %bound: i32) -> tensor<16x16xf16>
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    %c0idx = arith.constant 0 : index
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %res = scf.for %i = %c0 to %bound step %c1 iter_args(%vacc = %vinit) -> (tensor<16x16xf16>) : i32 {
+      %sexp = tensor.empty() : tensor<1xf32>
+      %red = hivm.hir.vreduce <sum> ins(%svin : tensor<8xf32>) outs(%sexp : tensor<1xf32>) unsigned_src = false reduce_dims = [0] -> tensor<1xf32>
+      %ext = tensor.extract %red[%c0idx] {"DuplicateTensorExtractForCube::visitedLabel" = 1 : i32} : tensor<1xf32>
+      %ws = memref_ext.alloc_workspace() : memref<1xf32>
+      hivm.hir.store ins(%red : tensor<1xf32>) outs(%ws : memref<1xf32>) {hivm.tcore_type = #hivm.tcore_type<VECTOR>, "inserted-store"}
+      %stored = bufferization.to_tensor %ws restrict writable : memref<1xf32>
+      %newext = tensor.extract %stored[%c0idx] {"DuplicateTensorExtractForCube::newExtractLabel" = 1 : i32, "DuplicateTensorExtractForCube::visitedLabel" = 1 : i32} : tensor<1xf32>
+      annotation.mark %ext {"DuplicateTensorExtractForCube::replacementLabel" = 1 : i32} keys = [] values = [%newext : f32] : f32
+
+      %kf = arith.fptosi %ext : f32 to i32
+      %kidx = arith.index_cast %kf : i32 to index
+      %cdest = tensor.empty() : tensor<1x1x16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %kidx : tensor<1x1x16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%cdest : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
+      %ub0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot : tensor<1x1x16x16xf32>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
+      %ub0_cast = memref.memory_space_cast %ub0 : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
+      %wst = bufferization.to_tensor %ub0_cast restrict writable : memref<16x16xf16>
+
+      %extf16 = arith.truncf %ext : f32 to f16
+      %vdest = tensor.empty() : tensor<16x16xf16>
+      %vadd = hivm.hir.vadd ins(%wst, %extf16 : tensor<16x16xf16>, f16) outs(%vdest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      scf.yield %vadd : tensor<16x16xf16>
+    }
+    return %res : tensor<16x16xf16>
+  }
+}
+
+// -----
+
+// Mixed scf.if conditioned on a scalar marked with replacementLabel routes the
+// CUBE scope's scf.if condition through the workspace extract while keeping the
+// VECTOR scope's scf.if condition on the UB extract, preserving pipeline.if.cond.
+// CHECK-LABEL: func.func @outline_duplicate_extract_scalar_mixed_if_cond
+// CHECK-NOT: DuplicateTensorExtractForCube::replacementLabel
+// CHECK: scf.for
+// CHECK: %[[RED_SCOPE:.*]] = scope.scope : () -> tensor<1xi32> {
+// CHECK:   hivm.hir.vreduce
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK: %[[WS_SCOPE:.*]] = scope.scope : () -> tensor<i32> {
+// CHECK:   %[[WS:.*]] = memref_ext.alloc_workspace() : memref<i32>
+// CHECK:   hivm.hir.store {{.*}} outs(%[[WS]] : memref<i32>)
+// CHECK:   %[[WST:.*]] = bufferization.to_tensor %[[WS]]
+// CHECK:   scope.return %[[WST]] : tensor<i32>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK: scope.scope : () -> tensor<1x1x16x16xf16> {
+// CHECK:   %[[COLLAPSED:.*]] = tensor.collapse_shape %[[RED_SCOPE]]
+// CHECK:   %[[VEXT:.*]] = tensor.extract %[[COLLAPSED]][] {"DuplicateTensorExtractForCube::visitedLabel" = 1 : i32} : tensor<i32>
+// CHECK:   %[[VCOND:.*]] = arith.cmpi ugt, %[[VEXT]], %{{.*}} : i32
+// CHECK:   scf.if %[[VCOND]] {
+// CHECK:     hivm.hir.copy
+// CHECK:   } {pipeline.if.cond = 0 : i64}
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK: %[[CUBE_SCOPE:.*]] = scope.scope : () -> tensor<1x1x16x16xf32> {
+// CHECK:   %[[CEXT:.*]] = tensor.extract %[[WS_SCOPE]][] {{.*}}DuplicateTensorExtractForCube::newExtractLabel{{.*}} : tensor<i32>
+// CHECK:   %[[CCOND:.*]] = arith.cmpi ugt, %[[CEXT]], %{{.*}} : i32
+// CHECK:   %[[CIF:.*]] = scf.if %[[CCOND]] -> (tensor<1x1x16x16xf32>) {
+// CHECK:     hivm.hir.mmadL1
+// CHECK:   } else {
+// CHECK:     scf.yield
+// CHECK:   } {pipeline.if.cond = 0 : i64}
+// CHECK:   scope.return %[[CIF]] : tensor<1x1x16x16xf32>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NOT: DuplicateTensorExtractForCube::replacementLabel
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @outline_duplicate_extract_scalar_mixed_if_cond(
+      %x: tensor<16x16xf16>, %b: tensor<1x1x16x16xf16>, %mask: tensor<256xi32>, %bound: i32) -> tensor<1x1x16x16xf32>
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %init = tensor.empty() : tensor<1x1x16x16xf32>
+    %res = scf.for %i = %c0 to %bound step %c1 iter_args(%acc = %init) -> (tensor<1x1x16x16xf32>) : i32 {
+      %red_init = tensor.empty() : tensor<1xi32>
+      %red = hivm.hir.vreduce <sum> ins(%mask : tensor<256xi32>) outs(%red_init : tensor<1xi32>) reduce_dims = [0] -> tensor<1xi32>
+      %collapsed = tensor.collapse_shape %red [] : tensor<1xi32> into tensor<i32>
+      %ext = tensor.extract %collapsed[] {"DuplicateTensorExtractForCube::visitedLabel" = 1 : i32} : tensor<i32>
+      %ws = memref_ext.alloc_workspace() : memref<i32>
+      hivm.hir.store ins(%collapsed : tensor<i32>) outs(%ws : memref<i32>) {hivm.tcore_type = #hivm.tcore_type<VECTOR>, "hivm.inserted-store"}
+      %wst = bufferization.to_tensor %ws restrict writable : memref<i32>
+      %newext = tensor.extract %wst[] {"DuplicateTensorExtractForCube::newExtractLabel" = 1 : i32, "DuplicateTensorExtractForCube::visitedLabel" = 1 : i32} : tensor<i32>
+      annotation.mark %ext {"DuplicateTensorExtractForCube::replacementLabel" = 1 : i32} keys = [] values = [%newext : i32] : i32
+
+      %cond = arith.cmpi ugt, %ext, %c0 : i32
+      %next = scf.if %cond -> (tensor<1x1x16x16xf32>) {
+        %exp_init = tensor.empty() : tensor<16x16xf16>
+        %exp = hivm.hir.vexp ins(%x : tensor<16x16xf16>) outs(%exp_init : tensor<16x16xf16>) -> tensor<16x16xf16>
+        %exp_4d = tensor.expand_shape %exp [[0, 1, 2], [3]] output_shape [1, 1, 16, 16] : tensor<16x16xf16> into tensor<1x1x16x16xf16>
+        %cbuf = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+        %a = bufferization.to_tensor %cbuf restrict writable : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+        hivm.hir.copy ins(%exp_4d : tensor<1x1x16x16xf16>) outs(%cbuf : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>) {"hivm.inserted-copy"}
+        %dot = hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : tensor<1x1x16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%acc : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
+        scf.yield %dot : tensor<1x1x16x16xf32>
+      } else {
+        scf.yield %acc : tensor<1x1x16x16xf32>
+      }
+      scf.yield %next : tensor<1x1x16x16xf32>
+    }
+    return %res : tensor<1x1x16x16xf32>
+  }
+}

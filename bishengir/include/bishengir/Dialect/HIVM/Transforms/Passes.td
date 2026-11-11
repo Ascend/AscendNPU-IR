@@ -1566,6 +1566,19 @@ def CVPipelining
               "Enable registered-kernel CV-pipelining heuristics">];
 }
 
+def NormalizeWorkspaceStore
+    : HIVMPass<"normalize-workspace-store", "func::FuncOp",
+               [MixKernel, PureAicKernel]> {
+  let summary = "Rewrite workspace tensor stores to memref stores followed by "
+                "to_tensor for CV pipelining v2";
+  let constructor = "mlir::hivm::createNormalizeWorkspaceStorePass()";
+  let dependentDialects = ["annotation::AnnotationDialect",
+                           "hivm::HIVMDialect",
+                           "bishengir::memref_ext::MemRefExtDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect"];
+}
+
 def OutlineCVScopes
     : HIVMPass<"outline-cv-scopes", "func::FuncOp", [MixKernel, PureAicKernel]> {
   let summary = "Partition mixed-core loops into scoped work items for CV pipelining v2";

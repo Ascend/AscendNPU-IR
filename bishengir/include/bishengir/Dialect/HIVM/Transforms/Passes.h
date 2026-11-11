@@ -418,6 +418,9 @@ std::unique_ptr<Pass> createAutoBlockifyParallelLoopPass();
 std::unique_ptr<Pass>
 createCVPipeliningPass(const CVPipeliningOptions &options = {});
 
+// Create Normalize Workspace Store pass for CV pipelining v2
+std::unique_ptr<Pass> createNormalizeWorkspaceStorePass();
+
 // Create Outline CV Scopes pass for CV pipelining v2
 std::unique_ptr<Pass> createOutlineCVScopesPass();
 
