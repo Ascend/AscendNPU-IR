@@ -178,3 +178,20 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     return
   }
 }
+
+// -----
+// Kernels that never read the program id still need one iteration per
+// logical block. Canonicalization has already erased get_block_idx.
+// CHECK-LABEL: func.func @blockify_without_program_id(
+// CHECK:         %[[IDX:.*]] = hivm.hir.get_block_idx
+// CHECK:         %[[STEP:.*]] = arith.constant 56 : i32
+// CHECK:         %[[LB:.*]] = arith.trunci %[[IDX]]
+// CHECK:         scf.for %{{.*}} = %[[LB]] to %{{.*}} step %[[STEP]]
+// CHECK:           hivm.hir.set_mask_norm
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, hivm.module_core_type = #hivm.module_core_type<AIV>} {
+  func.func @blockify_without_program_id(%n: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    annotation.mark %n {logical_block_num} : i32
+    hivm.hir.set_mask_norm
+    return
+  }
+}
