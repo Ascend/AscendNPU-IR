@@ -90,12 +90,47 @@ LogicalResult Flattener::flatten(bool multiDynamicShape) {
   auto result = initialize();
   if (failed(result))
     return success();
+  auto preserveRank = [this](Value value, bool createRef = false) {
+    auto type = dyn_cast<ShapedType>(value.getType());
+    if (!type || !type.hasRank())
+      return;
+    // Region arguments and while results need local bookkeeping for slices.
+    // Do not register arbitrary producers outside the analyzed graph.
+    if (createRef || isa<BlockArgument>(value) ||
+        value.getDefiningOp<scf::WhileOp>())
+      createDummyRefIfNotExist({value});
+    updatePreviousType(value);
+    // Preserve existing analysis boundaries without making an untracked
+    // producer eligible for rewriting merely because it feeds a loop.
+    if (!hasCollapseGroup(value))
+      return;
+    auto dimensions = getValueDimIndices(value);
+    for (size_t i = 1; i < dimensions.size(); ++i)
+      disconnect(dimensions[i - 1], dimensions[i]);
+  };
+  // While regions have separate before/after signatures. Until their type
+  // rewriting is supported, retain ranks at every edge of the loop while
+  // allowing operations inside the regions to flatten independently.
+  op_->walk([&preserveRank](scf::WhileOp loop) {
+    for (Value value : loop.getOperands())
+      preserveRank(value);
+    for (Value value : loop.getResults())
+      preserveRank(value);
+    for (Region &region : loop->getRegions()) {
+      for (Block &block : region) {
+        for (Value value : block.getArguments())
+          preserveRank(value);
+        for (Value value : block.getTerminator()->getOperands())
+          preserveRank(value);
+      }
+    }
+  });
   // TensorView tile axes and broadcast/span load axes retain their logical
   // ranks. Disconnect both load operands before propagating collapse
   // constraints, so producers (including memory_space_cast) cannot collapse
   // only the source. Unrelated dimension groups remain available for
   // flattening.
-  op_->walk([&](Operation *op) {
+  op_->walk([this, &preserveRank](Operation *op) {
     auto loadOp = dyn_cast<hivm::LoadOp>(op);
     bool preserveLoadRank =
         options.registerBased && loadOp &&
@@ -104,13 +139,7 @@ LogicalResult Flattener::flatten(bool multiDynamicShape) {
       return;
     for (Value value :
          llvm::concat<Value>(op->getOperands(), op->getResults())) {
-      if (!isa<ShapedType>(value.getType()))
-        continue;
-      createDummyRefIfNotExist({value});
-      updatePreviousType(value);
-      auto dimensions = getValueDimIndices(value);
-      for (size_t i = 1; i < dimensions.size(); ++i)
-        disconnect(dimensions[i - 1], dimensions[i]);
+      preserveRank(value, /*createRef=*/true);
     }
   });
   for (const auto &ref : dimIndices_) {
@@ -169,11 +198,11 @@ void Flattener::breakSubByteI1CollapseBoundaries() {
   };
 
   auto crossesBoundary = [](Value v) -> bool {
-  if (isa<BlockArgument>(v))
-    return isa<func::FuncOp>(
-        cast<BlockArgument>(v).getOwner()->getParentOp());
-  Operation *def = v.getDefiningOp();
-  return def && isa<func::CallOp>(def);
+    if (isa<BlockArgument>(v))
+      return isa<func::FuncOp>(
+          cast<BlockArgument>(v).getOwner()->getParentOp());
+    Operation *def = v.getDefiningOp();
+    return def && isa<func::CallOp>(def);
   };
 
   for (const auto &valAndIdx : valueToDimIndicesIndex_) {
@@ -193,7 +222,8 @@ void Flattener::breakSubByteI1CollapseBoundaries() {
       continue;
 
     int64_t innerAxis = shape.back();
-    if (!ShapedType::isDynamic(innerAxis) && innerAxis % utils::kBitsToByte == 0)
+    if (!ShapedType::isDynamic(innerAxis) &&
+        innerAxis % utils::kBitsToByte == 0)
       continue;
     for (size_t j = 1; j < args.size(); ++j)
       disconnect(args[j - 1], args[j]);
@@ -236,7 +266,8 @@ bool Flattener::computeMutation(int pos, int dir) const {
     // then its safe
     bool canProceed = isConnected_[std::min(pos + dir, pos)].rightConnected &&
                       isConnected_[std::max(pos + dir, pos)].leftConnected;
-    LDBG("Can proceed to " << pos << " " << pos + dir << " ?" << canProceed << "Can proceed");
+    LDBG("Can proceed to " << pos << " " << pos + dir << " ?" << canProceed
+                           << "Can proceed");
     if (!canProceed)
       break;
     if (isConnected_[pos + dir].elementKind != ElementKind::Unit) {
@@ -289,8 +320,7 @@ void Flattener::breakDynamicShapes() {
     assert(leftBoundary == 0 || !isConnected(leftBoundary - 1, leftBoundary));
     SmallVector<int> dynamicPosition;
     auto getAndAddIfDynamic = [&dynamicPosition, this](int pos) -> void {
-      auto currentParShapePair =
-          equivalentDsu_->getMinParentAndShapePair(pos);
+      auto currentParShapePair = equivalentDsu_->getMinParentAndShapePair(pos);
       if (ShapedType::isDynamic(currentParShapePair.second)) {
         dynamicPosition.push_back(pos);
       }
