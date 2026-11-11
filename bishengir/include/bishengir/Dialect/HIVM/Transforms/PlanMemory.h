@@ -351,10 +351,12 @@ class MemLivenessAnalysis {
 public:
   MemLivenessAnalysis(func::FuncOp func, MemPlanMode planMode,
                       bool disableTightlyCoupledBufferReuse,
-                      uint32_t randomSeed = 0)
+                      uint32_t randomSeed = 0,
+                      bool enableMmadL0Planning = false)
       : func_(func), planMode(planMode),
         disableTightlyCoupledBufferReuse(disableTightlyCoupledBufferReuse),
-        randomSeed(randomSeed), randomGenerator(this->randomSeed) {}
+        enableMmadL0Planning(enableMmadL0Planning), randomSeed(randomSeed),
+        randomGenerator(this->randomSeed) {}
 
   void build();
 
@@ -595,6 +597,9 @@ private:
   /// Disable tightly coupled buffer reuse. Default is false
   bool disableTightlyCoupledBufferReuse;
 
+  /// Enable explicit A5 cube planning only for functions containing MMAD L0.
+  bool enableMmadL0Planning;
+
   /// Gen-kill status corresponding to buffer.
   DenseMap<Value, BufferStatus> buffer2status;
 
@@ -625,13 +630,16 @@ public:
   MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
           bool enableMemoryDisplay, bool restrictInplaceAsISA,
           int simtVFDynamicSize, bool disableVFReachableCheck,
-          PlanMemoryStrategy planMemoryStrategy = PlanMemoryStrategy::DEFAULT)
+          PlanMemoryStrategy planMemoryStrategy = PlanMemoryStrategy::DEFAULT,
+          bool enableMmadL0Planning = false)
       : enableMemoryDisplay(enableMemoryDisplay), planMode(planMode),
         enableGlobalReuse(enableGlobalReuse),
         restrictInplaceAsISA(restrictInplaceAsISA),
         simtVFDynamicSize(simtVFDynamicSize),
         disableVFReachableCheck(disableVFReachableCheck),
-        planMemoryStrategy(planMemoryStrategy), vfInplaceReuseInfo(nullptr) {}
+        planMemoryStrategy(planMemoryStrategy),
+        enableMmadL0Planning(enableMmadL0Planning),
+        vfInplaceReuseInfo(nullptr) {}
 
   LogicalResult plan(bool emitErrors = true);
   /// Report whether allocation failed only in UB.
@@ -731,6 +739,9 @@ private:
 
   /// Strategy for reordering storage entries during plan memory.
   PlanMemoryStrategy planMemoryStrategy;
+
+  /// Per-function policy shared with liveness and DMA/scalar buffer analysis.
+  bool enableMmadL0Planning;
 
   /// inplace-reuse info for the vf call.
   VFCallInplaceReuseInfo *vfInplaceReuseInfo;

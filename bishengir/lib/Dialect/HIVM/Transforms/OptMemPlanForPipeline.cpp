@@ -22,7 +22,22 @@ using namespace mlir;
 using namespace mlir::detail;
 using namespace mlir::hivm;
 
-void OptMemPlanForDma::build(func::FuncOp func) {
+bool mlir::hivm::isLocalBufferForMemoryPlanning(
+    std::optional<AddressSpaceAttr> space, bool enableMmadL0Planning) {
+  if (!isLocalBuffer(space))
+    return false;
+  switch (space->getAddressSpace()) {
+  case AddressSpace::L0A:
+  case AddressSpace::L0B:
+  case AddressSpace::BiasBUF:
+    return enableMmadL0Planning;
+  default:
+    return true;
+  }
+}
+
+void OptMemPlanForDma::build(func::FuncOp func, bool useMmadL0Planning) {
+  this->enableMmadL0Planning = useMmadL0Planning;
   auto result = func->walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (auto implByScalarOp =
             dyn_cast<mlir::hivm::ImplByScalarOpInterface>(op)) {
@@ -77,7 +92,8 @@ void OptMemPlanForDma::UpdatePipe2DmaBuffers(hivm::PIPE pipe,
                                              SmallVector<Value> dpsOperand) {
   for (Value operand : dpsOperand) {
     auto memorySpaceAttr = GetBufferSpaceAttr(operand);
-    if (!isLocalBuffer(memorySpaceAttr)) {
+    if (!isLocalBufferForMemoryPlanning(memorySpaceAttr,
+                                        enableMmadL0Planning)) {
       continue;
     }
     pipe2DmaBuffers[pipe].insert(utils::tracebackMemRef(operand));
@@ -126,7 +142,7 @@ typename std::enable_if<std::is_same_v<OP, memref::LoadOp> ||
                         void>::type
 OptMemPlanForDma::UpdateScalarBuffers(OP op) {
   auto memorySpaceAttr = GetBufferSpaceAttr(op.getMemRef());
-  if (!isLocalBuffer(memorySpaceAttr)) {
+  if (!isLocalBufferForMemoryPlanning(memorySpaceAttr, enableMmadL0Planning)) {
     return;
   }
   ScalarBuffers.insert(utils::tracebackMemRef(op.getMemRef()));
@@ -147,7 +163,8 @@ bool OptMemPlanForDma::IsScalarBuffer(const Value buf) const {
 void OptMemPlanForDma::UpdateScalarBuffersForLowerToLoops(Operation *op) {
   for (Value operand : op->getOperands()) {
     auto memorySpaceAttr = GetBufferSpaceAttr(operand);
-    if (!isLocalBuffer(memorySpaceAttr)) {
+    if (!isLocalBufferForMemoryPlanning(memorySpaceAttr,
+                                        enableMmadL0Planning)) {
       continue;
     }
     ScalarBuffers.insert(utils::tracebackMemRef(operand));

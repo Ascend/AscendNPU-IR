@@ -96,6 +96,27 @@ static LogicalResult bufferizeDestinationStyleOpInterface(
   return success();
 }
 
+struct MmadL0OpInterface
+    : public DstBufferizableOpInterfaceExternalModel<MmadL0OpInterface,
+                                                     hivm::MmadL0Op> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &operand,
+                              const AnalysisState &state) const {
+    auto matmul = cast<MmadL0Op>(op);
+    auto dps = cast<DestinationStyleOpInterface>(op);
+    return dps.isDpsInput(&operand) ||
+           (dps.isDpsInit(&operand) && matmul.readsAccumulator());
+  }
+
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    // Physical L0/BT storage is supplied by the caller. Do not introduce
+    // tensor copies or allocations with inferred layouts/address spaces.
+    if (!cast<DestinationStyleOpInterface>(op).hasPureBufferSemantics())
+      return op->emitOpError("standalone mmadL0 requires explicit memrefs");
+    return success();
+  }
+};
+
 struct MmadL1OpInterface
     : public DstBufferizableOpInterfaceExternalModel<MmadL1OpInterface,
                                                      hivm::MmadL1Op> {
@@ -1153,6 +1174,7 @@ void mlir::hivm::registerBufferizableOpInterfaceExternalModels(
   registry.addExtension(+[](MLIRContext *ctx, hivm::HIVMDialect *dialect) {
     FixpipeOp::attachInterface<FixpipeOpInterface>(*ctx);
     MmadL1Op::attachInterface<MmadL1OpInterface>(*ctx);
+    MmadL0Op::attachInterface<MmadL0OpInterface>(*ctx);
     BatchMmadL1Op::attachInterface<BatchMmadL1OpInterface>(*ctx);
     Conv1DL1Op::attachInterface<Conv1DL1OpInterface>(*ctx);
     Conv2DL1Op::attachInterface<Conv2DL1OpInterface>(*ctx);

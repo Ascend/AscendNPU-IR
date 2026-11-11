@@ -249,8 +249,9 @@ def HIVM_AddressSpaceAttr : HIVM_Attr<"AddressSpace", "address_space",
   let assemblyFormat = "`<` params `>`";
   let description = [{
     HIVM address space mapping attribute. Maps to GM, L1, L0A, L0B, L0C, UB and SSBUF.
-    FixBUF and BiasBUF are annotation-only spaces that do not participate in
-    memory planning or scope inference.
+    FixBUF does not participate in memory planning or scope inference. BiasBUF
+    supports explicit allocation planning on A5; its scope must be specified
+    explicitly rather than inferred.
   }];
 }
 
