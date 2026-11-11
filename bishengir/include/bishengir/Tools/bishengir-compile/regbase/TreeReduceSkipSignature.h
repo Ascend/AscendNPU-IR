@@ -137,6 +137,8 @@ inline bool isSpecialCaseCloseNewTreeReduce(mlir::ModuleOp mod) {
   static const NewTreeReduceCloseSignature kSignatures[] = {
       // causal_conv1d_bwd_kernel
       {14, 8, 0, 0, 0, 16, 37, 0, 0, 0, 1},
+      // chunk_gla_bwd_kernel_inter
+      {3, 0, 0, 2, 2, 3, 13, 1, 0, 0, 2},
       // chunk_kda_bwd_kernel_wy_dqkg_fused needs two entries: fill and func
       // counts are not stable across its shapes (16/1 vs 15/3).
       {2, 2, 0, 9, 3, 9, 16, 0, 1, 1, 1},
