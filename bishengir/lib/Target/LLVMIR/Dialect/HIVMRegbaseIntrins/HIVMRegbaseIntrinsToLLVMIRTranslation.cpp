@@ -140,6 +140,18 @@ public:
                  NamedAttribute attribute,
                  LLVM::ModuleTranslation &moduleTranslation) const final {
 
+    if (isa<LLVM::CallOp>(op) &&
+        attribute.getName() ==
+            hivm_regbaseintrins::kDavinciCallingConvAttrName &&
+        isa<hivm_regbaseintrins::SIMT_CallableAttr>(attribute.getValue())) {
+      if (instructions.size() != 1 ||
+          !llvm::isa<llvm::CallInst>(instructions.front()))
+        return op->emitError("expected a single LLVM call instruction");
+      llvm::cast<llvm::CallInst>(instructions.front())
+          ->setCallingConv(llvm::CallingConv::TPE_SIMTCallable);
+      return success();
+    }
+
     LLVM::LLVMFuncOp func = dyn_cast<LLVM::LLVMFuncOp>(op);
     if (!func) {
       // Module-level attributes (e.g. hivm_regbaseintrins.v2intrins) do not
