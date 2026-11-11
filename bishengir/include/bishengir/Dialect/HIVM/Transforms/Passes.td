@@ -307,6 +307,13 @@ def PlanMemory : HIVMPass<"hivm-plan-memory", "ModuleOp"> {
   ];
 }
 
+def TcbPoolOpInsertion : HIVMPass<"hivm-tcb-pool-op-insertion", "ModuleOp"> {
+  let summary = "Insert TCB pool operations after memory planning";
+  let constructor = "mlir::hivm::createTcbPoolOpInsertionPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "arith::ArithDialect",
+                           "scf::SCFDialect", "memref::MemRefDialect"];
+}
+
 def InjectSync : HIVMPass<"hivm-inject-sync", "func::FuncOp"> {
   let summary = "auto inject sync ";
   let constructor = "mlir::hivm::createInjectSyncPass()";
