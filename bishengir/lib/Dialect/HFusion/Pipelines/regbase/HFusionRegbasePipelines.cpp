@@ -406,12 +406,6 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(tensor::createFoldExtractInsertPairPass());
   pm.nest<func::FuncOp>().addPass(hivm::createSinkOpToConsumerInLoopPass());
   hfusionVectorizeManualScopePipeline(pm, hfusionOptions);
-  // Hoist invariant DMA-load clusters and the tensor compute they feed
-  // before VFFusionPass outlines loop bodies into separate functions; after
-  // that point the ops live in another function and are out of reach.
-  if (hfusionOptions.enableTritonKernelCompile)
-    pm.nest<func::FuncOp>().addPass(
-        hivm::createHoistLoopInvariantDmaLoadPass());
   // Prepare tree reduce options for RA / AR control.
   TreeReduceEnableFlags treeReduceFlags =
       getTreeReduceEnableFlags(hfusionOptions.enableTreeReduceMode);
