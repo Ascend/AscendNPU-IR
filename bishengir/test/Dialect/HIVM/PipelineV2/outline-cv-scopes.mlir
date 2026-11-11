@@ -1080,3 +1080,50 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %res : tensor<1x1x16x16xf32>
   }
 }
+
+// -----
+
+// Map unmapped annotation.mark and hivm.debug ops to the work item of their
+// operand's definition inside the loop instead of a trailing catch-all scope.
+// CHECK-LABEL: func.func @outline_mark_and_debug_with_operand_def
+// CHECK: scf.for
+// CHECK: %[[VEXP_SCOPE:.*]] = scope.scope : () -> tensor<16x16xf16> {
+// CHECK:   %[[EXP:.*]] = hivm.hir.vexp
+// CHECK:   annotation.mark %[[EXP]] {marked_exp} : tensor<16x16xf16>
+// CHECK:   scope.return %[[EXP]] : tensor<16x16xf16>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: scope.scope : () -> tensor<1x1x16x16xf16> {
+// CHECK:   tensor.expand_shape %[[VEXP_SCOPE]]
+// CHECK:   hivm.hir.copy
+// CHECK:   scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: %[[CUBE:.*]] = scope.scope : () -> tensor<1x1x16x16xf32> {
+// CHECK:   %[[DOT:.*]] = hivm.hir.mmadL1
+// CHECK:   hivm.hir.debug {debugtype = "print", hex = false, prefix = "dot: "} %[[DOT]] : tensor<1x1x16x16xf32>
+// CHECK:   scope.return %[[DOT]] : tensor<1x1x16x16xf32>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT: scf.yield %[[CUBE]] : tensor<1x1x16x16xf32>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @outline_mark_and_debug_with_operand_def(
+      %x: tensor<16x16xf16>, %b: tensor<1x1x16x16xf16>, %bound: i32) -> tensor<1x1x16x16xf32>
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %init = tensor.empty() : tensor<1x1x16x16xf32>
+    %res = scf.for %i = %c0 to %bound step %c1 iter_args(%acc = %init) -> (tensor<1x1x16x16xf32>) : i32 {
+      %exp_init = tensor.empty() : tensor<16x16xf16>
+      %exp = hivm.hir.vexp ins(%x : tensor<16x16xf16>) outs(%exp_init : tensor<16x16xf16>) -> tensor<16x16xf16>
+      annotation.mark %exp {marked_exp} : tensor<16x16xf16>
+      %exp_4d = tensor.expand_shape %exp [[0, 1, 2], [3]] output_shape [1, 1, 16, 16] : tensor<16x16xf16> into tensor<1x1x16x16xf16>
+      %cbuf = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+      %a = bufferization.to_tensor %cbuf restrict writable : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+      hivm.hir.copy ins(%exp_4d : tensor<1x1x16x16xf16>) outs(%cbuf : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>) {"hivm.inserted-copy"}
+      %dot = hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : tensor<1x1x16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%acc : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
+      hivm.hir.debug {debugtype = "print", hex = false, prefix = "dot: "} %dot : tensor<1x1x16x16xf32>
+      scf.yield %dot : tensor<1x1x16x16xf32>
+    }
+    return %res : tensor<1x1x16x16xf32>
+  }
+}

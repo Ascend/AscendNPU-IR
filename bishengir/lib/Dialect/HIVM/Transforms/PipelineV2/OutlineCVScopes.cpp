@@ -1256,18 +1256,43 @@ void CVScopeOutliner::collectUnmappedOps() {
     if (isa<scf::YieldOp>(op) &&
         (op->getParentOp() == loopOp || isa<scf::IfOp>(op->getParentOp())))
       return;
-    if (!finalWorkItem) {
-      finalWorkItem = std::make_unique<WorkItem>();
-      finalWorkItem->id = nextWorkItemId++;
-      finalWorkItem->coreType = TCoreType::CUBE_AND_VECTOR;
+    WorkItem *targetItem = nullptr;
+    if (isa<annotation::MarkOp, DebugOp>(op)) {
+      Value src = op->getOperand(0);
+      if (Operation *defOp = src.getDefiningOp();
+          defOp && loopOp->isProperAncestor(defOp)) {
+        if (auto defIf = dyn_cast<scf::IfOp>(defOp)) {
+          unsigned resIdx = cast<OpResult>(src).getResultNumber();
+          for (WorkItem *w : sortedWorkItems) {
+            if (!w->condOps.contains(defIf) ||
+                !isIfResultOwnedByItem(defIf, resIdx, w))
+              continue;
+            if (targetItem && targetItem != w) {
+              targetItem = nullptr;
+              break;
+            }
+            targetItem = w;
+          }
+        } else {
+          targetItem = opToWorkItemMap.lookup(defOp);
+        }
+      }
     }
-    finalWorkItem->ops.insert(op);
-    finalWorkItem->orderedOps.insert(op);
-    opToWorkItemMap[op] = finalWorkItem.get();
+    if (!targetItem) {
+      if (!finalWorkItem) {
+        finalWorkItem = std::make_unique<WorkItem>();
+        finalWorkItem->id = nextWorkItemId++;
+        finalWorkItem->coreType = TCoreType::CUBE_AND_VECTOR;
+      }
+      targetItem = finalWorkItem.get();
+    }
+    targetItem->ops.insert(op);
+    targetItem->orderedOps.insert(op);
+    opToWorkItemMap[op] = targetItem;
 
     if (auto ifOp = dyn_cast<scf::IfOp>(op->getParentOp());
         ifOp && loopOp->isProperAncestor(ifOp))
-      getOrCreateCondOps(*finalWorkItem, ifOp, op);
+      getOrCreateCondOps(*targetItem, ifOp, op);
   };
 
   for (Region &reg : loopOp->getRegions()) {
