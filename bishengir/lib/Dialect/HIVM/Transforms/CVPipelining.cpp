@@ -20,15 +20,15 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
-#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/PreloadProtocolVerifier.h"
-#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsDagBuilder.h"
-#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsPartitioner.h"
 #include "bishengir/Dialect/HIVM/Transforms/TightlyCoupledBufferUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
-#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/CostModel/MSCostModel.h"
 #include "bishengir/Dialect/HIVM/Utils/HIVMAliasAnalysis.h"
-#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/HIVM/Utils/PipeSchedule/Alg/Sms/SmsScheduler.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/CostModel/MSCostModel.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsDagBuilder.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsPartitioner.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/PreloadProtocolVerifier.h"
+#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
 #include "bishengir/Dialect/HIVM/Utils/WorklistBuilder.h"
@@ -2937,8 +2937,7 @@ CVPipelineImpl::installMsPartition(const MsPartitionResult &partition) {
           msCoordinateMap.try_emplace(wi, stage.preloadCoordinate);
       if (!inserted) {
         DEBUG_WITH_TYPE("ms-preload-scheduler",
-                        dbgs()
-                            << "[ms] duplicate WorkItem in stage mapping\n");
+                        dbgs() << "[ms] duplicate WorkItem in stage mapping\n");
         return failure();
       }
     }
@@ -2947,9 +2946,9 @@ CVPipelineImpl::installMsPartition(const MsPartitionResult &partition) {
   // Validate that every worklist item has a coordinate.
   for (const auto &wi : worklist) {
     if (!msCoordinateMap.count(wi.get())) {
-      DEBUG_WITH_TYPE("ms-preload-scheduler",
-                      dbgs() << "[ms] WorkItem #" << wi->id
-                             << " missing coordinate\n");
+      DEBUG_WITH_TYPE("ms-preload-scheduler", dbgs()
+                                                  << "[ms] WorkItem #" << wi->id
+                                                  << " missing coordinate\n");
       return failure();
     }
   }
@@ -3303,14 +3302,14 @@ LogicalResult CVPipelineImpl::run() {
       FixedProductionLatencyProvider latencyProvider;
       costmodel::MSCostModel costModel;
       MsDagBuilder dagBuilder(pipelineLoop, latencyProvider, counterCloneMap,
-                               *defaultBuild, &costModel);
+                              *defaultBuild, &costModel);
       auto dagResult = dagBuilder.build();
       if (failed(dagResult)) {
         DEBUG_WITH_TYPE("ms-preload-scheduler",
                         dbgs() << "[ms] DAG build failed\n");
         msFailReason = dagBuilder.failedDueToLoopCarriedDependency()
-                            ? "LoopCarriedDep"
-                            : "dag-build-failure";
+                           ? "LoopCarriedDep"
+                           : "dag-build-failure";
         return failure();
       }
 
@@ -3512,7 +3511,7 @@ void CVPipeliningPass::runOnOperation() {
     CVPipelineImpl impl(loop, this->setDepthInUnrollMode, this->pipelineMode,
                         this->enableLazyLoading, this->schedulerMode,
                         this->bypassShapeRegistry, this->enablePreload,
-                        this->msFailOnFallback);
+                        this->smsFailOnFallback);
 
     // Mark all parent loops to not attempt pipelining to save compile time
     if (impl.run().succeeded())
@@ -3520,7 +3519,7 @@ void CVPipeliningPass::runOnOperation() {
         pipelinedNest.insert(parentLoop);
         parentLoop = parentLoop->getParentOfType<scf::ForOp>();
       }
-    else if (this->msFailOnFallback && impl.sawMsFallback()) {
+    else if (this->smsFailOnFallback && impl.sawMsFallback()) {
       signalPassFailure();
       return;
     }

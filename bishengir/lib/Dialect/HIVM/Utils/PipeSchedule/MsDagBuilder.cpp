@@ -26,8 +26,8 @@
 #include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsDagBuilder.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/CostModel/CostModelTypes.h"
 #include "bishengir/Dialect/HIVM/Utils/PipeSchedule/Alg/Sms/DagVerifier.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/CostModel/CostModelTypes.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -173,7 +173,7 @@ bool MsDagBuilder::isExtractedScalarGather(scf::ForOp forOp) {
 
 // cf. WorklistBuilder.cpp: getContainedParent
 Operation *MsDagBuilder::getContainedParent(Operation *containing,
-                                             Operation &inner) {
+                                            Operation &inner) {
   Operation *cur = &inner;
   Operation *parent = cur->getParentOp();
   while (parent && parent != containing && containing->isAncestor(cur)) {
@@ -184,7 +184,7 @@ Operation *MsDagBuilder::getContainedParent(Operation *containing,
 }
 
 Operation *MsDagBuilder::getContainedParent(Operation *containing,
-                                             Value inner) {
+                                            Value inner) {
   Operation *defining = inner.getDefiningOp();
   if (defining)
     return getContainedParent(containing, *defining);
@@ -192,8 +192,7 @@ Operation *MsDagBuilder::getContainedParent(Operation *containing,
 }
 
 // cf. WorklistBuilder.cpp: memrefDFS
-void MsDagBuilder::memrefDFS(Value memrefVal,
-                              SmallVector<Operation *> &users) {
+void MsDagBuilder::memrefDFS(Value memrefVal, SmallVector<Operation *> &users) {
   SmallVector<Operation *> traceStack;
   DenseSet<Operation *> visited;
   Value rootVal = traceValueDef(memrefVal);
@@ -270,17 +269,17 @@ MsDagBuilder::RegionCoreKind MsDagBuilder::classifyRegion(Operation &op) {
 //===----------------------------------------------------------------------===//
 
 MsDagBuilder::MsDagBuilder(scf::ForOp loop,
-                             const LatencyProvider &latencyProvider,
-                             const DenseMap<Value, Operation *> &counterClones,
-                             const WorklistBuildResult &defaultBuild,
-                             const costmodel::CostModel *costModel)
+                           const LatencyProvider &latencyProvider,
+                           const DenseMap<Value, Operation *> &counterClones,
+                           const WorklistBuildResult &defaultBuild,
+                           const costmodel::CostModel *costModel)
     : pipelineLoop(loop), scopeOp(loop.getOperation()),
       latencyProvider(latencyProvider), counterClones(counterClones),
       defaultBuild(&defaultBuild), costModel(costModel) {}
 
 MsDagBuilder::MsDagBuilder(scf::ForOp loop,
-                             const LatencyProvider &latencyProvider,
-                             const DenseMap<Value, Operation *> &counterClones)
+                           const LatencyProvider &latencyProvider,
+                           const DenseMap<Value, Operation *> &counterClones)
     : pipelineLoop(loop), scopeOp(loop.getOperation()),
       latencyProvider(latencyProvider), counterClones(counterClones) {}
 
@@ -455,8 +454,7 @@ static std::string escapeRecordLabel(llvm::StringRef text) {
 
 /// Emit a DOT-format representation of the DAG after DAG1 (compute nodes +
 /// inter-compute edges only, no synthetic transfers or data nodes).
-static void dumpDag1Dot(llvm::raw_ostream &os,
-                        const MsDagBuildResult &result) {
+static void dumpDag1Dot(llvm::raw_ostream &os, const MsDagBuildResult &result) {
   os << "digraph DAG1 {\n";
   os << "  rankdir=TB;\n";
   os << "  node [shape=record, fontname=\"Courier\"];\n\n";
@@ -492,8 +490,7 @@ static void dumpDag1Dot(llvm::raw_ostream &os,
 
 /// Emit a DOT-format representation of the DAG after DAG2 (compute + synthetic
 /// transfer nodes and all edges).
-static void dumpDag2Dot(llvm::raw_ostream &os,
-                        const MsDagBuildResult &result) {
+static void dumpDag2Dot(llvm::raw_ostream &os, const MsDagBuildResult &result) {
   os << "digraph DAG2 {\n";
   os << "  rankdir=TB;\n";
   os << "  node [shape=record, fontname=\"Courier\"];\n\n";
@@ -539,8 +536,7 @@ static void dumpDag2Dot(llvm::raw_ostream &os,
 
 /// Emit a DOT-format representation of the full DAG3 (DAG2 schedulable graph +
 /// data nodes shown as ellipses with storage/shape/byte metadata).
-static void dumpDag3Dot(llvm::raw_ostream &os,
-                        const MsDagBuildResult &result) {
+static void dumpDag3Dot(llvm::raw_ostream &os, const MsDagBuildResult &result) {
   os << "digraph DAG3 {\n";
   os << "  rankdir=TB;\n";
   os << "  node [shape=record, fontname=\"Courier\"];\n\n";

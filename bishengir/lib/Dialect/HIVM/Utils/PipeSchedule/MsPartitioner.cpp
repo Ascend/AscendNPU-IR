@@ -48,9 +48,8 @@ namespace hivm {
 // Constructor
 //===----------------------------------------------------------------------===//
 
-MsPartitioner::MsPartitioner(scf::ForOp loop,
-                               const MsDagBuildResult &dagResult,
-                               const sms::ScheduleResult &schedule)
+MsPartitioner::MsPartitioner(scf::ForOp loop, const MsDagBuildResult &dagResult,
+                             const sms::ScheduleResult &schedule)
     : pipelineLoop(loop), dagResult(dagResult), schedule(schedule) {}
 
 //===----------------------------------------------------------------------===//

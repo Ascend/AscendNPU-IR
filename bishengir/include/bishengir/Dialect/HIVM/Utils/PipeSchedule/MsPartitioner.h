@@ -39,8 +39,8 @@
 #ifndef BISHENGIR_DIALECT_HIVM_TRANSFORMS_MSPARTITIONER_H
 #define BISHENGIR_DIALECT_HIVM_TRANSFORMS_MSPARTITIONER_H
 
-#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsDagBuilder.h"
 #include "bishengir/Dialect/HIVM/Utils/PipeSchedule/Alg/Sms/SmsScheduler.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsDagBuilder.h"
 #include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/DenseMap.h"
@@ -114,7 +114,7 @@ struct MsPartitionResult {
 class MsPartitioner {
 public:
   MsPartitioner(scf::ForOp loop, const MsDagBuildResult &dagResult,
-                 const sms::ScheduleResult &schedule);
+                const sms::ScheduleResult &schedule);
 
   FailureOr<MsPartitionResult> partition();
 

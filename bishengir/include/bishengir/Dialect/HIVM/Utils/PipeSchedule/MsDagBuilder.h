@@ -42,9 +42,9 @@
 #define BISHENGIR_DIALECT_HIVM_TRANSFORMS_MSDAGBUILDER_H
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/CostModel/CostModel.h"
 #include "bishengir/Dialect/HIVM/Utils/PipeSchedule/Alg/Sms/DDG.h"
 #include "bishengir/Dialect/HIVM/Utils/PipeSchedule/Alg/Sms/OpNode.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/CostModel/CostModel.h"
 #include "bishengir/Dialect/HIVM/Utils/WorklistBuilder.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -287,15 +287,15 @@ public:
   ///                          when null the placeholders are kept (backwards
   ///                          compatible).
   MsDagBuilder(scf::ForOp loop, const LatencyProvider &latencyProvider,
-                const DenseMap<Value, Operation *> &counterClones,
-                const WorklistBuildResult &defaultBuild,
-                const costmodel::CostModel *costModel = nullptr);
+               const DenseMap<Value, Operation *> &counterClones,
+               const WorklistBuildResult &defaultBuild,
+               const costmodel::CostModel *costModel = nullptr);
 
   /// Legacy constructor without Default WorkItems (deprecated — will be
   /// removed once all callers pass the build result).
   MsDagBuilder(scf::ForOp loop, const LatencyProvider &latencyProvider,
-                const DenseMap<Value, Operation *> &counterClones =
-                    DenseMap<Value, Operation *>());
+               const DenseMap<Value, Operation *> &counterClones =
+                   DenseMap<Value, Operation *>());
 
   /// Build the DAG.  Returns failure if the loop body contains patterns that
   /// MS cannot handle (mixed-core region ops, unsupported units, zero
