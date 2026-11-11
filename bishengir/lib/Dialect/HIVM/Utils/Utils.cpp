@@ -489,7 +489,7 @@ bool isLocalBuffer(std::optional<AddressSpaceAttr> memorySpaceAttr) {
   if (LocalBufferSpace.count(memorySpaceAttr.value().getAddressSpace())) {
     return true;
   }
-  llvm::report_fatal_error("Currently only support (UB | L1 | L0C) allocation");
+  llvm::report_fatal_error("Unsupported local buffer address space");
 }
 
 bool isSsbuffer(std::optional<AddressSpaceAttr> memorySpaceAttr) {
