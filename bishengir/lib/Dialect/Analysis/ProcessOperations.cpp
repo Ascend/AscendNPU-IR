@@ -653,6 +653,35 @@ void DimensionAnalyzerBase::processSlicingOp(T slicingOp) {
   };
   auto contiguousMask = getContiguousAxes();
   separateGroup(superview, contiguousMask, subviewShapeSize);
+
+  propagateSliceBoundaries(superview, subview, droppedDims);
+}
+
+void DimensionAnalyzerBase::propagateSliceBoundaries(
+    Value superview, Value subview, const llvm::SmallBitVector &droppedDims) {
+  if (!valueToDimIndicesIndex_.contains(superview) ||
+      !valueToDimIndicesIndex_.contains(subview))
+    return;
+  auto superviewRef = getValueDimIndices(superview);
+  auto subviewRef = getValueDimIndices(subview);
+  // Dropping dimensions must not hide a boundary between retained dimensions.
+  int64_t previousAxis = -1;
+  int64_t resultAxis = 0;
+  for (int64_t axis = 0; axis < static_cast<int64_t>(superviewRef.size());
+       ++axis) {
+    if (droppedDims[axis])
+      continue;
+    if (previousAxis >= 0) {
+      for (int64_t boundary = previousAxis + 1; boundary <= axis; ++boundary) {
+        if (!isConnected(superviewRef[boundary - 1], superviewRef[boundary])) {
+          disconnect(subviewRef[resultAxis - 1], subviewRef[resultAxis]);
+          break;
+        }
+      }
+    }
+    previousAxis = axis;
+    ++resultAxis;
+  }
 }
 
 void DimensionAnalyzerBase::processInsertOp(tensor::InsertOp insertOp) {
