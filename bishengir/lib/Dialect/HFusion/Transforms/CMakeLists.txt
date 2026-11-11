@@ -72,7 +72,6 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   UnfoldSymbolicDim.cpp
   UpliftWhileToFor.cpp
   LegalizeScalar.cpp
-  LegalizeNarrowFloatKernelArguments.cpp
   OptimizeScalarTransfers.cpp
   VectorizeOps.cpp
   LegalizeBF16.cpp
