@@ -11,5 +11,6 @@ add_bishengir_translation_library(BiShengIRToLLVMIRTranslationRegistration
   MLIRHACCToLLVMIRTranslation
   MLIRHIVMToLLVMIRTranslation
   MLIRHIVMRegbaseIntrinsToLLVMIRTranslation
+  BiShengIRBMUToLLVMIRTranslation
   MLIRToLLVMIRTranslationRegistration
 )

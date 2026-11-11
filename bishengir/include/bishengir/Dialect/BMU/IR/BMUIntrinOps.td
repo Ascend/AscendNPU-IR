@@ -102,6 +102,7 @@ def BTAllocImmIntrOp      : BMU_AllocImmIntrOp<"hivm.__bt_alloci">;
 // FREE REG wrappers: (ptr<AS> addr, i64 size, i64 pipe) -> void
 // No seg parameter — BiSheng-CCE BUF_FREE ArgNames = "src,size,pipe".
 // immArgPositions: pipe=2 (addr=0, size=1 are SSA operands)
+// BT is the exception: llvm.hivm.__bt_free takes an i64 address.
 //===----------------------------------------------------------------------===//
 
 class BMU_FreeRegIntrOp<string mnemonic>
@@ -112,7 +113,7 @@ class BMU_FreeRegIntrOp<string mnemonic>
           /*int numResults=*/0,
           /*immArgPositions=*/[2],
           /*immArgAttrNames=*/["pipe"]> {
-  let arguments = (ins LLVM_AnyPointer:$addr, I64:$size, I64Attr:$pipe);
+  let arguments = (ins AnyTypeOf<[LLVM_AnyPointer, I64]>:$addr, I64:$size, I64Attr:$pipe);
 }
 
 def UBufFreeRegIntrOp    : BMU_FreeRegIntrOp<"hivm.__ubuf_free">;
@@ -126,6 +127,7 @@ def BTFreeRegIntrOp      : BMU_FreeRegIntrOp<"hivm.__bt_free">;
 //===----------------------------------------------------------------------===//
 // FREE IMM wrappers: (ptr<AS> addr, i64 size_imm, i64 pipe) -> void
 // No seg parameter. immArgPositions: size=1, pipe=2 (addr=0 is SSA operand)
+// BT is the exception: llvm.hivm.__bt_freei takes an i64 address.
 //===----------------------------------------------------------------------===//
 
 class BMU_FreeImmIntrOp<string mnemonic>
@@ -136,7 +138,7 @@ class BMU_FreeImmIntrOp<string mnemonic>
           /*int numResults=*/0,
           /*immArgPositions=*/[1, 2],
           /*immArgAttrNames=*/["size", "pipe"]> {
-  let arguments = (ins LLVM_AnyPointer:$addr, I64Attr:$size, I64Attr:$pipe);
+  let arguments = (ins AnyTypeOf<[LLVM_AnyPointer, I64]>:$addr, I64Attr:$size, I64Attr:$pipe);
 }
 
 def UBufFreeImmIntrOp    : BMU_FreeImmIntrOp<"hivm.__ubuf_freei">;
