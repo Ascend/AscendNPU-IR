@@ -54,6 +54,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   OutlineVectorFunction.cpp
   PackTilingData.cpp
   PrepareI1Nx1ForVectorization.cpp
+  PrepareL1Gather.cpp
   PreVectorizationFusion.cpp
   PullFillIntoVectorFunction.cpp
   ReCacheIO.cpp

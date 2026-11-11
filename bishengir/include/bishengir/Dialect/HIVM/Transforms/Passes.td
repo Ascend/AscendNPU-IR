@@ -21,6 +21,15 @@
 include "mlir/Pass/PassBase.td"
 include "bishengir/Dialect/HIVM/Transforms/HIVMPass.td"
 
+def PromoteL1Gather : HIVMPass<"hivm-promote-l1-gather", "func::FuncOp"> {
+  let summary = "Promote explicitly hinted row gathers consumed by matmul to L1";
+  let constructor = "mlir::hivm::createPromoteL1GatherPass()";
+  let dependentDialects = ["annotation::AnnotationDialect", "arith::ArithDialect",
+    "bufferization::BufferizationDialect", "hivm::HIVMDialect",
+    "memref::MemRefDialect", "scf::SCFDialect", "tensor::TensorDialect",
+    "affine::AffineDialect"];
+}
+
 def InferFuncCoreType : HIVMPass<"hivm-infer-func-core-type", "ModuleOp"> {
   let summary = "Infer the core type of each function";
   let constructor = "mlir::hivm::createInferFuncCoreTypePass()";
