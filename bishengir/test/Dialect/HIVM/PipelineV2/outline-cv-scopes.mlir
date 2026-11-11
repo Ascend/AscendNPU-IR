@@ -18,17 +18,20 @@
 // CHECK:     scope.return {{.*}} : tensor<1x1x16x16xf16>
 // CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
 // CHECK:   %[[S3:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK:     %[[VADD0:.*]] = hivm.hir.vadd ins(%[[ACC]], %[[S1]] : tensor<16x16xf32>, tensor<16x16xf32>)
+// CHECK:     scope.return %[[VADD0]] : tensor<16x16xf32>
+// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK:   %[[S4:.*]] = scope.scope : () -> tensor<16x16xf32> {
 // CHECK:     hivm.hir.nd2nz
 // CHECK:     hivm.hir.mmadL1 ins(%[[S2]], {{.*}})
 // CHECK:     hivm.hir.fixpipe
 // CHECK:     scope.return {{.*}} : tensor<16x16xf32>
 // CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
-// CHECK:   %[[S4:.*]] = scope.scope : () -> tensor<16x16xf32> {
-// CHECK:     %[[VADD0:.*]] = hivm.hir.vadd ins(%[[ACC]], %[[S1]] : tensor<16x16xf32>, tensor<16x16xf32>)
-// CHECK:     %[[VADD1:.*]] = hivm.hir.vadd ins(%[[VADD0]], %[[S3]] : tensor<16x16xf32>, tensor<16x16xf32>)
+// CHECK:   %[[S5:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK:     %[[VADD1:.*]] = hivm.hir.vadd ins(%[[S3]], %[[S4]] : tensor<16x16xf32>, tensor<16x16xf32>)
 // CHECK:     scope.return %[[VADD1]] : tensor<16x16xf32>
 // CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
-// CHECK:   scf.yield %[[S4]] : tensor<16x16xf32>
+// CHECK:   scf.yield %[[S5]] : tensor<16x16xf32>
 // CHECK: } {hivm.cv_pipelined_loop}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @outline_basic_and_fanout(
@@ -1125,5 +1128,314 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       scf.yield %dot : tensor<1x1x16x16xf32>
     }
     return %res : tensor<1x1x16x16xf32>
+  }
+}
+
+// -----
+
+// Propagate Cube outputs along user chains inside Vector work items and split
+// untouched Vector operations into their own Vector work item, while keeping
+// Cube work items (e.g. nd2nz + mmadL1 + fixpipe) intact.
+// CHECK-LABEL: func.func @outline_split_untouched_ops_in_vector_work_item
+// CHECK-SAME: (%{{.*}}: tensor<16x16xf16>, %[[Y:.*]]: tensor<16x16xf32>,
+// CHECK: scf.for {{.*}} iter_args(%[[ACC:.*]] = {{.*}}) -> (tensor<16x16xf32>)
+// CHECK:   %[[S_COPY:.*]] = scope.scope : () -> tensor<1x1x16x16xf16> {
+// CHECK:     hivm.hir.vexp
+// CHECK:     hivm.hir.copy
+// CHECK:     scope.return {{.*}} : tensor<1x1x16x16xf16>
+// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK:   %[[S_CUBE:.*]] = scope.scope : () -> tensor<1x16x16xf32> {
+// CHECK:     hivm.hir.nd2nz
+// CHECK:     hivm.hir.mmadL1 ins(%[[S_COPY]], {{.*}})
+// CHECK:     hivm.hir.fixpipe
+// CHECK:     scope.return {{.*}} : tensor<1x16x16xf32>
+// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK:   %[[S_UNTOUCHED:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK:     hivm.hir.load
+// CHECK:     %[[U0:.*]] = hivm.hir.vmul ins(%[[Y]], {{.*}})
+// CHECK:     %[[U1:.*]] = hivm.hir.vmul ins(%[[U0]], {{.*}})
+// CHECK:     scope.return %[[U1]] : tensor<16x16xf32>
+// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK:   %[[S_TOUCHED:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK:     %[[COLLAPSED:.*]] = tensor.collapse_shape %[[S_CUBE]]
+// CHECK:     %[[T0:.*]] = hivm.hir.vmul ins(%[[Y]], %[[COLLAPSED]] : tensor<16x16xf32>, tensor<16x16xf32>)
+// CHECK:     %[[T1:.*]] = hivm.hir.vadd ins(%[[T0]], %[[S_UNTOUCHED]] : tensor<16x16xf32>, tensor<16x16xf32>)
+// CHECK:     scope.return %[[T1]] : tensor<16x16xf32>
+// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK:   scf.yield %[[S_TOUCHED]] : tensor<16x16xf32>
+// CHECK: } {hivm.cv_pipelined_loop}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @outline_split_untouched_ops_in_vector_work_item(
+      %x: tensor<16x16xf16>,
+      %y: tensor<16x16xf32>,
+      %b_gm: memref<16x16xf16>,
+      %d_gm: memref<16x16xf32>,
+      %scale: f32,
+      %ub: i32) -> tensor<16x16xf32>
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %init = tensor.empty() : tensor<16x16xf32>
+    %res = scf.for %i = %c0 to %ub step %c1 iter_args(%acc = %init) -> (tensor<16x16xf32>) : i32 {
+      %exp_init = tensor.empty() : tensor<16x16xf16>
+      %exp = hivm.hir.vexp ins(%x : tensor<16x16xf16>) outs(%exp_init : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %exp_4d = tensor.expand_shape %exp [[0, 1, 2], [3]] output_shape [1, 1, 16, 16] : tensor<16x16xf16> into tensor<1x1x16x16xf16>
+      %cbuf = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+      %a_cbuf = bufferization.to_tensor %cbuf restrict writable : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+      hivm.hir.copy ins(%exp_4d : tensor<1x1x16x16xf16>) outs(%cbuf : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>) {"hivm.inserted-copy"}
+
+      %b_alloc = memref.alloc() : memref<1x1x16x16xf16>
+      hivm.hir.nd2nz {dst_continuous} ins(%b_gm : memref<16x16xf16>) outs(%b_alloc : memref<1x1x16x16xf16>)
+      %b_l1 = bufferization.to_tensor %b_alloc restrict writable : memref<1x1x16x16xf16>
+      %dot_init = tensor.empty() : tensor<1x1x16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%a_cbuf, %b_l1, %true, %c16, %c16, %c16 : tensor<1x1x16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%dot_init : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
+      %ub_alloc = memref.alloc() : memref<1x16x16xf32, #hivm.address_space<ub>>
+      %ub_cast = memref.memory_space_cast %ub_alloc : memref<1x16x16xf32, #hivm.address_space<ub>> to memref<1x16x16xf32>
+      %cube_3d = bufferization.to_tensor %ub_cast restrict writable : memref<1x16x16xf32>
+      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%dot : tensor<1x1x16x16xf32>) outs(%ub_alloc : memref<1x16x16xf32, #hivm.address_space<ub>>)
+
+      %d_alloc = memref.alloc() : memref<16x16xf32>
+      hivm.hir.load ins(%d_gm : memref<16x16xf32>) outs(%d_alloc : memref<16x16xf32>) core_type = <VECTOR>
+      %d = bufferization.to_tensor %d_alloc restrict writable : memref<16x16xf32>
+
+      %shared_empty = tensor.empty() : tensor<16x16xf32>
+      %u0 = hivm.hir.vmul ins(%y, %scale : tensor<16x16xf32>, f32) outs(%shared_empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+      %u1 = hivm.hir.vmul ins(%u0, %d : tensor<16x16xf32>, tensor<16x16xf32>) outs(%shared_empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+      %cube_2d = tensor.collapse_shape %cube_3d [[0, 1], [2]] : tensor<1x16x16xf32> into tensor<16x16xf32>
+      %t0 = hivm.hir.vmul ins(%y, %cube_2d : tensor<16x16xf32>, tensor<16x16xf32>) outs(%shared_empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+      %t1 = hivm.hir.vadd ins(%t0, %u1 : tensor<16x16xf32>, tensor<16x16xf32>) outs(%shared_empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scf.yield %t1 : tensor<16x16xf32>
+    }
+    return %res : tensor<16x16xf32>
+  }
+}
+
+// -----
+
+// Define a CoreOp's result as an Output when it uses a loop iter_arg directly
+// or via view-like operations (e.g. collapse_shape, extract_slice).
+// CHECK-LABEL: func.func @outline_iter_arg_derived_core_op_as_output
+// CHECK: scf.for {{.*}} iter_args(%[[ACC0:.*]] = {{.*}}, %[[ACC1:.*]] = {{.*}}) -> (tensor<16x16xf32>, tensor<1x32x16xf32>)
+// CHECK-NEXT: %[[S_CUBE:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK:        hivm.hir.mmadL1
+// CHECK:        hivm.hir.fixpipe
+// CHECK-NEXT:   scope.return {{.*}} : tensor<16x16xf32>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT: %[[S_DIRECT:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK-NEXT:   %[[VSUB:.*]] = hivm.hir.vsub ins(%[[ACC0]], {{.*}})
+// CHECK-NEXT:   scope.return %[[VSUB]] : tensor<16x16xf32>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: %[[S_DERIVED:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK-NEXT:   %[[VEXP:.*]] = hivm.hir.vexp ins(%[[S_DIRECT]] : tensor<16x16xf32>)
+// CHECK-NEXT:   %[[COLLAPSED:.*]] = tensor.collapse_shape %[[ACC1]]
+// CHECK-NEXT:   %[[SLICED:.*]] = tensor.extract_slice %[[COLLAPSED]]
+// CHECK-NEXT:   %[[VMUL:.*]] = hivm.hir.vmul ins(%[[SLICED]], %[[VEXP]] : tensor<16x16xf32>, tensor<16x16xf32>)
+// CHECK-NEXT:   scope.return %[[VMUL]] : tensor<16x16xf32>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: %[[S_YIELD0:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK-NEXT:   %[[VADD:.*]] = hivm.hir.vadd ins(%[[S_CUBE]], %[[S_DERIVED]] : tensor<16x16xf32>, tensor<16x16xf32>)
+// CHECK-NEXT:   scope.return %[[VADD]] : tensor<16x16xf32>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: %[[S_YIELD1:.*]] = scope.scope : () -> tensor<1x32x16xf32> {
+// CHECK-NEXT:   %[[EXP1:.*]] = tensor.expand_shape %[[S_YIELD0]]
+// CHECK-NEXT:   %[[VADD1:.*]] = hivm.hir.vadd ins(%[[ACC1]], %[[EXP1]] : tensor<1x32x16xf32>, tensor<1x16x16xf32>)
+// CHECK-NEXT:   scope.return %[[VADD1]] : tensor<1x32x16xf32>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: scf.yield %[[S_YIELD0]], %[[S_YIELD1]] : tensor<16x16xf32>, tensor<1x32x16xf32>
+// CHECK-NEXT: } {hivm.cv_pipelined_loop}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @outline_iter_arg_derived_core_op_as_output(
+      %a: tensor<1x1x16x16xf16>,
+      %b: tensor<1x1x16x16xf16>,
+      %x: tensor<16x16xf32>,
+      %ub: i32) -> (tensor<16x16xf32>, tensor<1x32x16xf32>)
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %init0 = tensor.empty() : tensor<16x16xf32>
+    %init1 = tensor.empty() : tensor<1x32x16xf32>
+    %res:2 = scf.for %i = %c0 to %ub step %c1 iter_args(%acc0 = %init0, %acc1 = %init1) -> (tensor<16x16xf32>, tensor<1x32x16xf32>) : i32 {
+      %dot_init = tensor.empty() : tensor<1x1x16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : tensor<1x1x16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%dot_init : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
+      %ub_alloc = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
+      %ub_cast = memref.memory_space_cast %ub_alloc : memref<16x16xf32, #hivm.address_space<ub>> to memref<16x16xf32>
+      %cube_s = bufferization.to_tensor %ub_cast restrict writable : memref<16x16xf32>
+      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%dot : tensor<1x1x16x16xf32>) outs(%ub_alloc : memref<16x16xf32, #hivm.address_space<ub>>)
+
+      %d_sub = hivm.hir.vsub ins(%acc0, %x : tensor<16x16xf32>, tensor<16x16xf32>) outs(%init0 : tensor<16x16xf32>) -> tensor<16x16xf32>
+      %d_exp = hivm.hir.vexp ins(%d_sub : tensor<16x16xf32>) outs(%init0 : tensor<16x16xf32>) -> tensor<16x16xf32>
+
+      %collapsed = tensor.collapse_shape %acc1 [[0, 1], [2]] : tensor<1x32x16xf32> into tensor<32x16xf32>
+      %sliced = tensor.extract_slice %collapsed[0, 0] [16, 16] [1, 1] : tensor<32x16xf32> to tensor<16x16xf32>
+      %v_mul = hivm.hir.vmul ins(%sliced, %d_exp : tensor<16x16xf32>, tensor<16x16xf32>) outs(%init0 : tensor<16x16xf32>) -> tensor<16x16xf32>
+
+      %next0 = hivm.hir.vadd ins(%cube_s, %v_mul : tensor<16x16xf32>, tensor<16x16xf32>) outs(%init0 : tensor<16x16xf32>) -> tensor<16x16xf32>
+      %next0_3d = tensor.expand_shape %next0 [[0, 1], [2]] output_shape [1, 16, 16] : tensor<16x16xf32> into tensor<1x16x16xf32>
+      %next1 = hivm.hir.vadd ins(%acc1, %next0_3d : tensor<1x32x16xf32>, tensor<1x16x16xf32>) outs(%init1 : tensor<1x32x16xf32>) broadcast = [1] -> tensor<1x32x16xf32>
+      scf.yield %next0, %next1 : tensor<16x16xf32>, tensor<1x32x16xf32>
+    }
+    return %res#0, %res#1 : tensor<16x16xf32>, tensor<1x32x16xf32>
+  }
+}
+
+// -----
+
+// Split multiple independent untouched Vector subgraphs inside an scf.if into
+// separate single-result Vector scopes while keeping Cube-touched ops together.
+// CHECK-LABEL: func.func @outline_split_multiple_untouched_ops_in_scf_if
+// CHECK: scf.for {{.*}} iter_args(%[[ACC:.*]] = {{.*}}) -> (tensor<16x16xf32>)
+// CHECK:   %[[S_CUBE:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK:     scf.if {{.*}} {
+// CHECK:       hivm.hir.mmadL1
+// CHECK:       hivm.hir.fixpipe
+// CHECK:     } {pipeline.if.cond = 0 : i64}
+// CHECK:     scope.return {{.*}} : tensor<16x16xf32>
+// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK:   %[[S_U0:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK:     %[[IF_U0:.*]] = scf.if {{.*}} -> (tensor<16x16xf32>) {
+// CHECK:       %[[EXP:.*]] = hivm.hir.vexp
+// CHECK:       scf.yield %[[EXP]] : tensor<16x16xf32>
+// CHECK:     } else {
+// CHECK:       scf.yield {{.*}} : tensor<16x16xf32>
+// CHECK:     } {pipeline.if.cond = 0 : i64}
+// CHECK:     scope.return %[[IF_U0]] : tensor<16x16xf32>
+// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK:   %[[S_U1:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK:     %[[IF_U1:.*]] = scf.if {{.*}} -> (tensor<16x16xf32>) {
+// CHECK:       %[[LN:.*]] = hivm.hir.vln
+// CHECK:       scf.yield %[[LN]] : tensor<16x16xf32>
+// CHECK:     } else {
+// CHECK:       scf.yield {{.*}} : tensor<16x16xf32>
+// CHECK:     } {pipeline.if.cond = 0 : i64}
+// CHECK:     scope.return %[[IF_U1]] : tensor<16x16xf32>
+// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK:   %[[S_TOUCHED:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK:     %[[IF_T:.*]] = scf.if {{.*}} -> (tensor<16x16xf32>) {
+// CHECK:       %[[T0:.*]] = hivm.hir.vadd ins(%[[S_CUBE]], %[[S_U0]] : tensor<16x16xf32>, tensor<16x16xf32>)
+// CHECK:       %[[T1:.*]] = hivm.hir.vsub ins(%[[T0]], %[[S_U1]] : tensor<16x16xf32>, tensor<16x16xf32>)
+// CHECK:       scf.yield %[[T1]] : tensor<16x16xf32>
+// CHECK:     } else {
+// CHECK:       scf.yield %[[ACC]] : tensor<16x16xf32>
+// CHECK:     } {pipeline.if.cond = 0 : i64}
+// CHECK:     scope.return %[[IF_T]] : tensor<16x16xf32>
+// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK:   scf.yield %[[S_TOUCHED]] : tensor<16x16xf32>
+// CHECK: } {hivm.cv_pipelined_loop}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @outline_split_multiple_untouched_ops_in_scf_if(
+      %a: tensor<1x1x16x16xf16>,
+      %b: tensor<1x1x16x16xf16>,
+      %x: tensor<16x16xf32>,
+      %y: tensor<16x16xf32>,
+      %ub: i32) -> tensor<16x16xf32>
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    %c2 = arith.constant 2 : i32
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %init = tensor.empty() : tensor<16x16xf32>
+    %res = scf.for %i = %c0 to %ub step %c1 iter_args(%acc = %init) -> (tensor<16x16xf32>) : i32 {
+      %cond = arith.cmpi slt, %i, %c2 : i32
+      %if_res = scf.if %cond -> (tensor<16x16xf32>) {
+        %dot_init = tensor.empty() : tensor<1x1x16x16xf32>
+        %dot = hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : tensor<1x1x16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%dot_init : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
+        %ub_alloc = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
+        %ub_cast = memref.memory_space_cast %ub_alloc : memref<16x16xf32, #hivm.address_space<ub>> to memref<16x16xf32>
+        %s = bufferization.to_tensor %ub_cast restrict writable : memref<16x16xf32>
+        hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%dot : tensor<1x1x16x16xf32>) outs(%ub_alloc : memref<16x16xf32, #hivm.address_space<ub>>)
+
+        %v_empty = tensor.empty() : tensor<16x16xf32>
+        %u0 = hivm.hir.vexp ins(%x : tensor<16x16xf32>) outs(%v_empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+        %u1 = hivm.hir.vln ins(%y : tensor<16x16xf32>) outs(%v_empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+        %t0 = hivm.hir.vadd ins(%s, %u0 : tensor<16x16xf32>, tensor<16x16xf32>) outs(%v_empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+        %t1 = hivm.hir.vsub ins(%t0, %u1 : tensor<16x16xf32>, tensor<16x16xf32>) outs(%v_empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+        scf.yield %t1 : tensor<16x16xf32>
+      } else {
+        scf.yield %acc : tensor<16x16xf32>
+      }
+      scf.yield %if_res : tensor<16x16xf32>
+    }
+    return %res : tensor<16x16xf32>
+  }
+}
+
+// -----
+
+// Only split off untouched slices that contain at least one CoreOp; keep
+// non-CoreOp tensor helpers like `tensor.insert_slice` inside the consuming
+// Vector scope instead of forming a CUBE_AND_VECTOR scope.
+// CHECK-LABEL: func.func @outline_do_not_split_non_core_untouched_slice
+// CHECK: scf.for {{.*}} iter_args(%[[CNT:.*]] = {{.*}}, %[[ACC:.*]] = {{.*}}) -> (i64, tensor<16x16xf32>)
+// CHECK-NEXT: %[[S_CNT:.*]] = scope.scope : () -> i64 {
+// CHECK-NEXT:   %[[NEXT:.*]] = arith.addi %[[CNT]],
+// CHECK-NEXT:   scope.return %[[NEXT]] : i64
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>}
+// CHECK-NEXT: %[[S_CUBE:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK:        hivm.hir.mmadL1
+// CHECK:        hivm.hir.fixpipe
+// CHECK-NEXT:   scope.return {{.*}} : tensor<16x16xf32>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT: %[[S_UNTOUCHED:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK:        %[[EXP:.*]] = hivm.hir.vexp
+// CHECK-NEXT:   scope.return %[[EXP]] : tensor<16x16xf32>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: %[[S_TOUCHED:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK:        arith.index_cast %[[CNT]] : i64 to index
+// CHECK:        tensor.extract_slice
+// CHECK:        %[[INS:.*]] = tensor.insert_slice
+// CHECK:        %[[T0:.*]] = hivm.hir.vadd ins(%[[S_CUBE]], %[[S_UNTOUCHED]] : tensor<16x16xf32>, tensor<16x16xf32>)
+// CHECK:        %[[T1:.*]] = hivm.hir.vadd ins(%[[T0]], %[[INS]] : tensor<16x16xf32>, tensor<16x16xf32>)
+// CHECK-NEXT:   scope.return %[[T1]] : tensor<16x16xf32>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: scf.yield %[[S_CNT]], %[[S_TOUCHED]] : i64, tensor<16x16xf32>
+// CHECK-NEXT: } {hivm.cv_pipelined_loop}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @outline_do_not_split_non_core_untouched_slice(
+      %a: tensor<1x1x16x16xf16>,
+      %b: tensor<1x1x16x16xf16>,
+      %x: tensor<16x16xf32>,
+      %pad0: tensor<16x16xf32>,
+      %pad1: tensor<16x16xf32>,
+      %lens: memref<?xi32>,
+      %ub: i32) -> (i64, tensor<16x16xf32>)
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c0_idx = arith.constant 0 : index
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %init = tensor.empty() : tensor<16x16xf32>
+    %res:2 = scf.for %i = %c0 to %ub step %c1 iter_args(%cnt = %c0_i64, %acc = %init) -> (i64, tensor<16x16xf32>) : i32 {
+      %next = arith.addi %cnt, %c1_i64 : i64
+
+      %dot_init = tensor.empty() : tensor<1x1x16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : tensor<1x1x16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%dot_init : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
+      %ub_alloc = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
+      %ub_cast = memref.memory_space_cast %ub_alloc : memref<16x16xf32, #hivm.address_space<ub>> to memref<16x16xf32>
+      %cube_s = bufferization.to_tensor %ub_cast restrict writable : memref<16x16xf32>
+      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%dot : tensor<1x1x16x16xf32>) outs(%ub_alloc : memref<16x16xf32, #hivm.address_space<ub>>)
+
+      %v_empty = tensor.empty() : tensor<16x16xf32>
+      %u_exp = hivm.hir.vexp ins(%x : tensor<16x16xf32>) outs(%v_empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+
+      %cnt_idx = arith.index_cast %cnt : i64 to index
+      %rc = memref.reinterpret_cast %lens to offset: [%cnt_idx], sizes: [1], strides: [1] : memref<?xi32> to memref<1xi32, strided<[1], offset: ?>>
+      %len_i32 = memref.load %rc[%c0_idx] : memref<1xi32, strided<[1], offset: ?>>
+      %len = arith.index_cast %len_i32 : i32 to index
+      %ext = tensor.extract_slice %pad0[0, 0] [16, %len] [1, 1] : tensor<16x16xf32> to tensor<16x?xf32>
+      %ins = tensor.insert_slice %ext into %pad1[0, 0] [16, %len] [1, 1] : tensor<16x?xf32> into tensor<16x16xf32>
+
+      %t0 = hivm.hir.vadd ins(%cube_s, %u_exp : tensor<16x16xf32>, tensor<16x16xf32>) outs(%v_empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+      %t1 = hivm.hir.vadd ins(%t0, %ins : tensor<16x16xf32>, tensor<16x16xf32>) outs(%v_empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scf.yield %next, %t1 : i64, tensor<16x16xf32>
+    }
+    return %res#0, %res#1 : i64, tensor<16x16xf32>
   }
 }

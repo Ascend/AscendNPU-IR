@@ -102,6 +102,7 @@ private:
   static bool isAllocTargetOfMultiUserLoadOrND2NZ(Operation *rootAlloc);
 
   bool hasLoopLocalToTensor(Value memref);
+  bool isDerivedFromLoopIterArg(Value val) const;
   bool isStoppingToTensor(Operation *tracedOp, Value startOutput);
   TCoreType determineCoreType(Value output);
   TCoreType determineCoreType(Operation *seedOp);
@@ -128,6 +129,9 @@ private:
   LogicalResult collectScalarState();
   void collectUnmappedOps();
   void collectConditionalMerges();
+  bool canExportValueFromWorkItem(Value val) const;
+  bool trySplitVectorWorkItemOnCubeInput(WorkItem *item, Value cubeInp);
+  bool splitVectorWorkItems(Operation *origLoopTerminator);
   LogicalResult sortPopulatedWorkItems();
   void computeHoistedOps(WorkItem *item);
   void populateWorkItemIO(Operation *origLoopTerminator);
@@ -153,6 +157,7 @@ private:
   Operation *checkpointClone = nullptr;
   unsigned nextWorkItemId = 0;
   unsigned nextIfId = 0;
+  bool didSplitVectorItems = false;
 };
 
 struct OutlineCVScopesPass
@@ -329,6 +334,50 @@ bool CVScopeOutliner::hasLoopLocalToTensor(Value memref) {
     Operation *usr = use.getOwner();
     return isa<bufferization::ToTensorOp>(usr) && loopOp->isProperAncestor(usr);
   });
+}
+
+bool CVScopeOutliner::isDerivedFromLoopIterArg(Value val) const {
+  auto loop = dyn_cast<LoopLikeOpInterface>(loopOp);
+  if (!loop)
+    return false;
+  auto iterArgsRange = loop.getRegionIterArgs();
+  if (iterArgsRange.empty())
+    return false;
+  SmallPtrSet<Value, 8> iterArgs(iterArgsRange.begin(), iterArgsRange.end());
+
+  SmallVector<Value, 4> worklist = {val};
+  SmallPtrSet<Value, 8> visited;
+  while (!worklist.empty()) {
+    Value curr = worklist.pop_back_val();
+    if (!curr || !visited.insert(curr).second)
+      continue;
+    if (iterArgs.contains(curr))
+      return true;
+    Operation *def = curr.getDefiningOp();
+    if (!def || !loopOp->isProperAncestor(def))
+      continue;
+    if (auto insertSlice = dyn_cast<tensor::InsertSliceOp>(def)) {
+      worklist.push_back(insertSlice.getSource());
+      worklist.push_back(insertSlice.getDest());
+      continue;
+    }
+    if (auto viewLike = dyn_cast<ViewLikeOpInterface>(def)) {
+      worklist.push_back(viewLike.getViewSource());
+      continue;
+    }
+    if (isViewLikeTensorOp(def) || isViewLikeMemRefOp(def) ||
+        isa<bufferization::ToTensorOp,
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+            bufferization::ToMemrefOp
+#else
+            bufferization::ToBufferOp
+#endif
+            >(def)) {
+      if (def->getNumOperands() > 0)
+        worklist.push_back(def->getOperand(0));
+    }
+  }
+  return false;
 }
 
 bool CVScopeOutliner::isStoppingToTensor(Operation *tracedOp,
@@ -840,6 +889,47 @@ void CVScopeOutliner::collectLocalOutputs() {
       }
     }
   }
+  loopOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (op == loopOp || isa<scf::IfOp>(op))
+      return WalkResult::advance();
+    if (op->getNumRegions() > 0)
+      return WalkResult::skip();
+    if (!isCoreOp(op) || op->getNumResults() == 0)
+      return WalkResult::advance();
+    if (!llvm::any_of(op->getOperands(), [&](Value opnd) {
+          return isDerivedFromLoopIterArg(opnd);
+        }))
+      return WalkResult::advance();
+
+    auto enclosingIf = op->getParentOfType<scf::IfOp>();
+    bool inLoopIf = enclosingIf && loopOp->isProperAncestor(enclosingIf);
+    for (Value res : op->getResults()) {
+      if (valToOutputAlias.contains(res)) {
+        addLocalOutput(res);
+        continue;
+      }
+      if (inLoopIf && res.hasOneUse()) {
+        OpOperand &use = *res.getUses().begin();
+        if (auto yieldOp = dyn_cast<scf::YieldOp>(use.getOwner());
+            yieldOp && yieldOp->getParentOp() == enclosingIf) {
+          unsigned resIdx = use.getOperandNumber();
+          if (resIdx < enclosingIf.getNumResults()) {
+            auto [tVal, eVal] = getIfYieldedValues(enclosingIf, resIdx);
+            Value otherVal = (tVal == res) ? eVal : tVal;
+            Operation *otherDef = otherVal ? otherVal.getDefiningOp() : nullptr;
+            if (otherVal &&
+                (!otherDef || !enclosingIf->isProperAncestor(otherDef))) {
+              addLocalOutput(enclosingIf.getResult(resIdx));
+              continue;
+            }
+          }
+        }
+      }
+      if (!inLoopIf || canExportValueFromWorkItem(res))
+        addLocalOutput(res);
+    }
+    return WalkResult::advance();
+  });
 }
 
 LogicalResult CVScopeOutliner::traceWorkItem(Value output, Operation *seedOp,
@@ -1325,6 +1415,8 @@ void CVScopeOutliner::collectConditionalMerges() {
   for (auto ifOp : cast<scf::ForOp>(loopOp).getBody()->getOps<scf::IfOp>()) {
     SmallPtrSet<WorkItem *, 4> branchItems;
     for (auto result : ifOp.getResults()) {
+      if (conditionalMergeOwners.contains(result))
+        continue;
       auto [thenValue, elseValue] =
           getIfYieldedValues(ifOp, result.getResultNumber());
       Operation *thenDef = thenValue ? thenValue.getDefiningOp() : nullptr;
@@ -1369,6 +1461,461 @@ void CVScopeOutliner::collectConditionalMerges() {
       conditionalMergeOwners[result] = merge;
     }
   }
+}
+
+bool CVScopeOutliner::canExportValueFromWorkItem(Value val) const {
+  Operation *def = val ? val.getDefiningOp() : nullptr;
+  if (!def || isa<scf::IfOp>(def))
+    return true;
+  auto enclosingIf = def->getParentOfType<scf::IfOp>();
+  if (!enclosingIf || !loopOp->isProperAncestor(enclosingIf))
+    return true;
+  if (!isa<TensorType>(val.getType()))
+    return true;
+  if (auto dpsOp = dyn_cast<DestinationStyleOpInterface>(def)) {
+    Value initVal = dpsOp.getTiedOpOperand(cast<OpResult>(val))->get();
+    if (auto brc = initVal.getDefiningOp<VBrcOp>())
+      initVal = brc.getDst();
+    return isa_and_nonnull<tensor::EmptyOp>(initVal.getDefiningOp());
+  }
+  if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(def)) {
+    Operation *rootAlloc = getRootAlloc(toTensor.getOperand());
+    if (!rootAlloc)
+      return false;
+    SmallPtrSet<Operation *, 8> chainInIf;
+    for (Value curr = toTensor.getOperand(); curr;) {
+      Operation *cDef = curr.getDefiningOp();
+      if (!cDef || !enclosingIf->isProperAncestor(cDef))
+        break;
+      chainInIf.insert(cDef);
+      if (cDef == rootAlloc)
+        break;
+      if (!isViewLikeMemRefOp(cDef) || cDef->getNumOperands() == 0)
+        return false;
+      curr = cDef->getOperand(0);
+    }
+    chainInIf.insert(toTensor.getOperation());
+    return llvm::all_of(chainInIf, [&](Operation *cOp) {
+      return llvm::all_of(cOp->getOperands(), [&](Value opnd) {
+        Operation *oDef = opnd.getDefiningOp();
+        return !oDef || !enclosingIf->isAncestor(oDef) ||
+               chainInIf.contains(oDef);
+      });
+    });
+  }
+  return false;
+}
+
+bool CVScopeOutliner::trySplitVectorWorkItemOnCubeInput(WorkItem *item,
+                                                        Value cubeInp) {
+  SmallPtrSet<Value, 32> touchedValues;
+  SmallPtrSet<Operation *, 32> touchedOps;
+  SmallVector<Value, 32> valQueue;
+
+  auto markValueTouched = [&](Value v) {
+    if (v && touchedValues.insert(v).second)
+      valQueue.push_back(v);
+  };
+
+  std::function<void(Operation *)> markOpTouched = [&](Operation *op) {
+    if (!op || !item->ops.contains(op) || !touchedOps.insert(op).second)
+      return;
+    for (Value res : op->getResults())
+      markValueTouched(res);
+
+    if (isa<memref::AllocOp, AllocWorkspaceOp>(op) &&
+        loopOp->isProperAncestor(op)) {
+      walkAllocUsers(op, [&](OpOperand &use) {
+        markOpTouched(use.getOwner());
+        return false;
+      });
+    }
+
+    if (auto dps = dyn_cast<DestinationStyleOpInterface>(op)) {
+      for (Value init : dps.getDpsInits()) {
+        if (isa<MemRefType>(init.getType())) {
+          if (Operation *rootAlloc = getRootAlloc(init);
+              rootAlloc && loopOp->isProperAncestor(rootAlloc)) {
+            markOpTouched(rootAlloc);
+            walkAllocUsers(rootAlloc, [&](OpOperand &use) {
+              markOpTouched(use.getOwner());
+              return false;
+            });
+          }
+        } else if (isa<TensorType>(init.getType())) {
+          SmallVector<Operation *, 4> viewChain;
+          for (Value curr = init; curr;) {
+            Operation *initDef = curr.getDefiningOp();
+            if (!initDef || !item->ops.contains(initDef))
+              break;
+            if (isViewLikeTensorOp(initDef) && initDef->getNumOperands() > 0) {
+              viewChain.push_back(initDef);
+              curr = initDef->getOperand(0);
+              continue;
+            }
+            if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(initDef)) {
+              for (Operation *vOp : viewChain)
+                markOpTouched(vOp);
+              markOpTouched(initDef);
+              if (Operation *rootAlloc = getRootAlloc(toTensor.getOperand());
+                  rootAlloc && loopOp->isProperAncestor(rootAlloc)) {
+                markOpTouched(rootAlloc);
+                walkAllocUsers(rootAlloc, [&](OpOperand &use) {
+                  markOpTouched(use.getOwner());
+                  return false;
+                });
+              }
+            }
+            break;
+          }
+        }
+      }
+    }
+  };
+
+  auto drainValQueue = [&]() {
+    while (!valQueue.empty()) {
+      Value v = valQueue.pop_back_val();
+
+      for (auto &[_, cOps] : item->condOps) {
+        if (getIfConditionForItem(cOps.ifOp, item) == v) {
+          for (Operation *tOp : cOps.thenOps)
+            markOpTouched(tOp);
+          for (Operation *eOp : cOps.elseOps)
+            markOpTouched(eOp);
+          for (auto [resIdx, ifRes] : llvm::enumerate(cOps.ifOp.getResults())) {
+            if (isIfResultOwnedByItem(cOps.ifOp, resIdx, item))
+              markValueTouched(ifRes);
+          }
+        }
+      }
+
+      for (OpOperand &use : v.getUses()) {
+        Operation *usr = use.getOwner();
+        if (!loopOp->isProperAncestor(usr))
+          continue;
+        if (isa<scf::YieldOp>(usr)) {
+          if (auto ifOp = dyn_cast<scf::IfOp>(usr->getParentOp());
+              ifOp && item->condOps.contains(ifOp)) {
+            unsigned resIdx = use.getOperandNumber();
+            if (resIdx < ifOp.getNumResults() &&
+                isIfResultOwnedByItem(ifOp, resIdx, item))
+              markValueTouched(ifOp.getResult(resIdx));
+          }
+          continue;
+        }
+        Operation *curr = usr;
+        while (curr && curr != loopOp && !item->ops.contains(curr))
+          curr = curr->getParentOp();
+        if (curr && item->ops.contains(curr))
+          markOpTouched(curr);
+      }
+    }
+  };
+
+  markValueTouched(cubeInp);
+  drainValQueue();
+
+  SetVector<Value> boundaryOutputs;
+  SmallPtrSet<Operation *, 32> untouchedOwned;
+  while (true) {
+    for (Operation *op : item->orderedOps) {
+      if (opToWorkItemMap.lookup(op) != item || touchedOps.contains(op) ||
+          !isa<bufferization::AllocTensorOp>(op))
+        continue;
+      bool usedByTouched = false;
+      bool usedByUntouched = false;
+      for (Operation *usr : op->getUsers()) {
+        if (opToWorkItemMap.lookup(usr) != item)
+          continue;
+        if (touchedOps.contains(usr))
+          usedByTouched = true;
+        else
+          usedByUntouched = true;
+      }
+      if (usedByTouched && !usedByUntouched)
+        touchedOps.insert(op);
+    }
+
+    untouchedOwned.clear();
+    bool hasTouchedCoreOp = false;
+    bool hasUntouchedCoreOp = false;
+    for (Operation *op : item->orderedOps) {
+      if (opToWorkItemMap.lookup(op) != item)
+        continue;
+      if (touchedOps.contains(op)) {
+        if (isCoreOp(op))
+          hasTouchedCoreOp = true;
+      } else {
+        untouchedOwned.insert(op);
+        if (isCoreOp(op))
+          hasUntouchedCoreOp = true;
+      }
+    }
+    if (!hasTouchedCoreOp || !hasUntouchedCoreOp)
+      return false;
+
+    boundaryOutputs.clear();
+    SmallPtrSet<Value, 32> visitedWalk;
+    auto collectFrom = [&](Value rootVal) {
+      SmallVector<Value, 16> stack = {rootVal};
+      while (!stack.empty()) {
+        Value v = stack.pop_back_val();
+        if (!v || touchedValues.contains(v) || !visitedWalk.insert(v).second)
+          continue;
+        Operation *defOp = v.getDefiningOp();
+        if (!defOp || !loopOp->isProperAncestor(defOp))
+          continue;
+        if (auto ifOp = dyn_cast<scf::IfOp>(defOp)) {
+          unsigned resIdx = cast<OpResult>(v).getResultNumber();
+          if (isIfResultOwnedByItem(ifOp, resIdx, item))
+            boundaryOutputs.insert(v);
+          continue;
+        }
+        if (untouchedOwned.contains(defOp)) {
+          if (canCloneOpInWorkItem(defOp, nullptr)) {
+            for (Value opnd : getWorkItemOperands(defOp))
+              stack.push_back(opnd);
+          } else {
+            boundaryOutputs.insert(v);
+          }
+          continue;
+        }
+        if (item->ops.contains(defOp) && canCloneOpInWorkItem(defOp, nullptr)) {
+          for (Value opnd : getWorkItemOperands(defOp))
+            stack.push_back(opnd);
+        }
+      }
+    };
+
+    for (Operation *tOp : item->orderedOps) {
+      if (opToWorkItemMap.lookup(tOp) != item || !touchedOps.contains(tOp))
+        continue;
+      if (auto enIf = tOp->getParentOfType<scf::IfOp>();
+          enIf && loopOp->isProperAncestor(enIf) &&
+          !item->hoistedOps.contains(tOp))
+        collectFrom(getIfConditionForItem(enIf, item));
+      for (Value opnd : getWorkItemOperands(tOp))
+        collectFrom(opnd);
+    }
+    for (auto &[_, cOps] : item->condOps) {
+      for (auto [resIdx, ifRes] : llvm::enumerate(cOps.ifOp.getResults())) {
+        if (!touchedValues.contains(ifRes) ||
+            !isIfResultOwnedByItem(cOps.ifOp, resIdx, item))
+          continue;
+        collectFrom(getIfConditionForItem(cOps.ifOp, item));
+        auto [tVal, eVal] = getIfYieldedValues(cOps.ifOp, resIdx);
+        collectFrom(tVal);
+        collectFrom(eVal);
+      }
+    }
+    for (Value outVal : item->outputs) {
+      if (!touchedValues.contains(outVal))
+        collectFrom(outVal);
+    }
+
+    bool absorbedUnexportable = false;
+    for (Value bVal : boundaryOutputs) {
+      if (!canExportValueFromWorkItem(bVal)) {
+        if (Operation *def = bVal.getDefiningOp()) {
+          markOpTouched(def);
+          drainValQueue();
+          absorbedUnexportable = true;
+        }
+      }
+    }
+    if (!absorbedUnexportable)
+      break;
+  }
+
+  if (boundaryOutputs.empty())
+    return false;
+
+  auto collectUntouchedSlice = [&](Value rootVal, bool stopAtBoundaries,
+                                   SmallPtrSetImpl<Operation *> &sliceOps,
+                                   SetVector<scf::IfOp> *sliceIfs) {
+    SmallPtrSet<Value, 32> visitedVals;
+    SmallPtrSet<Operation *, 8> expandedAllocs;
+    SmallVector<Value, 32> stack = {rootVal};
+
+    std::function<void(Operation *)> visitOp = [&](Operation *op) {
+      if (!op || !untouchedOwned.contains(op) || !sliceOps.insert(op).second)
+        return;
+      if (auto enIf = op->getParentOfType<scf::IfOp>();
+          enIf && loopOp->isProperAncestor(enIf))
+        stack.push_back(getIfConditionForItem(enIf, item));
+      for (Value opnd : getWorkItemOperands(op))
+        stack.push_back(opnd);
+
+      Operation *rootAlloc = nullptr;
+      if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op))
+        rootAlloc = getRootAlloc(toTensor.getOperand());
+      else if (isa<memref::AllocOp, AllocWorkspaceOp>(op))
+        rootAlloc = op;
+      if (rootAlloc && expandedAllocs.insert(rootAlloc).second) {
+        visitOp(rootAlloc);
+        walkAllocUsers(rootAlloc, [&](OpOperand &use) {
+          Operation *usr = use.getOwner();
+          if (!isa<bufferization::ToTensorOp>(usr))
+            visitOp(usr);
+          return false;
+        });
+      }
+    };
+
+    while (!stack.empty()) {
+      Value v = stack.pop_back_val();
+      if (!v || !visitedVals.insert(v).second)
+        continue;
+      Operation *defOp = v.getDefiningOp();
+      if (!defOp || !loopOp->isProperAncestor(defOp))
+        continue;
+      if (auto ifOp = dyn_cast<scf::IfOp>(defOp)) {
+        unsigned resIdx = cast<OpResult>(v).getResultNumber();
+        if (v == rootVal ||
+            ((!stopAtBoundaries || !boundaryOutputs.contains(v)) &&
+             isIfResultOwnedByItem(ifOp, resIdx, item) &&
+             !touchedValues.contains(v))) {
+          if (sliceIfs)
+            sliceIfs->insert(ifOp);
+          stack.push_back(getIfConditionForItem(ifOp, item));
+          auto [tVal, eVal] = getIfYieldedValues(ifOp, resIdx);
+          stack.push_back(tVal);
+          stack.push_back(eVal);
+        }
+        continue;
+      }
+      if (!untouchedOwned.contains(defOp)) {
+        if (item->ops.contains(defOp) && canCloneOpInWorkItem(defOp, nullptr)) {
+          for (Value opnd : getWorkItemOperands(defOp))
+            stack.push_back(opnd);
+        }
+        continue;
+      }
+      if (stopAtBoundaries && v != rootVal && boundaryOutputs.contains(v))
+        continue;
+      visitOp(defOp);
+    }
+  };
+
+  boundaryOutputs.remove_if([&](Value bVal) {
+    SmallPtrSet<Operation *, 32> candidateOps;
+    collectUntouchedSlice(bVal, /*stopAtBoundaries=*/false, candidateOps,
+                          /*sliceIfs=*/nullptr);
+    return llvm::none_of(candidateOps, isCoreOp);
+  });
+  if (boundaryOutputs.empty())
+    return false;
+
+  SmallVector<Value> sortedBoundaries(boundaryOutputs.begin(),
+                                      boundaryOutputs.end());
+  llvm::stable_sort(sortedBoundaries, [&](Value a, Value b) {
+    return opOrder.lookup(a.getDefiningOp()) <
+           opOrder.lookup(b.getDefiningOp());
+  });
+
+  SmallVector<WorkItem *, 4> newItemPtrs;
+  for (Value bVal : sortedBoundaries) {
+    SmallPtrSet<Operation *, 32> sliceOps;
+    SetVector<scf::IfOp> sliceIfs;
+    collectUntouchedSlice(bVal, /*stopAtBoundaries=*/true, sliceOps, &sliceIfs);
+    if (llvm::none_of(sliceOps, isCoreOp))
+      continue;
+
+    SmallVector<Operation *, 32> orderedSlice(sliceOps.begin(), sliceOps.end());
+    llvm::sort(orderedSlice, [&](Operation *a, Operation *b) {
+      return opOrder.lookup(a) < opOrder.lookup(b);
+    });
+
+    auto newItem = std::make_unique<WorkItem>();
+    newItem->id = nextWorkItemId++;
+    newItem->output = bVal;
+    newItem->outputOp = bVal.getDefiningOp();
+    newItem->coreType = TCoreType::VECTOR;
+    for (scf::IfOp ifOp : sliceIfs)
+      getOrCreateCondOps(*newItem, ifOp);
+    for (Operation *op : orderedSlice) {
+      newItem->orderedOps.insert(op);
+      opToWorkItemMap[op] = newItem.get();
+      untouchedOwned.erase(op);
+      if (auto enIf = op->getParentOfType<scf::IfOp>();
+          enIf && loopOp->isProperAncestor(enIf))
+        getOrCreateCondOps(*newItem, enIf, op);
+    }
+    newItemPtrs.push_back(newItem.get());
+    workItems.push_back(std::move(newItem));
+  }
+
+  if (newItemPtrs.empty())
+    return false;
+
+  for (Operation *op : item->orderedOps) {
+    if (!untouchedOwned.contains(op) || !isa<annotation::MarkOp, DebugOp>(op))
+      continue;
+    if (Operation *srcDef = op->getOperand(0).getDefiningOp()) {
+      WorkItem *defOwner = opToWorkItemMap.lookup(srcDef);
+      if (defOwner && defOwner != item) {
+        defOwner->orderedOps.insert(op);
+        opToWorkItemMap[op] = defOwner;
+        untouchedOwned.erase(op);
+        if (auto enIf = op->getParentOfType<scf::IfOp>();
+            enIf && loopOp->isProperAncestor(enIf))
+          getOrCreateCondOps(*defOwner, enIf, op);
+      }
+    }
+  }
+
+  auto it = llvm::find(sortedWorkItems, item);
+  sortedWorkItems.insert(it, newItemPtrs.begin(), newItemPtrs.end());
+  return true;
+}
+
+bool CVScopeOutliner::splitVectorWorkItems(Operation *origLoopTerminator) {
+  bool anySplit = false;
+  while (true) {
+    populateWorkItemIO(origLoopTerminator);
+
+    SmallPtrSet<Value, 16> cubeOutputs;
+    DenseMap<Value, unsigned> cubeOutputPos;
+    for (auto [idx, w] : llvm::enumerate(sortedWorkItems)) {
+      if (w->coreType == TCoreType::CUBE) {
+        for (Value out : w->outputs) {
+          cubeOutputs.insert(out);
+          cubeOutputPos[out] = idx;
+        }
+      }
+    }
+    if (cubeOutputs.empty())
+      break;
+
+    bool splitInRound = false;
+    SmallVector<WorkItem *> snapshot(sortedWorkItems.begin(),
+                                     sortedWorkItems.end());
+    for (WorkItem *item : snapshot) {
+      if (item->coreType != TCoreType::VECTOR)
+        continue;
+      SmallVector<Value, 4> itemCubeInputs;
+      for (Value inp : item->inputs) {
+        if (cubeOutputs.contains(inp))
+          itemCubeInputs.push_back(inp);
+      }
+      if (itemCubeInputs.empty())
+        continue;
+      llvm::sort(itemCubeInputs, [&](Value a, Value b) {
+        return cubeOutputPos.lookup(a) > cubeOutputPos.lookup(b);
+      });
+      for (Value cubeInp : itemCubeInputs) {
+        if (trySplitVectorWorkItemOnCubeInput(item, cubeInp)) {
+          splitInRound = true;
+          anySplit = true;
+          break;
+        }
+      }
+    }
+    if (!splitInRound)
+      break;
+  }
+  return anySplit;
 }
 
 // Ownership and branch exports are only final after populateWorkItemIO.
@@ -1451,9 +1998,15 @@ void CVScopeOutliner::computeHoistedOps(WorkItem *item) {
       for (Operation *tOp : candidates) {
         if (item->hoistedOps.contains(tOp))
           continue;
-        bool isAlloc = isa<memref::AllocOp, AllocWorkspaceOp>(tOp) &&
-                       (isAllocTargetOfStoreFixpipeCopy(tOp) ||
-                        isAllocTargetOfMultiUserLoadOrND2NZ(tOp));
+        bool isAlloc =
+            isa<memref::AllocOp, AllocWorkspaceOp>(tOp) &&
+            (isAllocTargetOfStoreFixpipeCopy(tOp) ||
+             isAllocTargetOfMultiUserLoadOrND2NZ(tOp) ||
+             walkAllocUsers(tOp, [&](OpOperand &use) {
+               auto toTensor =
+                   dyn_cast<bufferization::ToTensorOp>(use.getOwner());
+               return toTensor && item->output == toTensor.getResult();
+             }));
         bool isCast =
             (isViewLikeMemRefOp(tOp) || isViewLikeTensorOp(tOp) ||
              isa<annotation::MarkOp, bufferization::ToTensorOp>(tOp)) &&
@@ -1482,6 +2035,7 @@ void CVScopeOutliner::populateWorkItemIO(Operation *origLoopTerminator) {
     item->inputs.clear();
     item->outputs.clear();
     item->ops.clear();
+    item->hoistedOps.clear();
     for (Operation *op : item->orderedOps) {
       if (opToWorkItemMap.lookup(op) == item)
         item->ops.insert(op);
@@ -1648,7 +2202,8 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
 
   Operation *origLoopTerminator = origBody->getTerminator();
   populateWorkItemIO(origLoopTerminator);
-  if ((!conditionalMergeOwners.empty() || !nestedCounters.empty()) &&
+  if ((!conditionalMergeOwners.empty() || !nestedCounters.empty() ||
+       didSplitVectorItems) &&
       failed(sortPopulatedWorkItems())) {
     origForOp.emitWarning(
         "[OutlineCVScopes] cyclic conditional merge; skipping loop");
@@ -2094,6 +2649,12 @@ LogicalResult CVScopeOutliner::run() {
   // Step 5: Final iteration for unmapped ops
   collectUnmappedOps();
   collectConditionalMerges();
+  if (auto forOp = dyn_cast<scf::ForOp>(loopOp)) {
+    didSplitVectorItems =
+        splitVectorWorkItems(forOp.getBody()->getTerminator());
+    if (didSplitVectorItems)
+      collectConditionalMerges();
+  }
 
   // Step 6: Create new loop with encapsulating scope.scope
   if (auto forOp = dyn_cast<scf::ForOp>(loopOp)) {
