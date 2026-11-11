@@ -158,6 +158,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   SplitMixedIfConditionals.cpp
   SplitMixKernel.cpp
   SyncBlockHoisting.cpp
+  TcbPoolOpInsertion.cpp
   TcbPoolPlan.cpp
   TileAndBindSubBlock.cpp
   TileBatchMMIntoLoop.cpp

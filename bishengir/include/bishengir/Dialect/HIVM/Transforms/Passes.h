@@ -122,6 +122,9 @@ std::unique_ptr<Pass> createLowerMultiBufferCounterPass();
 std::unique_ptr<Pass>
 createPlanMemoryPass(const PlanMemoryOptions &planMemoryOption = {});
 
+/// Insert pool operations for a successful TCB memory-planning fallback.
+std::unique_ptr<Pass> createTcbPoolOpInsertionPass();
+
 /// Create a pass to inject sync
 std::unique_ptr<Pass>
 createInjectSyncPass(const InjectSyncOptions &options = {});
