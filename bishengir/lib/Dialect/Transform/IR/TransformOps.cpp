@@ -151,59 +151,7 @@ FailureOr<Value> traceReshapeOrSliceSingleProducer(Value input) {
       getReshapeOrSliceSource(definingOp));
 }
 
-// Process inner loops before the explicit boundary. Keeping slices in the
-// boundary also keeps their dependent operations available for producer fusion.
-void applyLICMWithSliceBoundary(scf::ForOp containingForOp) {
-  containingForOp->walk<WalkOrder::PostOrder>(
-      [&](LoopLikeOpInterface loopLike) {
-        if (loopLike != containingForOp) {
-          moveLoopInvariantCode(loopLike);
-          return;
-        }
-        moveLoopInvariantCode(
-            loopLike.getLoopRegions(),
-            [&](Value value, Region *) {
-              return loopLike.isDefinedOutsideOfLoop(value);
-            },
-            [&](Operation *op, Region *) {
-              return !isa<tensor::ExtractSliceOp>(op) &&
-                     isMemoryEffectFree(op) && isSpeculatable(op);
-            },
-            [&](Operation *op, Region *) { loopLike.moveOutOfLoop(op); });
-      });
-}
-
 } // namespace
-
-//===----------------------------------------------------------------------===//
-// ApplyLoopInvariantCodeMotionWithSliceBoundaryOp
-//===----------------------------------------------------------------------===//
-
-DiagnosedSilenceableFailure
-ApplyLoopInvariantCodeMotionWithSliceBoundaryOp::apply(
-    TransformRewriter &rewriter, TransformResults &results,
-    TransformState &state) {
-  SmallVector<scf::ForOp> boundaries;
-  for (Operation *target : state.getPayloadOps(getTarget())) {
-    auto containingForOp = dyn_cast<scf::ForOp>(target);
-    if (!containingForOp)
-      return emitDefiniteFailure() << "expected an scf.for slice boundary";
-    for (scf::ForOp boundary : boundaries)
-      if (boundary->isAncestor(target) || target->isAncestor(boundary))
-        return emitDefiniteFailure()
-               << "slice boundaries must not contain one another";
-    boundaries.push_back(containingForOp);
-  }
-  for (scf::ForOp boundary : boundaries)
-    applyLICMWithSliceBoundary(boundary);
-  return DiagnosedSilenceableFailure::success();
-}
-
-void ApplyLoopInvariantCodeMotionWithSliceBoundaryOp::getEffects(
-    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
-  onlyReadsHandle(getTargetMutable(), effects);
-  modifiesPayload(effects);
-}
 
 //===----------------------------------------------------------------------===//
 // GetFuncArgumentOp
@@ -1052,7 +1000,28 @@ findAndMergeMultipleExtractUses(transform::TransformRewriter &rewriter,
       rewriter.replaceOp(extractUserOp, newInnerExtractSliceOp);
     }
   }
-  applyLICMWithSliceBoundary(containingForOp);
+  // Sink loop-invariant code into the loops that use it. The containing op is
+  // treated specially: the caller is in the middle of fusing producers into
+  // it, and hoisting a producer's slice past its header would leave the
+  // producer with no use inside the container for `FuseIntoContainingOp` to
+  // find. Hold the slices back there and let everything else leave as before.
+  containingForOp->walk([&](LoopLikeOpInterface loopLike) {
+    if (loopLike == containingForOp) {
+      moveLoopInvariantCode(
+          loopLike.getLoopRegions(),
+          [&](Value value, Region *) {
+            return loopLike.isDefinedOutsideOfLoop(value);
+          },
+          [&](Operation *op, Region *) {
+            if (isa<tensor::ExtractSliceOp>(op))
+              return false;
+            return isMemoryEffectFree(op) && isSpeculatable(op);
+          },
+          [&](Operation *op, Region *) { loopLike.moveOutOfLoop(op); });
+      return;
+    }
+    moveLoopInvariantCode(loopLike);
+  });
 }
 
 //===----------------------------------------------------------------------===//
