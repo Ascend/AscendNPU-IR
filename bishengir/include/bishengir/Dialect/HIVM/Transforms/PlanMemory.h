@@ -922,9 +922,14 @@ private:
   bool IsReuseHIVMOp(Operation *op, const Value &genBuffer,
                      const Value &killBuffer) const;
 
-  /// the vf call that can reuse dst address `gen` and src address `kill` in
-  /// limited situation
-  bool IsReuseVFCall(Value gen, Value kill);
+  /// Returns true if reusing root alloc `kill` for root alloc `gen` would stall
+  /// the mte2/mte3 pipeline, so the reuse must be rejected.
+  bool IsReuseVFStallPipeline(Value gen, Value kill);
+
+  /// Returns true if the vf call `op` allows its dst `genBuffer` to reuse its
+  /// src `killBuffer` in place: no aliased-argument risk and the vf inplace
+  /// reuse analysis permits it.
+  bool IsReuseVFCall(Operation *op, Value genBuffer, Value killBuffer);
 
   /// Determines whether the value `src` is reachable to an operand of an
   /// operation with pipe type `Pipe`.

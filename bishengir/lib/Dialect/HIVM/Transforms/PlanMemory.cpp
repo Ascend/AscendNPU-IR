@@ -1517,27 +1517,27 @@ template <PIPE Pipe> bool MemPlan::IsInplaceReuseReachable(Value allocValue) {
   return false;
 }
 
-bool MemPlan::IsReuseVFCall(Value gen, Value kill) {
-  auto genAlloc = utils::tracebackMemRefToAlloc(gen);
-  auto killAlloc = utils::tracebackMemRefToAlloc(kill);
-  if (!genAlloc.has_value() || !killAlloc.has_value()) {
-    return false;
-  }
-  auto genRoot = genAlloc.value().getResult();
-  auto killRoot = killAlloc.value().getResult();
-  auto genReachStore = IsInplaceReuseReachable<PIPE::PIPE_MTE3>(genRoot);
-  auto killReachLoad = IsInplaceReuseReachable<PIPE::PIPE_MTE2>(killRoot);
-  auto loopParent = genAlloc.value()->getParentOfType<LoopLikeOpInterface>();
+bool MemPlan::IsReuseVFStallPipeline(Value gen, Value kill) {
+  // `gen` and `kill` are root allocs from genKillMap.
+  auto genReachStore = IsInplaceReuseReachable<PIPE::PIPE_MTE3>(gen);
+  auto killReachLoad = IsInplaceReuseReachable<PIPE::PIPE_MTE2>(kill);
+  auto loopParent = gen.getDefiningOp()->getParentOfType<LoopLikeOpInterface>();
 
-  // When `gen` reaches `store` and `kill` reaches `load`, inplace-reuse for
-  // `gen` and `kill` can cause mte2/mte3 pipeline stalls, because we need extra
-  // synchronization on the same ub address between loop interations.
+  // When `gen` reaches a store and `kill` reaches a load inside a loop, reuse
+  // needs extra mte2/mte3 synchronization on the same ub address between loop
+  // iterations, which stalls the pipeline.
   if (genReachStore && killReachLoad && loopParent) {
-    LDBG("can't reuse " << genRoot << " and " << killRoot << "\n");
-    return false;
+    LDBG("can't reuse " << gen << " and " << kill << "\n");
+    return true;
   }
-  LDBG("can reuse " << genRoot << " and " << killRoot << "\n");
-  return true;
+  LDBG("can reuse " << gen << " and " << kill << "\n");
+  return false;
+}
+
+bool MemPlan::IsReuseVFCall(Operation *op, Value genBuffer, Value killBuffer) {
+  return vfInplaceReuseInfo && hivm::isVFCall(op) &&
+         !VFCallInplaceReuseInfo::hasAliasArgRisk(op) &&
+         vfInplaceReuseInfo->isInplaceReusable(op, genBuffer, killBuffer);
 }
 
 SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
@@ -1553,26 +1553,6 @@ SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
       continue;
     }
     Operation *op = it->first->operation;
-    bool isVFCallReusable = vfInplaceReuseInfo && hivm::isVFCall(op) &&
-                            !VFCallInplaceReuseInfo::hasAliasArgRisk(op);
-    DenseMap<ValuePair, bool> vfReuseCache;
-
-    auto isVFInplacePair = [&](Value genBuffer, Value killBuffer) {
-      if (!isVFCallReusable ||
-          !vfInplaceReuseInfo->isInplaceReusable(op, genBuffer, killBuffer)) {
-        return false;
-      }
-
-      // use cache to avoid redundant traversal
-      ValuePair pair = {genBuffer, killBuffer};
-      auto cached = vfReuseCache.find(pair);
-      if (cached != vfReuseCache.end()) {
-        return cached->second;
-      }
-      return vfReuseCache
-          .try_emplace(pair, IsReuseVFCall(genBuffer, killBuffer))
-          .first->second;
-    };
 
     SmallVector<Value> sortedGen(it->second.gen.begin(), it->second.gen.end());
     llvm::stable_sort(sortedGen, [&](Value a, Value b) {
@@ -1609,7 +1589,8 @@ SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
           continue;
         }
 
-        if (isVFInplacePair(genBuffer, killBuffer)) {
+        if (IsReuseVFCall(op, genBuffer, killBuffer) &&
+            !IsReuseVFStallPipeline(genBuffer, killBuffer)) {
           reusedKill.insert(killBuffer);
           reachableMap.unite(genBuffer, killBuffer);
           inplaceList.emplace_back(genBuffer, killBuffer);
@@ -1824,8 +1805,8 @@ bool MemPlan::IsPreloadBufferReuseable(PreloadBufferReuseableInfo &info,
   auto isInplaceReuseable = [this](Operation *op, Value gen, Value kill) {
     auto genType = cast<ShapedType>(gen.getType());
     auto killType = cast<ShapedType>(kill.getType());
-    return genType.getShape() == killType.getShape() && hivm::isVFCall(op) &&
-           vfInplaceReuseInfo->isInplaceReusable(op, gen, kill);
+    return genType.getShape() == killType.getShape() &&
+           IsReuseVFCall(op, gen, kill);
   };
   // A life sits in the window when it starts at or after the window start and
   // ends at or before the window end.

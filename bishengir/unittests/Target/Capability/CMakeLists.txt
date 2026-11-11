@@ -79,3 +79,17 @@ target_link_libraries(BiShengIRFixpipeCapabilityTests PRIVATE
   BiShengIRNPUFixpipeCapability
   MLIRIR
 )
+
+add_bishengir_unittest(BiShengIRCubeLoadCapabilityTests
+  PARTIAL_SOURCES_INTENDED
+  CubeLoadCapabilityTest.cpp
+)
+add_dependencies(BiShengIRCubeLoadCapabilityTests
+  BiShengIRCubeLoadCapabilityIncGen
+  BiShengIRCubeLoadCapabilityBindingIncGen
+)
+target_link_libraries(BiShengIRCubeLoadCapabilityTests PRIVATE
+  BiShengIRHIVMDialect
+  BiShengIRNPUCubeLoadCapability
+  MLIRIR
+)

@@ -15,13 +15,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/DMA/CubeLoad/CubeLoadCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -168,16 +168,6 @@ static constexpr llvm::StringLiteral conv3dDepthPadded =
 //   or Back padding is nonzero, normalize materializes depth padding and tags
 //   the op, while decompose relies on this tag and keeps T/B/L/R padding on
 //   Conv2d attributes.
-
-bool isRegBasedArch(Operation *op) {
-  auto moduleOp = op->getParentOfType<ModuleOp>();
-  return moduleOp && hacc::utils::isRegBasedArch(moduleOp);
-}
-
-bool isAscend950(Operation *op) {
-  auto moduleOp = op->getParentOfType<ModuleOp>();
-  return moduleOp && hacc::utils::isAscend950(moduleOp);
-}
 
 inline RoundModeAttr getRoundAttr(mlir::OpBuilder &b, Type srcType,
                                   Type dstType) {
@@ -504,10 +494,13 @@ bool canUseNCHW2NC1HWC0(ConvOpType op, RankedTensorType inputType) {
     return false;
   }
 
-  if (!isAscend950(op) || !inputType.hasStaticShape())
+  if (!inputType.hasStaticShape())
     return false;
   Type elementType = inputType.getElementType();
   if (!isa<Float16Type, BFloat16Type, Float32Type>(elementType))
+    return false;
+  if (!isNativeNchw2Nc1hwc0(op, elementType, AddressSpace::GM,
+                            AddressSpace::L1))
     return false;
 
   int64_t groups = op.getGroups();
@@ -537,10 +530,13 @@ bool canUseNCHW2C1HWNC0(ConvOpType op, RankedTensorType weightType) {
     return false;
   }
 
-  if (!isAscend950(op) || !weightType.hasStaticShape())
+  if (!weightType.hasStaticShape())
     return false;
   Type elementType = weightType.getElementType();
   if (!isa<Float16Type, BFloat16Type, Float32Type>(elementType))
+    return false;
+  if (!isNativeNchw2C1hwnc0(op, elementType, AddressSpace::GM,
+                            AddressSpace::L1))
     return false;
 
   int64_t groups = op.getGroups();
@@ -855,10 +851,10 @@ insertPadExpandTransToFormatInput(ConvOpType op, PatternRewriter &rewriter,
     finalVal = vtranspose.getResult()[0];
   }
 
-  // Keep the normalized input in the tensor dataflow so that InsertLoadStore
-  // can later use tightly-coupled buffer DMA for the UB-to-L1 transfer.
-  // A3 lacks this pathway and relies on explicit store/load instead.
-  if (isRegBasedArch(op)) {
+  // Keep the tensor when the grouped NCHW load that consumes this layout is
+  // Native. Otherwise materialize a store and a load.
+  if (isNativeNchw2Nc1hwc0(op, elementType, AddressSpace::GM,
+                           AddressSpace::L1)) {
     op->replaceUsesOfWith(input, finalVal);
     return success();
   }
@@ -1087,10 +1083,10 @@ insertPadExpandTransToFormatWeight(ConvOpType op, PatternRewriter &rewriter,
     finalVal = vtranspose.getResult()[0];
   }
 
-  // Keep the normalized weight in the tensor dataflow so that InsertLoadStore
-  // can later use tightly-coupled buffer DMA for the UB-to-L1 transfer.
-  // A3 lacks this pathway and relies on explicit store/load instead.
-  if (isRegBasedArch(op)) {
+  // Keep the tensor when the grouped NCHW weight load is Native. Otherwise
+  // materialize a store and a load.
+  if (isNativeNchw2C1hwnc0(op, elementType, AddressSpace::GM,
+                           AddressSpace::L1)) {
     // Align per-group oC to the fractal boundary required by L1-to-L0B DMA.
     // Split oC into [groups, oC/groups], pad the inner dim to a multiple of
     // FRACTAL_BLOCK_NUM, then collapse back so the combined oC is

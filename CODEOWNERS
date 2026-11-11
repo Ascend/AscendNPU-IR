@@ -262,4 +262,5 @@
 
 # Custom op.
 /bishengir/**/CustomOp/ @danielcm585 @hid90099092 @tanshengshun
+/bishengir/test/**/custom-op/* @danielcm585 @hid90099092 @tanshengshun
 /bishengir/test/**/custom-op* @danielcm585 @hid90099092 @tanshengshun

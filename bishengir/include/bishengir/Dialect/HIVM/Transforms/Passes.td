@@ -1836,26 +1836,31 @@ def CacheModuleTarget : HIVMPass<"hivm-cache-module-target"> {
 }
 
 // Explicit capability check. Do not add this to a default pipeline.
-// Fixpipe is the first checker. Add another checker for the next op.
+// The pass walks every CapabilityBinding whose Verify bit is true. A new
+// bound op is checked without a hand-written checker.
 def VerifyCapability : HIVMPass<"hivm-verify-capability"> {
   let summary = "Check HIVM ops against the selected target capability";
   let description = [{
     Explicitly invoked capability check. It is not part of the default
-    pipeline. Each supported op is a separate checker. Fixpipe is the first.
-    The pass does not replace a target-independent op verifier.
+    pipeline. The pass does not replace a target-independent op verifier.
+
+    Every generated capability binding with Verify=1 is checked. The pass
+    builds the request from that binding and queries that binding's profile.
+    A binding that shares an operation with another key, such as batched
+    ND2NZ, sets Verify=0 so the operation is not checked twice. A new
+    catalogue namespace is one call in the pass. A new op inside an existing
+    catalogue needs no C++ checker.
 
     `#hacc.target` is read with `hacc::utils::getTargetDevice` from the nearest
     enclosing module. A nested module overrides an outer module. A missing
     attribute is reported as missing; this pass does not assume Ascend910B.
 
-    The Fixpipe checker builds a request through the generated binding and
-    queries the production profile. Other operations are ignored until a
-    checker is registered for them. `unknown` means a partial profile, or a
-    missing profile, has no confirmed native row. It does not mean the
-    hardware rejects the operation. `unsupported` means a complete profile
-    has no native row. `invalid-request` means the request does not match
-    the schema. A binding that cannot read the operation is reported
-    separately and is not a hardware result.
+    `unknown` means a partial profile, or a missing profile, has no confirmed
+    native row. It does not mean the hardware rejects the operation.
+    `unsupported` means a complete profile has no native row.
+    `invalid-request` means the request does not match the schema. A binding
+    that cannot read the operation is reported separately and is not a
+    hardware result.
 
     `strict=true` accepts only `native`. `strict=false` prints the same facts
     as remarks and then succeeds. A successful report-mode run does not prove
