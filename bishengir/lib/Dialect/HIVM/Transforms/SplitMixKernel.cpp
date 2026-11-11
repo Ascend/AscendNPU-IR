@@ -19,7 +19,6 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
-#include "bishengir/Dialect/HIVM/Transforms/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/SplitKernelUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/TightlyCoupledBufferUtils.h"
@@ -170,12 +169,12 @@ static SmallVector<Value> getOutOperands(Operation *op, bool opIsPreserved) {
     return {};
   }
 
-  // Distributed custom ops (e.g. dist.aclshmem_ptr_*) may carry results without
+  // Custom ops (e.g. dist.aclshmem_ptr_*) may carry results without
   // any "outputs"/init operands, so the DPS path below would yield zero inits
   // for a result-bearing op. Derive a replacement per result: unused results
   // need no replacement (sentinel), used results reuse a type-matching input
   // operand when available, otherwise fall back to a zero/empty stub.
-  if (hivm::isDistributedTypeCustomOp(op)) {
+  if (isa<hivm::CustomOp, hivm::CustomMacroOp>(op)) {
     auto dpsOp = dyn_cast_if_present<DestinationStyleOpInterface>(op);
     // If the op already provides matching init operands, use them directly.
     if (dpsOp && dpsOp.getDpsInits().size() == op->getNumResults()) {
@@ -202,7 +201,7 @@ static SmallVector<Value> getOutOperands(Operation *op, bool opIsPreserved) {
             createZeroOrEmptyStub(localBuilder, op->getLoc(), result.getType());
         if (!replacement)
           op->emitError() << "Failed to create replacement stub for "
-                             "distributed custom op result #"
+                             "custom op result #"
                           << result.getResultNumber()
                           << " with unsupported type: " << result.getType();
       }
@@ -572,29 +571,6 @@ static bool shouldPreserveForSplit(Operation *op) {
   return false;
 }
 
-static void inferDistributedCoreType(func::FuncOp mixedFunc) {
-  auto rectifyCoreType = [mixedFunc](hivm::TCoreType &cur) {
-    auto funcCoreType = mixedFunc
-                            ->getAttrOfType<hivm::TFuncCoreTypeAttr>(
-                                hivm::TFuncCoreTypeAttr::name)
-                            .getFuncCoreType();
-    if (cur == TCoreType::CUBE_AND_VECTOR || cur == TCoreType::CUBE_OR_VECTOR) {
-      return kTFuncCoreType2TCoreType.at(funcCoreType);
-    }
-    return cur;
-  };
-  mixedFunc->walk([&rectifyCoreType](Operation *op) {
-    if (isDistributedTypeCustomOp(op)) {
-      if (auto res = hivm::detail::queryCoreTypeHelper(op)) {
-        auto coreType = rectifyCoreType(res.value());
-        auto coreTypeAttr =
-            hivm::TCoreTypeAttr::get(op->getContext(), coreType);
-        op->setAttr(hivm::TCoreTypeAttr::name, coreTypeAttr);
-      }
-    }
-  });
-}
-
 /// Tag SIMT scopes as VECTOR and erase empty scopes belonging to the filtered
 /// core type (pre-order so nested scopes are handled outer-first).
 static void filterEmptyScopesPreOrder(OpBuilder &builder,
@@ -641,8 +617,8 @@ void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
   const enum TCoreType coreType =
       filterCoreType == TCoreType::CUBE ? TCoreType::VECTOR : TCoreType::CUBE;
 
-  // Distributed CustomOps need a concrete core type before erase walks.
-  inferDistributedCoreType(mixedFunc);
+  // Resolve annotated operations before the core-specific erase walks.
+  resolveFlexibleCoreTypes(mixedFunc, /*specializeBoth=*/true);
   filterEmptyScopesPreOrder(builder, mixedFunc, coreType);
 
   mixedFunc.walk<WalkOrder::PostOrder>([&](Operation *op) {
@@ -744,9 +720,13 @@ void SplitMixKernelPass::splitMixKernel(func::FuncOp &func) {
   if (funcCoreTypeAttr.getFuncCoreType() != TFuncCoreType::MIX) {
     if (funcCoreTypeAttr.getFuncCoreType() == TFuncCoreType::AIC ||
         funcCoreTypeAttr.getFuncCoreType() == TFuncCoreType::AIV)
-      inferDistributedCoreType(func);
+      resolveFlexibleCoreTypes(func, /*specializeBoth=*/true);
     return;
   }
+
+  // Freeze operation-specific choices against the intact MIX body before
+  // cloning or filtering can change notify/load/debug inference.
+  resolveFlexibleCoreTypes(func, /*specializeBoth=*/true);
 
   // On Ascend950, MIX ratios 0:1 and 1:0 use a standalone vector/cube entry
   // inside a MIX module.

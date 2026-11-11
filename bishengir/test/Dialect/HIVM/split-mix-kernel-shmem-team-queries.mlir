@@ -1,3 +1,5 @@
+// RUN: sed "s/hivm.is_distributed, //g" %s | bishengir-opt -hivm-infer-func-core-type -hivm-insert-anchors-and-backup -hivm-split-mix-kernel -canonicalize -hivm-delayed-cross-core-gss="force-is-reg-based=true solver-version=v1" -o /dev/null
+// RUN: sed "s/hivm.is_distributed, //g" %s | bishengir-opt -hivm-infer-func-core-type -hivm-insert-anchors-and-backup -hivm-split-mix-kernel -canonicalize -hivm-delayed-cross-core-gss="force-is-reg-based=true solver-version=v2" -o /dev/null
 // RUN: bishengir-opt %s -hivm-infer-func-core-type -hivm-insert-anchors-and-backup -hivm-split-mix-kernel -canonicalize | FileCheck %s
 // RUN: bishengir-opt %s -hivm-infer-func-core-type -hivm-insert-anchors-and-backup -hivm-split-mix-kernel -canonicalize -hivm-delayed-cross-core-gss="force-is-reg-based=true solver-version=v1" -o /dev/null
 // RUN: bishengir-opt %s -hivm-infer-func-core-type -hivm-insert-anchors-and-backup -hivm-split-mix-kernel -canonicalize -hivm-delayed-cross-core-gss="force-is-reg-based=true solver-version=v2" -o /dev/null
