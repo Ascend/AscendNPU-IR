@@ -445,7 +445,12 @@ static LogicalResult loopOnLogicBlock(func::FuncOp funcOp,
   if (!logicBlockNum)
     return funcOp->emitError("Logical Block number not found");
   if (!getBlockIdxOp) {
-    return success();
+    // Program ids with no users are erased by canonicalization, and that
+    // also deletes get_block_idx. Triton still launches only the physical
+    // core count, so recreate the index and wrap the body.
+    rewriter.setInsertionPointAfterValue(logicBlockNum);
+    getBlockIdxOp =
+        rewriter.create<hivm::GetBlockIdxOp>(loc, rewriter.getI64Type());
   }
 
   traceExceptions(logicBlockNum, exceptions);
