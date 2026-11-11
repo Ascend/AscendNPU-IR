@@ -133,7 +133,7 @@ protected:
   }
 
   scf::ForOp findForOp(ModuleOp module) {
-    scf::ForOp result;
+    scf::ForOp result = nullptr;
     module.walk([&](scf::ForOp op) { result = op; });
     return result;
   }
