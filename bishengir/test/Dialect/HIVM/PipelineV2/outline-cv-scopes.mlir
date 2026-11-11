@@ -1,5 +1,6 @@
 // RUN: bishengir-opt -outline-cv-scopes -canonicalize -cse -split-input-file %s | FileCheck %s
 // RUN: bishengir-opt -outline-cv-scopes -verify-each -split-input-file %s | FileCheck %s --check-prefix=RESHAPE
+// RUN: bishengir-opt -outline-cv-scopes -split-input-file %s | FileCheck %s --check-prefix=TCB
 
 // CHECK-LABEL: func.func @outline_basic_and_fanout
 // CHECK: %[[FOR:.*]] = scf.for {{.*}} iter_args(%[[ACC:.*]] = {{.*}}) -> (tensor<16x16xf32>)
@@ -1490,6 +1491,90 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
         hivm.hir.store ins(%next : tensor<64x1xf32>) outs(%dst1 : memref<64x1xf32>)
       }
     }
+    return
+  }
+}
+
+// -----
+
+// Legacy loops bypass outlining, but their TCB marks must still follow the
+// allocations hoisted out of the preload scopes. Preserve all attributes and
+// the order of multiple marks on the same allocation, including nested scopes.
+// TCB-LABEL: func.func @legacy_tcb_marks_to_allocations
+// TCB: scf.for
+// TCB-NEXT: %[[A:.*]] = memref.alloc()
+// TCB-NEXT: annotation.mark %[[A]] {effects = ["write", "read"], first, hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>}
+// TCB-NEXT: annotation.mark %[[A]] {effects = ["read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>, second} keys = ["tag"] values = [%{{.*}} : index]
+// TCB-NEXT: %[[B:.*]] = memref.alloc()
+// TCB-NEXT: annotation.mark %[[B]] {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>}
+// TCB-NEXT: scope.scope
+// TCB-NOT: annotation.mark
+// TCB: } {"hivm.legacy-cv-pipeline"}
+module {
+  func.func @legacy_tcb_marks_to_allocations(%n: index, %tag: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %n step %c1 {
+      %a = memref.alloc() : memref<8xf32, #hivm.address_space<cbuf>>
+      %b = memref.alloc() : memref<8xf32, #hivm.address_space<cbuf>>
+      scope.scope : () -> () {
+        annotation.mark %b {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>} : memref<8xf32, #hivm.address_space<cbuf>>
+        annotation.mark %a {effects = ["write", "read"], first, hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<8xf32, #hivm.address_space<cbuf>>
+        scope.scope : () -> () {
+          annotation.mark %a {effects = ["read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>, second} keys = ["tag"] values = [%tag : index] : memref<8xf32, #hivm.address_space<cbuf>>
+          scope.return
+        } {no_inline}
+        scope.return
+      } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 2 : i32, hivm.preload_num = 1 : i32, no_inline}
+      scf.yield
+    } {"hivm.legacy-cv-pipeline"}
+    return
+  }
+
+  // Crossing an if or a loop would change execution of the mark.
+  // TCB-LABEL: func.func @preserve_guarded_tcb_marks
+  // TCB: %[[GUARDED:.*]] = memref.alloc()
+  // TCB-NEXT: scope.scope
+  // TCB-NEXT: scf.if
+  // TCB-NEXT: annotation.mark %[[GUARDED]]
+  // TCB: scf.for
+  // TCB-NEXT: annotation.mark %[[GUARDED]]
+  func.func @preserve_guarded_tcb_marks(%cond: i1, %n: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %a = memref.alloc() : memref<8xf32>
+    scope.scope : () -> () {
+      scf.if %cond {
+        annotation.mark %a {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<8xf32>
+      }
+      scf.for %i = %c0 to %n step %c1 {
+        annotation.mark %a {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<8xf32>
+      } {"hivm.legacy-cv-pipeline"}
+      scope.return
+    } {no_inline}
+    return
+  }
+
+  // Do not move marks whose dynamic values would no longer dominate, marks on
+  // block arguments, unrelated annotations, or marks already beside their alloc.
+  // TCB-LABEL: func.func @preserve_other_marks
+  // TCB: %[[LOCAL:.*]] = memref.alloc()
+  // TCB-NEXT: annotation.mark %[[LOCAL]] {hivm.tightly_coupled_buffer
+  // TCB-NEXT: scope.scope
+  // TCB-NEXT: %[[TAG:.*]] = arith.addi
+  // TCB-NEXT: annotation.mark %[[LOCAL]] {{.*}} keys = ["tag"] values = [%[[TAG]] : index]
+  // TCB-NEXT: annotation.mark %{{.*}} {hivm.tightly_coupled_buffer
+  // TCB-NEXT: annotation.mark %[[LOCAL]] {unrelated}
+  func.func @preserve_other_marks(%arg: memref<8xf32>, %x: index, %y: index) {
+    %a = memref.alloc() : memref<8xf32>
+    annotation.mark %a {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<8xf32>
+    scope.scope : () -> () {
+      %tag = arith.addi %x, %y : index
+      annotation.mark %a {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} keys = ["tag"] values = [%tag : index] : memref<8xf32>
+      annotation.mark %arg {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>} : memref<8xf32>
+      annotation.mark %a {unrelated} : memref<8xf32>
+      scope.return
+    } {no_inline}
     return
   }
 }
