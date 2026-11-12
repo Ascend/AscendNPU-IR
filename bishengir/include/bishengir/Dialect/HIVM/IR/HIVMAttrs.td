@@ -1500,6 +1500,64 @@ def HIVM_PreloadLocalBufferAttr
   }];
 }
 
+def HIVM_LoadPreloadAttr : HIVM_Attr<"LoadPreload", "load_preload"> {
+  let description = [{
+    Specifies the i32 scheduling stage of an independent Load scope.
+    SeparateLoadCompute sets this attribute; MarkBufferPool preserves it.
+    EnableBufferPool orders tasks by task index plus max(stage) minus stage,
+    breaking ties in favor of the larger stage.
+  }];
+}
+
+def HIVM_MemPoolIdAttr : HIVM_Attr<"MemPoolId", "mempool_id"> {
+  let description = [{
+    Specifies an i32 buffer pool identifier unique within a function.
+    MarkBufferPool sets the same identifier on member Load scopes and their
+    root buffer annotation.mark operations. PlanMemory shares the slot address
+    table, and EnableBufferPool and GSS group members by this identifier.
+  }];
+}
+
+def HIVM_MemPoolSizeAttr : HIVM_Attr<"MemPoolSize", "mempool_size"> {
+  let description = [{
+    Specifies the positive i32 number of physical slots in a buffer pool.
+    MarkBufferPool sets this attribute on each member's root buffer
+    annotation.mark, with the same value as multi_buffer. PlanMemory allocates
+    the slots; EnableBufferPool and GSS use this capacity for slot selection
+    and synchronization.
+  }];
+}
+
+def HIVM_ExperimentalBufferSlotsAttr
+    : HIVM_Attr<"ExperimentalBufferSlots", "experimental_buffer_slots"> {
+  let description = [{
+    Marks a planned pointer_cast with a unit attribute when its accesses use
+    explicit experimental.pool_slot bindings. EnableBufferPool sets it; GSS
+    and EnableMultiBuffer use each binding's slot for synchronization and
+    address selection. It is removed when the address bindings are lowered.
+  }];
+}
+
+def HIVM_ExperimentalPoolReadyAttr
+    : HIVM_Attr<"ExperimentalPoolReady", "experimental_pool_ready"> {
+  let description = [{
+    Marks the producer boundary of an independent buffer access with a unit
+    attribute. EnableBufferPool attaches it to annotation.mark of the
+    experimental.pool_slot result after the Load writes. GSS consumes and
+    removes the mark when generating synchronization for that slot.
+  }];
+}
+
+def HIVM_ExperimentalPoolReleaseAttr
+    : HIVM_Attr<"ExperimentalPoolRelease", "experimental_pool_release"> {
+  let description = [{
+    Marks the consumer boundary of an independent buffer access with a unit
+    attribute. EnableBufferPool attaches it to annotation.mark of the
+    experimental.pool_slot result after its consumers. GSS consumes and
+    removes the mark when generating synchronization for that slot.
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Distributed
 //===----------------------------------------------------------------------===//

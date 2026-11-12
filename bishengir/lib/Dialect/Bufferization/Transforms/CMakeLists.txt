@@ -13,6 +13,7 @@ add_bishengir_dialect_library(BiShengIRBufferizationTransforms
 
   LINK_LIBS PUBLIC
   BiShengIRDialectUtils
+  BiShengIRScopeDialect
   MLIRBufferizationDialect
   MLIRBufferizationTransforms
   MLIRFuncDialect

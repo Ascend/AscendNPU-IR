@@ -255,6 +255,26 @@ def ConvertLayoutOp : HIVM_Op<"convert_layout",
   let hasCanonicalizer = 1;
 }
 
+def PoolSlotOp : HIVM_Op<"experimental.pool_slot", [
+    Pure, CubeVectorCoreTypeTrait, ViewLikeOpInterface,
+    AllTypesMatch<["source", "result"]>]> {
+  let summary = "Select a physical slot for one independent buffer access";
+  let description = [{
+    Binds an access to one slot of a planned multi-address pointer_cast.
+    The result aliases the source; this operation allocates no memory and
+    performs no synchronization. The index must be in [0, address count).
+    Load and Compute may bind different slots of the same source.
+    EnableMultiBuffer lowers the binding after synchronization insertion.
+  }];
+  let arguments = (ins AnyMemRef:$source, Index:$slot);
+  let results = (outs AnyMemRef:$result);
+  let assemblyFormat = "$source `[` $slot `]` attr-dict `:` type($source)";
+  let extraClassDeclaration = [{
+    Value getViewSource() { return getSource(); }
+  }];
+  let hasVerifier = 1;
+}
+
 def PointerCastOp : HIVM_Op<"pointer_cast",
   [CubeVectorCoreTypeTrait, AttrSizedOperandSegments]> {
   let summary = "HIVM pointer cast op at specific i64 addr";

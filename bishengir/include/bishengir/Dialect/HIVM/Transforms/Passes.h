@@ -112,6 +112,15 @@ createMarkMultiBufferPass(const MarkMultiBufferOptions &options = {});
 /// Create a pass to enable multi buffer.
 std::unique_ptr<Pass> createEnableMultiBufferPass();
 
+/// Separate Cube GM loads and assign their preload stages.
+std::unique_ptr<Pass> createSeparateLoadComputePass();
+
+/// Mark shared local buffer capacity for separated loads.
+std::unique_ptr<Pass> createMarkBufferPoolPass();
+
+/// Materialize independent load submission and explicit access slots.
+std::unique_ptr<Pass> createEnableBufferPoolPass();
+
 /// Create a pass to add FFTS (arg0) to every SyncBlockSetOp
 std::unique_ptr<Pass> createAddFFTSToSyncBlockSetOpPass();
 

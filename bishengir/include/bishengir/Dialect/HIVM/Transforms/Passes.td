@@ -184,6 +184,31 @@ def MarkMultiBuffer : HIVMPass<"hivm-mark-multi-buffer", "func::FuncOp"> {
   ];
 }
 
+def EnableBufferPool : HIVMPass<"hivm-enable-buffer-pool", "ModuleOp"> {
+  let summary = "Materialize independent loads and explicit buffer access slots";
+  let constructor = "mlir::hivm::createEnableBufferPoolPass()";
+  let dependentDialects = ["mlir::hivm::HIVMDialect", "mlir::scf::SCFDialect",
+                          "mlir::arith::ArithDialect", "mlir::scope::ScopeDialect",
+                          "mlir::annotation::AnnotationDialect"];
+}
+
+def MarkBufferPool : HIVMPass<"hivm-mark-buffer-pool", "ModuleOp"> {
+  let summary = "Mark shared local buffer pools for independent loads";
+  let constructor = "mlir::hivm::createMarkBufferPoolPass()";
+  let dependentDialects = ["mlir::hivm::HIVMDialect",
+                          "mlir::annotation::AnnotationDialect"];
+}
+
+def SeparateLoadCompute
+    : HIVMPass<"hivm-separate-load-compute", "ModuleOp"> {
+  let summary = "Separate Cube GM loads and assign their preload stages";
+  let constructor = "mlir::hivm::createSeparateLoadComputePass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
+                           "mlir::scope::ScopeDialect",
+                           "annotation::AnnotationDialect",
+                           "arith::ArithDialect", "memref::MemRefDialect"];
+}
+
 def EnableMultiBuffer : HIVMPass<"hivm-enable-multi-buffer", "func::FuncOp"> {
   let summary = "Enable multi buffer";
   let description = [{
