@@ -392,6 +392,8 @@ static void hoistAllocAndToTensor(scope::ScopeOp &scopeOp) {
       continue;
 
     bool shouldSinkToTensor = returnOperand.hasOneUse();
+    // An internal tensor use needs its cast to dominate the scope body.
+    bool hoistCast = castUsedByWrite || !shouldSinkToTensor;
 
     SmallVector<Operation *> moveBefore{allocOp};
     SmallVector<Operation *> moveAfter;
@@ -400,7 +402,7 @@ static void hoistAllocAndToTensor(scope::ScopeOp &scopeOp) {
       moveAfter.push_back(toTensorOp);
 
     if (castOp)
-      (castUsedByWrite ? moveBefore : moveAfter).push_back(castOp);
+      (hoistCast ? moveBefore : moveAfter).push_back(castOp);
 
     auto collectUsers = [&](Value value, bool valueInMoveBefore) {
       for (Operation *user : value.getUsers()) {
@@ -413,7 +415,7 @@ static void hoistAllocAndToTensor(scope::ScopeOp &scopeOp) {
       return true;
     };
     if (!collectUsers(allocResult, /*valueInMoveBefore=*/true) ||
-        (castOp && !collectUsers(castOp, castUsedByWrite)))
+        (castOp && !collectUsers(castOp, hoistCast)))
       continue;
 
     DenseSet<Operation *> movingOps;
