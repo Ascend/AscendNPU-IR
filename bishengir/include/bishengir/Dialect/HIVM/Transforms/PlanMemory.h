@@ -625,6 +625,10 @@ using StorageEntryIdPair = std::pair<EntryMemoId, EntryMemoId>;
 /// Map from buffer value to its planned memory address(es).
 using Buffer2Offsets = DenseMap<Value, SmallVector<uint64_t>>;
 
+/// Result of planning one function: the assigned buffer offsets and the roots
+/// of preload-local buffers.
+using PlanResult = std::pair<Buffer2Offsets, DenseSet<Value>>;
+
 class MemPlan {
 public:
   MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
