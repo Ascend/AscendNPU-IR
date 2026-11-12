@@ -33,6 +33,13 @@
 namespace mlir {
 namespace hivm {
 
+bool isPipelineReject(Operation *op) {
+  for (Operation *curr = op; curr; curr = curr->getParentOp())
+    if (curr->hasAttr(LegacyCVPipelineAttr::name))
+      return true;
+  return false;
+}
+
 bool isCoreOp(Operation *op) {
   if (!op || !op->getDialect())
     return false;

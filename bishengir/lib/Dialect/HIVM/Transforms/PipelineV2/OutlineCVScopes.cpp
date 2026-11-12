@@ -60,6 +60,30 @@ static Operation *ancestorInBlock(Operation *op, Block *block) {
   return op;
 }
 
+// A scope op that pipeline did not create means an earlier pass has already
+// restructured the function's buffers, in that case mark every loop so all
+// pipeline passes reject the function.
+static void markPipelineReject(func::FuncOp funcOp) {
+  if (!funcOp.walk([&](scope::ScopeOp scopeOp) {
+             if (isPipelineReject(scopeOp))
+               return WalkResult::advance();
+             for (Operation *curr = scopeOp->getParentOp();
+                  curr && curr != funcOp.getOperation();
+                  curr = curr->getParentOp())
+               if (curr->hasAttr(CVPipelinedLoopAttr::name))
+                 return WalkResult::advance();
+             return WalkResult::interrupt();
+           }).wasInterrupted())
+    return;
+  
+  funcOp->emitWarning(
+      "[OutlineCVScopes] foreign scope found; reject function\n");
+  auto unitAttr = UnitAttr::get(funcOp->getContext());
+  funcOp.walk([&](scf::ForOp forOp) {
+    forOp->setAttr(LegacyCVPipelineAttr::name, unitAttr);
+  });
+}
+
 struct ConditionalOps {
   unsigned id = 0;
   scf::IfOp ifOp;
@@ -2758,6 +2782,7 @@ static void moveTCBMarksToAllocations(func::FuncOp funcOp) {
 }
 
 void OutlineCVScopesPass::runOnOperation() {
+  markPipelineReject(getOperation());
   SmallVector<Operation *> loopQueue;
   getOperation().walk<WalkOrder::PostOrder>([&](scf::ForOp forOp) {
     // TODO: Temporary transition measure: skip loops already pipelined by

@@ -20,6 +20,9 @@ using scope::ScopeOp;
 
 constexpr llvm::StringLiteral kPipelineIfCondAttrName = "pipeline.if.cond";
 
+/// Return true if some op on its ancestor chain carries LegacyCVPipelineAttr.
+bool isPipelineReject(Operation *op);
+
 /// Return true if `op` is a core HIVM DPS operation.
 bool isCoreOp(Operation *op);
 
