@@ -24,11 +24,8 @@
 // CHECK-DEBUG: nextOperation {{.*}} linalg.broadcast {{.*}} is fusible
 // CHECK-DEBUG: nextOperation {{.*}} linalg.elemwise_binary {{.*}} ins({{.*}}) outs({{.*}}) -> tensor<2x32x40xf16> is not fusible because it failed the test.
 
-// CHECK-DEBUG: Analyzing reduction producers for consumer #0
-// CHECK-DEBUG: hfusion.store
-
-// CHECK-DEBUG: Analyzing reduction producers for consumer #1
-// CHECK-DEBUG: hfusion.store
+// CHECK-DEBUG-DAG: [fusible-producer-analyzer]: {{.*}}hfusion.store {{.*}}hfusion.return_operand_num = 0 : i64
+// CHECK-DEBUG-DAG: [fusible-producer-analyzer]: {{.*}}hfusion.store {{.*}}hfusion.return_operand_num = 1 : i64
 
 module {
   func.func @mlir_fused_native_group_norm_35(%arg0: tensor<2x1280x16x16xf16>, %arg1: tensor<2x1280xf16>, %arg2: tensor<1280xf16>) -> (tensor<2x32x1x1xf32>, tensor<2x32x1x1xf32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PBR>} {
