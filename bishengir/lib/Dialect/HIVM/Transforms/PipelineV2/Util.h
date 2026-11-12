@@ -77,10 +77,10 @@ void moveOpToScope(Operation *op, ScopeOp target, bool insertAtEnd = false);
 /// `pipeline.if.cond` ID, and pruning scope results that become unused.
 ScopeOp mergeScopes(ScopeOp scope1, ScopeOp scope2, Operation *at);
 
-/// Write a Graphviz DOT file depicting the dependence graph between scopes in
-/// `forOp` (including loop-carried dependencies), modeled after LLVM's
-/// `writeCFGToDotFile` (`-dot-cfg`). If `filename` is empty, defaults to
-/// `[<prefix>.]<func>[.<idx>].dot`.
+/// Write a Graphviz DOT file depicting the dependence graph between scopes
+/// (including nested scopes and loop-carried dependencies) in `forOp`, modeled
+/// after LLVM's `writeCFGToDotFile` (`-dot-cfg`). If `filename` is empty,
+/// defaults to `[<prefix>.]<func>[.<idx>].dot`.
 void writeScopeDependenceGraphToDotFile(scf::ForOp forOp, StringRef prefix = "",
                                         StringRef filename = "",
                                         bool shortNames = false);

@@ -105,46 +105,51 @@ private:
 
 class LoopScopeMerger {
 public:
-  using MergeRuleFn = void (LoopScopeMerger::*)();
+  using MergeRuleFn = bool (LoopScopeMerger::*)();
+
+  struct MergeRule {
+    MergeRuleFn fn;
+    StringLiteral dotPrefix;
+  };
 
   explicit LoopScopeMerger(scf::ForOp loopOp) : loopOp(loopOp) {}
 
-  void run(ArrayRef<MergeRuleFn> rules);
+  void run(ArrayRef<MergeRule> rules);
   scf::ForOp getLoopOp() const { return loopOp; }
 
   // Rule 0: Clone/merge scalar-only `CUBE_AND_VECTOR` scopes that generate
   // loop-carried-dependency results used by other `CUBE` or `VECTOR` scopes
   // into every user scope, giving each merged scope its own loop `iter_arg`
   // and erasing the original scalar-only scope.
-  void applyScalarLoopCarriedDepRule();
+  bool applyScalarLoopCarriedDepRule();
 
   // Rule 1: Group scopes connected by loop-carried dependencies into an outer
   // `{cv_merged_scope}` wrapper scope, keeping member scopes nested inside so
   // cross-core boundaries remain visible.
-  void applyLoopCarriedDepGroupingRule();
+  bool applyLoopCarriedDepGroupingRule();
 
   // Rule 2: Within each `{cv_merged_scope}`, merge compatible scopes along
   // intra-iteration dependencies, and if the `{cv_merged_scope}` reduces to a
   // single inner scope, collapse it into a single work item.
-  void applyMergedScopeSameCoreRule();
+  bool applyMergedScopeSameCoreRule();
 
   // Rule 3: Starting from cross-core transfers (fixpipe -> UB or copy -> CBUF),
   // traverse backward along intra-iteration scope dependencies within the same
   // parent block and merge compatible scopes, stopping traversal at any scope
   // that has an incompatible dependency.
-  void applyCrossCoreTransferBackwardRule();
+  bool applyCrossCoreTransferBackwardRule();
 
   // Rule 4: Merge same-core scopes connected by an intra-iteration edge or
   // sharing a predecessor or successor in the loop body.
-  void applyGraphSameCoreRule();
+  bool applyGraphSameCoreRule();
 
   // Rule 5: Starting from a Cube-and-Vector scope with an alloca inside,
   // trace downward to find its users and sink the alloca, initialization, and
   // loads into the user cube and/or vector scopes.
-  void applySinkAllocaInCAVScopeRule();
+  bool applySinkAllocaInCAVScopeRule();
 
   // Run Rule 5 early for normalized matmul counters.
-  void applySinkNormalizedCounterInCAVScopeRule();
+  bool applySinkNormalizedCounterInCAVScopeRule();
 
 private:
   static bool isScalarOnlyCubeAndVectorScope(ScopeOp scope);
@@ -156,20 +161,20 @@ private:
   static bool isCrossCoreTransferOp(Operation *op);
   static bool hasCrossCoreTransfer(ScopeOp scope);
   static bool isEligibleForCoreMerge(ScopeOp scope);
-  static void collapseSingleChildMergedScope(ScopeOp outerScope);
+  static bool collapseSingleChildMergedScope(ScopeOp outerScope);
   static void collectAllocaScopes(scf::ForOp &loopOp,
                                   SmallVector<ScopeOp> &allocaScopes);
   static void collectAllocaAccesses(
       scf::ForOp loopOp, ArrayRef<ScopeOp> allocaScopes,
       DenseMap<ScopeOp, AllocaAccesses> &accessesByAllocaScope);
-  static void sinkLoadsToUserScopes(
+  static bool sinkLoadsToUserScopes(
       ArrayRef<ScopeOp> allocaScopes,
       DenseMap<ScopeOp, AllocaAccesses> &accessesByAllocaScope);
-  static void sinkStoresToUserScopes(
+  static bool sinkStoresToUserScopes(
       ArrayRef<ScopeOp> allocaScopes,
       DenseMap<ScopeOp, AllocaAccesses> &accessesByAllocaScope);
-  static void sinkAllocasToUserScopes(ArrayRef<ScopeOp> allocaScopes);
-  void sinkAllocasInCAVScopes(bool onlyNormalizedCounters);
+  static bool sinkAllocasToUserScopes(ArrayRef<ScopeOp> allocaScopes);
+  bool sinkAllocasInCAVScopes(bool onlyNormalizedCounters);
 
   SetVector<ScopeOp> getIntraIterScopeDeps(ScopeOp scope);
   ScopeOp mergeScopeGroup(SmallPtrSetImpl<Operation *> &group);
@@ -590,7 +595,8 @@ bool LoopScopeMerger::isScalarOnlyCubeAndVectorScope(ScopeOp scope) {
               .wasInterrupted();
 }
 
-void LoopScopeMerger::applyScalarLoopCarriedDepRule() {
+bool LoopScopeMerger::applyScalarLoopCarriedDepRule() {
+  bool changed = false;
   while (true) {
     Block *body = loopOp.getBody();
     auto yieldOp = cast<scf::YieldOp>(body->getTerminator());
@@ -684,7 +690,7 @@ void LoopScopeMerger::applyScalarLoopCarriedDepRule() {
     }
 
     if (!targetScalarScope)
-      return;
+      return changed;
 
     unsigned privateBase = 0;
     if (targetUserScopes.size() > 1) {
@@ -693,7 +699,7 @@ void LoopScopeMerger::applyScalarLoopCarriedDepRule() {
       FailureOr<unsigned> baseOr =
           hivm::appendPassThroughIterArgs(loopOp, newInits);
       if (failed(baseOr))
-        return;
+        return changed;
       privateBase = *baseOr;
     }
 
@@ -736,19 +742,24 @@ void LoopScopeMerger::applyScalarLoopCarriedDepRule() {
     assert(targetScalarScope.use_empty() &&
            "expected scalar-only scope to have no remaining uses");
     targetScalarScope.erase();
+    changed = true;
   }
 }
 
-void LoopScopeMerger::applyLoopCarriedDepGroupingRule() {
+bool LoopScopeMerger::applyLoopCarriedDepGroupingRule() {
   ScopeDependenceGraph graph(loopOp);
   SmallVector<SmallVector<Operation *>> groups = graph.formGroups();
   LLVM_DEBUG(graph.printSummary(llvm::dbgs(), groups));
 
+  bool changed = false;
   for (SmallVector<Operation *> &group : groups) {
     if (failed(wrapGroupInScope(loopOp, group)))
       loopOp->emitWarning("[MergeCVScopes] loop-carried group is not convex; "
                           "left unmerged");
+    else
+      changed = true;
   }
+  return changed;
 }
 
 bool LoopScopeMerger::isCrossCoreTransferOp(Operation *op) {
@@ -779,15 +790,15 @@ bool LoopScopeMerger::isEligibleForCoreMerge(ScopeOp scope) {
          getScopeCoreType(scope).has_value();
 }
 
-void LoopScopeMerger::collapseSingleChildMergedScope(ScopeOp outerScope) {
+bool LoopScopeMerger::collapseSingleChildMergedScope(ScopeOp outerScope) {
   if (!outerScope || !outerScope->hasAttr(kCVMergedScopeAttrName))
-    return;
+    return false;
   Block &outerBody = outerScope.getRegion().front();
   if (!llvm::hasSingleElement(outerBody.without_terminator()))
-    return;
+    return false;
   auto innerScope = dyn_cast<ScopeOp>(&outerBody.front());
   if (!innerScope || !isEligibleForCoreMerge(innerScope))
-    return;
+    return false;
 
   auto outerReturn = cast<scope::ReturnOp>(outerBody.getTerminator());
   Block &innerBody = innerScope.getRegion().front();
@@ -807,6 +818,7 @@ void LoopScopeMerger::collapseSingleChildMergedScope(ScopeOp outerScope) {
                                    innerBody.getOperations(), innerBody.begin(),
                                    innerReturn->getIterator());
   innerScope.erase();
+  return true;
 }
 
 SetVector<ScopeOp> LoopScopeMerger::getIntraIterScopeDeps(ScopeOp scope) {
@@ -1016,7 +1028,8 @@ ScopeOp LoopScopeMerger::tryMergeBackwardFromSeed(ScopeOp seed) {
   return mergeScopeGroup(mergeSet);
 }
 
-void LoopScopeMerger::applyMergedScopeSameCoreRule() {
+bool LoopScopeMerger::applyMergedScopeSameCoreRule() {
+  bool changed = false;
   SmallVector<ScopeOp> mergedScopes;
   for (ScopeOp scope : loopOp.getBody()->getOps<ScopeOp>()) {
     if (scope->hasAttr(kCVMergedScopeAttrName))
@@ -1044,8 +1057,11 @@ void LoopScopeMerger::applyMergedScopeSameCoreRule() {
         break;
 
       processedSeeds.insert(seed.getOperation());
-      if (ScopeOp merged = tryMergeBackwardFromSeed(seed))
+      if (ScopeOp merged = tryMergeBackwardFromSeed(seed)) {
         processedSeeds.insert(merged.getOperation());
+        if (merged != seed)
+          changed = true;
+      }
     }
 
     ScopeOp previous;
@@ -1065,6 +1081,7 @@ void LoopScopeMerger::applyMergedScopeSameCoreRule() {
         if (prevCore && areCompatibleCoreTypes(*prevCore, *currCore)) {
           if (ScopeOp merged = mergeScopes(previous, current, current)) {
             previous = merged;
+            changed = true;
             continue;
           }
         }
@@ -1072,11 +1089,13 @@ void LoopScopeMerger::applyMergedScopeSameCoreRule() {
       previous = current;
     }
 
-    collapseSingleChildMergedScope(outerScope);
+    changed |= collapseSingleChildMergedScope(outerScope);
   }
+  return changed;
 }
 
-void LoopScopeMerger::applyCrossCoreTransferBackwardRule() {
+bool LoopScopeMerger::applyCrossCoreTransferBackwardRule() {
+  bool changed = false;
   DenseSet<Operation *> processedSeeds;
   while (true) {
     ScopeOp seed;
@@ -1096,9 +1115,13 @@ void LoopScopeMerger::applyCrossCoreTransferBackwardRule() {
       break;
 
     processedSeeds.insert(seed.getOperation());
-    if (ScopeOp merged = tryMergeBackwardFromSeed(seed))
+    if (ScopeOp merged = tryMergeBackwardFromSeed(seed)) {
       processedSeeds.insert(merged.getOperation());
+      if (merged != seed)
+        changed = true;
+    }
   }
+  return changed;
 }
 
 static bool isNormalizedCounterLoad(Operation *op) {
@@ -1114,7 +1137,8 @@ static bool isNormalizedCounterLoad(Operation *op) {
   return alloca && alloca->hasAttr(kNormalizeMatmulCounterAttr);
 }
 
-void LoopScopeMerger::applyGraphSameCoreRule() {
+bool LoopScopeMerger::applyGraphSameCoreRule() {
+  bool anyChanged = false;
   while (true) {
     ScopeDependenceGraph graph(loopOp, /*withCarriedEdges=*/false);
     auto tryMerge = [&](unsigned first, unsigned second) {
@@ -1186,7 +1210,8 @@ void LoopScopeMerger::applyGraphSameCoreRule() {
       }
     }
     if (!changed)
-      return;
+      return anyChanged;
+    anyChanged = true;
     // A successful contraction erases nodes. Rebuild before any further
     // candidate discovery, including candidates enabled by the last merge.
   }
@@ -1281,9 +1306,10 @@ collectScopeLocalDependencies(Operation *op, ScopeOp scope,
   }));
 }
 
-void LoopScopeMerger::sinkLoadsToUserScopes(
+bool LoopScopeMerger::sinkLoadsToUserScopes(
     ArrayRef<ScopeOp> allocaScopes,
     DenseMap<ScopeOp, AllocaAccesses> &accessesByAllocaScope) {
+  bool changed = false;
   for (ScopeOp scope : allocaScopes) {
     auto it = accessesByAllocaScope.find(scope);
     ScopeOp loadScope = it->second.initialLoad.first;
@@ -1324,11 +1350,13 @@ void LoopScopeMerger::sinkLoadsToUserScopes(
       retVal.replaceUsesWithIf(clonedLoad.getResult(), [&](OpOperand &use) {
         return userScope->isProperAncestor(use.getOwner());
       });
+      changed = true;
     }
 
     if (!retVal.use_empty())
       continue;
 
+    changed = true;
     if (loadScope.getNumResults() == 1 &&
         loadScope.getRegion().front().getOperations().size() ==
             dependencies.size() + 1) {
@@ -1378,11 +1406,13 @@ void LoopScopeMerger::sinkLoadsToUserScopes(
     if (eraseScope)
       newScope.erase();
   }
+  return changed;
 }
 
-void LoopScopeMerger::sinkStoresToUserScopes(
+bool LoopScopeMerger::sinkStoresToUserScopes(
     ArrayRef<ScopeOp> allocaScopes,
     DenseMap<ScopeOp, AllocaAccesses> &accessesByAllocaScope) {
+  bool changed = false;
   for (ScopeOp scope : allocaScopes) {
     auto it = accessesByAllocaScope.find(scope);
     memref::StoreOp store = it->second.initialStore.first;
@@ -1426,10 +1456,13 @@ void LoopScopeMerger::sinkStoresToUserScopes(
     if (storeScope.getNumResults() == 0 &&
         storeScope.getRegion().front().getOperations().size() == 1)
       storeScope.erase();
+    changed = true;
   }
+  return changed;
 }
 
-void LoopScopeMerger::sinkAllocasToUserScopes(ArrayRef<ScopeOp> allocaScopes) {
+bool LoopScopeMerger::sinkAllocasToUserScopes(ArrayRef<ScopeOp> allocaScopes) {
+  bool changed = false;
   for (ScopeOp scope : allocaScopes) {
     Value retVal = scope.getResult(0);
     ScopeOp firstScope;
@@ -1455,6 +1488,7 @@ void LoopScopeMerger::sinkAllocasToUserScopes(ArrayRef<ScopeOp> allocaScopes) {
     retVal.replaceUsesWithIf(clonedAlloca.getResult(), [&](OpOperand &use) {
       return firstScope->isProperAncestor(use.getOwner());
     });
+    changed = true;
 
     // Later scopes must share this allocation through a
     // scope result; the local alloca value cannot escape its region directly.
@@ -1479,12 +1513,15 @@ void LoopScopeMerger::sinkAllocasToUserScopes(ArrayRef<ScopeOp> allocaScopes) {
   }
 
   for (ScopeOp scope : allocaScopes) {
-    if (scope->use_empty())
+    if (scope->use_empty()) {
       scope.erase();
+      changed = true;
+    }
   }
+  return changed;
 }
 
-void LoopScopeMerger::sinkAllocasInCAVScopes(bool onlyNormalizedCounters) {
+bool LoopScopeMerger::sinkAllocasInCAVScopes(bool onlyNormalizedCounters) {
   SmallVector<ScopeOp> allocaScopes;
   collectAllocaScopes(loopOp, allocaScopes);
   if (onlyNormalizedCounters)
@@ -1493,26 +1530,30 @@ void LoopScopeMerger::sinkAllocasInCAVScopes(bool onlyNormalizedCounters) {
       return !alloca->hasAttr(kNormalizeMatmulCounterAttr);
     });
   if (allocaScopes.empty())
-    return;
+    return false;
 
   DenseMap<ScopeOp, AllocaAccesses> accessesByAllocaScope;
   collectAllocaAccesses(loopOp, allocaScopes, accessesByAllocaScope);
-  sinkLoadsToUserScopes(allocaScopes, accessesByAllocaScope);
-  sinkStoresToUserScopes(allocaScopes, accessesByAllocaScope);
-  sinkAllocasToUserScopes(allocaScopes);
+  bool changed = false;
+  changed |= sinkLoadsToUserScopes(allocaScopes, accessesByAllocaScope);
+  changed |= sinkStoresToUserScopes(allocaScopes, accessesByAllocaScope);
+  changed |= sinkAllocasToUserScopes(allocaScopes);
+  return changed;
 }
 
-void LoopScopeMerger::applySinkAllocaInCAVScopeRule() {
-  sinkAllocasInCAVScopes(/*onlyNormalizedCounters=*/false);
+bool LoopScopeMerger::applySinkAllocaInCAVScopeRule() {
+  return sinkAllocasInCAVScopes(/*onlyNormalizedCounters=*/false);
 }
 
-void LoopScopeMerger::applySinkNormalizedCounterInCAVScopeRule() {
-  sinkAllocasInCAVScopes(/*onlyNormalizedCounters=*/true);
+bool LoopScopeMerger::applySinkNormalizedCounterInCAVScopeRule() {
+  return sinkAllocasInCAVScopes(/*onlyNormalizedCounters=*/true);
 }
 
-void LoopScopeMerger::run(ArrayRef<MergeRuleFn> rules) {
-  for (MergeRuleFn rule : rules)
-    (this->*rule)();
+void LoopScopeMerger::run(ArrayRef<MergeRule> rules) {
+  for (const MergeRule &rule : rules) {
+    if ((this->*rule.fn)())
+      LLVM_DEBUG(writeScopeDependenceGraphToDotFile(loopOp, rule.dotPrefix));
+  }
 }
 
 //===----------------------------------------------------------------------===//
@@ -1520,14 +1561,19 @@ void LoopScopeMerger::run(ArrayRef<MergeRuleFn> rules) {
 //===----------------------------------------------------------------------===//
 
 void MergeCVScopesPass::runOnOperation() {
-  static constexpr LoopScopeMerger::MergeRuleFn kDefaultRuleOrder[] = {
-      &LoopScopeMerger::applySinkNormalizedCounterInCAVScopeRule,
-      &LoopScopeMerger::applyScalarLoopCarriedDepRule,
-      &LoopScopeMerger::applyLoopCarriedDepGroupingRule,
-      &LoopScopeMerger::applyMergedScopeSameCoreRule,
-      &LoopScopeMerger::applyCrossCoreTransferBackwardRule,
-      &LoopScopeMerger::applyGraphSameCoreRule,
-      &LoopScopeMerger::applySinkAllocaInCAVScopeRule};
+  static constexpr LoopScopeMerger::MergeRule kDefaultRuleOrder[] = {
+      {&LoopScopeMerger::applySinkNormalizedCounterInCAVScopeRule,
+       "merged.0-sink-normalized-counter"},
+      {&LoopScopeMerger::applyScalarLoopCarriedDepRule, "merged.1-scalar-lcd"},
+      {&LoopScopeMerger::applyLoopCarriedDepGroupingRule,
+       "merged.2-lcd-grouping"},
+      {&LoopScopeMerger::applyMergedScopeSameCoreRule,
+       "merged.3-merged-scope-same-core"},
+      {&LoopScopeMerger::applyCrossCoreTransferBackwardRule,
+       "merged.4-cross-core-backward"},
+      {&LoopScopeMerger::applyGraphSameCoreRule, "merged.5-graph-same-core"},
+      {&LoopScopeMerger::applySinkAllocaInCAVScopeRule,
+       "merged.6-sink-alloca"}};
 
   SmallVector<scf::ForOp> targetLoops;
   getOperation().walk<WalkOrder::PostOrder>([&](scf::ForOp forOp) {
@@ -1543,11 +1589,6 @@ void MergeCVScopesPass::runOnOperation() {
     merger.run(kDefaultRuleOrder);
     forOp = merger.getLoopOp();
   }
-
-  LLVM_DEBUG({
-    for (scf::ForOp forOp : targetLoops)
-      writeScopeDependenceGraphToDotFile(forOp, "merged");
-  });
 }
 
 std::unique_ptr<Pass> createMergeCVScopesPass() {
