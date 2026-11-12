@@ -66,18 +66,59 @@ namespace bishengir {
 /// Lane kind (AIC / AIV).
 enum class LaneKind : int { AIC = 0, AIV = 1 };
 
-/// Worker execution state (per lane).  Updated only on the worker thread
-/// except for the atomic readback used by trace/diagnostics.
+/// Worker execution state (per lane).
+///
+/// Transitions (writer in parentheses; "main" = submitting thread, "worker" =
+/// the lane's worker thread):
+///
+///   Cold --startWorker() [main]--> Starting --LoadInit ok [worker]--> Ready
+///   Ready --PreloadBase ok [worker]--> BaseAuxReady
+///   Ready/BaseAuxReady --PreloadFinalDelta [worker]--> unchanged
+///   Ready/BaseAuxReady --Compile [worker]--> Compiling
+///   Compiling --bridge.compile() returns [worker]--> Consumed
+///   any --shutdownWorker()/Shutdown [main/worker]--> Stopped
+///   any --resetForRetry() [main]--> Cold
+///   LoadInit/preload/Compile guard failure [worker]--> Failed
+///
+/// Cold/Starting/Stopped are written by the submitting thread; the remaining
+/// states are written by the worker thread.  The atomic is read by the
+/// handler state guards, by waitCommand() as a liveness signal (Failed and
+/// Stopped unblock waiters), and by the A5 retry boundary to decide between
+/// recreateLane (Consumed), ensureLaneLoadInit (Cold/Starting/Ready/
+/// BaseAuxReady) and abort (Failed/Stopped/Compiling).
 enum class WorkerState {
-  Cold,          ///< Worker thread not started.
-  Starting,      ///< Worker thread running, bridge load in progress.
-  Ready,         ///< Bridge loaded + init done.
-  BaseAuxReady,  ///< Base aux preload done.
-  Compiling,     ///< Compile in progress.
-  Consumed,      ///< Compile finished (success or failure); context consumed.
-  Stopped,       ///< Worker joined.
-  Failed,        ///< Unrecoverable failure.
+  Cold,         ///< Worker thread not started; bridge never loaded.
+  Starting,     ///< Worker thread running, bridge load in progress.
+  Ready,        ///< Bridge loaded + init done (vendor context valid).
+  BaseAuxReady, ///< Base aux preload done (context still valid).
+  Compiling,    ///< Compile in progress (delta preload + bridge compile).
+  Consumed,     ///< Compile finished (success or failure); context consumed.
+  Stopped,      ///< Worker joined / bridge torn down; terminal, not a failure.
+  Failed,       ///< Unrecoverable failure (environment or state-machine bug).
 };
+
+/// Human-readable name of a WorkerState, for diagnostics.
+inline llvm::StringRef workerStateName(WorkerState st) {
+  switch (st) {
+  case WorkerState::Cold:
+    return "Cold";
+  case WorkerState::Starting:
+    return "Starting";
+  case WorkerState::Ready:
+    return "Ready";
+  case WorkerState::BaseAuxReady:
+    return "BaseAuxReady";
+  case WorkerState::Compiling:
+    return "Compiling";
+  case WorkerState::Consumed:
+    return "Consumed";
+  case WorkerState::Stopped:
+    return "Stopped";
+  case WorkerState::Failed:
+    return "Failed";
+  }
+  return "Unknown";
+}
 
 /// Ticket returned by submit* calls.  The generation uniquely identifies the
 /// command so wait* avoids consuming a stale completion from a previous
@@ -367,15 +408,21 @@ public:
   /// handles those (Consumed -> recreateLane, others -> error).
   void ensureLaneLoadInit(LaneKind lane);
 
-  /// One-lane-failure cleanup.  Drain + join all Writers for the lanes
-  /// in \p mask BEFORE removing planned output files (join-before-remove),
-  /// then unlink every path in \p plannedOutputs (best-effort; missing files
-  /// are silently ignored).  Used by `lowerDeviceToBinary` (A3/A5) when one
-  /// Lane's Compile failed, so the other Lane's in-flight Writer is drained
-  /// and joined before any partial `.o` is unlinked, and no stale `.o` from
-  /// a previous attempt remains.
+  /// One-lane-failure cleanup.  Drain the retained tickets for the lanes in
+  /// \p mask, optionally join their Workers, then unlink every path in
+  /// \p plannedOutputs (best-effort; missing files are silently ignored).
+  /// Used by `lowerDeviceToBinary` (A3/A5) when one Lane's Compile failed, so
+  /// the other Lane's in-flight Writer is drained before any partial `.o` is
+  /// unlinked, and no stale `.o` from a previous attempt remains.
+  ///
+  /// \p shutdownLanes must be false for a retryable VF stack overflow: the
+  /// RegBase driver re-enters the compile and rebuilds the lane from its
+  /// `Consumed` state, and shutting the Worker down here would leave it
+  /// `Stopped`, which the retry boundary treats as unrecoverable.  The output
+  /// unlink still happens so the retry cannot observe a stale `.o`.
   void cleanupAfterLaneFailure(LaneMask mask,
-                               const std::vector<std::string> &plannedOutputs);
+                               const std::vector<std::string> &plannedOutputs,
+                               bool shutdownLanes = true);
 
   /// Shutdown both workers (join).  Called by destructor and failure cleanup.
   void shutdownAll();
