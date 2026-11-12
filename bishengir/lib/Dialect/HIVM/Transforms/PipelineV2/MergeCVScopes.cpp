@@ -66,7 +66,6 @@ public:
   void printSummary(llvm::raw_ostream &os,
                     ArrayRef<SmallVector<Operation *>> groups) const;
 
-private:
   struct MemAccess {
     bool read = false;
     bool write = false;
@@ -78,6 +77,10 @@ private:
     bool globalWrite = false;
   };
 
+  static void collectMemAccesses(Operation *top, NodeMemInfo &info);
+  static bool hasMemConflict(const NodeMemInfo &a, const NodeMemInfo &b);
+
+private:
   struct CarriedEdge {
     unsigned from;
     unsigned to;
@@ -86,8 +89,6 @@ private:
 
   static Value getMemBase(Value v);
   static void recordMemref(NodeMemInfo &info, Value v, bool isWrite);
-  static void collectMemAccesses(Operation *top, NodeMemInfo &info);
-  static bool hasMemConflict(const NodeMemInfo &a, const NodeMemInfo &b);
   static SmallVector<SmallVector<unsigned>>
   computeSCCs(ArrayRef<SmallVector<unsigned>> succ);
 
@@ -139,16 +140,21 @@ public:
   // that has an incompatible dependency.
   bool applyCrossCoreTransferBackwardRule();
 
-  // Rule 4: Merge same-core scopes connected by an intra-iteration edge or
+  // Rule 4: Merge small (< 3 CoreOps) `VECTOR` scopes that have only
+  // (1 input, 0 output) or (0 input, 1 output) into their connected `VECTOR`
+  // scope.
+  bool applySmallVectorScopeMergeRule();
+
+  // Rule 5: Merge same-core scopes connected by an intra-iteration edge or
   // sharing a predecessor or successor in the loop body.
   bool applyGraphSameCoreRule();
 
-  // Rule 5: Starting from a Cube-and-Vector scope with an alloca inside,
+  // Rule 6: Starting from a Cube-and-Vector scope with an alloca inside,
   // trace downward to find its users and sink the alloca, initialization, and
   // loads into the user cube and/or vector scopes.
   bool applySinkAllocaInCAVScopeRule();
 
-  // Run Rule 5 early for normalized matmul counters.
+  // Run Rule 6 early for normalized matmul counters.
   bool applySinkNormalizedCounterInCAVScopeRule();
 
 private:
@@ -179,6 +185,8 @@ private:
   SetVector<ScopeOp> getIntraIterScopeDeps(ScopeOp scope);
   ScopeOp mergeScopeGroup(SmallPtrSetImpl<Operation *> &group);
   ScopeOp tryMergeBackwardFromSeed(ScopeOp seed);
+  bool tryMergeSmallScopeIntoConnected(ScopeOp scopeA, ScopeOp scopeB,
+                                       bool aIsConsumer);
 
   scf::ForOp loopOp;
 };
@@ -1124,6 +1132,393 @@ bool LoopScopeMerger::applyCrossCoreTransferBackwardRule() {
   return changed;
 }
 
+static unsigned countCoreOps(ScopeOp scope) {
+  unsigned count = 0;
+  scope->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (op != scope.getOperation() && isa<ScopeOp>(op))
+      return WalkResult::skip();
+    if (isCoreOp(op))
+      ++count;
+    return WalkResult::advance();
+  });
+  return count;
+}
+
+static ScopeOp pruneUnusedWrapperResults(ScopeOp wrapper) {
+  if (!wrapper || !wrapper->hasAttr(kCVMergedScopeAttrName))
+    return wrapper;
+  if (llvm::none_of(wrapper.getResults(),
+                    [](Value r) { return r.use_empty(); }))
+    return wrapper;
+
+  auto retOp =
+      cast<scope::ReturnOp>(wrapper.getRegion().front().getTerminator());
+  SmallVector<Value> keptOperands;
+  SmallVector<Value> keptResults;
+  for (auto [opnd, res] :
+       llvm::zip(retOp.getOperands(), wrapper.getResults())) {
+    if (!res.use_empty()) {
+      keptOperands.push_back(opnd);
+      keptResults.push_back(res);
+    }
+  }
+  ScopeOp newWrapper = recreateScope(wrapper, keptOperands);
+  for (auto [oldRes, newRes] : llvm::zip(keptResults, newWrapper.getResults()))
+    oldRes.replaceAllUsesWith(newRes);
+  wrapper.erase();
+  return newWrapper;
+}
+
+bool LoopScopeMerger::tryMergeSmallScopeIntoConnected(ScopeOp scopeA,
+                                                      ScopeOp scopeB,
+                                                      bool aIsConsumer) {
+  Block *blockA = scopeA->getBlock();
+  Block *blockB = scopeB->getBlock();
+  if (!blockA || !blockB)
+    return false;
+
+  ScopeDependenceGraph::NodeMemInfo memA;
+  ScopeDependenceGraph::collectMemAccesses(scopeA, memA);
+  auto conflictsWith = [&](Operation *op) {
+    ScopeDependenceGraph::NodeMemInfo memOp;
+    ScopeDependenceGraph::collectMemAccesses(op, memOp);
+    return ScopeDependenceGraph::hasMemConflict(memA, memOp);
+  };
+
+  if (blockA == blockB) {
+    if (!aIsConsumer) {
+      if (!scopeA->isBeforeInBlock(scopeB))
+        return false;
+      for (Operation *op = scopeA->getNextNode(); op != scopeB.getOperation();
+           op = op->getNextNode()) {
+        if (conflictsWith(op))
+          return false;
+      }
+      if (auto w = dyn_cast<ScopeOp>(blockA->getParentOp());
+          w && w->hasAttr(kCVMergedScopeAttrName))
+        w = pruneUnusedWrapperResults(w);
+      if (!llvm::all_of(scopeA->getUsers(), [&](Operation *u) {
+            return scopeB->isProperAncestor(u);
+          }))
+        return false;
+      if (scopeA->getNextNode() != scopeB.getOperation())
+        scopeA->moveBefore(scopeB);
+      ScopeOp merged = mergeScopes(scopeA, scopeB, scopeB);
+      if (!merged)
+        return false;
+      if (auto w = dyn_cast<ScopeOp>(merged->getParentOp());
+          w && w->hasAttr(kCVMergedScopeAttrName))
+        collapseSingleChildMergedScope(w);
+      return true;
+    }
+
+    if (!scopeB->isBeforeInBlock(scopeA) || !scopeA->use_empty())
+      return false;
+    for (Operation *op = scopeB->getNextNode(); op != scopeA.getOperation();
+         op = op->getNextNode()) {
+      if (conflictsWith(op))
+        return false;
+    }
+    if (scopeB->getNextNode() != scopeA.getOperation())
+      scopeA->moveAfter(scopeB);
+    ScopeOp merged = mergeScopes(scopeB, scopeA, scopeA);
+    if (!merged)
+      return false;
+    if (auto w = dyn_cast<ScopeOp>(merged->getParentOp());
+        w && w->hasAttr(kCVMergedScopeAttrName))
+      collapseSingleChildMergedScope(w);
+    return true;
+  }
+
+  // `scopeA` in `loopOp.getBody()` and `scopeB` inside a `{cv_merged_scope}`
+  // wrapper directly in `loopOp.getBody()`.
+  if (blockA == loopOp.getBody()) {
+    auto wrapper = dyn_cast<ScopeOp>(blockB->getParentOp());
+    if (!wrapper || !wrapper->hasAttr(kCVMergedScopeAttrName) ||
+        wrapper->getBlock() != loopOp.getBody())
+      return false;
+
+    wrapper = pruneUnusedWrapperResults(wrapper);
+    blockB = &wrapper.getRegion().front();
+
+    if (!aIsConsumer) {
+      if (!scopeA->isBeforeInBlock(wrapper))
+        return false;
+      if (!llvm::all_of(scopeA->getUsers(), [&](Operation *u) {
+            return scopeB->isProperAncestor(u);
+          }))
+        return false;
+      for (Operation *op = scopeA->getNextNode(); op != wrapper.getOperation();
+           op = op->getNextNode()) {
+        if (conflictsWith(op))
+          return false;
+      }
+      for (Operation &op : *blockB) {
+        if (&op == scopeB.getOperation())
+          break;
+        if (conflictsWith(&op))
+          return false;
+      }
+
+      scopeA->moveBefore(scopeB);
+      ScopeOp merged = mergeScopes(scopeA, scopeB, scopeB);
+      assert(merged && "validated small vector scope must merge");
+      collapseSingleChildMergedScope(wrapper);
+      return true;
+    }
+
+    if (!wrapper->isBeforeInBlock(scopeA) || !scopeA->use_empty())
+      return false;
+    for (Operation *op = wrapper->getNextNode(); op != scopeA.getOperation();
+         op = op->getNextNode()) {
+      if (conflictsWith(op))
+        return false;
+    }
+    for (Operation *op = scopeB->getNextNode();
+         op && !op->hasTrait<OpTrait::IsTerminator>(); op = op->getNextNode()) {
+      if (conflictsWith(op))
+        return false;
+    }
+
+    auto wRet = cast<scope::ReturnOp>(blockB->getTerminator());
+    bool validWrapperInputs = true;
+    scopeA->walk([&](Operation *nested) {
+      for (Value opnd : nested->getOperands()) {
+        if (auto res = dyn_cast<OpResult>(opnd);
+            res && res.getOwner() == wrapper.getOperation()) {
+          if (wRet.getOperand(res.getResultNumber()).getDefiningOp() !=
+              scopeB.getOperation())
+            validWrapperInputs = false;
+        }
+      }
+    });
+    if (!validWrapperInputs)
+      return false;
+
+    scopeA->walk([&](Operation *nested) {
+      for (OpOperand &opnd : nested->getOpOperands()) {
+        if (auto res = dyn_cast<OpResult>(opnd.get());
+            res && res.getOwner() == wrapper.getOperation()) {
+          opnd.set(wRet.getOperand(res.getResultNumber()));
+        }
+      }
+    });
+    scopeA->moveAfter(scopeB);
+    wrapper = pruneUnusedWrapperResults(wrapper);
+    ScopeOp merged = mergeScopes(scopeB, scopeA, scopeA);
+    assert(merged && "validated small vector scope must merge");
+    collapseSingleChildMergedScope(wrapper);
+    return true;
+  }
+
+  // `scopeA` inside a `{cv_merged_scope}` wrapper directly in
+  // `loopOp.getBody()` and `scopeB` in `loopOp.getBody()`.
+  if (blockB == loopOp.getBody()) {
+    auto wrapper = dyn_cast<ScopeOp>(blockA->getParentOp());
+    if (!wrapper || !wrapper->hasAttr(kCVMergedScopeAttrName) ||
+        wrapper->getBlock() != loopOp.getBody())
+      return false;
+
+    wrapper = pruneUnusedWrapperResults(wrapper);
+    blockA = &wrapper.getRegion().front();
+    auto finalizeWrapper = [](ScopeOp w) {
+      if (!w)
+        return;
+      if (w.getRegion().front().without_terminator().empty())
+        w.erase();
+      else
+        collapseSingleChildMergedScope(w);
+    };
+
+    if (!aIsConsumer) {
+      if (!wrapper->isBeforeInBlock(scopeB))
+        return false;
+      for (Operation *op = scopeA->getNextNode();
+           op && !op->hasTrait<OpTrait::IsTerminator>();
+           op = op->getNextNode()) {
+        if (conflictsWith(op))
+          return false;
+      }
+      for (Operation *op = wrapper->getNextNode(); op != scopeB.getOperation();
+           op = op->getNextNode()) {
+        if (conflictsWith(op))
+          return false;
+      }
+
+      auto wRet = cast<scope::ReturnOp>(blockA->getTerminator());
+      for (OpOperand &use : llvm::make_early_inc_range(scopeA->getUses())) {
+        if (scopeB->isProperAncestor(use.getOwner()))
+          continue;
+        if (use.getOwner() != wRet.getOperation())
+          return false;
+        Value wRes = wrapper.getResult(use.getOperandNumber());
+        if (!llvm::all_of(wRes.getUsers(), [&](Operation *u) {
+              return scopeB->isProperAncestor(u);
+            }))
+          return false;
+      }
+
+      for (auto [idx, retVal] : llvm::enumerate(wRet.getOperands())) {
+        if (retVal.getDefiningOp() == scopeA.getOperation())
+          wrapper.getResult(idx).replaceAllUsesWith(retVal);
+      }
+      wrapper = pruneUnusedWrapperResults(wrapper);
+      scopeA->moveBefore(scopeB);
+      finalizeWrapper(wrapper);
+      ScopeOp merged = mergeScopes(scopeA, scopeB, scopeB);
+      assert(merged && "validated small vector scope must merge");
+      return true;
+    }
+
+    if (!scopeB->isBeforeInBlock(wrapper) || !scopeA->use_empty())
+      return false;
+    for (Operation &op : *blockA) {
+      if (&op == scopeA.getOperation())
+        break;
+      if (conflictsWith(&op))
+        return false;
+    }
+    for (Operation *op = scopeB->getNextNode(); op != wrapper.getOperation();
+         op = op->getNextNode()) {
+      if (conflictsWith(op))
+        return false;
+    }
+
+    scopeA->moveAfter(scopeB);
+    finalizeWrapper(wrapper);
+    ScopeOp merged = mergeScopes(scopeB, scopeA, scopeA);
+    assert(merged && "validated small vector scope must merge");
+    return true;
+  }
+
+  return false;
+}
+
+bool LoopScopeMerger::applySmallVectorScopeMergeRule() {
+  bool anyChanged = false;
+  auto findEnclosingLeafScope = [&](Operation *user) -> ScopeOp {
+    for (Operation *p = user; p && p != loopOp.getOperation();
+         p = p->getParentOp()) {
+      if (auto s = dyn_cast<ScopeOp>(p);
+          s && !s->hasAttr(kCVMergedScopeAttrName))
+        return s;
+    }
+    return ScopeOp();
+  };
+
+  while (true) {
+    SmallVector<ScopeOp> candidates;
+    loopOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
+      if (op != loopOp.getOperation() && isa<scf::ForOp>(op))
+        return WalkResult::skip();
+      auto scope = dyn_cast<ScopeOp>(op);
+      if (!scope || !isEligibleForCoreMerge(scope))
+        return WalkResult::advance();
+      if (getScopeCoreType(scope) == TCoreType::VECTOR &&
+          countCoreOps(scope) < 3)
+        candidates.push_back(scope);
+      return WalkResult::skip();
+    });
+
+    bool changed = false;
+    for (ScopeOp scopeA : candidates) {
+      SmallPtrSet<Operation *, 4> inputScopes;
+      bool hasUnsupportedInput = false;
+      scopeA->walk([&](Operation *op) {
+        if (hasUnsupportedInput || op == scopeA.getOperation())
+          return;
+        for (Value opnd : op->getOperands()) {
+          if (scopeA.getRegion().isAncestor(opnd.getParentRegion()))
+            continue;
+          if (!loopOp.getRegion().isAncestor(opnd.getParentRegion()))
+            continue;
+          if (opnd == loopOp.getInductionVar())
+            continue;
+
+          Value unwrapped = opnd;
+          while (auto res = dyn_cast<OpResult>(unwrapped)) {
+            auto wrapper = dyn_cast<ScopeOp>(res.getOwner());
+            if (!wrapper || !wrapper->hasAttr(kCVMergedScopeAttrName) ||
+                !loopOp->isProperAncestor(wrapper))
+              break;
+            auto wRet = cast<scope::ReturnOp>(
+                wrapper.getRegion().front().getTerminator());
+            unwrapped = wRet.getOperand(res.getResultNumber());
+          }
+
+          auto srcScope = unwrapped.getDefiningOp<ScopeOp>();
+          if (!srcScope || srcScope == scopeA ||
+              !isEligibleForCoreMerge(srcScope)) {
+            hasUnsupportedInput = true;
+            return;
+          }
+          inputScopes.insert(srcScope.getOperation());
+        }
+      });
+      if (hasUnsupportedInput)
+        continue;
+
+      SmallPtrSet<Operation *, 4> outputScopes;
+      bool hasUnsupportedOutput = false;
+      SmallVector<Value, 4> outWorklist(scopeA.result_begin(),
+                                        scopeA.result_end());
+      SmallPtrSet<Value, 4> visitedOut(outWorklist.begin(), outWorklist.end());
+      while (!outWorklist.empty() && !hasUnsupportedOutput) {
+        Value cur = outWorklist.pop_back_val();
+        for (OpOperand &use : cur.getUses()) {
+          Operation *user = use.getOwner();
+          if (isa<scope::ReturnOp>(user)) {
+            if (auto wrapper = dyn_cast<ScopeOp>(user->getParentOp());
+                wrapper && wrapper->hasAttr(kCVMergedScopeAttrName) &&
+                loopOp->isProperAncestor(wrapper)) {
+              Value wRes = wrapper.getResult(use.getOperandNumber());
+              if (visitedOut.insert(wRes).second)
+                outWorklist.push_back(wRes);
+              continue;
+            }
+          }
+          if (ScopeOp dstScope = findEnclosingLeafScope(user)) {
+            if (dstScope == scopeA || !isEligibleForCoreMerge(dstScope)) {
+              hasUnsupportedOutput = true;
+              break;
+            }
+            outputScopes.insert(dstScope.getOperation());
+            continue;
+          }
+          hasUnsupportedOutput = true;
+          break;
+        }
+      }
+      if (hasUnsupportedOutput)
+        continue;
+
+      bool isOneInputZeroOutput =
+          inputScopes.size() == 1 && outputScopes.empty();
+      bool isZeroInputOneOutput =
+          inputScopes.empty() && outputScopes.size() == 1;
+      if (!isOneInputZeroOutput && !isZeroInputOneOutput)
+        continue;
+
+      ScopeOp scopeB = cast<ScopeOp>(
+          isOneInputZeroOutput ? *inputScopes.begin() : *outputScopes.begin());
+      if (!isEligibleForCoreMerge(scopeB) ||
+          getScopeCoreType(scopeB) != TCoreType::VECTOR)
+        continue;
+
+      if (tryMergeSmallScopeIntoConnected(scopeA, scopeB,
+                                          isOneInputZeroOutput)) {
+        changed = true;
+        anyChanged = true;
+        break;
+      }
+    }
+
+    if (!changed)
+      break;
+  }
+  return anyChanged;
+}
+
 static bool isNormalizedCounterLoad(Operation *op) {
   auto load = dyn_cast<memref::LoadOp>(op);
   if (!load)
@@ -1571,9 +1966,11 @@ void MergeCVScopesPass::runOnOperation() {
        "merged.3-merged-scope-same-core"},
       {&LoopScopeMerger::applyCrossCoreTransferBackwardRule,
        "merged.4-cross-core-backward"},
-      {&LoopScopeMerger::applyGraphSameCoreRule, "merged.5-graph-same-core"},
+      {&LoopScopeMerger::applySmallVectorScopeMergeRule,
+       "merged.5-small-vector-merge"},
+      {&LoopScopeMerger::applyGraphSameCoreRule, "merged.6-graph-same-core"},
       {&LoopScopeMerger::applySinkAllocaInCAVScopeRule,
-       "merged.6-sink-alloca"}};
+       "merged.7-sink-alloca"}};
 
   SmallVector<scf::ForOp> targetLoops;
   getOperation().walk<WalkOrder::PostOrder>([&](scf::ForOp forOp) {
