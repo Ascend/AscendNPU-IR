@@ -307,6 +307,22 @@ bool MemInfo::checkConflict(
 
 MemInfo MemInfo::getMemInfo(Value value, std::optional<PIPE> pipe,
                             std::optional<hivm::TCoreType> coreType) {
+  if (Operation *source = getTcbPoolAddressSource(value)) {
+    Value pool, address;
+    if (auto alloc = dyn_cast<hivm::TcbPoolAllocOp>(source)) {
+      pool = alloc.getPool();
+      address = alloc.getAddress();
+    } else {
+      auto get = cast<hivm::TcbPoolGetOp>(source);
+      pool = get.getPool();
+      address = get.getAddress();
+    }
+    // Retain the full pool range for ordinary alias checks, including checks
+    // against non-pool accesses. Allocation identity is not disjointness.
+    MemInfo info = getMemInfo(pool, pipe, coreType);
+    info.poolInfo = PoolInfo{address};
+    return info;
+  }
   if (auto funcArgInfo = FuncArgInfo::tryGet(value)) {
     return MemInfo(value, funcArgInfo.value(), pipe, coreType);
   }

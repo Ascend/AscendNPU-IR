@@ -20,13 +20,14 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/DialectConversion.h"
 
+#include <type_traits>
+
 using namespace mlir;
 using namespace ascend_dpx;
 
 namespace {
 
-template <typename... T>
-struct UnaryDirect {};
+template <typename... T> struct UnaryDirect {};
 
 template <typename DPX_OP, typename LOWER_OP>
 struct UnaryDirect<DPX_OP, LOWER_OP>
@@ -70,8 +71,7 @@ struct UnaryDirect<DPX_OP, LOWER_F16, LOWER_F32, LOWER_BF16>
     return success();
   }
 };
-template <typename... T>
-struct BinaryDirect {};
+template <typename... T> struct BinaryDirect {};
 
 template <typename DPX_OP, typename LOWER_OP>
 struct BinaryDirect<DPX_OP, LOWER_OP>
@@ -155,22 +155,14 @@ LLVM::CallOp emitOrCreateLibCall(OpBuilder &builder, Location loc,
 }
 
 // declared in empty namespace so not a bunch of global variables
-template <typename opName>
-constexpr const char *libFuncName = "";
-template <typename opName>
-constexpr const char *libFuncNameF16 = nullptr;
-template <typename opName>
-constexpr const char *libFuncNameF32 = nullptr;
-template <typename opName>
-constexpr const char *libFuncNameBF16 = nullptr;
-template <typename opName>
-constexpr const char *libFuncNameI8 = nullptr;
-template <typename opName>
-constexpr const char *libFuncNameI16 = nullptr;
-template <typename opName>
-constexpr const char *libFuncNameI32 = nullptr;
-template <typename opName>
-constexpr const char *libFuncNameI64 = nullptr;
+template <typename opName> constexpr const char *libFuncName = "";
+template <typename opName> constexpr const char *libFuncNameF16 = nullptr;
+template <typename opName> constexpr const char *libFuncNameF32 = nullptr;
+template <typename opName> constexpr const char *libFuncNameBF16 = nullptr;
+template <typename opName> constexpr const char *libFuncNameI8 = nullptr;
+template <typename opName> constexpr const char *libFuncNameI16 = nullptr;
+template <typename opName> constexpr const char *libFuncNameI32 = nullptr;
+template <typename opName> constexpr const char *libFuncNameI64 = nullptr;
 // ideally we somehow move these strings into the template parameters
 // of LibCallLowering, but C++ template strings are finnicky
 #define TCCC                                                                   \
@@ -407,9 +399,16 @@ struct LibCallLowering : public mlir::ConvertOpToLLVMPattern<DPX_OP> {
       funcName = libFuncNameI64<DPX_OP>;
     else
       funcName = libFuncName<DPX_OP>;
-    rewriter.replaceOp(op,
-                       emitOrCreateLibCall(rewriter, loc, funcName,
-                                           adaptor.getOperands(), resultType));
+    auto call = emitOrCreateLibCall(rewriter, loc, funcName,
+                                    adaptor.getOperands(), resultType);
+    // Umulhi is compiled as __simt_callee__. LLVM calls do not inherit the
+    // declaration's calling convention. Other templates retain their legacy
+    // ABI.
+    if constexpr (std::is_same_v<DPX_OP, UmulhiOp>)
+      call->setAttr(
+          hivm_regbaseintrins::kDavinciCallingConvAttrName,
+          hivm_regbaseintrins::SIMT_CallableAttr::get(rewriter.getContext()));
+    rewriter.replaceOp(op, call);
     return success();
   }
 };
