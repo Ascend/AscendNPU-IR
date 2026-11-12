@@ -25,9 +25,9 @@ AscendNPU IR已为上游模型支持丰富的算子集合。但部分业务场�
 | 属性名 | 说明 | 备注/示例 |
 |--------|------|----------|
 | `CoreType` | 在哪种核类型上执行 | 参见`TCoreTypeAttr` |
-| `Pipe` | 在哪个Pipe上执行（用于`hivm.hir.custom`） | 参见`PipeAttr` |
-| `InPipe` | Macro自定义算子的输入Pipe | 参见`PipeAttr`（`hivm.pipe_in`） |
-| `OutPipe` | Macro自定义算子的输出Pipe | 参见`PipeAttr`（`hivm.pipe_out`） |
+| `Pipe` | 在哪个Pipe上执行（用于`hivm.hir.custom`） | 单个`al.PIPE`取值。见[支持的 PIPE、数据布局与地址空间](#支持的-pipe数据布局与地址空间) |
+| `InPipe` | Macro自定义算子的输入Pipe | `al.PIPE`（`hivm.pipe_in`）。`pipe`为两个取值时降级为`InPipe`与`OutPipe` |
+| `OutPipe` | Macro自定义算子的输出Pipe | `al.PIPE`（`hivm.pipe_out`） |
 | `VFMode` | 在向量单元上的运行模式 | 参见`VFModeAttr`。当核类型为Cube时此属性被忽略。注意：内置算子可指定或不指定，编译器会检查正确性并规范化 |
 | `Symbol` | 实现函数的名称 | - |
 | `sync_event_slots` | Macro自定义算子的同步槽位元信息。`GraphSyncSolver`会据此填充`sync_related_args`，并在macro前后注入`set/wait flag`。 | 列表长度必须与macro实现体内、同一Pipe对上的`set_flag`/`wait_flag`对数一致。详见[Macro sync_event_slots](#macro算子同步槽位sync_event_slots) |
@@ -35,7 +35,9 @@ AscendNPU IR已为上游模型支持丰富的算子集合。但部分业务场�
 | `indexing_map` | 逐操作数的仿射索引映射（与Linalg的`indexing_maps`作用相同） | 可选，类型为`ArrayAttr<AffineMapAttr>` |
 | `max_rank` | flatten/布局类Pass支持的最大张量秩 | 可选`i64`属性，默认值5 |
 | `align_dim` | 逐操作数的维度对齐提示 | 通过`arg_attrs`挂在对应操作数上 |
-| `arg_attrs` | 逐操作数的字典属性数组 | 类型为`ArrayAttr`（例如操作数2上的`{align_dim = 1 : i64}`）。Triton前端根据注册类上的`align_dim`自动生成 |
+| `arg_attrs` | 逐操作数的字典属性数组 | 类型为`ArrayAttr`（例如操作数2上的`{align_dim = 1 : i64}`）。Triton前端根据`align_dim`生成；Cube算子还会写入`data_layout`与`address_space` |
+| `data_layout` | Cube自定义算子逐操作数的数据布局 | 以操作数名或下标为键、`al.DataLayout`为值的字典。仅当`core`为`CUBE`时发出。支持`ND`与`Fractal` |
+| `address_space` | Cube自定义算子逐操作数的地址空间 | 以操作数名或下标为键、`al.AddressSpace`为值的字典。仅当`core`为`CUBE`时发出，形式为`#hivm.address_space<...>` |
 | `extra_buffers_types` | 临时buffer的元素类型 | 由`hivm-alloc-extra-buffer` Pass分配`memref`并追加到`temp_buffers`（汇编中为`tmps`） |
 | `extra_buffers_sizes` | 临时buffer的一维大小（元素个数） | 同上 |
 | `temp_buffers` | 传给设备实现的临时`memref`（`tmps`操作数段） | 通常由`extra_buffers_*`属性自动填充，无需手动设置 |
@@ -70,8 +72,10 @@ AscendNPU IR已为上游模型支持丰富的算子集合。但部分业务场�
 | 特性 | 说明 |
 | ------------------------------- | ------------------------------------------------------------ |
 | CoreType | 自定义算子执行核 |
-| Pipe | 自定义算子执行pipe（`hivm.hir.custom`） |
-| InPipe / OutPipe | Macro自定义算子的输入/输出pipe（`hivm.hir.custom_macro`） |
+| Pipe | 自定义算子执行pipe（`hivm.hir.custom`）。Triton前端接受`PIPE_S`、`PIPE_V`、`PIPE_M`、`PIPE_MTE1`、`PIPE_MTE2`、`PIPE_MTE3`、`PIPE_ALL` |
+| InPipe / OutPipe | Macro自定义算子的输入/输出pipe（`hivm.hir.custom_macro`）。两侧使用同一`PIPE`集合 |
+| DataLayout | Cube自定义算子的逐操作数布局：`ND`、`Fractal` |
+| AddressSpace | Cube自定义算子的逐操作数地址空间：`Zero`、`GM`、`L1`、`L0A`、`L0B`、`L0C`、`UB`、`SSBUF`、`FixBUF`、`BiasBUF` |
 | VFMode | 自定义算子在向量核上的运行模式：SIMT/SIMD/MIX |
 | Symbol | 使用者提供的函数名称 |
 | sync_event_slots | Macro同步槽位声明，用于GraphSyncSolver集成 |
@@ -82,6 +86,55 @@ AscendNPU IR已为上游模型支持丰富的算子集合。但部分业务场�
 | extra_buffers_* / tmps | 临时buffer声明与分配 |
 | no_side_effect | 无额外副作用标记，便于优化，仍允许写入声明的输出 |
 | 内置算子 | 一组内置算子（名称预留） |
+
+## 支持的 PIPE、数据布局与地址空间
+
+Triton自定义算子前端（`triton.language.extra.cann.extension`）接受下列取值。每个注册算子都必须设置`pipe`。`data_layout`与`address_space`仅在`core`为`al.CORE.CUBE`时写入操作数的`arg_attrs`。
+
+### PIPE
+
+`pipe`取一个`al.PIPE`，或恰好两个`al.PIPE`组成的序列。
+
+| Python | MLIR | 作用 |
+| --- | --- | --- |
+| `al.PIPE.PIPE_S` | `#hivm.pipe<PIPE_S>` | 标量Pipe |
+| `al.PIPE.PIPE_V` | `#hivm.pipe<PIPE_V>` | 向量Pipe |
+| `al.PIPE.PIPE_M` | `#hivm.pipe<PIPE_M>` | Cube（矩阵）Pipe |
+| `al.PIPE.PIPE_MTE1` | `#hivm.pipe<PIPE_MTE1>` | MTE1，L1到L0A/L0B |
+| `al.PIPE.PIPE_MTE2` | `#hivm.pipe<PIPE_MTE2>` | MTE2，GM到UB/L1 |
+| `al.PIPE.PIPE_MTE3` | `#hivm.pipe<PIPE_MTE3>` | MTE3，UB/L1到GM |
+| `al.PIPE.PIPE_ALL` | `#hivm.pipe<PIPE_ALL>` | 全部Pipe |
+
+- 单个取值降级为`hivm.hir.custom`，写入`hivm.pipe`。
+- 两个取值降级为`hivm.hir.custom_macro`。第一个是`hivm.pipe_in`，第二个是`hivm.pipe_out`。
+
+### 数据布局
+
+`data_layout`是字典。键为`__init__`参数名或位置下标，值为`al.DataLayout`。
+
+| Python | MLIR | 含义 |
+| --- | --- | --- |
+| `al.DataLayout.ND` | `#hivm.data_layout<ND>` | 连续ND布局 |
+| `al.DataLayout.Fractal` | `#hivm.data_layout<Fractal>` | Fractal布局 |
+
+### 地址空间
+
+`address_space`使用同样的字典形式。MLIR拼写是HIVM地址空间助记符；片上Cube buffer的助记符与Python名称不同。
+
+| Python | MLIR | 存储 |
+| --- | --- | --- |
+| `al.AddressSpace.Zero` | `#hivm.address_space<zero>` | 默认，无地址空间 |
+| `al.AddressSpace.GM` | `#hivm.address_space<gm>` | Global Memory |
+| `al.AddressSpace.L1` | `#hivm.address_space<cbuf>` | L1（cbuf） |
+| `al.AddressSpace.L0A` | `#hivm.address_space<ca>` | L0A |
+| `al.AddressSpace.L0B` | `#hivm.address_space<cb>` | L0B |
+| `al.AddressSpace.L0C` | `#hivm.address_space<cc>` | L0C |
+| `al.AddressSpace.UB` | `#hivm.address_space<ub>` | Unified Buffer |
+| `al.AddressSpace.SSBUF` | `#hivm.address_space<ssbuf>` | Shared Scalar Buffer |
+| `al.AddressSpace.FixBUF` | `#hivm.address_space<fixbuf>` | Fix buffer |
+| `al.AddressSpace.BiasBUF` | `#hivm.address_space<biasbuf>` | Bias buffer |
+
+`FixBUF`与`BiasBUF`仅作标注，不参与内存规划与作用域推导。
 
 ## 限制约束
 

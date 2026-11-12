@@ -25,9 +25,9 @@ Custom operators allow users to freely use the interfaces provided by AscendNPU 
 | Attribute | Description | Remarks/Example |
 |--------|------|----------|
 | `CoreType` | The core type on which the operator executes | See `TCoreTypeAttr` |
-| `Pipe` | The pipe on which the operator executes (used for `hivm.hir.custom`) | See `PipeAttr` |
-| `InPipe` | The input pipe of a Macro custom operator | See `PipeAttr` (`hivm.pipe_in`) |
-| `OutPipe` | The output pipe of a Macro custom operator | See `PipeAttr` (`hivm.pipe_out`) |
+| `Pipe` | The pipe on which the operator executes (used for `hivm.hir.custom`) | One `al.PIPE` value. See [Supported PIPE, DataLayout, and AddressSpace](#supported-pipe-datalayout-and-addressspace) |
+| `InPipe` | The input pipe of a Macro custom operator | `al.PIPE` (`hivm.pipe_in`). A two-value `pipe` lowers to `InPipe` and `OutPipe` |
+| `OutPipe` | The output pipe of a Macro custom operator | `al.PIPE` (`hivm.pipe_out`) |
 | `VFMode` | The running mode on the vector unit | See `VFModeAttr`. This attribute is ignored when the core type is Cube. Note: Built-in operators may or may not specify it; the compiler checks correctness and normalizes it |
 | `Symbol` | The name of the implementation function | - |
 | `sync_event_slots` | The synchronization slot metadata of a Macro custom operator. `GraphSyncSolver` fills in `sync_related_args` accordingly and injects `set/wait flag` before and after the macro. | The list length must match the number of `set_flag`/`wait_flag` pairs on the same pipe pair within the macro implementation body. See [Macro sync_event_slots](#macro-operator-synchronization-slots-sync_event_slots) for details |
@@ -35,7 +35,9 @@ Custom operators allow users to freely use the interfaces provided by AscendNPU 
 | `indexing_map` | Operand-by-operand affine index mapping (same role as Linalg's `indexing_maps`) | Optional, of type `ArrayAttr<AffineMapAttr>` |
 | `max_rank` | The maximum tensor rank supported by flatten/layout-type Passes | Optional `i64` attribute, default value 5 |
 | `align_dim` | Operand-by-operand dimension alignment hint | Attached to the corresponding operand via `arg_attrs` |
-| `arg_attrs` | Operand-by-operand dictionary attribute array | Of type `ArrayAttr` (for example, `{align_dim = 1 : i64}` on operand 2). The Triton frontend generates it automatically based on `align_dim` on the registered class |
+| `arg_attrs` | Operand-by-operand dictionary attribute array | Of type `ArrayAttr` (for example, `{align_dim = 1 : i64}` on operand 2). The Triton frontend generates it automatically based on `align_dim` on the registered class. For Cube operators it also writes `data_layout` and `address_space` |
+| `data_layout` | Per-operand data layout of a Cube custom operator | Dict from operand name or index to `al.DataLayout`. Emitted only when `core` is `CUBE`. Supported values are `ND` and `Fractal` |
+| `address_space` | Per-operand address space of a Cube custom operator | Dict from operand name or index to `al.AddressSpace`. Emitted only when `core` is `CUBE`, as `#hivm.address_space<...>` |
 | `extra_buffers_types` | The element types of temporary buffers | `memref` is allocated by the `hivm-alloc-extra-buffer` Pass and appended to `temp_buffers` (`tmps` in assembly) |
 | `extra_buffers_sizes` | The one-dimensional size (number of elements) of temporary buffers | Same as above |
 | `temp_buffers` | Temporary `memref` passed to the device implementation (the `tmps` operand segment) | Usually filled automatically by the `extra_buffers_*` attributes, no manual setting required |
@@ -70,8 +72,10 @@ Custom operators allow users to freely use the interfaces provided by AscendNPU 
 | Feature | Description |
 | ------------------------------- | ------------------------------------------------------------ |
 | CoreType | Execution core of the custom operator |
-| Pipe | Execution pipe of the custom operator (`hivm.hir.custom`) |
-| InPipe / OutPipe | Input/output pipes of the Macro custom operator (`hivm.hir.custom_macro`) |
+| Pipe | Execution pipe of the custom operator (`hivm.hir.custom`). The Triton frontend accepts `PIPE_S`, `PIPE_V`, `PIPE_M`, `PIPE_MTE1`, `PIPE_MTE2`, `PIPE_MTE3`, and `PIPE_ALL` |
+| InPipe / OutPipe | Input/output pipes of the Macro custom operator (`hivm.hir.custom_macro`). Each side uses the same `PIPE` set |
+| DataLayout | Per-operand layout of a Cube custom operator: `ND`, `Fractal` |
+| AddressSpace | Per-operand address space of a Cube custom operator: `Zero`, `GM`, `L1`, `L0A`, `L0B`, `L0C`, `UB`, `SSBUF`, `FixBUF`, `BiasBUF` |
 | VFMode | Running mode of the custom operator on the vector core: SIMT/SIMD/MIX |
 | Symbol | Function name provided by the user |
 | sync_event_slots | Macro synchronization slot declaration, used for GraphSyncSolver integration |
@@ -82,6 +86,55 @@ Custom operators allow users to freely use the interfaces provided by AscendNPU 
 | extra_buffers_* / tmps | Temporary buffer declaration and allocation |
 | no_side_effect | Pure operator marker for optimization |
 | Built-in operator | A set of built-in operators (names reserved) |
+
+## Supported PIPE, DataLayout, and AddressSpace
+
+The Triton custom-op frontend (`triton.language.extra.cann.extension`) accepts the values below. `pipe` is required for every registered op. `data_layout` and `address_space` are written onto operand `arg_attrs` only when `core` is `al.CORE.CUBE`.
+
+### PIPE
+
+Set `pipe` to one `al.PIPE` value, or to a sequence of exactly two `al.PIPE` values.
+
+| Python | MLIR | Role |
+| --- | --- | --- |
+| `al.PIPE.PIPE_S` | `#hivm.pipe<PIPE_S>` | Scalar pipe |
+| `al.PIPE.PIPE_V` | `#hivm.pipe<PIPE_V>` | Vector pipe |
+| `al.PIPE.PIPE_M` | `#hivm.pipe<PIPE_M>` | Cube (matrix) pipe |
+| `al.PIPE.PIPE_MTE1` | `#hivm.pipe<PIPE_MTE1>` | MTE1, L1 to L0A/L0B |
+| `al.PIPE.PIPE_MTE2` | `#hivm.pipe<PIPE_MTE2>` | MTE2, GM to UB/L1 |
+| `al.PIPE.PIPE_MTE3` | `#hivm.pipe<PIPE_MTE3>` | MTE3, UB/L1 to GM |
+| `al.PIPE.PIPE_ALL` | `#hivm.pipe<PIPE_ALL>` | All pipes |
+
+- One value lowers to `hivm.hir.custom` and is stored in `hivm.pipe`.
+- Two values lower to `hivm.hir.custom_macro`. The first is `hivm.pipe_in` and the second is `hivm.pipe_out`.
+
+### DataLayout
+
+`data_layout` is a dict. Each key is an `__init__` parameter name or a positional index, and each value is an `al.DataLayout`.
+
+| Python | MLIR | Meaning |
+| --- | --- | --- |
+| `al.DataLayout.ND` | `#hivm.data_layout<ND>` | Contiguous ND layout |
+| `al.DataLayout.Fractal` | `#hivm.data_layout<Fractal>` | Fractal layout |
+
+### AddressSpace
+
+`address_space` uses the same dict form. The MLIR spelling is the HIVM address-space mnemonic, which differs from the Python name for the on-chip Cube buffers.
+
+| Python | MLIR | Memory |
+| --- | --- | --- |
+| `al.AddressSpace.Zero` | `#hivm.address_space<zero>` | Default, no address space |
+| `al.AddressSpace.GM` | `#hivm.address_space<gm>` | Global Memory |
+| `al.AddressSpace.L1` | `#hivm.address_space<cbuf>` | L1 (cbuf) |
+| `al.AddressSpace.L0A` | `#hivm.address_space<ca>` | L0A |
+| `al.AddressSpace.L0B` | `#hivm.address_space<cb>` | L0B |
+| `al.AddressSpace.L0C` | `#hivm.address_space<cc>` | L0C |
+| `al.AddressSpace.UB` | `#hivm.address_space<ub>` | Unified Buffer |
+| `al.AddressSpace.SSBUF` | `#hivm.address_space<ssbuf>` | Shared Scalar Buffer |
+| `al.AddressSpace.FixBUF` | `#hivm.address_space<fixbuf>` | Fix buffer |
+| `al.AddressSpace.BiasBUF` | `#hivm.address_space<biasbuf>` | Bias buffer |
+
+`FixBUF` and `BiasBUF` are annotation-only. They do not participate in memory planning or scope inference.
 
 ## Limitations and Constraints
 
