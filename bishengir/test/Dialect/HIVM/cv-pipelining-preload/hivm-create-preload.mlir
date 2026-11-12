@@ -816,7 +816,8 @@ func.func @test_nested_subview_local_buffer_result() {
   // Peel selects the active addr (`ctr % N`) into a single-addr pointer_cast
   // and drops multi_buffer marks from the peeled body.
   // CHECK: scf.for
-  // CHECK: arith.remui
+  // CHECK: %[[LCTR:.*]] = memref.load
+  // CHECK: arith.remui %[[LCTR]]
   // CHECK: arith.select
   // CHECK: hivm.hir.pointer_cast(%{{.*}})
   scf.for %i = %c0 to %c16 step %c1  : i32 {
@@ -826,6 +827,10 @@ func.func @test_nested_subview_local_buffer_result() {
     // CHECK: %[[RE0:.*]] = memref.subview
     // CHECK: %[[RE1:.*]] = memref.subview %[[RE0]]
     // CHECK: "test.consume"(%[[RE1]])
+    // The slot rotates once per iteration; a counter that never steps reads
+    // one physical buffer for the whole loop.
+    // CHECK: %[[NEXT:.*]] = arith.addi %[[LCTR]], %{{.*}} : i64
+    // CHECK: memref.store %[[NEXT]], %{{.*}}[%{{.*}}] : memref<1xi64>
     %s0 = scope.scope : () -> memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>> {
       %nested = scope.scope : () -> memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>> {
         %sv0 = memref.subview %buf[0, 0, 0] [64, 128, 1] [1, 1, 1] : memref<64x256x1xi1, #hivm.address_space<ub>> to memref<64x128x1xi1, strided<[256, 1, 1]>, #hivm.address_space<ub>>

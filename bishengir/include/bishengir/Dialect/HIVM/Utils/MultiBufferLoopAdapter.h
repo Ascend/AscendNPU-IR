@@ -66,10 +66,10 @@ public:
   /// `anchorBlock` := the block whose counter drives the rotation.
   /// Pass the consuming block, never the buffer's definition block.
   ///
-  /// scf.for: the counter sits in the loop body, whatever `anchorBlock` names.
-  /// scf.while: it sits in the region `anchorBlock` names.
-  /// null `anchorBlock` -> the builder insertion point's region, the after
-  /// region when that names none.
+  /// scf.for: that block's own counter when it lies in this loop and no other
+  /// loop sits between the two; the loop body otherwise.
+  /// scf.while: the region is `anchorBlock`'s, the insertion point's when
+  /// `anchorBlock` names none, the after region as the last fallback.
   Value getModuloIndex(OpBuilder &builder, int64_t modular,
                        Block *anchorBlock = nullptr);
 
