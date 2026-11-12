@@ -80,6 +80,50 @@ func.func @fixpipe_to_ub(%src: tensor<16xf32>) {
 
 // -----
 
+// CHECK-LABEL: func.func @fixpipe_to_ub_return_and_inside_use
+// CHECK:       scf.for
+// CHECK:         %[[ALLOC:.*]] = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+// CHECK-NEXT:    %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]]
+// CHECK-DAG:     %[[TENSOR:.*]] = bufferization.to_tensor %[[CAST]] restrict writable
+// CHECK-DAG:     scope.scope : () -> tensor<16xf32> {
+// CHECK-DAG:       hivm.hir.fixpipe {{.*}} outs(%[[ALLOC]] : memref<16xf32, #hivm.address_space<ub>>)
+// CHECK:           scf.if {{.*}} -> (tensor<16xf32>) {
+// CHECK:             scf.yield %[[TENSOR]] : tensor<16xf32>
+// CHECK:           } {{.*}} {
+// CHECK:             scf.yield %[[TENSOR]] : tensor<16xf32>
+// CHECK:           }
+// CHECK:           scope.return %[[TENSOR]] : tensor<16xf32>
+// CHECK-NEXT:    } {{.*}}
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+
+func.func @fixpipe_to_ub_return_and_inside_use(%src: tensor<16xf32>, %cond: i1) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  scf.for %i = %c0 to %c1 step %c1 {
+    %tensor = scope.scope : () -> tensor<16xf32> {
+      %alloc = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+      hivm.hir.fixpipe ins(%src : tensor<16xf32>) outs(%alloc : memref<16xf32, #hivm.address_space<ub>>)
+      %cast = memref.memory_space_cast %alloc : memref<16xf32, #hivm.address_space<ub>> to memref<16xf32>
+      %t = bufferization.to_tensor %cast restrict writable : memref<16xf32>
+      scf.if %cond -> (tensor<16xf32>) {
+        scf.yield %t : tensor<16xf32>
+      } else {
+        scf.yield %t : tensor<16xf32>
+      }
+      scope.return %t : tensor<16xf32>
+    }
+    scope.scope : () -> () {
+      %dim = tensor.dim %tensor, %c0 : tensor<16xf32>
+      scope.return
+    }
+  } {hivm.cv_pipelined_loop}
+  return
+}
+}
+
+// -----
+
 // The last scope depends on the first. Staging moves the first scope into the
 // same stage as the third scope, leaving the second scope with a larger preload
 // number. Keep the first and third scopes in their original relative order.
