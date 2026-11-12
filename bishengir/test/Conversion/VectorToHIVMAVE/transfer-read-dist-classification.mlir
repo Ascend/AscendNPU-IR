@@ -53,15 +53,15 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
-// A genuine transpose cannot be implemented by a supported load dist.
-// Reject it instead of silently emitting a plain load.
+// Non-unit source dimensions must remain in source order, even when a
+// transposed strided layout would make the result physically contiguous.
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
-  func.func @unconverted_transpose(%arg0: memref<16x16xi8, #hivm.address_space<ub>>) -> vector<16x16xi8> attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  func.func @unconverted_transpose(%arg0: memref<16x16xi8, strided<[1, 16]>, #hivm.address_space<ub>>) -> vector<16x16xi8> attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
     %cst = arith.constant 0 : i8
     %c0 = arith.constant 0 : index
     // expected-error@+2 {{unsupported transfer_read: expected BRC/NORM/E2B/BLK layout}}
     // expected-error@+1 {{failed to legalize operation 'vector.transfer_read' that was explicitly marked illegal}}
-    %0 = vector.transfer_read %arg0[%c0, %c0], %cst {in_bounds = [true, true], permutation_map = affine_map<(d0, d1) -> (d1, d0)>} : memref<16x16xi8, #hivm.address_space<ub>>, vector<16x16xi8>
+    %0 = vector.transfer_read %arg0[%c0, %c0], %cst {in_bounds = [true, true], permutation_map = affine_map<(d0, d1) -> (d1, d0)>} : memref<16x16xi8, strided<[1, 16]>, #hivm.address_space<ub>>, vector<16x16xi8>
     return %0 : vector<16x16xi8>
   }
 }
