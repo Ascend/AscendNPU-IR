@@ -1,6 +1,3 @@
-// Copyright (c) 2025 Huawei Technologies Co.,Ltd.
-// Licensed under Mulan PSL v2: http://license.coscl.org.cn/MulanPSL2
-// Provided on an "AS IS" basis, without warranties of any kind.
 #include <cstdint>
 
 namespace {
