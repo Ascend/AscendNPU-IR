@@ -217,8 +217,20 @@ bool FusedNode::useAsDpsInits(Operation *newOp) const {
   });
 }
 
+// Uses nested in a consumer region capture the original producer result rather
+// than a tile described by the consumer's indexing maps. Fusing such a producer
+// can clone its full computation into the consumer body instead of sharing the
+// tiled producer with its ordinary DPS input uses.
+bool FusedNode::hasNestedProducerUse(Operation *producer) const {
+  return llvm::any_of(producer->getUsers(), [&](Operation *user) {
+    return llvm::any_of(ops(), [&](Operation *fusedOp) {
+      return fusedOp->isProperAncestor(user);
+    });
+  });
+}
+
 bool FusedNode::canFuseProducer(Operation *producer) const {
-  if (useAsDpsInits(producer))
+  if (useAsDpsInits(producer) || hasNestedProducerUse(producer))
     return false;
 
   SmallVector<int64_t> estimatedTileSize;
