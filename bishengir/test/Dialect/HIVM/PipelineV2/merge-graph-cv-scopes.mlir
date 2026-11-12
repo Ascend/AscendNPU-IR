@@ -268,8 +268,9 @@ func.func @memory_cross_core_detour(%x: f32, %buf: memref<1xf32>) {
 
 // -----
 
-// A mixed loop-carried wrapper can anchor both fan-in and fan-out, but its
-// inner scopes and cross-core boundary must remain intact.
+// A mixed loop-carried wrapper anchors fan-in from CUBE predecessors while
+// small (1 input, 0 output) VECTOR consumers of its inner VECTOR scope merge
+// directly into that inner VECTOR scope.
 // CHECK-LABEL: func.func @wrapper_anchors_neighbors
 // CHECK: scf.for
 // CHECK-NEXT: %[[P:.*]]:2 = scope.scope
@@ -277,20 +278,18 @@ func.func @memory_cross_core_detour(%x: f32, %buf: memref<1xf32>) {
 // CHECK-NEXT: %[[B:.*]] = arith.mulf
 // CHECK-NEXT: scope.return %[[A]], %[[B]] : f32, f32
 // CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
-// CHECK-NEXT: %[[W:.*]] = scope.scope
+// CHECK-NEXT: scope.scope : () -> () {
 // CHECK-NEXT: %[[C:.*]] = scope.scope
 // CHECK-NEXT: {{.*}} = arith.addf %[[P]]#0, %[[P]]#1
 // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
-// CHECK-NEXT: %[[V:.*]] = scope.scope
-// CHECK-NEXT: {{.*}} = arith.negf %[[C]]
-// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
-// CHECK-NEXT: scope.return %[[V]] : f32
-// CHECK-NEXT: } {cv_merged_scope}
-// CHECK-NEXT: scope.scope
-// CHECK-NEXT: {{.*}} = arith.negf %[[W]]
-// CHECK-NEXT: {{.*}} = arith.mulf %[[W]], %[[W]]
+// CHECK-NEXT: scope.scope : () -> () {
+// CHECK-NEXT: %[[NEG:.*]] = arith.negf %[[C]]
+// CHECK-NEXT: {{.*}} = arith.negf %[[NEG]]
+// CHECK-NEXT: {{.*}} = arith.mulf %[[NEG]], %[[NEG]]
 // CHECK-NEXT: scope.return
 // CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {cv_merged_scope}
 // CHECK-NEXT: } {hivm.cv_pipelined_loop}
 func.func @wrapper_anchors_neighbors(%x: f32) {
   %c0 = arith.constant 0 : index
@@ -314,6 +313,53 @@ func.func @wrapper_anchors_neighbors(%x: f32) {
         scope.return %a : f32
       } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
       scope.return %v : f32
+    } {cv_merged_scope}
+    scope.scope : () -> () {
+      %a = arith.negf %wrapper : f32
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    scope.scope : () -> () {
+      %a = arith.mulf %wrapper, %wrapper : f32
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+  } {hivm.cv_pipelined_loop}
+  return
+}
+
+// -----
+
+// When a mixed loop-carried wrapper exports a CUBE scope result, VECTOR
+// consumers do not merge into the CUBE scope and still merge via wrapper
+// fan-out in applyGraphSameCoreRule.
+// CHECK-LABEL: func.func @wrapper_anchors_cube_fan_out
+// CHECK: scf.for
+// CHECK-NEXT: %[[W:.*]] = scope.scope : () -> f32 {
+// CHECK-NEXT: %[[C:.*]] = scope.scope
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT: scope.scope
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: scope.return %[[C]] : f32
+// CHECK-NEXT: } {cv_merged_scope}
+// CHECK-NEXT: scope.scope : () -> () {
+// CHECK-NEXT: {{.*}} = arith.negf %[[W]]
+// CHECK-NEXT: {{.*}} = arith.mulf %[[W]], %[[W]]
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: } {hivm.cv_pipelined_loop}
+func.func @wrapper_anchors_cube_fan_out(%x: f32) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  scf.for %i = %c0 to %c1 step %c1 {
+    %wrapper = scope.scope : () -> f32 {
+      %c = scope.scope : () -> f32 {
+        %a = arith.addf %x, %x : f32
+        scope.return %a : f32
+      } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+      scope.scope : () -> () {
+        %a = arith.negf %c : f32
+        scope.return
+      } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+      scope.return %c : f32
     } {cv_merged_scope}
     scope.scope : () -> () {
       %a = arith.negf %wrapper : f32

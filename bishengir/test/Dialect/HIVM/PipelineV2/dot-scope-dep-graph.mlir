@@ -12,8 +12,8 @@
 // FILES:     merged.2-lcd-grouping.multi_rule_progression.dot
 // FILES-NEXT: merged.2-lcd-grouping.nested_mixed_cores.dot
 // FILES-NEXT: merged.3-merged-scope-same-core.multi_rule_progression.dot
-// FILES-NEXT: merged.5-graph-same-core.multi_rule_progression.dot
-// FILES-NEXT: merged.6-sink-alloca.sink_alloca_only.dot
+// FILES-NEXT: merged.5-small-vector-merge.multi_rule_progression.dot
+// FILES-NEXT: merged.7-sink-alloca.sink_alloca_only.dot
 // FILES-NOT: .dot
 
 // Verify nested scope cluster and SSA edge names in @nested_mixed_cores:
