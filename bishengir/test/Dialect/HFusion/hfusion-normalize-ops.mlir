@@ -2193,6 +2193,18 @@ func.func @opt_cast_IToF_fill() -> tensor<24x32xf32>{
 }
 // -----
 
+// CHECK-LABEL: func.func @opt_cast_unsigned_IToF_fill
+// CHECK: %[[CAST:.*]] = arith.uitofp %arg0 : i8 to f16
+// CHECK: %[[FILL:.*]] = linalg.fill ins(%[[CAST]] : f16) outs({{.*}} : tensor<128xf16>)
+// CHECK: return %[[FILL]] : tensor<128xf16>
+func.func @opt_cast_unsigned_IToF_fill(%arg0: i8) -> tensor<128xf16> {
+  %src_empty = tensor.empty() : tensor<128xi8>
+  %src = linalg.fill ins(%arg0 : i8) outs(%src_empty : tensor<128xi8>) -> tensor<128xi8>
+  %dst = tensor.empty() : tensor<128xf16>
+  %cast = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%src : tensor<128xi8>) outs(%dst : tensor<128xf16>) -> tensor<128xf16>
+  return %cast : tensor<128xf16>
+}
+
 // CHECK-LABEL: func.func @opt_cast_FToI_fill_rint
 // CHECK: %[[CST:.*]] = arith.constant 1.500000e+00 : f32
 // CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<f32>
