@@ -357,6 +357,7 @@ static void buildCVPipelineV2(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(createNormalizeWorkspaceStorePass());
   pm.nest<func::FuncOp>().addPass(createOutlineCVScopesPass());
   pm.nest<func::FuncOp>().addPass(createMergeCVScopesPass());
+  pm.nest<func::FuncOp>().addPass(createIntraStageSchedulingPass());
   PipelineStagingOptions options;
   options.maxPipelineMultibuffer =
       hivmPipelineOptions.setMaxPipelineMultibuffer;

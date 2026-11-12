@@ -179,6 +179,7 @@ inferCoreTypeForGlobalMixMatmulOps(GlobalMixMatmulTy *mixMatmulOp);
 
 constexpr llvm::StringLiteral kCVUnrolledLoopName = "cv_unrolled_loop";
 constexpr llvm::StringLiteral kCVMergedScopeAttrName = "cv_merged_scope";
+constexpr llvm::StringLiteral kVFScopeAttrName = "vf-scope";
 constexpr llvm::StringLiteral kMultibufferUnrollAttrName =
     "multibuffer_unroll_factor";
 constexpr llvm::StringLiteral kPipelinedLoopCoreTypeAttrName =

@@ -427,6 +427,9 @@ std::unique_ptr<Pass> createOutlineCVScopesPass();
 // Create Merge CV Scopes pass for CV pipelining v2
 std::unique_ptr<Pass> createMergeCVScopesPass();
 
+// Create Intra Stage Scheduling pass for CV pipelining v2
+std::unique_ptr<Pass> createIntraStageSchedulingPass();
+
 // Create a CV Pipelining Staging pass
 std::unique_ptr<Pass>
 createPipelineStagingPass(const PipelineStagingOptions &options = {});

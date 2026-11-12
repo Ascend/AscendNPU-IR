@@ -1595,6 +1595,28 @@ def MergeCVScopes
                            "arith::ArithDialect"];
 }
 
+def IntraStageScheduling
+    : HIVMPass<"intra-stage-scheduling", "func::FuncOp",
+               [MixKernel, PureAicKernel]> {
+  let summary = "Hoist the cube-facing dependencies of each vector scope into "
+                "a leading sub-scope";
+  let description = [{
+    Runs after MergeCVScopes, scheduling inside a stage rather than across
+    stages. For every vector scope followed by a cube scope in the same block,
+    the operations producing the values that cube scope reads are grouped into
+    one new scope placed at the beginning of the vector scope's body, so the
+    cube can start as soon as that group retires. The group is closed under
+    its dependencies, including the cross-core copy that fills the L1 buffer
+    the cube reads, and carries a `vf-scope` attribute. A vector scope is left
+    unchanged when it returns no value,
+    when no following cube scope reads its results, or when every one of its
+    results feeds that cube scope.
+  }];
+  let constructor = "mlir::hivm::createIntraStageSchedulingPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "mlir::scope::ScopeDialect",
+                           "memref::MemRefDialect"];
+}
+
 def PipelineStaging
     : HIVMPass<"pipeline-staging", "func::FuncOp"> {
   let summary = "Assign preload number to scopes";

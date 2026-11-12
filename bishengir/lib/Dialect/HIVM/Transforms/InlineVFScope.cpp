@@ -47,7 +47,7 @@ void InlineVFScopePass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
   SmallVector<scope::ScopeOp> vfScopes;
   moduleOp.walk([&](scope::ScopeOp scopeOp) {
-    if (!scopeOp->hasAttr("vf-scope"))
+    if (!scopeOp->hasAttr(hivm::kVFScopeAttrName))
       return;
     auto parentScope =
         dyn_cast_if_present<scope::ScopeOp>(scopeOp->getParentOp());
