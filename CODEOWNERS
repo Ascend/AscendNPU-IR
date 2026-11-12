@@ -261,9 +261,10 @@
 /bishengir/include/bishengir/Transforms/regbase/Normalize/ @ciggaco @xiechenye @lingfei_wu @hid90099092 @tanshengshun
 
 # Custom op.
-/bishengir/**/CustomOp/ @danielcm585 @hid90099092 @tanshengshun
-/bishengir/test/**/custom-op/* @danielcm585 @hid90099092 @tanshengshun
-/bishengir/test/**/custom-op* @danielcm585 @hid90099092 @tanshengshun
+/bishengir/**/CustomOp/ @danielcm585 @Zackc @hid90099092 @tanshengshun
+/bishengir/test/**/custom-op/* @danielcm585 @Zackc @hid90099092 @tanshengshun
+/bishengir/test/**/custom-op* @danielcm585 @Zackc @hid90099092 @tanshengshun
+/docs/**/*custom_op* @wuying123wy @hid90099092 @tanshengshun @danielcm585 @Zackc
 
 # TensorView.
 /bishengir/**/TensorView/ @wcleungaj @hid90099092 @tanshengshun
