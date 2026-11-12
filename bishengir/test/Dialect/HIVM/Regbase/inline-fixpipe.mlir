@@ -856,11 +856,57 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
+// Debug users of the fallback_not_exec result must be cloned into both
+// branches. The Cube branch keeps a debug-only f32 fixpipe while the original
+// fixpipe still absorbs cast + store.
+// CHECK-LABEL: func.func @inline_fixpipe_fallback_not_exec_debug
+// CHECK: scf.if %{{.*}} {
+// CHECK:   %[[BRC:.*]] = hivm.hir.vbrc
+// CHECK:   hivm.hir.debug
+// CHECK-SAME: %[[BRC]] : tensor<16x16xf32>
+// CHECK:   hivm.hir.vcast
+// CHECK:   hivm.hir.store
+// CHECK: } else {
+// CHECK:   %[[DEBUG_FIX:.*]] = hivm.hir.fixpipe
+// CHECK-SAME: used_for_debug_op = true
+// CHECK:   hivm.hir.debug
+// CHECK-SAME: %[[DEBUG_FIX]] : tensor<16x16xf32>
+// CHECK:   hivm.hir.fixpipe
+// CHECK-SAME: pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>
+// CHECK-SAME: outs(%{{.*}} : memref<16x16xf16
+// CHECK: } {fallback_not_exec
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @inline_fixpipe_fallback_not_exec_debug(
+      %cond: i1,
+      %l0c: tensor<16x16xf32>,
+      %gm: memref<16x16xf16, strided<[16, 1]>>) {
+    %cst = arith.constant 0.000000e+00 : f32
+    %brc_init = tensor.empty() : tensor<16x16xf32>
+    %res = scf.if %cond -> (tensor<16x16xf32>) {
+      %brc = hivm.hir.vbrc ins(%cst : f32) outs(%brc_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scf.yield %brc : tensor<16x16xf32>
+    } else {
+      %ub = tensor.empty() : tensor<16x16xf32>
+      %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+          ins(%l0c : tensor<16x16xf32>) outs(%ub : tensor<16x16xf32>)
+          -> tensor<16x16xf32>
+      scf.yield %fix : tensor<16x16xf32>
+    } {fallback_not_exec}
+    hivm.hir.debug {debugtype = "print", hex = false, prefix = " accumulator: "} %res : tensor<16x16xf32>
+    %cast_init = tensor.empty() : tensor<16x16xf16>
+    %cast = hivm.hir.vcast ins(%res : tensor<16x16xf32>) outs(%cast_init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    hivm.hir.store ins(%cast : tensor<16x16xf16>) outs(%gm : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
 // annotation.mark on the fallback_not_exec if-result is ignored when walking
 // the store chain (same as hivm.debug / tensor.dim): it does not count as a
-// second user, so the sink still applies. After the rewrite the if is
-// resultless, so the mark on the old if-result is erased. Marks on values
-// that still exist (e.g. the L0C source) are left in place.
+// second user, so the sink still applies. Unlike debug, a mark cannot be
+// usefully replayed in both branches; the mark on the old if-result is erased.
+// Marks on values that still exist (e.g. the L0C source) are left in place.
 // CHECK-LABEL: func.func @inline_fixpipe_fallback_not_exec_markop
 // CHECK: annotation.mark %{{.*}} : tensor<16x16xf32>
 // CHECK: scf.if %{{.*}} {
