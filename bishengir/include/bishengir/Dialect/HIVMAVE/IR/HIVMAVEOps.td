@@ -189,11 +189,31 @@ def AVE_VFGatherOp : AVE_LibFnOp<"vgather",[DeclareOpInterfaceMethods<AVELibrary
   }];
 }
 
+def AVE_VFBlockGatherOp : AVE_Op<"vgatherb", [
+    TypesMatchWith<"buffer and result element types match", "base", "res",
+                   "VectorType::get({64}, ::llvm::cast<MemRefType>($_self).getElementType())">]> {
+  let summary = "Gather eight 32-byte UB blocks using byte offsets";
+  let description = [{
+    Index lanes 0..7 select eight complete blocks. The initial implementation
+    supports a full 32-bit register and four-byte-aligned offsets. Masked
+    lanes do not access memory. Lowering reuses element gather by expanding
+    each block offset into eight element indices.
+  }];
+  let arguments = (ins Arg<AnyMemRef, "load base", [MemRead]>:$base,
+                       Variadic<Index>:$indices,
+                       VectorOfLengthAndType<[64], [I32]>:$index_vec,
+                       VectorOfLengthAndType<[64], [I1]>:$mask);
+  let results = (outs VectorOfLengthAndType<[64], [I32, F32]>:$res);
+  let assemblyFormat = "$base `[` $indices `]` `[` $index_vec `]` `,` $mask attr-dict `:`"
+                       "type($base) `,` type($index_vec) `,` type($mask) `into` type($res)";
+  let hasVerifier = 1;
+}
+
 def AVE_VFScatterOp : AVE_LibFnOp<"vscatter",[DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>]> {
   let summary = "Scatter operation for AVE.";
   let arguments = (ins Arg<AnyMemRef, "store base", [MemWrite]>:$base,
                        Variadic<Index>:$indices,
-                       VectorOfRankAndType<[1], [Index]>:$index_vec, // TODO: Add verifier for index_vec
+                       VectorOfRankAndType<[1], [AnyInteger, Index]>:$index_vec, // Element indices
                        AveMaskType:$mask,
                        AveExtValidVector:$val);
   let assemblyFormat = "$base `[` $indices `]` `[` $index_vec `]` `,` $mask `,` $val attr-dict `:`"
@@ -401,6 +421,125 @@ def AVE_VFPregTypeCastOp : AVE_Op<"preg.cast", [Pure]> {
   let results = (outs AveMaskType:$res);
   let assemblyFormat = "$src $preg_cast_mode attr-dict `:` type($src) `->` type($res)";
   let hasCanonicalizer = 1;
+}
+
+// Logical predicate operations. Unlike preg.cast, their vector lengths are
+// part of the contract, and pack explicitly initializes the unused half.
+class AVE_PregPackBaseOp<string mnemonic> : AVE_Op<mnemonic, [Pure]> {
+  let arguments = (ins VectorOfRankAndType<[1], [I1]>:$src, I32Attr:$part);
+  let results = (outs VectorOfRankAndType<[1], [I1]>:$res);
+  let assemblyFormat = [{
+    $src `,` $part attr-dict `:` type($src) `->` type($res)
+  }];
+  let hasVerifier = 1;
+  let builders = [OpBuilder<(ins "Value":$src, "int32_t":$part)>];
+}
+
+def AVE_PregPackOp : AVE_PregPackBaseOp<"preg.pack"> {
+  let summary = "Place a logical predicate in one half of a larger predicate";
+  let description = [{
+    For N = 64 or 128, returns 2N logical lanes. For part = 0 (lower) or
+    1 (higher), res[part*N+i] = src[i]; the other half is false. The source
+    and result use the natural predicate densities for their logical lengths.
+    This operation does not fold through preg.cast.
+  }];
+}
+
+def AVE_PregUnpackOp : AVE_PregPackBaseOp<"preg.unpack"> {
+  let summary = "Select a continuous half of a logical predicate";
+  let description = [{
+    For N = 128 or 256, returns N/2 logical lanes, with
+    res[i] = src[part*(N/2)+i]. Part is 0 (lower) or 1 (higher).
+    Physical predicate spacing is an implementation detail of lowering.
+  }];
+}
+
+class AVE_PregInterleaveBaseOp<string mnemonic>
+    : AVE_Op<mnemonic, [Pure, AllTypesMatch<["src0", "src1", "res0", "res1"]>]> {
+  let arguments = (ins VectorOfRankAndType<[1], [I1]>:$src0,
+                       VectorOfRankAndType<[1], [I1]>:$src1);
+  let results = (outs VectorOfRankAndType<[1], [I1]>:$res0,
+                      VectorOfRankAndType<[1], [I1]>:$res1);
+  let assemblyFormat = [{
+    $src0 `,` $src1 attr-dict `:` type($src0)
+  }];
+  let hasVerifier = 1;
+  let builders = [OpBuilder<(ins "Value":$src0, "Value":$src1), [{
+    build($_builder, $_state, src0.getType(), src0.getType(), src0, src1);
+  }]>];
+}
+
+def AVE_PregInterleaveOp : AVE_PregInterleaveBaseOp<"preg.interleave"> {
+  let summary = "Interleave two logical predicates";
+  let description = [{
+    For matching N = 64, 128 or 256, interleave src0[i], src1[i] and split
+    the resulting 2N lanes into res0 and res1, each containing N lanes.
+    Both results retain the input predicate density.
+  }];
+}
+
+def AVE_PregDeinterleaveOp : AVE_PregInterleaveBaseOp<"preg.deinterleave"> {
+  let summary = "Deinterleave two concatenated logical predicates";
+  let description = [{
+    For matching N = 64, 128 or 256, concatenate src0 and src1. Res0 contains
+    the even logical lanes, and res1 the odd lanes. Inverse of preg.interleave.
+  }];
+}
+
+def AVE_VFRegisterGatherOp
+    : AVE_Op<"vselr", [Pure, AllTypesMatch<["src", "res"]>]> {
+  let summary = "Gather lanes from a full vector register";
+  let description = [{
+    res[i] = mask[i] ? src[index[i]] : zero. Source and result are full
+    2048-bit registers with 8/16/32-bit integer or floating-point elements.
+    Indices are signless integers interpreted as unsigned, with the same
+    width and lane count as the source. Every index must be in [0, N), even
+    for inactive result lanes; duplicates are allowed. Floating-point values
+    are moved bit for bit, including NaN payloads. There is no memory access.
+  }];
+  let arguments = (ins AnyVectorOfAnyRank:$src,
+                       AnyVectorOfAnyRank:$index,
+                       VectorOfRankAndType<[1], [I1]>:$mask);
+  let results = (outs AnyVectorOfAnyRank:$res);
+  let assemblyFormat = [{
+    $src `,` $index `,` $mask attr-dict `:` type($src) `,` type($index) `,`
+    type($mask)
+  }];
+  let hasVerifier = 1;
+  let builders = [OpBuilder<(ins "Value":$src, "Value":$index, "Value":$mask), [{
+    build($_builder, $_state, src.getType(), src, index, mask);
+  }]>];
+}
+
+def AVE_GroupReductionOp : AVE_Op<"group_reduction", [Pure]> {
+  let summary = "Ascend950 reduction of eight independent 32-byte groups";
+  let description = [{
+    Reduce active source lanes within each contiguous 32-byte block of a
+    full 2048-bit register. The eight results occupy lanes 0..7 of a full
+    result register; all remaining result lanes are zero. The mask selects
+    input contributions, and has the source lane count.
+
+    Supports add/min/max on signless i16/i32, f16 and f32. The cast attribute
+    selects integer signedness; floating-point operands require cast_signed.
+    Integer i16 add widens to i32 (64 result lanes); all other combinations
+    preserve the source type. Integer i32 add wraps modulo 2^32. Empty sums
+    are zero; empty min/max and floating-point order, NaNs and signed zeros
+    follow the target's native reduction semantics. No reassociation or
+    fast-math is implied. Only Ascend950 is supported; Ascend960's distinct
+    group semantics require a separate implementation.
+  }];
+  let arguments = (ins AVE_CombiningKindAttr:$kind,
+                       AnyVectorOfAnyRank:$src,
+                       VectorOfRankAndType<[1], [I1]>:$mask,
+                       DefaultValuedAttr<HIVM_TypeFnAttr,
+                                         "hivm::TypeFn::cast_signed">:$cast);
+  let results = (outs AnyVectorOfAnyRank:$res);
+  let assemblyFormat = [{
+    $kind $src `,` $mask attr-dict `:` type($src) `,` type($mask) `->` type($res)
+  }];
+  let hasVerifier = 1;
+  let builders = [OpBuilder<(ins "CombiningKind":$kind, "Value":$src,
+                                "Value":$mask, "hivm::TypeFn":$cast)>];
 }
 
 def AVE_VFSelectOp : AVE_LibFnOp<"vsel", [
@@ -823,6 +962,71 @@ def AVE_VFExpdifOp : AVE_BinaryOp<"vexpdif">{
 }
 
 def AVE_VFVMULLOp : AVE_VmullBinaryOp<"mull", [DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>]> {
+  let extraClassDeclaration = opNameDeclaration;
+}
+
+// Pairwise adjacent-lane sum.
+def AVE_VcpaddOp
+    : AVE_LibFnOp<"vcpadd", [Pure, AVEUnaryOpInterface,
+                             AllTypesMatch<["src", "res"]>]> {
+  let summary = "AVE pairwise adjacent-lane sum.";
+  let arguments = (ins AveVector<[F16, F32]>:$src,
+                       AveMaskType:$mask);
+  let results = (outs AveVector<[F16, F32]>:$res);
+  let assemblyFormat = [{
+    $src `,` $mask attr-dict `:` type($src) `,` type($mask)
+  }];
+  let extraClassDeclaration = opNameDeclaration;
+}
+
+// Stable compaction of active lanes toward the low lanes.
+def AVE_VsqzOp
+    : AVE_LibFnOp<"vsqz", [AllTypesMatch<["src", "res"]>]> {
+  let summary = "AVE squeeze selected lanes toward the low lanes.";
+  let arguments = (ins AveVector<[I8, I16, I32, F16, F32]>:$src,
+                       AveMaskType:$mask,
+                       DefaultValuedAttr<AVE_SqueezeStoreModeAttr,
+                                         "SqueezeStoreMode::STORED">:$squeeze_store);
+  let results = (outs AveVector<[I8, I16, I32, F16, F32]>:$res);
+  let assemblyFormat = [{
+    $src `,` $mask attr-dict `:` type($src) `,` type($mask)
+  }];
+  let extraClassDeclaration = opNameDeclaration;
+}
+
+// Carry/borrow arithmetic. CCE uses carry/no-borrow predicates for
+// subtraction; these ops expose that polarity directly.
+class AVE_CarryTernaryOp<string mnemonic>
+    : AVE_LibFnOp<mnemonic, [Pure, AllTypesMatch<["src0", "src1", "res"]>,
+                             AllTypesMatch<["mask", "carry_in", "carry"]>]> {
+  let arguments = (ins AveVector<[I32]>:$src0,
+                       AveVector<[I32]>:$src1,
+                       AveMaskType:$carry_in,
+                       AveMaskType:$mask,
+                       DefaultValuedAttr<HIVM_TypeFnAttr,
+                                         "hivm::TypeFn::cast_signed">:$cast);
+  let results = (outs AveVector<[I32]>:$res,
+                      AveMaskType:$carry);
+  let assemblyFormat = [{
+    $src0 `,` $src1 `,` $carry_in `,` $mask attr-dict `:` type($src0) `,`
+    type($src1) `,` type($carry_in) `,` type($mask) `->` type($res) `,`
+    type($carry)
+  }];
+  let extraClassDeclaration = opNameDeclaration;
+}
+
+def AVE_VaddcsOp : AVE_CarryTernaryOp<"vaddcs">;
+def AVE_VsubcsOp : AVE_CarryTernaryOp<"vsubcs">;
+
+// Exclusive prefix count of an active-lane predicate.
+def AVE_VusqzOp
+    : AVE_LibFnOp<"vusqz", [Pure]> {
+  let summary = "AVE exclusive prefix count of a predicate.";
+  let arguments = (ins AveMaskType:$mask);
+  let results = (outs AveVector<[I8, I16, I32]>:$res);
+  let assemblyFormat = [{
+    $mask attr-dict `:` type($mask) `->` type($res)
+  }];
   let extraClassDeclaration = opNameDeclaration;
 }
 

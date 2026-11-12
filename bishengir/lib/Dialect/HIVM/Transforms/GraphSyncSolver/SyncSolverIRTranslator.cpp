@@ -863,6 +863,8 @@ IRTranslator::getCallOp(func::CallOp callOp, OperationBase *parentOp) {
       handleRWValue(loadOp.getBase(), MemoryEffect::READ);
     } else if (auto gatherOp = dyn_cast<hivmave::VFGatherOp>(op)) {
       handleRWValue(gatherOp.getBase(), MemoryEffect::READ);
+    } else if (auto gatherOp = dyn_cast<hivmave::VFBlockGatherOp>(op)) {
+      handleRWValue(gatherOp.getBase(), MemoryEffect::READ);
     } else if (auto storeOp = dyn_cast<hivmave::VFMaskedStoreOp>(op)) {
       handleRWValue(storeOp.getBase(), MemoryEffect::WRITE);
     } else if (auto storeOp = dyn_cast<hivmave::VFUnalignedMaskedStoreOp>(op)) {

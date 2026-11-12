@@ -320,6 +320,169 @@ struct HIVMVunpackOpLowering
   }
 };
 
+static Value castToTypeIfNeeded(PatternRewriter &rewriter, Location loc,
+                                Value v, Type dstType) {
+  if (v.getType() == dstType)
+    return v;
+  return rewriter.create<UnrealizedConversionCastOp>(loc, dstType, v)
+      .getResult(0);
+}
+
+// Kept for the vector utility lowerings layered on this register API change.
+static Value castFromVLVector(Value value, Type type,
+                              ConversionPatternRewriter &rewriter) {
+  return castToTypeIfNeeded(rewriter, value.getLoc(), value, type);
+}
+
+template <typename OpTy, auto BuildOp>
+struct HIVMPregPackOpLowering : ConvertOpToLLVMPattern<OpTy> {
+  using ConvertOpToLLVMPattern<OpTy>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(OpTy op, typename OpTy::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    Value src = getVLRegValueOrSelf(adaptor.getSrc(), rewriter);
+    Value part = rewriter.create<LLVM::ConstantOp>(
+        loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(op.getPart()));
+    Value result = BuildOp(loc, part, src, rewriter)->getResult(0);
+    rewriter.replaceOp(
+        op, castToTypeIfNeeded(rewriter, loc, result, op.getRes().getType()));
+    return success();
+  }
+};
+
+template <typename OpTy, typename B8InstrTy, typename B16InstrTy,
+          typename B32InstrTy>
+struct HIVMPregInterleaveOpLowering : ConvertOpToLLVMPattern<OpTy> {
+  explicit HIVMPregInterleaveOpLowering(LLVMTypeConverter &converter)
+      : ConvertOpToLLVMPattern<OpTy>(converter) {}
+
+  LogicalResult
+  matchAndRewrite(OpTy op, typename OpTy::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    Value src0 = getVLRegValueOrSelf(adaptor.getSrc0(), rewriter);
+    Value src1 = getVLRegValueOrSelf(adaptor.getSrc1(), rewriter);
+    auto srcType = cast<VectorType>(op.getSrc0().getType());
+    VectorType predType = createVLVectorType(rewriter.getI1Type());
+    Type structType = LLVM::LLVMStructType::getLiteral(rewriter.getContext(),
+                                                       {predType, predType});
+    Value result;
+    switch (srcType.getNumElements()) {
+    case 256:
+      result = rewriter.create<B8InstrTy>(loc, structType, src0, src1);
+      break;
+    case 128:
+      result = rewriter.create<B16InstrTy>(loc, structType, src0, src1);
+      break;
+    case 64:
+      result = rewriter.create<B32InstrTy>(loc, structType, src0, src1);
+      break;
+    default:
+      return rewriter.notifyMatchFailure(op, "unsupported predicate length");
+    }
+    Value res0 = rewriter.create<LLVM::ExtractValueOp>(loc, result, 0);
+    Value res1 = rewriter.create<LLVM::ExtractValueOp>(loc, result, 1);
+    res0 = castToTypeIfNeeded(rewriter, loc, res0, op.getRes0().getType());
+    res1 = castToTypeIfNeeded(rewriter, loc, res1, op.getRes1().getType());
+    rewriter.replaceOp(op, {res0, res1});
+    return success();
+  }
+};
+
+struct HIVMRegisterGatherOpLowering
+    : ConvertOpToLLVMPattern<hivmave::VFRegisterGatherOp> {
+  explicit HIVMRegisterGatherOpLowering(LLVMTypeConverter &converter)
+      : ConvertOpToLLVMPattern<hivmave::VFRegisterGatherOp>(converter) {}
+
+  LogicalResult
+  matchAndRewrite(hivmave::VFRegisterGatherOp op,
+                  hivmave::VFRegisterGatherOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto indexType = cast<VectorType>(op.getIndex().getType());
+    Value src = adaptor.getSrc();
+    if (src.getType() != indexType)
+      src = rewriter.create<LLVM::BitcastOp>(loc, indexType, src);
+    Value result =
+        rewriter.create<VselrInstrOp>(loc, indexType, src, adaptor.getIndex());
+    Value zero = rewriter.create<LLVM::ConstantOp>(
+        loc, indexType.getElementType(),
+        rewriter.getZeroAttr(indexType.getElementType()));
+    zero = rewriter.create<VbrInstrOp>(loc, indexType, zero);
+    Value mask = getVLRegValueOrSelf(adaptor.getMask(), rewriter);
+    result = rewriter.create<VselInstrOp>(loc, indexType, result, zero, mask);
+    if (result.getType() != op.getRes().getType())
+      result =
+          rewriter.create<LLVM::BitcastOp>(loc, op.getRes().getType(), result);
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+struct HIVMGroupReductionOpLowering
+    : ConvertOpToLLVMPattern<hivmave::GroupReductionOp> {
+  explicit HIVMGroupReductionOpLowering(LLVMTypeConverter &converter)
+      : ConvertOpToLLVMPattern<hivmave::GroupReductionOp>(converter) {}
+
+  LogicalResult
+  matchAndRewrite(hivmave::GroupReductionOp op,
+                  hivmave::GroupReductionOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    Value src = adaptor.getSrc();
+    Value mask = getVLRegValueOrSelf(adaptor.getMask(), rewriter);
+    bool isUnsigned = op.getCast() == hivm::TypeFn::cast_unsigned;
+    Value result;
+    switch (op.getKind()) {
+    case CombiningKind::ADD:
+      if (isUnsigned)
+        result =
+            rewriter.create<VcgaddUXInstrOp>(loc, src.getType(), src, mask);
+      else
+        result =
+            rewriter.create<VcgaddSXInstrOp>(loc, src.getType(), src, mask);
+      break;
+    case CombiningKind::MAX:
+      if (isUnsigned)
+        result = rewriter.create<VcgmaxUInstrOp>(loc, src.getType(), src, mask);
+      else
+        result = rewriter.create<VcgmaxSInstrOp>(loc, src.getType(), src, mask);
+      break;
+    case CombiningKind::MIN:
+      if (isUnsigned)
+        result = rewriter.create<VcgminUInstrOp>(loc, src.getType(), src, mask);
+      else
+        result = rewriter.create<VcgminSInstrOp>(loc, src.getType(), src, mask);
+      break;
+    default:
+      return failure();
+    }
+    auto resType = cast<VectorType>(op.getRes().getType());
+    // The legacy i16 add intrinsic returns i16 ABI bits containing i32 sums.
+    // Preserve all bits; the public result type describes the actual lanes.
+    if (result.getType() != resType)
+      result = rewriter.create<LLVM::BitcastOp>(loc, resType, result);
+    // Explicitly zero the tail, including min whose legacy wrapper does not
+    // promise initialized tail lanes. This mask applies only to the result.
+    Value pattern = rewriter.create<LLVM::ConstantOp>(
+        loc, rewriter.getI32Type(),
+        rewriter.getI32IntegerAttr(static_cast<int32_t>(PgePattern::VL8)));
+    Value firstEight =
+        buildPgeOp(loc, pattern, resType.getElementTypeBitWidth(), rewriter)
+            ->getResult(0);
+    Value zero = rewriter.create<LLVM::ConstantOp>(
+        loc, resType.getElementType(),
+        rewriter.getZeroAttr(resType.getElementType()));
+    zero = rewriter.create<VbrInstrOp>(loc, resType, zero);
+    result =
+        rewriter.create<VselInstrOp>(loc, resType, result, zero, firstEight);
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
 struct HIVMPregCastOpLowering
     : public ConvertOpToLLVMPattern<hivmave::VFPregTypeCastOp> {
   using ConvertOpToLLVMPattern<
@@ -364,6 +527,163 @@ struct HIVMPregCastOpLowering
       return success();
     }
     return failure();
+  }
+};
+
+static Value castToVLVector(Value value, Type elementType,
+                            ConversionPatternRewriter &rewriter) {
+  VectorType vlType = createVLVectorType(elementType);
+  if (value.getType() == vlType)
+    return value;
+  return rewriter
+      .create<UnrealizedConversionCastOp>(value.getLoc(), vlType, value)
+      .getResult(0);
+}
+
+struct HIVMVcpaddOpLowering : ConvertOpToLLVMPattern<hivmave::VcpaddOp> {
+  explicit HIVMVcpaddOpLowering(LLVMTypeConverter &converter)
+      : ConvertOpToLLVMPattern<hivmave::VcpaddOp>(converter) {}
+
+  LogicalResult
+  matchAndRewrite(hivmave::VcpaddOp op, hivmave::VcpaddOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto srcType = dyn_cast<VectorType>(op.getSrc().getType());
+    if (!srcType)
+      return rewriter.notifyMatchFailure(op, "expected vector source");
+    Type elementType = srcType.getElementType();
+    if (!elementType.isF16() && !elementType.isF32())
+      return rewriter.notifyMatchFailure(op, "vcpadd requires f16/f32");
+    VectorType vlType = createVLVectorType(elementType);
+    Value src = castToVLVector(op.getSrc(), elementType, rewriter);
+    Value mask = getVLRegValueOrSelf(op.getMask(), rewriter);
+    Value result =
+        rewriter.create<VcpaddInstrOp>(loc, vlType, src, mask).getResult();
+    rewriter.replaceOp(op, castFromVLVector(result, srcType, rewriter));
+    return success();
+  }
+};
+
+struct HIVMVsqzOpLowering : ConvertOpToLLVMPattern<hivmave::VsqzOp> {
+  explicit HIVMVsqzOpLowering(LLVMTypeConverter &converter)
+      : ConvertOpToLLVMPattern<hivmave::VsqzOp>(converter) {}
+
+  LogicalResult
+  matchAndRewrite(hivmave::VsqzOp op, hivmave::VsqzOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto srcType = dyn_cast<VectorType>(op.getSrc().getType());
+    if (!srcType)
+      return rewriter.notifyMatchFailure(op, "expected vector source");
+    Type elementType = srcType.getElementType();
+    if (!(elementType.isInteger(8) || elementType.isInteger(16) ||
+          elementType.isInteger(32) || elementType.isF16() ||
+          elementType.isF32()))
+      return rewriter.notifyMatchFailure(op, "unsupported vsqz element type");
+    VectorType vlType = createVLVectorType(elementType);
+    Value src = castToVLVector(op.getSrc(), elementType, rewriter);
+    Value mask = getVLRegValueOrSelf(op.getMask(), rewriter);
+    bool stored = op.getSqueezeStore() == hivmave::SqueezeStoreMode::STORED;
+    Value store = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI32IntegerAttr(stored ? 1 : 0));
+    Value result = rewriter.create<VsqzXInstrOp>(loc, vlType, src, mask, store)
+                       .getResult();
+    rewriter.replaceOp(op, castFromVLVector(result, srcType, rewriter));
+    return success();
+  }
+};
+
+struct HIVMVusqzOpLowering : ConvertOpToLLVMPattern<hivmave::VusqzOp> {
+  explicit HIVMVusqzOpLowering(LLVMTypeConverter &converter)
+      : ConvertOpToLLVMPattern<hivmave::VusqzOp>(converter) {}
+
+  LogicalResult
+  matchAndRewrite(hivmave::VusqzOp op, hivmave::VusqzOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto resType = dyn_cast<VectorType>(op.getRes().getType());
+    if (!resType)
+      return rewriter.notifyMatchFailure(op, "expected vector result");
+    Type elementType = resType.getElementType();
+    if (!(elementType.isInteger(8) || elementType.isInteger(16) ||
+          elementType.isInteger(32)))
+      return rewriter.notifyMatchFailure(op, "vusqz requires integer result");
+    VectorType vlType = createVLVectorType(elementType);
+    // VUSQZ is an in-place merging instruction: its destination must start at
+    // zero.  Materialize that zero with VBR; a dense zero-vector constant can
+    // survive as BUILD_VECTOR and has no ISel pattern on the CCE backend.
+    Value zeroScalar = rewriter.create<LLVM::ConstantOp>(
+        loc, elementType, rewriter.getIntegerAttr(elementType, 0));
+    Value zero = rewriter.create<VbrInstrOp>(loc, vlType, zeroScalar).getRes();
+    Value mask = getVLRegValueOrSelf(op.getMask(), rewriter);
+    Value result =
+        rewriter.create<VusqzMInstrOp>(loc, vlType, zero, mask).getResult();
+    rewriter.replaceOp(op, castFromVLVector(result, resType, rewriter));
+    return success();
+  }
+};
+
+template <typename OpTy, typename SignedInstrTy, typename UnsignedInstrTy,
+          bool HasCarryIn>
+struct HIVMCarryOpLowering : ConvertOpToLLVMPattern<OpTy> {
+  explicit HIVMCarryOpLowering(LLVMTypeConverter &converter)
+      : ConvertOpToLLVMPattern<OpTy>(converter) {}
+
+  LogicalResult
+  matchAndRewrite(OpTy op, typename OpTy::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto srcType = dyn_cast<VectorType>(op.getSrc0().getType());
+    auto resType = dyn_cast<VectorType>(op.getRes().getType());
+    auto carryType = dyn_cast<VectorType>(op.getCarry().getType());
+    if (!srcType || !resType || !carryType)
+      return rewriter.notifyMatchFailure(op, "expected vector types");
+    if (!srcType.getElementType().isInteger(32) ||
+        srcType.getNumElements() != 64)
+      return rewriter.notifyMatchFailure(
+          op, "carry arithmetic requires vector<64xi32>");
+
+    Type elementType = srcType.getElementType();
+    VectorType vlType = createVLVectorType(elementType);
+    VectorType predType =
+        VectorType::get({util::PREDICATE_BITS}, rewriter.getI1Type());
+    Type structType = LLVM::LLVMStructType::getLiteral(rewriter.getContext(),
+                                                       {vlType, predType});
+    Value src0 = castToVLVector(op.getSrc0(), elementType, rewriter);
+    Value src1 = castToVLVector(op.getSrc1(), elementType, rewriter);
+    Value mask = getVLRegValueOrSelf(op.getMask(), rewriter);
+
+    Operation *newOp = nullptr;
+    if (op.getCast() == hivm::TypeFn::cast_unsigned) {
+      if constexpr (HasCarryIn) {
+        Value carryIn = getVLRegValueOrSelf(op.getCarryIn(), rewriter);
+        newOp = rewriter.create<UnsignedInstrTy>(loc, structType, src0, src1,
+                                                 carryIn, mask);
+      } else {
+        newOp =
+            rewriter.create<UnsignedInstrTy>(loc, structType, src0, src1, mask);
+      }
+    } else {
+      if constexpr (HasCarryIn) {
+        Value carryIn = getVLRegValueOrSelf(op.getCarryIn(), rewriter);
+        newOp = rewriter.create<SignedInstrTy>(loc, structType, src0, src1,
+                                               carryIn, mask);
+      } else {
+        newOp =
+            rewriter.create<SignedInstrTy>(loc, structType, src0, src1, mask);
+      }
+    }
+
+    SmallVector<int64_t, 1> resIndex{0};
+    SmallVector<int64_t, 1> carryIndex{1};
+    Value resultVL = rewriter.create<LLVM::ExtractValueOp>(
+        loc, vlType, newOp->getResult(0), resIndex);
+    Value carryVL = rewriter.create<LLVM::ExtractValueOp>(
+        loc, predType, newOp->getResult(0), carryIndex);
+    Value result = castFromVLVector(resultVL, srcType, rewriter);
+    Value carry = castFromVLVector(carryVL, carryType, rewriter);
+    rewriter.replaceOp(op, {result, carry});
+    return success();
   }
 };
 
@@ -822,14 +1142,6 @@ struct HIVM2VLLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
     return success();
   }
 };
-
-static Value castToTypeIfNeeded(PatternRewriter &rewriter, Location loc,
-                                Value v, Type dstType) {
-  if (v.getType() == dstType)
-    return v;
-  return rewriter.create<UnrealizedConversionCastOp>(loc, dstType, v)
-      .getResult(0);
-}
 
 struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
   explicit HIVMLoadOpLowering(LLVMTypeConverter &converter)
@@ -1414,14 +1726,82 @@ struct HIVMGatherOpLowering : public ConvertOpToLLVMPattern<VFGatherOp> {
   }
 };
 
+struct HIVMBlockGatherOpLowering : ConvertOpToLLVMPattern<VFBlockGatherOp> {
+  using ConvertOpToLLVMPattern<VFBlockGatherOp>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(VFBlockGatherOp op, VFBlockGatherOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto memref = cast<MemRefType>(op.getBase().getType());
+    Value ptr = this->getStridedElementPtr(loc, memref, adaptor.getBase(),
+                                           adaptor.getIndices(), rewriter);
+    auto type = VectorType::get({64}, rewriter.getI32Type());
+    auto scalar = [&](int32_t value) -> Value {
+      return rewriter.create<LLVM::ConstantOp>(
+          loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(value));
+    };
+    Value zero = scalar(0);
+    Value all = buildPgeOp(loc, scalar(static_cast<int32_t>(PgePattern::ALL)),
+                           32, rewriter)
+                    ->getResult(0);
+    auto shift = [&](int16_t value) -> Value {
+      return rewriter.create<LLVM::ConstantOp>(
+          loc, rewriter.getI16Type(), rewriter.getI16IntegerAttr(value));
+    };
+    Value lane = rewriter.create<VciInstrOp>(loc, type, zero, zero);
+    Value block =
+        rewriter.create<VshrsUXInstrOp>(loc, type, lane, shift(3), all);
+    Value offset =
+        rewriter.create<VselrInstrOp>(loc, type, adaptor.getIndexVec(), block);
+    offset = rewriter.create<VshrsUXInstrOp>(loc, type, offset, shift(2), all);
+    Value seven = rewriter.create<VbrInstrOp>(loc, type, scalar(7));
+    Value within = rewriter.create<VandXInstrOp>(loc, type, lane, seven, all);
+    offset = rewriter.create<VaddUXInstrOp>(loc, type, offset, within, all);
+    Value mask = getVLRegValueOrSelf(adaptor.getMask(), rewriter);
+    // Reuse the validated element gather path: byteOffset[i/8]/4 + i%8.
+    Value result =
+        rewriter.create<VGatherV64S32InstrOp>(loc, type, ptr, offset, mask);
+    if (result.getType() != op.getRes().getType())
+      result =
+          rewriter.create<LLVM::BitcastOp>(loc, op.getRes().getType(), result);
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
 struct HIVMScatterOpLowering : public ConvertOpToLLVMPattern<VFScatterOp> {
   explicit HIVMScatterOpLowering(LLVMTypeConverter &converter)
       : ConvertOpToLLVMPattern<VFScatterOp>(converter) {}
   LogicalResult
   matchAndRewrite(VFScatterOp scatter, VFScatterOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    return rewriter.notifyMatchFailure(scatter,
-                                       "scatter lowering not implemented yet");
+    auto loc = scatter.getLoc();
+    auto type = cast<VectorType>(scatter.getVal().getType());
+    auto indexType = VectorType::get({64}, rewriter.getI32Type());
+    if (type.getRank() != 1 || type.getNumElements() != 64 ||
+        !(type.getElementType().isInteger(32) ||
+          type.getElementType().isF32()) ||
+        scatter.getIndexVec().getType() != indexType ||
+        scatter.getMask().getType() !=
+            VectorType::get({64}, rewriter.getI1Type()))
+      return rewriter.notifyMatchFailure(
+          scatter, "requires full 32-bit data, indices and mask");
+    auto memref = cast<MemRefType>(scatter.getBase().getType());
+    if (memref.getElementType() != type.getElementType() ||
+        scatter.getIndices().size() != static_cast<size_t>(memref.getRank()))
+      return rewriter.notifyMatchFailure(scatter,
+                                         "buffer type or rank mismatch");
+    Value ptr = this->getStridedElementPtr(loc, memref, adaptor.getBase(),
+                                           adaptor.getIndices(), rewriter);
+    Value value = adaptor.getVal();
+    if (value.getType() != indexType)
+      value = rewriter.create<LLVM::BitcastOp>(loc, indexType, value);
+    Value mask = getVLRegValueOrSelf(adaptor.getMask(), rewriter);
+    rewriter.create<VScatterV64S32InstrOp>(loc, value, ptr,
+                                           adaptor.getIndexVec(), mask);
+    rewriter.eraseOp(scatter);
+    return success();
   }
 };
 
@@ -3691,7 +4071,7 @@ void populateHIVMAVEToAVEIntrinPatterns(LLVMTypeConverter &converter,
   // Populate conversion patterns
   // clang-format off
   patterns.add<HIVMLoadOpLowering, HIVM2VLLoadOpLowering, HIVMStoreOpLowering, HIVMStoreStrideOpLowering,
-               HIVMGatherOpLowering, HIVMScatterOpLowering,
+               HIVMGatherOpLowering, HIVMBlockGatherOpLowering, HIVMScatterOpLowering,
                HIVMPgeOpLowering, HIVMPltOpLowering, HIVMPltMOpLowering,
                HIVMVtrcOpLowering, HIVMVSlideOpLowering,
                HIVMSelectOpLowering, HIVMReductionOpLowering,
@@ -3718,7 +4098,22 @@ void populateHIVMAVEToAVEIntrinPatterns(LLVMTypeConverter &converter,
                HIVMExpdifOpLowering, HIVMMemBarOpLowering,
                HIVMVmullOpLowering,
                HIVMVpackOpLowering, HIVMVunpackOpLowering,
-               HIVMPregCastOpLowering
+               HIVMPregCastOpLowering,
+               HIVMPregPackOpLowering<PregPackOp, buildPpackOp>,
+               HIVMPregPackOpLowering<PregUnpackOp, buildPunpackOp>,
+               HIVMPregInterleaveOpLowering<hivmave::PregInterleaveOp,
+                                           PintlvB8InstrOp, PintlvB16InstrOp,
+                                           PintlvB32InstrOp>,
+               HIVMPregInterleaveOpLowering<hivmave::PregDeinterleaveOp,
+                                           PDintlvB8InstrOp, PDintlvB16InstrOp,
+                                           PDintlvB32InstrOp>,
+               HIVMRegisterGatherOpLowering, HIVMGroupReductionOpLowering,
+               HIVMVcpaddOpLowering, HIVMVsqzOpLowering,
+               HIVMVusqzOpLowering,
+               HIVMCarryOpLowering<hivmave::VaddcsOp, VaddcsV64S32InstrOp,
+                                   VaddcsV64U32InstrOp, true>,
+               HIVMCarryOpLowering<hivmave::VsubcsOp, VsubcsV64S32InstrOp,
+                                   VsubcsV64U32InstrOp, true>
   >(converter);
   BinaryRegistry::registerPatterns(converter, patterns);
   UnaryRegistry::registerPatterns(converter, patterns);
@@ -4625,6 +5020,26 @@ struct HIVMAVEToAVEIntrinPass
 
   /// Run the dialect converter on the module.
   void runOnOperation() override {
+    // A known target is required for these native register operations. Reject
+    // unsupported semantics explicitly rather than leaving AVE ops behind in
+    // a partial conversion (in particular, do not use 950 groups on 960).
+    auto module = getOperation();
+    auto supported = module.walk([&](Operation *op) {
+      if (isa<GroupReductionOp>(op) && !hacc::utils::isAscend950(module)) {
+        op->emitOpError("group reduction currently supports only Ascend950");
+        return WalkResult::interrupt();
+      }
+      if (isa<PregPackOp, PregUnpackOp, PregInterleaveOp, PregDeinterleaveOp,
+              VFRegisterGatherOp>(op) &&
+          !hacc::utils::supportsRegBaseVectorLowering(module)) {
+        op->emitOpError(
+            "requires a target with register-based vector lowering");
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    });
+    if (supported.wasInterrupted())
+      return signalPassFailure();
     mergeUnderfilledStores(getOperation());
     // If applicable, narrow loop ivs to help generate hardware loops.
     narrowSCFForIV();
@@ -4632,6 +5047,9 @@ struct HIVMAVEToAVEIntrinPass
     LLVMConversionTarget target(getContext());
     target.addLegalOp<LLVM::BitcastOp>();
     target.addLegalDialect<hivm_regbaseintrins::HIVMRegbaseIntrinsDialect>();
+    target.addIllegalOp<PregPackOp, PregUnpackOp, PregInterleaveOp,
+                        PregDeinterleaveOp, VFRegisterGatherOp,
+                        GroupReductionOp, VFBlockGatherOp, VFScatterOp>();
 
     RewritePatternSet patterns(&getContext());
     LLVMTypeConverter converter(&getContext());
