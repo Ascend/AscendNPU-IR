@@ -1279,11 +1279,11 @@ static scf::ForOp preprocessPreloadLoop(scf::ForOp forOp) {
   return activeForOp;
 }
 
-static void getUserScopes(scope::ScopeOp source,
+static void getUserScopes(Value source,
                           llvm::SmallSet<scope::ScopeOp, 16> &userScopes) {
-  scope::ScopeOp useScope;
-  for (Operation *user : source->getUsers()) {
-    auto *ancestor = source->getBlock()->findAncestorOpInBlock(*user);
+  Block *sourceBlock = source.getDefiningOp()->getBlock();
+  for (Operation *user : source.getUsers()) {
+    auto *ancestor = sourceBlock->findAncestorOpInBlock(*user);
     auto parentScope = dyn_cast_if_present<scope::ScopeOp>(ancestor);
     if (parentScope)
       userScopes.insert(parentScope);
@@ -1296,6 +1296,20 @@ static void cloneCounterOps(Block *body,
   for (Operation &op : body->without_terminator()) {
     if (!opsToClone.contains(&op))
       continue;
+    if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
+      auto clonedIf = builder.create<scf::IfOp>(
+          ifOp.getLoc(), mapping.lookupOrDefault(ifOp.getCondition()),
+          !ifOp.getElseRegion().empty());
+      clonedIf->setAttrs(ifOp->getAttrs());
+      OpBuilder::InsertionGuard guard(builder);
+      builder.setInsertionPointToStart(clonedIf.thenBlock());
+      cloneCounterOps(ifOp.thenBlock(), opsToClone, builder, mapping);
+      if (!ifOp.getElseRegion().empty()) {
+        builder.setInsertionPointToStart(clonedIf.elseBlock());
+        cloneCounterOps(ifOp.elseBlock(), opsToClone, builder, mapping);
+      }
+      continue;
+    }
     auto loop = dyn_cast<scf::ForOp>(op);
     if (!loop) {
       builder.clone(op, mapping);
@@ -1334,22 +1348,36 @@ static bool hasOnlyPrivateMemoryEffects(scope::ScopeOp scopeOp) {
       });
 }
 
+static std::optional<unsigned>
+findNormalizeMatmulCounterResult(scope::ReturnOp returnOp) {
+  for (auto [idx, retVal] : llvm::enumerate(returnOp.getResults())) {
+    if (auto defOp = retVal.getDefiningOp<memref::AllocaOp>();
+        defOp && defOp->hasAttr(kNormalizeMatmulCounterAttr))
+      return idx;
+  }
+  return std::nullopt;
+}
+
 static void cloneCounterLoopIntoUserScope(scf::ForOp forOp) {
   for (scope::ScopeOp scopeOp : forOp.getOps<scope::ScopeOp>()) {
     auto returnOp = cast<scope::ReturnOp>(scopeOp.getBody()->getTerminator());
 
-    bool isCounterLoop = false;
-    if (scopeOp->getNumResults() == 1) {
-      if (auto defOp =
-              returnOp->getOperand(0).getDefiningOp<memref::AllocaOp>()) {
-        isCounterLoop = defOp->hasAttr(kNormalizeMatmulCounterAttr);
-      }
-    }
-    if (!isCounterLoop)
+    std::optional<unsigned> counterResultIdx =
+        findNormalizeMatmulCounterResult(returnOp);
+    if (!counterResultIdx)
       continue;
+    unsigned counterIdx = *counterResultIdx;
+
+    // An empty mark carries no metadata, but keeps a private counter result
+    // artificially live across the stage boundary.
+    for (Operation *user :
+         llvm::make_early_inc_range(scopeOp.getResult(counterIdx).getUsers()))
+      if (auto mark = dyn_cast<annotation::MarkOp>(user);
+          mark && mark.isAttrEmpty())
+        user->erase();
 
     llvm::SmallSet<scope::ScopeOp, 16> dstScopes;
-    getUserScopes(scopeOp, dstScopes);
+    getUserScopes(scopeOp.getResult(counterIdx), dstScopes);
     if (dstScopes.empty())
       continue;
 
@@ -1367,7 +1395,7 @@ static void cloneCounterLoopIntoUserScope(scf::ForOp forOp) {
     // Start from writes to this counter, not all users of its loads. This keeps
     // the load/addi/store increment without pulling in the matmul or other
     // work.
-    Value counter = returnOp.getResults()[0];
+    Value counter = returnOp.getResults()[counterIdx];
     collectOp(counter.getDefiningOp());
     for (Operation *user : counter.getUsers())
       if (auto store = dyn_cast<memref::StoreOp>(user);
@@ -1381,7 +1409,9 @@ static void cloneCounterLoopIntoUserScope(scf::ForOp forOp) {
     while (!worklist.empty()) {
       Operation *op = worklist.pop_back_val();
       auto loop = dyn_cast<scf::ForOp>(op);
-      if (op->getNumRegions() && !loop) {
+      auto ifOp = dyn_cast<scf::IfOp>(op);
+      if (op->getNumRegions() && !loop &&
+          !(ifOp && ifOp.getNumResults() == 0)) {
         canClone = false;
         break;
       }
@@ -1409,9 +1439,10 @@ static void cloneCounterLoopIntoUserScope(scf::ForOp forOp) {
       IRMapping mapping;
       cloneCounterOps(scopeOp.getBody(), opsToClone, builder, mapping);
 
-      scopeOp->getResult(0).replaceUsesWithIf(
-          mapping.lookup(counter),
-          [&](OpOperand &use) { return dstScope->isAncestor(use.getOwner()); });
+      scopeOp->getResult(counterIdx)
+          .replaceUsesWithIf(mapping.lookup(counter), [&](OpOperand &use) {
+            return dstScope->isAncestor(use.getOwner());
+          });
     }
   }
 }
