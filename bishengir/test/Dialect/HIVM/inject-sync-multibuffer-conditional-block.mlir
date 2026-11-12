@@ -1,15 +1,14 @@
 // RUN: bishengir-opt -hivm-inject-sync -hivm-enable-multi-buffer -split-input-file %s | FileCheck %s
 // clang-format off
 
-// The unlocalised half of a deliberate trade: InjectSync does not pick a counter
-// block, and EnableMultiBuffer no longer opens one of its own. Both the slot
-// select and the flag ids therefore read the loop counter -- consistent, just not
-// per block. Do not "restore symmetry" by letting EnableMultiBuffer create the
-// counter here: the two cadences splitting apart is the 507015 class, whichever
-// side moves first. The measured instance splits as slot on the loop counter,
-// `FIX->M` id on the guard's own counter (`error_report/README.md` section 6).
-// Red case: the GraphSyncSolver pipeline on this same input moves the counter
-// into the guard, so these checks fail against it.
+// The unlocalised half of a deliberate trade:
+// InjectSync picks no counter block, and EnableMultiBuffer opens none.
+// => slot select and flag ids read the loop counter: consistent, not per block.
+// Do not restore symmetry by letting EnableMultiBuffer create the counter here:
+// the slot and the flags splitting apart is the failure this file pins, whichever
+// side moves first.
+// Red case: GraphSyncSolver moves the counter into the guard on this same
+// input, so these checks fail against it.
 
 // -----
 module {
@@ -50,8 +49,8 @@ module {
 
 // -----
 module {
-  // A pair whose producer stays unconditional cannot rotate on the guard: both
-  // ends must read one value, and the consumer sits inside an `scf.if`.
+  // producer unconditional, consumer inside an scf.if
+  // => cannot rotate on the guard: both ends must read one value
   // CHECK-LABEL: func.func @outer_pair_keeps_loop_counter(
   func.func @outer_pair_keeps_loop_counter(
       %arg0: memref<16xf16, #hivm.address_space<gm>>,

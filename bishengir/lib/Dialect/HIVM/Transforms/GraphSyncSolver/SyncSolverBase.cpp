@@ -21,7 +21,6 @@
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
 
-#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Value.h"
@@ -1118,14 +1117,14 @@ std::optional<int64_t> SyncSolverBase::getMultiBufferEventIdNum(
 /// handshake may rotate.
 ///
 /// The multi-buffer mark is not consulted here.
-/// A cast without one only widens the consumer block.
-/// That vetoes the block counter, so the pair keeps the loop counter.
-/// It never rotates on the wrong cadence.
+/// A cast without one only widens the consumer block
+/// => no block owns its counter, so the pair keeps the loop counter
+/// => the two ends never rotate on different counts.
 static SmallVector<Value> collectMultiBufferBuffers(RWOperation *rwOp1,
-                                                   RWOperation *rwOp2) {
-  // `PointerLikeInfo` is set only for a `pointer_cast` or a workspace alloc
-  // (`MemInfo.cpp`), so a function argument or reinterpret cast never reaches
-  // this loop; those are shared across guards and would coarsen every block.
+                                                    RWOperation *rwOp2) {
+  // PointerLikeInfo is set only for a pointer_cast or a workspace alloc
+  // (MemInfo.cpp). A function argument or reinterpret cast never reaches this
+  // loop: such a value is shared across guards and would coarsen every block.
   SmallVector<Value> buffers;
   for (RWOperation *rwOp : {rwOp1, rwOp2}) {
     for (const auto *memInfos : {&rwOp->readMemInfo, &rwOp->writeMemInfo}) {
@@ -1173,8 +1172,8 @@ std::optional<EventIdInfo> SyncSolverBase::getMultiBufferEventIdInfo(
 
   EventIdInfo eventIdInfo;
   eventIdInfo.eventIdNum = eventIdNum.value();
-  // The pair travels with the id set: the counter block is derived from its
-  // consumers, and EnableMultiBuffer derives the slot from the same value.
+  // The pair travels with the id set: counterBlock comes from its consumers,
+  // and EnableMultiBuffer derives the slot from the same value.
   eventIdInfo.multiBufferInfo = MultiBufferInfo(
       multibufferScope, collectMultiBufferBuffers(rwOp1, rwOp2));
   return eventIdInfo;

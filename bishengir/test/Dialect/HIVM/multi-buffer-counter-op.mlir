@@ -91,10 +91,9 @@ module {
 
 // -----
 
-// A counter op materialized in a conditional block is lowered with its load in
-// that block and its increment before that block's own terminator, so the block
-// counts its entries instead of the loop iterations. The alloca stays
-// function-scoped.
+// counter op in a conditional block -> load inside that block
+//   increment before its own terminator => the block counts its entries
+// alloca -> function scope
 module {
 // LOWER-LABEL: func.func @lower_counter_in_conditional_block(
 // LOWER: %[[CTR:.*]] = memref.alloca() : memref<1xi64>
@@ -116,6 +115,31 @@ module {
         // LOWER: arith.addi %[[CUR]], %{{.*}} : i64
         // LOWER: memref.store %{{.*}}, %[[CTR]][%{{.*}}] : memref<1xi64>
         // LOWER-NEXT: }
+        scf.yield
+      }
+      scf.yield
+    }
+    return
+  }
+}
+
+// -----
+
+// two counters in one loop (body + guard) -> two allocas
+//   one shared storage would advance each on the other's entries.
+module {
+// LOWER-LABEL: func.func @lower_two_counters_one_loop(
+// One alloca and one load per counter; shared storage would show one of each.
+// LOWER-COUNT-2: memref.alloca() : memref<1xi64>
+// LOWER-COUNT-2: memref.load
+  func.func @lower_two_counters_one_loop(%cond: i1) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    scf.for %iv = %c0 to %c4 step %c1 {
+      %a = hivm.hir.multi_buffer_counter -> i64
+      scf.if %cond {
+        %b = hivm.hir.multi_buffer_counter -> i64
         scf.yield
       }
       scf.yield

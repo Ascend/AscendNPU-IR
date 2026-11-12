@@ -57,6 +57,19 @@ std::optional<int> getYieldValueIdx(Value targetVal, ValueRange yieldedValues) {
 
   return std::nullopt;
 }
+
+/// First block of the region that `block` belongs to and `loop` owns.
+/// `scf.while` has two such regions and neither dominates the other
+/// => the use has to name the region it sits in.
+/// null when `block` is not nested in `loop`.
+static Block *getLoopRegionBlock(Block *block, Operation *loop) {
+  if (!block || !loop)
+    return nullptr;
+  Region *region = block->getParent();
+  while (region && region->getParentOp() != loop)
+    region = region->getParentOp()->getParentRegion();
+  return region ? &region->front() : nullptr;
+}
 class MultiBufferHelper {
 public:
   explicit MultiBufferHelper(hivm::PointerCastOp &ptrCastOp)
@@ -120,10 +133,6 @@ public:
 
     Location loc = ptrCastOp_->getLoc();
     auto idxType = builder.getI64Type();
-    // A guard between the cast and the loop makes the definition block count its
-    // own entries, while the flags keep the loop cadence.
-    // => hand over the definition block only when it is the loop body itself.
-    // Otherwise pass no block, and the pair keeps the loop counter.
     Operation *enclosingLoop =
         ptrCastOp_->getParentOfType<LoopLikeOpInterface>();
     Block *definitionBlock = ptrCastOp_->getBlock();
@@ -131,17 +140,23 @@ public:
     for (Operation *parent = definitionBlock->getParentOp();
          parent && parent != enclosingLoop; parent = parent->getParentOp())
       insideGuard |= isa<scf::IfOp>(parent);
-    Value modularIndex = createNestedIndexModular(
-        builder, ptrCastOp_.getOperation(), factor,
-        ownsRotation            ? selectionBlock
-        : insideGuard           ? nullptr
-                                : definitionBlock);
+    // A guard between the cast and the loop makes the definition block count
+    // its own entries, while the flags keep the loop counter.
+    // anchorBlock := selectionBlock when the sync pass put a counter there,
+    //                else rotationBlock: the loop's own region under a guard.
+    // The region must still be named: before and after do not dominate each
+    // other, and the counter itself stays on the loop.
+    Block *rotationBlock = definitionBlock;
+    if (insideGuard)
+      rotationBlock = getLoopRegionBlock(definitionBlock, enclosingLoop);
+    Value modularIndex =
+        createNestedIndexModular(builder, ptrCastOp_.getOperation(), factor,
+                                 ownsRotation ? selectionBlock : rotationBlock);
 
     // Restore selection locality.
     if (ownsRotation) {
-      // index in `selectionBlock` => insert after it;
-      // index elsewhere => insert at the block head, because the builder must
-      // stay inside `selectionBlock`.
+      // index in selectionBlock -> insert after it
+      // else -> insert at the block head: the builder stays in selectionBlock
       if (modularIndex.getParentBlock() == selectionBlock)
         builder.setInsertionPointAfter(modularIndex.getDefiningOp());
       else
@@ -177,8 +192,8 @@ public:
 private:
   /// True when `block` already carries a counter op, i.e. it counts its own
   /// entries.
-  /// Post: a null `block` (no guarded consumer) is false.
-  /// A predicate rather than the op: the only caller branches.
+  /// null `block` (no guarded consumer) -> false.
+  /// Returns a bool, not the counter op: the only caller branches on it.
   static bool ownsCounter(Block *block) {
     return block && llvm::any_of(*block, [](Operation &op) {
              return isa<hivm::MultiBufferCounterOp>(&op);

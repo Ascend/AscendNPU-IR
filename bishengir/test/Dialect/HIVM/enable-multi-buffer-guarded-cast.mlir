@@ -1,14 +1,15 @@
 // clang-format off
 // RUN: bishengir-opt %s -hivm-enable-multi-buffer -hivm-lower-multi-buffer-counter -split-input-file | FileCheck %s
 
-// A marked pointer_cast that sits inside an scf.if has a definition block that
-// counts guard entries, not loop iterations. When no counter is owned there, the
-// pair must keep the loop counter: handing the definition block to the adapter
-// would open a counter inside the guard, and the slot would then rotate per
-// entry while the flags (inject-sync path) rotate per iteration.
+// A marked pointer_cast inside an scf.if has a definition block that counts
+// guard entries, not loop iterations.
+// No counter owned there => the pair keeps the loop counter:
+// handing the definition block to the adapter would open a counter inside the
+// guard, so the slot would rotate per entry while the flags (inject-sync path)
+// rotate per iteration.
 //
-// The assertions below read as: the counter load, the slot select and the
-// increment all stay in the loop body, and the guard holds only the uses.
+// Assertions: counter load, slot select and increment stay in the loop body;
+// the guard holds only the uses.
 
 module {
   // CHECK-LABEL: func.func @guarded_cast(
@@ -22,15 +23,15 @@ module {
     %c16_i64 = arith.constant 16 : i64
     %c128_i64 = arith.constant 128 : i64
     %c144_i64 = arith.constant 144 : i64
-    // Counter alloca at function scope, initialised before the loop.
+    // counter alloca: function scope, initialised before the loop.
     // CHECK-DAG: %[[CTR:.*]] = memref.alloca() : memref<1xi64>
     // CHECK-DAG: memref.store %{{.*}}, %[[CTR]]
     scf.for %iv = %c0 to %c8 step %c1 {
       // CHECK: scf.for
       // CHECK-NOT: scf.if
       // CHECK: %[[CUR:.*]] = memref.load %[[CTR]]
-      // The slot index is derived from the loop-level load, not from a counter
-      // opened inside the guard; both selects therefore precede the guard.
+      // slot index -> from the loop-level load, not from a counter in the guard
+      // => both selects precede the guard.
       // CHECK: arith.remui %[[CUR]], %{{.*}} : i64
       // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
       // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>

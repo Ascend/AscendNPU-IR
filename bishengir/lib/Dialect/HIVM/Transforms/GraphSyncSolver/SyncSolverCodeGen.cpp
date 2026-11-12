@@ -44,6 +44,23 @@
 using namespace mlir;
 using namespace hivm::syncsolver;
 
+// Landing block of \p opBase from its own state, creating nothing.
+// A scope-end place holder whose result-less scf.if still lacks an else block
+// names no block yet: that one returns null, and setProperInsertionPoint
+// creates the block before asking again.
+static Block *findAnchorBlock(OperationBase *opBase) {
+  if (auto *placeHolderOp = dyn_cast<PlaceHolder>(opBase)) {
+    if (placeHolderOp->block != nullptr)
+      return placeHolderOp->block;
+    for (OperationBase *linked :
+         {placeHolderOp->beforeOp, placeHolderOp->afterOp})
+      if (linked != nullptr && linked->op != nullptr)
+        return linked->op->getBlock();
+    return nullptr;
+  }
+  return opBase->op != nullptr ? opBase->op->getBlock() : nullptr;
+}
+
 // Choose where to insert generated sync ops (handles function-scope,
 // placeholder, blocks, op-based insertion).
 void CodeGenerator::setProperInsertionPoint(IRRewriter &rewriter,
@@ -91,20 +108,23 @@ void CodeGenerator::setProperInsertionPoint(IRRewriter &rewriter,
         }
       }
     }
+    // The block comes from findAnchorBlock; only the position inside it is
+    // this function's own.
+    Block *anchorBlock = findAnchorBlock(opBase);
+    if (anchorBlock == nullptr) {
+      llvm::report_fatal_error(
+          "setProperInsertionPoint: unhandled place-holder op case.");
+    }
     if (placeHolderOp->block != nullptr) {
       if (placeHolderOp->scopeBegin) {
-        rewriter.setInsertionPointToStart(placeHolderOp->block);
+        rewriter.setInsertionPointToStart(anchorBlock);
+      } else if (!anchorBlock->empty() &&
+                 anchorBlock->back().hasTrait<mlir::OpTrait::IsTerminator>()) {
+        rewriter.setInsertionPoint(&anchorBlock->back());
       } else {
-        if (!placeHolderOp->block->empty() &&
-            placeHolderOp->block->back()
-                .hasTrait<mlir::OpTrait::IsTerminator>()) {
-          rewriter.setInsertionPoint(&placeHolderOp->block->back());
-        } else {
-          rewriter.setInsertionPointToEnd(placeHolderOp->block);
-        }
+        rewriter.setInsertionPointToEnd(anchorBlock);
       }
-    } else if (placeHolderOp->beforeOp != nullptr ||
-               placeHolderOp->afterOp != nullptr) {
+    } else {
       assert(placeHolderOp->beforeOp == nullptr ||
              placeHolderOp->afterOp == nullptr);
       OperationBase *linkedOpBase = placeHolderOp->beforeOp != nullptr
@@ -117,9 +137,6 @@ void CodeGenerator::setProperInsertionPoint(IRRewriter &rewriter,
       } else {
         rewriter.setInsertionPoint(linkedOpBase->op);
       }
-    } else {
-      llvm::report_fatal_error(
-          "setProperInsertionPoint: unhandled place-holder op case.");
     }
   } else {
     assert(opBase->op != nullptr);
@@ -408,32 +425,22 @@ CodeGenerator::getEventIdsWithOffset(const llvm::SmallVector<int64_t> &eventIds,
   return newEventIds;
 }
 
-// Sources, in order: the place holder's own block, the block of the op it is
-// linked to, the innermost enclosing op's block.
-// A result-less `scf.if` has no else block until the flag is emitted, so such a
-// scope-end place holder has no knowable landing block yet.
+// Landing block of \p opBase, or null when its state names none yet.
+// A place holder never climbs: an enclosing block is not where its flag goes.
 Block *CodeGenerator::getFlagLandingBlock(OperationBase *opBase) {
   if (!opBase)
     return nullptr;
   if (opBase->parentOp == funcIr.get())
     return &funcOp.getBody().front();
-  if (auto *placeHolderOp = dyn_cast<PlaceHolder>(opBase)) {
-    if (placeHolderOp->block)
-      return placeHolderOp->block;
-    OperationBase *linkedOpBase = placeHolderOp->beforeOp != nullptr
-                                      ? placeHolderOp->beforeOp
-                                      : placeHolderOp->afterOp;
-    if (linkedOpBase && linkedOpBase->op)
-      return linkedOpBase->op->getBlock();
-    return nullptr;
-  }
+  if (isa<PlaceHolder>(opBase))
+    return findAnchorBlock(opBase);
   if (opBase->op)
     return opBase->op->getBlock();
   // A synthesized op has no MLIR op: the template performs the real one.
   // => its landing block is the innermost enclosing op's block.
-  // Without this, the `MTE1 -> MTE2` set hidden inside `mmadL1` has no landing
-  // block => its anchor is vetoed, so that id stays on the loop counter while
-  // the slot it protects moves into the block.
+  // The MTE1 -> MTE2 set inside mmadL1 relies on that: without a landing
+  // block its handshake keeps the loop counter while the slot moves into
+  // the block.
   for (OperationBase *cur = opBase->parentOp; cur != nullptr;
        cur = cur->parentOp)
     if (cur->op)
@@ -441,20 +448,24 @@ Block *CodeGenerator::getFlagLandingBlock(OperationBase *opBase) {
   return nullptr;
 }
 /// Collect, per multi-buffer handshake, the block whose counter drives it.
-/// Key := `(consumer block, id set)`.
-/// The consumer block is part of it because one handshake's veto must not clear
-/// another's anchor.
+/// key := (consumer block, id set)
+/// One id set resolved to two blocks stays split: each rotates on its own.
 /// The rotation follows the consuming block's execution count.
 /// The trip count equals it only while that block runs every iteration.
 /// A guard is what skips an iteration => the counter belongs to that block.
-/// The block comes from the pair's consumers -- the same query EnableMultiBuffer
-/// asks -- so the slot select and the ids read one counter.
-/// Pre: the sync maps hold their final flag positions.
-/// Post: no such block, or a flag outside it, keeps the loop counter.
+/// The block comes from the pair's consumers, the same query
+/// EnableMultiBuffer asks, so slot select and ids read one counter.
+/// The sync maps hold their final flag positions when this runs. No such
+/// block, or a flag outside the consumed block, keeps the loop counter.
 void CodeGenerator::collectCounterAnchors() {
+  // Record one handshake's counter block, or that its set keeps the loop
+  // counter.
   auto record = [&](OperationBase *opBase, SyncOp *syncOp) {
     auto *setWaitOp = dyn_cast<SetWaitOp>(syncOp);
-    if (!setWaitOp || setWaitOp->eventIds.size() < 2)
+    // allAtOnce -> a static id sequence; eventIds.size() < 2 -> no dynamic id
+    // read
+    // => neither consumes a counter.
+    if (!setWaitOp || setWaitOp->allAtOnce || setWaitOp->eventIds.size() < 2)
       return;
     // preload pair => keyed on its cv-pipelining loop and per-end offset
     // => never matches an id set collected from the multi-buffer scope
@@ -472,23 +483,20 @@ void CodeGenerator::collectCounterAnchors() {
         setWaitOp->eventIdInfo.multiBufferInfo->buffers);
     if (!counterBlock)
       return;
-    // The key's first field is the candidate this handshake resolves to:
-    // several handshakes may share one id set, and one handshake's veto must not
-    // clear another's anchor.
-    IdAnchor &entry = multiBufferIdAnchors[multibufferLoop][std::make_pair(
-        counterBlock, setWaitOp->eventIds)];
-    if (entry.vetoed)
+    // Several handshakes may share one id set, and one decision must not
+    // overwrite another's.
+    auto &perLoop = multiBufferIdAnchors[multibufferLoop];
+    auto [it, inserted] =
+        perLoop.try_emplace(std::make_pair(counterBlock, setWaitOp->eventIds));
+    if (!inserted)
       return;
-    // The flag must land inside that block, or its id could not read it.
+    // The flag must land inside that block, or that id could not read it.
     // A branch scope's place holder carries the then/else block, while
-    // `opBase->op` may sit in the loop body: take the place holder's block.
+    // opBase->op may sit in the loop body: take the place holder's block.
     Block *landingBlock = getFlagLandingBlock(opBase);
-    if (!landingBlock || !blockEncloses(counterBlock, landingBlock)) {
-      entry.counterBlock = nullptr;
-      entry.vetoed = true;
-      return;
-    }
-    entry.counterBlock = counterBlock;
+    it->second = (landingBlock && blockEncloses(counterBlock, landingBlock))
+                     ? counterBlock
+                     : nullptr;
   };
   for (auto &[opBase, syncOps] : syncMapBefore)
     for (auto &syncOp : syncOps)
@@ -502,9 +510,9 @@ Block *CodeGenerator::getMultiBufferIdAnchor(LoopLikeOpInterface loop,
                                              Block *candidate,
                                              llvm::ArrayRef<int64_t> ids) {
   // The key's first field is this handshake's consumer block.
-  // The allocator hands one id set to handshakes it never separated, and each of
-  // them rotates on its own block.
-  // One shared value => the ids depend on the wrong counter.
+  // The allocator hands one id set to handshakes it never separated, and each
+  // of them rotates on its own block.
+  // One shared value would tie the ids to the wrong counter.
   if (!candidate)
     return nullptr;
   auto loopIt = multiBufferIdAnchors.find(loop);
@@ -512,9 +520,9 @@ Block *CodeGenerator::getMultiBufferIdAnchor(LoopLikeOpInterface loop,
     return nullptr;
   auto it = loopIt->second.find(std::make_pair(
       candidate, llvm::SmallVector<int64_t>(ids.begin(), ids.end())));
-  if (it == loopIt->second.end() || it->second.vetoed)
+  if (it == loopIt->second.end())
     return nullptr;
-  return it->second.counterBlock;
+  return it->second;
 }
 
 // Build/select a runtime i64 value that picks which buffer/event to use for
@@ -623,7 +631,7 @@ Value CodeGenerator::getMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
   auto multibufferLoop = dyn_cast<LoopLikeOpInterface>(multibufferLoopOp->op);
   assert(multibufferLoop != nullptr);
   // Counter block of this id set, or null for the loop counter.
-  // The key is the same `(consumer block, id set)` record() writes.
+  // Look it up with the same (consumer block, id set) key record() writes.
   Block *candidate = nullptr;
   if (auto multiBufferInfo = syncOp->eventIdInfo.multiBufferInfo)
     candidate = getMultiBufferConsumerBlock(multiBufferInfo->buffers);

@@ -62,44 +62,40 @@ public:
 private:
   bool resultFuncIrWasGenerated{false};
 
-  // Per-multibuffer loop cached helper: modular indices created during codegen
-  // and reused to select between multi-buffer event ids.
-  // Key -> value: (loop, mod, offset, counterBlock) -> modular slot index.
+  // Per-loop cache of modular slot indices built during codegen.
+  // key -> value: (loop, mod, offset, counterBlock) -> modular slot index
   //   loop         := the multi-buffer loop that rotates
-  //   mod          := number of event ids, i.e. the modulo
-  //   offset       := preload shift; 0 is the plain `counter mod mod` index
+  //   mod          := number of event ids, the modulo
+  //   offset       := preload shift; 0 -> the plain counter mod mod index
   //   counterBlock := the block that owns the counter
-  // counterBlock is part of the key because two id sets of one loop may live in
-  // different blocks and therefore own different counters.
+  // counterBlock is in the key: two id sets of one loop may live in different
+  // blocks, hence own different counters.
   llvm::DenseMap<std::tuple<LoopLikeOpInterface, int64_t, int64_t, Block *>,
                  Value>
       nestedIndexModularMem;
 
-  // Counter block of an id set, from collectCounterAnchors.
-  // counterBlock := the block that owns the counter.
-  // vetoed := no block may own it, and the set keeps the loop counter:
-  //   consumers span regions => no block holds the whole handshake
-  //   a flag lands outside it => its id could not read that counter
-  // => ids on two cadences never match their wait.
-  struct IdAnchor {
-    Block *counterBlock = nullptr;
-    bool vetoed = false;
-  };
-  // Key := `(candidate block, id set)`.
-  // candidate := the block the handshake's own buffers resolve to.
-  // => two handshakes sharing one id set keep separate entries.
-  // Their vetos and block choices cannot reach each other.
-  // `std::map`, not DenseMap: LLVM has no DenseMapInfo for these keys.
-  llvm::DenseMap<LoopLikeOpInterface,
-                 std::map<std::pair<Block *, llvm::SmallVector<int64_t>>,
-                          IdAnchor>>
+  // Counter block of one id set, from collectCounterAnchors.
+  // Written only by record() there, read only through getMultiBufferIdAnchor().
+  // An entry exists only for a decided set: the block that owns the counter,
+  // or null when the set keeps the loop counter.
+  //   consumers span regions => null: no block holds the whole handshake
+  //   a flag lands outside that block => null: that id could not read the
+  //     counter
+  //
+  // key := (candidate block, id set)
+  // candidate := the block the handshake's own buffers resolve to
+  // One id set resolved to two different blocks keeps two entries, so each
+  // handshake's counter choice stays with its own block.
+  llvm::DenseMap<
+      LoopLikeOpInterface,
+      std::map<std::pair<Block *, llvm::SmallVector<int64_t>>, Block *>>
       multiBufferIdAnchors;
 
-  // Select value per `(loop, preload offset, counter block, id set)`.
-  // It chooses which buffer/event id to use at runtime.
-  llvm::DenseMap<std::tuple<LoopLikeOpInterface, int64_t>,
-                 std::map<std::pair<Block *, llvm::SmallVector<int64_t>>,
-                          Value>>
+  // Select value per (loop, preload offset), keyed by (counter block, id set):
+  // the buffer or event id this pair reads at runtime.
+  llvm::DenseMap<
+      std::tuple<LoopLikeOpInterface, int64_t>,
+      std::map<std::pair<Block *, llvm::SmallVector<int64_t>>, Value>>
       bufferSelectedMem;
 
   llvm::DenseMap<Value, std::map<llvm::SmallVector<int64_t>, Value>>
@@ -188,14 +184,14 @@ private:
 
   void collectCounterAnchors();
 
-  /// Block the flag of \p opBase lands in; mirrors setProperInsertionPoint
-  /// without creating the blocks it creates on demand.
-  /// Post: null when that block cannot be known yet.
+  /// Landing block of the flag of \p opBase, null when it cannot be known yet.
+  /// Shares the block query with setProperInsertionPoint, which creates the
+  /// else block on demand.
   Block *getFlagLandingBlock(OperationBase *opBase);
 
-  /// Counter block of \p ids in \p loop, for the handshake whose consumer block
-  /// is \p candidate.
-  /// Post: null when the set keeps the loop counter.
+  /// Counter block of \p ids in \p loop, for the handshake whose consumer
+  /// block is \p candidate.
+  /// null when the set keeps the loop counter.
   Block *getMultiBufferIdAnchor(LoopLikeOpInterface loop, Block *candidate,
                                 llvm::ArrayRef<int64_t> ids);
 

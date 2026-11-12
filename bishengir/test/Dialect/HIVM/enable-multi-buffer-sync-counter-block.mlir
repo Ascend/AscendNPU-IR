@@ -1,17 +1,17 @@
 // RUN: bishengir-opt "-hivm-graph-sync-solver=solver-version=v2" -hivm-enable-multi-buffer -split-input-file %s | FileCheck %s
 // clang-format off
 
-// One counter per handshake, chosen by one rule: the innermost block enclosing
-// every non-mark user of the protected buffers.
-// The sync pass places that counter and EnableMultiBuffer adopts it, so the slot
-// select and the flags cannot rotate on different cadences.
-// GraphSyncSolver only: the InjectSync path keeps the loop counter and is pinned
-// by inject-sync-multibuffer-conditional-block.mlir.
+// One counter per handshake, one rule: the innermost block enclosing every
+// non-mark user of the protected buffers.
+// The sync pass places it, EnableMultiBuffer adopts it
+// => slot select and flags cannot rotate on different counters.
+// GraphSyncSolver only: the InjectSync path keeps the loop counter, pinned by
+// inject-sync-multibuffer-conditional-block.mlir.
 
 // -----
 module {
-  // The only handshake of this loop lands inside the conditional block, so the
-  // sync pass put the counter there and the slot select reuses it.
+  // The loop's only handshake lands inside the conditional block
+  // => the sync pass put the counter there, and the slot select reuses it.
   // CHECK-LABEL: func.func @guarded_pair_owns_block_counter(
   func.func @guarded_pair_owns_block_counter(
       %arg0: memref<16xf16, #hivm.address_space<gm>>,
@@ -42,9 +42,9 @@ module {
 
 // -----
 module {
-  // The guarded pair's handshake is static, so no counter was placed in its
-  // guard. Adoption only: the slot select stays at the definition and reads the
-  // loop counter, which is also what the body handshake reads.
+  // The guarded pair's handshake is static => no counter in its guard.
+  // Adoption only: the slot select stays at the definition and reads the loop
+  // counter, which is what the body handshake reads too.
   // CHECK-LABEL: func.func @foreign_counter_keeps_loop_counter(
   func.func @foreign_counter_keeps_loop_counter(
       %arg0: memref<16xf16, #hivm.address_space<gm>>,
@@ -85,10 +85,11 @@ module {
 
 // -----
 module {
-  // Users spread over the guard and a guard-nested `scf.if` still share one
-  // cadence: every entry runs both. Requiring the users to sit in the literal
-  // same block would leave the select on the loop counter while the ids rotate
-  // per entry -- the desynchronization this file guards against.
+  // Users spread over the guard and a guard-nested scf.if share one counter:
+  // every entry runs both.
+  // Requiring the users to sit in the literal same block would leave the select
+  // on the loop counter while the ids rotate per entry, the desynchronization
+  // this file guards against.
   // CHECK-LABEL: func.func @nested_if_users_share_guard_counter(
   func.func @nested_if_users_share_guard_counter(
       %arg0: memref<16xf16, #hivm.address_space<gm>>,
@@ -111,7 +112,7 @@ module {
         // CHECK: %[[SLOT:.*]] = arith.select %{{.*}}, %{{.*}}, %{{.*}} : memref<16xf16, #hivm.address_space<ub>>
         hivm.hir.load ins(%arg0 : memref<16xf16, #hivm.address_space<gm>>)
                       outs(%a : memref<16xf16, #hivm.address_space<ub>>)
-        // The nested reader reuses the slot, so both blocks read one counter.
+        // nested reader reuses the slot => both blocks read one counter.
         // CHECK: %{{.*}} = arith.select %{{.*}}, %{{.*}}, %{{.*}} : i64
         // CHECK: scf.if
         scf.if %inner {
@@ -127,7 +128,7 @@ module {
 
 // -----
 module {
-  // Two sibling guards each touch the same pair, so no single block encloses
+  // Two sibling guards each touch the same pair => no single block encloses
   // both entries: the rotation stays on the loop counter, which both read.
   // CHECK-LABEL: func.func @pair_in_two_sibling_guards(
   func.func @pair_in_two_sibling_guards(
@@ -161,7 +162,7 @@ module {
 // -----
 module {
   // A reader inside a guard-nested loop runs on that loop's trip count, not on
-  // the guard's entries, so no block encloses both cadences.
+  // the guard's entries => no block encloses both ends.
   // CHECK-LABEL: func.func @user_in_nested_loop_keeps_loop_counter(
   func.func @user_in_nested_loop_keeps_loop_counter(
       %arg0: memref<16xf16, #hivm.address_space<gm>>,

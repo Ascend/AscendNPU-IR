@@ -1418,9 +1418,9 @@ Block *getMultiBufferConsumerBlock(ArrayRef<Value> buffers) {
     if (!common)
       return nullptr;
   }
-  // Only `scf.if` may stand between that block and a user: a guard runs its
-  // body once per entry, like the block itself.
-  // A nested loop runs on its own trip count, so it would break the cadence.
+  // Only scf.if may stand between that block and a user: a guard runs its body
+  // once per entry, like the block itself.
+  // nested loop -> its own trip count, which breaks the pairing.
   for (Operation *user : users) {
     for (Block *cur = user->getBlock(); cur != common;) {
       Operation *parent = cur->getParentOp();
@@ -1432,25 +1432,27 @@ Block *getMultiBufferConsumerBlock(ArrayRef<Value> buffers) {
   return common;
 }
 
-// Four overloads of one expression: the nested index of a loop, anchored at a
-// use site or not.
-//   (op, mod)          -> loop from `op`'s result; anchor = `op`
-//   (op, mod, anchor)  -> loop from `op`'s result; anchor = `anchor`
-//   (loop, mod)        -> loop given; no anchor (while-after / for-body)
-//   (loop, mod, anchor) -> loop given; anchor given
-// `anchor` := the use whose block owns the counter; see
-// MultiBufferLoopAdapter::getModuloIndex.
+// Four overloads of one expression: the nested index of a loop.
+// anchor := the block whose entries the counter counts
+// anchor + scf.while -> the region is named too, before or after
+// no anchor -> the loop counter
+//   (op, mod)           -> loop from op's result, no anchor
+//   (op, mod, anchor)   -> loop from op's result, anchor given
+//   (loop, mod)         -> loop given, no anchor
+//   (loop, mod, anchor) -> loop given, anchor given
 Value createNestedIndexModular(OpBuilder &builder, Operation *op, int modular) {
   LoopLikeOpInterface parentLoop = getParentLoop(op->getResult(0));
   assert(parentLoop && " op has no proper parent loop to do multi buffer");
   auto adapter = MultiBufferLoopAdapter::create(parentLoop);
   assert(succeeded(adapter) &&
          "createNestedIndexModular: loop is neither scf.for nor scf.while");
-  // `op` only selects the while region here: the regions do not dominate each
-  // other, so the use has to say which one.
-  // scf.for => no anchor: the loop body owns the counter.
-  // Passing the use's own block instead would let a use nested in a guard own a
-  // per-block counter, while the flags of these callers keep the loop cadence.
+  // op only names the while region: the regions do not dominate each other,
+  // so the use has to say which one.
+  // scf.for -> no anchor: the loop body owns the counter.
+  // scf.while -> the use's block, climbed inside the loop: before and after
+  // do not dominate each other, so the use must name its region.
+  // Not the use's own block when it is scf.for: a guard-nested use would own
+  // a per-block counter while these callers' flags keep the loop counter.
   Block *anchorBlock = nullptr;
   if (adapter->asWhileOp()) {
     anchorBlock = op->getBlock();
@@ -1475,9 +1477,8 @@ Value createNestedIndexModular(OpBuilder &builder, LoopLikeOpInterface loopOp,
   auto adapter = MultiBufferLoopAdapter::create(loopOp);
   assert(succeeded(adapter) &&
          "createNestedIndexModular: loop is neither scf.for nor scf.while");
-  // An explicit `anchorBlock` -> that block owns the counter.
-  // For scf.while it also picks the region: before and after do not dominate
-  // each other.
+  // anchorBlock given -> that block owns the counter.
+  // scf.while -> it also picks the region: before and after do not dominate.
   return modular == -1 ? adapter->getIterationCounter(builder, anchorBlock)
                        : adapter->getModuloIndex(builder, modular, anchorBlock);
 }

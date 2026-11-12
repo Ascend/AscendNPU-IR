@@ -2,10 +2,10 @@
 // RUN: bishengir-opt "-hivm-graph-sync-solver=solver-version=v2" -split-input-file %s | FileCheck %s
 // clang-format off
 
-// A multi-buffer handshake that lives inside a conditional block rotates on that
-// block's own counter: the block may run fewer times than the loop, so a
-// loop-iteration index reproduces neither its rotation nor its parity. Both ends
-// of the handshake share the one counter of the block.
+// Multi-buffer handshake inside a conditional block -> that block's counter
+//   the block may run fewer times than the loop, so a loop-iteration index
+//   reproduces neither its rotation nor its parity
+// both ends of the handshake read that one counter
 
 // -----
 module {
@@ -52,8 +52,8 @@ module {
     %c1 = arith.constant 1 : index
     %c8 = arith.constant 8 : index
     // CHECK: scf.for
-    // The buffer is filled unconditionally and consumed under a guard, so the
-    // pair keeps the loop parity: its counter stays at the loop body head.
+    // buffer filled unconditionally, consumed under a guard
+    // => the pair keeps loop parity: counter stays at the loop body head
     // CHECK-NEXT: %[[CTR:.*]] = hivm.hir.multi_buffer_counter -> i64
     scf.for %iv = %c0 to %c8 step %c1 {
       %buf = hivm.hir.pointer_cast(%c0_i64, %c32_i64) : memref<16xf16, #hivm.address_space<ub>>

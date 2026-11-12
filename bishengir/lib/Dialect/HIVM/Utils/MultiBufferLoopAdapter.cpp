@@ -36,14 +36,15 @@ namespace {
 
 /// Body block of a multi-buffer-supported LoopLike op (for / while).
 ///   - scf.for   : the single body block (`forOp.getBody()`).
-///   - scf.while : the before or after region that contains `anchorBlock`, or
-///                 the builder insertion point when it is null. The latter
-///                 supports GSS, which selects events from a LoopLike handle.
-///                 After is the fallback when neither context is available.
+///   - scf.while : the before or after region `anchorBlock` sits in, else the
+///                 builder insertion point's region.
+///                 The latter supports GSS, which selects events from a
+///                 LoopLike handle. After is the fallback when neither names a
+///                 region.
 /// Returns nullptr for any unsupported loop type, which lets callers fail
 /// gracefully (the adapter's `create()` factory also gates on the same types).
 static Block *getLoopBodyBlock(LoopLikeOpInterface loop, Block *anchorBlock,
-                              Block *insertionBlock) {
+                               Block *insertionBlock) {
   if (!loop)
     return nullptr;
   Operation *op = loop.getOperation();
@@ -67,24 +68,24 @@ static Block *getLoopBodyBlock(LoopLikeOpInterface loop, Block *anchorBlock,
 }
 
 /// Block that owns the counter used by a use site in `anchorBlock`.
-/// A conditional block runs on its own cadence, so a loop-iteration index
-/// reproduces neither its rotation nor its parity.
-/// Such a use gets a counter of its own block.
+/// A conditional block advances once per entry:
+/// a loop-iteration index reproduces neither its rotation nor its parity.
+/// So such a use gets its own block's counter.
 ///
 /// `regionHint` := while before/after only, and may name a block outside the
 /// loop (GSS asks for an id while the rewriter sits at entry).
 ///
 /// ```
 /// counterBlock null or body     -> body       (loop counter)
-/// path up crosses another loop  -> body       (that loop's cadence)
+/// path up crosses another loop  -> body       (inner loop has its own count)
 /// path up reaches `loop` first  -> counterBlock
 /// `loop` never reached          -> body       (outside or sibling region)
 /// ```
-/// Policy lives only here: coarsening it to one counter per if tree leaves
-/// every caller unchanged.
 /// Resolve the block whose *entries* the counter counts.
-/// Pre: `counterBlock` is the block the sync pass chose, or null.
-/// Post: `counterBlock` when it belongs to this loop, the loop body otherwise.
+/// `counterBlock` is the block the sync pass chose, or null.
+/// The return is `counterBlock` when it belongs to this loop, the loop body
+/// otherwise.
+/// Policy lives only here: one counter per if tree would cost every caller.
 static Block *getCounterBlock(LoopLikeOpInterface loop, Block *regionHint,
                               Block *counterBlock, Block *insertionBlock) {
   Block *body = getLoopBodyBlock(loop, regionHint, insertionBlock);
@@ -94,17 +95,19 @@ static Block *getCounterBlock(LoopLikeOpInterface loop, Block *regionHint,
        parent = parent->getParentOp()) {
     if (parent == loop.getOperation())
       return counterBlock;
-    // An inner loop owns its own cadence; the outer counter would be wrong.
+    // An inner loop counts its own entries: the outer counter advances per
+    // outer iteration, not per inner one.
     if (isa<LoopLikeOpInterface>(parent))
       return body;
   }
-  // Outside the loop, or in a sibling region that does not dominate the use.
+  // Outside the loop, or in a sibling region that does not dominate the use:
+  // the body counter is the only one both ends can read.
   return body;
 }
 
 /// Locate the shared counter op of `block`; null when none exists yet.
-/// A counter in a sibling while region or a level above/below is ignored:
-/// it advances on a different cadence.
+/// A counter in a sibling while region or a level above or below is ignored:
+/// that counter advances on a different count.
 static hivm::MultiBufferCounterOp findExistingCounterOp(Block *block) {
   if (!block)
     return {};
@@ -141,8 +144,8 @@ void MultiBufferLoopAdapter::ensureCounterMaterialized(OpBuilder &builder,
         "ensureCounterMaterialized only valid for scf.for / "
         "scf.while; adapter::create gates on this invariant.");
   if (cachedCounter_) {
-    // Cached counter must dominate the call site; only reuse when it lives in
-    // the resolved counter block (same nesting level / while region).
+    // Cached counter must dominate the call site, so reuse it only in the
+    // resolved counter block (same nesting level / while region).
     if (cachedCounter_.getParentBlock() == body) {
       builder.setInsertionPointAfter(cachedCounter_.getDefiningOp());
       return;
@@ -160,11 +163,11 @@ void MultiBufferLoopAdapter::ensureCounterMaterialized(OpBuilder &builder,
     return;
   }
 
-  // ---- Fresh materialization: one HIVM op at the block head. ----
-  // LowerMultiBufferCounter emits the alloca/load/increment/store later, so
+  // Fresh materialization: one HIVM op at the block head.
+  // LowerMultiBufferCounter emits the alloca/load/increment/store later:
   // every counter client in the block reuses this SSA value.
-  // Its increment lands before the block's own terminator => the counter counts
-  // that block's entries.
+  // Its increment lands before the block's own terminator, so the counter
+  // counts that block's entries.
   builder.setInsertionPointToStart(body);
   auto counter = builder.create<hivm::MultiBufferCounterOp>(loc, i64Ty);
   cachedCounter_ = counter.getResult();
@@ -176,8 +179,7 @@ Value MultiBufferLoopAdapter::getIterationCounter(OpBuilder &builder,
   // Unified counter-op path for both scf.for and scf.while. The concrete
   // memref-based counter is emitted later by LowerMultiBufferCounter.
   // The counter stays on the loop body on purpose: this entry feeds iteration
-  // parity (DB conditions).
-  // A conditional block's cadence does not reproduce that parity.
+  // parity (DB conditions), which a conditional block's entry count misses.
   ensureCounterMaterialized(builder, anchorBlock, /*counterBlock=*/nullptr);
   Location loc = loop_->getLoc();
   // cachedCounter_ is i64; convert to index so the surface API stays parity
@@ -190,12 +192,12 @@ Value MultiBufferLoopAdapter::getIterationCounter(OpBuilder &builder,
 Value MultiBufferLoopAdapter::getModuloIndex(OpBuilder &builder,
                                              int64_t modular,
                                              Block *anchorBlock) {
-  // Unified counter-op path for both scf.for and scf.while (see
-  // getIterationCounter).
-  // slot = counter mod modular, where counter is lowered to a monotonically
-  // increasing function-scoped alloca counter.
-  // `anchorBlock` owns the counter: a conditional block counts its entries,
-  // not the loop's iterations.
+  // Unified counter-op path for both scf.for and scf.while
+  // (see getIterationCounter).
+  // slot = counter mod modular; counter lowers to a monotonically increasing
+  // function-scoped alloca.
+  // anchorBlock owns the counter: a conditional block counts its entries, not
+  // the loop's iterations.
   ensureCounterMaterialized(builder, anchorBlock,
                             /*counterBlock=*/anchorBlock);
   Location loc = loop_->getLoc();
