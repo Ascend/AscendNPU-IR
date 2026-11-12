@@ -369,6 +369,17 @@ classifyTransferReadDist(vector::TransferReadOp readOp) {
   if (vecType.isScalable())
     return fail("scalable vectors are unsupported");
 
+  ArrayRef<int64_t> srcShape = srcType.getShape();
+  ArrayRef<int64_t> shape = vecType.getShape();
+  int64_t rank = vecType.getRank();
+  bool singleton = vecType.getNumElements() == 1 ||
+                   (srcType.hasStaticShape() && srcType.getNumElements() == 1);
+  bool checkMap = !map.isIdentity() && !singleton;
+  if (checkMap &&
+      (map.getNumSymbols() != 0 || map.getNumResults() != shape.size() ||
+       map.getNumDims() != srcShape.size()))
+    return fail("permutation map dimensions do not match source and vector");
+
   SmallVector<int64_t> sourceStrides;
   int64_t sourceOffset;
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
@@ -379,21 +390,56 @@ classifyTransferReadDist(vector::TransferReadOp readOp) {
     return fail("source memref layout cannot be represented as strided layout");
   (void)sourceOffset;
   SmallVector<int64_t> vectorStrides;
-  vectorStrides.reserve(vecType.getRank());
-  for (AffineExpr expr : map.getResults()) {
-    if (auto dim = dyn_cast<AffineDimExpr>(expr)) {
-      int64_t stride = sourceStrides[dim.getPosition()];
-      vectorStrides.push_back(stride);
+  vectorStrides.reserve(rank);
+  // Record non-unit source dimensions and their positions in the vector.
+  SmallVector<std::pair<int64_t, unsigned>> realDims;
+  int64_t lastSeenDim = -1;
+  for (auto [idx, expr] : llvm::enumerate(map.getResults())) {
+    if (auto dimExpr = dyn_cast<AffineDimExpr>(expr)) {
+      int64_t dim = dimExpr.getPosition();
+      vectorStrides.push_back(sourceStrides[dim]);
+      if (!checkMap)
+        continue;
+      if (srcShape[dim] == 1) {
+        // Unit-dimension expansion is also rejected by the pass's pre-walk.
+        if (shape[idx] != 1)
+          return fail("permutation map expands a unit source dimension");
+        continue;
+      }
+      if (dim <= lastSeenDim)
+        return fail("non-unit source dimensions must remain in source order");
+      lastSeenDim = dim;
+      realDims.push_back({dim, idx});
     } else {
+      // Broadcast dimensions may have any size; distribution checks below
+      // determine whether the hardware can implement their repetition.
+      auto constant = dyn_cast<AffineConstantExpr>(expr);
+      if (checkMap && (!constant || constant.getValue() != 0))
+        return fail(
+            "permutation map results must be source dimensions or zero");
       vectorStrides.push_back(0);
     }
   }
 
-  ArrayRef<int64_t> shape = vecType.getShape();
-  int64_t rank = vecType.getRank();
+  // Preserve the non-identity map requirement that participating non-unit
+  // source dimensions form a dense block, with every inner dimension read
+  // in full. Identity maps and singleton reads retain their exemption.
+  int64_t expectedStride = 1;
+  for (auto [idx, dimAndPos] : llvm::enumerate(llvm::reverse(realDims))) {
+    auto [dim, vecPos] = dimAndPos;
+    if (sourceStrides[dim] != expectedStride)
+      return fail("participating source dimensions are not contiguous");
+    if (idx + 1 < realDims.size()) {
+      if (ShapedType::isDynamic(srcShape[dim]) ||
+          shape[vecPos] != srcShape[dim])
+        return fail("inner source dimensions must be read in full");
+      if (llvm::MulOverflow(expectedStride, srcShape[dim], expectedStride))
+        return fail(
+            "source shape overflows while computing contiguous strides");
+    }
+  }
+
   int64_t dataWidth = srcType.getElementTypeBitWidth();
-  bool singleton = vecType.getNumElements() == 1 ||
-                   (srcType.hasStaticShape() && srcType.getNumElements() == 1);
   if (singleton || isBroadcastRange(shape, vectorStrides, 0, rank)) {
     switch (dataWidth) {
     case 8:
