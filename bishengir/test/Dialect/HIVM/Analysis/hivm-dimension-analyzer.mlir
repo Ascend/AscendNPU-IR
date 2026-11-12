@@ -465,8 +465,8 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 
 // -----
 
-// A hivm.parallel_loop IV used as an extract index and a subview offset
-// joins those source dimensions. The destination store tiles dim 0.
+// A shared parallel-loop IV does not join otherwise independent sources.
+// The destination store still tiles dim 0.
 // CHECK: 1 succeedFunc - Function analyzed count
 // CHECK: Tiling dim for {{.*}} is 0
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
@@ -486,4 +486,29 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     hivm.hir.store ins(%t : tensor<16x32xf32>) outs(%out : memref<16x32xf32>)
     return
   }
+}
+
+// -----
+
+// The inner expanded axis must remain non-tileable after collapse joins
+// its structural group to the output axis.
+// CHECK: Tiling dim for hivm.hir.store {{.*}} is -1
+func.func @preserve_reshaped_inner_kind(%input: tensor<256x64xf32>, %output: memref<1x512xf32>) {
+  %expanded = tensor.expand_shape %input [[0, 1], [2]] output_shape [32, 8, 64] : tensor<256x64xf32> into tensor<32x8x64xf32>
+  %collapsed = tensor.collapse_shape %expanded [[0], [1, 2]] : tensor<32x8x64xf32> into tensor<32x512xf32>
+  %empty = tensor.empty() : tensor<1x512xf32>
+  %reduced = hivm.hir.vreduce <sum> ins(%collapsed : tensor<32x512xf32>) outs(%empty : tensor<1x512xf32>) reduce_dims = [0] -> tensor<1x512xf32>
+  hivm.hir.store ins(%reduced : tensor<1x512xf32>) outs(%output : memref<1x512xf32>)
+  return
+}
+
+// -----
+
+// The outer axis remains a valid candidate.
+// CHECK: Tiling dim for hivm.hir.store {{.*}} is 0
+func.func @preserve_outer_axis_tiling(%input: tensor<256x64xf32>, %output: memref<32x512xf32>) {
+  %expanded = tensor.expand_shape %input [[0, 1], [2]] output_shape [32, 8, 64] : tensor<256x64xf32> into tensor<32x8x64xf32>
+  %collapsed = tensor.collapse_shape %expanded [[0], [1, 2]] : tensor<32x8x64xf32> into tensor<32x512xf32>
+  hivm.hir.store ins(%collapsed : tensor<32x512xf32>) outs(%output : memref<32x512xf32>)
+  return
 }
