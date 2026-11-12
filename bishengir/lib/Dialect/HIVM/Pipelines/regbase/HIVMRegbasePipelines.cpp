@@ -361,6 +361,7 @@ static void buildCVPipelineV2(OpPassManager &pm,
   options.maxPipelineMultibuffer =
       hivmPipelineOptions.setMaxPipelineMultibuffer;
   pm.nest<func::FuncOp>().addPass(createPipelineStagingPass(options));
+  pm.nest<func::FuncOp>().addPass(createCVLazyLoadPass());
   pm.nest<func::FuncOp>().addPass(createWrapCVPreloadScopesPass());
 }
 

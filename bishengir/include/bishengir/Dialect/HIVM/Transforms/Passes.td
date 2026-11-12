@@ -1609,6 +1609,25 @@ def PipelineStaging
                         "Maximum pipeline multibuffer.">];
 }
 
+def CVLazyLoad : HIVMPass<"cv-lazy-load", "func::FuncOp"> {
+  let summary = "Reload read-only GM tensors in consuming preload stages";
+  let description = [{
+    Runs after PipelineStaging and before WrapCVPreloadScopes. Clones a GM
+    load and its address, padding, cast and tensor-view operations into a consuming
+    VECTOR scope only when its preload number differs from the producer's.
+    Retains early loads needed for Cube inputs and removes unused scope results
+    to avoid keeping tensor snapshots live across preload stages.
+
+    Distinct GM roots are assumed independent. A write through any view of the
+    loaded GM root in the pipelined loop prevents rematerialization, including
+    writes in other stages or iterations. Unknown effects also prevent it.
+  }];
+  let constructor = "mlir::hivm::createCVLazyLoadPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "mlir::scope::ScopeDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect", "tensor::TensorDialect"];
+}
+
 def WrapCVPreloadScopes
     : HIVMPass<"wrap-cv-preload-scopes", "func::FuncOp"> {
   let summary = "Wrap same-stage CV scopes in one preload scope";

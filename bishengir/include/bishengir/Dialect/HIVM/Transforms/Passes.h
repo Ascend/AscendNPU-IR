@@ -431,6 +431,9 @@ std::unique_ptr<Pass> createMergeCVScopesPass();
 std::unique_ptr<Pass>
 createPipelineStagingPass(const PipelineStagingOptions &options = {});
 
+/// Reload GM tensors in their consuming PipelineV2 preload stages.
+std::unique_ptr<Pass> createCVLazyLoadPass();
+
 /// Wrap scopes belonging to the same PipelineV2 preload stage.
 std::unique_ptr<Pass> createWrapCVPreloadScopesPass();
 
