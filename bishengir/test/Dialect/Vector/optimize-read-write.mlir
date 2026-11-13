@@ -58,3 +58,25 @@ func.func @test_forward_write_empty_to_read(%arg0: tensor<1x64xi8>, %arg1: tenso
   %6 = vector.transfer_read %5[%c0, %c0], %false {in_bounds = [true, true]} : tensor<1x64xi1>, vector<1x64xi1>
   return %6 : vector<1x64xi1>
 }
+
+// -----
+
+// A masked-i1 write followed by a broadcast read must not forward the
+// rank-1 write's vector verbatim: the write mask enables only lane 0, so
+// the read must re-broadcast lane 0 across its own vector<1x64xi1> shape.
+// Forwarding vector<64xi1> in place of vector<1x64xi1> produced type-invalid consumer
+// CHECK-LABEL: func @test_i1_masked_write_broadcast_read_no_forward
+// CHECK: %[[WRITE:.*]] = vector.transfer_write {{.*}} : vector<64xi1>, tensor<1xi1>
+// CHECK: %[[READ:.*]] = vector.transfer_read %[[WRITE]]{{.*}} : tensor<1xi1>, vector<1x64xi1>
+// CHECK: return %[[READ]] : vector<1x64xi1>
+func.func @test_i1_masked_write_broadcast_read_no_forward(%arg0: tensor<64xi1>) -> vector<1x64xi1> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %false = arith.constant false
+  %empty = tensor.empty() : tensor<1xi1>
+  %mask = vector.create_mask %c1 : vector<64xi1>
+  %sv = vector.transfer_read %arg0[%c0], %false {in_bounds = [true]} : tensor<64xi1>, vector<64xi1>
+  %w = vector.transfer_write %sv, %empty[%c0], %mask {in_bounds = [true]} : vector<64xi1>, tensor<1xi1>
+  %r = vector.transfer_read %w[%c0], %false {in_bounds = [true, true], permutation_map = affine_map<(d0) -> (0, 0)>} : tensor<1xi1>, vector<1x64xi1>
+  return %r : vector<1x64xi1>
+}
