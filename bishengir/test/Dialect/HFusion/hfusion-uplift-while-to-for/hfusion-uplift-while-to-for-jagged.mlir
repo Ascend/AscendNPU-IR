@@ -1,8 +1,6 @@
 // Registered jagged-DK kernel enables the 3160 sign-extend normalize without
 // --bypass-shape-registry.
-// TODO: Temporary transition measure: pass bypass-shape-registry=true while
-// ShapeRegistry is emptied; remove once ShapeRegistry is retired.
-// RUN: bishengir-opt %s -hfusion-uplift-while-to-for="bypass-shape-registry=true" | FileCheck %s
+// RUN: bishengir-opt %s -hfusion-uplift-while-to-for | FileCheck %s
 
 // CHECK-LABEL: func.func @_jagged_dense_flash_attention_bwd_dk_kernel
 //       CHECK: %[[MIN:.*]] = arith.constant -2147483648 : i64

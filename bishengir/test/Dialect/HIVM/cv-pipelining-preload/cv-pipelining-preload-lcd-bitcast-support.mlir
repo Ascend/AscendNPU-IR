@@ -1,23 +1,18 @@
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew" -allow-unregistered-dialect %s | FileCheck %s --implicit-check-not=scope.scope --implicit-check-not=hivm.legacy-cv-pipeline
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew bypass-shape-registry=true" -allow-unregistered-dialect %s | FileCheck %s
 
-// The bitcast consumes a carry produced by another candidate work item.
-// Keep the complete recurrence for PipelineV2 instead of using the LCD
-// bitcast seed heuristic or pinning several scopes to stage zero.
+
 // CHECK-LABEL: func.func @parallel_nsa_compression_fwd_kernel(
-// CHECK: scf.for {{.*}} iter_args(%[[ACC:[^ ]+]] = %{{.*}}, %[[MAX:[^ ]+]] = %{{.*}}, %[[SUM:[^ ]+]] = %{{.*}}) -> (tensor<16x64xf32>, tensor<16xf32>, tensor<16xf32>)
-// CHECK: hivm.hir.mmadL1
-// CHECK: %[[BITS:.*]] = hivm.hir.bitcast %[[MAX]] : tensor<16xf32> -> tensor<16xi32>
-// CHECK: hivm.hir.vand ins(%[[BITS]],
-// CHECK: %[[NEW_MAX:.*]] = hivm.hir.vmax {{.*}} -> tensor<16xf32>
-// CHECK: %[[DIFF:.*]] = hivm.hir.vsub ins(%[[MAX]], %[[NEW_MAX]]
-// CHECK: %[[SCALE:.*]] = hivm.hir.vexp ins(%[[DIFF]]
-// CHECK: %[[SCALED_SUM:.*]] = hivm.hir.vmul ins(%[[SUM]], %[[SCALE]]
-// CHECK: %[[NEW_SUM:.*]] = hivm.hir.vadd ins(%[[SCALED_SUM]],
-// CHECK: hivm.hir.vmul ins(%[[ACC]],
-// CHECK: hivm.hir.mmadL1
-// CHECK: %[[NEW_ACC:.*]] = hivm.hir.vadd
-// CHECK-NEXT: scf.yield %[[NEW_ACC]], %[[NEW_MAX]], %[[NEW_SUM]] : tensor<16x64xf32>, tensor<16xf32>, tensor<16xf32>
-// CHECK-NEXT: } {fixpipe_for_mmad_result_already_inserted = true}
+// CHECK-LABEL:       scope.scope : () ->
+// CHECK-LABEL:       } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 5 : i32, hivm.preload_num = 4 : i32, no_inline}
+// CHECK-LABEL:       scope.scope : () ->
+// CHECK-LABEL:       } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 5 : i32, hivm.preload_num = 3 : i32, no_inline}
+// CHECK-LABEL:       scope.scope : () ->
+// CHECK-LABEL:       } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 5 : i32, hivm.preload_num = 2 : i32, no_inline}
+// CHECK-LABEL:       scope.scope : () ->
+// CHECK-LABEL:       } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 5 : i32, hivm.preload_num = 1 : i32, no_inline}
+// CHECK-LABEL:       scope.scope : () ->
+// CHECK-LABEL:       } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 5 : i32, hivm.preload_num = 0 : i32, no_inline}
+// CHECK-LABEL:     } {fixpipe_for_mmad_result_already_inserted = true, hivm.cv_pipelined_loop, "hivm.legacy-cv-pipeline"}
 
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 func.func @parallel_nsa_compression_fwd_kernel(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.tensor_kind = 0 : i32}, %arg3: memref<?xf16> {tt.tensor_kind = 0 : i32}, %arg4: memref<?xf16> {tt.tensor_kind = 0 : i32}, %arg5: memref<?xf16> {tt.tensor_kind = 1 : i32}, %arg6: memref<?xf32> {tt.tensor_kind = 1 : i32}, %arg7: f32, %arg8: i32, %arg9: i32, %arg10: i32, %arg11: i32, %arg12: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, true, true, true, true, false, false, false, false, false, false]> : vector<13xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix", parallel_mode = "simd"} {

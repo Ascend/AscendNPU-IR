@@ -1,6 +1,4 @@
-// TODO: Temporary transition measure: pass bypass-shape-registry=true while
-// ShapeRegistry is emptied; remove once ShapeRegistry is retired.
-// RUN: bishengir-opt %s --canonicalize --hivm-combine-optimized-convert-layout="bypass-shape-registry=true" --split-input-file | FileCheck %s
+// RUN: bishengir-opt %s --canonicalize --hivm-combine-optimized-convert-layout --split-input-file | FileCheck %s
 
 // CHECK-LABEL: func.func @fold_direct_load_to_nchw2nc1hwc0(
 // CHECK-NOT: hivm.hir.load

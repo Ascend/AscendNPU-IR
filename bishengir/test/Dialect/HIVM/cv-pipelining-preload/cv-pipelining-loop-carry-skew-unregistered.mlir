@@ -1,6 +1,6 @@
 // Off-registry intra-WI LCD (VECTOR acc) must not take the LCD backup /
 // preload path.
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew set-depth-in-unroll-mode=2" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
 //
 // CHECK-LABEL: func.func @unregistered_intra_wi_acc_lcd
 // CHECK: scf.for

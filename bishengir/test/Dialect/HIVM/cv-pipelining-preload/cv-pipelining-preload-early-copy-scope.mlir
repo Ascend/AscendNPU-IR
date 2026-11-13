@@ -1,23 +1,28 @@
-// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew" -inline-scope -hivm-mark-multi-buffer="enable-auto=false enable-preload=true" | FileCheck %s
-// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew" -inline-scope -hivm-inline-vf-scope | FileCheck %s --check-prefix=INLINE-VF
-// RUN: sed 's/@early_copy/@_swa_bwd_dkdv_kernel/g' %s > %t && bishengir-opt %t -cv-pipelining="pipeline-mode=skew" | FileCheck %t --check-prefix=SAME --implicit-check-not='= scope.scope'
-// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew" | FileCheck %s --check-prefix=SAME --implicit-check-not='= scope.scope'
-// RUN: sed 's/, %dp :/, %qk :/' %s | bishengir-opt -cv-pipelining="pipeline-mode=skew" | FileCheck %s --check-prefix=SAME --implicit-check-not='= scope.scope'
-// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=unroll" | FileCheck %s --check-prefix=UNROLL --implicit-check-not=scope.scope
+// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew enable-preload=true bypass-shape-registry=true" -inline-scope -hivm-mark-multi-buffer="enable-auto=false enable-preload=true" | FileCheck %s
+// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew enable-preload=true bypass-shape-registry=true" -inline-scope -hivm-inline-vf-scope | FileCheck %s --check-prefix=INLINE-VF
+// RUN: sed 's/@early_copy/@_swa_bwd_dkdv_kernel/g' %s > %t && bishengir-opt %t -cv-pipelining="pipeline-mode=skew enable-preload=true" | FileCheck %t --check-prefix=REGISTRY
+// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew enable-preload=true" | FileCheck %s --check-prefix=SAME --implicit-check-not='= scope.scope'
+// RUN: sed 's/, %dp :/, %qk :/' %s | bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true bypass-shape-registry=true" | FileCheck %s --check-prefix=SAME --implicit-check-not='= scope.scope'
+// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=unroll enable-preload=false bypass-shape-registry=true" | FileCheck %s --check-prefix=UNROLL --implicit-check-not=scope.scope
 
-// Preserve the ordinary three-stage pipeline without inserting an inner
-// vf-scope around the early CBUF copy, regardless of the kernel name.
+// Publish P before consuming the independent dP input. The nested boundary
+// survives inlining without adding a stage or hiding any TCB's two slots.
+// The nest is registry-gated: @_swa_bwd_dkdv_kernel gets it with preload on,
+// and an unregistered name stays flat.
+// REGISTRY-LABEL: func.func @_swa_bwd_dkdv_kernel
+// REGISTRY: = scope.scope : () -> tensor<16x16xf32> {
+// REGISTRY: } {no_inline, "vf-scope"}
 // CHECK-LABEL: func.func @early_copy
 // CHECK-COUNT-3: hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32
 // CHECK: hivm.preload_num = 2 : i32
-// CHECK: scope.scope : () -> () {
-// CHECK-NOT: scope.scope
+// CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<16x16xf16>
+// CHECK: %[[P:.*]] = scope.scope : () -> tensor<16x16xf32> {
 // CHECK: %[[EXP:.*]] = hivm.hir.vexp
-// CHECK-NEXT: %[[EMPTY:.*]] = tensor.empty() : tensor<16x16xf16>
 // CHECK: hivm.hir.vcast {{.*}} outs(%[[EMPTY]]
 // CHECK: hivm.hir.copy
-// CHECK-NOT: scope.scope
-// CHECK: hivm.hir.vmul ins(%[[EXP]],
+// CHECK-NEXT: scope.return %[[EXP]] : tensor<16x16xf32>
+// CHECK-NEXT: } {no_inline, "vf-scope"}
+// CHECK: hivm.hir.vmul ins(%[[P]],
 // CHECK: hivm.preload_num = 1 : i32
 // CHECK: hivm.preload_num = 0 : i32
 // INLINE-VF-LABEL: func.func @early_copy

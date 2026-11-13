@@ -900,7 +900,9 @@ def RepositionPreloadWork
       "Reposition ops between and inside preload scopes after CVPipelining.";
   let description = [{
     Runs after CVPipelining and before MarkMultiBuffer, on the unsplit MIX
-    function. It repositions ops both between preload scopes and inside a
+    function. All transformations require a registered kernel name unless
+    bypass-shape-registry is explicitly enabled. It repositions ops both
+    between preload scopes and inside a
     scope. A later `mmadL1` that reads the same left matrix as an earlier
     one is moved, with its fixpipe, to just after that earlier matmul when
     every operand it needs is already available there. Inside a VECTOR
@@ -1556,7 +1558,14 @@ def CVPipelining
        Option<"enableLazyLoading", "enable-lazy-loading", "bool",
               /*default=*/"false",
               "Allow load ops to be cloned into multiple work items "
-              "to reduce intermediate buffer expansion">];
+              "to reduce intermediate buffer expansion">,
+       Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+              /*default=*/"false",
+              "Bypass shape registry check for registered-kernel "
+              "CV-pipelining heuristics">,
+       Option<"enablePreload", "enable-preload", "bool",
+              /*default=*/"false",
+              "Enable registered-kernel CV-pipelining heuristics">];
 }
 
 def NormalizeWorkspaceStore

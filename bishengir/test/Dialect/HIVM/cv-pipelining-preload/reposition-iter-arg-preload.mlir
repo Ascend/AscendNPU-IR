@@ -1,6 +1,8 @@
 // RUN: bishengir-opt %s -hivm-reposition-preload-work="bypass-shape-registry=true enable-preload=true" -split-input-file -verify-diagnostics
+// RUN: bishengir-opt %s -hivm-reposition-preload-work="enable-preload=true set-workspace-multibuffer=2" -o /dev/null
 
 // A preload loop must not leave one iter_arg in scopes of different stages.
+// Unregistered functions bypass the entire pass, including this verifier.
 func.func @iter_arg_two_preload_scopes(%g: memref<?xi64>)
     attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
   %c0 = arith.constant 0 : index
