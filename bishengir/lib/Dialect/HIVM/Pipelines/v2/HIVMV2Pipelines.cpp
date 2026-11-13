@@ -125,6 +125,37 @@ static void buildAlignStorage(OpPassManager &pm) {
   pm.addPass(createEnableStrideAlignPass());
 }
 
+static void hivmIntraCoreSyncPipeline(OpPassManager &pm,
+                                      const V2PipelineOptions &options) {
+  if (options.disableHIVMAutoInjectSync)
+    return;
+
+  if (options.enableHIVMInjectBarrierAllSync) {
+    InjectSyncOptions syncOptions;
+    syncOptions.enableUnitFlag = options.enableHIVMUnitFlagSync;
+    syncOptions.syncMode = SyncMode::BARRIERALL;
+    addFuncPass(pm, createInjectSyncPass(syncOptions));
+    return;
+  }
+
+  GraphSyncSolverOptions gssOptions;
+  gssOptions.enableUnitFlag = options.enableHIVMUnitFlagSync;
+  gssOptions.solverVersion = options.hivmSyncSolverVersion;
+  addFuncPass(pm, createGraphSyncSolverPass(gssOptions));
+}
+
+static void hivmCrossCoreAutoSyncPipeline(OpPassManager &pm,
+                                          const V2PipelineOptions &options) {
+  if (options.disableAutoInjectBlockSync)
+    return;
+
+  CrossCoreGSSOptions crossCoreOptions;
+  crossCoreOptions.forceIsRegBased = true;
+  crossCoreOptions.blockAllSync = options.enableHIVMInjectBlockAllSync;
+  crossCoreOptions.solverVersion = options.hivmSyncSolverVersion;
+  addFuncPass(pm, createCrossCoreGSSPass(crossCoreOptions));
+}
+
 /// Post-bufferization: both memory plans and the solve see the unsplit MIX.
 void buildV2PostBufferizationPhase(OpPassManager &pm,
                                    const V2PipelineOptions &options) {
@@ -194,9 +225,7 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
 
   // Single-shot cross-core solve on the MIX.
   canonicalizationHIVMPipeline(pm);
-  CrossCoreGSSOptions crossCoreOptions;
-  crossCoreOptions.forceIsRegBased = true;
-  addFuncPass(pm, createCrossCoreGSSPass(crossCoreOptions));
+  hivmCrossCoreAutoSyncPipeline(pm, options);
 
   if (options.enablePreload) {
     CreatePreloadOptions preloadOptions;
@@ -209,13 +238,12 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
 }
 
 /// Per-core tail.
-void buildV2PerCoreTail(OpPassManager &pm) {
+void buildV2PerCoreTail(OpPassManager &pm, const V2PipelineOptions &options) {
   addFuncPass(pm, createHIVMLowerToLoopsPass());
   addFuncPass(pm, createHIVMDecomposeOpPass());
   pm.addPass(createInferHIVMMemScopePass());
 
-  GraphSyncSolverOptions gssOptions;
-  addFuncPass(pm, createGraphSyncSolverPass(gssOptions));
+  hivmIntraCoreSyncPipeline(pm, options);
 
   pm.addPass(mlir::createMemrefExtLoweringPass());
   addFuncPass(pm, createLowerMultiBufferCounterPass());
@@ -233,7 +261,7 @@ void buildV2HIVMPipeline(OpPassManager &pm, const V2PipelineOptions &options) {
   buildV2TensorPhase(pm, options);
   buildV2BufferizationPhase(pm, options);
   buildV2PostBufferizationPhase(pm, options);
-  buildV2PerCoreTail(pm);
+  buildV2PerCoreTail(pm, options);
 }
 
 void registerV2HIVMPipelines() {
