@@ -60,11 +60,65 @@ static Operation *ancestorInBlock(Operation *op, Block *block) {
   return op;
 }
 
+// Keep the tensor read of a conditionally loaded buffer after its writer.
+// Hoisting the allocation is necessary to export it from the scope, but
+// hoisting to_tensor as well hides subsequent tensor reads from memref-dse.
+static void sinkHoistedLoadToTensor(ArrayRef<Operation *> hoistedOps,
+                                    const IRMapping &mapping, scf::IfOp ifOp) {
+  for (Operation *op : hoistedOps) {
+    auto original = dyn_cast<bufferization::ToTensorOp>(op);
+    if (!original)
+      continue;
+    auto alloc = traceAlloc(original.getOperand());
+    if (!alloc)
+      continue;
+
+    // Only restore reads that originally followed a load in the same branch.
+    bool followsLoad = false;
+    for (Operation &preceding : *original->getBlock()) {
+      if (&preceding == op)
+        break;
+      if (auto load = dyn_cast<LoadOp>(preceding))
+        followsLoad |= traceAlloc(load.getTarget()) == alloc;
+    }
+    if (!followsLoad)
+      continue;
+
+    auto toTensor = cast<bufferization::ToTensorOp>(mapping.lookup(op));
+    auto clonedAlloc = traceAlloc(toTensor.getOperand());
+    WalkResult writer = ifOp->walk([&](LoadOp load) {
+      return traceAlloc(load.getTarget()) == clonedAlloc
+                 ? WalkResult::interrupt()
+                 : WalkResult::advance();
+    });
+    if (!writer.wasInterrupted())
+      continue;
+
+    SmallVector<Operation *> marks;
+    bool canSink = llvm::all_of(toTensor->getUsers(), [&](Operation *user) {
+      if (isa<annotation::MarkOp>(user) &&
+          user->getBlock() == ifOp->getBlock()) {
+        marks.push_back(user);
+        return true;
+      }
+      Operation *ancestor = ancestorInBlock(user, ifOp->getBlock());
+      return ancestor && ifOp->isBeforeInBlock(ancestor);
+    });
+    if (!canSink)
+      continue;
+
+    toTensor->moveAfter(ifOp);
+    for (Operation *mark : marks)
+      mark->moveAfter(toTensor);
+  }
+}
+
 // A scope op that pipeline did not create means an earlier pass has already
 // restructured the function's buffers, in that case mark every loop so all
 // pipeline passes reject the function.
 static void markPipelineReject(func::FuncOp funcOp) {
-  if (!funcOp.walk([&](scope::ScopeOp scopeOp) {
+  if (!funcOp
+           .walk([&](scope::ScopeOp scopeOp) {
              if (isPipelineReject(scopeOp))
                return WalkResult::advance();
              for (Operation *curr = scopeOp->getParentOp();
@@ -73,9 +127,10 @@ static void markPipelineReject(func::FuncOp funcOp) {
                if (curr->hasAttr(CVPipelinedLoopAttr::name))
                  return WalkResult::advance();
              return WalkResult::interrupt();
-           }).wasInterrupted())
+           })
+           .wasInterrupted())
     return;
-  
+
   funcOp->emitWarning(
       "[OutlineCVScopes] foreign scope found; reject function\n");
   auto unitAttr = UnitAttr::get(funcOp->getContext());
@@ -2480,6 +2535,8 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
         mapIfValues(ifOrigResultsToMap, /*checkAncestor=*/false);
         mapIfValues(ifThenYieldVals, /*checkAncestor=*/true);
         mapIfValues(ifElseYieldVals, /*checkAncestor=*/true);
+
+        sinkHoistedLoadToTensor(opsToHoist, scopeMap, newIfOp);
 
         builder.setInsertionPointToEnd(scopeBlock);
         continue;
