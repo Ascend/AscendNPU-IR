@@ -437,6 +437,17 @@ createPipelineStagingPass(const PipelineStagingOptions &options = {});
 /// Reload GM tensors in their consuming PipelineV2 preload stages.
 std::unique_ptr<Pass> createCVLazyLoadPass();
 
+/// Clone functions before OutlineCVScopes so preload can be rolled back.
+std::unique_ptr<Pass> createSaveCVPipelineSnapshotPass();
+
+/// Restore or inline PipelineV2 when the cross-scope UB estimate exceeds
+/// budget.
+std::unique_ptr<Pass>
+createGuardCVPipelineUBPass(const GuardCVPipelineUBOptions &options = {});
+
+/// Delete the private clones created by SaveCVPipelineSnapshot.
+std::unique_ptr<Pass> createEraseCVPipelineSnapshotsPass();
+
 /// Wrap scopes belonging to the same PipelineV2 preload stage.
 std::unique_ptr<Pass> createWrapCVPreloadScopesPass();
 

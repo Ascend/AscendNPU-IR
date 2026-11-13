@@ -41,6 +41,8 @@ struct NormalizeWorkspaceStorePass
     : public impl::NormalizeWorkspaceStoreBase<NormalizeWorkspaceStorePass> {
   void runOnOperation() override {
     func::FuncOp funcOp = getOperation();
+    if (isCVPipelineSnapshot(funcOp))
+      return;
 
     SmallVector<StoreOp> candidates;
     funcOp.walk([&](StoreOp storeOp) {

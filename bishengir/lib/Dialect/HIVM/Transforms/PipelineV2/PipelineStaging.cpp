@@ -677,6 +677,8 @@ static void markVectorScopeIfs(scope::ScopeOp scopeOp) {
 
 void PipelineStagingPass::runOnOperation() {
   func::FuncOp funcOp = getOperation();
+  if (isCVPipelineSnapshot(funcOp))
+    return;
   SmallVector<scf::ForOp> cvPipelinedLoops;
   collectCVPipelinedLoops(funcOp, cvPipelinedLoops);
 
