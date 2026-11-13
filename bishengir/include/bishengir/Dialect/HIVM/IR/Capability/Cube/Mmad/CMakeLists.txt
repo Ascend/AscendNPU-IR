@@ -1,0 +1,7 @@
+set(LLVM_TARGET_DEFINITIONS MmadCapabilityBinding.td)
+bishengir_target_tablegen(MmadCapabilityBinding.h.inc
+  -gen-mmad-capability-binding)
+add_public_tablegen_target(BiShengIRMmadCapabilityBindingIncGen)
+add_dependencies(BiShengIRMmadCapabilityBindingIncGen
+  BiShengIRMmadCapabilityIncGen)
+add_dependencies(mlir-headers BiShengIRMmadCapabilityBindingIncGen)

@@ -1155,11 +1155,13 @@ def HIVM_LocalMatmul_BiasModeEnum : HIVM_I32Enum<"MatmulBiasMode", "bias mode fo
   HIVM_LocalMatmul_ReuseL0c
 ]>;
 
+def HIVM_MatmulFormat_FP8E5M2 : I32EnumAttrCase<"FP8E5M2_T", 1, "fp8_e5m2_t">;
+def HIVM_MatmulFormat_FP8E4M3 : I32EnumAttrCase<"FP8E4M3_T", 2, "fp8_e4m3_t">;
+def HIVM_MatmulFormat_FP4E2M1 : I32EnumAttrCase<"FP4E2M1_T", 3, "fp4_e2m1_t">;
 def HIVM_LocalMatmulMx_DataFormat
     : HIVM_I32Enum<"HIVMMatmulDataformat", "",
-                   [I32EnumAttrCase<"FP8E5M2_T", 1, "fp8_e5m2_t">,
-                    I32EnumAttrCase<"FP8E4M3_T", 2, "fp8_e4m3_t">,
-                    I32EnumAttrCase<"FP4E2M1_T", 3, "fp4_e2m1_t">]>;
+                   [HIVM_MatmulFormat_FP8E5M2, HIVM_MatmulFormat_FP8E4M3,
+                    HIVM_MatmulFormat_FP4E2M1]>;
 
 //===----------------------------------------------------------------------===//
 // Metadata
