@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Util.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
@@ -124,6 +125,8 @@ static LogicalResult wrapStages(Block &block) {
 struct WrapCVPreloadScopesPass
     : mlir::hivm::impl::WrapCVPreloadScopesBase<WrapCVPreloadScopesPass> {
   void runOnOperation() override {
+    if (isCVPipelineSnapshot(getOperation()))
+      return;
     SmallVector<LoopLikeOpInterface> loops;
     getOperation().walk<WalkOrder::PreOrder>([&](LoopLikeOpInterface loop) {
       // TODO: Temporary transition measure: skip loops already pipelined by

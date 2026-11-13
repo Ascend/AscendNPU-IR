@@ -3008,6 +3008,8 @@ static void moveTCBMarksToAllocations(func::FuncOp funcOp) {
 }
 
 void OutlineCVScopesPass::runOnOperation() {
+  if (isCVPipelineSnapshot(getOperation()))
+    return;
   markPipelineReject(getOperation());
   SmallVector<Operation *> loopQueue;
   getOperation().walk<WalkOrder::PostOrder>([&](scf::ForOp forOp) {

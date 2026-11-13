@@ -352,8 +352,10 @@ static void convertTensorToTightCoupledBuffer(OpPassManager &pm) {
 // This builder operates on a function pass manager so the caller can select
 // v1 or v2 independently for each kernel in a module.
 static void buildCVPipelineV2(OpPassManager &pm,
-                              unsigned maxPipelineMultibuffer) {
+                              unsigned maxPipelineMultibuffer,
+                              int simtVFDynamicSize) {
   pm.addPass(createNormalizeWorkspaceStorePass());
+  pm.addPass(createSaveCVPipelineSnapshotPass());
   pm.addPass(createOutlineCVScopesPass());
   pm.addPass(createMergeCVScopesPass());
   pm.addPass(createIntraStageSchedulingPass());
@@ -361,6 +363,9 @@ static void buildCVPipelineV2(OpPassManager &pm,
   options.maxPipelineMultibuffer = maxPipelineMultibuffer;
   pm.addPass(createPipelineStagingPass(options));
   pm.addPass(createCVLazyLoadPass());
+  GuardCVPipelineUBOptions guardOptions;
+  guardOptions.simtVFDynamicSize = simtVFDynamicSize;
+  pm.addPass(createGuardCVPipelineUBPass(guardOptions));
   pm.addPass(createWrapCVPreloadScopesPass());
 }
 
@@ -375,7 +380,8 @@ struct SelectCVPipelinePass
         enableLazyLoading(options.enableLazyLoading),
         pipelineMode(options.setCVPipelineMode),
         workspaceMultiBufferNum(options.setWorkspaceMultibuffer),
-        maxPipelineMultibuffer(options.setMaxPipelineMultibuffer) {}
+        maxPipelineMultibuffer(options.setMaxPipelineMultibuffer),
+        simtVFDynamicSize(options.simtVFDynamicSize) {}
 
   StringRef getArgument() const override { return "hivm-select-cv-pipeline"; }
   StringRef getDescription() const override {
@@ -387,12 +393,16 @@ struct SelectCVPipelinePass
     nested.addPass(createCVPipeliningPass());
     nested.addPass(createSetBufferSizePass());
     nested.addPass(createMarkTightlyCoupledBufferPass());
-    buildCVPipelineV2(nested, maxPipelineMultibuffer);
+    buildCVPipelineV2(nested, maxPipelineMultibuffer, simtVFDynamicSize);
     nested.getDependentDialects(registry);
   }
 
   void runOnOperation() override {
     func::FuncOp func = getOperation();
+    // The snapshot is inserted while this pass walks functions. Leave it
+    // untouched so a later module pass can delete it.
+    if (func->hasAttr("hivm.cv_pipeline_snapshot"))
+      return;
     bool registered = isLoopShapeRegistered(func.getName());
     bool useLegacy = !usePipelineV2;
     if (useLegacy && (!enableMixedCV || pipelineMode == CVPipelineMode::Off))
@@ -416,7 +426,7 @@ struct SelectCVPipelinePass
     if (usePipelineV2 || (!registered && enablePreload)) {
       if (usePipelineV2)
         nested.addPass(createSetBufferSizePass());
-      buildCVPipelineV2(nested, maxPipelineMultibuffer);
+      buildCVPipelineV2(nested, maxPipelineMultibuffer, simtVFDynamicSize);
       if (usePipelineV2)
         nested.addPass(createMarkTightlyCoupledBufferPass());
     }
@@ -432,6 +442,7 @@ private:
   CVPipelineMode pipelineMode;
   unsigned workspaceMultiBufferNum;
   unsigned maxPipelineMultibuffer;
+  int simtVFDynamicSize;
 };
 
 static void hivmPreBufferizationOptimizationPipeline(
@@ -549,6 +560,7 @@ static void hivmPreBufferizationOptimizationPipeline(
        hivmPipelineOptions.setCVPipelineMode != CVPipelineMode::Off)) {
     pm.nest<func::FuncOp>().addPass(
         std::make_unique<SelectCVPipelinePass>(hivmPipelineOptions));
+    pm.addPass(createEraseCVPipelineSnapshotsPass());
     // Reposition only registered kernels on the default v1 route, before
     // buffer-count marking sees the split scopes. Explicit v2 skips this pass.
     if (enableRegisteredPreloadHeuristics(hivmPipelineOptions)) {

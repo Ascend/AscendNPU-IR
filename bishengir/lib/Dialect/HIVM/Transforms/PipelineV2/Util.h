@@ -20,6 +20,15 @@ using scope::ScopeOp;
 
 constexpr llvm::StringLiteral kPipelineIfCondAttrName = "pipeline.if.cond";
 
+/// Private clone of a function taken before OutlineCVScopes. The value is a
+/// symbol reference to the function this snapshot restores.
+constexpr llvm::StringLiteral kCVPipelineSnapshotAttrName =
+    "hivm.cv_pipeline_snapshot";
+
+inline bool isCVPipelineSnapshot(Operation *op) {
+  return op && op->hasAttr(kCVPipelineSnapshotAttrName);
+}
+
 /// Return true if some op on its ancestor chain carries LegacyCVPipelineAttr.
 bool isPipelineReject(Operation *op);
 

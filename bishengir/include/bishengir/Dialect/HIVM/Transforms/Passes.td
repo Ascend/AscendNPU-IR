@@ -1659,6 +1659,54 @@ def CVLazyLoad : HIVMPass<"cv-lazy-load", "func::FuncOp"> {
                            "memref::MemRefDialect", "tensor::TensorDialect"];
 }
 
+def SaveCVPipelineSnapshot
+    : HIVMPass<"save-cv-pipeline-snapshot", "func::FuncOp"> {
+  let summary = "Clone a function before OutlineCVScopes";
+  let description = [{
+    Runs immediately before OutlineCVScopes. Stores a private clone of each
+    function that contains a loop. GuardCVPipelineUB restores that clone when
+    the cross-scope UB estimate exceeds capacity. The clone is marked with
+    `hivm.cv_pipeline_snapshot` and is skipped by the PipelineV2 passes.
+  }];
+  let constructor = "mlir::hivm::createSaveCVPipelineSnapshotPass()";
+  let dependentDialects = ["func::FuncDialect"];
+}
+
+def EraseCVPipelineSnapshots
+    : HIVMPass<"erase-cv-pipeline-snapshots", "ModuleOp"> {
+  let summary = "Erase PipelineV2 function snapshots";
+  let description = [{
+    Runs after GuardCVPipelineUB. Deletes the private clones created by
+    SaveCVPipelineSnapshot once the guard has either kept preload or copied
+    a clone back into its function.
+  }];
+  let constructor = "mlir::hivm::createEraseCVPipelineSnapshotsPass()";
+  let dependentDialects = ["func::FuncDialect"];
+}
+
+def GuardCVPipelineUB
+    : HIVMPass<"guard-cv-pipeline-ub", "func::FuncOp"> {
+  let summary = "Drop PipelineV2 preload when cross-scope UB exceeds capacity";
+  let description = [{
+    Runs after CVLazyLoad. Estimates UB for tensors passed across scopes and
+    for UB tightly-coupled buffers. The multibuffer factor of a value is one
+    plus the largest preload_num gap between its producer and any consumer.
+    Because cube:vector is 1:2, the estimate is compared with twice the UB
+    budget. Above that budget the function body is replaced with the clone
+    saved before OutlineCVScopes. Without that clone, the pipelined scopes
+    are inlined and preload attributes are removed.
+  }];
+  let constructor = "mlir::hivm::createGuardCVPipelineUBPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
+                           "mlir::scope::ScopeDialect",
+                           "annotation::AnnotationDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect"];
+  let options = [Option<"simtVFDynamicSize", "simt-vf-dynamic-size", "int",
+                        /*default=*/"216",
+                        "MIX/SIMT UB budget in KiB. Matches PlanMemory.">];
+}
+
 def WrapCVPreloadScopes
     : HIVMPass<"wrap-cv-preload-scopes", "func::FuncOp"> {
   let summary = "Wrap same-stage CV scopes in one preload scope";

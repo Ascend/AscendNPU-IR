@@ -362,6 +362,8 @@ void populateSchedulingRules(SchedulingRuleList &rules) {
 struct IntraStageSchedulingPass
     : mlir::hivm::impl::IntraStageSchedulingBase<IntraStageSchedulingPass> {
   void runOnOperation() override {
+    if (isCVPipelineSnapshot(getOperation()))
+      return;
     SchedulingRuleList rules;
     populateSchedulingRules(rules);
     if (rules.empty())

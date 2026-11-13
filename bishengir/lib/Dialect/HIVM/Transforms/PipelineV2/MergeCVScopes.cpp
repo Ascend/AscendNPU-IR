@@ -1956,6 +1956,8 @@ void LoopScopeMerger::run(ArrayRef<MergeRule> rules) {
 //===----------------------------------------------------------------------===//
 
 void MergeCVScopesPass::runOnOperation() {
+  if (isCVPipelineSnapshot(getOperation()))
+    return;
   static constexpr LoopScopeMerger::MergeRule kDefaultRuleOrder[] = {
       {&LoopScopeMerger::applySinkNormalizedCounterInCAVScopeRule,
        "merged.0-sink-normalized-counter"},
