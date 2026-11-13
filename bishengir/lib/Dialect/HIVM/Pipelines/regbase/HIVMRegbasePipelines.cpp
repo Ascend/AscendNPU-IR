@@ -496,6 +496,9 @@ static void hivmPreBufferizationOptimizationPipeline(
     }
   }
 
+  if (hivmPipelineOptions.decoupledMemoryComputeScheduling)
+    pm.addPass(createSeparateLoadComputePass());
+
   pm.addPass(createPartitionAndBindSubBlockPass());
   pm.nest<func::FuncOp>().addPass(createInferVFModePass());
 
@@ -726,6 +729,7 @@ static void hivmPostBufferizationOptimizationPipeline(
   multiBufferOptions.gmMultiBufferNum = 1;
   pm.nest<func::FuncOp>().addPass(
       createMarkMultiBufferPass(multiBufferOptions));
+  pm.addPass(createMarkBufferPoolPass());
   if (hivmPipelineOptions.enableVFOperandSubstitution) {
     pm.addPass(createVFOperandSubstitutionPass());
   }
@@ -760,6 +764,7 @@ static void hivmPostBufferizationOptimizationPipeline(
         hivmPipelineOptions.setWorkspaceMultibuffer;
     pm.addPass(createCreatePreloadPass(preloadOpts));
   }
+  pm.addPass(createEnableBufferPoolPass());
   // Intra-Core Auto-Sync passes (Inject-Sync, GSS)
   hivmIntraCoreSyncPipeline(pm, hivmPipelineOptions);
   if (hivmPipelineOptions.enablePreload)

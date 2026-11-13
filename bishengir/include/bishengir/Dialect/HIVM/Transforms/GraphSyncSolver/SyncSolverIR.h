@@ -493,12 +493,26 @@ struct CVPreloadingInfo {
         preloadOffset2(preloadOffset2) {};
 };
 
+/// Explicit dependency supplied by EnableBufferPool. The loop/resource and
+/// directed pipes identify a shared event node; SET and WAIT select it using
+/// independent slot values. Scopes bound placement to the corresponding issue.
+struct BufferPoolInfo {
+  Value resource;
+  Value setSlot, waitSlot;
+  Scope *setScope, *waitScope;
+  Loop *loop;
+  bool ready;
+};
+
 struct EventIdInfo {
   int64_t eventIdNum{0};
   int64_t eventIdRepeatNum{1};
   std::optional<MultiBufferInfo> multiBufferInfo;
   std::optional<CVPreloadingInfo> cvPreloadingInfo;
   std::optional<CVPipeliningInfo> cvPipeliningInfo;
+  std::optional<BufferPoolInfo> bufferPoolInfo;
+  // Explicit pool accesses use their own slot instead of loop rotation.
+  Value bufferSlot;
   bool cannotRepeatFlagId{false};
 
   EventIdInfo() {};
