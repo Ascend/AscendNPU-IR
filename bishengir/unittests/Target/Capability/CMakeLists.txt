@@ -89,9 +89,12 @@ add_dependencies(BiShengIRMmadCapabilityTests
   BiShengIRMmadCapabilityBindingIncGen
 )
 target_link_libraries(BiShengIRMmadCapabilityTests PRIVATE
+  BiShengIRHACCDialect
+  BiShengIRHACCUtils
   BiShengIRHIVMDialect
   BiShengIRNPUMmadCapability
   MLIRIR
+  MLIRFuncDialect
 )
 
 add_bishengir_unittest(BiShengIRCubeLoadCapabilityTests
