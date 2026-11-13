@@ -953,25 +953,22 @@ vdiv_int_scalar(memref_t<__ubuf__ T, dim> *src0,
     indirect_load<dim, dtype, itype, false>(src, idx, dst, mask, other);       \
   }
 
-#define DECLARE_STRIDE_LOAD(dim, dtype, itype, ...)                            \
+#define DECLARE_STRIDE_LOAD(dim, dtype, itype, othertype, ...)                 \
   __aiv__ __attribute__((always_inline)) void                                  \
-  _mlir_ciface_stride_load_##dim##d_##dtype##_##itype(                         \
-      memref_t<__gm__ dtype, 1> *src, memref_t<__ubuf__ dtype, dim> *dst,      \
-      __VA_ARGS__)
+      _mlir_ciface_stride_load_##dim##d_##dtype##_##itype(                     \
+          memref_t<__gm__ dtype, 1> *src, memref_t<__ubuf__ dtype, dim> *dst,  \
+          itype offset, othertype other, __VA_ARGS__)
 
 #define DECLARE_STRIDE_LOAD_1D(dtype, itype)                                   \
-  DECLARE_STRIDE_LOAD(1, dtype, itype, itype offset, dtype other,              \
-                      itype stride, itype numel)
+  DECLARE_STRIDE_LOAD(1, dtype, itype, dtype, itype stride, itype numel)
 
 #define DECLARE_STRIDE_LOAD_2D(dtype, itype)                                   \
-  DECLARE_STRIDE_LOAD(2, dtype, itype, itype offset, dtype other,              \
-                      itype stride0, itype stride1, itype numel0,              \
-                      itype numel1)
+  DECLARE_STRIDE_LOAD(2, dtype, itype, dtype, itype stride0, itype stride1,    \
+                      itype numel0, itype numel1)
 
 #define DECLARE_STRIDE_LOAD_3D(dtype, itype)                                   \
-  DECLARE_STRIDE_LOAD(3, dtype, itype, itype offset, dtype other,              \
-                      itype stride0, itype stride1, itype stride2,             \
-                      itype numel0, itype numel1, itype numel2)
+  DECLARE_STRIDE_LOAD(3, dtype, itype, dtype, itype stride0, itype stride1,    \
+                      itype stride2, itype numel0, itype numel1, itype numel2)
 
 #define REGISTE_STRIDE_LOAD_1D(dtype, itype)                                   \
   DECLARE_STRIDE_LOAD_1D(dtype, itype) {                                       \
@@ -988,6 +985,39 @@ vdiv_int_scalar(memref_t<__ubuf__ T, dim> *src0,
   DECLARE_STRIDE_LOAD_3D(dtype, itype) {                                       \
     stride_load_3d<dtype, itype>(src, dst, offset, other, stride0, stride1,    \
                                  stride2, numel0, numel1, numel2);            \
+  }
+
+#define REGISTE_STRIDE_LOAD_FP8_1D(dtype, itype)                               \
+  DECLARE_STRIDE_LOAD(1, dtype, itype, int8_t, itype stride, itype numel) {    \
+    static_assert(sizeof(dtype) == sizeof(int8_t),                             \
+                  "FP8 stride load requires byte-sized elements");             \
+    stride_load_1d<int8_t, itype>(                                             \
+        reinterpret_cast<memref_t<__gm__ int8_t, 1> *>(src),                   \
+        reinterpret_cast<memref_t<__ubuf__ int8_t, 1> *>(dst), offset, other,  \
+        stride, numel);                                                        \
+  }
+
+#define REGISTE_STRIDE_LOAD_FP8_2D(dtype, itype)                               \
+  DECLARE_STRIDE_LOAD(2, dtype, itype, int8_t, itype stride0, itype stride1,   \
+                      itype numel0, itype numel1) {                            \
+    static_assert(sizeof(dtype) == sizeof(int8_t),                             \
+                  "FP8 stride load requires byte-sized elements");             \
+    stride_load_2d<int8_t, itype>(                                             \
+        reinterpret_cast<memref_t<__gm__ int8_t, 1> *>(src),                   \
+        reinterpret_cast<memref_t<__ubuf__ int8_t, 2> *>(dst), offset, other,  \
+        stride0, stride1, numel0, numel1);                                     \
+  }
+
+#define REGISTE_STRIDE_LOAD_FP8_3D(dtype, itype)                               \
+  DECLARE_STRIDE_LOAD(3, dtype, itype, int8_t, itype stride0, itype stride1,   \
+                      itype stride2, itype numel0, itype numel1,               \
+                      itype numel2) {                                          \
+    static_assert(sizeof(dtype) == sizeof(int8_t),                             \
+                  "FP8 stride load requires byte-sized elements");             \
+    stride_load_3d<int8_t, itype>(                                             \
+        reinterpret_cast<memref_t<__gm__ int8_t, 1> *>(src),                   \
+        reinterpret_cast<memref_t<__ubuf__ int8_t, 3> *>(dst), offset, other,  \
+        stride0, stride1, stride2, numel0, numel1, numel2);                    \
   }
 
 #define DECLARE_STRIDE_STORE(dim, dtype, itype, ...)                           \
