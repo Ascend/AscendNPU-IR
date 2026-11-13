@@ -30,6 +30,7 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -576,9 +577,12 @@ LogicalResult pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
   return erasedAny ? failure() : success();
 }
 
-bool areLoadAndStoreSameAddress(ArrayRef<func::FuncOp> aivFunctions) {
-  return llvm::any_of(aivFunctions, [](func::FuncOp aivFunc) {
-    llvm::SmallDenseSet<BlockArgument, 16> funcArgs;
+bool areLoadAndStoreSameAddress(ArrayRef<func::FuncOp> aivFunctions,
+                                bool checkRegbaseHazards) {
+  return llvm::any_of(aivFunctions, [&](func::FuncOp aivFunc) {
+    llvm::SmallDenseMap<BlockArgument, SmallVector<memref::ReinterpretCastOp>,
+                        16>
+        loads;
     aivFunc.walk([&](hivm::LoadOp op) {
       auto maybeSrc = traceDefOp<memref::ReinterpretCastOp>(op.getSrc());
       if (!maybeSrc)
@@ -586,7 +590,7 @@ bool areLoadAndStoreSameAddress(ArrayRef<func::FuncOp> aivFunctions) {
       auto src = cast<memref::ReinterpretCastOp>(maybeSrc.value());
       if (auto arg = dyn_cast<BlockArgument>(src.getSource());
           arg && arg.getOwner()->getParentOp() == aivFunc.getOperation())
-        funcArgs.insert(arg);
+        loads[arg].push_back(src);
     });
     return aivFunc
         .walk([&](hivm::StoreOp op) {
@@ -594,9 +598,27 @@ bool areLoadAndStoreSameAddress(ArrayRef<func::FuncOp> aivFunctions) {
           if (!maybeDst)
             return WalkResult::advance();
           auto dst = cast<memref::ReinterpretCastOp>(maybeDst.value());
-          if (auto arg = dyn_cast<BlockArgument>(dst.getSource());
-              arg && funcArgs.contains(arg))
-            return WalkResult::interrupt();
+          if (auto arg = dyn_cast<BlockArgument>(dst.getSource())) {
+            auto it = loads.find(arg);
+            if (it == loads.end())
+              return WalkResult::advance();
+
+            if (!checkRegbaseHazards)
+              return WalkResult::interrupt();
+
+            if (llvm::any_of(it->second, [&](memref::ReinterpretCastOp src) {
+                  // Equal starting addresses with different view geometry
+                  // can select incompatible producer/consumer partitions.
+                  // Identical views retain the existing regbase behavior.
+                  return isEqualConstantIntOrValueArray(
+                             src.getMixedOffsets(), dst.getMixedOffsets()) &&
+                         (!isEqualConstantIntOrValueArray(
+                              src.getMixedSizes(), dst.getMixedSizes()) ||
+                          !isEqualConstantIntOrValueArray(
+                              src.getMixedStrides(), dst.getMixedStrides()));
+                }))
+              return WalkResult::interrupt();
+          }
           return WalkResult::advance();
         })
         .wasInterrupted();
@@ -610,9 +632,8 @@ LogicalResult tileAicFixpipeFuncsIfNeeded(
 
   for (func::FuncOp originalFunc : aicFunctions) {
     originalFunc->walk([&](annotation::MarkOp markOp) {
-      if (auto attr =
-              markOp->getAttrOfType<HIVMTightlyCoupledBufferAttr>(
-                  HIVMTightlyCoupledBufferAttr::name)) {
+      if (auto attr = markOp->getAttrOfType<HIVMTightlyCoupledBufferAttr>(
+              HIVMTightlyCoupledBufferAttr::name)) {
         auto maybeId = attr.getId();
         if (!maybeId) {
           markOp.emitError() << "Missing id in HIVMTightlyCoupledBufferAttr";

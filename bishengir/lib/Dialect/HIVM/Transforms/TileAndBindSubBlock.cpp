@@ -1539,10 +1539,13 @@ void TileAndBindSubBlockPass::runOnOperation() {
     return;
   }
 
-  // If there is a possibility that loadOp and storeOp accessing the same
-  // address, skip this pass
-  if (!hacc::utils::isRegBasedArch(moduleOp) &&
-      areLoadAndStoreSameAddress(aivFunctions)) {
+  // Different GM views at the same offset may choose incompatible sub-block
+  // partitions for a load and store.
+  // Intra-core synchronization cannot order those cross-sub-block accesses.
+  // Preserve the membase guard and reject these view hazards on regbase.
+  if (areLoadAndStoreSameAddress(
+          aivFunctions,
+          /*checkRegbaseHazards=*/hacc::utils::isRegBasedArch(moduleOp))) {
     (void)limitAllAivToSubBlock0();
     return;
   }
