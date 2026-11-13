@@ -1850,8 +1850,9 @@ def FlattenModule : HIVMPass<"hivm-flatten-module", "ModuleOp"> {
 def V2SplitKernel : HIVMPass<"hivm-v2-split-kernel", "ModuleOp"> {
   let summary = "Split a MIX kernel on memref IR";
   let constructor = "mlir::hivm::createV2SplitKernelPass()";
-  let dependentDialects = ["func::FuncDialect", "hivm::HIVMDialect",
-                           "scf::SCFDialect"];
+  let dependentDialects = ["arith::ArithDialect", "func::FuncDialect",
+                           "hivm::HIVMDialect", "scf::SCFDialect",
+                           "scope::ScopeDialect"];
 }
 
 // Compute ModuleTargetAnalysis and preserve it. Does not rewrite IR.

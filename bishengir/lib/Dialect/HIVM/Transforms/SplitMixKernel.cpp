@@ -59,82 +59,6 @@ FailureOr<bool> isCoreTypeOp(Operation *op, enum TCoreType coreType) {
   return res == coreType;
 }
 
-FailureOr<bool> hasRequiredCoreWork(func::FuncOp func,
-                                    hivm::TCoreType requiredCore) {
-  bool foundWork = false;
-  bool hasFailed = false;
-
-  func.walk([&](Operation *op) {
-    if (op == func.getOperation())
-      return WalkResult::advance();
-
-    FailureOr<hivm::TCoreType> coreType = hivm::getCoreType(op);
-    if (failed(coreType)) {
-      hasFailed = true;
-      return WalkResult::interrupt();
-    }
-
-    if (*coreType == requiredCore ||
-        *coreType == hivm::TCoreType::CUBE_AND_VECTOR) {
-      foundWork = true;
-      return WalkResult::interrupt();
-    }
-
-    return WalkResult::advance();
-  });
-
-  if (hasFailed)
-    return failure();
-
-  return foundWork;
-}
-
-/// Verify that a mixed function or split core half has no required work when
-/// its core_ratio reserves zero instances of that core.
-LogicalResult verifyCoreRatio(func::FuncOp func) {
-  auto ratio = hivm::getCoreRatioAttr(func);
-  auto coreType = func->getAttrOfType<hivm::TFuncCoreTypeAttr>(
-      hivm::TFuncCoreTypeAttr::name);
-  if (!ratio || !coreType)
-    return success();
-
-  TFuncCoreType funcCoreType = coreType.getFuncCoreType();
-  if ((funcCoreType == TFuncCoreType::MIX ||
-       funcCoreType == TFuncCoreType::AIC) &&
-      ratio.getCube() == 0) {
-    auto hasCube = hasRequiredCoreWork(func, hivm::TCoreType::CUBE);
-    if (failed(hasCube)) {
-      return failure();
-    }
-    if (*hasCube) {
-      return func->emitError()
-             << "hivm.core_ratio<0, " << ratio.getVector()
-             << "> reserves no cube core, but the kernel has cube work";
-    }
-  }
-
-  if ((funcCoreType == TFuncCoreType::MIX ||
-       funcCoreType == TFuncCoreType::AIV) &&
-      ratio.getVector() == 0) {
-    auto hasVec = hasRequiredCoreWork(func, hivm::TCoreType::VECTOR);
-    if (failed(hasVec)) {
-      return failure();
-    }
-    if (*hasVec) {
-      return func->emitError()
-             << "hivm.core_ratio<" << ratio.getCube()
-             << ", 0> reserves no vector core, but the kernel has vector work";
-    }
-  }
-
-  return success();
-}
-
-bool isSingleCoreRatio(hivm::TCoreRatioAttr ratio) {
-  return ratio && ((ratio.getCube() == 0 && ratio.getVector() == 1) ||
-                   (ratio.getCube() == 1 && ratio.getVector() == 0));
-}
-
 // mark the operands if the defining op is of given core type
 void annotateOpOperand(OpBuilder builder, Operation *op,
                        enum TCoreType coreType) {
@@ -482,7 +406,6 @@ struct SplitMixKernelPass
                                      hivm::TCoreRatioAttr coreRatio);
   void splitMixKernel(func::FuncOp &funcOp);
   void runOnOperation() override;
-  void generateMixKernelDecl(func::FuncOp &funcOp);
 };
 
 struct PostCubeReplacement : public OpRewritePattern<tensor::ExtractOp> {
@@ -783,11 +706,6 @@ void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
   });
 }
 
-void SplitMixKernelPass::generateMixKernelDecl(func::FuncOp &funcOp) {
-  if (failed(hivm::generateMixKernelDecl(funcOp)))
-    signalPassFailure();
-}
-
 /// Lower Ascend950 MIX ratios 0:1 and 1:0 to one unsuffixed AIV/AIC function.
 LogicalResult
 SplitMixKernelPass::lowerSingleCoreRatio(func::FuncOp func,
@@ -819,7 +737,6 @@ SplitMixKernelPass::lowerSingleCoreRatio(func::FuncOp func,
 }
 
 void SplitMixKernelPass::splitMixKernel(func::FuncOp &func) {
-  StringRef funcName = func.getSymName();
   auto funcCoreTypeAttr = func->getAttrOfType<hivm::TFuncCoreTypeAttr>(
       hivm::TFuncCoreTypeAttr::name);
   if (!funcCoreTypeAttr ||
@@ -836,31 +753,18 @@ void SplitMixKernelPass::splitMixKernel(func::FuncOp &func) {
     return;
   }
 
-  // generate a Mix function declaration for host callers
-  generateMixKernelDecl(func);
-
-  // clone the function and add mix-aic / mix-aiv post-fix name
+  auto splitFuncs = createSplitMixFunctions(func);
+  if (failed(splitFuncs)) {
+    signalPassFailure();
+    return;
+  }
+  auto [cubeFunc, vecFunc] = *splitFuncs;
   OpBuilder builder(func);
-  builder.setInsertionPointAfter(func.getOperation());
-  auto vecFunc = cast<func::FuncOp>(builder.clone(*func.getOperation()));
-
-  func.setSymNameAttr(builder.getStringAttr(funcName + kMixFuncAicSuffix));
-  vecFunc.setSymNameAttr(builder.getStringAttr(funcName + kMixFuncAivSuffix));
-
-  func->setAttr(hivm::TPartOfMixAttr::name, builder.getUnitAttr());
-  vecFunc->setAttr(hivm::TPartOfMixAttr::name, builder.getUnitAttr());
-
-  func->setAttr(hivm::TFuncCoreTypeAttr::name,
-                hivm::TFuncCoreTypeAttr::get(func->getContext(),
-                                             hivm::TFuncCoreType::AIC));
-  vecFunc->setAttr(hivm::TFuncCoreTypeAttr::name,
-                   hivm::TFuncCoreTypeAttr::get(vecFunc->getContext(),
-                                                hivm::TFuncCoreType::AIV));
 
   // filter vector ops from AIC kernel, and cube ops from AIV kernel
-  filterMixFunc(builder, func, TCoreType::VECTOR);
-  LDBG("New aic:\n" << func);
-  postProcessCubeFunc(func);
+  filterMixFunc(builder, cubeFunc, TCoreType::VECTOR);
+  LDBG("New aic:\n" << cubeFunc);
+  postProcessCubeFunc(cubeFunc);
   filterMixFunc(builder, vecFunc, TCoreType::CUBE);
   LDBG("New aiv:\n" << vecFunc);
   postProcessVectorFunc(vecFunc);
