@@ -2912,6 +2912,57 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 
 
 // -----
+// CHECK-LABEL: func @test_stride_load_fp8
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func @test_stride_load_fp8(
+      %src_e4m3: memref<?xf8E4M3FN>, %src_e5m2: memref<?xf8E5M2>) {
+    %offset_i64 = arith.constant 0 : i64
+    %stride_i64 = arith.constant 2 : i64
+    %numel_i64 = arith.constant 8 : i64
+    %other_e4m3 = arith.constant 0.000000e+00 : f8E4M3FN
+    %dst_e4m3 = memref.alloc() : memref<8xf8E4M3FN>
+    // CHECK-DAG: arith.constant 0 : i8
+    // CHECK-DAG: arith.constant 60 : i8
+    // CHECK: call @stride_load_1d_float8_e4m3_t_int64_t
+    hivm.hir.stride_load
+      ins(%src_e4m3 : memref<?xf8E4M3FN>)
+      outs(%dst_e4m3 : memref<8xf8E4M3FN>)
+      offset(%offset_i64 : i64)
+      other(%other_e4m3 : f8E4M3FN)
+      strides([%stride_i64 : i64])
+      numels([%numel_i64 : i64])
+
+    %offset_i32 = arith.constant 0 : i32
+    %stride_i32 = arith.constant 3 : i32
+    %numel0_i32 = arith.constant 4 : i32
+    %numel1_i32 = arith.constant 8 : i32
+    %other_e5m2 = arith.constant 1.000000e+00 : f8E5M2
+    %dst_e5m2_2d = memref.alloc() : memref<4x8xf8E5M2>
+    // CHECK: call @stride_load_2d_float8_e5m2_t_int32_t
+    hivm.hir.stride_load
+      ins(%src_e5m2 : memref<?xf8E5M2>)
+      outs(%dst_e5m2_2d : memref<4x8xf8E5M2>)
+      offset(%offset_i32 : i32)
+      other(%other_e5m2 : f8E5M2)
+      strides([%stride_i32, %stride_i32 : i32, i32])
+      numels([%numel0_i32, %numel1_i32 : i32, i32])
+
+    %numel2_i32 = arith.constant 2 : i32
+    %dst_e5m2_3d = memref.alloc() : memref<2x4x8xf8E5M2>
+    // CHECK: call @stride_load_3d_float8_e5m2_t_int32_t
+    hivm.hir.stride_load
+      ins(%src_e5m2 : memref<?xf8E5M2>)
+      outs(%dst_e5m2_3d : memref<2x4x8xf8E5M2>)
+      offset(%offset_i32 : i32)
+      other(%other_e5m2 : f8E5M2)
+      strides([%stride_i32, %stride_i32, %stride_i32 : i32, i32, i32])
+      numels([%numel2_i32, %numel0_i32, %numel1_i32 : i32, i32, i32])
+    return
+  }
+}
+
+
+// -----
 // CHECK-LABEL: func @test_stride_store
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   func.func @test_stride_store(%dst: memref<?xf32>, %src1d: memref<8xf32>, %src2d: memref<4x8xf32>, %src3d: memref<2x4x8xf32>) {
