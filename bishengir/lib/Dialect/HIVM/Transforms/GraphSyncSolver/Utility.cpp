@@ -34,6 +34,18 @@
 using namespace mlir;
 using namespace hivm::syncsolver;
 
+Operation *mlir::hivm::syncsolver::getTcbPoolAddressSource(Value value) {
+  auto pointer = value.getDefiningOp<hivm::PointerCastOp>();
+  if (!pointer || pointer.getAddrs().size() != 1)
+    return nullptr;
+  Value address = pointer.getSingleAddr();
+  if (auto alloc = address.getDefiningOp<hivm::TcbPoolAllocOp>())
+    return address == alloc.getAddress() ? alloc.getOperation() : nullptr;
+  if (auto get = address.getDefiningOp<hivm::TcbPoolGetOp>())
+    return address == get.getAddress() ? get.getOperation() : nullptr;
+  return nullptr;
+}
+
 int ConflictPair::globalIdCounter = 0;
 int EventIdNode::globalIdCounter = 0;
 

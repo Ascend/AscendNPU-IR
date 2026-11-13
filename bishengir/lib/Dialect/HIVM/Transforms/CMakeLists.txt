@@ -15,6 +15,8 @@ set(TILE_AND_BIND_SUB_BLOCK
     ${CMAKE_CURRENT_SOURCE_DIR}/TileAndBindSubBlock/TileUtils.cpp)
 file(GLOB PARTITION_AND_BIND_SUB_BLOCK CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/PartitionAndBindSubBlock/*.cpp)
+file(GLOB BUFFER_POOL CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/BufferPool/*.cpp)
 file(GLOB PIPELINE_V2 CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/PipelineV2/*.cpp)
 
@@ -30,6 +32,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ${TILE_AND_BIND_SUB_BLOCK}
   ${PARTITION_AND_BIND_SUB_BLOCK}
   ${PIPELINE_V2}
+  ${BUFFER_POOL}
   ${NORMALIZE}
   AddFFTSToSyncBlockSetOp.cpp
   AllocExtraBuffer.cpp
@@ -84,7 +87,6 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   HIVMOptSinglePoint.cpp
   HIVMVectorize.cpp
   HIVMVectorizeLowering.cpp
-  HoistLoopInvariantDmaLoad.cpp
   HoistTightlyCoupledAlloc.cpp
   InferFuncCoreType.cpp
   InferHIVMDataLayout.cpp
@@ -144,6 +146,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   OptimizeTransposePlacement/RootReachability.cpp
   OptimizeTransposePlacement/Utils.cpp
   OutlineAllocInVF.cpp
+  OutlineCopyInVF.cpp
   PlanMemory.cpp
   RecognizeDeinterleaveOp.cpp
   RecognizeDiscontiguousStore.cpp
@@ -158,6 +161,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   SplitMixedIfConditionals.cpp
   SplitMixKernel.cpp
   SyncBlockHoisting.cpp
+  TcbPoolOpInsertion.cpp
   TcbPoolPlan.cpp
   TileAndBindSubBlock.cpp
   TileBatchMMIntoLoop.cpp
@@ -166,7 +170,6 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   TritonGlobalKernelArgsToHIVMOp.cpp
   UnitFlagInfoBase.cpp
   VerifyCapability.cpp
-  VerifyVectorFunctionTopLevelCopy.cpp
   VFOperandSubstitution.cpp
   AnalyzeArithVectorMask.cpp
   WriteBackShared.cpp
@@ -210,7 +213,6 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MLIRMathDialect
   MLIRMemRefDialect
   MLIRMemRefTransforms
-  MLIRTransformUtils
   MLIRVectorDialect
   BiShengIRMemRefExtDialect
   BiShengIRDialectUtils

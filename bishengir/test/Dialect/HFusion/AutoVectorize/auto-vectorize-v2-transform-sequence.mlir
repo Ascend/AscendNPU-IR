@@ -3,10 +3,12 @@
 
 // SEQUENCE-LABEL: transform.sequence
 // SEQUENCE: %[[TILED:.*]], %[[LOOP:.*]] = transform.structured.tile_using_for
-// SEQUENCE-NEXT: apply_licm_with_slice_boundary to %[[LOOP]] : !transform.any_op
+// SEQUENCE: %[[LOOPS:.*]] = transform.structured.match interface{LoopLikeInterface}
+// SEQUENCE-NEXT: apply_licm_with_slice_boundary to %[[LOOPS]] : !transform.any_op
 // SEQUENCE-LABEL: transform.sequence
 // SEQUENCE: %[[TILED:.*]], %[[LOOP:.*]] = transform.structured.tile_using_for
-// SEQUENCE-NEXT: apply_licm_with_slice_boundary to %[[LOOP]] : !transform.any_op
+// SEQUENCE: %[[LOOPS:.*]] = transform.structured.match interface{LoopLikeInterface}
+// SEQUENCE-NEXT: apply_licm_with_slice_boundary to %[[LOOPS]] : !transform.any_op
 
 // CHECK-LABEL: func.func @kernel_a
 // CHECK: vector.transfer_read

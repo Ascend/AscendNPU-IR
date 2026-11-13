@@ -4384,7 +4384,8 @@ static bool allI16ElemType(const SmallVector<Value> &values) {
 struct NormalizeBrcCast : public OpRewritePattern<hfusion::CastOp> {
   std::optional<Value> getCastedValue(PatternRewriter &rewriter, Location loc,
                                       Value cst, Type srcType, Type dstType,
-                                      hfusion::RoundMode roundMode) const {
+                                      hfusion::RoundMode roundMode,
+                                      hfusion::TypeFn castType) const {
     auto srcElmTy = getElementTypeOrSelf(srcType);
     auto dstElmTy = getElementTypeOrSelf(dstType);
 
@@ -4396,7 +4397,7 @@ struct NormalizeBrcCast : public OpRewritePattern<hfusion::CastOp> {
     if (!(defaultRounding == roundMode) && scalarSrc)
       return std::nullopt;
 
-    return hfusion::castTo(rewriter, cst, dstElmTy, roundMode);
+    return hfusion::castTo(rewriter, cst, dstElmTy, roundMode, castType);
   }
 
 public:
@@ -4431,8 +4432,8 @@ public:
                     ? dyn_cast<linalg::FillOp>(defOp).getInputs()[0]
                     : dyn_cast<linalg::BroadcastOp>(defOp).getInput();
 
-    auto castedVal =
-        getCastedValue(rewriter, loc, cst, srcTy, dstTy, roundMode);
+    auto castedVal = getCastedValue(rewriter, loc, cst, srcTy, dstTy, roundMode,
+                                    castOp.getCast());
     if (!castedVal.has_value())
       return rewriter.notifyMatchFailure(
           castOp, "either round mode or datatype is not supported!");

@@ -112,6 +112,15 @@ createMarkMultiBufferPass(const MarkMultiBufferOptions &options = {});
 /// Create a pass to enable multi buffer.
 std::unique_ptr<Pass> createEnableMultiBufferPass();
 
+/// Separate Cube GM loads and assign their preload stages.
+std::unique_ptr<Pass> createSeparateLoadComputePass();
+
+/// Mark shared local buffer capacity for separated loads.
+std::unique_ptr<Pass> createMarkBufferPoolPass();
+
+/// Materialize independent load submission and explicit access slots.
+std::unique_ptr<Pass> createEnableBufferPoolPass();
+
 /// Create a pass to add FFTS (arg0) to every SyncBlockSetOp
 std::unique_ptr<Pass> createAddFFTSToSyncBlockSetOpPass();
 
@@ -121,6 +130,9 @@ std::unique_ptr<Pass> createLowerMultiBufferCounterPass();
 /// Create a pass to plan memory.
 std::unique_ptr<Pass>
 createPlanMemoryPass(const PlanMemoryOptions &planMemoryOption = {});
+
+/// Insert pool operations for a successful TCB memory-planning fallback.
+std::unique_ptr<Pass> createTcbPoolOpInsertionPass();
 
 /// Create a pass to inject sync
 std::unique_ptr<Pass>
@@ -175,13 +187,12 @@ std::unique_ptr<Pass> createAllocExtraBufferPass();
 /// Create a pass to outline memref.alloc with static shape in VF
 std::unique_ptr<Pass> createOutlineAllocInVFPass();
 
+/// Create a pass to outline hivm.load in VF by rewriting it to hivm.copy.
+std::unique_ptr<Pass> createOutlineCopyInVFPass();
+
 /// Create a pass that promotes temporary tensor buffers inside vector
 /// functions into enclosing loop iter_args.
 std::unique_ptr<Pass> createNormalizeTmpBufferInVfPass();
-
-/// Create a post-bufferization checkpoint that fails when a vector function
-/// holds a memref.copy in its top-level block.
-std::unique_ptr<Pass> createVerifyVectorFunctionTopLevelCopyPass();
 
 /// Create a pass to rewrite bufferization.alloc_tensor(copy...) into a
 /// bufferization.alloc_tensor + hivm.hir.copy pair.
@@ -227,11 +238,6 @@ std::unique_ptr<Pass> createMarkTightlyCoupledBufferPass(
 // Create a pass to hoist yielded tightly-coupled allocs out of inner regions so
 // the AIC/AIV multi-buffer anchor stays consistent after SplitMixKernel.
 std::unique_ptr<Pass> createHoistTightlyCoupledAllocPass();
-
-// Create a pass to hoist loop-invariant GM->UB load clusters (alloc + guarded
-// fill + hivm.hir.load + to_tensor) out of scf.for loops as one unit
-// (Ascend950 / RegBase).
-std::unique_ptr<Pass> createHoistLoopInvariantDmaLoadPass();
 
 // Create a pass to mark scalar operations with core-type attribute.
 std::unique_ptr<Pass>

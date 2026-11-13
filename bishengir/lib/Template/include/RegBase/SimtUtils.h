@@ -135,7 +135,8 @@ DECLARE_SIMT_OP2(pow, bfloat16_t, bfloat16_t);
 DECLARE_SIMT_OP2(pow, int32_t, int32_t);
 
 // UMULHI declarations
-DECLARE_SIMT_OP2(umulhi, uint32_t, uint32_t);
+__simt_callee__ __attribute__((always_inline)) uint32_t
+_mlir_ciface_simt_umulhi_uint32_t(uint32_t src1, uint32_t src2);
 
 // LDEXP declarations
 DECLARE_SIMT_OPWithInt32(ldexp, float, float);

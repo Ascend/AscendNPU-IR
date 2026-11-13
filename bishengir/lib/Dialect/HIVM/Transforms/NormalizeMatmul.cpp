@@ -2096,6 +2096,10 @@ struct ReuseL0CAddIfPattern
     rewriter.setInsertionPointAfter(insertPointOp);
     Value postCount =
         rewriter.create<memref::LoadOp>(loc, counterBuf, ValueRange{});
+    postCount.getDefiningOp()->setAttr(
+        hivm::TCoreTypeAttr::name,
+        hivm::TCoreTypeAttr::get(rewriter.getContext(),
+                                 hivm::TCoreType::CUBE_AND_VECTOR));
     Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
     Value neverRan = rewriter.create<arith::CmpIOp>(
         loc, arith::CmpIPredicate::eq, postCount, zeroI32);

@@ -358,6 +358,47 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
         }
       }
     }
+    // A successful legacy choice is unchanged. Otherwise allow optional
+    // stores/copies to remain untiled and compare UB-related dimensions.
+    if (selectedTilingCandGroupMap.contains(groupIndex))
+      continue;
+    auto numRequiredUb = requiredUbCounts.lookup(groupIndex);
+    if (numRequiredUb == 0)
+      continue;
+    for (const auto &[candGroup, candidate] : candidatesByCandGroup) {
+      if (candidateGroupSize[candGroup] < numRequiredUb)
+        continue;
+      SmallVector<Dimension> candidates;
+      SmallVector<int64_t> candidateDims;
+      for (auto cand : candidate) {
+        auto indices = getValueDimIndices(cand.first);
+        auto parent = structuralDsu_->find(indices[cand.second]);
+        if (!requiredUbBuffers[groupIndex].contains(parent))
+          continue;
+        candidates.push_back(cand);
+      }
+      // FIXME: Temporary skip; reduction-dim fallback currently slows kernels
+      // down. Replace with a faster selection instead of this blanket skip.
+      if (llvm::any_of(candidates,
+                       [&](Dimension dim) { return isReduceDim(dim); })) {
+        LDBG("UB TCB fallback skipped candGroup "
+             << candGroup << " in group " << groupIndex
+             << ": required UB candidate contains a reduction dim");
+        continue;
+      }
+      auto [higherDimCnt, reverseDimCnt] =
+          getHigherDimCounts(candidates, &candidateDims);
+      if (reverseDimCnt < higherDimCnt &&
+          2 * higherDimCnt >= static_cast<int64_t>(candidates.size())) {
+        selectedTilingCandGroupMap[groupIndex] = candGroup;
+        for (auto [store, dim] : candidate)
+          tilingDim_[store] = dim;
+        LDBG("UB TCB fallback selected "
+             << candGroup << " in group " << groupIndex
+             << " with UB-related dimensions "
+             << utils::debugger::to_string(candidateDims));
+      }
+    }
   }
   LDBG("Selected independent tiling dims: "
        << selectedTilingCandGroupMap.size());

@@ -213,3 +213,31 @@ func.func @cfg_caller(%dst: tensor<f32>, %cond: i1) -> tensor<f32> {
   %r = call @cfg_vf(%f, %cond) {hivm.vector_function} : (tensor<f32>, i1) -> tensor<f32>
   return %r : tensor<f32>
 }
+
+// -----
+
+// Compose with the existing slice pull on a different operand of the same VF.
+// CHECK-LABEL: func.func @slice_and_fill_vf(
+// CHECK-SAME: %[[SRC:.*]]: tensor<128xf32>, %[[DST:.*]]: tensor<f32>
+// CHECK-DAG: tensor.extract_slice %[[SRC]][32] [64] [1]
+// CHECK-DAG: vector.transfer_write %{{.*}}, %[[DST]][]
+// CHECK: return
+func.func @slice_and_fill_vf(%input: tensor<64xf32>, %dst: tensor<f32>)
+    -> (tensor<64xf32>, tensor<f32>) attributes {hivm.vector_function} {
+  return %input, %dst : tensor<64xf32>, tensor<f32>
+}
+
+// CHECK-LABEL: func.func @slice_and_fill_caller(
+// CHECK-SAME: %[[SRC:.*]]: tensor<128xf32>, %[[DST:.*]]: tensor<f32>
+// CHECK-NOT: linalg.fill
+// CHECK-NOT: tensor.extract_slice
+// CHECK: call @slice_and_fill_vf(%[[SRC]], %[[DST]])
+func.func @slice_and_fill_caller(%input: tensor<128xf32>, %dst: tensor<f32>)
+    -> (tensor<64xf32>, tensor<f32>) {
+  %c = arith.constant 0.0 : f32
+  %filled = linalg.fill ins(%c : f32) outs(%dst : tensor<f32>) -> tensor<f32>
+  %slice = tensor.extract_slice %input[32] [64] [1] : tensor<128xf32> to tensor<64xf32>
+  %r:2 = call @slice_and_fill_vf(%slice, %filled) {hivm.vector_function}
+      : (tensor<64xf32>, tensor<f32>) -> (tensor<64xf32>, tensor<f32>)
+  return %r#0, %r#1 : tensor<64xf32>, tensor<f32>
+}

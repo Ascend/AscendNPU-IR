@@ -534,14 +534,6 @@ def LegalizeScalarPass : Pass<"hfusion-legalize-scalar", "func::FuncOp"> {
   let dependentDialects = ["arith::ArithDialect", "linalg::LinalgDialect", "hfusion::HFusionDialect"];
 }
 
-def LegalizeNarrowFloatKernelArguments
-    : Pass<"hfusion-legalize-narrow-float-kernel-arguments", "func::FuncOp"> {
-  let summary = "Legalize narrow scalar launcher arguments to f32 to meet with Triton launcher ABI";
-  let constructor =
-      "mlir::hfusion::createLegalizeNarrowFloatKernelArgumentsPass()";
-  let dependentDialects = ["arith::ArithDialect", "func::FuncDialect"];
-}
-
 def OptimizeScalarTransfers
     : Pass<"hfusion-optimize-scalar-transfers", "func::FuncOp"> {
   let summary = "Optimize scalar transfers between tensor operations";

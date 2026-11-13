@@ -429,4 +429,19 @@ def AVE_PregCastModeAttr : EnumAttr<AVE_Dialect, AVE_PregCastMode, "preg_cast_mo
   let assemblyFormat = [{`<` $value `>`}];
 }
 
+def AVE_SqueezeStore_STORED : I32EnumAttrCase<"STORED", 0, "stored">;
+def AVE_SqueezeStore_NO_STORED : I32EnumAttrCase<"NO_STORED", 1, "no_stored">;
+
+def AVE_SqueezeStoreMode : I32EnumAttr<"SqueezeStoreMode",
+    "Store mode for AVE squeeze operation",
+    [AVE_SqueezeStore_STORED, AVE_SqueezeStore_NO_STORED]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "mlir::hivmave";
+}
+
+def AVE_SqueezeStoreModeAttr
+    : EnumAttr<AVE_Dialect, AVE_SqueezeStoreMode, "squeeze_store"> {
+  let assemblyFormat = [{`<` $value `>`}];
+}
+
 #endif // AVE_VFATTRS

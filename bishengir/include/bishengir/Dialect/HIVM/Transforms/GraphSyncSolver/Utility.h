@@ -724,6 +724,10 @@ getFirstLastOpOfTypes(Operation *parentOp) {
   return std::make_pair(firstOp, lastOp);
 }
 
+/// Return the pool alloc/get supplying a direct pointer_cast's address.
+/// Views and other address expressions are not matched.
+Operation *getTcbPoolAddressSource(Value value);
+
 bool isEmptyScope(Scope *scope);
 
 bool isWorkSpaceFuncArgument(func::FuncOp funcOp, BlockArgument funcArg);

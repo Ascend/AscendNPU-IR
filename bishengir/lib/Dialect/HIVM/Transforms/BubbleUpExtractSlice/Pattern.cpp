@@ -962,12 +962,35 @@ handleSliceInsertDimOnly(tensor::ExtractSliceOp sliceOp,
       sliceOp.getLoc(), parentInsertOp.getDest(), sliceOp.getMixedOffsets(),
       sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
   markCreatedExtractSliceOp(rewriter, newDst);
-  auto newOffsets = newDst.getMixedOffsets();
-  auto newSizes = newDst.getMixedSizes();
-  newOffsets[tilingDim] = parentInsertOp.getMixedOffsets()[tilingDim];
-  newSizes[tilingDim] = parentInsertOp.getMixedSizes()[tilingDim];
+
+  // Rewrite the insert into the tiled coordinate space. Copying the original
+  // (global) offset onto the already-sliced dest is OOB when the insert is
+  // indexed by a sequential loop IV and the dest has been split by
+  // TileAndBindSubBlock, e.g. insert at iv in [0, 64) into a dest of size 32.
+  SmallVector<OpFoldResult> newOffsets = parentInsertOp.getMixedOffsets();
+  SmallVector<OpFoldResult> newSizes = parentInsertOp.getMixedSizes();
+  Location loc = sliceOp.getLoc();
+  handleExtractOfExtract(newOffsets[tilingDim], newSizes[tilingDim],
+                         sliceOp.getMixedOffsets()[tilingDim],
+                         sliceOp.getMixedSizes()[tilingDim], loc, rewriter);
+  // A disjoint insert remaps to size 0 while keeping a still-global offset.
+  // Clamp that offset into the tiled dest so the no-op insert is well-formed.
+  Value offsetVal =
+      getValueOrCreateConstantIndexOp(rewriter, loc, newOffsets[tilingDim]);
+  Value destSizeVal = getValueOrCreateConstantIndexOp(
+      rewriter, loc, newDst.getMixedSizes()[tilingDim]);
+  newOffsets[tilingDim] =
+      rewriter.createOrFold<arith::MinSIOp>(loc, offsetVal, destSizeVal);
+
+  SmallVector<OpFoldResult> srcOffsets(parentInsertOp.getSourceType().getRank(),
+                                       rewriter.getIndexAttr(0));
+  auto newSrc = rewriter.create<tensor::ExtractSliceOp>(
+      sliceOp.getLoc(), parentInsertOp.getSource(), srcOffsets, newSizes,
+      parentInsertOp.getMixedStrides());
+  markCreatedExtractSliceOp(rewriter, newSrc);
+
   rewriter.replaceOpWithNewOp<tensor::InsertSliceOp>(
-      sliceOp, parentInsertOp.getSource(), newDst, newOffsets, newSizes,
+      sliceOp, newSrc, newDst, newOffsets, newSizes,
       parentInsertOp.getMixedStrides());
   return success();
 }

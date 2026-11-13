@@ -612,6 +612,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
 // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
 // CHECK: } attributes {may_not_exec, normalized_in_L0C = [0 : i32]}
 // CHECK: %[[N:.*]] = memref.load
+// CHECK-SAME: hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>
 // CHECK: %[[GUARD:.*]] = arith.cmpi eq, %[[N]], %{{.*}} : i32
 // CHECK: scf.if %[[GUARD]]
 // CHECK: hivm.hir.vbrc

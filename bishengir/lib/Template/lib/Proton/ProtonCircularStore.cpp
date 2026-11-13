@@ -50,4 +50,12 @@ proton_circular_store(memref_t<__gm__ int32_t, 1> *buffer,
   buffer_ptr[record_index + stride] = static_cast<int32_t>(cycle);
   buffer_ptr[count_index] = static_cast<int32_t>(write_pointer + kRecordWords);
 }
+
+// C entry point expected by the llvm.emit_c_interface library-call lowering.
+__aiv__ __attribute__((always_inline)) void _mlir_ciface_proton_circular_store(
+    memref_t<__gm__ int32_t, 1> *buffer, int64_t section_offset, int64_t clock,
+    int32_t scope_id, int32_t is_start, int32_t data_segment_words) {
+  proton_circular_store(buffer, section_offset, clock, scope_id, is_start,
+                        data_segment_words);
+}
 }

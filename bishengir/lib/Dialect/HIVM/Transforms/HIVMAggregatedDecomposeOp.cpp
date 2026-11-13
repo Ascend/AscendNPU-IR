@@ -247,7 +247,14 @@ struct DecomposeUnalignedSubview : public OpRewritePattern<memref::SubViewOp> {
                                 PatternRewriter &rewriter) const override {
     auto srcType = op.getSourceType();
     auto dstType = op.getType();
-    if (!isLocalBuffer(GetBufferSpaceAttr(op.getSource())))
+    auto space = GetBufferSpaceAttr(op.getSource());
+    if (!isLocalBuffer(space))
+      return failure();
+    // This membase rewrite uses UB-aligned vector casts and scalar copies.
+    // Classifying explicit cube spaces as local does not enable those accesses.
+    if (space->getAddressSpace() == AddressSpace::L0A ||
+        space->getAddressSpace() == AddressSpace::L0B ||
+        space->getAddressSpace() == AddressSpace::BiasBUF)
       return failure();
     if (!isMarkedExtractSliceOp(op))
       return failure();

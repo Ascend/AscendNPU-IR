@@ -313,6 +313,8 @@ protected:
   // op with itself, made unnecessary by the disjoint logical blocks.
   bool checkSkipAutoBlockifyDMAPair(Occurrence *occ1, Occurrence *occ2);
 
+  bool checkSkipPoolManagedFixPair(Occurrence *occ1, Occurrence *occ2);
+
   // Whether (occ1, occ2) cannot form a valid sync-operation candidate.
   bool checkImpossibleOccPair(Occurrence *occ1, Occurrence *occ2);
 

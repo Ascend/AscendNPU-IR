@@ -20,14 +20,18 @@
 
 #if BISHENG_TPL_REGBASE
 template <typename TYPE>
-__aicore__ __attribute__((always_inline)) TYPE simt_umulhi(TYPE a, TYPE b) {
+__simt_callee__ __attribute__((always_inline)) TYPE simt_umulhi(TYPE a,
+                                                                TYPE b) {
   uint64_t result = static_cast<uint64_t>(static_cast<uint32_t>(a)) *
                     static_cast<uint64_t>(static_cast<uint32_t>(b));
   return static_cast<TYPE>(result >> 32);
 }
 
 extern "C" {
-REGISTER_SIMT_OP2(umulhi, uint32_t, uint32_t);
+__simt_callee__ __attribute__((always_inline)) uint32_t
+_mlir_ciface_simt_umulhi_uint32_t(uint32_t a, uint32_t b) {
+  return simt_umulhi<uint32_t>(a, b);
+}
 }
 
 #endif

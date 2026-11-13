@@ -128,8 +128,11 @@ const std::string Ascend910BDataLayout =
     "e-i1:8:32-i8:8:32-i16:16:32-i64:64-f16:16:32-v16:16-v32:32-n64-S64";
 
 const std::set<hivm::AddressSpace> LocalBufferSpace{
-    hivm::AddressSpace::UB, hivm::AddressSpace::L1, hivm::AddressSpace::L0C,
-    hivm::AddressSpace::SSBUF};
+    hivm::AddressSpace::UB,      hivm::AddressSpace::L1,
+    hivm::AddressSpace::L0A,     hivm::AddressSpace::L0B,
+    hivm::AddressSpace::L0C,     hivm::AddressSpace::SSBUF,
+    hivm::AddressSpace::BiasBUF,
+};
 
 const std::map<TFuncCoreType, TCoreType> kTFuncCoreType2TCoreType = {
     {TFuncCoreType::AIC, TCoreType::CUBE},
@@ -199,7 +202,8 @@ bool isOpTouchLocalBuffer(Operation *op);
 
 bool isOpTouchSsbufferOnly(Operation *op);
 
-/// Determine whether there is in ub buffer.
+/// Classify local buffer spaces. Target-specific allocation support is checked
+/// by memory planning, not by this predicate.
 bool isLocalBuffer(std::optional<AddressSpaceAttr> memorySpaceAttr);
 
 /// Determine whether there is in ssbuffer.

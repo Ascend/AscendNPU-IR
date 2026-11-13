@@ -415,6 +415,47 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownLoadOp(
   return success();
 }
 
+static Value sliceExtractSource(Value source, int64_t dim,
+                                OpFoldResult tiledOffset,
+                                OpFoldResult tiledSize, Location loc,
+                                PatternRewriter &rewriter) {
+  auto shapedType = cast<RankedTensorType>(source.getType());
+  int64_t rank = shapedType.getRank();
+  SmallVector<OpFoldResult> offsets(rank, rewriter.getIndexAttr(0));
+  SmallVector<OpFoldResult> sizes;
+  SmallVector<OpFoldResult> strides(rank, rewriter.getIndexAttr(1));
+  offsets[dim] = tiledOffset;
+  for (int64_t i = 0; i < rank; ++i) {
+    if (i == dim)
+      sizes.push_back(tiledSize);
+    else if (shapedType.isDynamicDim(i))
+      sizes.push_back(getAsOpFoldResult(
+          rewriter.createOrFold<tensor::DimOp>(loc, source, i)));
+    else
+      sizes.push_back(rewriter.getIndexAttr(shapedType.getDimSize(i)));
+  }
+  auto sliceOp = rewriter.create<tensor::ExtractSliceOp>(loc, source, offsets,
+                                                         sizes, strides);
+  markCreatedExtractSliceOp(rewriter, sliceOp);
+  return sliceOp;
+}
+
+/// handleParallelLoop rewrites the parent scf.for bounds from the tile. That
+/// is only valid when the tiled-axis offset is the loop IV itself (typically
+/// `subview %alloc[%iv, 0]`). A nested dynamic column subview uses a constant
+/// 0 offset on that axis and must take the generic path.
+static bool subviewIndexesTilingDimWithLoopIV(memref::SubViewOp subViewOp,
+                                              scf::ForOp loop,
+                                              int64_t tilingDim) {
+  if (tilingDim < 0)
+    return false;
+  auto offsets = subViewOp.getMixedOffsets();
+  if (static_cast<size_t>(tilingDim) >= offsets.size())
+    return false;
+  Value offsetVal = dyn_cast<Value>(offsets[tilingDim]);
+  return offsetVal && offsetVal == loop.getInductionVar();
+}
+
 static LogicalResult handleParallelLoop(scf::ForOp parallelLoopOp,
                                         memref::SubViewOp subViewOp,
                                         UnrealizedConversionCastOp propagateOp,
@@ -436,6 +477,39 @@ static LogicalResult handleParallelLoop(scf::ForOp parallelLoopOp,
     lb.set(offsetVal);
     ub.set(newUb);
   });
+
+  Value inductionVar = parallelLoopOp.getInductionVar();
+  SmallVector<tensor::ExtractOp> extracts;
+  for (Operation *user : inductionVar.getUsers())
+    if (auto extractOp = dyn_cast<tensor::ExtractOp>(user))
+      extracts.push_back(extractOp);
+  for (auto extractOp : extracts) {
+    // Only discrete gathers are indexed in the pre-slice coordinate space.
+    // Other extracts keep the full tensor and the original induction variable.
+    if (!extractOp->hasAttr("DiscreteMemAccess"))
+      continue;
+    std::optional<int64_t> dim;
+    for (auto [i, index] : llvm::enumerate(extractOp.getIndices())) {
+      if (index == inductionVar) {
+        dim = i;
+        break;
+      }
+    }
+    if (!dim)
+      continue;
+    rewriter.setInsertionPoint(extractOp);
+    Value sliced = sliceExtractSource(extractOp.getTensor(), *dim, tiledOffset,
+                                      tiledSize, extractOp.getLoc(), rewriter);
+    // The sliced tensor's origin is tiledOffset, while the narrowed loop
+    // still yields the original induction variable.
+    Value localIndex = rewriter.create<arith::SubIOp>(extractOp.getLoc(),
+                                                      inductionVar, offsetVal);
+    rewriter.modifyOpInPlace(extractOp, [&]() {
+      extractOp.getTensorMutable().set(sliced);
+      extractOp.getIndicesMutable()[*dim].set(localIndex);
+    });
+  }
+
   rewriter.setInsertionPoint(subViewOp);
   auto offsets = subViewOp.getMixedOffsets();
   auto sizes = subViewOp.getMixedSizes();
@@ -471,7 +545,7 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownSubView(
   auto [tilingDim, tiledOffset, tiledSize] = getTilingDimInfo(propagateOp);
   if (auto parallelLoopOp = dyn_cast<scf::ForOp>(subViewOp->getParentOp());
       parallelLoopOp && parallelLoopOp->hasAttr(hivm::ParallelLoopAttr::name) &&
-      getExtractOrInsertDim(subViewOp).contains(tilingDim)) {
+      subviewIndexesTilingDimWithLoopIV(subViewOp, parallelLoopOp, tilingDim)) {
     return handleParallelLoop(parallelLoopOp, subViewOp, propagateOp, rewriter);
   }
 

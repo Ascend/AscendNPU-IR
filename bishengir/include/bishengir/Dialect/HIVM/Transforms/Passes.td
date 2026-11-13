@@ -184,6 +184,31 @@ def MarkMultiBuffer : HIVMPass<"hivm-mark-multi-buffer", "func::FuncOp"> {
   ];
 }
 
+def EnableBufferPool : HIVMPass<"hivm-enable-buffer-pool", "ModuleOp"> {
+  let summary = "Materialize independent loads and explicit buffer access slots";
+  let constructor = "mlir::hivm::createEnableBufferPoolPass()";
+  let dependentDialects = ["mlir::hivm::HIVMDialect", "mlir::scf::SCFDialect",
+                          "mlir::arith::ArithDialect", "mlir::scope::ScopeDialect",
+                          "mlir::annotation::AnnotationDialect"];
+}
+
+def MarkBufferPool : HIVMPass<"hivm-mark-buffer-pool", "ModuleOp"> {
+  let summary = "Mark shared local buffer pools for independent loads";
+  let constructor = "mlir::hivm::createMarkBufferPoolPass()";
+  let dependentDialects = ["mlir::hivm::HIVMDialect",
+                          "mlir::annotation::AnnotationDialect"];
+}
+
+def SeparateLoadCompute
+    : HIVMPass<"hivm-separate-load-compute", "ModuleOp"> {
+  let summary = "Separate Cube GM loads and assign their preload stages";
+  let constructor = "mlir::hivm::createSeparateLoadComputePass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
+                           "mlir::scope::ScopeDialect",
+                           "annotation::AnnotationDialect",
+                           "arith::ArithDialect", "memref::MemRefDialect"];
+}
+
 def EnableMultiBuffer : HIVMPass<"hivm-enable-multi-buffer", "func::FuncOp"> {
   let summary = "Enable multi buffer";
   let description = [{
@@ -305,6 +330,13 @@ def PlanMemory : HIVMPass<"hivm-plan-memory", "ModuleOp"> {
               /*default=*/"false",
               "Disable VF reachable check, default : false">,
   ];
+}
+
+def TcbPoolOpInsertion : HIVMPass<"hivm-tcb-pool-op-insertion", "ModuleOp"> {
+  let summary = "Insert TCB pool operations after memory planning";
+  let constructor = "mlir::hivm::createTcbPoolOpInsertionPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "arith::ArithDialect",
+                           "scf::SCFDialect", "memref::MemRefDialect"];
 }
 
 def InjectSync : HIVMPass<"hivm-inject-sync", "func::FuncOp"> {
@@ -631,6 +663,14 @@ def OutlineAllocInVF : HIVMPass<"hivm-outline-alloc-in-VF", "ModuleOp"> {
                            "memref::MemRefDialect"];
 }
 
+def OutlineCopyInVF : HIVMPass<"hivm-outline-copy-in-VF", "ModuleOp"> {
+  let summary =
+      "rewrite hivm.load to hivm.copy in VF when operands are VF args";
+  let constructor = "mlir::hivm::createOutlineCopyInVFPass()";
+  let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
+                           "memref::MemRefDialect", "vector::VectorDialect"];
+}
+
 def NormalizeTmpBufferInVf
     : HIVMPass<"hivm-normalize-tmp-buffer-in-vf", "func::FuncOp"> {
   let summary = "Normalize temporary tensor buffers in vector functions.";
@@ -644,20 +684,6 @@ def NormalizeTmpBufferInVf
   let constructor = "mlir::hivm::createNormalizeTmpBufferInVfPass()";
   let dependentDialects = ["func::FuncDialect", "scf::SCFDialect",
                            "tensor::TensorDialect"];
-}
-
-def VerifyVectorFunctionTopLevelCopy
-    : HIVMPass<"hivm-verify-vector-function-top-level-copy", "func::FuncOp"> {
-  let summary = "Verify that vector functions have no top-level memref.copy";
-  let description = [{
-    Post-bufferization IR checkpoint for `hivm.vector_function` functions: a
-    `memref.copy` placed directly in the function's top-level block is not
-    supported by the downstream lowering pipeline. The pass emits an error and
-    fails when such a copy is found, instead of leaving it to fail later with
-    a less actionable error. The IR is never modified.
-  }];
-  let constructor = "mlir::hivm::createVerifyVectorFunctionTopLevelCopyPass()";
-  let dependentDialects = ["memref::MemRefDialect"];
 }
 
 def ConstantizeBufferSize
@@ -758,26 +784,6 @@ def MarkTightlyCoupledBuffer
            "workspaceMultiBufferNum", "workspace-multibuffer-num", "unsigned",
            /*default=*/"0",
            "Workspace multibuffer count used by the registered-kernel skip">];
-}
-
-def HoistLoopInvariantDmaLoad
-    : HIVMPass<"hivm-hoist-loop-invariant-dma-load", "func::FuncOp"> {
-  let summary =
-      "Hoist loop-invariant GM->UB load clusters out of scf.for loops.";
-  let description = [{
-    A masked `tl.load` materializes as a cluster: a `memref.alloc` for the dst
-    buffer, a guarded zero-fill `scf.if`, the `hivm.hir.load` DMA and a
-    `to_tensor` view. Every op in that cluster carries memory effects, so the
-    generic per-op LICM (`isMemoryEffectFree` && `isSpeculatable`) can never
-    hoist it. This pass treats the cluster as one unit and moves it before
-    the loop when no cluster operand is defined inside the loop, the dst
-    buffers have no other in-loop user, and no in-loop op may write the
-    loaded GM source. Only runs for Ascend950 (RegBase) targets.
-  }];
-  let constructor = "mlir::hivm::createHoistLoopInvariantDmaLoadPass()";
-  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
-                           "memref::MemRefDialect",
-                           "bufferization::BufferizationDialect"];
 }
 
 def HoistTightlyCoupledAlloc

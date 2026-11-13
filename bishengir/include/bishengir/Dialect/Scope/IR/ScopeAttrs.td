@@ -40,32 +40,7 @@ def Scope_OutlineAttr : Scope_Attr<"Outline", "outline"> {
   let description = [{
     Unit attribute marking a `scope.scope` that should be outlined into a
     function by `outline-scope{outline-marked-scopes-only}`. It is set by
-    `auto-scope` and `inline-func-to-scope` and removed by `outline-scope`.
-  }];
-}
-
-def Scope_SymFuncNameAttr : Scope_Attr<"SymFuncName", "sym_func_name"> {
-  let parameters = (ins "::mlir::StringAttr":$name);
-  let assemblyFormat = "`<` $name `>`";
-  let description = [{
-    Records the symbol name of the function a `scope.scope` was created from
-    (e.g. by `inline-func-to-scope`). `outline-scope` uses it as the name of the
-    outlined function when it does not clash with an existing symbol.
-  }];
-}
-
-def Scope_CallAttrsVecAttr : Scope_Attr<"CallAttrsVec", "call_attrs_vec"> {
-  let parameters = (ins "::mlir::DictionaryAttr":$attrs);
-  let assemblyFormat = "`<` $attrs `>`";
-  let builders = [
-    AttrBuilder<(ins "::llvm::ArrayRef<::mlir::NamedAttribute>":$attrs), [{
-      return $_get($_ctxt, ::mlir::DictionaryAttr::get($_ctxt, attrs));
-    }]>
-  ];
-  let description = [{
-    Records the call-site attributes of the `func.call` a `scope.scope` was
-    created from (e.g. by `inline-func-to-scope`). `outline-scope` restores them
-    on the recreated call.
+    `auto-scope` and removed by `outline-scope`.
   }];
 }
 
