@@ -1210,8 +1210,7 @@ static scf::ForOp preprocessPreloadLoop(scf::ForOp forOp) {
   });
   for (arith::SelectOp selectOp : remainingSelects) {
     PointerCastTraceResult traceResult;
-    if (failed(collectRootPointerCasts({selectOp.getResult()}, traceResult)) ||
-        traceResult.pointerCasts.front().getAddrs().size() > 1)
+    if (failed(collectRootPointerCasts({selectOp.getResult()}, traceResult)))
       continue;
     hivm::PointerCastOp firstPC = traceResult.pointerCasts.front();
     hivm::PointerCastOp markedLocalPC =
