@@ -1578,3 +1578,43 @@ module {
     return
   }
 }
+
+// -----
+
+// An indirect store has no SSA result, so it must seed its own vector work
+// item and pull in the computation that produces the stored data.
+// CHECK-LABEL: func.func @indirect_store_gm_output
+// CHECK: scf.for
+// CHECK: %[[CUBE:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK:   hivm.hir.mmadL1
+// CHECK:   hivm.hir.fixpipe
+// CHECK:   scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT: scope.scope : () -> () {
+// CHECK:   %[[VALUE:.*]] = hivm.hir.vexp ins(%[[CUBE]] : tensor<16x16xf32>)
+// CHECK-NEXT: hivm.hir.indirect_store ins(%[[VALUE]] : tensor<16x16xf32>, {{.*}}) outs({{.*}} : memref<?xf32>)
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: } {hivm.cv_pipelined_loop}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @indirect_store_gm_output(
+      %a: tensor<1x1x16x16xf16>, %b: tensor<1x1x16x16xf16>,
+      %offsets: tensor<16x16xi64>, %dst: memref<?xf32>, %n: index)
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    scf.for %i = %c0 to %n step %c1 {
+      %init = tensor.empty() : tensor<1x1x16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : tensor<1x1x16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%init : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
+      %ub = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
+      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%dot : tensor<1x1x16x16xf32>) outs(%ub : memref<16x16xf32, #hivm.address_space<ub>>)
+      %data = bufferization.to_tensor %ub restrict writable : memref<16x16xf32, #hivm.address_space<ub>>
+      %vinit = tensor.empty() : tensor<16x16xf32>
+      %value = hivm.hir.vexp ins(%data : tensor<16x16xf32>) outs(%vinit : tensor<16x16xf32>) -> tensor<16x16xf32>
+      hivm.hir.indirect_store ins(%value : tensor<16x16xf32>, %offsets : tensor<16x16xi64>) outs(%dst : memref<?xf32>)
+    }
+    return
+  }
+}
