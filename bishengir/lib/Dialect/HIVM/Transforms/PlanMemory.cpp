@@ -749,6 +749,9 @@ void MemLivenessAnalysis::UpdateExtraBufferIgnoreInplace(
   // mark the temp buffer as ignoring inplace
   for (Value operand : results) {
     auto *it = bufferInfos.find(operand);
+    // The global planner tracks workspace, not the operation's UB scratch.
+    if (it == bufferInfos.end() && isGlobalWorkSpaceMemPlan())
+      continue;
     assert(it != bufferInfos.end());
     it->second.ignoreInplace = true;
   }
