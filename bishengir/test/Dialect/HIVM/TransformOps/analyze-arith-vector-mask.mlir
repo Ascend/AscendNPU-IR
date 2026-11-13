@@ -72,8 +72,8 @@ func.func @mask_32_and_63(
 
 // (32, 128): restricted write uses mask[32]; the 128-element full path is
 // split into two 64-element writes each with its own explicit
-// vector.constant_mask [64] op. Three distinct mask ops produce three mask
-// indices on %shared, so size()>1 fires. Unaffected by the new fix.
+// vector.constant_mask [64] op. Analysis assigns three distinct indices, so
+// size()>1 fires. Mask merging is handled separately by hoisting and CSE.
 // CHECK-LABEL: mask_32_and_128
 // CHECK: %[[SHARED:.*]] = arith.addi
 // CHECK-NOT: annotation.mark %[[SHARED]]

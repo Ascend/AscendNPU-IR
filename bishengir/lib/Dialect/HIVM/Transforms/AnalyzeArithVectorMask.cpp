@@ -13,6 +13,7 @@
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Visitors.h"
 #include "mlir/Interfaces/CastInterfaces.h"
@@ -47,33 +48,6 @@ public:
   void runOnOperation() override;
 };
 } // namespace
-
-// Get all mask ops, including vector.create_mask, vector.constant_mask
-static SmallVector<Operation *> getAllMaskOps(func::FuncOp funcOp) {
-  SmallVector<Operation *> retVec;
-  funcOp->walk([&](Operation *op) {
-    if (isa<vector::CreateMaskOp>(op))
-      retVec.push_back(op);
-    if (isa<vector::ConstantMaskOp>(op))
-      retVec.push_back(op);
-  });
-  return retVec;
-}
-
-int getIdxInMaskOps(Value mask) {
-  int idx = -1;
-  Operation *op = mask.getDefiningOp();
-  assert(op != nullptr);
-  func::FuncOp funcOp = op->getParentOfType<func::FuncOp>();
-  if (!funcOp)
-    return idx;
-  SmallVector<Operation *> maskOps = getAllMaskOps(funcOp);
-  auto it = std::find(maskOps.begin(), maskOps.end(), op);
-  if (it != maskOps.end()) {
-    idx = it - maskOps.begin();
-  }
-  return idx;
-}
 
 // Mark the value could reach to which mask op
 void markReachableInfo(Value val, Operation *maskOp, int idx,
@@ -138,7 +112,19 @@ void analyzeUseAndMark(Value val, Operation *maskOp, int maskOpIdx,
 void ArithVectorMaskAnalysisPass::runOnOperation() {
   func::FuncOp Func = getOperation();
   IRRewriter rewriter(Func.getContext());
-  std::map<int, annotation::MarkOp> maskOpMarkIdx;
+  DominanceInfo domInfo;
+
+  // Assign an index to each mask value in one walk. Hoisting and CSE in the
+  // pipeline unify equivalent constant masks before this analysis.
+  DenseMap<Operation *, int> opToIdx;
+  SmallVector<Value> maskValues;
+  Func.walk([&](Operation *op) {
+    if (!isa<vector::ConstantMaskOp, vector::CreateMaskOp>(op))
+      return;
+    opToIdx.try_emplace(op, maskValues.size());
+    maskValues.push_back(op->getResult(0));
+  });
+
   Func.walk<WalkOrder::PostOrder>([&](Operation *op) {
     // Regard the mask of MaskedStoreOp and TransferWriteOp as the anchor
     Value outVec;
@@ -161,17 +147,20 @@ void ArithVectorMaskAnalysisPass::runOnOperation() {
             maskOpMark->template getAttrOfType<IntegerAttr>(utils::maskOpIdx)
                 .getValue()
                 .getZExtValue();
-        maskOpMarkIdx[maskOpIdx] = maskOpMark;
       } else {
         // If the value has no annotation, create new annotation to record the
         // reachable mask op index
-        maskOpIdx = getIdxInMaskOps(maskOp);
-        rewriter.setInsertionPointAfter(maskOp.getDefiningOp());
+        auto *maskDef = maskOp.getDefiningOp();
+        if (maskDef == nullptr) {
+          return; // block-arg mask: nothing to annotate/reuse → skip anchor
+        }
+        auto opIt = opToIdx.find(maskDef);
+        maskOpIdx = (opIt != opToIdx.end()) ? opIt->second : -1;
+        rewriter.setInsertionPointAfter(maskDef);
         maskOpMark =
             rewriter.create<annotation::MarkOp>(maskOp.getLoc(), maskOp);
         maskOpMark->setAttr(utils::maskOpIdx,
                             rewriter.getI32IntegerAttr(maskOpIdx));
-        maskOpMarkIdx[maskOpIdx] = maskOpMark;
       }
       if (maskOpIdx != -1) {
         llvm::SmallPtrSet<Value, 16> visited;
@@ -194,81 +183,101 @@ void ArithVectorMaskAnalysisPass::runOnOperation() {
   // Process marks on a use-def chain from use to def. This relies on:
   // 1. Marks being inserted immediately after the marked op.
   // 2. SSA dependencies not crossing blocks under MLIR region barrier ops.
-  DominanceInfo domInfo;
   for (annotation::MarkOp markOp : llvm::reverse(reachedMaskMarks)) {
     if (markOp.isAnnotatedByStaticAttr(utils::reachedMaskOpsIdx)) {
       auto markedIdxArray =
           markOp->template getAttrOfType<ArrayAttr>(utils::reachedMaskOpsIdx)
               .getValue();
       if (markedIdxArray.size() == 1) {
-        auto maskOpMark = maskOpMarkIdx.find(
-            dyn_cast<IntegerAttr>(markedIdxArray[0]).getInt());
-        if (domInfo.properlyDominates(
-                markOp.getOperation(), // reached_mask_ops_idx
-                maskOpMark->second)) { // mask_op_idx
+        int reachedMaskIdx = dyn_cast<IntegerAttr>(markedIdxArray[0]).getInt();
+        if (reachedMaskIdx < 0 ||
+            static_cast<size_t>(reachedMaskIdx) >= maskValues.size()) {
           rewriter.eraseOp(markOp);
-        } else {
-          // If the annotated value is also used outside the masked data flow,
-          // do not mark it. Marking it would cause the LLVM lowering to
-          // materialize it under the restricted predicate, and then silently
-          // reuse that restricted-predicate result in the unmasked context,
-          // leaving the upper lanes of the vector invalid.
-          Value annotatedVal = markOp.getSrc();
-          int reachedMaskIdx =
-              dyn_cast<IntegerAttr>(markedIdxArray[0]).getInt();
-          // Check whether a user still belongs to the same masked data flow as
-          // the annotated value.
-          auto isUserInSameMaskedFlow = [reachedMaskIdx](Operation *user) {
-            // Users with results must stay in the reached-mask data flow.
-            if (user->getNumResults() != 0) {
-              return static_cast<bool>(utils::getAnnotateOpWithAttr(
-                  user->getResult(0), utils::reachedMaskOpsIdx));
-            }
-
-            // Store-like users have no result, so check whether their mask
-            // matches the mask that reached the annotated value.
-            Value userMask;
-            if (auto maskedStoreOp = dyn_cast<vector::MaskedStoreOp>(user)) {
-              userMask = maskedStoreOp.getMask();
-            } else if (auto transferWriteOp =
-                           dyn_cast<vector::TransferWriteOp>(user)) {
-              userMask = transferWriteOp.getMask();
-            }
-            if (!userMask)
-              return false;
-
-            auto userMaskMark =
-                utils::getAnnotateOpWithAttr(userMask, utils::maskOpIdx);
-            if (!userMaskMark)
-              return false;
-
-            auto mark = dyn_cast<annotation::MarkOp>(userMaskMark.value());
-            if (!mark)
-              return false;
-            auto maskIdxAttr =
-                mark->template getAttrOfType<IntegerAttr>(utils::maskOpIdx);
-            if (!maskIdxAttr)
-              return false;
-
-            return static_cast<int>(maskIdxAttr.getInt()) == reachedMaskIdx;
-          };
-          bool hasUnmaskedUser = false;
-          for (Operation *user : annotatedVal.getUsers()) {
-            // Skip annotation mark ops themselves.
-            if (isa<annotation::MarkOp>(user))
-              continue;
-            // Any user outside the same masked flow makes this a mixed use.
-            if (!isUserInSameMaskedFlow(user)) {
-              hasUnmaskedUser = true;
-              break;
-            }
-          }
-          if (hasUnmaskedUser)
-            rewriter.eraseOp(markOp);
-          else
-            markOp->setAttr(utils::reachedMaskOpsIdx, markedIdxArray[0]);
+          continue;
         }
+        // If the annotated value is also used outside the masked data flow,
+        // do not mark it. Marking it would cause the LLVM lowering to
+        // materialize it under the restricted predicate, and then silently
+        // reuse that restricted-predicate result in the unmasked context,
+        // leaving the upper lanes of the vector invalid.
+        //
+        // Note: unlike an earlier revision, a mark is NOT erased when the
+        // annotated value properly dominates the mask. An SSA value feeding
+        // ops in two sibling blocks always properly dominates those blocks'
+        // masks, so that rule would erase the very annotation that makes
+        // cross-block mask reuse possible. Keeping the mark is safe:
+        // findReuseableMask re-verifies dominance (or same-block clone)
+        // before reusing, and an unhonorable mark degrades to a fresh mask.
+        Value annotatedVal = markOp.getSrc();
+        // Check whether a user still belongs to the same masked data flow as
+        // the annotated value.
+        auto isUserInSameMaskedFlow = [reachedMaskIdx](Operation *user) {
+          // Users with results must stay in the reached-mask data flow.
+          if (user->getNumResults() != 0) {
+            return static_cast<bool>(utils::getAnnotateOpWithAttr(
+                user->getResult(0), utils::reachedMaskOpsIdx));
+          }
 
+          // Store-like users have no result, so check whether their mask
+          // matches the mask that reached the annotated value.
+          Value userMask;
+          if (auto maskedStoreOp = dyn_cast<vector::MaskedStoreOp>(user)) {
+            userMask = maskedStoreOp.getMask();
+          } else if (auto transferWriteOp =
+                         dyn_cast<vector::TransferWriteOp>(user)) {
+            userMask = transferWriteOp.getMask();
+          }
+          if (!userMask)
+            return false;
+
+          auto userMaskMark =
+              utils::getAnnotateOpWithAttr(userMask, utils::maskOpIdx);
+          if (!userMaskMark)
+            return false;
+
+          auto mark = dyn_cast<annotation::MarkOp>(userMaskMark.value());
+          if (!mark)
+            return false;
+          auto maskIdxAttr =
+              mark->template getAttrOfType<IntegerAttr>(utils::maskOpIdx);
+          if (!maskIdxAttr)
+            return false;
+
+          return static_cast<int>(maskIdxAttr.getInt()) == reachedMaskIdx;
+        };
+        bool hasUnmaskedUser = false;
+        for (Operation *user : annotatedVal.getUsers()) {
+          // Skip annotation mark ops themselves.
+          if (isa<annotation::MarkOp>(user))
+            continue;
+          // Any user outside the same masked flow makes this a mixed use.
+          if (!isUserInSameMaskedFlow(user)) {
+            hasUnmaskedUser = true;
+            break;
+          }
+        }
+        if (hasUnmaskedUser) {
+          rewriter.eraseOp(markOp);
+          continue;
+        }
+        // Keep: resolve the accumulated array to a single index.
+        markOp->setAttr(utils::reachedMaskOpsIdx, markedIdxArray[0]);
+        // Record the direct mask reference consumed by findReuseableMask.
+        // A same-block mask may follow the annotated value when this analysis
+        // runs without hoisting. Move only the mark to keep its operand in
+        // scope; lowering still checks dominance before reusing the mask.
+        Value mask = maskValues[reachedMaskIdx];
+        Operation *maskDef = mask.getDefiningOp();
+        if (!domInfo.dominates(maskDef, markOp.getOperation())) {
+          if (maskDef->getBlock() != markOp->getBlock())
+            continue;
+          rewriter.moveOpAfter(markOp.getOperation(), maskDef);
+        }
+        rewriter.modifyOpInPlace(markOp, [&]() {
+          markOp->setAttr(markOp.getKeysAttrName(),
+                          rewriter.getStrArrayAttr(utils::reachedMaskValue));
+          markOp.getValuesMutable().assign(mask);
+        });
       } else {
         rewriter.eraseOp(markOp);
       }

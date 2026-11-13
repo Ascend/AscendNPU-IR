@@ -86,8 +86,11 @@ static constexpr llvm::StringLiteral kEnableAutoMarkBufferSize =
 /// ones.
 constexpr llvm::StringLiteral kBufferSizeInByteAttr = "buffer_size_in_byte";
 static constexpr llvm::StringLiteral kMemrefAsPtr = "memref.memref_as_ptr";
-static constexpr llvm::StringLiteral maskOpIdx = "mask_op_idx";
-static constexpr llvm::StringLiteral reachedMaskOpsIdx = "reached_mask_ops_idx";
+inline constexpr llvm::StringLiteral maskOpIdx = "mask_op_idx";
+inline constexpr llvm::StringLiteral reachedMaskOpsIdx = "reached_mask_ops_idx";
+/// Dynamic annotation key carrying the selected mask SSA value from mask
+/// analysis to Arith/Vector lowering.
+inline constexpr llvm::StringLiteral reachedMaskValue = "reached_mask_value";
 static constexpr llvm::StringLiteral maskBitWidth = "mask_bit_width";
 static const llvm::StringLiteral simtVFSuffix = "_vf_simt";
 static const llvm::StringLiteral kMapForToForallAttrName = "map_for_to_forall";
