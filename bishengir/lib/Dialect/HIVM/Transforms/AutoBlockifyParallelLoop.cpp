@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -419,6 +420,27 @@ static void markBlockifyDMAs(func::FuncOp funcOp, scf::ForOp forOp) {
   });
 }
 
+// Recreating get_block_idx wraps the whole kernel in a stride loop. That
+// loop is required for an atomic or a sync-block critical section, whose
+// bakery lock is sized to the physical launch. Other kernels keep one
+// iteration: the extra loop makes multi-buffer reserve a second copy of
+// every load in the body.
+static bool needsBlockifyWithoutProgramId(func::FuncOp funcOp) {
+  auto result = funcOp.walk([&](Operation *op) {
+    if (isa<hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp, hivm::AtomicCasOp,
+            hivm::AtomicXchgOp, hivm::AtomicRMWOp, hivm::SetAtomicOp,
+            hfusion::AtomicCasOp, hfusion::AtomicXchgOp, hfusion::AtomicRMWOp>(
+            op))
+      return WalkResult::interrupt();
+    if (auto store = dyn_cast<hivm::StoreLikeOpInterface>(op)) {
+      if (store.isAtomic())
+        return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return result.wasInterrupted();
+}
+
 static LogicalResult loopOnLogicBlock(func::FuncOp funcOp,
                                       IRRewriter &rewriter) {
   auto &entryBlock = funcOp.getBody().front();
@@ -446,8 +468,11 @@ static LogicalResult loopOnLogicBlock(func::FuncOp funcOp,
     return funcOp->emitError("Logical Block number not found");
   if (!getBlockIdxOp) {
     // Program ids with no users are erased by canonicalization, and that
-    // also deletes get_block_idx. Triton still launches only the physical
-    // core count, so recreate the index and wrap the body.
+    // also deletes get_block_idx. Recreate it only when the kernel has an
+    // atomic or a sync-block lock: Triton still launches the physical core
+    // count, and those ops need one iteration per logical block.
+    if (!needsBlockifyWithoutProgramId(funcOp))
+      return success();
     rewriter.setInsertionPointAfterValue(logicBlockNum);
     getBlockIdxOp =
         rewriter.create<hivm::GetBlockIdxOp>(loc, rewriter.getI64Type());
