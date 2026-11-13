@@ -1506,6 +1506,115 @@ func.func @load_and_store_same_GM(%arg0: tensor<64xf32>, %arg1: memref<?xf32>, %
 }
 
 // -----
+// Regbase guards differently shaped or strided views
+// sharing the same source and offset, without rejecting every shared root.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+// CHECK-LABEL: func.func @regbase_different_sizes
+// CHECK-NOT: scf.for
+// CHECK: hivm.hir.store
+// CHECK: limit_sub_block_id0
+// CHECK: hivm.hir.load
+// CHECK: return
+func.func @regbase_different_sizes(%value: tensor<64x64xf32>, %scratch: memref<?xf32>, %out: memref<?xf32>, %offset: index, %other_offset: index) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  %store_view = memref.reinterpret_cast %scratch to offset: [%offset], sizes: [64, 64], strides: [64, 1] : memref<?xf32> to memref<64x64xf32, strided<[64, 1], offset: ?>>
+  %load_view = memref.reinterpret_cast %scratch to offset: [%offset], sizes: [16, 16], strides: [64, 1] : memref<?xf32> to memref<16x16xf32, strided<[64, 1], offset: ?>>
+  %ub = memref.alloc() : memref<16x16xf32>
+  hivm.hir.store ins(%value : tensor<64x64xf32>) outs(%store_view : memref<64x64xf32, strided<[64, 1], offset: ?>>)
+  hivm.hir.load ins(%load_view : memref<16x16xf32, strided<[64, 1], offset: ?>>) outs(%ub : memref<16x16xf32>)
+  %result = bufferization.to_tensor %ub restrict writable : memref<16x16xf32>
+  %dst = memref.reinterpret_cast %out to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf32> to memref<16x16xf32>
+  hivm.hir.store ins(%result : tensor<16x16xf32>) outs(%dst : memref<16x16xf32>)
+  return
+}
+}
+// -----
+// Regbase guards differently shaped or strided views
+// sharing the same source and offset, without rejecting every shared root.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+// CHECK-LABEL: func.func @regbase_different_strides
+// CHECK-NOT: scf.for
+// CHECK: hivm.hir.store
+// CHECK: limit_sub_block_id0
+// CHECK: hivm.hir.load
+// CHECK: return
+func.func @regbase_different_strides(%value: tensor<64x64xf32>, %scratch: memref<?xf32>, %out: memref<?xf32>, %offset: index, %other_offset: index) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  %store_view = memref.reinterpret_cast %scratch to offset: [%offset], sizes: [64, 64], strides: [64, 1] : memref<?xf32> to memref<64x64xf32, strided<[64, 1], offset: ?>>
+  %load_view = memref.reinterpret_cast %scratch to offset: [%offset], sizes: [64, 64], strides: [1, 64] : memref<?xf32> to memref<64x64xf32, strided<[1, 64], offset: ?>>
+  %ub = memref.alloc() : memref<64x64xf32>
+  hivm.hir.store ins(%value : tensor<64x64xf32>) outs(%store_view : memref<64x64xf32, strided<[64, 1], offset: ?>>)
+  hivm.hir.load ins(%load_view : memref<64x64xf32, strided<[1, 64], offset: ?>>) outs(%ub : memref<64x64xf32>)
+  %result = bufferization.to_tensor %ub restrict writable : memref<64x64xf32>
+  %dst = memref.reinterpret_cast %out to offset: [0], sizes: [64, 64], strides: [64, 1] : memref<?xf32> to memref<64x64xf32>
+  hivm.hir.store ins(%result : tensor<64x64xf32>) outs(%dst : memref<64x64xf32>)
+  return
+}
+}
+// -----
+// Regbase guards differently shaped or strided views
+// sharing the same source and offset, without rejecting every shared root.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+// CHECK-LABEL: func.func @regbase_identical_views
+// CHECK: scf.for
+// CHECK: hivm.hir.store
+// CHECK-SAME: tiled_op
+// CHECK: return
+func.func @regbase_identical_views(%value: tensor<64x64xf32>, %scratch: memref<?xf32>, %out: memref<?xf32>, %offset: index, %other_offset: index) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  %store_view = memref.reinterpret_cast %scratch to offset: [%offset], sizes: [64, 64], strides: [64, 1] : memref<?xf32> to memref<64x64xf32, strided<[64, 1], offset: ?>>
+  %load_view = memref.reinterpret_cast %scratch to offset: [%offset], sizes: [64, 64], strides: [64, 1] : memref<?xf32> to memref<64x64xf32, strided<[64, 1], offset: ?>>
+  %ub = memref.alloc() : memref<64x64xf32>
+  hivm.hir.store ins(%value : tensor<64x64xf32>) outs(%store_view : memref<64x64xf32, strided<[64, 1], offset: ?>>)
+  hivm.hir.load ins(%load_view : memref<64x64xf32, strided<[64, 1], offset: ?>>) outs(%ub : memref<64x64xf32>)
+  %result = bufferization.to_tensor %ub restrict writable : memref<64x64xf32>
+  %dst = memref.reinterpret_cast %out to offset: [0], sizes: [64, 64], strides: [64, 1] : memref<?xf32> to memref<64x64xf32>
+  hivm.hir.store ins(%result : tensor<64x64xf32>) outs(%dst : memref<64x64xf32>)
+  return
+}
+}
+// -----
+// Regbase guards differently shaped or strided views
+// sharing the same source and offset, without rejecting every shared root.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+// CHECK-LABEL: func.func @regbase_read_before_write
+// CHECK-NOT: scf.for
+// CHECK: hivm.hir.load
+// CHECK: hivm.hir.store
+// CHECK: limit_sub_block_id0
+// CHECK: return
+func.func @regbase_read_before_write(%value: tensor<64x64xf32>, %scratch: memref<?xf32>, %out: memref<?xf32>, %offset: index, %other_offset: index) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  %store_view = memref.reinterpret_cast %scratch to offset: [%offset], sizes: [64, 64], strides: [64, 1] : memref<?xf32> to memref<64x64xf32, strided<[64, 1], offset: ?>>
+  %load_view = memref.reinterpret_cast %scratch to offset: [%offset], sizes: [16, 16], strides: [64, 1] : memref<?xf32> to memref<16x16xf32, strided<[64, 1], offset: ?>>
+  %ub = memref.alloc() : memref<16x16xf32>
+  hivm.hir.load ins(%load_view : memref<16x16xf32, strided<[64, 1], offset: ?>>) outs(%ub : memref<16x16xf32>)
+  hivm.hir.store ins(%value : tensor<64x64xf32>) outs(%store_view : memref<64x64xf32, strided<[64, 1], offset: ?>>)
+  %result = bufferization.to_tensor %ub restrict writable : memref<16x16xf32>
+  %dst = memref.reinterpret_cast %out to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf32> to memref<16x16xf32>
+  hivm.hir.store ins(%result : tensor<16x16xf32>) outs(%dst : memref<16x16xf32>)
+  return
+}
+}
+// -----
+// Regbase guards differently shaped or strided views
+// sharing the same source and offset, without rejecting every shared root.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+// CHECK-LABEL: func.func @regbase_different_offsets
+// CHECK: scf.for
+// CHECK: hivm.hir.store
+// CHECK-SAME: tiled_op
+// CHECK: return
+func.func @regbase_different_offsets(%value: tensor<64x64xf32>, %scratch: memref<?xf32>, %out: memref<?xf32>, %offset: index, %other_offset: index) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  %store_view = memref.reinterpret_cast %scratch to offset: [%offset], sizes: [64, 64], strides: [64, 1] : memref<?xf32> to memref<64x64xf32, strided<[64, 1], offset: ?>>
+  %load_view = memref.reinterpret_cast %scratch to offset: [%other_offset], sizes: [16, 16], strides: [64, 1] : memref<?xf32> to memref<16x16xf32, strided<[64, 1], offset: ?>>
+  %ub = memref.alloc() : memref<16x16xf32>
+  hivm.hir.store ins(%value : tensor<64x64xf32>) outs(%store_view : memref<64x64xf32, strided<[64, 1], offset: ?>>)
+  hivm.hir.load ins(%load_view : memref<16x16xf32, strided<[64, 1], offset: ?>>) outs(%ub : memref<16x16xf32>)
+  %result = bufferization.to_tensor %ub restrict writable : memref<16x16xf32>
+  %dst = memref.reinterpret_cast %out to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf32> to memref<16x16xf32>
+  hivm.hir.store ins(%result : tensor<16x16xf32>) outs(%dst : memref<16x16xf32>)
+  return
+}
+}
+
+// -----
 // CHECK-LABEL:   func.func @unstructure_store(
 // CHECK:           scf.if %[[VAL_14:.*]] {
 // CHECK:             hivm.hir.store ins(%[[VAL_10:.*]] : tensor<1xf32>) outs(%[[VAL_11:.*]] : memref<1xf32, strided<[1], offset: ?>>)
