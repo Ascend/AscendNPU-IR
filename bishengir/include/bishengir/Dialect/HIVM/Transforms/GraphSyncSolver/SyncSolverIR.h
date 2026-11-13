@@ -22,6 +22,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
+#include <atomic>
 #include <memory>
 #include <utility>
 
@@ -93,13 +94,13 @@ public:
 
 private:
   // Monotonic id allocator used to assign stable ids to in-memory ops.
-  static int globalIndex;
+  static std::atomic<int> globalIndex;
 
 public:
   OperationBase() = delete;
   OperationBase(const OpType &opType, Operation *op, OperationBase *parentOp)
       : opType(opType), op(op), parentOp(parentOp) {
-    id = globalIndex++;
+    id = globalIndex.fetch_add(1, std::memory_order_relaxed);
   }
 
 public:

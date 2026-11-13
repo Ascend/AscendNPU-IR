@@ -34,7 +34,7 @@ using namespace hivm::syncsolver;
 
 namespace mlir::hivm::syncsolver {
 
-int OperationBase::globalIndex = 0;
+std::atomic<int> OperationBase::globalIndex{0};
 
 namespace {
 
