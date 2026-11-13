@@ -618,6 +618,24 @@ getTaylorSeriesCoefficients(TaylerMode taylerMode, int termCount) {
   llvm::report_fatal_error("unsupported TaylerMode");
 }
 
+// Coefficients for the even cosine series
+//   cos(x) = 1 - x^2 / 2! + x^4 / 4! - ...
+// returned as [1, -1/2!, 1/4!, ...]
+inline SmallVector<double> getCosineSeriesCoefficients(int termCount) {
+  if (termCount <= 0)
+    llvm::report_fatal_error("Taylor expansion term count must be positive");
+
+  SmallVector<double> coefficients;
+  coefficients.reserve(termCount);
+  coefficients.push_back(1.0);
+  double coefficientDenominator = 1.0;
+  for (int i = 1; i < termCount; ++i) {
+    coefficientDenominator *= -1.0 * (2 * i - 1) * (2 * i);
+    coefficients.push_back(1.0 / coefficientDenominator);
+  }
+  return coefficients;
+}
+
 // Computes k = round(x / pi + offset). For cosine, offset = 0.5 because
 //   cos(x) = sin(x + pi / 2)
 // and (x + pi / 2) / pi = x / pi + 0.5.
@@ -677,6 +695,38 @@ Value buildRangeReducedTrigInput(
                                 empty, BinaryKind::Add);
 }
 
+// Evaluates the even polynomial
+//   c0 + c1 * x^2 + c2 * x^4 + ... + cn * x^(2n)
+// with Horner's method.
+template <typename Traits>
+Value buildHornerEvenPolynomial(PatternRewriter &rewriter, Location loc,
+                                Value input,
+                                llvm::ArrayRef<double> coefficients,
+                                Value empty = Value()) {
+  if (coefficients.empty())
+    llvm::report_fatal_error("polynomial coefficients must not be empty");
+
+  Type elementType = getElementTypeOrSelf(input.getType());
+  if (!empty)
+    empty = utils::createEmptyOp(rewriter, loc, input);
+  Value squaredInput = Traits::createBinaryOp(rewriter, loc, input, input,
+                                              empty, BinaryKind::Mul);
+  Value approximation =
+      createFloatConstant(rewriter, loc, elementType, coefficients.back());
+
+  for (int index = static_cast<int>(coefficients.size()) - 2; index >= 0;
+       --index) {
+    approximation = Traits::createBinaryOp(
+        rewriter, loc, squaredInput, approximation, empty, BinaryKind::Mul);
+    Value coefficientValue =
+        createFloatConstant(rewriter, loc, elementType, coefficients[index]);
+    approximation = Traits::createBinaryOp(
+        rewriter, loc, approximation, coefficientValue, empty, BinaryKind::Add);
+  }
+
+  return approximation;
+}
+
 // Evaluates
 //   x * (c0 + c1 * x^2 + ... + cn * x^(2n))
 // with Horner's method. For sine this becomes
@@ -692,27 +742,24 @@ Value buildTaylorApproximation(PatternRewriter &rewriter, Location loc,
   if (coefficients.empty())
     llvm::report_fatal_error("Taylor coefficients must not be empty");
 
-  Type elementType = getElementTypeOrSelf(input.getType());
   Value empty = utils::createEmptyOp(rewriter, loc, input);
-  Value squaredInput = Traits::createBinaryOp(rewriter, loc, input, input,
-                                              empty, BinaryKind::Mul);
-  Value approximation = createFloatConstant(rewriter, loc, elementType,
-                                            coefficients.back());
-
-  for (int index = static_cast<int>(coefficients.size()) - 2; index >= 0;
-       --index) {
-    approximation = Traits::createBinaryOp(rewriter, loc, squaredInput,
-                                           approximation, empty,
-                                           BinaryKind::Mul);
-    Value coefficientValue = createFloatConstant(rewriter, loc, elementType,
-                                                 coefficients[index]);
-    approximation = Traits::createBinaryOp(rewriter, loc, approximation,
-                                           coefficientValue, empty,
-                                           BinaryKind::Add);
-  }
-
+  Value approximation = buildHornerEvenPolynomial<Traits>(rewriter, loc, input,
+                                                          coefficients, empty);
   return Traits::createBinaryOp(rewriter, loc, approximation, input, empty,
                                 BinaryKind::Mul);
+}
+
+// Evaluates the even Taylor polynomial for cosine
+//   cos(x) = 1 - x^2 / 2! + x^4 / 4! - ...
+// i.e. the even Horner form without the odd factor.
+template <typename Traits>
+Value buildCosTaylorApproximation(PatternRewriter &rewriter, Location loc,
+                                  Value input,
+                                  llvm::ArrayRef<double> coefficients) {
+  if (coefficients.empty())
+    llvm::report_fatal_error("Cos coefficients must not be empty");
+
+  return buildHornerEvenPolynomial<Traits>(rewriter, loc, input, coefficients);
 }
 
 // Elementwise helper for the common polynomial step
