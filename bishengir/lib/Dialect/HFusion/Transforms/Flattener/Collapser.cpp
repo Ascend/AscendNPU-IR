@@ -149,6 +149,11 @@ SmallVector<OpFoldResult> Flattener::getFlattenMixedSizes(Value res) const {
             continue;
           }
         }
+        if (auto recovered = tryGetOriginalSliceMixedSizes(res)) {
+            if (static_cast<int64_t>(recovered->size()) ==
+                static_cast<int64_t>(args.size()))
+            return *recovered;
+        }
         LDBG("[Parent not part of args, not reified size] " << res << " "
                                                             << idx);
         report_fatal_error(
@@ -1733,6 +1738,15 @@ Flattener::tryGetOriginalSliceMixedSizes(Value value) const {
   }
 
   while (true) {
+    if (auto replIt = valueReplacement.find(current);
+        replIt != valueReplacement.end()) {
+      Value prev = replIt->second;
+      if (!visited.insert(prev).second)
+        break;
+      current = prev;
+      continue;
+    }
+
     if (auto subviewOp = current.getDefiningOp<memref::SubViewOp>()) {
       SmallVector<OpFoldResult> sizes;
       llvm::append_range(sizes, subviewOp.getMixedSizes());

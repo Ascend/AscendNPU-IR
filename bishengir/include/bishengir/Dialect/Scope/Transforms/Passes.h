@@ -21,10 +21,7 @@
 #ifndef BISHENGIR_DIALECT_SCOPE_TRANSFORMS_PASSES_H
 #define BISHENGIR_DIALECT_SCOPE_TRANSFORMS_PASSES_H
 
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Pass/Pass.h"
-
-#include <functional>
 
 namespace mlir {
 #define GEN_PASS_DECL
@@ -46,16 +43,6 @@ std::unique_ptr<Pass> createPropagateSIMTModePass();
 // outer region.
 std::unique_ptr<Pass>
 createInlineScopePass(const InlineScopeOptions &options = {});
-
-/// Filter deciding whether a callee should be inlined. The default filter
-/// accepts every callee.
-using CalleeFilter = std::function<bool(func::FuncOp)>;
-
-// Create a pass to inline calls to the functions accepted by `calleeFilter`
-// into scope.scope ops, so that one-shot-bufferize sees through the former
-// call boundary.
-std::unique_ptr<Pass> createInlineFuncToScopePass(
-    CalleeFilter calleeFilter = [](func::FuncOp) { return true; });
 
 //===----------------------------------------------------------------------===//
 // Registration

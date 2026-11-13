@@ -16,6 +16,7 @@ add_bishengir_dialect_library(MLIRAVEDialect
   BiShengIRHIVMAttributesIncGen
 
   LINK_LIBS PUBLIC
+  BiShengIRHIVMDialect
   MLIRArithDialect
   MLIRDestinationStyleOpInterface
   MLIRLinalgDialect

@@ -2884,6 +2884,61 @@ module {
 
 // -----
 
+// Read %arg0, write %arg1, then read %arg2. %arg1 is locally reusable with
+// %arg0, but %arg2 is a different formal read after that write.
+func.func @vf_preload_alias_late_read(
+    %arg0: memref<256x128xf32, #hivm.address_space<ub>>,
+    %arg1: memref<256x128xf32, #hivm.address_space<ub>>,
+    %arg2: memref<256x128xf32, #hivm.address_space<ub>>)
+    attributes {hivm.func_core_type = #hivm.func_core_type<AIV>,
+                hivm.vector_function, no_inline} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : f32
+  %0 = vector.transfer_read %arg0[%c0, %c0], %cst {in_bounds = [true, true]}
+      : memref<256x128xf32, #hivm.address_space<ub>>, vector<1x64xf32>
+  vector.transfer_write %0, %arg1[%c0, %c0] {in_bounds = [true, true]}
+      : vector<1x64xf32>, memref<256x128xf32, #hivm.address_space<ub>>
+  %1 = vector.transfer_read %arg2[%c0, %c0], %cst {in_bounds = [true, true]}
+      : memref<256x128xf32, #hivm.address_space<ub>>, vector<1x64xf32>
+  return
+}
+
+// %safe is passed as both the early read and the late read. Preload reuse must
+// not fold %alpha onto %safe: the late read would observe the write. Both
+// buffers then stay live and do not fit in UB. Folding them is what previously
+// let this plan succeed.
+// expected-error@below {{ub overflow, requires 2097152 bits while 1572864 bits available! (possible reason: tiling basic block is too large or block number is more than what user expect due to multi-buffer feature is enabled and some ops need extra local buffer.)}}
+func.func @test_preload_reuse_rejects_aliased_vf_arg(
+    %arg0: memref<256x128xf32, #hivm.address_space<gm>>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  scf.for %i = %c0 to %c4 step %c1 {
+    %safe = memref.alloc() : memref<256x128xf32, #hivm.address_space<ub>>
+    annotation.mark %safe {hivm.multi_buffer = 1 : i32, hivm.preload_local_buffer = 1 : i32}
+        : memref<256x128xf32, #hivm.address_space<ub>>
+    scope.scope : () -> () {
+      hivm.hir.load ins(%arg0 : memref<256x128xf32, #hivm.address_space<gm>>)
+                    outs(%safe : memref<256x128xf32, #hivm.address_space<ub>>)
+    } {hivm.preload_num = 1 : i32}
+    scope.scope : () -> () {
+      %alpha = memref.alloc() : memref<256x128xf32, #hivm.address_space<ub>>
+      func.call @vf_preload_alias_late_read(%safe, %alpha, %safe)
+          {hivm.vector_function, no_inline}
+          : (memref<256x128xf32, #hivm.address_space<ub>>,
+             memref<256x128xf32, #hivm.address_space<ub>>,
+             memref<256x128xf32, #hivm.address_space<ub>>) -> ()
+      hivm.hir.debug {debugtype = "print", hex = false, prefix = "alpha: ",
+                      tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>}
+          %alpha : memref<256x128xf32, #hivm.address_space<ub>>
+      scope.return
+    } {hivm.preload_num = 0 : i32}
+  }
+  return
+}
+
+// -----
+
 func.func @test_reuse_l0C(%arg0: memref<128x128xf16, #hivm.address_space<gm>>, %arg1: memref<128x128xf16, #hivm.address_space<gm>>, %arg2: i1) {
   %c1 = arith.constant 1 : index
   %c64 = arith.constant 64 : index

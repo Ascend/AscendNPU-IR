@@ -69,9 +69,77 @@ static bool isBTransposed(Operation *op) {
   return false;
 }
 
+/// Collect source dims that \p iv indexes as an offset of extract,
+/// extract_slice, or subview.
+static void collectOffsetSourceDims(
+    Operation *user, Value iv,
+    SmallVectorImpl<std::pair<Value, int64_t>> &sourceDims) {
+  auto appendMatchingOffsets = [&](Value source,
+                                   ArrayRef<OpFoldResult> offsets) {
+    for (auto [dim, offset] : llvm::enumerate(offsets)) {
+      if (dyn_cast_if_present<Value>(offset) == iv)
+        sourceDims.emplace_back(source, static_cast<int64_t>(dim));
+    }
+  };
+
+  TypeSwitch<Operation *>(user)
+      .Case<tensor::ExtractOp>([&](auto extract) {
+        for (auto [dim, index] : llvm::enumerate(extract.getIndices())) {
+          if (index == iv)
+            sourceDims.emplace_back(extract.getTensor(),
+                                    static_cast<int64_t>(dim));
+        }
+      })
+      .Case<tensor::ExtractSliceOp>([&](auto slice) {
+        appendMatchingOffsets(slice.getSource(), slice.getMixedOffsets());
+      })
+      .Case<memref::SubViewOp>([&](auto subview) {
+        appendMatchingOffsets(subview.getSource(), subview.getMixedOffsets());
+      });
+}
+
+static scf::ForOp getOwningParallelFor(Value v) {
+  auto arg = dyn_cast<BlockArgument>(v);
+  if (!arg)
+    return {};
+  auto forOp = dyn_cast<scf::ForOp>(arg.getOwner()->getParentOp());
+  if (!forOp || forOp.getInductionVar() != v ||
+      !forOp->hasAttrOfType<UnitAttr>(hivm::ParallelLoopAttr::name))
+    return {};
+  return forOp;
+}
+
+void DimensionAnalyzer::joinParallelLoopOffsetValueGroups(scf::ForOp forOp) {
+  Value iv = forOp.getInductionVar();
+  SmallVector<std::pair<Value, int64_t>> sourceDims;
+  for (Operation *ivUser : iv.getUsers())
+    collectOffsetSourceDims(ivUser, iv, sourceDims);
+
+  Value first;
+  for (auto [source, dim] : sourceDims) {
+    if (!utils::hasRank(source.getType()))
+      continue;
+    if (!first)
+      first = source;
+    else
+      joinValueGroup(first, source);
+  }
+}
+
 void DimensionAnalyzer::handleValueGroupForUse(Operation *user, Value current,
                                                OpOperand *use,
                                                unsigned operandNumber) {
+  if (auto forOp = dyn_cast<scf::ForOp>(user)) {
+    if (forOp->hasAttrOfType<UnitAttr>(hivm::ParallelLoopAttr::name))
+      joinParallelLoopOffsetValueGroups(forOp);
+  } else if (isa<tensor::ExtractOp, tensor::ExtractSliceOp, memref::SubViewOp>(
+                 user)) {
+    for (OpOperand &operand : user->getOpOperands()) {
+      if (auto forOp = getOwningParallelFor(operand.get()))
+        joinParallelLoopOffsetValueGroups(forOp);
+    }
+  }
+
   if (!utils::hasRank(current.getType()))
     return;
   createDummyRefIfNotExist({current});
@@ -661,6 +729,28 @@ void DimensionAnalyzer::processForOp(scf::ForOp op) {
     processValue(regionArg, initArg);
     processValue(regionArg, yield);
   }
+
+  if (!op->hasAttrOfType<UnitAttr>(hivm::ParallelLoopAttr::name))
+    return;
+
+  Value iv = op.getInductionVar();
+  SmallVector<std::pair<Value, int64_t>> sourceDims;
+  for (Operation *user : iv.getUsers())
+    collectOffsetSourceDims(user, iv, sourceDims);
+
+  int firstRef = -1;
+  for (auto [source, dim] : sourceDims) {
+    if (!isa<ShapedType>(source.getType()))
+      continue;
+    createDummyRefIfNotExist({source});
+    auto refs = getValueDimIndices(source);
+    if (dim < 0 || static_cast<size_t>(dim) >= refs.size())
+      continue;
+    if (firstRef < 0)
+      firstRef = refs[dim];
+    else
+      joinShape(firstRef, refs[dim]);
+  }
 }
 
 void DimensionAnalyzer::processWhileOp(scf::WhileOp op) {
@@ -1114,6 +1204,8 @@ void DimensionAnalyzer::combineInferable() {
 }
 
 void DimensionAnalyzer::markDimensions() {
+  requiredUbCounts.clear();
+  requiredUbBuffers.clear();
   auto markCustomReductionDims = [this](auto customOp) {
     if (!customOpHasExplicitSemantics(customOp))
       return;
@@ -1223,6 +1315,28 @@ void DimensionAnalyzer::markDimensions() {
         })
         .Case<hivm::FixpipeOp>([&](auto op) { markFixpipeTilingPriority(op); })
         .Case<hivm::VTransposeOp>([&](auto op) { markTransposedDim(op); })
+        .Case<annotation::MarkOp>([&](auto mark) {
+          auto attr =
+              mark->template getAttrOfType<HIVMTightlyCoupledBufferAttr>(
+                  HIVMTightlyCoupledBufferAttr::name);
+          if (!attr || !attr.getId())
+            return;
+          Value buffer = mark.getSrc();
+          auto type = dyn_cast<MemRefType>(buffer.getType());
+          auto space = GetBufferSpaceAttr(buffer);
+          // Match the trivial-UB exception in the post-bubble-up check.
+          if (!space || space->getAddressSpace() != AddressSpace::UB)
+            return;
+          createDummyRefIfNotExist({buffer});
+          auto indices = getValueDimIndices(buffer);
+          auto groupIndex = getValueGroupIndex(buffer);
+          if (requiredUbBuffers.size() <= static_cast<size_t>(groupIndex))
+            requiredUbBuffers.resize(groupIndex + 1);
+          ++requiredUbCounts[groupIndex];
+          for (int64_t dim = 0; dim < type.getRank(); ++dim)
+            requiredUbBuffers[groupIndex].insert(
+                structuralDsu_->find(indices[dim]));
+        })
         .Case<memref::AllocOp>([&](auto op) {
           if (!hacc::utils::isRegBasedArch(
                   op->template getParentOfType<ModuleOp>()))

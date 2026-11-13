@@ -24,8 +24,10 @@
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
@@ -388,10 +390,100 @@ LogicalResult MultiBufferPattern::OptMultiBuffer(hivm::PointerCastOp op) const {
   return success();
 }
 
+/// Explicit access bindings are lowered before the legacy root-wide pattern.
+/// Validate every new root first so a missing binding cannot silently select
+/// addresses using the old loop counter.
+static LogicalResult lowerPoolSlots(func::FuncOp function) {
+  auto pending = function.walk([](annotation::MarkOp mark) -> WalkResult {
+    if (!mark->hasAttr(ExperimentalPoolReadyAttr::name) &&
+        !mark->hasAttr(ExperimentalPoolReleaseAttr::name))
+      return WalkResult::advance();
+    mark.emitError(
+        "buffer protocol must be synchronized by GSS before address lowering");
+    return WalkResult::interrupt();
+  });
+  if (pending.wasInterrupted())
+    return failure();
+  llvm::SetVector<Operation *> roots;
+  function.walk([&](hivm::PoolSlotOp slot) {
+    roots.insert(slot.getSource().getDefiningOp());
+  });
+  function.walk([&](hivm::PointerCastOp root) {
+    if (root->hasAttr(ExperimentalBufferSlotsAttr::name) ||
+        utils::getAnnotateOpWithAttr(root.getResult(), MemPoolSizeAttr::name))
+      roots.insert(root);
+  });
+  for (Operation *operation : roots) {
+    auto root = dyn_cast<hivm::PointerCastOp>(operation);
+    if (!root)
+      return operation->emitError(
+          "experimental.pool_slot requires a pointer_cast root");
+    if (auto mark = utils::getAnnotateOpWithAttr(root, MemPoolSizeAttr::name)) {
+      auto size = (*mark)->getAttrOfType<IntegerAttr>(MemPoolSizeAttr::name);
+      if (!size || size.getInt() != int64_t(root.getAddrs().size()))
+        return root.emitError(
+            "buffer pool size differs from its address count");
+    }
+    for (Operation *user : root->getUsers())
+      if (!isa<hivm::PoolSlotOp, annotation::MarkOp, memref::DimOp>(user))
+        return user->emitError(
+            "independent buffer access is missing experimental.pool_slot");
+  }
+  for (Operation *operation : roots) {
+    auto root = cast<hivm::PointerCastOp>(operation);
+    OpBuilder builder(root);
+    SmallVector<Value> addresses;
+    for (Value address : root.getAddrs())
+      addresses.push_back(builder.create<hivm::PointerCastOp>(
+          root.getLoc(), root.getType(), address, root.getDynamicSizes()));
+    SmallVector<Operation *> users(root->getUsers());
+    for (Operation *user : users) {
+      builder.setInsertionPoint(user);
+      if (auto mark = dyn_cast<annotation::MarkOp>(user)) {
+        for (Value address : addresses) {
+          IRMapping mapping;
+          mapping.map(root.getResult(), address);
+          Operation *copy = builder.clone(*mark, mapping);
+          for (StringRef key : {StringRef(MemPoolIdAttr::name),
+                                StringRef(MemPoolSizeAttr::name),
+                                StringRef(MultiBufferAttr::name),
+                                StringRef(PreloadLocalBufferAttr::name),
+                                StringRef(ExperimentalBufferSlotsAttr::name)})
+            copy->removeAttr(key);
+        }
+        mark.erase();
+        continue;
+      }
+      if (auto dim = dyn_cast<memref::DimOp>(user)) {
+        dim.getSourceMutable().assign(addresses.front());
+        continue;
+      }
+      auto slot = cast<hivm::PoolSlotOp>(user);
+      Value selected = addresses.front();
+      for (auto [i, address] : llvm::enumerate(addresses)) {
+        if (i == 0)
+          continue;
+        Value index = builder.create<arith::ConstantIndexOp>(slot.getLoc(), i);
+        Value matches = builder.create<arith::CmpIOp>(
+            slot.getLoc(), arith::CmpIPredicate::eq, slot.getSlot(), index);
+        selected = builder.create<arith::SelectOp>(slot.getLoc(), matches,
+                                                   address, selected);
+      }
+      slot.replaceAllUsesWith(selected);
+      slot.erase();
+    }
+    root.erase();
+  }
+  return success();
+}
+
 void EnableMultiBufferPass::runOnOperation() {
   auto funcOp = getOperation();
   if (hacc::utils::isHost(funcOp))
     return;
+
+  if (failed(lowerPoolSlots(funcOp)))
+    return signalPassFailure();
 
   RewritePatternSet patterns(&getContext());
   patterns.insert<MultiBufferPattern>(patterns.getContext());

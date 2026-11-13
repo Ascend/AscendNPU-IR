@@ -172,7 +172,8 @@ llvm::SmallVector<Value> IRTranslator::tracebackMemVals(Value val) {
     if (options.enableSubviewConflictRefinement && options.isIntraCoreMode() &&
         curVal == val) {
       if (auto subviewOp = curVal.getDefiningOp<memref::SubViewOp>()) {
-        if (subviewOp.getViewSource().getDefiningOp<hivm::PointerCastOp>()) {
+        if (subviewOp.getViewSource().getDefiningOp<hivm::PointerCastOp>() &&
+            !getTcbPoolAddressSource(subviewOp.getViewSource())) {
           collectedValsSet.insert(curVal);
           continue;
         }
@@ -284,6 +285,15 @@ IRTranslator::getReadWriteMemoryOps(Operation *op) {
       }
       writeMemVals = extendedWriteMemVals.takeVector();
     }
+  }
+  // DPS inits are normally modeled as writes. Standalone MMAD also reads C
+  // when accumulating (including a dynamic clear condition). Keep this in
+  // sync with MmadL0Op's memory effects; zero/BT initialization does not read
+  // C.
+  if (auto matmul = dyn_cast<hivm::MmadL0Op>(op);
+      matmul && matmul.readsAccumulator()) {
+    auto accumulators = getMemoryOps({matmul.getC()});
+    llvm::append_range(readMemVals, accumulators);
   }
   return std::make_pair(readMemVals, writeMemVals);
 }
@@ -685,10 +695,14 @@ IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
   rwOp->isAutoBlockifyDMA =
       op->hasAttrOfType<UnitAttr>(hivm::AutoBlockifyDMAAttr::name);
   if (isa<UnitFlagEnabledInterface>(op)) {
+    bool skipUnitFlag = false;
+    // Standalone MMAD lowering currently accepts DISABLED only. Use ordinary
+    // pipe events even when the solver's UnitFlag optimization is enabled.
+    if (isa<hivm::MmadL0Op>(op))
+      skipUnitFlag = true;
     // A dual-dst fixpipe may fall back to a software split (two
     // copy_matrix_cc_to_ubuf intrinsics) in the template library; the
     // unit-flag feature does not apply on that path.
-    bool skipUnitFlag = false;
     if (auto fixpipeOp = dyn_cast<hivm::FixpipeOp>(op))
       skipUnitFlag = isSoftwareSplitFixpipe(fixpipeOp);
     if (!skipUnitFlag) {
@@ -848,6 +862,8 @@ IRTranslator::getCallOp(func::CallOp callOp, OperationBase *parentOp) {
     } else if (auto loadOp = dyn_cast<hivmave::VFLoadOp>(op)) {
       handleRWValue(loadOp.getBase(), MemoryEffect::READ);
     } else if (auto gatherOp = dyn_cast<hivmave::VFGatherOp>(op)) {
+      handleRWValue(gatherOp.getBase(), MemoryEffect::READ);
+    } else if (auto gatherOp = dyn_cast<hivmave::VFBlockGatherOp>(op)) {
       handleRWValue(gatherOp.getBase(), MemoryEffect::READ);
     } else if (auto storeOp = dyn_cast<hivmave::VFMaskedStoreOp>(op)) {
       handleRWValue(storeOp.getBase(), MemoryEffect::WRITE);

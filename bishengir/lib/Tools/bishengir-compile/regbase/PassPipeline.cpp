@@ -16,7 +16,6 @@
 #include "bishengir/Conversion/HIVMToStandard/HIVMToStandard.h"
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Conversion/ProtonToHIVM/ProtonToHIVM.h"
-#include "bishengir/Conversion/TensorViewToHIVM/TensorViewToHIVM.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/AscendDPX/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
@@ -26,7 +25,6 @@
 #include "bishengir/Dialect/HFusion/Pipelines/Passes.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Pipelines/ConvertToHIVMPipeline.h"
-#include "bishengir/Dialect/HIVM/Pipelines/HIVMBufferizationPipeline.h"
 #include "bishengir/Dialect/HIVM/Pipelines/regbase/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVMAVE/Pipelines/Passes.h"
@@ -193,16 +191,10 @@ void buildAffinityPipeline(OpPassManager &pm,
   // Decompose explicit HIVM operations, including set_atomic into set_ctrl.
   pm.nest<func::FuncOp>().addPass(hivm::createHIVMDecomposeOpPass());
 
-  pm.addPass(createConvertElementwiseToLinalgPass());
-  hivm::bufferizationPipelineBase(pm, /*isRegBased=*/true);
-  pm.addPass(createTensorViewToHIVMConversionPass());
-
   // Frontend ttadapter codegen does not yet mark kernel memref arguments as GM.
   // TODO: Remove scope inference once the frontend guarantees explicit address
   // spaces for all memref values.
   pm.addPass(hivm::createInferHIVMMemScopePass());
-  pm.addPass(hivm::createConvertToHIVMOpPass());
-  pm.nest<func::FuncOp>().addPass(createConvertLinalgToLoopsPass());
 
   PlanMemoryOptions planMemoryOptions;
   planMemoryOptions.enableMemoryDisplay =
@@ -217,8 +209,8 @@ void buildAffinityPipeline(OpPassManager &pm,
   pm.addPass(hivm::createPlanMemoryPass(planMemoryOptions));
 
   // Fold addresses and views while preserving input instruction choices.
-  pm.addPass(createCanonicalizerPass());
   pm.nest<func::FuncOp>().addPass(createCSEPass());
+  pm.addPass(createCanonicalizerPass());
 
   // Affinity auto-sync is enabled by default and always uses GraphSyncSolver.
   // Algorithm selection and barrier-all options do not select InjectSync.

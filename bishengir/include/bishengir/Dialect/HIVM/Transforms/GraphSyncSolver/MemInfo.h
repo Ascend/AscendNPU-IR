@@ -158,12 +158,24 @@ struct SubviewInfo {
                             const SubviewInfo &subviewInfo2);
 };
 
+// A dynamic pool address keeps its allocation identity separately from the
+// underlying storage range. Distinct allocations can alias after reclamation.
+struct PoolInfo {
+  Value address;
+
+  bool operator==(const PoolInfo &other) const {
+    return address == other.address;
+  }
+  bool operator!=(const PoolInfo &other) const { return !(*this == other); }
+};
+
 struct MemInfo {
   Value value{nullptr};
   std::optional<FuncArgInfo> funcArgInfo;
   std::optional<PointerLikeInfo> pointerLikeInfo;
   std::optional<AllocLikeInfo> allocLikeInfo;
   std::optional<SubviewInfo> subviewInfo;
+  std::optional<PoolInfo> poolInfo;
   std::optional<PIPE> pipe;
   std::optional<hivm::TCoreType> coreType;
 
@@ -192,6 +204,10 @@ struct MemInfo {
         coreType(coreType) {}
 
   bool operator==(const MemInfo &other) const {
+    // V2 groups equal MemInfos into one memory-tree node. Do not merge
+    // different dynamic allocations merely because they share a pool base.
+    if (poolInfo != other.poolInfo)
+      return false;
     return (value != nullptr && value == other.value) ||
            (std::tie(funcArgInfo, pointerLikeInfo, allocLikeInfo, subviewInfo,
                      pipe, coreType) ==

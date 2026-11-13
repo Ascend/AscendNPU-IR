@@ -776,6 +776,14 @@ def VxorXInstrOp : ElementwiseBinaryAnyInstrOp<"hivm.vxor.x"> {
     ```
   }];
 }
+def VselrInstrOp : HIVMRegbaseIntrins_Op<"hivm.vselr", [0], [],
+    [Pure, AllTypesMatch<["src", "index", "res"]>]> {
+  let summary = "Bitwise register gather using the integer intrinsic overload";
+  let arguments = (ins VectorOfRankAndType<[1], [I8, I16, I32]>:$src,
+                       VectorOfRankAndType<[1], [I8, I16, I32]>:$index);
+  let results = (outs VectorOfRankAndType<[1], [I8, I16, I32]>:$res);
+}
+
 def VselInstrOp : ElementwiseBinaryInstrOp<"hivm.vsel"> {
     // add traits for type constraint
   let summary = "HIVM vector select operation";
@@ -1837,6 +1845,42 @@ def VcpaddInstrOp : ReductionInstrOp<"hivm.vcpadd.x"> {
     ```
   }];
 }
+
+// SQZ: squeeze/compact selected lanes.
+def VsqzXInstrOp
+    : HIVMRegbaseIntrins_Op<"hivm.vsqz.x", /*overloadedResults=*/[0],
+                             /*overloadedOperands=*/[]> {
+  let arguments = (ins ValidVector:$src,
+                       predicateVector:$mask,
+                       I32:$store);
+  let results = (outs ValidVector:$res);
+}
+
+// USQZ: build exclusive prefix counts from a predicate.
+def VusqzMInstrOp
+    : HIVMRegbaseIntrins_Op<"hivm.vusqz.m", /*overloadedResults=*/[0],
+                             /*overloadedOperands=*/[]> {
+  let arguments = (ins ValidVector:$src,
+                       predicateVector:$mask);
+  let results = (outs ValidVector:$res);
+}
+
+// CCE carry/no-borrow arithmetic: v64i32 only.
+class CarryTernaryInstrOp<string mnemonic>
+    : HIVMRegbaseIntrins_Op<mnemonic, /*overloadedResults=*/[],
+                             /*overloadedOperands=*/[],
+                             /*traits=*/[AllTypesMatch<["src0", "src1"]>],
+                             /*numResults=*/2> {
+  let arguments = (ins ValidVector:$src0,
+                       ValidVector:$src1,
+                       predicateVector:$carry_in,
+                       predicateVector:$mask);
+}
+
+def VaddcsV64S32InstrOp : CarryTernaryInstrOp<"hivm.vaddcs.v64s32">;
+def VaddcsV64U32InstrOp : CarryTernaryInstrOp<"hivm.vaddcs.v64u32">;
+def VsubcsV64S32InstrOp : CarryTernaryInstrOp<"hivm.vsubcs.v64s32">;
+def VsubcsV64U32InstrOp : CarryTernaryInstrOp<"hivm.vsubcs.v64u32">;
 
 class ReductionVcbInstrOp<string mnemonic>
     : HIVMRegbaseIntrins_Op<
