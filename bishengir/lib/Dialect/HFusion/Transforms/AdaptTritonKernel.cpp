@@ -17,6 +17,7 @@
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
+#include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/SCF/Transforms/Transform.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -24,8 +25,8 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
-#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -43,6 +44,139 @@ namespace mlir {
 using namespace mlir;
 
 namespace {
+
+/// Workaround to preserve Triton RTZ floating-point cast semantics when
+/// lowering to VCVTFF.
+///
+/// A narrowing cast with round_mode<trunc> requests rounding toward zero (RTZ).
+/// For example:
+///
+/// ```mlir
+/// %y = hfusion.cast {round_mode = #hfusion.round_mode<trunc>}
+///     ins(%x : tensor<16xf32>) outs(%init : tensor<16xf16>)
+///     -> tensor<16xf16>
+/// ```
+///
+/// This eventually lowers to VCVTFF after all. Its non-saturating RTZ behavior
+/// does not implement the required finite-overflow semantics. Enabling
+/// saturation gives the required finite-overflow behavior, but may also clamp
+/// infinities and does not by itself preserve NaNs. Therefore, use the
+/// saturating RTZ cast only for finite inputs and obtain non-finite results
+/// from a separate, non-saturating RINT cast:
+///
+/// ```mlir
+/// %finite = hfusion.isfinite %x : tensor<16xf32> -> tensor<16xi1>
+/// %special = hfusion.cast {round_mode = #hfusion.round_mode<rint>}
+///     ins(%x : tensor<16xf32>) outs(%tmp : tensor<16xf16>)
+///     -> tensor<16xf16>
+/// %normal = hfusion.cast {enable_saturate = true, hfusion.rtz_processed,
+///                        round_mode = #hfusion.round_mode<trunc>}
+///     ins(%x : tensor<16xf32>) outs(%init : tensor<16xf16>)
+///     -> tensor<16xf16>
+/// %y = hfusion.select
+///     ins(%finite, %normal, %special
+///         : tensor<16xi1>, tensor<16xf16>, tensor<16xf16>)
+///     outs(%init : tensor<16xf16>) -> tensor<16xf16>
+/// ```
+///
+/// Here %tmp is a fresh tensor.empty and the auxiliary cast has saturation
+/// disabled. Its finite results are discarded; only NaN and signed infinities
+/// are selected. Rounding is irrelevant for these special values, and using
+/// RINT avoids recursively applying this workaround to the auxiliary cast.
+/// The processed marker makes the transformation idempotent. Saturation is
+/// updated in both the named op and its scalar region so that generalization
+/// preserves the same semantics.
+///
+/// Note that hfusion.isfinite / hfusion.isnan accept only f16, bf16 and f32.
+/// For FP8 sources, maskInput is a non-saturating widening cast to f32 used
+/// solely for classification; both result-producing casts still consume the
+/// original input. This is an elementwise selection, not a masked gather or a
+/// change of tensor shape.
+///
+/// The f8E4M3FN type has no infinities. For this destination, retain saturating
+/// conversion for all non-NaN inputs and select a broadcast destination NaN for
+/// NaN inputs instead of generating the auxiliary result cast.
+struct WorkaroundRTZCastPattern : public OpRewritePattern<hfusion::CastOp> {
+  using OpRewritePattern<hfusion::CastOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::CastOp op,
+                                PatternRewriter &rewriter) const override {
+    constexpr StringLiteral processedAttr = "hfusion.rtz_processed";
+    if (op->hasAttr(processedAttr) ||
+        op.getRoundMode() != hfusion::RoundMode::TRUNC ||
+        !op.hasPureTensorSemantics()) {
+      return failure();
+    }
+
+    Value input = op.getDpsInputs()[0];
+    auto inputType = dyn_cast<RankedTensorType>(input.getType());
+    auto outputType = dyn_cast<RankedTensorType>(op.getResult(0).getType());
+    if (!inputType || !outputType) {
+      return failure();
+    }
+
+    auto srcType = dyn_cast<FloatType>(inputType.getElementType());
+    auto dstType = dyn_cast<FloatType>(outputType.getElementType());
+    if (!srcType || !dstType || dstType.getWidth() > srcType.getWidth()) {
+      return failure();
+    }
+
+    Location loc = op.getLoc();
+
+    rewriter.setInsertionPoint(op);
+
+    // hfusion.isfinite accept f16, bf16 and f32, so widen FP8 first
+    Value maskInput = input;
+    if (isa<Float8E4M3FNType, Float8E5M2Type>(srcType)) {
+      maskInput = hfusion::castTo(
+          rewriter, input, rewriter.getF32Type(), hfusion::RoundMode::RINT,
+          std::nullopt, op.getEnableOverflow(), false,
+          hfusion::TypeFn::cast_signed, hfusion::UnsignedMode::SI2SI);
+    }
+
+    auto maskType = inputType.clone(rewriter.getI1Type());
+    bool finiteOnlyDestination = isa<Float8E4M3FNType>(dstType);
+    Value mask;
+    Value special;
+    if (finiteOnlyDestination) {
+      // The E4M3FN type cannot represent infinity.
+      // So, retain its existing saturation policy.
+      mask = rewriter.create<hfusion::IsNanOp>(loc, maskType, maskInput);
+      special = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getFloatAttr(
+                   dstType, APFloat::getNaN(dstType.getFloatSemantics())));
+    } else {
+      mask = rewriter.create<hfusion::IsFiniteOp>(loc, maskType, maskInput);
+      // Only non-finite results are used.
+      // RINT preserves them without recursively triggering this RTZ workaround.
+      special = hfusion::castTo(
+          rewriter, input, dstType, hfusion::RoundMode::RINT, std::nullopt,
+          op.getEnableOverflow(), false, hfusion::TypeFn::cast_signed,
+          hfusion::UnsignedMode::SI2SI);
+    }
+
+    rewriter.modifyOpInPlace(op, [&] {
+      op->setAttr(processedAttr, rewriter.getUnitAttr());
+      op->setAttr("enable_saturate", rewriter.getBoolAttr(true));
+
+      // Named structured ops already contain a scalar region. Updating only
+      // the outer attribute would leave generalization using stale semantics.
+      op->getRegion(0).walk([&](Operation *scalarOp) {
+        if (scalarOp->hasAttr("round_mode"))
+          scalarOp->setAttr("enable_saturate", rewriter.getBoolAttr(true));
+      });
+    });
+
+    rewriter.setInsertionPointAfter(op);
+    auto select = rewriter.create<hfusion::SelectOp>(
+        loc, TypeRange{outputType},
+        finiteOnlyDestination ? ValueRange{mask, special, op.getResult(0)}
+                              : ValueRange{mask, op.getResult(0), special},
+        ValueRange{op.getDpsInits()[0]});
+    rewriter.replaceAllUsesExcept(op.getResult(0), select.getResult(0), select);
+    return success();
+  }
+};
 
 /// This pass labels the triton entry kernel
 struct AdaptTritonKernelPass
@@ -1185,6 +1319,7 @@ void AdaptTritonKernelPass::runOnOperation() {
   MLIRContext *context = &getContext();
   RewritePatternSet patterns(context);
   ModuleOp module = getOperation();
+  patterns.add<WorkaroundRTZCastPattern>(context);
 
   if (hacc::utils::isRegBasedArch(module)) {
     patterns

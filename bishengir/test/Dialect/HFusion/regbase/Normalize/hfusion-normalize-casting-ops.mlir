@@ -1,5 +1,97 @@
 // RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true" %s -split-input-file -verify-diagnostics | FileCheck %s
 // RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true" --hfusion-pre-vectorization-fusion %s -split-input-file | FileCheck %s --check-prefix=INTEGER
+// RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true" %s -split-input-file -mlir-print-op-generic | FileCheck %s --check-prefix=FLAGS
+
+// CHECK-LABEL: @preserve_f16_to_e5m2
+// CHECK: hfusion.cast
+// CHECK-NOT: enable_saturate = true
+// CHECK-SAME: round_mode = #hfusion.round_mode<trunc>
+// CHECK-SAME: -> tensor<16xf32>
+// CHECK: hfusion.cast
+// CHECK-SAME: enable_saturate = true
+// CHECK-SAME: round_mode = #hfusion.round_mode<trunc>
+// CHECK-SAME: -> tensor<16xf8E5M2>
+// FLAGS-LABEL: sym_name = "preserve_f16_to_e5m2"
+// FLAGS: "arith.truncf"
+// FLAGS-SAME: enable_saturate = true
+// FLAGS-SAME: round_mode = #hfusion.round_mode<trunc>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @preserve_f16_to_e5m2(%src: tensor<16xf16>, %init: tensor<16xf8E5M2>) -> tensor<16xf8E5M2> {
+  %0 = hfusion.cast {enable_saturate = true, round_mode = #hfusion.round_mode<trunc>} ins(%src : tensor<16xf16>) outs(%init : tensor<16xf8E5M2>) -> tensor<16xf8E5M2>
+  return %0 : tensor<16xf8E5M2>
+}
+
+// CHECK-LABEL: @preserve_i32_to_f16
+// CHECK: hfusion.cast
+// CHECK-NOT: enable_saturate = true
+// CHECK-SAME: -> tensor<16xf32>
+// CHECK: hfusion.cast
+// CHECK-SAME: enable_saturate = true
+// CHECK-SAME: round_mode = #hfusion.round_mode<floor>
+// CHECK-SAME: -> tensor<16xf16>
+// FLAGS-LABEL: sym_name = "preserve_i32_to_f16"
+// FLAGS: "arith.truncf"
+// FLAGS-SAME: enable_saturate = true
+// FLAGS-SAME: round_mode = #hfusion.round_mode<floor>
+func.func @preserve_i32_to_f16(%src: tensor<16xi32>, %init: tensor<16xf16>) -> tensor<16xf16> {
+  %0 = hfusion.cast {enable_saturate = true, round_mode = #hfusion.round_mode<floor>} ins(%src : tensor<16xi32>) outs(%init : tensor<16xf16>) -> tensor<16xf16>
+  return %0 : tensor<16xf16>
+}
+}
+
+// -----
+
+// CHECK-LABEL: @preserve_disabled_saturation
+// CHECK-NOT: enable_saturate = true
+// CHECK: hfusion.cast
+// CHECK-SAME: -> tensor<16xf32>
+// CHECK-NOT: enable_saturate = true
+// CHECK: hfusion.cast
+// CHECK-SAME: round_mode = #hfusion.round_mode<trunc>
+// CHECK-SAME: -> tensor<16xf8E5M2>
+// CHECK-NOT: enable_saturate = true
+// CHECK: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @preserve_disabled_saturation(%src: tensor<16xf16>, %init: tensor<16xf8E5M2>) -> tensor<16xf8E5M2> {
+  %0 = hfusion.cast {enable_saturate = false, round_mode = #hfusion.round_mode<trunc>} ins(%src : tensor<16xf16>) outs(%init : tensor<16xf8E5M2>) -> tensor<16xf8E5M2>
+  return %0 : tensor<16xf8E5M2>
+}
+}
+
+// -----
+
+// CHECK-LABEL: @preserve_bf16_to_e4m3
+// CHECK: hfusion.cast
+// CHECK-NOT: enable_saturate = true
+// CHECK-SAME: -> tensor<16xf32>
+// CHECK: hfusion.cast
+// CHECK-SAME: enable_saturate = true
+// CHECK-SAME: -> tensor<16xf8E4M3FN>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @preserve_bf16_to_e4m3(%src: tensor<16xbf16>, %init: tensor<16xf8E4M3FN>) -> tensor<16xf8E4M3FN> {
+  %0 = hfusion.cast {enable_saturate = true, round_mode = #hfusion.round_mode<trunc>} ins(%src : tensor<16xbf16>) outs(%init : tensor<16xf8E4M3FN>) -> tensor<16xf8E4M3FN>
+  return %0 : tensor<16xf8E4M3FN>
+}
+}
+
+// -----
+
+// CHECK-LABEL: @preserve_i8_to_i64
+// CHECK: hfusion.cast
+// CHECK-NOT: enable_saturate = true
+// CHECK-SAME: -> tensor<16xi32>
+// CHECK: hfusion.cast
+// CHECK-SAME: enable_saturate = true
+// CHECK-SAME: -> tensor<16xi64>
+// CHECK: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @preserve_i8_to_i64(%src: tensor<16xi8>, %init: tensor<16xi64>) -> tensor<16xi64> {
+  %0 = hfusion.cast {enable_saturate = true} ins(%src : tensor<16xi8>) outs(%init : tensor<16xi64>) -> tensor<16xi64>
+  return %0 : tensor<16xi64>
+}
+}
+
+// -----
 
 // CHECK-LABEL: func.func @test_NormalizeCastLowering_cast_f32_to_i1
 // CHECK: %[[arg4:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[arg2:.*]], %[[cst:.*]] : tensor<2x256x12x257xf32>, f32) outs(%[[arg5:.*]] : tensor<2x256x12x257xi1>) -> tensor<2x256x12x257xi1>

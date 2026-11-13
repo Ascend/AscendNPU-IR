@@ -169,13 +169,22 @@ static bool shouldLegalizeFP8Op(Operation *op) {
 }
 
 template <typename Op, typename FP8Type>
-static Operation *createNewOp(PatternRewriter &rewriter, Op op,
-                              SmallVector<Value> &castedOperands) {
+static Operation *
+createNewOp(PatternRewriter &rewriter, Op op,
+            SmallVector<std::pair<Value, Value>> &mappedOperands,
+            SmallVector<std::pair<unsigned, Value>> &positionalOperands) {
+
   IRMapping mapper;
-  for (const auto &[idx, oper] : llvm::enumerate(op->getOperands()))
-    mapper.map(oper, castedOperands[idx]);
+  for (auto [original, replacement] : mappedOperands) {
+    mapper.map(original, replacement);
+  }
 
   auto *newOp = rewriter.cloneWithoutRegions(*op, mapper);
+
+  for (auto [index, replacement] : positionalOperands) {
+    newOp->setOperand(index, replacement);
+  }
+
   auto *ctx = op->getContext();
   for (const auto &[idx, res] : llvm::enumerate(op->getResults())) {
     ShapedType shapedType = cast<ShapedType>(res.getType());
@@ -253,15 +262,32 @@ static void createF32ElementTypeOp(Op fp8Op, PatternRewriter &rewriter) {
   [[maybe_unused]] Type f32Type = rewriter.getF32Type();
 
   // Count all the OPs that require casting.
-  SmallVector<Value> castedOperands;
-  for (auto oper : fp8Op->getOperands()) {
-    Value castedOperand = isFP8<FP8Type>(getElementTypeOrSelf(oper.getType()))
-                              ? castFP8ToF32<FP8Type>(rewriter, oper)
-                              : oper;
-    castedOperands.push_back(castedOperand);
+  SmallVector<std::pair<Value, Value>> mappedOperands;
+  SmallVector<std::pair<unsigned, Value>> positionalOperands;
+  for (OpOperand &operand : fp8Op->getOpOperands()) {
+    Value oper = operand.get();
+    Value castedOperand = oper;
+    if (isFP8<FP8Type>(getElementTypeOrSelf(oper.getType()))) {
+      auto linalgOp = dyn_cast<linalg::LinalgOp>(fp8Op.getOperation());
+
+      // An unused destination supplies only shape, not initialized data.
+      if (linalgOp && linalgOp.isDpsInit(&operand) &&
+          !linalgOp.payloadUsesValueFromOperand(&operand)) {
+        castedOperand = utils::createEmptyOpWithTargetElemType(
+            rewriter, fp8Op.getLoc(), oper, f32Type);
+        positionalOperands.emplace_back(operand.getOperandNumber(),
+                                        castedOperand);
+      } else {
+        castedOperand = castFP8ToF32<FP8Type>(rewriter, oper);
+        mappedOperands.emplace_back(oper, castedOperand);
+      }
+    } else {
+      mappedOperands.emplace_back(oper, castedOperand);
+    }
   }
 
-  auto newOp = createNewOp<Op, FP8Type>(rewriter, fp8Op, castedOperands);
+  auto newOp = createNewOp<Op, FP8Type>(rewriter, fp8Op, mappedOperands,
+                                        positionalOperands);
   createF32ElementTypeOpRegion<Operation *, FP8Type>(newOp, rewriter);
 
   rewriter.setInsertionPointAfter(newOp);

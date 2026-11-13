@@ -1,5 +1,98 @@
 // RUN: bishengir-opt -hfusion-legalize-bf16 %s -split-input-file -verify-diagnostics | FileCheck %s
 
+// CHECK-LABEL: func.func @reduce_captured_source
+// CHECK: %[[SRC:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<1xbf16>)
+// CHECK: linalg.reduce ins(%[[SRC]] : tensor<1xf32>)
+// CHECK: %[[VALUE:.*]] = tensor.extract %[[SRC]][%{{.*}}] : tensor<1xf32>
+// CHECK: arith.addf %[[VALUE]], %{{.*}} : f32
+module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
+  func.func @reduce_captured_source(%src: tensor<1xbf16>, %init: tensor<bf16>) -> tensor<bf16> {
+    %c0 = arith.constant 0 : index
+    %r = linalg.reduce ins(%src : tensor<1xbf16>) outs(%init : tensor<bf16>) dimensions = [0]
+      (%in: bf16, %acc: bf16) {
+        %v = tensor.extract %src[%c0] : tensor<1xbf16>
+        %sum = arith.addf %v, %acc : bf16
+        linalg.yield %sum : bf16
+      }
+    return %r : tensor<bf16>
+  }
+}
+
+// -----
+
+// Keep a captured input initialized even when the same value is an unused init.
+// CHECK-LABEL: func.func @shared_input_init_capture
+// CHECK: %[[INPUT:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<1xbf16>)
+// CHECK: %[[DEST:.*]] = tensor.empty() : tensor<1xf32>
+// CHECK-NOT: hfusion.cast
+// CHECK: linalg.reduce ins(%[[INPUT]] : tensor<1xf32>) outs(%[[DEST]] : tensor<1xf32>)
+// CHECK: tensor.extract %[[INPUT]][%{{.*}}] : tensor<1xf32>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
+  func.func @shared_input_init_capture(%src: tensor<1xbf16>) -> tensor<1xbf16> {
+    %c0 = arith.constant 0 : index
+    %r = linalg.reduce ins(%src : tensor<1xbf16>) outs(%src : tensor<1xbf16>) dimensions = []
+      (%in: bf16, %unused: bf16) {
+        %v = tensor.extract %src[%c0] : tensor<1xbf16>
+        %sum = arith.addf %v, %in : bf16
+        linalg.yield %sum : bf16
+      }
+    return %r : tensor<1xbf16>
+  }
+}
+
+// -----
+
+// An unused init reconstructed from a scalar must not be cast either.
+// CHECK-LABEL: func.func @singleton_unused_init
+// CHECK-NOT: tensor.from_elements
+// CHECK: %[[INPUT:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<1xbf16>)
+// CHECK: %[[DEST:.*]] = tensor.empty() : tensor<1xf32>
+// CHECK-NOT: hfusion.cast
+// CHECK: hfusion.elemwise_unary {{.*}} ins(%[[INPUT]] : tensor<1xf32>) outs(%[[DEST]] : tensor<1xf32>)
+module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
+  func.func @singleton_unused_init(%src: tensor<1xbf16>, %scalar: bf16) -> tensor<1xbf16> {
+    %init = tensor.from_elements %scalar : tensor<1xbf16>
+    %r = hfusion.elemwise_unary {fun = #hfusion.unary_fn<cos>}
+        ins(%src : tensor<1xbf16>) outs(%init : tensor<1xbf16>) -> tensor<1xbf16>
+    return %r : tensor<1xbf16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @select_rank_zero
+// CHECK: %[[INPUT:.*]] = hfusion.cast {{.*}} ins(%arg1 : tensor<bf16>)
+// CHECK: %[[DEST:.*]] = tensor.empty() : tensor<f32>
+// CHECK-NOT: hfusion.cast
+// CHECK: %[[SELECT:.*]] = hfusion.select ins(%arg0, %[[INPUT]], %[[INPUT]] :
+// CHECK-SAME: outs(%[[DEST]] : tensor<f32>)
+// CHECK: hfusion.cast {{.*}} ins(%[[SELECT]] : tensor<f32>)
+module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
+  func.func @select_rank_zero(%mask: tensor<i1>, %src: tensor<bf16>) -> tensor<bf16> {
+    %empty = tensor.empty() : tensor<bf16>
+    %result = hfusion.select ins(%mask, %src, %src : tensor<i1>, tensor<bf16>, tensor<bf16>) outs(%empty : tensor<bf16>) -> tensor<bf16>
+    return %result : tensor<bf16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @select_singleton
+// CHECK: %[[INPUT:.*]] = hfusion.cast {{.*}} ins(%arg1 : tensor<1xbf16>)
+// CHECK: %[[DEST:.*]] = tensor.empty() : tensor<1xf32>
+// CHECK-NOT: hfusion.cast
+// CHECK: hfusion.select ins(%arg0, %[[INPUT]], %[[INPUT]] :
+// CHECK-SAME: outs(%[[DEST]] : tensor<1xf32>)
+module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
+  func.func @select_singleton(%mask: tensor<1xi1>, %src: tensor<1xbf16>) -> tensor<1xbf16> {
+    %empty = tensor.empty() : tensor<1xbf16>
+    %result = hfusion.select ins(%mask, %src, %src : tensor<1xi1>, tensor<1xbf16>, tensor<1xbf16>) outs(%empty : tensor<1xbf16>) -> tensor<1xbf16>
+    return %result : tensor<1xbf16>
+  }
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_conv1d_bf16_not_to_f32
 // CHECK-NOT: hfusion.cast
 // CHECK: hfusion.conv1d
