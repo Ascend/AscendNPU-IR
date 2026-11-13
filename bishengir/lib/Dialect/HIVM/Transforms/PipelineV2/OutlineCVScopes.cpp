@@ -174,11 +174,12 @@ private:
   static bool isViewLikeTensorOp(Operation *op);
   static Operation *getRootAlloc(Value memref);
   static bool isGMTarget(Value dst);
-  static bool isStoreFixpipeCopyWriter(Operation *usr, Value memrefVal);
+  static bool isGMOutputCandidate(Operation *op);
+  static bool isOutputBufferWriter(Operation *usr, Value memrefVal);
   static bool isLoadOrND2NZWriter(Operation *usr, Value memrefVal);
   static bool walkAllocUsers(Operation *rootAlloc,
                              llvm::function_ref<bool(OpOperand &)> visitUse);
-  static bool isAllocTargetOfStoreFixpipeCopy(Operation *rootAlloc);
+  static bool isAllocTargetOfOutputWriter(Operation *rootAlloc);
   static bool isAllocTargetOfMultiUserLoadOrND2NZ(Operation *rootAlloc);
 
   bool hasLoopLocalToTensor(Value memref);
@@ -320,11 +321,15 @@ bool CVScopeOutliner::isGMTarget(Value dst) {
   return false;
 }
 
-bool CVScopeOutliner::isStoreFixpipeCopyWriter(Operation *usr,
-                                               Value memrefVal) {
+bool CVScopeOutliner::isGMOutputCandidate(Operation *op) {
+  return isa<StoreOp, IndirectStoreOp, ScatterStoreOp, StrideStoreOp,
+             IndexPutOp, ScatterTOp, AtomicRMWOp, FixpipeOp>(op);
+}
+
+bool CVScopeOutliner::isOutputBufferWriter(Operation *usr, Value memrefVal) {
   if (auto copyOp = dyn_cast<memref::CopyOp>(usr))
     return copyOp.getTarget() == memrefVal;
-  if (!isa<StoreOp, FixpipeOp, CopyOp>(usr))
+  if (!isGMOutputCandidate(usr) && !isa<CopyOp>(usr))
     return false;
   if (isa<FixpipeOp>(usr)) {
     if (auto space = GetBufferSpaceAttr(memrefVal);
@@ -367,9 +372,9 @@ bool CVScopeOutliner::walkAllocUsers(
   return false;
 }
 
-bool CVScopeOutliner::isAllocTargetOfStoreFixpipeCopy(Operation *rootAlloc) {
+bool CVScopeOutliner::isAllocTargetOfOutputWriter(Operation *rootAlloc) {
   return walkAllocUsers(rootAlloc, [](OpOperand &use) {
-    return isStoreFixpipeCopyWriter(use.getOwner(), use.get());
+    return isOutputBufferWriter(use.getOwner(), use.get());
   });
 }
 
@@ -466,7 +471,7 @@ bool CVScopeOutliner::isStoppingToTensor(Operation *tracedOp,
   if (!toTensor || toTensor.getResult() == startOutput)
     return false;
   Operation *rootAlloc = getRootAlloc(toTensor.getOperand());
-  return isAllocTargetOfStoreFixpipeCopy(rootAlloc) ||
+  return isAllocTargetOfOutputWriter(rootAlloc) ||
          isAllocTargetOfMultiUserLoadOrND2NZ(rootAlloc);
 }
 
@@ -942,21 +947,19 @@ void CVScopeOutliner::collectLocalOutputs() {
   loopOp->walk([&](Operation *op) {
     if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op)) {
       Operation *rootAlloc = getRootAlloc(toTensor.getOperand());
-      if (isAllocTargetOfStoreFixpipeCopy(rootAlloc) ||
+      if (isAllocTargetOfOutputWriter(rootAlloc) ||
           isAllocTargetOfMultiUserLoadOrND2NZ(rootAlloc))
         addLocalOutput(toTensor.getResult());
       return;
     }
-    if (auto storeOp = dyn_cast<StoreOp>(op)) {
-      if (isGMTarget(storeOp.getDst()) &&
-          !hasLoopLocalToTensor(storeOp.getDst()))
-        addGMOutputOp(storeOp);
+    if (!isGMOutputCandidate(op))
       return;
-    }
-    if (auto fixpipeOp = dyn_cast<FixpipeOp>(op)) {
-      if (isGMTarget(fixpipeOp.getDst()) &&
-          !hasLoopLocalToTensor(fixpipeOp.getDst()))
-        addGMOutputOp(fixpipeOp);
+    auto dps = cast<DestinationStyleOpInterface>(op);
+    for (Value dst : dps.getDpsInits()) {
+      if (isGMTarget(dst) && !hasLoopLocalToTensor(dst)) {
+        addGMOutputOp(op);
+        break;
+      }
     }
   });
   for (Region &reg : loopOp->getRegions()) {
@@ -2093,7 +2096,7 @@ void CVScopeOutliner::computeHoistedOps(WorkItem *item) {
           continue;
         bool isAlloc =
             isa<memref::AllocOp, AllocWorkspaceOp>(tOp) &&
-            (isAllocTargetOfStoreFixpipeCopy(tOp) ||
+            (isAllocTargetOfOutputWriter(tOp) ||
              isAllocTargetOfMultiUserLoadOrND2NZ(tOp) ||
              walkAllocUsers(tOp, [&](OpOperand &use) {
                auto toTensor =
