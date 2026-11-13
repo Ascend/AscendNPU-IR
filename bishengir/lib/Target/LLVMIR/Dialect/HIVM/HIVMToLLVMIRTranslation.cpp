@@ -105,7 +105,7 @@ public:
   convertOperation(Operation *op, llvm::IRBuilderBase &builder,
                    LLVM::ModuleTranslation &moduleTranslation) const final {
     Operation &opInst = *op;
-#if !defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) && \
+#if !defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) &&                          \
     !defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__)
 #include "bishengir/Dialect/HIVM/IR/HIVMConversions.inc"
 #endif
@@ -215,10 +215,18 @@ public:
       LLVM::LLVMFuncOp func = dyn_cast<LLVM::LLVMFuncOp>(op);
       llvm::Function *llvmFunc =
           moduleTranslation.lookupFunction(func.getName());
-      // mark each parameter type being !llvm.ptr of llvm.func as NoAlias
+      // Scatter may write through a view captured separately from its root.
+      // Those VF arguments do not establish independent allocations.
+      bool hasScatter =
+          func.walk([](Operation *nested) {
+                return isa<hivm_regbaseintrins::VScatterV64S32InstrOp>(nested)
+                           ? WalkResult::interrupt()
+                           : WalkResult::advance();
+              })
+              .wasInterrupted();
       auto llvmFuncArgs = llvmFunc->args();
       for (auto &arg : llvmFuncArgs) {
-        if (isa<llvm::PointerType>(arg.getType())) {
+        if (!hasScatter && isa<llvm::PointerType>(arg.getType())) {
           arg.addAttr(llvm::Attribute::AttrKind::NoAlias);
         }
       }

@@ -629,6 +629,151 @@ LogicalResult VFTruncIOp::verify() {
   return emitOpError("Improper setting of #part and #pp, please check ISA");
 }
 
+static bool isValidPredicateType(Type type) {
+  auto vecType = dyn_cast<VectorType>(type);
+  return vecType && vecType.getRank() == 1 && !vecType.isScalable() &&
+         vecType.getElementType().isSignlessInteger(1) &&
+         (vecType.getNumElements() == 64 || vecType.getNumElements() == 128 ||
+          vecType.getNumElements() == 256);
+}
+
+void PregPackOp::build(OpBuilder &builder, OperationState &state, Value src,
+                       int32_t part) {
+  auto type = cast<VectorType>(src.getType());
+  build(builder, state,
+        VectorType::get({2 * type.getNumElements()}, builder.getI1Type()), src,
+        builder.getI32IntegerAttr(part));
+}
+
+void PregUnpackOp::build(OpBuilder &builder, OperationState &state, Value src,
+                         int32_t part) {
+  auto type = cast<VectorType>(src.getType());
+  build(builder, state,
+        VectorType::get({type.getNumElements() / 2}, builder.getI1Type()), src,
+        builder.getI32IntegerAttr(part));
+}
+
+LogicalResult PregPackOp::verify() {
+  auto srcType = cast<VectorType>(getSrc().getType());
+  auto resType = cast<VectorType>(getRes().getType());
+  if (!isValidPredicateType(srcType) || !isValidPredicateType(resType))
+    return emitOpError("requires fixed 64/128/256-lane predicates");
+  if (resType.getNumElements() != srcType.getNumElements() * 2)
+    return emitOpError("requires a factor-of-two logical lane change");
+  if (getPart() != 0 && getPart() != 1)
+    return emitOpError("part must be 0 (lower) or 1 (higher)");
+  return success();
+}
+
+LogicalResult PregUnpackOp::verify() {
+  auto srcType = cast<VectorType>(getSrc().getType());
+  auto resType = cast<VectorType>(getRes().getType());
+  if (!isValidPredicateType(srcType) || !isValidPredicateType(resType))
+    return emitOpError("requires fixed 64/128/256-lane predicates");
+  if (resType.getNumElements() * 2 != srcType.getNumElements())
+    return emitOpError("requires a factor-of-two logical lane change");
+  if (getPart() != 0 && getPart() != 1)
+    return emitOpError("part must be 0 (lower) or 1 (higher)");
+  return success();
+}
+
+LogicalResult PregInterleaveOp::verify() {
+  if (!isValidPredicateType(getSrc0().getType()))
+    return emitOpError("requires fixed 64/128/256-lane predicates");
+  return success();
+}
+
+LogicalResult PregDeinterleaveOp::verify() {
+  if (!isValidPredicateType(getSrc0().getType()))
+    return emitOpError("requires fixed 64/128/256-lane predicates");
+  return success();
+}
+
+static bool isFullVectorRegister(VectorType type) {
+  return type.getRank() == 1 && !type.isScalable() &&
+         type.getNumElements() * type.getElementTypeBitWidth() ==
+             hivm::util::VL_BITS;
+}
+
+// Layout analysis annotates vector types. Logical shape verification must not
+// reject those annotations before remove-vector-layout-attr runs.
+static bool sameLogicalVectorType(VectorType lhs, VectorType rhs) {
+  return lhs.getShape() == rhs.getShape() &&
+         lhs.getElementType() == rhs.getElementType() &&
+         lhs.getScalableDims() == rhs.getScalableDims();
+}
+
+static LogicalResult verifyRegisterMask(Operation *op, VectorType src,
+                                        Value mask) {
+  if (!sameLogicalVectorType(
+          cast<VectorType>(mask.getType()),
+          VectorType::get(src.getShape(),
+                          IntegerType::get(op->getContext(), 1))))
+    return op->emitOpError("mask must have the source logical lane count");
+  return success();
+}
+
+LogicalResult VFRegisterGatherOp::verify() {
+  auto srcType = cast<VectorType>(getSrc().getType());
+  Type elem = srcType.getElementType();
+  if (!(elem.isSignlessInteger(8) || elem.isSignlessInteger(16) ||
+        elem.isSignlessInteger(32) || elem.isF16() || elem.isBF16() ||
+        elem.isF32() || isa<Float8E4M3FNType, Float8E5M2Type>(elem)) ||
+      !isFullVectorRegister(srcType))
+    return emitOpError("requires a full 8/16/32-bit register");
+  auto indexType = VectorType::get(
+      srcType.getShape(),
+      IntegerType::get(getContext(), srcType.getElementTypeBitWidth()));
+  if (!sameLogicalVectorType(cast<VectorType>(getIndex().getType()), indexType))
+    return emitOpError(
+        "indices must be signless integers matching source width and lanes");
+  if (failed(verifyRegisterMask(*this, srcType, getMask())))
+    return failure();
+  if (auto constant = getIndex().getDefiningOp<arith::ConstantOp>()) {
+    if (auto values = dyn_cast<DenseIntElementsAttr>(constant.getValue()))
+      for (const APInt &index : values.getValues<APInt>())
+        if (index.uge(srcType.getNumElements()))
+          return emitOpError("every index must be in [0, source lanes), "
+                             "including inactive lanes");
+  }
+  return success();
+}
+
+void GroupReductionOp::build(OpBuilder &builder, OperationState &state,
+                             CombiningKind kind, Value src, Value mask,
+                             hivm::TypeFn castHint) {
+  auto type = cast<VectorType>(src.getType());
+  auto resType = type;
+  if (kind == CombiningKind::ADD && type.getElementType().isInteger(16))
+    resType = VectorType::get({64}, builder.getI32Type());
+  build(builder, state, resType, kind, src, mask, castHint);
+}
+
+LogicalResult GroupReductionOp::verify() {
+  auto srcType = cast<VectorType>(getSrc().getType());
+  Type elem = srcType.getElementType();
+  if (!(elem.isSignlessInteger(16) || elem.isSignlessInteger(32) ||
+        elem.isF16() || elem.isF32()) ||
+      !isFullVectorRegister(srcType))
+    return emitOpError("requires a full i16/i32/f16/f32 register");
+  if (getKind() != CombiningKind::ADD && getKind() != CombiningKind::MIN &&
+      getKind() != CombiningKind::MAX)
+    return emitOpError(
+        "supports only add/min/max; use cast for integer signedness");
+  if (getCast() != hivm::TypeFn::cast_signed &&
+      getCast() != hivm::TypeFn::cast_unsigned)
+    return emitOpError("cast must select signed or unsigned interpretation");
+  if (isa<FloatType>(elem) && getCast() != hivm::TypeFn::cast_signed)
+    return emitOpError("floating-point sources require cast_signed");
+  auto expected = srcType;
+  if (getKind() == CombiningKind::ADD && elem.isInteger(16))
+    expected = VectorType::get({64}, IntegerType::get(getContext(), 32));
+  if (!sameLogicalVectorType(cast<VectorType>(getRes().getType()), expected))
+    return emitOpError("result must preserve source type, except i16 add "
+                       "returns vector<64xi32>");
+  return verifyRegisterMask(*this, srcType, getMask());
+}
+
 LogicalResult VFVpackOp::verify() {
   Type inType = cast<VectorType>(getSrc().getType()).getElementType();
   Type outType = cast<VectorType>(getRes().getType()).getElementType();
@@ -703,4 +848,11 @@ LogicalResult VFUIntToFpOp::verify() {
     return success();
 
   return emitOpError("Improper setting of #part and #rnd.");
+}
+
+LogicalResult VFBlockGatherOp::verify() {
+  auto baseType = cast<MemRefType>(getBase().getType());
+  if (getIndices().size() != static_cast<size_t>(baseType.getRank()))
+    return emitOpError("requires one scalar index per buffer dimension");
+  return success();
 }

@@ -209,8 +209,8 @@ void buildAffinityPipeline(OpPassManager &pm,
   pm.addPass(hivm::createPlanMemoryPass(planMemoryOptions));
 
   // Fold addresses and views while preserving input instruction choices.
-  pm.addPass(createCanonicalizerPass());
   pm.nest<func::FuncOp>().addPass(createCSEPass());
+  pm.addPass(createCanonicalizerPass());
 
   // Affinity auto-sync is enabled by default and always uses GraphSyncSolver.
   // Algorithm selection and barrier-all options do not select InjectSync.

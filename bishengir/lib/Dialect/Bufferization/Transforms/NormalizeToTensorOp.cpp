@@ -45,7 +45,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Bufferization/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -101,6 +103,19 @@ struct IsolateToTensorMemspacePattern : public OpRewritePattern<ToTensorOp> {
   }
 };
 
+/// A separated load scope executes its direct body once. Its nested writer
+/// does not structurally dominate a later to_tensor, but the scope does.
+/// Conditional writes inside the scope do not satisfy this check.
+static bool precedesToTensor(Operation *user, Operation *toTensor,
+                             DominanceInfo &domInfo) {
+  if (domInfo.properlyDominates(user, toTensor))
+    return true;
+  auto loadScope = dyn_cast<scope::ScopeOp>(user->getParentOp());
+  if (!loadScope || !loadScope->hasAttr(hivm::LoadPreloadAttr::name))
+    return false;
+  return domInfo.properlyDominates(loadScope, toTensor);
+}
+
 /// Check if a memref value (or its aliases via subview/reinterpret_cast/cast)
 /// is written by a DPS op before the given `toTensor` operation. The memref
 /// is traced up to its root, which must be an allocation (memref.alloc /
@@ -145,7 +160,7 @@ static bool isMemrefWrittenBeforeToTensor(Value memref, Operation *toTensor) {
       // Only consider users that are properly before to_tensor.
       // dominanceInfo.properlyDominates returns true if `user` comes before
       // `to_tensor` in execution order (and they are not the same op).
-      if (!domInfo.properlyDominates(user, toTensor))
+      if (!precedesToTensor(user, toTensor, domInfo))
         continue;
       // If user is a DPS op that writes to current (as a dpsInit operand),
       // the memref has been written.
