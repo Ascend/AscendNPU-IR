@@ -1,4 +1,136 @@
 // RUN: bishengir-opt -adapt-triton-kernel %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt %s -split-input-file -pass-pipeline='builtin.module(adapt-triton-kernel,adapt-triton-kernel)' | FileCheck %s
+// RUN: bishengir-opt %s -split-input-file -adapt-triton-kernel -mlir-print-op-generic | FileCheck %s --check-prefix=SCALAR
+// RUN: bishengir-opt %s -split-input-file -adapt-triton-kernel --hfusion-normalize-ops | FileCheck %s --check-prefix=NORMALIZE
+
+// NORMALIZE-LABEL: @rtz_broadcast_normalized
+// NORMALIZE: %[[NORMAL:.*]] = hfusion.cast {{.*}}enable_saturate = true
+// NORMALIZE-SAME: round_mode = #hfusion.round_mode<trunc>
+// NORMALIZE-SAME: ins(%arg0 : tensor<16xf32>)
+// NORMALIZE-SAME: -> tensor<16xf16>
+// NORMALIZE: %[[BRC:.*]] = linalg.broadcast ins(%[[NORMAL]] : tensor<16xf16>)
+// NORMALIZE: hfusion.select ins({{.*}}, %[[BRC]],
+module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
+  func.func @rtz_broadcast_normalized(%src: tensor<16xf32>) -> tensor<16x16xf16> {
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %brc = linalg.broadcast ins(%src : tensor<16xf32>) outs(%empty : tensor<16x16xf32>) dimensions = [0]
+    %init = tensor.empty() : tensor<16x16xf16>
+    %r = hfusion.cast {round_mode = #hfusion.round_mode<trunc>}
+        ins(%brc : tensor<16x16xf32>) outs(%init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    return %r : tensor<16x16xf16>
+  }
+}
+
+// -----
+
+// NORMALIZE-LABEL: @rtz_fill_normalized
+// NORMALIZE: %[[NORMAL:.*]] = hfusion.cast {{.*}}enable_saturate = true
+// NORMALIZE-SAME: round_mode = #hfusion.round_mode<trunc>
+// NORMALIZE-SAME: -> tensor<1xf16>
+// NORMALIZE: %[[EXTRACT:.*]] = tensor.extract %[[NORMAL]]
+// NORMALIZE: %[[POINT:.*]] = tensor.insert %[[EXTRACT]] into {{.*}} : tensor<f16>
+// NORMALIZE: %[[ELEM:.*]] = tensor.extract %[[POINT]][] : tensor<f16>
+// NORMALIZE: %[[BRC:.*]] = linalg.fill ins(%[[ELEM]] : f16)
+// NORMALIZE: hfusion.select ins({{.*}}, %[[BRC]],
+module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
+  func.func @rtz_fill_normalized(%src: f32) -> tensor<16xf16> {
+    %empty = tensor.empty() : tensor<16xf32>
+    %fill = linalg.fill ins(%src : f32) outs(%empty : tensor<16xf32>) -> tensor<16xf32>
+    %init = tensor.empty() : tensor<16xf16>
+    %r = hfusion.cast {round_mode = #hfusion.round_mode<trunc>}
+        ins(%fill : tensor<16xf32>) outs(%init : tensor<16xf16>) -> tensor<16xf16>
+    return %r : tensor<16xf16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: @rtz_f16
+// CHECK: %[[FINITE:.*]] = hfusion.isfinite %arg0
+// CHECK: %[[SPECIAL:.*]] = hfusion.cast
+// CHECK-NOT: enable_saturate = true
+// CHECK-SAME: round_mode = #hfusion.round_mode<rint>
+// CHECK: %[[CAST:.*]] = hfusion.cast
+// CHECK-SAME: enable_saturate = true
+// CHECK-SAME: hfusion.rtz_processed
+// CHECK-SAME: round_mode = #hfusion.round_mode<trunc>
+// CHECK: hfusion.select ins(%[[FINITE]], %[[CAST]], %[[SPECIAL]]
+// CHECK-NOT: hfusion.select
+// CHECK: return
+// SCALAR: "arith.truncf"
+// SCALAR-NOT: enable_saturate = true
+// SCALAR-SAME: round_mode = #hfusion.round_mode<rint>
+// SCALAR: "arith.truncf"
+// SCALAR-SAME: enable_saturate = true
+// SCALAR-SAME: round_mode = #hfusion.round_mode<trunc>
+func.func @rtz_f16(%src: tensor<16xf32>, %init: tensor<16xf16>) -> tensor<16xf16> {
+  %0 = hfusion.cast {round_mode = #hfusion.round_mode<trunc>} ins(%src : tensor<16xf32>) outs(%init : tensor<16xf16>) -> tensor<16xf16>
+  return %0 : tensor<16xf16>
+}
+
+// CHECK-LABEL: @rtz_bf16
+// CHECK: %[[FINITE:.*]] = hfusion.isfinite %arg0
+// CHECK: %[[SPECIAL:.*]] = hfusion.cast
+// CHECK-NOT: enable_saturate = true
+// CHECK-SAME: round_mode = #hfusion.round_mode<rint>
+// CHECK: %[[CAST:.*]] = hfusion.cast
+// CHECK-SAME: enable_saturate = true
+// CHECK: hfusion.select ins(%[[FINITE]], %[[CAST]], %[[SPECIAL]]
+func.func @rtz_bf16(%src: tensor<?xf32>, %init: tensor<?xbf16>) -> tensor<?xbf16> {
+  %0 = hfusion.cast {round_mode = #hfusion.round_mode<trunc>} ins(%src : tensor<?xf32>) outs(%init : tensor<?xbf16>) -> tensor<?xbf16>
+  return %0 : tensor<?xbf16>
+}
+
+// CHECK-LABEL: @rtz_fp8
+// CHECK-NOT: hfusion.cast
+// CHECK-NOT: hfusion.isfinite
+// CHECK: %[[NAN:.*]] = arith.constant 0x7F : f8E4M3FN
+// CHECK-NEXT: %[[ISNAN:.*]] = hfusion.isnan %arg0 : tensor<16xf16> -> tensor<16xi1>
+// CHECK-NEXT: %[[CAST:.*]] = hfusion.cast
+// CHECK-SAME: enable_saturate = true
+// CHECK-SAME: hfusion.rtz_processed
+// CHECK-SAME: round_mode = #hfusion.round_mode<trunc>
+// CHECK-NEXT: %[[RESULT:.*]] = hfusion.select ins(%[[ISNAN]], %[[NAN]], %[[CAST]]
+// CHECK-NEXT: return %[[RESULT]]
+func.func @rtz_fp8(%src: tensor<16xf16>, %init: tensor<16xf8E4M3FN>) -> tensor<16xf8E4M3FN> {
+  %0 = hfusion.cast {round_mode = #hfusion.round_mode<trunc>} ins(%src : tensor<16xf16>) outs(%init : tensor<16xf8E4M3FN>) -> tensor<16xf8E4M3FN>
+  return %0 : tensor<16xf8E4M3FN>
+}
+
+// CHECK-LABEL: @rtz_fp8_e5m2
+// CHECK: %[[FINITE:.*]] = hfusion.isfinite %arg0
+// CHECK: %[[SPECIAL:.*]] = hfusion.cast
+// CHECK-NOT: enable_saturate = true
+// CHECK-SAME: round_mode = #hfusion.round_mode<rint>
+// CHECK: %[[CAST:.*]] = hfusion.cast
+// CHECK-SAME: enable_saturate = true
+// CHECK: hfusion.select ins(%[[FINITE]], %[[CAST]], %[[SPECIAL]]
+func.func @rtz_fp8_e5m2(%src: tensor<16xf32>, %init: tensor<16xf8E5M2>) -> tensor<16xf8E5M2> {
+  %0 = hfusion.cast {round_mode = #hfusion.round_mode<trunc>} ins(%src : tensor<16xf32>) outs(%init : tensor<16xf8E5M2>) -> tensor<16xf8E5M2>
+  return %0 : tensor<16xf8E5M2>
+}
+
+// CHECK-LABEL: @rtz_upcast_unchanged
+// CHECK-NOT: hfusion.compare
+// CHECK: hfusion.cast {round_mode = #hfusion.round_mode<trunc>}
+// CHECK-NOT: hfusion.select
+// CHECK: return
+func.func @rtz_upcast_unchanged(%src: tensor<16xf16>, %init: tensor<16xf32>) -> tensor<16xf32> {
+  %0 = hfusion.cast {round_mode = #hfusion.round_mode<trunc>} ins(%src : tensor<16xf16>) outs(%init : tensor<16xf32>) -> tensor<16xf32>
+  return %0 : tensor<16xf32>
+}
+
+// CHECK-LABEL: @rint_unchanged
+// CHECK-NOT: hfusion.compare
+// CHECK: hfusion.cast {round_mode = #hfusion.round_mode<rint>}
+// CHECK-NOT: hfusion.select
+// CHECK: return
+func.func @rint_unchanged(%src: tensor<16xf32>, %init: tensor<16xf16>) -> tensor<16xf16> {
+  %0 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%src : tensor<16xf32>) outs(%init : tensor<16xf16>) -> tensor<16xf16>
+  return %0 : tensor<16xf16>
+}
+
+// -----
 
 // CHECK-LABEL: module
 // CHECK-LABEL: @__hmf_atanf

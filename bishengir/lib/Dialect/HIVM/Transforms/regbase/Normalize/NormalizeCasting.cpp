@@ -49,7 +49,7 @@ struct HIVMNormalizeCastLoweringTraits : public hivm::NormalizeTraitsBase {
   }
 
   static bool hasSaturateEnabled(hivm::VCastOp op) {
-    return hasSaturateOverflowModeAnnotation(op);
+    return getCastEnableSaturate(op) || hasSaturateOverflowModeAnnotation(op);
   }
 
   static bool isUnsignedCast(hivm::VCastOp op) {
@@ -123,6 +123,9 @@ struct HIVMNormalizeScalarCastTraits : public hivm::NormalizeTraitsBase {
         rewriter.create<tensor::FromElementsOp>(loc, tensorType, scalar);
     auto castOp = hivm::castTo(
         rewriter, loc, fromElementsOp, op.getRoundModeAttr(), dstType);
+    if (getCastEnableSaturate(op)) {
+      castOp->setAttr("enable_saturate", rewriter.getBoolAttr(true));
+    }
     castOp.setCastAttr(op.getCastAttr());
     if (auto unsignedMode = op->getAttrOfType<hivm::UnsignedModeAttr>(
             hivm::UnsignedModeAttr::name);

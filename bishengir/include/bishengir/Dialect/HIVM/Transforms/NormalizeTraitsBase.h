@@ -58,6 +58,11 @@ public:
                                Value lhs, Value mid, Value rhs, Value dst,
                                TernaryKind kind);
 
+  static bool getCastEnableSaturate(VCastOp op) {
+    auto attr = op->getAttrOfType<BoolAttr>("enable_saturate");
+    return attr && attr.getValue();
+  }
+
   /// Create a dialect cast preserving the source dialect round mode when one is
   /// already available. If no round mode is provided, the dialect default is
   /// selected first, then adjusted when HIVM requires a more restrictive cast
@@ -66,7 +71,8 @@ public:
                             Value input, Type targetElemType,
                             std::optional<RoundMode> roundMode = std::nullopt,
                             TypeFn castType = TypeFn::cast_signed,
-                            UnsignedMode unsignedMode = UnsignedMode::SI2SI);
+                            UnsignedMode unsignedMode = UnsignedMode::SI2SI,
+                            bool enableSaturate = false);
 
   /// Create a dialect cast from a normalize-template abstract round kind.
   static Value createCastOp(PatternRewriter &rewriter, Location loc,
@@ -145,7 +151,8 @@ public:
   static Value
   castScalarThroughTensor(PatternRewriter &rewriter, Location loc, Value scalar,
                           Type dstType, TypeFn castType = TypeFn::cast_signed,
-                          UnsignedMode unsignedMode = UnsignedMode::SI2SI);
+                          UnsignedMode unsignedMode = UnsignedMode::SI2SI,
+                          bool enableSaturate = false);
   static Value createSelectOp(PatternRewriter &rewriter, Location loc,
                               Value cond, Value a, Value b, Value dst);
 

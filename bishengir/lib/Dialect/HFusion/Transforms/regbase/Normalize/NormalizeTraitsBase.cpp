@@ -58,9 +58,10 @@ Value mlir::hfusion::NormalizeTraitsBase::createCastValueFromSourceOp(
       unsignedModeKind, signKind == CastSignKind::Preserve
                             ? getCastUnsignedMode(op)
                             : hfusion::UnsignedMode::SI2SI);
-  hfusion::RoundMode defaultRoundMode =
-      selectRoundMode<hfusion::RoundMode>(
-          getElementTypeOrSelf(input.getType()), targetElemType);
+
+  // A decomposition must not silently reset the source cast's semantics.
+  // Steps requiring a different rounding mode specify it explicitly.
+  hfusion::RoundMode defaultRoundMode = op.getRoundMode();
   hfusion::RoundMode roundMode =
       mapCastRoundKind(executionKind, defaultRoundMode);
   const bool enableOverflow = executionKind == CastRoundKind::Default
@@ -345,13 +346,13 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createBinaryOp(
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createCastOp(
     PatternRewriter &rewriter, Location loc, Value input, Type targetElemType,
     std::optional<RoundMode> roundMode, TypeFn castType,
-    UnsignedMode unsignedMode) {
+    UnsignedMode unsignedMode, bool enableSaturate) {
   if (!roundMode)
     roundMode = mlir::utils::selectRoundMode<RoundMode>(
         getElementTypeOrSelf(input.getType()), targetElemType);
   return hfusion::castTo(rewriter, input, targetElemType, *roundMode,
-                         std::nullopt, /*enableOverflow=*/true,
-                         /*enableSaturate=*/false, castType, unsignedMode);
+                         std::nullopt, /*enableOverflow=*/true, enableSaturate,
+                         castType, unsignedMode);
 }
 
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createShiftOp(
