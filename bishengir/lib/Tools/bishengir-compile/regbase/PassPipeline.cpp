@@ -172,7 +172,7 @@ void buildAffinityPipeline(OpPassManager &pm,
   pm.addPass(createCanonicalizeModulePass());
 
   pm.nest<func::FuncOp>().addPass(hivm::createMarkTightlyCoupledBufferPass());
-  pm.addPass(hivm::createSplitMixKernelPass());
+  pm.addPass(hivm::createV2SplitKernelPass());
   pm.addPass(createCanonicalizerPass());
 
   OutlineScopeOptions outlineScopeOptions;
