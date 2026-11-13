@@ -1389,7 +1389,8 @@ def DecoupledMemoryComputeScheduling : HIVMOptimizationControlOptions<
 >;
 
 def UsePipelinev2 : HIVMOptimizationControlOptions<
-  "Enable pipeline v2, bypassing cv-pipelining pass and using pipeline v2 passes (RegBase only for now).",
+  "Enable pipeline v2 for all kernels, overriding the registered-kernel "
+  "v1 default (RegBase only).",
   "bool",
   "false"
 >;

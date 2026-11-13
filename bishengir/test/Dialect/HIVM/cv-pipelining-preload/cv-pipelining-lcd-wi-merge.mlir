@@ -1,24 +1,36 @@
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew bypass-shape-registry=true" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
 
-// Test 1: Without LCD backup extraction or the small-work-item merge,
-// this cross-work-item carry remains intact for PipelineV2.
+// Test 1: Merge last non-LCD work item (WI0, < 3 core ops) with first LCD work item (WI1) of same core type.
+// Stage 0: Independent CUBE stage (mmad + fixpipe) has preload_num = 1.
+// Stage 1: VECTOR WI0 has 1 non-LCD core op (vmul).
+//          VECTOR WI1 has 1 LCD core op (vcast) consuming the carried iter_arg.
+// WI0 and WI1 are merged into a single VECTOR stage with has_loop_carried_dep (preload_num = 0).
+
 // CHECK-LABEL: func.func @test_lcd_wi_merge
-// CHECK-NOT: scope.scope
-// CHECK: scf.for {{.*}} iter_args(%[[ITER_ARG:.*]] = {{.*}}) -> (tensor<16x16xf32>)
-// CHECK-NOT: scope.scope
-// CHECK: hivm.hir.mmadL1
-// CHECK: hivm.hir.fixpipe
-// CHECK: %[[SCALED:.*]] = hivm.hir.vmul
-// CHECK: %[[CAST:.*]] = hivm.hir.vcast {{.*}} ins(%[[ITER_ARG]]
-// CHECK: hivm.hir.copy ins(%[[CAST]]
-// CHECK: hivm.hir.mmadL1
-// CHECK: hivm.hir.fixpipe
-// CHECK: %[[SUM:.*]] = hivm.hir.vadd ins(%{{.*}}, %[[SCALED]]
-// CHECK-NEXT: scf.yield %[[SUM]] : tensor<16x16xf32>
-// CHECK-NOT: scope.scope
-// CHECK-NOT: hivm.legacy-cv-pipeline
-// CHECK: return
-
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%[[ITER_ARG:.*]] = %{{.*}}) -> (tensor<16x16xf32>)
+// CHECK:   scope.scope : () -> tensor<16x16xbf16> {
+// CHECK:     hivm.hir.mmadL1
+// CHECK:     hivm.hir.fixpipe
+// CHECK:     scope.return
+// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 2 : i32, hivm.preload_num = 1 : i32, no_inline}
+// CHECK:   %[[MERGED_RES:.*]]:2 = scope.scope : () -> (tensor<16x16xf32>, tensor<16x16xbf16>) {
+// CHECK:     hivm.hir.load
+// CHECK:     hivm.hir.vmul
+// CHECK:     hivm.hir.vcast
+// CHECK:     hivm.hir.copy
+// CHECK:     scope.return
+// CHECK:   } {hivm.has_loop_carried_dep, hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 2 : i32, hivm.preload_num = 0 : i32, no_inline}
+// CHECK:   scope.scope : () -> () {
+// CHECK:     hivm.hir.mmadL1
+// CHECK:     hivm.hir.fixpipe
+// CHECK:     scope.return
+// CHECK:   } {hivm.has_loop_carried_dep, hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 2 : i32, hivm.preload_num = 0 : i32, no_inline}
+// CHECK:   %[[VEC_OUT:.*]] = scope.scope : () -> tensor<16x16xf32> {
+// CHECK:     hivm.hir.load
+// CHECK:     hivm.hir.vadd
+// CHECK:     scope.return
+// CHECK:   } {hivm.has_loop_carried_dep, hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 2 : i32, hivm.preload_num = 0 : i32, no_inline}
+// CHECK:   scf.yield %[[VEC_OUT]] : tensor<16x16xf32>
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @test_lcd_wi_merge(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}) attributes {WorkspaceArgIdx = 0 : i16, func_dyn_memref_args = dense<true> : vector<1xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
     %0 = "some_op"() : () -> memref<16x16xbf16>
@@ -78,8 +90,9 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
-// Test 2: Ordinary load handling still supports an independent Cube stage
-// followed by a Vector cast and an accumulator local to that work item.
+// Test 2: VCast bundling with load operations.
+// VCast casting a load result is bundled with the load operation rather than
+// eager extraction, being delayed until traced by the consumer stage.
 
 // CHECK-LABEL: func.func @test_vcast_load_bundling
 // CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%[[ITER_ARG:.*]] = %{{.*}}) -> (tensor<16x16xf32>)

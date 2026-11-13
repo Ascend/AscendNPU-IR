@@ -1,13 +1,11 @@
-// TODO: Temporary transition measure: pass bypass-shape-registry=true while
-// ShapeRegistry is emptied; remove once ShapeRegistry is retired.
-// RUN: bishengir-opt %s -allow-unregistered-dialect -create-preload="enable-preload=true set-workspace-multibuffer=2 bypass-shape-registry=true" | FileCheck %s --check-prefixes=CHECK,ON --implicit-check-not=scope.scope
+// RUN: bishengir-opt %s -allow-unregistered-dialect -create-preload="enable-preload=true set-workspace-multibuffer=2" | FileCheck %s --check-prefixes=CHECK,ON --implicit-check-not=scope.scope
 // RUN: sed 's/chunk_gated_delta_product_fwd_kernel_h_blockdim64/parallel_path_fwd_kernel/g' %s > %t
-// RUN: bishengir-opt %t -allow-unregistered-dialect -create-preload="enable-preload=true set-workspace-multibuffer=2 bypass-shape-registry=true" | FileCheck %t --check-prefixes=CHECK,ON --implicit-check-not=scope.scope
+// RUN: bishengir-opt %t -allow-unregistered-dialect -create-preload="enable-preload=true set-workspace-multibuffer=2" | FileCheck %t --check-prefixes=CHECK,ON --implicit-check-not=scope.scope
 // RUN: bishengir-opt %s -allow-unregistered-dialect -create-preload="enable-preload=false set-workspace-multibuffer=2" | FileCheck %s --check-prefix=OFF
 // RUN: bishengir-opt %s -allow-unregistered-dialect -create-preload="enable-preload=true set-workspace-multibuffer=0" | FileCheck %s --check-prefix=OFF
 // RUN: sed 's/chunk_gated_delta_product_fwd_kernel_h_blockdim64/off_registry/g' %s | bishengir-opt -allow-unregistered-dialect -create-preload="enable-preload=true set-workspace-multibuffer=2" | FileCheck %s --check-prefix=OFF
 
-// RUN: sed 's/hivm.hir.pipe_barrier\[<PIPE_ALL>\]/"test.outside"() : () -> ()/g' %s | bishengir-opt -allow-unregistered-dialect -create-preload="enable-preload=true set-workspace-multibuffer=2 bypass-shape-registry=true" | FileCheck %s --check-prefix=UNSAFE
+// RUN: sed 's/hivm.hir.pipe_barrier\[<PIPE_ALL>\]/"test.outside"() : () -> ()/g' %s | bishengir-opt -allow-unregistered-dialect -create-preload="enable-preload=true set-workspace-multibuffer=2" | FileCheck %s --check-prefix=UNSAFE
 
 // Preserve arbitrary lower/upper bounds, positive step and loop-carried state.
 // Only the actual program condition remains; no preload range guards or tail.

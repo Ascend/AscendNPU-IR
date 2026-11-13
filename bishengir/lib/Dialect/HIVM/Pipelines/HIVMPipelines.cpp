@@ -38,12 +38,10 @@
 namespace mlir {
 namespace hivm {
 
-// TODO: Temporary transition measure disabling ShapeRegistry-dependent preload
-// passes while migrating to PipelineV2. Remove ShapeRegistry altogether later.
 static bool
 enableRegisteredPreloadHeuristics(const HIVMPipelineOptions &pipelineOpts) {
-  (void)pipelineOpts;
-  return false;
+  return pipelineOpts.enablePreload &&
+         pipelineOpts.setWorkspaceMultibuffer != 0;
 }
 
 static ConstantizeBufferSizeOptions
@@ -267,6 +265,7 @@ static void hivmPreBufferizationOptimizationPipeline(
           hivmPipelineOptions.setWorkspaceMultibuffer;
       pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
       pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
+      pipelineOptions.enablePreload = hivmPipelineOptions.enablePreload;
       // Workspace allocation with dyn size, requires setbuffersize pass to get
       // fixed size. Infer buffer size upper bounds first so setbuffersize can
       // consume them.
