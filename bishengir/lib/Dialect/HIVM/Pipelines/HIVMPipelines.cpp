@@ -231,6 +231,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   if (hivmPipelineOptions.enableTritonKernelCompile &&
       hivmPipelineOptions.enableAutoBlockifyLoop) {
     pm.addPass(createAutoBlockifyParallelLoopPass());
+    pm.nest<func::FuncOp>().addPass(createInitEntryKernelPass());
   }
 
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
@@ -511,7 +512,11 @@ static void hivmPostBufferizationOptimizationPipeline(
 
 void buildOptimizeHIVMPipeline(OpPassManager &pm,
                                const HIVMPipelineOptions &options) {
-  pm.nest<func::FuncOp>().addPass(createInitEntryKernelPass());
+  const bool initAfterAutoBlockify = !options.disableHIVMTensorCompile &&
+                                     options.enableTritonKernelCompile &&
+                                     options.enableAutoBlockifyLoop;
+  if (!initAfterAutoBlockify)
+    pm.nest<func::FuncOp>().addPass(createInitEntryKernelPass());
   if (!options.disableHIVMTensorCompile) {
     hivmPreBufferizationOptimizationPipeline(pm, options);
     bufferizationPipeline(pm, options);
