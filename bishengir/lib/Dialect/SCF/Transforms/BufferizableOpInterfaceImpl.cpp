@@ -327,21 +327,20 @@ LogicalResult resolveConflicts(Operation *op, RewriterBase &rewriter,
     if (!allocTensor) {
       continue;
     }
-    assert(allocTensor.getCopy() && allocTensor->hasOneUse() &&
-           "allocTensor must have a copy and one use");
+    assert(allocTensor.getCopy() && " must have a copy if it's yielded");
     auto scopeResult = allocTensor.getCopy();
     if (!isa_and_nonnull<scope::ScopeOp>(scopeResult.getDefiningOp()) ||
         !scopeResult.getDefiningOp()->hasAttr(hivm::PreloadNumAttr::name)) {
       continue;
     }
-
+    assert(allocTensor->hasOneUse() && " allocTensor must have one use");
     // Move the existing copy into the scope. Erasing it would invalidate
     // values retained by OneShotAnalysisState: the enclosing loop still
     // queries those aliases when resolving its conflicts.
     rewriter.modifyOpInPlace(
         yieldOp, [&]() { yieldOp.setOperand(pair.index(), scopeResult); });
     auto scopeOp = cast<scope::ScopeOp>(scopeResult.getDefiningOp());
-    auto *returnOp = &scopeOp.getBody()->back();
+    auto *returnOp = scopeOp.getBody()->getTerminator();
     rewriter.moveOpBefore(allocTensor, returnOp);
 
     auto returnOpIdx = cast<OpResult>(scopeResult).getResultNumber();
