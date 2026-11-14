@@ -619,11 +619,10 @@ Value castInToF32ToOut(CastOpType op, PatternRewriter &rewriter) {
   if (dstType.isF32())
     return castSrcToF32;
 
-  auto kind =
-      dstType.isInteger() ? CastSignKind::Signed : CastSignKind::Preserve;
-  return Traits::createCastValueFromSourceOp(
-      rewriter, loc, op, castSrcToF32, dstType, CastRoundKind::Default, kind,
-      Traits::hasSaturateEnabled(op));
+  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castSrcToF32, dstType,
+                           CastRoundKind::Default,
+                           dstType.isInteger() ? CastSignKind::Signed
+                                               : CastSignKind::Preserve);
 }
 
 template <typename Traits, typename CastOpType>
@@ -641,10 +640,9 @@ template <typename Traits, typename CastOpType>
 Value castU32ToI64ToF32ToOut(CastOpType op, Type targetType,
                              PatternRewriter &rewriter) {
   Value u32ToF32Result = castU32ToI64ToF32<Traits>(op, rewriter);
-  return Traits::createCastValueFromSourceOp(
-      rewriter, op.getLoc(), op, u32ToF32Result, targetType,
-      CastRoundKind::Default, CastSignKind::Signed,
-      Traits::hasSaturateEnabled(op));
+  return Traits::createCastValueFromSourceOp(rewriter, op.getLoc(), op, u32ToF32Result,
+                           targetType, CastRoundKind::Default,
+                           CastSignKind::Signed);
 }
 
 template <typename Traits, typename CastOpType>
@@ -662,14 +660,14 @@ Value castSrcToFp16ToTargetType(CastOpType op, Type targetType,
         Traits::createCastValueFromSourceOp(rewriter, loc, op, castSrcToF16, rewriter.getF32Type(),
                           CastRoundKind::Default,
                           CastSignKind::Preserve);
-    return Traits::createCastValueFromSourceOp(
-        rewriter, loc, op, castF16ToF32, targetType, CastRoundKind::Default,
-        CastSignKind::Preserve, Traits::hasSaturateEnabled(op));
+    return Traits::createCastValueFromSourceOp(rewriter, loc, op, castF16ToF32, targetType,
+                             CastRoundKind::Default,
+                             CastSignKind::Preserve);
   }
 
-  return Traits::createCastValueFromSourceOp(
-      rewriter, loc, op, castSrcToF16, targetType, CastRoundKind::Default,
-      CastSignKind::Signed, Traits::hasSaturateEnabled(op));
+  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castSrcToF16, targetType,
+                           CastRoundKind::Default,
+                           CastSignKind::Signed);
 }
 
 template <typename Traits, typename CastOpType>
@@ -706,20 +704,19 @@ Value castI8ToI64(CastOpType op, PatternRewriter &rewriter) {
   if (!Traits::archIsRegbased()) {
     Value i8ToF32Result =
         castSrcToFp16ToTargetType<Traits>(op, rewriter.getF32Type(), rewriter);
-    return Traits::createCastValueFromSourceOp(
-        rewriter, loc, op, i8ToF32Result, rewriter.getI64Type(),
-        CastRoundKind::Default, CastSignKind::Signed,
-        Traits::hasSaturateEnabled(op));
+    return Traits::createCastValueFromSourceOp(rewriter, loc, op, i8ToF32Result,
+                             rewriter.getI64Type(),
+                             CastRoundKind::Default,
+                             CastSignKind::Signed);
   }
 
   Value castValue = Traits::createCastValueFromSourceOp(rewriter, loc, op, op.getDpsInputs()[0],
                                       rewriter.getI32Type(),
                                       CastRoundKind::Default,
                                       CastSignKind::Preserve);
-  return Traits::createCastValueFromSourceOp(
-      rewriter, loc, op, castValue, rewriter.getI64Type(),
-      CastRoundKind::Default, CastSignKind::Preserve,
-      Traits::hasSaturateEnabled(op));
+  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castValue, rewriter.getI64Type(),
+                           CastRoundKind::Default,
+                           CastSignKind::Preserve);
 }
 
 template <typename Traits, typename CastOpType>
@@ -728,10 +725,8 @@ Value castI1ToI32ViaF16(CastOpType op, PatternRewriter &rewriter) {
   Value castF16Value = Traits::createCastValueFromSourceOp(rewriter, loc, op, op.getDpsInputs()[0],
                                          rewriter.getF16Type(),
                                          CastRoundKind::RInt);
-  return Traits::createCastValueFromSourceOp(
-      rewriter, loc, op, castF16Value, rewriter.getI32Type(),
-      CastRoundKind::RInt, CastSignKind::Preserve,
-      Traits::hasSaturateEnabled(op));
+  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castF16Value,
+                           rewriter.getI32Type(), CastRoundKind::RInt);
 }
 
 template <typename Traits, typename CastOpType>
@@ -740,10 +735,10 @@ Value castI1ToI64ViaF32(CastOpType op, PatternRewriter &rewriter) {
   Value castF32Value = Traits::createCastValueFromSourceOp(rewriter, loc, op, op.getDpsInputs()[0],
                                          rewriter.getF32Type(),
                                          CastRoundKind::RInt);
-  return Traits::createCastValueFromSourceOp(
-      rewriter, loc, op, castF32Value, rewriter.getI64Type(),
-      CastRoundKind::Default, CastSignKind::Signed,
-      Traits::hasSaturateEnabled(op));
+  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castF32Value,
+                           rewriter.getI64Type(),
+                           CastRoundKind::Default,
+                           CastSignKind::Signed);
 }
 
 template <typename Traits, typename CastOpType>
@@ -751,10 +746,8 @@ Value castI32ToF16ViaF32(CastOpType op, PatternRewriter &rewriter) {
   Location loc = op.getLoc();
   Value castF32Value = Traits::createCastValueFromSourceOp(rewriter, loc, op, op.getDpsInputs()[0],
                                          rewriter.getF32Type());
-  return Traits::createCastValueFromSourceOp(
-      rewriter, loc, op, castF32Value, rewriter.getF16Type(),
-      CastRoundKind::Default, CastSignKind::Preserve,
-      Traits::hasSaturateEnabled(op));
+  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castF32Value,
+                           rewriter.getF16Type());
 }
 
 template <typename Traits, typename CastOpType>
@@ -772,10 +765,9 @@ Value castI16ToI64(CastOpType op, PatternRewriter &rewriter) {
                                   CastRoundKind::RInt);
   }
 
-  return Traits::createCastValueFromSourceOp(
-      rewriter, loc, op, castValue, rewriter.getI64Type(),
-      CastRoundKind::Default, CastSignKind::Preserve,
-      Traits::hasSaturateEnabled(op));
+  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castValue, rewriter.getI64Type(),
+                           CastRoundKind::Default,
+                           CastSignKind::Preserve);
 }
 
 template <typename Traits, typename CastOpType>
@@ -784,10 +776,8 @@ Value castI16ToI32ViaF32(CastOpType op, PatternRewriter &rewriter) {
   Value castF32Value = Traits::createCastValueFromSourceOp(rewriter, loc, op, op.getDpsInputs()[0],
                                          rewriter.getF32Type(),
                                          CastRoundKind::RInt);
-  return Traits::createCastValueFromSourceOp(
-      rewriter, loc, op, castF32Value, rewriter.getI32Type(),
-      CastRoundKind::Default, CastSignKind::Preserve,
-      Traits::hasSaturateEnabled(op));
+  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castF32Value,
+                           rewriter.getI32Type());
 }
 
 template <typename Traits, typename CastOpType>
@@ -797,10 +787,9 @@ Value castF32ToU32ViaI64(CastOpType op, PatternRewriter &rewriter) {
                                          rewriter.getI64Type(),
                                          CastRoundKind::Default,
                                          CastSignKind::Signed);
-  return Traits::createCastValueFromSourceOp(
-      rewriter, loc, op, castF32ToI64, rewriter.getI32Type(),
-      CastRoundKind::Default, CastSignKind::Signed,
-      Traits::hasSaturateEnabled(op));
+  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castF32ToI64,
+                           rewriter.getI32Type(), CastRoundKind::Default,
+                           CastSignKind::Signed);
 }
 
 } // namespace mlir
