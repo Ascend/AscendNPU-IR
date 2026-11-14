@@ -12,4 +12,5 @@ add_dependencies(BiShengIRNPUArchitectureFeaturesIncGen
   BiShengIRNPUArchitectureIncGen)
 add_dependencies(mlir-headers BiShengIRNPUArchitectureFeaturesIncGen)
 
+add_subdirectory(Cube)
 add_subdirectory(DMA)

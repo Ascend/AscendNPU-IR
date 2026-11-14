@@ -26,7 +26,8 @@ const llvm::StringSet<> shmemCoreTypeInferFromPreOp = {
     "aclshmem_uint64_p",         "aclshmem_uint32_p",
     "aclshmem_uint16_p",         "aclshmem_uint8_p",
     "aclshmemx_signal_op",       "aclshmem_fence",
-    "aclshmem_atomic_add_int64", "aclshmem_atomic_add_uint64"};
+    "aclshmemx_mte_quiet",       "aclshmem_atomic_add_int64",
+    "aclshmem_atomic_add_uint64"};
 
 const std::string kShmemPtr = "aclshmem_ptr";
 const std::string kShmemConsumeToken = "aclshmem_consume_token";

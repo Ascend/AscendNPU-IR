@@ -169,6 +169,21 @@ struct PoolInfo {
   bool operator!=(const PoolInfo &other) const { return !(*this == other); }
 };
 
+/// Explicit slot identity, separate from the physical address table. Derived
+/// views are traced back to the binding by IRTranslator before constructing
+/// this.
+struct PoolSlotInfo {
+  PoolSlotOp binding;
+
+  explicit PoolSlotInfo(PoolSlotOp binding) : binding(binding) {}
+  bool operator==(const PoolSlotInfo &other) const {
+    return binding == other.binding;
+  }
+  bool operator!=(const PoolSlotInfo &other) const { return !(*this == other); }
+
+  static std::optional<PoolSlotInfo> tryGet(Value value);
+};
+
 struct MemInfo {
   Value value{nullptr};
   std::optional<FuncArgInfo> funcArgInfo;
@@ -176,6 +191,7 @@ struct MemInfo {
   std::optional<AllocLikeInfo> allocLikeInfo;
   std::optional<SubviewInfo> subviewInfo;
   std::optional<PoolInfo> poolInfo;
+  std::optional<PoolSlotInfo> poolSlotInfo;
   std::optional<PIPE> pipe;
   std::optional<hivm::TCoreType> coreType;
 
@@ -208,6 +224,8 @@ struct MemInfo {
     // different dynamic allocations merely because they share a pool base.
     if (poolInfo != other.poolInfo)
       return false;
+    if (poolSlotInfo != other.poolSlotInfo)
+      return value != nullptr && value == other.value;
     return (value != nullptr && value == other.value) ||
            (std::tie(funcArgInfo, pointerLikeInfo, allocLikeInfo, subviewInfo,
                      pipe, coreType) ==

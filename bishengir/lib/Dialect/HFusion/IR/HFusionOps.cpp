@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/Cube/Mmad/MmadCapabilityQuery.h"
 #include "bishengir/Dialect/MathExt/IR/MathExt.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/AsmParser/AsmParser.h"
@@ -3863,9 +3864,20 @@ MatMulMxOp::decomposeOperation(PatternRewriter &builder) {
   Value a = getInputA();
   auto aType = cast<RankedTensorType>(a.getType());
 
-  // Software emulation only used to support K = 32
+  // If it's not native mmadmx, we try to emulate it using mmad + vmul
   const auto K = aType.getShape()[1];
-  if (K != 32)
+  bool formatsPresent =
+      getLhsFormat().has_value() && getRhsFormat().has_value();
+  uint64_t lhsFormat =
+      formatsPresent ? static_cast<uint64_t>(*getLhsFormat()) : 1;
+  uint64_t rhsFormat =
+      formatsPresent ? static_cast<uint64_t>(*getRhsFormat()) : 1;
+  if (hivm::isNativeMmadMx(getOperation(), getElementTypeOrSelf(a.getType()),
+                           getElementTypeOrSelf(getInputB().getType()),
+                           getElementTypeOrSelf(getScaleA().getType()),
+                           getElementTypeOrSelf(getScaleB().getType()),
+                           getElementTypeOrSelf(getAcc().getType()),
+                           formatsPresent, lhsFormat, rhsFormat, K))
     return failure();
 
   OpBuilder::InsertionGuard guard(builder);

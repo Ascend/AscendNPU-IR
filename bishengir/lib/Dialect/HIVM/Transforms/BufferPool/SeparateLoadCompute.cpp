@@ -167,10 +167,10 @@ static bool hasSupportedReaders(const LoadGroup &group,
       continue;
     if (access.write || !group.loop->isAncestor(access.op))
       return false;
-    // Intermediate copies and cross-core readers require the TCB path.
-    if (isa<hivm::CopyOp, hivm::ND2NZOp>(access.op))
-      return false;
-    if (hivm::detail::queryCoreTypeHelper(access.op) == TCoreType::VECTOR)
+    // Tensor matrix operands do not have an address space yet. GSS later
+    // models these L1 inputs as MTE1 reads; copies and other consumers use
+    // their existing scheduling path.
+    if (!isa<hivm::MmadL1Op, hivm::BatchMmadL1Op, hivm::MmadMxL1Op>(access.op))
       return false;
     readers.push_back(access.op);
   }
@@ -519,7 +519,8 @@ static void separateFunction(func::FuncOp function) {
           isTightlyCoupledValue(root))
         return;
       auto space = getOptionalHIVMAddressSpace(alloc.getType());
-      if (space && *space != AddressSpace::L1 && *space != AddressSpace::UB)
+      // Before memory-scope inference, MTE1 consumers determine L1 storage.
+      if (space && *space != AddressSpace::L1)
         return;
       auto [it, inserted] = indices.try_emplace(root, groups.size());
       if (inserted) {
@@ -535,6 +536,8 @@ static void separateFunction(func::FuncOp function) {
     llvm::erase_if(groups, [&](LoadGroup &group) {
       return !analyzeGroup(group, dominance);
     });
+    if (groups.size() > 2)
+      continue;
     if (!inferLoadStages(groups))
       continue;
     // Keep source order within the load prefix. Stage inference above still
@@ -551,7 +554,11 @@ static void separateFunction(func::FuncOp function) {
 struct SeparateLoadComputePass
     : public impl::SeparateLoadComputeBase<SeparateLoadComputePass> {
   void runOnOperation() override {
-    for (func::FuncOp function : getOperation().getOps<func::FuncOp>())
+    auto module = getOperation();
+    auto enabled = module->getAttrOfType<BoolAttr>("hivm.load_buffer_pool");
+    if (!enabled || !enabled.getValue())
+      return;
+    for (func::FuncOp function : module.getOps<func::FuncOp>())
       separateFunction(function);
   }
 };

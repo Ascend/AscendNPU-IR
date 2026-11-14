@@ -17,6 +17,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/Cube/Mmad/MmadCapabilityBinding.h"
 #include "bishengir/Dialect/HIVM/IR/Capability/DMA/CubeLoad/CubeLoadCapabilityBinding.h"
 #include "bishengir/Dialect/HIVM/IR/Capability/DMA/Fixpipe/FixpipeCapabilityBinding.h"
 #include "bishengir/Dialect/HIVM/Transforms/FixpipeCapabilityQuery.h"
@@ -206,6 +207,8 @@ void VerifyCapabilityPass::runOnOperation() {
   // that library is walked here. A new op does not need a hand-written
   // checker. A new catalogue namespace adds one line.
   checkCatalogue<bishengir::npu::CapabilityCatalogue>(root, targets, *this);
+  checkCatalogue<bishengir::npu::mmad::CapabilityCatalogue>(root, targets,
+                                                            *this);
   checkCatalogue<bishengir::npu::cubeload::CapabilityCatalogue>(root, targets,
                                                                 *this);
   markAnalysesPreserved<hivm::ModuleTargetAnalysis>();

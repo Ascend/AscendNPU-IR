@@ -1,4 +1,4 @@
-//===- V2SplitKernel.cpp - MIX split -------------------------------------===//
+//===- V2SplitKernel.cpp - MIX split --------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -10,21 +10,24 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/SplitKernelUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/Support/Debug.h"
-
-#include <optional>
 
 namespace mlir {
 #define GEN_PASS_DEF_V2SPLITKERNEL
@@ -37,82 +40,181 @@ using namespace mlir;
 
 namespace {
 
-/// Erase ops owned by `filteredCore`; fail on filtered ops with live results.
-static LogicalResult filterCoreOps(func::FuncOp func,
-                                   hivm::TCoreType filteredCore) {
-  WalkResult result = func.walk<WalkOrder::PostOrder>([&](Operation *op) {
-    if (op == func.getOperation())
-      return WalkResult::advance();
-    if (op->hasTrait<OpTrait::IsTerminator>())
-      return WalkResult::advance();
+static FailureOr<hivm::TCoreType> getSplitCoreType(Operation *op) {
+  if (op->hasAttr(hivm::VectorFunctionAttr::name))
+    return hivm::TCoreType::VECTOR;
+  return hivm::getCoreType(op);
+}
 
-    auto coreType = hivm::getCoreType(op);
-    if (failed(coreType) || *coreType != filteredCore)
+/// Freeze use-dependent inference before either clone loses consumers.
+static LogicalResult resolveCoreTypes(func::FuncOp func) {
+  WalkResult result = func.walk([&](Operation *op) {
+    if (op == func || op->hasTrait<OpTrait::IsTerminator>())
       return WalkResult::advance();
-
-    if (op->getNumResults() != 0) {
-      op->emitError()
-          << "hivm-v2-split-kernel cannot erase a filtered op with results "
-             "on memref IR";
+    auto coreType = getSplitCoreType(op);
+    if (failed(coreType))
       return WalkResult::interrupt();
-    }
-
-    op->erase();
-    return WalkResult::skip();
+    if (isa<hivm::LoadOp, hivm::DebugOp, hivm::CustomOp>(op) ||
+        op->hasAttr(hivm::VectorFunctionAttr::name))
+      op->setAttr(hivm::TCoreTypeAttr::name,
+                  hivm::TCoreTypeAttr::get(func.getContext(), *coreType));
+    return WalkResult::advance();
   });
   return success(!result.wasInterrupted());
 }
 
-static std::optional<hivm::TFuncCoreType> getFuncCoreType(func::FuncOp func) {
-  auto attr = func->getAttrOfType<hivm::TFuncCoreTypeAttr>(
-      hivm::TFuncCoreTypeAttr::name);
-  if (!attr)
-    return std::nullopt;
-  return attr.getFuncCoreType();
+/// A shared region can still carry buffer descriptors and scalar loop state
+/// after its core-local effects are erased. A vector function is indivisible.
+static bool isSharedRegion(Operation *op) {
+  return isa<RegionBranchOpInterface>(op) &&
+         !op->hasAttr(hivm::VectorFunctionAttr::name);
+}
+
+static FailureOr<bool> isFiltered(Operation *op, hivm::TCoreType filteredCore) {
+  auto coreType = getSplitCoreType(op);
+  if (failed(coreType))
+    return failure();
+  if (*coreType != hivm::TCoreType::CUBE_OR_VECTOR)
+    return *coreType == filteredCore;
+  if (isa<RegionBranchOpInterface, annotation::MarkOp>(op) ||
+      isMemoryEffectFree(op) || hasSingleEffect<MemoryEffects::Allocate>(op))
+    return false;
+
+  for (Operation *parent = op->getParentOp(); !isa<func::FuncOp>(parent);
+       parent = parent->getParentOp()) {
+    auto parentCore = getSplitCoreType(parent);
+    if (failed(parentCore))
+      return failure();
+    if (*parentCore != hivm::TCoreType::CUBE_OR_VECTOR)
+      return *parentCore == filteredCore;
+  }
+  return false;
+}
+
+/// Drop marks that would otherwise keep an unused buffer allocation alive.
+struct EraseUnusedBufferMarks : OpRewritePattern<annotation::MarkOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(annotation::MarkOp mark,
+                                PatternRewriter &rewriter) const override {
+    Value src = mark.getSrc();
+    Operation *def = src.getDefiningOp();
+    if (!isa<BaseMemRefType>(src.getType()) || !def ||
+        !wouldOpBeTriviallyDead(def) ||
+        !llvm::all_of(src.getUsers(), [&](Operation *user) {
+          auto otherMark = dyn_cast<annotation::MarkOp>(user);
+          return otherMark && otherMark.getSrc() == src;
+        }))
+      return failure();
+    rewriter.eraseOp(mark);
+    return success();
+  }
+};
+
+struct FilterCoreOps : RewritePattern {
+  FilterCoreOps(MLIRContext *ctx, hivm::TCoreType filteredCore)
+      : RewritePattern(MatchAnyOpTypeTag(), 1, ctx),
+        filteredCore(filteredCore) {}
+
+  LogicalResult matchAndRewrite(Operation *op,
+                                PatternRewriter &rewriter) const override {
+    if (isa<func::FuncOp>(op) || op->hasTrait<OpTrait::IsTerminator>())
+      return failure();
+
+    auto filtered = isFiltered(op, filteredCore);
+    if (failed(filtered) || !*filtered || !op->use_empty() ||
+        isSharedRegion(op))
+      return failure();
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+  hivm::TCoreType filteredCore;
+};
+
+/// Remaining filtered ops must be shared control flow, without live vectors
+/// or tensors. Clear stale ownership while preserving descriptor/scalar state.
+static LogicalResult validateRemainingCoreOps(func::FuncOp func,
+                                              hivm::TCoreType filteredCore) {
+  WalkResult result = func.walk<WalkOrder::PostOrder>([&](Operation *op) {
+    if (op == func || op->hasTrait<OpTrait::IsTerminator>())
+      return WalkResult::advance();
+    auto filtered = isFiltered(op, filteredCore);
+    if (failed(filtered))
+      return WalkResult::interrupt();
+    if (!*filtered)
+      return WalkResult::advance();
+    if (!isSharedRegion(op) || llvm::any_of(op->getResults(), [](Value result) {
+          return !result.use_empty() && isa<ShapedType>(result.getType()) &&
+                 !isa<BaseMemRefType>(result.getType());
+        })) {
+      op->emitError("filtered operation has live results on the other core");
+      return WalkResult::interrupt();
+    }
+    op->removeAttr(hivm::TCoreTypeAttr::name);
+    op->removeAttr(hivm::kPipelinedLoopCoreTypeAttrName);
+    op->removeAttr(hivm::kCubeOnlyAttrName);
+    op->removeAttr(hivm::kVecOnlyAttrName);
+    return WalkResult::advance();
+  });
+  return success(!result.wasInterrupted());
+}
+
+static LogicalResult filterCoreOps(func::FuncOp func,
+                                   hivm::TCoreType filteredCore) {
+  MLIRContext *ctx = func.getContext();
+  RewritePatternSet patterns(ctx);
+  patterns.add<EraseUnusedBufferMarks>(ctx);
+  patterns.add<FilterCoreOps>(ctx, filteredCore);
+  scope::ScopeOp::getCanonicalizationPatterns(patterns, ctx);
+  scf::ForOp::getCanonicalizationPatterns(patterns, ctx);
+  scf::IfOp::getCanonicalizationPatterns(patterns, ctx);
+  scf::WhileOp::getCanonicalizationPatterns(patterns, ctx);
+  if (failed(applyPatternsGreedily(func, std::move(patterns))))
+    return failure();
+  return validateRemainingCoreOps(func, filteredCore);
 }
 
 static bool isMixFunction(func::FuncOp func) {
   if (hacc::utils::isHost(func) || func.isExternal())
     return false;
-  auto coreType = getFuncCoreType(func);
+  auto coreType = hivm::queryFuncCoreType(func);
   return coreType && *coreType == hivm::TFuncCoreType::MIX &&
          !func->hasAttr(hivm::TPartOfMixAttr::name);
 }
 
 static LogicalResult splitMixKernel(func::FuncOp func) {
-  if (!isMixFunction(func))
-    return success();
-
-  StringRef funcName = func.getSymName();
-  if (failed(hivm::generateMixKernelDecl(func)))
+  if (failed(resolveCoreTypes(func)) || failed(hivm::verifyCoreRatio(func)))
     return failure();
 
-  OpBuilder builder(func);
-  builder.setInsertionPointAfter(func.getOperation());
-  auto vecFunc = cast<func::FuncOp>(builder.clone(*func.getOperation()));
+  auto ratio = hivm::getCoreRatioAttr(func);
+  if (hacc::utils::isAscend950(func->getParentOfType<ModuleOp>()) &&
+      hivm::isSingleCoreRatio(ratio)) {
+    bool vectorOnly = ratio.getCube() == 0;
+    if (failed(filterCoreOps(func, vectorOnly ? hivm::TCoreType::CUBE
+                                              : hivm::TCoreType::VECTOR)))
+      return failure();
+    func->setAttr(hivm::TFuncCoreTypeAttr::name,
+                  hivm::TFuncCoreTypeAttr::get(func.getContext(),
+                                               vectorOnly
+                                                   ? hivm::TFuncCoreType::AIV
+                                                   : hivm::TFuncCoreType::AIC));
+    func->removeAttr(hivm::TCoreRatioAttr::name);
+    return success();
+  }
 
-  func.setSymNameAttr(
-      builder.getStringAttr((Twine(funcName) + hivm::kMixFuncAicSuffix).str()));
-  vecFunc.setSymNameAttr(
-      builder.getStringAttr((Twine(funcName) + hivm::kMixFuncAivSuffix).str()));
+  auto splitFuncs = hivm::createSplitMixFunctions(func);
+  if (failed(splitFuncs))
+    return failure();
+  auto [cubeFunc, vecFunc] = *splitFuncs;
 
-  func->setAttr(hivm::TPartOfMixAttr::name, builder.getUnitAttr());
-  vecFunc->setAttr(hivm::TPartOfMixAttr::name, builder.getUnitAttr());
-
-  func->setAttr(hivm::TFuncCoreTypeAttr::name,
-                hivm::TFuncCoreTypeAttr::get(func->getContext(),
-                                             hivm::TFuncCoreType::AIC));
-  vecFunc->setAttr(hivm::TFuncCoreTypeAttr::name,
-                   hivm::TFuncCoreTypeAttr::get(vecFunc->getContext(),
-                                                hivm::TFuncCoreType::AIV));
-
-  if (failed(filterCoreOps(func, hivm::TCoreType::VECTOR)))
+  if (failed(filterCoreOps(cubeFunc, hivm::TCoreType::VECTOR)))
     return failure();
   if (failed(filterCoreOps(vecFunc, hivm::TCoreType::CUBE)))
     return failure();
 
   LLVM_DEBUG(llvm::dbgs() << "[hivm-v2-split-kernel] AIC:\n"
-                          << func << "\nAIV:\n"
+                          << cubeFunc << "\nAIV:\n"
                           << vecFunc << "\n");
   return success();
 }

@@ -3,9 +3,12 @@
 // RUN: bishengir-opt %t/stages.mlir -hacc-append-device-spec=target=Ascend950PR_950z -hivm-mark-buffer-pool -split-input-file | FileCheck %t/stages.mlir
 // RUN: bishengir-opt %t/stages.mlir -hacc-append-device-spec=target=Ascend950PR_950z -hivm-mark-buffer-pool -hivm-mark-buffer-pool -split-input-file | FileCheck %t/stages.mlir
 // RUN: bishengir-opt %t/ssbuffer.mlir -hacc-append-device-spec=target=Ascend950PR_950z -hivm-mark-buffer-pool | FileCheck %t/ssbuffer.mlir
+// RUN: bishengir-opt %t/ssbuffer.mlir -hacc-append-device-spec=target=Ascend950PR_950z -hivm-mark-buffer-pool -hivm-plan-memory -hivm-enable-buffer-pool | FileCheck %t/ssbuffer.mlir --check-prefix=ENABLE --implicit-check-not=scope.scope --implicit-check-not=hivm.load_preload --implicit-check-not=scf.while
+// RUN: sed 's/slt, %v, %c8/slt, %v, %c2/' %t/ssbuffer.mlir | bishengir-opt -hacc-append-device-spec=target=Ascend950PR_950z -hivm-mark-buffer-pool -hivm-plan-memory -hivm-enable-buffer-pool | FileCheck %t/ssbuffer.mlir --check-prefix=UNEQUAL
 // RUN: bishengir-opt %t/unseparated.mlir -o %t/unseparated-before.mlir
 // RUN: bishengir-opt %t/unseparated.mlir -hivm-mark-buffer-pool -hivm-enable-buffer-pool -o %t/unseparated-after.mlir
 // RUN: diff %t/unseparated-before.mlir %t/unseparated-after.mlir
+// RUN: sed -n '/^func.func @insufficient_simultaneous_inputs/,/^}/p' %t/stages.mlir | sed 's/hivm.multi_buffer = 6/hivm.multi_buffer = 2/' | bishengir-opt -hacc-append-device-spec=target=Ascend950PR_950z -hivm-mark-buffer-pool -hivm-plan-memory -hivm-enable-buffer-pool | FileCheck %t/stages.mlir --check-prefix=INPUTS
 
 //--- stages.mlir
 // One remaining event cannot hold the two inputs of one computation.

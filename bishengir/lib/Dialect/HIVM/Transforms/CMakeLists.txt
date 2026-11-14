@@ -157,6 +157,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   RepositionPreloadWork.cpp
   SinkOpToConsumerInLoop.cpp
   SIMTVFSubTiling.cpp
+  SplitKernelUtils.cpp
   SplitSimtModule.cpp
   SplitMixedIfConditionals.cpp
   SplitMixKernel.cpp
@@ -181,6 +182,8 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   DEPENDS
   BiShengIRHIVMTransformsIncGen
   BiShengIRNPUArchitectureFeaturesIncGen
+  BiShengIRMmadCapabilityIncGen
+  BiShengIRMmadCapabilityBindingIncGen
   BiShengIRFixpipeCapabilityIncGen
   BiShengIRFixpipeCapabilityBindingIncGen
   BiShengIRCubeLoadCapabilityIncGen
@@ -200,6 +203,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MLIRDialectUtils
   BiShengIRHACCUtils
   BiShengIRHACCDialect
+  BiShengIRNPUMmadCapability
   BiShengIRNPUFixpipeCapability
   BiShengIRHIVMAnalysis
   BiShengIRHIVMDialect

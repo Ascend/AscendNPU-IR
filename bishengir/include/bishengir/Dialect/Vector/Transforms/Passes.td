@@ -26,6 +26,18 @@ def NormalizeVector
   ];
 }
 
+def HoistConstantMasks : Pass<"hoist-constant-masks", "func::FuncOp"> {
+  let summary = "Hoist constant vector masks to the function entry";
+  let description = [{
+    Move operandless vector.constant_mask operations to the function entry so
+    they dominate arithmetic that can reuse them. Do not cross nested isolated
+    operations. This pass only performs hoisting; a separate CSE pass must run
+    afterward to merge equivalent masks before mask analysis.
+  }];
+  let constructor = "mlir::vector::createHoistConstantMasksPass()";
+  let dependentDialects = ["vector::VectorDialect"];
+}
+
 def PeelLoopsContainingTranspose
     : Pass<"peel-loops-containing-transpose", "func::FuncOp"> {
   let summary = "Peel loops which contains vector.transfer_read which "
