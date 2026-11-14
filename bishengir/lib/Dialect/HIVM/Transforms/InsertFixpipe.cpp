@@ -205,6 +205,10 @@ static bool needYieldOut(Operation *user, Value val) {
 /// would emit one fixpipe per branch and hand consumers of the merged result
 /// (such as annotation.mark bind_buffer) the fixpipe output rather than the
 /// value still living in L0C.
+///
+/// Also walk scf.for and scf.while yields that must stay on the raw L0C value.
+/// The fixpipe is then emitted at the first real consumer (for example a store
+/// after the outer loop) instead of inside the loop, where it would be dead.
 Operation *getInsertPointOutOfIf(Operation *op, int &resultIndx) {
   OpResult result = op->getResult(resultIndx);
   if (!op->hasAttr(RemainInL0CAttr::name))
@@ -218,10 +222,20 @@ Operation *getInsertPointOutOfIf(Operation *op, int &resultIndx) {
     auto yieldOp = dyn_cast<scf::YieldOp>(user);
     if (!yieldOp)
       continue;
-    auto ifOp = dyn_cast<scf::IfOp>(yieldOp->getParentOp());
-    if (!ifOp || (!isResultInL0C(result) && isMixKernel(ifOp, result)))
+    Operation *parent = yieldOp->getParentOp();
+    if (auto ifOp = dyn_cast<scf::IfOp>(parent)) {
+      if (!isResultInL0C(result) && isMixKernel(ifOp, result))
+        continue;
+      yieldOperand = yieldOp;
       continue;
-    yieldOperand = yieldOp;
+    }
+    if (!isa<scf::ForOp, scf::WhileOp>(parent))
+      continue;
+    auto yieldIdx = findIdx(llvm::to_vector(yieldOp->getOperands()), result);
+    if (!yieldIdx.has_value())
+      continue;
+    if (shouldKeepYieldInL0C(yieldOp->getOpOperand(*yieldIdx)))
+      yieldOperand = yieldOp;
   }
 
   if (count > 1 || !yieldOperand)
