@@ -56,6 +56,21 @@ align_pad_for_load_b64_1d(memref_t<__ubuf__ T, 1> *dst, int64_t pad_value,
 }
 
 #if BISHENG_TPL_REGBASE
+#if BISHENG_TPL_920R1
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool canUseNddmaForOrdinaryLoad1d(
+    const memref_t<__gm__ T, 1> *src, const memref_t<__ubuf__ T, 1> *dst,
+    PadMode pad_mode, int64_t left_padding_num, AtomicKind atomic_kind) {
+  const int64_t width = src->sizes[0];
+  return pad_mode == PadMode::Null && left_padding_num == 0 &&
+         atomic_kind == AtomicKind::None && width > 0 && width <= 0xfffff &&
+         width == dst->sizes[0] && width % (128 / sizeof(T)) == 0 &&
+         src->offset >= 0 && dst->offset >= 0 &&
+         src->offset <= INT64_MAX / sizeof(T) - width &&
+         dst->offset <= INT64_MAX / sizeof(T) - width;
+}
+#endif
+
 /// Core func of loading gm -> ub, 1D
 /// UB starting address must be 32B aligned; otherwise, it degrades to looped
 /// scalar transfer: `load_gm_to_ubuf_1d_by_scalar` As long as the UB starting
@@ -96,6 +111,22 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
   const int64_t stride0_gm = src->strides[0];
   const int64_t stride0_ub = dst->strides[0];
   if (stride0_gm == 1 && stride0_ub == 1) [[likely]] {
+#if BISHENG_TPL_920R1
+    if constexpr (sizeof(T) <= 4) {
+      const int64_t width = src->sizes[0];
+      if (canUseNddmaForOrdinaryLoad1d<T>(src, dst, pad_mode,
+                                          left_padding_num, atomic_kind)) {
+        // A single row uses the existing descriptor emitter and public ABI.
+        memref_t<__gm__ T, 2> gm = {
+            src->allocated, src->aligned, src->offset, {1, width}, {width, 1}};
+        memref_t<__ubuf__ T, 2> ub = {
+            dst->allocated, dst->aligned, dst->offset, {1, width}, {width, 1}};
+        load_gm_to_ubuf_2d_by_nddma<T>(&gm, &ub, pad_mode, pad_value, 0,
+                                       l2_cache_ctl);
+        return;
+      }
+    }
+#endif
     // last dimension is contiguous
     load_gm_to_ubuf_1d_core_with_contiguous_last_dim<T>(
         src, dst, left_padding_num, l2_cache_ctl);
