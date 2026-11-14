@@ -114,7 +114,7 @@ struct HFusionNormalizeScalarCastTraits : public hfusion::NormalizeTraitsBase {
     bool isIntegerCast = scalar.getType().isInteger() && dstType.isInteger();
     Value castOp = hfusion::castTo(
         rewriter, fromElementsOp, dstType, op.getRoundMode(), std::nullopt,
-        op.getEnableOverflow(), op.getEnableSaturate(),
+        op.getEnableOverflow(), /*enableSaturate=*/false,
         isIntegerCast ? op.getCast() : hfusion::TypeFn::cast_signed,
         getCastUnsignedMode(op));
     auto c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
