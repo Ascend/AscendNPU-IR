@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Pass/PassManager.h"
+#include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/hivmc/AdapterSanitizer.h"
 #include "bishengir/Tools/hivmc/BishengAsyncRuntime.h"
 #include "bishengir/Tools/hivmc/BishengLlcBridge.h"
@@ -529,9 +530,13 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
   arguments.push_back("-mllvm");
   arguments.push_back("-cce-aicore-dcci-insert-for-scalar=false");
   // Inline functions from linked modules (e.g. template bitcode) into the
-  // kernel during device compilation.
-  arguments.push_back("-mllvm");
-  arguments.push_back("-enable-module-inliner");
+  // kernel during device compilation. The module inliner requires CANN 9.2.0
+  // or newer; keep passing it when the toolkit version is unavailable.
+  if (auto version = detectCannVersion();
+      !version || *version >= std::make_tuple(9u, 2u, 0u)) {
+    arguments.push_back("-mllvm");
+    arguments.push_back("-enable-module-inliner");
+  }
 
   std::string paramSizeArg =
       "--cce-aicore-input-parameter-size=" +
@@ -606,7 +611,9 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
     // 5. -cce-aicore-dcci-insert-for-scalar=false (manual -mllvm)
     extraOpts.push_back("-cce-aicore-dcci-insert-for-scalar=false");
     // 6. -enable-module-inliner (manual -mllvm)
-    extraOpts.push_back("-enable-module-inliner");
+    if (auto version = detectCannVersion();
+        !version || *version >= std::make_tuple(9u, 2u, 0u))
+      extraOpts.push_back("-enable-module-inliner");
     // 7. -O0 translation: dav-c220 driver injects -cce-dyn-kernel-stack-size
     //    at -O0 (dav-c310 -O0 has no extra -mllvm).
     if (config.shouldEnableDebugVariables())
