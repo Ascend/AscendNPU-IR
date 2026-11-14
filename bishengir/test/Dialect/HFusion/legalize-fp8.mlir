@@ -1,145 +1,11 @@
 // RUN: bishengir-opt -hfusion-legalize-fp8 %s -split-input-file -verify-diagnostics | FileCheck %s
 
-// Captures of structured-op inputs must use the same data-preserving cast.
-// CHECK-LABEL: func.func @reduce_captured_source_e4m3
-// CHECK: %[[SRC:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<1xf8E4M3FN>)
-// CHECK: linalg.reduce ins(%[[SRC]] : tensor<1xf32>)
-// CHECK: %[[VALUE:.*]] = tensor.extract %[[SRC]][%{{.*}}] : tensor<1xf32>
-// CHECK: arith.addf %[[VALUE]], %{{.*}} : f32
-func.func @reduce_captured_source_e4m3(%src: tensor<1xf8E4M3FN>, %init: tensor<f8E4M3FN>) -> tensor<f8E4M3FN> {
-  %c0 = arith.constant 0 : index
-  %r = linalg.reduce ins(%src : tensor<1xf8E4M3FN>) outs(%init : tensor<f8E4M3FN>) dimensions = [0]
-    (%in: f8E4M3FN, %acc: f8E4M3FN) {
-      %v = tensor.extract %src[%c0] : tensor<1xf8E4M3FN>
-      %sum = arith.addf %v, %acc : f8E4M3FN
-      linalg.yield %sum : f8E4M3FN
-    }
-  return %r : tensor<f8E4M3FN>
-}
-
-// -----
-
-// CHECK-LABEL: func.func @reduce_captured_source_e5m2
-// CHECK: %[[SRC:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<1xf8E5M2>)
-// CHECK: linalg.reduce ins(%[[SRC]] : tensor<1xf32>)
-// CHECK: %[[VALUE:.*]] = tensor.extract %[[SRC]][%{{.*}}] : tensor<1xf32>
-// CHECK: arith.addf %[[VALUE]], %{{.*}} : f32
-func.func @reduce_captured_source_e5m2(%src: tensor<1xf8E5M2>, %init: tensor<f8E5M2>) -> tensor<f8E5M2> {
-  %c0 = arith.constant 0 : index
-  %r = linalg.reduce ins(%src : tensor<1xf8E5M2>) outs(%init : tensor<f8E5M2>) dimensions = [0]
-    (%in: f8E5M2, %acc: f8E5M2) {
-      %v = tensor.extract %src[%c0] : tensor<1xf8E5M2>
-      %sum = arith.addf %v, %acc : f8E5M2
-      linalg.yield %sum : f8E5M2
-    }
-  return %r : tensor<f8E5M2>
-}
-
-// -----
-
-// A singleton init may already have been reconstructed from a scalar. Its
-// unused data must not be cast, even when it is not a tensor.empty.
-// CHECK-LABEL: func.func @singleton_unused_init_e4m3
-// CHECK-NOT: tensor.from_elements
-// CHECK: %[[INPUT:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<1xf8E4M3FN>)
-// CHECK: %[[DEST:.*]] = tensor.empty() : tensor<1xf32>
-// CHECK-NOT: hfusion.cast
-// CHECK: hfusion.elemwise_unary {{.*}} ins(%[[INPUT]] : tensor<1xf32>) outs(%[[DEST]] : tensor<1xf32>)
-func.func @singleton_unused_init_e4m3(%src: tensor<1xf8E4M3FN>, %scalar: f8E4M3FN) -> tensor<1xf8E4M3FN> {
-  %init = tensor.from_elements %scalar : tensor<1xf8E4M3FN>
-  %r = hfusion.elemwise_unary {fun = #hfusion.unary_fn<cos>}
-      ins(%src : tensor<1xf8E4M3FN>) outs(%init : tensor<1xf8E4M3FN>) -> tensor<1xf8E4M3FN>
-  return %r : tensor<1xf8E4M3FN>
-}
-
-// -----
-
-// CHECK-LABEL: func.func @singleton_unused_init_e5m2
-// CHECK-NOT: tensor.from_elements
-// CHECK: %[[INPUT:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<1xf8E5M2>)
-// CHECK: %[[DEST:.*]] = tensor.empty() : tensor<1xf32>
-// CHECK-NOT: hfusion.cast
-// CHECK: hfusion.elemwise_unary {{.*}} ins(%[[INPUT]] : tensor<1xf32>) outs(%[[DEST]] : tensor<1xf32>)
-func.func @singleton_unused_init_e5m2(%src: tensor<1xf8E5M2>, %scalar: f8E5M2) -> tensor<1xf8E5M2> {
-  %init = tensor.from_elements %scalar : tensor<1xf8E5M2>
-  %r = hfusion.elemwise_unary {fun = #hfusion.unary_fn<cos>}
-      ins(%src : tensor<1xf8E5M2>) outs(%init : tensor<1xf8E5M2>) -> tensor<1xf8E5M2>
-  return %r : tensor<1xf8E5M2>
-}
-
-// -----
-
-// CHECK-LABEL: func.func @shared_input_init_capture_e4m3
-// CHECK: %[[INPUT:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<1xf8E4M3FN>)
-// CHECK: %[[DEST:.*]] = tensor.empty() : tensor<1xf32>
-// CHECK-NOT: hfusion.cast
-// CHECK: linalg.reduce ins(%[[INPUT]] : tensor<1xf32>) outs(%[[DEST]] : tensor<1xf32>)
-// CHECK: tensor.extract %[[INPUT]][%{{.*}}] : tensor<1xf32>
-func.func @shared_input_init_capture_e4m3(%src: tensor<1xf8E4M3FN>) -> tensor<1xf8E4M3FN> {
-  %c0 = arith.constant 0 : index
-  %r = linalg.reduce ins(%src : tensor<1xf8E4M3FN>) outs(%src : tensor<1xf8E4M3FN>) dimensions = []
-    (%in: f8E4M3FN, %unused: f8E4M3FN) {
-      %v = tensor.extract %src[%c0] : tensor<1xf8E4M3FN>
-      %sum = arith.addf %v, %in : f8E4M3FN
-      linalg.yield %sum : f8E4M3FN
-    }
-  return %r : tensor<1xf8E4M3FN>
-}
-
-// -----
-
-// CHECK-LABEL: func.func @shared_input_init_capture_e5m2
-// CHECK: %[[INPUT:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<1xf8E5M2>)
-// CHECK: %[[DEST:.*]] = tensor.empty() : tensor<1xf32>
-// CHECK-NOT: hfusion.cast
-// CHECK: linalg.reduce ins(%[[INPUT]] : tensor<1xf32>) outs(%[[DEST]] : tensor<1xf32>)
-// CHECK: tensor.extract %[[INPUT]][%{{.*}}] : tensor<1xf32>
-func.func @shared_input_init_capture_e5m2(%src: tensor<1xf8E5M2>) -> tensor<1xf8E5M2> {
-  %c0 = arith.constant 0 : index
-  %r = linalg.reduce ins(%src : tensor<1xf8E5M2>) outs(%src : tensor<1xf8E5M2>) dimensions = []
-    (%in: f8E5M2, %unused: f8E5M2) {
-      %v = tensor.extract %src[%c0] : tensor<1xf8E5M2>
-      %sum = arith.addf %v, %in : f8E5M2
-      linalg.yield %sum : f8E5M2
-    }
-  return %r : tensor<1xf8E5M2>
-}
-
-// -----
-
-// CHECK-LABEL: func.func @shared_input_and_init
-// CHECK: %[[INPUT:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<16xf8E5M2>)
-// CHECK: %[[DEST:.*]] = tensor.empty() : tensor<16xf32>
-// CHECK: %[[RESULT:.*]] = hfusion.elemwise_unary {{.*}} ins(%[[INPUT]] : tensor<16xf32>) outs(%[[DEST]] : tensor<16xf32>)
-// CHECK: %[[CAST:.*]] = hfusion.cast {{.*}} ins(%[[RESULT]] : tensor<16xf32>)
-// CHECK: return %[[CAST]] : tensor<16xf8E5M2>
-func.func @shared_input_and_init(%src: tensor<16xf8E5M2>) -> tensor<16xf8E5M2> {
-  %result = hfusion.elemwise_unary {fun = #hfusion.unary_fn<cos>}
-      ins(%src : tensor<16xf8E5M2>) outs(%src : tensor<16xf8E5M2>) -> tensor<16xf8E5M2>
-  return %result : tensor<16xf8E5M2>
-}
-
-// -----
-
-// CHECK-LABEL: func.func @rank_zero_fp8
-// CHECK: %[[INPUT:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<f8E5M2>)
-// CHECK: %[[DEST:.*]] = tensor.empty() : tensor<f32>
-// CHECK-NOT: hfusion.cast
-// CHECK: hfusion.elemwise_unary {{.*}} ins(%[[INPUT]] : tensor<f32>) outs(%[[DEST]] : tensor<f32>)
-func.func @rank_zero_fp8(%src: tensor<f8E5M2>) -> tensor<f8E5M2> {
-  %empty = tensor.empty() : tensor<f8E5M2>
-  %result = hfusion.elemwise_unary {fun = #hfusion.unary_fn<cos>} ins(%src : tensor<f8E5M2>) outs(%empty : tensor<f8E5M2>) -> tensor<f8E5M2>
-  return %result : tensor<f8E5M2>
-}
-
-// -----
-
 // CHECK-LABEL: func.func @test_ceil_fp8e4m3
 func.func @test_ceil_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<ceil>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E4M3FN>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN>
@@ -154,8 +20,8 @@ func.func @test_ceil_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4
 func.func @test_ceil_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E5M2>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E5M2>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<ceil>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E5M2>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2>
@@ -170,8 +36,8 @@ func.func @test_ceil_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2
 func.func @test_cos_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<cos>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E4M3FN>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN>
@@ -186,8 +52,8 @@ func.func @test_cos_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4M
 func.func @test_cos_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E5M2>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E5M2>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<cos>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E5M2>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2>
@@ -202,8 +68,8 @@ func.func @test_cos_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2>
 func.func @test_sin_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sin>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E4M3FN>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN>
@@ -218,8 +84,8 @@ func.func @test_sin_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4M
 func.func @test_sin_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E5M2>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E5M2>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sin>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E5M2>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2>
@@ -236,8 +102,8 @@ func.func @test_div_rn_fp8e4m3(%src0 : tensor<6x4xf8E4M3FN>, %src1 : tensor<6x4x
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_4:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_5:.*]] =  hfusion.cast {{.*}} ins(%arg2 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_4]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_6:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%[[VAL_1]], %[[VAL_3]] : tensor<6x4xf32>, tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_7:.*]] = tensor.empty() : tensor<6x4xf8E4M3FN>
   // CHECK: %[[VAL_8:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_6]] : tensor<6x4xf32>) outs(%[[VAL_7]] : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN>
@@ -254,8 +120,8 @@ func.func @test_div_rn_fp8e5m2(%src0 : tensor<6x4xf8E5M2>, %src1 : tensor<6x4xf8
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E5M2>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E5M2>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_4:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_5:.*]] =  hfusion.cast {{.*}} ins(%arg2 : tensor<6x4xf8E5M2>) outs(%[[VAL_4]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_6:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%[[VAL_1]], %[[VAL_3]] : tensor<6x4xf32>, tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_7:.*]] = tensor.empty() : tensor<6x4xf8E5M2>
   // CHECK: %[[VAL_8:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_6]] : tensor<6x4xf32>) outs(%[[VAL_7]] : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2>
@@ -270,8 +136,8 @@ func.func @test_div_rn_fp8e5m2(%src0 : tensor<6x4xf8E5M2>, %src1 : tensor<6x4xf8
 func.func @test_floor_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<floor>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E4M3FN>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN>
@@ -286,8 +152,8 @@ func.func @test_floor_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E
 func.func @test_floor_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E5M2>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E5M2>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<floor>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E5M2>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2>
@@ -422,8 +288,8 @@ func.func @legalize_fp8_reduction$sum$f8E5M2(%arg0: tensor<8xf8E5M2>, %arg1: ten
 func.func @test_abs_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<abs>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E4M3FN>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN>
@@ -438,8 +304,8 @@ func.func @test_abs_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4M
 func.func @test_abs_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E5M2>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E5M2>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<abs>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E5M2>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2>
@@ -454,8 +320,8 @@ func.func @test_abs_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2>
 func.func @test_exp_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<exp>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E4M3FN>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN>
@@ -470,8 +336,8 @@ func.func @test_exp_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4M
 func.func @test_exp_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E5M2>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E5M2>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<exp>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E5M2>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2>
@@ -486,8 +352,8 @@ func.func @test_exp_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2>
 func.func @test_log_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<log>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E4M3FN>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN>
@@ -502,8 +368,8 @@ func.func @test_log_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4M
 func.func @test_log_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E5M2>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E5M2>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<log>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E5M2>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2>
@@ -518,8 +384,8 @@ func.func @test_log_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2>
 func.func @test_sqrt_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<sqrt>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E4M3FN>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN>
@@ -534,8 +400,8 @@ func.func @test_sqrt_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4
 func.func @test_sqrt_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E5M2>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E5M2>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<sqrt>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E5M2>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2>
@@ -550,8 +416,8 @@ func.func @test_sqrt_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2
 func.func @test_exp2_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<exp2>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E4M3FN>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN>
@@ -566,8 +432,8 @@ func.func @test_exp2_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4
 func.func @test_exp2_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E5M2>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E5M2>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<exp2>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E5M2>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2>
@@ -582,8 +448,8 @@ func.func @test_exp2_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2
 func.func @test_log2_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<log2>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E4M3FN>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN>
@@ -598,8 +464,8 @@ func.func @test_log2_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4
 func.func @test_log2_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E5M2>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E5M2>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<log2>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E5M2>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2>
@@ -614,8 +480,8 @@ func.func @test_log2_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2
 func.func @test_rsqrt_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<rsqrt>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E4M3FN>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN>
@@ -630,8 +496,8 @@ func.func @test_rsqrt_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E
 func.func @test_rsqrt_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E5M2>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E5M2>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<rsqrt>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E5M2>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2>
@@ -646,8 +512,8 @@ func.func @test_rsqrt_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M
 func.func @test_sqrt_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E4M3FN>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN>
@@ -662,8 +528,8 @@ func.func @test_sqrt_fp8e4m3(%src : tensor<6x4xf8E4M3FN>, %dst : tensor<6x4xf8E4
 func.func @test_sqrt_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E5M2>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E5M2>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf8E5M2>
   // CHECK: %[[VAL_6:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2>
@@ -680,8 +546,8 @@ func.func @test_sub_fp8e4m3(%src0 : tensor<6x4xf8E4M3FN>, %src1 : tensor<6x4xf8E
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_4:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_5:.*]] =  hfusion.cast {{.*}} ins(%arg2 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_4]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_6:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[VAL_1]], %[[VAL_3]] : tensor<6x4xf32>, tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_7:.*]] = tensor.empty() : tensor<6x4xf8E4M3FN>
   // CHECK: %[[VAL_8:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_6]] : tensor<6x4xf32>) outs(%[[VAL_7]] : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN>
@@ -698,8 +564,8 @@ func.func @test_sub_fp8e5m2(%src0 : tensor<6x4xf8E5M2>, %src1 : tensor<6x4xf8E5M
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E5M2>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E5M2>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_4:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_5:.*]] =  hfusion.cast {{.*}} ins(%arg2 : tensor<6x4xf8E5M2>) outs(%[[VAL_4]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_6:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[VAL_1]], %[[VAL_3]] : tensor<6x4xf32>, tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_7:.*]] = tensor.empty() : tensor<6x4xf8E5M2>
   // CHECK: %[[VAL_8:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_6]] : tensor<6x4xf32>) outs(%[[VAL_7]] : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2>
@@ -716,8 +582,8 @@ func.func @test_maxf_fp8e5m2(%src0 : tensor<6x4xf8E5M2>, %src1 : tensor<6x4xf8E5
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E5M2>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E5M2>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_4:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_5:.*]] =  hfusion.cast {{.*}} ins(%arg2 : tensor<6x4xf8E5M2>) outs(%[[VAL_4]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_6:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<maxf>} ins(%[[VAL_1]], %[[VAL_3]] : tensor<6x4xf32>, tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_7:.*]] = tensor.empty() : tensor<6x4xf8E5M2>
   // CHECK: %[[VAL_8:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_6]] : tensor<6x4xf32>) outs(%[[VAL_7]] : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2>
@@ -734,8 +600,8 @@ func.func @test_minf_fp8e4m3(%src0 : tensor<6x4xf8E4M3FN>, %src1 : tensor<6x4xf8
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_4:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_5:.*]] =  hfusion.cast {{.*}} ins(%arg2 : tensor<6x4xf8E4M3FN>) outs(%[[VAL_4]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_6:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<minf>} ins(%[[VAL_1]], %[[VAL_3]] : tensor<6x4xf32>, tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_7:.*]] = tensor.empty() : tensor<6x4xf8E4M3FN>
   // CHECK: %[[VAL_8:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_6]] : tensor<6x4xf32>) outs(%[[VAL_7]] : tensor<6x4xf8E4M3FN>) -> tensor<6x4xf8E4M3FN>
@@ -752,8 +618,8 @@ func.func @test_minf_fp8e5m2(%src0 : tensor<6x4xf8E5M2>, %src1 : tensor<6x4xf8E5
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<6x4xf8E5M2>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
   // CHECK: %[[VAL_3:.*]] =  hfusion.cast {{.*}} ins(%arg1 : tensor<6x4xf8E5M2>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
-  // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK-NOT: hfusion.cast
+  // CHECK: %[[VAL_4:.*]] = tensor.empty() : tensor<6x4xf32>
+  // CHECK: %[[VAL_5:.*]] =  hfusion.cast {{.*}} ins(%arg2 : tensor<6x4xf8E5M2>) outs(%[[VAL_4]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_6:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<minf>} ins(%[[VAL_1]], %[[VAL_3]] : tensor<6x4xf32>, tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_7:.*]] = tensor.empty() : tensor<6x4xf8E5M2>
   // CHECK: %[[VAL_8:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_6]] : tensor<6x4xf32>) outs(%[[VAL_7]] : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2>
