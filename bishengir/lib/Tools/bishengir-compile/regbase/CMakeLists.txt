@@ -41,7 +41,6 @@ add_bishengir_library(BiShengIRRegBaseCompileLib
   ${dialect_libs}
   ${extension_libs}
   BiShengIRCompileConfigLib
-  BiShengIRHIVMCLib
   BiShengIRHACCPipelines
   BiShengIRHFusionDialect
   BiShengIRHFusionPipelines
