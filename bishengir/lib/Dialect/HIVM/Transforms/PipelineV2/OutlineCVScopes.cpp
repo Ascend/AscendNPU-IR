@@ -15,6 +15,7 @@
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -155,6 +156,7 @@ struct WorkItem {
   Operation *outputOp = nullptr;
   SmallPtrSet<Value, 8> inputs;
   SmallPtrSet<Value, 8> outputs;
+  SetVector<Value> selectedIfResults;
   SmallPtrSet<Operation *, 32> ops;
   SetVector<Operation *> orderedOps;
   DenseMap<Operation *, ConditionalOps> condOps;
@@ -211,6 +213,9 @@ private:
   void collectUnmappedOps();
   void collectConditionalMerges();
   bool canExportValueFromWorkItem(Value val) const;
+  bool canHoistCloneOutOfIf(Operation *op, scf::IfOp defIf,
+                            WorkItem *item) const;
+  bool canDecomposeIfResult(scf::IfOp ifOp, unsigned resIdx) const;
   bool trySplitVectorWorkItemOnCubeInput(WorkItem *item, Value cubeInp);
   bool splitVectorWorkItems(Operation *origLoopTerminator);
   LogicalResult sortPopulatedWorkItems();
@@ -232,7 +237,9 @@ private:
   SmallVector<std::unique_ptr<WorkItem>> workItems;
   SmallVector<WorkItem *> sortedWorkItems;
   DenseMap<Operation *, WorkItem *> opToWorkItemMap;
-  DenseMap<Value, WorkItem *> conditionalMergeOwners;
+  DenseSet<Value> separatedMixedIfResults;
+  DenseSet<Value> decomposedIfResults;
+  SetVector<Value> loopYieldSelectedIfResults;
   DenseMap<Operation *, Value> cubeIfConditions;
   SmallVector<Value> nestedCounters;
   Operation *checkpointClone = nullptr;
@@ -564,18 +571,22 @@ bool CVScopeOutliner::canCloneOpInWorkItem(Operation *op,
 
 bool CVScopeOutliner::isIfResultOwnedByItem(scf::IfOp ifOp, unsigned resIdx,
                                             WorkItem *item) const {
-  if (auto *merge = conditionalMergeOwners.lookup(ifOp.getResult(resIdx)))
-    return merge == item;
   auto [tVal, eVal] = getIfYieldedValues(ifOp, resIdx);
   Operation *tDef = tVal ? tVal.getDefiningOp() : nullptr;
   Operation *eDef = eVal ? eVal.getDefiningOp() : nullptr;
   bool tInIf = tDef && ifOp->isProperAncestor(tDef);
   bool eInIf = eDef && ifOp->isProperAncestor(eDef);
+  if (tInIf && eInIf &&
+      opToWorkItemMap.lookup(tDef) != opToWorkItemMap.lookup(eDef))
+    return false;
   if (tInIf || eInIf)
     return (tInIf && opToWorkItemMap.lookup(tDef) == item) ||
            (eInIf && opToWorkItemMap.lookup(eDef) == item);
-  return (tDef && opToWorkItemMap.lookup(tDef) == item) ||
-         (eDef && opToWorkItemMap.lookup(eDef) == item);
+  WorkItem *tOwner = tDef ? opToWorkItemMap.lookup(tDef) : nullptr;
+  WorkItem *eOwner = eDef ? opToWorkItemMap.lookup(eDef) : nullptr;
+  if (tOwner && eOwner && tOwner != eOwner)
+    return false;
+  return (tOwner && tOwner == item) || (eOwner && eOwner == item);
 }
 
 Value CVScopeOutliner::getIfConditionForItem(scf::IfOp ifOp,
@@ -1491,14 +1502,13 @@ void CVScopeOutliner::collectUnmappedOps() {
   }
 }
 
-// A conditional result cannot belong to either producer when its branches
-// belong to different work items. Give the selection its own shared scope;
-// populateWorkItemIO will export both branch values from their producers.
+// Separate mixed-branch producers into their own scopes when different branches
+// belong to different work items.
 void CVScopeOutliner::collectConditionalMerges() {
   for (auto ifOp : cast<scf::ForOp>(loopOp).getBody()->getOps<scf::IfOp>()) {
     SmallPtrSet<WorkItem *, 4> branchItems;
     for (auto result : ifOp.getResults()) {
-      if (conditionalMergeOwners.contains(result))
+      if (!separatedMixedIfResults.insert(result).second)
         continue;
       auto [thenValue, elseValue] =
           getIfYieldedValues(ifOp, result.getResultNumber());
@@ -1513,7 +1523,7 @@ void CVScopeOutliner::collectConditionalMerges() {
         continue;
       // The catch-all item may contain both a branch producer and consumers
       // of the selected result. Separate the branch operations so scheduling
-      // the merge between producers and consumers does not create a cycle.
+      // between producers and consumers does not create a cycle.
       for (auto [value, owner] : {std::make_pair(thenValue, thenOwner),
                                   std::make_pair(elseValue, elseOwner)}) {
         if (branchItems.contains(owner))
@@ -1534,14 +1544,6 @@ void CVScopeOutliner::collectConditionalMerges() {
         sortedWorkItems.push_back(branch.get());
         workItems.push_back(std::move(branch));
       }
-      auto item = std::make_unique<WorkItem>();
-      item->id = nextWorkItemId++;
-      item->coreType = TCoreType::CUBE_AND_VECTOR;
-      WorkItem *merge = item.get();
-      getOrCreateCondOps(*merge, ifOp);
-      sortedWorkItems.push_back(merge);
-      workItems.push_back(std::move(item));
-      conditionalMergeOwners[result] = merge;
     }
   }
 }
@@ -1553,12 +1555,21 @@ bool CVScopeOutliner::canExportValueFromWorkItem(Value val) const {
   auto enclosingIf = def->getParentOfType<scf::IfOp>();
   if (!enclosingIf || !loopOp->isProperAncestor(enclosingIf))
     return true;
-  if (!isa<TensorType>(val.getType()))
+  if (val.getType().isIntOrIndexOrFloat())
     return true;
+  if (!isa<TensorType>(val.getType()))
+    return false;
   if (auto dpsOp = dyn_cast<DestinationStyleOpInterface>(def)) {
     Value initVal = dpsOp.getTiedOpOperand(cast<OpResult>(val))->get();
-    if (auto brc = initVal.getDefiningOp<VBrcOp>())
-      initVal = brc.getDst();
+    while (Operation *initOp = initVal.getDefiningOp()) {
+      if (auto brc = dyn_cast<VBrcOp>(initOp))
+        initVal = brc.getDst();
+      else if (isa<tensor::ExpandShapeOp, tensor::CollapseShapeOp,
+                   tensor::ReshapeOp>(initOp))
+        initVal = initOp->getOperand(0);
+      else
+        break;
+    }
     return isa_and_nonnull<tensor::EmptyOp>(initVal.getDefiningOp());
   }
   if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(def)) {
@@ -1587,6 +1598,47 @@ bool CVScopeOutliner::canExportValueFromWorkItem(Value val) const {
     });
   }
   return false;
+}
+
+bool CVScopeOutliner::canHoistCloneOutOfIf(Operation *op, scf::IfOp defIf,
+                                           WorkItem *item) const {
+  if (!op || !canCloneOpInWorkItem(op, item))
+    return false;
+  for (Value opnd : getWorkItemOperands(op)) {
+    Operation *oDef = opnd.getDefiningOp();
+    if (!oDef || !defIf->isProperAncestor(oDef))
+      continue;
+    WorkItem *oOwner = opToWorkItemMap.lookup(oDef);
+    if (oOwner && oOwner->hoistedOps.contains(oDef))
+      continue;
+    if (!canHoistCloneOutOfIf(oDef, defIf, item))
+      return false;
+  }
+  return true;
+}
+
+bool CVScopeOutliner::canDecomposeIfResult(scf::IfOp ifOp,
+                                           unsigned resIdx) const {
+  if (!ifOp || ifOp->getParentOp() != loopOp || !ifOp.elseBlock() ||
+      resIdx >= ifOp.getNumResults())
+    return false;
+  auto [tVal, eVal] = getIfYieldedValues(ifOp, resIdx);
+  if (!tVal || !eVal)
+    return false;
+  for (Value bVal : {tVal, eVal}) {
+    Operation *bDef = bVal.getDefiningOp();
+    if (!bDef || !ifOp->isProperAncestor(bDef))
+      continue;
+    if (canHoistCloneOutOfIf(bDef, ifOp, nullptr))
+      continue;
+    WorkItem *bOwner = opToWorkItemMap.lookup(bDef);
+    if (!bOwner)
+      return false;
+    if (bOwner->hoistedOps.contains(bDef) || canExportValueFromWorkItem(bVal))
+      continue;
+    return false;
+  }
+  return true;
 }
 
 bool CVScopeOutliner::trySplitVectorWorkItemOnCubeInput(WorkItem *item,
@@ -1667,10 +1719,16 @@ bool CVScopeOutliner::trySplitVectorWorkItemOnCubeInput(WorkItem *item,
           for (Operation *eOp : cOps.elseOps)
             markOpTouched(eOp);
           for (auto [resIdx, ifRes] : llvm::enumerate(cOps.ifOp.getResults())) {
-            if (isIfResultOwnedByItem(cOps.ifOp, resIdx, item))
+            if (isIfResultOwnedByItem(cOps.ifOp, resIdx, item) ||
+                item->selectedIfResults.contains(ifRes))
               markValueTouched(ifRes);
           }
         }
+      }
+      for (Value selRes : item->selectedIfResults) {
+        auto ifOp = cast<scf::IfOp>(selRes.getDefiningOp());
+        if (getIfConditionForItem(ifOp, item) == v)
+          markValueTouched(selRes);
       }
 
       for (OpOperand &use : v.getUses()) {
@@ -1678,12 +1736,15 @@ bool CVScopeOutliner::trySplitVectorWorkItemOnCubeInput(WorkItem *item,
         if (!loopOp->isProperAncestor(usr))
           continue;
         if (isa<scf::YieldOp>(usr)) {
-          if (auto ifOp = dyn_cast<scf::IfOp>(usr->getParentOp());
-              ifOp && item->condOps.contains(ifOp)) {
+          if (auto ifOp = dyn_cast<scf::IfOp>(usr->getParentOp())) {
             unsigned resIdx = use.getOperandNumber();
-            if (resIdx < ifOp.getNumResults() &&
-                isIfResultOwnedByItem(ifOp, resIdx, item))
-              markValueTouched(ifOp.getResult(resIdx));
+            if (resIdx < ifOp.getNumResults()) {
+              Value ifRes = ifOp.getResult(resIdx);
+              if ((item->condOps.contains(ifOp) &&
+                   isIfResultOwnedByItem(ifOp, resIdx, item)) ||
+                  item->selectedIfResults.contains(ifRes))
+                markValueTouched(ifRes);
+            }
           }
           continue;
         }
@@ -1751,8 +1812,14 @@ bool CVScopeOutliner::trySplitVectorWorkItemOnCubeInput(WorkItem *item,
           continue;
         if (auto ifOp = dyn_cast<scf::IfOp>(defOp)) {
           unsigned resIdx = cast<OpResult>(v).getResultNumber();
-          if (isIfResultOwnedByItem(ifOp, resIdx, item))
+          if (decomposedIfResults.contains(v)) {
+            stack.push_back(getIfConditionForItem(ifOp, item));
+            auto [tVal, eVal] = getIfYieldedValues(ifOp, resIdx);
+            stack.push_back(tVal);
+            stack.push_back(eVal);
+          } else if (isIfResultOwnedByItem(ifOp, resIdx, item)) {
             boundaryOutputs.insert(v);
+          }
           continue;
         }
         if (untouchedOwned.contains(defOp)) {
@@ -1791,6 +1858,16 @@ bool CVScopeOutliner::trySplitVectorWorkItemOnCubeInput(WorkItem *item,
         collectFrom(tVal);
         collectFrom(eVal);
       }
+    }
+    for (Value ifRes : item->selectedIfResults) {
+      if (!touchedValues.contains(ifRes))
+        continue;
+      auto ifOp = cast<scf::IfOp>(ifRes.getDefiningOp());
+      unsigned resIdx = cast<OpResult>(ifRes).getResultNumber();
+      collectFrom(getIfConditionForItem(ifOp, item));
+      auto [tVal, eVal] = getIfYieldedValues(ifOp, resIdx);
+      collectFrom(tVal);
+      collectFrom(eVal);
     }
     for (Value outVal : item->outputs) {
       if (!touchedValues.contains(outVal))
@@ -1855,6 +1932,15 @@ bool CVScopeOutliner::trySplitVectorWorkItemOnCubeInput(WorkItem *item,
         continue;
       if (auto ifOp = dyn_cast<scf::IfOp>(defOp)) {
         unsigned resIdx = cast<OpResult>(v).getResultNumber();
+        if (decomposedIfResults.contains(v)) {
+          if (!touchedValues.contains(v)) {
+            stack.push_back(getIfConditionForItem(ifOp, item));
+            auto [tVal, eVal] = getIfYieldedValues(ifOp, resIdx);
+            stack.push_back(tVal);
+            stack.push_back(eVal);
+          }
+          continue;
+        }
         if (v == rootVal ||
             ((!stopAtBoundaries || !boundaryOutputs.contains(v)) &&
              isIfResultOwnedByItem(ifOp, resIdx, item) &&
@@ -2101,7 +2187,14 @@ void CVScopeOutliner::computeHoistedOps(WorkItem *item) {
              walkAllocUsers(tOp, [&](OpOperand &use) {
                auto toTensor =
                    dyn_cast<bufferization::ToTensorOp>(use.getOwner());
-               return toTensor && item->output == toTensor.getResult();
+               if (!toTensor)
+                 return false;
+               Value res = toTensor.getResult();
+               return item->output == res ||
+                      llvm::any_of(res.getUsers(), [&](Operation *usr) {
+                        return isa<scf::YieldOp>(usr) &&
+                               usr->getParentOp() == enclosingIf.getOperation();
+                      });
              }));
         bool isCast =
             (isViewLikeMemRefOp(tOp) || isViewLikeTensorOp(tOp) ||
@@ -2127,24 +2220,30 @@ void CVScopeOutliner::computeHoistedOps(WorkItem *item) {
 }
 
 void CVScopeOutliner::populateWorkItemIO(Operation *origLoopTerminator) {
-  for (WorkItem *item : sortedWorkItems) {
-    item->inputs.clear();
-    item->outputs.clear();
-    item->ops.clear();
-    item->hoistedOps.clear();
-    for (Operation *op : item->orderedOps) {
-      if (opToWorkItemMap.lookup(op) == item)
-        item->ops.insert(op);
+  decomposedIfResults.clear();
+  loopYieldSelectedIfResults.clear();
+
+  auto resetItems = [&]() {
+    for (WorkItem *item : sortedWorkItems) {
+      item->inputs.clear();
+      item->outputs.clear();
+      item->selectedIfResults.clear();
+      item->ops.clear();
+      item->hoistedOps.clear();
+      for (Operation *op : item->orderedOps) {
+        if (opToWorkItemMap.lookup(op) == item)
+          item->ops.insert(op);
+      }
+      for (auto &[_, cOps] : item->condOps) {
+        cOps.outputs.clear();
+        cOps.thenOps.remove_if(
+            [&](Operation *op) { return !item->ops.contains(op); });
+        cOps.elseOps.remove_if(
+            [&](Operation *op) { return !item->ops.contains(op); });
+      }
+      computeHoistedOps(item);
     }
-    for (auto &[_, cOps] : item->condOps) {
-      cOps.outputs.clear();
-      cOps.thenOps.remove_if(
-          [&](Operation *op) { return !item->ops.contains(op); });
-      cOps.elseOps.remove_if(
-          [&](Operation *op) { return !item->ops.contains(op); });
-    }
-    computeHoistedOps(item);
-  }
+  };
 
   auto getIfOwner = [&](scf::IfOp ifOp, unsigned resIdx) -> WorkItem * {
     for (WorkItem *w : sortedWorkItems) {
@@ -2154,106 +2253,189 @@ void CVScopeOutliner::populateWorkItemIO(Operation *origLoopTerminator) {
     return nullptr;
   };
 
+  resetItems();
+  for (auto ifOp : cast<scf::ForOp>(loopOp).getBody()->getOps<scf::IfOp>()) {
+    for (auto [resIdx, ifRes] : llvm::enumerate(ifOp.getResults())) {
+      if (!getIfOwner(ifOp, resIdx) && canDecomposeIfResult(ifOp, resIdx))
+        decomposedIfResults.insert(ifRes);
+    }
+  }
+
   struct PendingUse {
     Value val;
     WorkItem *consumer;
     scf::IfOp consumerIf;
+    bool forLoopYieldSelect = false;
   };
   SmallVector<PendingUse, 32> worklist;
 
-  auto recordValueUse = [&](Value val, WorkItem *consumer,
-                            scf::IfOp consumerIf) {
-    if (!val)
-      return;
-    Operation *defOp = val.getDefiningOp();
-    if (!defOp || !loopOp->isProperAncestor(defOp))
-      return;
+  for (bool restart = true; restart;) {
+    restart = false;
+    loopYieldSelectedIfResults.clear();
+    worklist.clear();
+    resetItems();
 
-    if (auto ifOp = dyn_cast<scf::IfOp>(defOp)) {
-      unsigned resIdx = cast<OpResult>(val).getResultNumber();
-      WorkItem *producer = getIfOwner(ifOp, resIdx);
+    auto recordValueUse = [&](Value val, WorkItem *consumer,
+                              scf::IfOp consumerIf,
+                              bool forLoopYieldSelect = false) {
+      if (!val || restart)
+        return;
+      Operation *defOp = val.getDefiningOp();
+      if (!defOp || !loopOp->isProperAncestor(defOp))
+        return;
+
+      if (auto ifOp = dyn_cast<scf::IfOp>(defOp)) {
+        unsigned resIdx = cast<OpResult>(val).getResultNumber();
+        if (decomposedIfResults.contains(val)) {
+          auto [tVal, eVal] = getIfYieldedValues(ifOp, resIdx);
+          if (consumer) {
+            if (consumer->selectedIfResults.insert(val)) {
+              worklist.push_back(
+                  {getIfConditionForItem(ifOp, consumer), consumer, nullptr});
+              worklist.push_back({tVal, consumer, nullptr});
+              worklist.push_back({eVal, consumer, nullptr});
+            }
+          } else {
+            if (loopYieldSelectedIfResults.insert(val)) {
+              worklist.push_back({ifOp.getCondition(), nullptr, nullptr, true});
+              worklist.push_back({tVal, nullptr, nullptr, true});
+              worklist.push_back({eVal, nullptr, nullptr, true});
+            }
+          }
+          return;
+        }
+        WorkItem *producer = getIfOwner(ifOp, resIdx);
+        if (consumer != nullptr && consumer != producer &&
+            canDecomposeIfResult(ifOp, resIdx)) {
+          decomposedIfResults.insert(val);
+          restart = true;
+          return;
+        }
+        if (!producer)
+          return;
+        if (producer != consumer) {
+          if (consumer)
+            consumer->inputs.insert(val);
+          producer->outputs.insert(val);
+        }
+        if (getOrCreateCondOps(*producer, ifOp).outputs.insert(val).second) {
+          worklist.push_back(
+              {getIfConditionForItem(ifOp, producer), producer, nullptr});
+          auto [tVal, eVal] = getIfYieldedValues(ifOp, resIdx);
+          if (tVal)
+            worklist.push_back({tVal, producer, ifOp});
+          if (eVal)
+            worklist.push_back({eVal, producer, ifOp});
+        }
+        return;
+      }
+
+      if (!consumer && forLoopYieldSelect &&
+          canCloneOpInWorkItem(defOp, nullptr)) {
+        auto defIf = defOp->getParentOfType<scf::IfOp>();
+        if (!defIf || !loopOp->isAncestor(defIf) ||
+            canHoistCloneOutOfIf(defOp, defIf, nullptr)) {
+          for (Value opnd : getWorkItemOperands(defOp))
+            worklist.push_back({opnd, nullptr, nullptr, true});
+          return;
+        }
+      }
+
+      WorkItem *producer = opToWorkItemMap.lookup(defOp);
       if (!producer)
         return;
-      if (producer != consumer) {
-        if (consumer)
-          consumer->inputs.insert(val);
-        producer->outputs.insert(val);
-      }
-      if (getOrCreateCondOps(*producer, ifOp).outputs.insert(val).second) {
-        worklist.push_back(
-            {getIfConditionForItem(ifOp, producer), producer, nullptr});
-        auto [tVal, eVal] = getIfYieldedValues(ifOp, resIdx);
-        if (tVal)
-          worklist.push_back({tVal, producer, ifOp});
-        if (eVal)
-          worklist.push_back({eVal, producer, ifOp});
-      }
-      return;
-    }
 
-    WorkItem *producer = opToWorkItemMap.lookup(defOp);
-    if (!producer)
-      return;
+      if (producer == consumer) {
+        auto defIf = defOp->getParentOfType<scf::IfOp>();
+        if (defIf && loopOp->isAncestor(defIf) &&
+            !producer->hoistedOps.contains(defOp) && consumerIf != defIf) {
+          if (canHoistCloneOutOfIf(defOp, defIf, nullptr)) {
+            if (producer->hoistedOps.insert(defOp).second) {
+              getOrCreateCondOps(*producer, defIf, defOp);
+              for (Value opnd : getWorkItemOperands(defOp))
+                worklist.push_back({opnd, producer, nullptr});
+            }
+          } else if (getOrCreateCondOps(*producer, defIf)
+                         .outputs.insert(val)
+                         .second) {
+            worklist.push_back(
+                {getIfConditionForItem(defIf, producer), producer, nullptr});
+          }
+        }
+        return;
+      }
 
-    if (producer == consumer) {
       auto defIf = defOp->getParentOfType<scf::IfOp>();
-      if (defIf && loopOp->isAncestor(defIf) &&
-          !producer->hoistedOps.contains(defOp) && consumerIf != defIf &&
+      bool inLoopIf = defIf && loopOp->isAncestor(defIf);
+      if (consumer && canCloneOpInWorkItem(defOp, consumer)) {
+        if (!inLoopIf || consumerIf == defIf) {
+          if (consumer->ops.insert(defOp).second) {
+            if (inLoopIf) {
+              getOrCreateCondOps(*consumer, defIf, defOp);
+              if (!consumer->hoistedOps.contains(defOp))
+                worklist.push_back({getIfConditionForItem(defIf, consumer),
+                                    consumer, nullptr});
+            }
+            for (Value opnd : getWorkItemOperands(defOp))
+              worklist.push_back({opnd, consumer, inLoopIf ? defIf : nullptr});
+          }
+          return;
+        }
+        if ((producer && producer->hoistedOps.contains(defOp)) ||
+            canHoistCloneOutOfIf(defOp, defIf, nullptr)) {
+          if (consumer->ops.insert(defOp).second) {
+            consumer->hoistedOps.insert(defOp);
+            getOrCreateCondOps(*consumer, defIf, defOp);
+            for (Value opnd : getWorkItemOperands(defOp))
+              worklist.push_back({opnd, consumer, nullptr});
+          }
+          return;
+        }
+      }
+
+      if (consumer)
+        consumer->inputs.insert(val);
+      producer->outputs.insert(val);
+      if (inLoopIf && !producer->hoistedOps.contains(defOp) &&
           getOrCreateCondOps(*producer, defIf).outputs.insert(val).second)
         worklist.push_back(
             {getIfConditionForItem(defIf, producer), producer, nullptr});
-      return;
+    };
+
+    for (Value opnd : origLoopTerminator->getOperands()) {
+      recordValueUse(opnd, /*consumer=*/nullptr, /*consumerIf=*/nullptr);
+      if (restart)
+        break;
     }
 
-    if (consumer && canCloneOpInWorkItem(defOp, consumer)) {
-      if (consumer->ops.insert(defOp).second) {
-        auto defIf = defOp->getParentOfType<scf::IfOp>();
-        if (defIf && loopOp->isAncestor(defIf)) {
-          getOrCreateCondOps(*consumer, defIf, defOp);
-          if (!consumer->hoistedOps.contains(defOp))
-            worklist.push_back(
-                {getIfConditionForItem(defIf, consumer), consumer, nullptr});
-        } else {
-          defIf = nullptr;
+    for (WorkItem *item : sortedWorkItems) {
+      if (restart)
+        break;
+      for (Operation *op : item->orderedOps) {
+        if (restart)
+          break;
+        if (opToWorkItemMap.lookup(op) != item)
+          continue;
+        auto enclosingIf = op->getParentOfType<scf::IfOp>();
+        if (enclosingIf &&
+            (!loopOp->isAncestor(enclosingIf) || item->hoistedOps.contains(op)))
+          enclosingIf = nullptr;
+        if (enclosingIf)
+          recordValueUse(getIfConditionForItem(enclosingIf, item), item,
+                         nullptr);
+        for (Value opnd : getWorkItemOperands(op)) {
+          recordValueUse(opnd, item, enclosingIf);
+          if (restart)
+            break;
         }
-        for (Value opnd : getWorkItemOperands(defOp))
-          worklist.push_back({opnd, consumer, defIf});
       }
-      return;
     }
 
-    if (consumer)
-      consumer->inputs.insert(val);
-    producer->outputs.insert(val);
-    if (auto defIf = defOp->getParentOfType<scf::IfOp>();
-        defIf && loopOp->isAncestor(defIf) &&
-        !producer->hoistedOps.contains(defOp) &&
-        getOrCreateCondOps(*producer, defIf).outputs.insert(val).second)
-      worklist.push_back(
-          {getIfConditionForItem(defIf, producer), producer, nullptr});
-  };
-
-  for (Value opnd : origLoopTerminator->getOperands())
-    recordValueUse(opnd, /*consumer=*/nullptr, /*consumerIf=*/nullptr);
-
-  for (WorkItem *item : sortedWorkItems) {
-    for (Operation *op : item->orderedOps) {
-      if (opToWorkItemMap.lookup(op) != item)
-        continue;
-      auto enclosingIf = op->getParentOfType<scf::IfOp>();
-      if (enclosingIf &&
-          (!loopOp->isAncestor(enclosingIf) || item->hoistedOps.contains(op)))
-        enclosingIf = nullptr;
-      if (enclosingIf)
-        recordValueUse(getIfConditionForItem(enclosingIf, item), item, nullptr);
-      for (Value opnd : getWorkItemOperands(op))
-        recordValueUse(opnd, item, enclosingIf);
+    while (!restart && !worklist.empty()) {
+      auto [val, consumer, consumerIf, forLoopYieldSelect] =
+          worklist.pop_back_val();
+      recordValueUse(val, consumer, consumerIf, forLoopYieldSelect);
     }
-  }
-
-  while (!worklist.empty()) {
-    auto [val, consumer, consumerIf] = worklist.pop_back_val();
-    recordValueUse(val, consumer, consumerIf);
   }
 
   for (WorkItem *item : sortedWorkItems) {
@@ -2298,8 +2480,8 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
 
   Operation *origLoopTerminator = origBody->getTerminator();
   populateWorkItemIO(origLoopTerminator);
-  if ((!conditionalMergeOwners.empty() || !nestedCounters.empty() ||
-       didSplitVectorItems) &&
+  if ((!decomposedIfResults.empty() || !separatedMixedIfResults.empty() ||
+       !nestedCounters.empty() || didSplitVectorItems) &&
       failed(sortPopulatedWorkItems())) {
     origForOp.emitWarning(
         "[OutlineCVScopes] cyclic conditional merge; skipping loop");
@@ -2311,15 +2493,10 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
     bool hasIfOutputs = llvm::any_of(item->condOps, [](const auto &pair) {
       return !pair.second.outputs.empty();
     });
-    if (item->ops.empty() && !hasIfOutputs && item->outputs.empty())
+    if (item->ops.empty() && !hasIfOutputs && item->outputs.empty() &&
+        item->selectedIfResults.empty())
       continue;
 
-    struct DeferredMerge {
-      OpResult result;
-      Value carried;
-      bool updatedInThen;
-    };
-    SmallVector<DeferredMerge> deferredMerges;
     SmallVector<Value> scopeReturnVals;
     for (Operation *op : item->orderedOps) {
       if (opToWorkItemMap.lookup(op) != item)
@@ -2332,7 +2509,8 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
     for (auto &[_, cOps] : item->condOps) {
       scf::IfOp enclosingIf = cOps.ifOp;
       for (auto [resIdx, ifRes] : llvm::enumerate(enclosingIf.getResults())) {
-        if (item->outputs.contains(ifRes) &&
+        if (!decomposedIfResults.contains(ifRes) &&
+            item->outputs.contains(ifRes) &&
             isIfResultOwnedByItem(enclosingIf, resIdx, item))
           scopeReturnVals.push_back(ifRes);
       }
@@ -2355,191 +2533,190 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
         continue;
 
       if (auto enclosingIf = dyn_cast<scf::IfOp>(&origOp)) {
-        auto condIt = item->condOps.find(enclosingIf);
-        if (condIt == item->condOps.end())
-          continue;
-
-        auto &cOps = condIt->second;
-        SmallVector<Operation *> opsToHoist;
-        SmallVector<Operation *> thenOpsToClone;
-        for (Operation &tOp : *enclosingIf.thenBlock()) {
-          if (isa<scf::YieldOp>(&tOp) || !cOps.thenOps.contains(&tOp))
-            continue;
-          if (item->hoistedOps.contains(&tOp))
-            opsToHoist.push_back(&tOp);
-          else
-            thenOpsToClone.push_back(&tOp);
-        }
-
-        SmallVector<Operation *> elseOpsToClone;
-        if (enclosingIf.elseBlock()) {
-          for (Operation &eOp : *enclosingIf.elseBlock()) {
-            if (isa<scf::YieldOp>(&eOp) || !cOps.elseOps.contains(&eOp))
+        if (auto condIt = item->condOps.find(enclosingIf);
+            condIt != item->condOps.end()) {
+          auto &cOps = condIt->second;
+          SmallVector<Operation *> opsToHoist;
+          SmallVector<Operation *> thenOpsToClone;
+          for (Operation &tOp : *enclosingIf.thenBlock()) {
+            if (isa<scf::YieldOp>(&tOp) || !cOps.thenOps.contains(&tOp))
               continue;
-            if (item->hoistedOps.contains(&eOp))
-              opsToHoist.push_back(&eOp);
+            if (item->hoistedOps.contains(&tOp))
+              opsToHoist.push_back(&tOp);
             else
-              elseOpsToClone.push_back(&eOp);
+              thenOpsToClone.push_back(&tOp);
           }
-        }
 
-        // Clone hoisted ops into scopeBlock before newIfOp
-        builder.setInsertionPointToEnd(scopeBlock);
-        for (Operation *hOp : opsToHoist)
-          builder.clone(*hOp, scopeMap);
-
-        // Fallbacks may be built after the opposite branch has been cloned.
-        // Only use mappings that are available before either branch.
-        const IRMapping initBaseMap(scopeMap);
-        auto getInitValue = [&](Value res) -> Value {
-          SmallVector<Operation *> reshapeOps;
-          Value init = getIntermediateInitValue(res, &reshapeOps);
-          if (!init)
-            return nullptr;
-          init = initBaseMap.lookupOrDefault(init);
-          // Use a separate mapping so the active branch still clones the
-          // original initialized destination, including its broadcasts.
-          IRMapping initMap(initBaseMap);
-          for (Operation *reshape : llvm::reverse(reshapeOps)) {
-            initMap.map(reshape->getOperand(0), init);
-            // A tensor.reshape shape (or an expand_shape extent) may be a
-            // constant defined in the active branch. Rematerialize it here.
-            for (Value operand : reshape->getOperands().drop_front()) {
-              Operation *def = operand.getDefiningOp();
-              if (!initMap.contains(operand) && def &&
-                  def->hasTrait<OpTrait::ConstantLike>() &&
-                  enclosingIf->isProperAncestor(def))
-                builder.clone(*def, initMap);
+          SmallVector<Operation *> elseOpsToClone;
+          if (enclosingIf.elseBlock()) {
+            for (Operation &eOp : *enclosingIf.elseBlock()) {
+              if (isa<scf::YieldOp>(&eOp) || !cOps.elseOps.contains(&eOp))
+                continue;
+              if (item->hoistedOps.contains(&eOp))
+                opsToHoist.push_back(&eOp);
+              else
+                elseOpsToClone.push_back(&eOp);
             }
-            init = builder.clone(*reshape, initMap)->getResult(0);
           }
-          return init;
-        };
 
-        SmallVector<Value> ifThenYieldVals;
-        SmallVector<Value> ifElseYieldVals;
-        SmallVector<Value> ifOrigResultsToMap;
-        SmallPtrSet<Value, 8> ifYieldSet;
+          // Clone hoisted ops into scopeBlock before newIfOp
+          builder.setInsertionPointToEnd(scopeBlock);
+          for (Operation *hOp : opsToHoist)
+            builder.clone(*hOp, scopeMap);
 
-        for (auto [resIdx, ifRes] : llvm::enumerate(enclosingIf.getResults())) {
-          auto [thenVal, elseVal] = getIfYieldedValues(enclosingIf, resIdx);
-          if (!thenVal || !cOps.outputs.contains(ifRes) ||
-              !ifYieldSet.insert(ifRes).second)
-            continue;
-          ifYieldSet.insert(thenVal);
-          if (elseVal)
-            ifYieldSet.insert(elseVal);
-          Value updated = thenVal, carried = elseVal;
-          auto isCarry = [&](Value value) {
-            return llvm::is_contained(origForOp.getRegionIterArgs(), value);
+          // Fallbacks may be built after the opposite branch has been cloned.
+          // Only use mappings that are available before either branch.
+          const IRMapping initBaseMap(scopeMap);
+          auto getInitValue = [&](Value res) -> Value {
+            SmallVector<Operation *> reshapeOps;
+            Value init = getIntermediateInitValue(res, &reshapeOps);
+            if (!init)
+              return nullptr;
+            init = initBaseMap.lookupOrDefault(init);
+            // Use a separate mapping so the active branch still clones the
+            // original initialized destination, including its broadcasts.
+            IRMapping initMap(initBaseMap);
+            for (Operation *reshape : llvm::reverse(reshapeOps)) {
+              initMap.map(reshape->getOperand(0), init);
+              // A tensor.reshape shape (or an expand_shape extent) may be a
+              // constant defined in the active branch. Rematerialize it here.
+              for (Value operand : reshape->getOperands().drop_front()) {
+                Operation *def = operand.getDefiningOp();
+                if (!initMap.contains(operand) && def &&
+                    def->hasTrait<OpTrait::ConstantLike>() &&
+                    enclosingIf->isProperAncestor(def))
+                  builder.clone(*def, initMap);
+              }
+              init = builder.clone(*reshape, initMap)->getResult(0);
+            }
+            return init;
           };
-          if (!isCarry(carried))
-            std::swap(updated, carried);
-          // Export a hoisted buffer directly. The pass-through selection does
-          // not belong to CUBE: capturing a VECTOR carry here keeps it on AIC.
-          if (item->coreType == TCoreType::CUBE &&
-              isa<TensorType>(ifRes.getType()) && isCarry(carried) &&
-              item->hoistedOps.contains(updated.getDefiningOp()) &&
-              item->outputs.contains(ifRes) &&
-              llvm::none_of(ifRes.getUsers(), [&](Operation *user) {
-                return item->ops.contains(user);
-              })) {
-            scopeMap.map(ifRes, scopeMap.lookup(updated));
-            deferredMerges.push_back({ifRes, carried, updated == thenVal});
-            continue;
-          }
-          ifThenYieldVals.push_back(thenVal);
-          ifElseYieldVals.push_back(elseVal);
-          ifOrigResultsToMap.push_back(ifRes);
-        }
 
-        for (Operation *tOp : thenOpsToClone) {
-          if (opToWorkItemMap.lookup(tOp) != item)
-            continue;
-          for (Value res : tOp->getResults()) {
-            if (cOps.outputs.contains(res) && ifYieldSet.insert(res).second) {
-              ifThenYieldVals.push_back(res);
-              ifElseYieldVals.push_back(nullptr);
+          SmallVector<Value> ifThenYieldVals;
+          SmallVector<Value> ifElseYieldVals;
+          SmallVector<Value> ifOrigResultsToMap;
+          SmallPtrSet<Value, 8> ifYieldSet;
+
+          for (auto [resIdx, ifRes] :
+               llvm::enumerate(enclosingIf.getResults())) {
+            if (decomposedIfResults.contains(ifRes))
+              continue;
+            auto [thenVal, elseVal] = getIfYieldedValues(enclosingIf, resIdx);
+            if (!thenVal || !cOps.outputs.contains(ifRes) ||
+                !ifYieldSet.insert(ifRes).second)
+              continue;
+            ifYieldSet.insert(thenVal);
+            if (elseVal)
+              ifYieldSet.insert(elseVal);
+            ifThenYieldVals.push_back(thenVal);
+            ifElseYieldVals.push_back(elseVal);
+            ifOrigResultsToMap.push_back(ifRes);
+          }
+
+          for (Operation *tOp : thenOpsToClone) {
+            if (opToWorkItemMap.lookup(tOp) != item)
+              continue;
+            for (Value res : tOp->getResults()) {
+              if (cOps.outputs.contains(res) && ifYieldSet.insert(res).second) {
+                ifThenYieldVals.push_back(res);
+                ifElseYieldVals.push_back(nullptr);
+                ifOrigResultsToMap.push_back(res);
+              }
+            }
+          }
+
+          for (Operation *eOp : elseOpsToClone) {
+            if (opToWorkItemMap.lookup(eOp) != item)
+              continue;
+            for (Value res : eOp->getResults()) {
+              if (!cOps.outputs.contains(res) || !ifYieldSet.insert(res).second)
+                continue;
+              ifThenYieldVals.push_back(nullptr);
+              ifElseYieldVals.push_back(res);
               ifOrigResultsToMap.push_back(res);
             }
           }
+
+          if (!ifOrigResultsToMap.empty() || !thenOpsToClone.empty() ||
+              !elseOpsToClone.empty()) {
+            Value cond = scopeMap.lookupOrDefault(
+                getIfConditionForItem(enclosingIf, item));
+            bool needElse =
+                !elseOpsToClone.empty() || !ifOrigResultsToMap.empty();
+
+            builder.setInsertionPointToEnd(scopeBlock);
+            auto newIfOp = builder.create<scf::IfOp>(
+                enclosingIf.getLoc(), TypeRange(ValueRange(ifOrigResultsToMap)),
+                cond, needElse);
+            newIfOp->setAttr(kPipelineIfCondAttrName,
+                             builder.getI64IntegerAttr(cOps.id));
+
+            if (!newIfOp.thenBlock()->empty())
+              newIfOp.thenBlock()->getTerminator()->erase();
+            if (newIfOp.elseBlock() && !newIfOp.elseBlock()->empty())
+              newIfOp.elseBlock()->getTerminator()->erase();
+
+            // Build both branches identically, exporting branch-local values
+            // through if results before they are returned from the scope.
+            auto populateBranch = [&](Block *block, ArrayRef<Operation *> ops,
+                                      ArrayRef<Value> values,
+                                      Location yieldLoc) {
+              builder.setInsertionPointToStart(block);
+              for (Operation *op : ops)
+                builder.clone(*op, scopeMap);
+              builder.setInsertionPointToEnd(block);
+              SmallVector<Value> operands;
+              for (auto [idx, value] : llvm::enumerate(values)) {
+                // Materialize a missing branch's destination here so its
+                // reshapes and shape constants execute only on the inactive
+                // path.
+                Value mapped = value ? scopeMap.lookupOrDefault(value)
+                                     : getInitValue(ifOrigResultsToMap[idx]);
+                operands.push_back(getOrCreateElseYieldValue(
+                    builder, loc,
+                    scopeMap.lookupOrDefault(ifOrigResultsToMap[idx]), mapped));
+              }
+              builder.create<scf::YieldOp>(yieldLoc, operands);
+            };
+            populateBranch(newIfOp.thenBlock(), thenOpsToClone, ifThenYieldVals,
+                           enclosingIf.thenYield().getLoc());
+            if (needElse)
+              populateBranch(
+                  newIfOp.elseBlock(), elseOpsToClone, ifElseYieldVals,
+                  enclosingIf.elseBlock() ? enclosingIf.elseYield().getLoc()
+                                          : loc);
+
+            // Map results of newIfOp
+            auto mapIfValues = [&](ArrayRef<Value> vals, bool checkAncestor) {
+              for (auto [yieldIdx, val] : llvm::enumerate(vals)) {
+                if (!val)
+                  continue;
+                Operation *d = val.getDefiningOp();
+                if (!checkAncestor || (d && enclosingIf->isProperAncestor(d) &&
+                                       !item->hoistedOps.contains(d)))
+                  scopeMap.map(val, newIfOp.getResult(yieldIdx));
+              }
+            };
+            mapIfValues(ifOrigResultsToMap, /*checkAncestor=*/false);
+            mapIfValues(ifThenYieldVals, /*checkAncestor=*/true);
+            mapIfValues(ifElseYieldVals, /*checkAncestor=*/true);
+
+            sinkHoistedLoadToTensor(opsToHoist, scopeMap, newIfOp);
+          }
         }
 
-        for (Operation *eOp : elseOpsToClone) {
-          if (opToWorkItemMap.lookup(eOp) != item)
+        for (auto [resIdx, ifRes] : llvm::enumerate(enclosingIf.getResults())) {
+          if (!item->selectedIfResults.contains(ifRes))
             continue;
-          for (Value res : eOp->getResults()) {
-            if (!cOps.outputs.contains(res) || !ifYieldSet.insert(res).second)
-              continue;
-            ifThenYieldVals.push_back(nullptr);
-            ifElseYieldVals.push_back(res);
-            ifOrigResultsToMap.push_back(res);
-          }
+          builder.setInsertionPointToEnd(scopeBlock);
+          Value cond = scopeMap.lookupOrDefault(
+              getIfConditionForItem(enclosingIf, item));
+          auto [thenVal, elseVal] = getIfYieldedValues(enclosingIf, resIdx);
+          Value selected = builder.create<arith::SelectOp>(
+              enclosingIf.getLoc(), cond, scopeMap.lookupOrDefault(thenVal),
+              scopeMap.lookupOrDefault(elseVal));
+          scopeMap.map(ifRes, selected);
         }
-
-        if (ifOrigResultsToMap.empty() && thenOpsToClone.empty() &&
-            elseOpsToClone.empty())
-          continue;
-
-        Value cond =
-            scopeMap.lookupOrDefault(getIfConditionForItem(enclosingIf, item));
-        bool needElse = !elseOpsToClone.empty() || !ifOrigResultsToMap.empty();
-
-        builder.setInsertionPointToEnd(scopeBlock);
-        auto newIfOp = builder.create<scf::IfOp>(
-            enclosingIf.getLoc(), TypeRange(ValueRange(ifOrigResultsToMap)),
-            cond, needElse);
-        newIfOp->setAttr(kPipelineIfCondAttrName,
-                         builder.getI64IntegerAttr(cOps.id));
-
-        if (!newIfOp.thenBlock()->empty())
-          newIfOp.thenBlock()->getTerminator()->erase();
-        if (newIfOp.elseBlock() && !newIfOp.elseBlock()->empty())
-          newIfOp.elseBlock()->getTerminator()->erase();
-
-        // Build both branches identically, exporting branch-local values
-        // through if results before they are returned from the scope.
-        auto populateBranch = [&](Block *block, ArrayRef<Operation *> ops,
-                                  ArrayRef<Value> values, Location yieldLoc) {
-          builder.setInsertionPointToStart(block);
-          for (Operation *op : ops)
-            builder.clone(*op, scopeMap);
-          builder.setInsertionPointToEnd(block);
-          SmallVector<Value> operands;
-          for (auto [idx, value] : llvm::enumerate(values)) {
-            // Materialize a missing branch's destination here so its reshapes
-            // and shape constants execute only on the inactive path.
-            Value mapped = value ? scopeMap.lookupOrDefault(value)
-                                 : getInitValue(ifOrigResultsToMap[idx]);
-            operands.push_back(getOrCreateElseYieldValue(
-                builder, loc, scopeMap.lookupOrDefault(ifOrigResultsToMap[idx]),
-                mapped));
-          }
-          builder.create<scf::YieldOp>(yieldLoc, operands);
-        };
-        populateBranch(newIfOp.thenBlock(), thenOpsToClone, ifThenYieldVals,
-                       enclosingIf.thenYield().getLoc());
-        if (needElse)
-          populateBranch(
-              newIfOp.elseBlock(), elseOpsToClone, ifElseYieldVals,
-              enclosingIf.elseBlock() ? enclosingIf.elseYield().getLoc() : loc);
-
-        // Map results of newIfOp
-        auto mapIfValues = [&](ArrayRef<Value> vals, bool checkAncestor) {
-          for (auto [yieldIdx, val] : llvm::enumerate(vals)) {
-            if (!val)
-              continue;
-            Operation *d = val.getDefiningOp();
-            if (!checkAncestor || (d && enclosingIf->isProperAncestor(d) &&
-                                   !item->hoistedOps.contains(d)))
-              scopeMap.map(val, newIfOp.getResult(yieldIdx));
-          }
-        };
-        mapIfValues(ifOrigResultsToMap, /*checkAncestor=*/false);
-        mapIfValues(ifThenYieldVals, /*checkAncestor=*/true);
-        mapIfValues(ifElseYieldVals, /*checkAncestor=*/true);
-
-        sinkHoistedLoadToTensor(opsToHoist, scopeMap, newIfOp);
 
         builder.setInsertionPointToEnd(scopeBlock);
         continue;
@@ -2570,56 +2747,45 @@ LogicalResult CVScopeOutliner::rewriteForOp(scf::ForOp origForOp) {
 
     for (auto [origVal, resIdx] : origValToResIdx)
       globalIRMap.map(origVal, scopeOp.getResult(resIdx));
+  }
 
-    for (auto [result, carried, updatedInThen] : deferredMerges) {
-      auto origIf = cast<scf::IfOp>(result.getOwner());
-      builder.setInsertionPointToEnd(newBody);
-      auto merge = builder.create<scope::ScopeOp>(origIf.getLoc(), TypeRange{});
-      merge->setAttr(kPipelinedLoopCoreTypeAttrName,
-                     TCoreTypeAttr::get(ctx, TCoreType::CUBE_AND_VECTOR));
-      Block *mergeBlock = builder.createBlock(&merge.getRegion());
-      builder.setInsertionPointToStart(mergeBlock);
-      IRMapping mergeMap(globalIRMap);
-      Value origCond = getIfConditionForItem(origIf, item);
-      if (!mergeMap.contains(origCond)) {
-        SmallVector<Operation *> condOps;
-        SmallVector<Value> stack = {origCond};
-        SmallPtrSet<Operation *, 8> visited;
-        while (!stack.empty()) {
-          Value v = stack.pop_back_val();
-          if (mergeMap.contains(v))
-            continue;
-          Operation *def = v.getDefiningOp();
-          if (!def || !origForOp->isProperAncestor(def) ||
-              !visited.insert(def).second)
-            continue;
-          condOps.push_back(def);
-          for (Value opnd : def->getOperands())
-            stack.push_back(opnd);
-        }
-        llvm::sort(condOps, [&](Operation *a, Operation *b) {
-          return opOrder.lookup(a) < opOrder.lookup(b);
-        });
-        for (Operation *op : condOps)
-          builder.clone(*op, mergeMap);
-      }
-      auto select = builder.create<scf::IfOp>(
-          origIf.getLoc(), TypeRange{result.getType()},
-          mergeMap.lookupOrDefault(origCond), true);
-      select->setAttr(kPipelineIfCondAttrName,
-                      builder.getI64IntegerAttr(getOrAssignIfId(origIf)));
-      Value updated = globalIRMap.lookup(result);
-      carried = globalIRMap.lookupOrDefault(carried);
-      builder.setInsertionPointToEnd(select.thenBlock());
-      builder.create<scf::YieldOp>(origIf.getLoc(),
-                                   updatedInThen ? updated : carried);
-      builder.setInsertionPointToEnd(select.elseBlock());
-      builder.create<scf::YieldOp>(origIf.getLoc(),
-                                   updatedInThen ? carried : updated);
-      auto newMerge = recreateScope(merge, select.getResults());
-      merge.erase();
-      globalIRMap.map(result, newMerge.getResult(0));
+  for (Value ifRes : loopYieldSelectedIfResults) {
+    auto origIf = cast<scf::IfOp>(ifRes.getDefiningOp());
+    unsigned resIdx = cast<OpResult>(ifRes).getResultNumber();
+    auto [thenVal, elseVal] = getIfYieldedValues(origIf, resIdx);
+    builder.setInsertionPointToEnd(newBody);
+    auto merge = builder.create<scope::ScopeOp>(origIf.getLoc(), TypeRange{});
+    merge->setAttr(kPipelinedLoopCoreTypeAttrName,
+                   TCoreTypeAttr::get(ctx, TCoreType::CUBE_AND_VECTOR));
+    Block *mergeBlock = builder.createBlock(&merge.getRegion());
+    builder.setInsertionPointToStart(mergeBlock);
+    IRMapping mergeMap(globalIRMap);
+    SmallVector<Operation *> neededOps;
+    SmallVector<Value> stack = {origIf.getCondition(), thenVal, elseVal};
+    SmallPtrSet<Operation *, 8> visited;
+    while (!stack.empty()) {
+      Value v = stack.pop_back_val();
+      if (!v || mergeMap.contains(v))
+        continue;
+      Operation *def = v.getDefiningOp();
+      if (!def || !origForOp->isProperAncestor(def) ||
+          !visited.insert(def).second)
+        continue;
+      neededOps.push_back(def);
+      for (Value opnd : getWorkItemOperands(def))
+        stack.push_back(opnd);
     }
+    llvm::sort(neededOps, [&](Operation *a, Operation *b) {
+      return opOrder.lookup(a) < opOrder.lookup(b);
+    });
+    for (Operation *op : neededOps)
+      builder.clone(*op, mergeMap);
+    Value sel = builder.create<arith::SelectOp>(
+        origIf.getLoc(), mergeMap.lookupOrDefault(origIf.getCondition()),
+        mergeMap.lookupOrDefault(thenVal), mergeMap.lookupOrDefault(elseVal));
+    auto newMerge = recreateScope(merge, ValueRange{sel});
+    merge.erase();
+    globalIRMap.map(ifRes, newMerge.getResult(0));
   }
 
   // Final loop yield
