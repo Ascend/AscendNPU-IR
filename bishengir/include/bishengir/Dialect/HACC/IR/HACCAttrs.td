@@ -281,7 +281,8 @@ def HACC_DeviceSpecEnum :
   I32EnumAttrCase<"L0C_ALIGN_SIZE", 10>,
   I32EnumAttrCase<"MINIMAL_D_CACHE_SIZE", 11>,
   I32EnumAttrCase<"MAXIMUM_D_CACHE_SIZE", 12>,
-  I32EnumAttrCase<"ARCH", 13>
+  I32EnumAttrCase<"ARCH", 13>,
+  I32EnumAttrCase<"UB_BANK_GROUP_COUNT", 14>
 ]> {
   let description = [{
     HACC `DeviceSpec` enum class defines the list of hardware specification

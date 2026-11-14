@@ -218,6 +218,26 @@ int64_t getIntegerSpecValue(DataLayoutEntryInterface entry) {
   return cast<IntegerAttr>(entry.getValue()).getValue().getSExtValue();
 }
 
+uint32_t getBankGroupCount(ModuleOp op) {
+  constexpr uint32_t kDefaultUbBankGroupCount = 16;
+  constexpr uint32_t kAscend960UbBankGroupCount = 32;
+  auto maybeSpecInterface = getNPUTargetSpec(op);
+  if (maybeSpecInterface.has_value()) {
+    DataLayoutEntryInterface entry =
+        maybeSpecInterface.value().getSpecForIdentifierEnum(
+            DeviceSpec::UB_BANK_GROUP_COUNT);
+    if (entry) {
+      if (auto intAttr = dyn_cast<IntegerAttr>(entry.getValue()))
+        return static_cast<uint32_t>(intAttr.getInt());
+    }
+  }
+  // Fall back to the target attribute for IR that has no device spec
+  // attached yet (e.g. standalone opt invocations).
+  if (isAscend960(op))
+    return kAscend960UbBankGroupCount;
+  return kDefaultUbBankGroupCount;
+}
+
 std::optional<llvm::VersionTuple> getHIVMCVersion(ModuleOp op) {
   if (auto versionAttr =
           op->getAttrOfType<HIVMCVersionAttr>(HIVMCVersionAttr::name))
