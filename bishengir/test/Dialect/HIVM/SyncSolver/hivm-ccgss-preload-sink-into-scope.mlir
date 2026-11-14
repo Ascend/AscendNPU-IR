@@ -11,6 +11,7 @@
 // SAME-NEXT: hivm.hir.fixpipe
 // SAME-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_V>]
 // SAME: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>]
+// SAME-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>]
 // SAME-NEXT: hivm.hir.copy
 // SAME-NEXT: hivm.hir.sync_block_set[<VECTOR>, <PIPE_V>, <PIPE_FIX>]
 // SAME-LABEL: func.func @k_nested
@@ -18,6 +19,7 @@
 // SAME-NEXT: hivm.hir.fixpipe
 // SAME-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_V>]
 // SAME: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>]
+// SAME-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>]
 // SAME-NEXT: hivm.hir.copy
 // SAME-NEXT: hivm.hir.sync_block_set[<VECTOR>, <PIPE_V>, <PIPE_FIX>]
 
