@@ -2288,9 +2288,10 @@ bool SyncSolverBase::checkSkipCVPreloadingPair(Occurrence *occ1,
   auto *scopeOp2 = dyn_cast<Scope>(parOcc2->op);
   if (scopeOp1 != nullptr && scopeOp2 != nullptr) {
     if (scopeOp1->preloadNum.has_value() && scopeOp2->preloadNum.has_value()) {
-      assert(scopeOp1 != scopeOp2 &&
-             *scopeOp1->preloadNum != *scopeOp2->preloadNum);
-      return true;
+      assert(scopeOp1 != scopeOp2);
+      // A preload stage may be split across multiple scopes. Dependencies
+      // between those scopes still need synchronization within the stage.
+      return *scopeOp1->preloadNum != *scopeOp2->preloadNum;
     }
   }
   return false;
