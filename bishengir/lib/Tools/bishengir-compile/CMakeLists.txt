@@ -56,7 +56,6 @@ add_bishengir_library(BiShengIRCompileLib
   ${dialect_libs}
   ${extension_libs}
   BiShengIRCompileConfigLib
-  BiShengIRHIVMCLib
   BiShengIRPass
   BiShengIRTransform
   BiShengIRToolUtils
