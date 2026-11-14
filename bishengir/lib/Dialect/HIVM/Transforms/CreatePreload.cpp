@@ -1539,14 +1539,15 @@ static LogicalResult mergeCounterLoops(func::FuncOp funcOp) {
     eraseDeadScopesAndReStage(forOp, erasedScopeNums);
   }
 
-  LLVM_DEBUG(for (scf::ForOp forOp : loops) {
-    DBGS() << "After merge:" << forOp << "\n";
+  LLVM_DEBUG({
+    for (scf::ForOp forOp : loops) 
+      DBGS() << "After merge:" << forOp << "\n";
   });
   return success();
 }
 
 void CreatePreloadPass::runOnOperation() {
-  auto moduleOp = getOperation();
+  auto *moduleOp = getOperation();
   WalkResult result = moduleOp->walk([](func::FuncOp funcOp) {
     return failed(mergeCounterLoops(funcOp)) ? WalkResult::interrupt()
                                              : WalkResult::advance();
