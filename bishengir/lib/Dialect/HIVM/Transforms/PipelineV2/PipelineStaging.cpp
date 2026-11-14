@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/TightlyCoupledBufferUtils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -253,6 +254,15 @@ static bool isFixpipeToUB(Operation *op) {
   return memSpaceAttr.getAddressSpace() == AddressSpace::UB;
 }
 
+static bool isL12UBToUB(Operation *op) {
+  auto l12ub = dyn_cast<L12UBOp>(op);
+  if (!l12ub)
+    return false;
+  memref::AllocOp alloc = traceAlloc(l12ub.getDst());
+  return alloc &&
+         getOptionalHIVMAddressSpace(alloc.getType()) == AddressSpace::UB;
+}
+
 static bool isStoreToWorkspace(Operation *op) {
   auto store = dyn_cast<StoreOp>(op);
   if (!store)
@@ -309,6 +319,20 @@ static void getAllWritesToAlloc(Value root, SmallVector<Operation *> &writes) {
       }
     }
   }
+}
+
+/// Return true if `allocOp` is already marked as a tightly coupled buffer or
+/// targets L1/UB and is written by a cross-core transfer op.
+static bool isTightlyCoupledBufferAlloc(memref::AllocOp allocOp) {
+  if (getTightlyCoupledMark(allocOp.getMemref()).has_value())
+    return true;
+  if (!isL1OrUBAlloc(allocOp))
+    return false;
+  SmallVector<Operation *> writes;
+  getAllWritesToAlloc(allocOp.getMemref(), writes);
+  return llvm::any_of(writes, [](Operation *write) {
+    return isFixpipeToUB(write) || isCrossCoreCopy(write) || isL12UBToUB(write);
+  });
 }
 
 static void sortScopes(scf::ForOp &loopOp) {
@@ -488,6 +512,103 @@ static void hoistAllocAndToTensor(scope::ScopeOp &scopeOp) {
   scopeOp.erase();
 }
 
+/// Hoist all remaining tightly coupled buffer allocations (and their direct
+/// annotation marks) out of the outermost stage scopes in `loopOp` so
+/// multi-buffering and PlanMemory can pair them across AIC and AIV stages.
+static void hoistTightlyCoupledBuffers(scf::ForOp loopOp) {
+  Block *loopBody = loopOp.getBody();
+  if (!loopBody)
+    return;
+
+  auto isAvailableBeforeInLoop = [&](Value v, Operation *insertPt) {
+    Region *valRegion = v.getParentRegion();
+    if (!valRegion || !loopOp.getRegion().isAncestor(valRegion))
+      return true;
+    if (auto blockArg = dyn_cast<BlockArgument>(v))
+      return blockArg.getOwner() == loopBody;
+    Operation *def = v.getDefiningOp();
+    return def->getBlock() == loopBody && def->isBeforeInBlock(insertPt);
+  };
+
+  struct StageSpan {
+    scope::ScopeOp firstScope;
+    scope::ScopeOp lastScope;
+  };
+  SmallVector<StageSpan> stageSpans;
+  for (scope::ScopeOp scopeOp : loopBody->getOps<scope::ScopeOp>()) {
+    auto preloadAttr =
+        scopeOp->getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name);
+    if (!stageSpans.empty()) {
+      auto prevPreloadAttr =
+          stageSpans.back().firstScope->getAttrOfType<IntegerAttr>(
+              hivm::PreloadNumAttr::name);
+      if (preloadAttr && prevPreloadAttr && preloadAttr == prevPreloadAttr) {
+        stageSpans.back().lastScope = scopeOp;
+        continue;
+      }
+    }
+    stageSpans.push_back({scopeOp, scopeOp});
+  }
+
+  for (StageSpan &span : stageSpans) {
+    SmallVector<Operation *> topLevelOps;
+    for (Operation *op = span.firstScope.getOperation();;
+         op = op->getNextNode()) {
+      topLevelOps.push_back(op);
+      if (op == span.lastScope.getOperation())
+        break;
+    }
+
+    struct HoistCandidate {
+      memref::AllocOp allocOp;
+      scope::ScopeOp enclosingStageScope;
+    };
+    SmallVector<HoistCandidate> candidates;
+    DenseMap<Value, SmallVector<annotation::MarkOp>> allocMarks;
+    for (Operation *topOp : topLevelOps) {
+      scope::ScopeOp enclosingStageScope = dyn_cast<scope::ScopeOp>(topOp);
+      topOp->walk<WalkOrder::PreOrder>([&](Operation *nested) {
+        if (auto allocOp = dyn_cast<memref::AllocOp>(nested)) {
+          if (isTightlyCoupledBufferAlloc(allocOp))
+            candidates.push_back({allocOp, enclosingStageScope});
+        } else if (auto markOp = dyn_cast<annotation::MarkOp>(nested)) {
+          allocMarks[markOp.getSrc()].push_back(markOp);
+        }
+      });
+    }
+
+    for (HoistCandidate &candidate : candidates) {
+      memref::AllocOp allocOp = candidate.allocOp;
+      scope::ScopeOp enclosingStageScope = candidate.enclosingStageScope;
+      Operation *insertPt = span.firstScope.getOperation();
+      auto canHoistAllocTo = [&](Operation *pt) {
+        return llvm::all_of(allocOp->getOperands(), [&](Value v) {
+          return isAvailableBeforeInLoop(v, pt);
+        });
+      };
+      if (!canHoistAllocTo(insertPt)) {
+        if (!enclosingStageScope || enclosingStageScope == span.firstScope ||
+            !canHoistAllocTo(enclosingStageScope.getOperation()))
+          continue;
+        insertPt = enclosingStageScope.getOperation();
+      }
+
+      allocOp->moveBefore(insertPt);
+      auto marksIt = allocMarks.find(allocOp.getMemref());
+      if (marksIt == allocMarks.end())
+        continue;
+      for (annotation::MarkOp markOp : marksIt->second) {
+        bool markReady = llvm::all_of(markOp->getOperands(), [&](Value v) {
+          return v == allocOp.getMemref() ||
+                 isAvailableBeforeInLoop(v, insertPt);
+        });
+        if (markReady)
+          markOp->moveBefore(insertPt);
+      }
+    }
+  }
+}
+
 // TODO: Temporary workaround until PlanMemory properly handles dead/writer-less
 // local allocations (or cross-scope scalar tensor allocations) left behind on
 // the opposite core after SplitMixKernel. Without `hivm.vec_only`,
@@ -572,6 +693,7 @@ void PipelineStagingPass::runOnOperation() {
   for (scf::ForOp loopOp : cvPipelinedLoops) {
     loopOp->walk<WalkOrder::PostOrder>(
         [&](scope::ScopeOp scopeOp) { hoistAllocAndToTensor(scopeOp); });
+    hoistTightlyCoupledBuffers(loopOp);
     loopOp->walk([&](scope::ScopeOp scopeOp) { markVectorScopeIfs(scopeOp); });
   }
 }
