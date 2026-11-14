@@ -384,8 +384,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
-// Export the UB descriptor from CUBE and keep the conditional merge in a
-// separate shared scope. The loop must still be outlined in either branch.
+// Export the UB descriptor from CUBE and materialize the conditional select in
+// the consuming VECTOR scope. The loop must still be outlined in either branch.
 // CHECK-LABEL: func.func @outline_conditional_merge_then
 // CHECK: scf.for {{.*}} iter_args(%[[ACC:.*]] = {{.*}})
 // CHECK: %[[CUBE:.*]] = scope.scope : () -> tensor<16x16xf32> {
@@ -396,12 +396,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK-NOT: scf.yield %[[ACC]]
 // CHECK: scope.return %[[BUFFER]] : tensor<16x16xf32>
 // CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
-// CHECK: %[[MERGE:.*]] = scope.scope
-// CHECK: %[[SELECT:.*]] = arith.select %{{.*}}, %[[CUBE]], %[[ACC]]
-// CHECK-NEXT: scope.return %[[SELECT]]
-// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>}
+// CHECK-NOT: hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>
 // CHECK: %[[VECTOR:.*]] = scope.scope
-// CHECK: hivm.hir.vadd ins(%[[ACC]], %[[MERGE]]
+// CHECK: %[[SELECT:.*]] = arith.select %{{.*}}, %[[CUBE]], %[[ACC]]
+// CHECK: hivm.hir.vadd ins(%[[ACC]], %[[SELECT]]
 // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NEXT: scf.yield %[[VECTOR]]
 // CHECK-NEXT: } {hivm.cv_pipelined_loop}
@@ -437,8 +435,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
-// Export the UB descriptor from CUBE and keep the conditional merge in a
-// separate shared scope. The loop must still be outlined in either branch.
+// Export the UB descriptor from CUBE and materialize the conditional select in
+// the consuming VECTOR scope. The loop must still be outlined in either branch.
 // CHECK-LABEL: func.func @outline_conditional_merge_else
 // CHECK: scf.for {{.*}} iter_args(%[[ACC:.*]] = {{.*}})
 // CHECK: %[[CUBE:.*]] = scope.scope : () -> tensor<16x16xf32> {
@@ -449,12 +447,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK-NOT: scf.yield %[[ACC]]
 // CHECK: scope.return %[[BUFFER]] : tensor<16x16xf32>
 // CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
-// CHECK: %[[MERGE:.*]] = scope.scope
-// CHECK: %[[SELECT:.*]] = arith.select %{{.*}}, %[[ACC]], %[[CUBE]]
-// CHECK-NEXT: scope.return %[[SELECT]]
-// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>}
+// CHECK-NOT: hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>
 // CHECK: %[[VECTOR:.*]] = scope.scope
-// CHECK: hivm.hir.vadd ins(%[[ACC]], %[[MERGE]]
+// CHECK: %[[SELECT:.*]] = arith.select %{{.*}}, %[[ACC]], %[[CUBE]]
+// CHECK: hivm.hir.vadd ins(%[[ACC]], %[[SELECT]]
 // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NEXT: scf.yield %[[VECTOR]]
 // CHECK-NEXT: } {hivm.cv_pipelined_loop}
@@ -563,22 +559,25 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
-// Both branches produce tensors in different core scopes.
+// Both branches produce tensors in different core scopes and are selected
+// directly inside the consuming VECTOR scope.
 // CHECK-LABEL: func.func @outline_mixed_branch_vector_then
 // CHECK: %[[VECTOR:.*]] = scope.scope
 // CHECK: scf.if
 // CHECK: hivm.hir.vbrc
 // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
-// CHECK: %[[CUBE:.*]] = scope.scope
-// CHECK: bufferization.to_tensor
+// CHECK: %[[CUBE:.*]] = scope.scope : () -> tensor<32x32xf32> {
+// CHECK: %[[CUBE_TENSOR:.*]] = bufferization.to_tensor
 // CHECK: scf.if
 // CHECK: hivm.hir.fixpipe
+// CHECK-NOT: scf.yield %[[VECTOR]]
+// CHECK: scope.return %[[CUBE_TENSOR]] : tensor<32x32xf32>
 // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
-// CHECK: %[[MERGE:.*]] = scope.scope
+// CHECK-NOT: hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>
+// CHECK: scope.scope
 // CHECK: %[[SELECT:.*]] = arith.select {{.*}}, %[[VECTOR]], %[[CUBE]]
-// CHECK-NEXT: scope.return %[[SELECT]]
-// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>}
-// CHECK: hivm.hir.store ins(%[[MERGE]]
+// CHECK: hivm.hir.store ins(%[[SELECT]]
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
 // CHECK: hivm.cv_pipelined_loop
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @outline_mixed_branch_vector_then(%dot: tensor<2x2x16x16xf32>, %dst: memref<32x32xf32>, %n: index, %cond: i1) attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
@@ -605,22 +604,25 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
-// Both branches produce tensors in different core scopes.
+// Both branches produce tensors in different core scopes and are selected
+// directly inside the consuming VECTOR scope.
 // CHECK-LABEL: func.func @outline_mixed_branch_vector_else
-// CHECK: %[[CUBE:.*]] = scope.scope
-// CHECK: bufferization.to_tensor
+// CHECK: %[[CUBE:.*]] = scope.scope : () -> tensor<32x32xf32> {
+// CHECK: %[[CUBE_TENSOR:.*]] = bufferization.to_tensor
 // CHECK: scf.if
 // CHECK: hivm.hir.fixpipe
+// CHECK-NOT: scf.yield %[[CUBE_TENSOR]]
+// CHECK: scope.return %[[CUBE_TENSOR]] : tensor<32x32xf32>
 // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
 // CHECK: %[[VECTOR:.*]] = scope.scope
 // CHECK: scf.if
 // CHECK: hivm.hir.vbrc
 // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
-// CHECK: %[[MERGE:.*]] = scope.scope
+// CHECK-NOT: hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>
+// CHECK: scope.scope
 // CHECK: %[[SELECT:.*]] = arith.select {{.*}}, %[[CUBE]], %[[VECTOR]]
-// CHECK-NEXT: scope.return %[[SELECT]]
-// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>}
-// CHECK: hivm.hir.store ins(%[[MERGE]]
+// CHECK: hivm.hir.store ins(%[[SELECT]]
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
 // CHECK: hivm.cv_pipelined_loop
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @outline_mixed_branch_vector_else(%dot: tensor<2x2x16x16xf32>, %dst: memref<32x32xf32>, %n: index, %cond: i1) attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
@@ -1614,6 +1616,93 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %vinit = tensor.empty() : tensor<16x16xf32>
       %value = hivm.hir.vexp ins(%data : tensor<16x16xf32>) outs(%vinit : tensor<16x16xf32>) -> tensor<16x16xf32>
       hivm.hir.indirect_store ins(%value : tensor<16x16xf32>, %offsets : tensor<16x16xi64>) outs(%dst : memref<?xf32>)
+    }
+    return
+  }
+}
+
+// -----
+
+// When users of an scf.if live across the scf.if scope boundary, the producer
+// scope exports its branch buffer directly via a resultless scf.if and each
+// cross-scope user selects between the branch values locally.
+// CHECK-LABEL: func.func @outline_cross_scope_if_users_select_branches
+// CHECK: scf.for
+// CHECK:   %[[VEC:.*]] = scope.scope : () -> tensor<64x64xf32> {
+// CHECK:     %[[VBRC:.*]] = hivm.hir.vbrc
+// CHECK:     hivm.hir.store ins(%[[VBRC]]
+// CHECK:     scope.return %[[VBRC]] : tensor<64x64xf32>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: %[[CUBE:.*]] = scope.scope : () -> tensor<64x64xf32> {
+// CHECK:     %[[BUF:.*]] = bufferization.to_tensor
+// CHECK-NEXT: scf.if %{{.*}} {
+// CHECK-NEXT: } else {
+// CHECK-NEXT:   hivm.hir.fixpipe {{.*}} ins(%{{.*}}) outs(%{{.*}})
+// CHECK-NEXT: } {pipeline.if.cond
+// CHECK-NEXT: scope.return %[[BUF]] : tensor<64x64xf32>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT: scope.scope : () -> () {
+// CHECK:     %[[SEL0:.*]] = arith.select %{{.*}}, %[[VEC]], %[[CUBE]] : tensor<64x64xf32>
+// CHECK:     %[[SLICE0:.*]] = tensor.extract_slice %[[SEL0]]
+// CHECK:     hivm.hir.store ins(%[[SLICE0]]
+// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: scope.scope : () -> () {
+// CHECK:     %[[SEL1:.*]] = arith.select %{{.*}}, %[[VEC]], %[[CUBE]] : tensor<64x64xf32>
+// CHECK:     %[[SLICE1:.*]] = tensor.extract_slice %[[SEL1]]
+// CHECK:     hivm.hir.store ins(%[[SLICE1]]
+// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// TCB-LABEL: func.func @outline_cross_scope_if_users_select_branches
+// TCB: scf.for
+// TCB:   %[[RVEC:.*]] = scope.scope : () -> tensor<64x64xf32> {
+// TCB:     %[[RVBRC:.*]] = hivm.hir.vbrc
+// TCB:     hivm.hir.store ins(%[[RVBRC]]
+// TCB:     scope.return %[[RVBRC]] : tensor<64x64xf32>
+// TCB-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// TCB-NEXT: %[[RCUBE:.*]] = scope.scope : () -> tensor<64x64xf32> {
+// TCB:     %[[RBUF:.*]] = bufferization.to_tensor
+// TCB-NEXT: scf.if %{{.*}} {
+// TCB-NEXT: } else {
+// TCB-NEXT:   hivm.hir.fixpipe {{.*}} ins(%{{.*}}) outs(%{{.*}})
+// TCB-NEXT: } {pipeline.if.cond
+// TCB-NEXT: scope.return %[[RBUF]] : tensor<64x64xf32>
+// TCB-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// TCB-NEXT: scope.scope : () -> () {
+// TCB:     %[[RSEL0:.*]] = arith.select %{{.*}}, %[[RVEC]], %[[RCUBE]] : tensor<64x64xf32>
+// TCB-NEXT: %[[RSLICE0:.*]] = tensor.extract_slice %[[RSEL0]]
+// TCB:     hivm.hir.store ins(%[[RSLICE0]]
+// TCB:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// TCB-NEXT: scope.scope : () -> () {
+// TCB:     %[[RSEL1:.*]] = arith.select %{{.*}}, %[[RVEC]], %[[RCUBE]] : tensor<64x64xf32>
+// TCB-NEXT: %[[RSLICE1:.*]] = tensor.extract_slice %[[RSEL1]]
+// TCB:     hivm.hir.store ins(%[[RSLICE1]]
+// TCB:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @outline_cross_scope_if_users_select_branches(
+      %a: tensor<4x4x16x16xf32>, %gm0: memref<64x64xf32>,
+      %gm1: memref<32x64xf32>, %gm2: memref<32x64xf32>,
+      %n: i32, %flag: i32)
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %zero = arith.constant 0.000000e+00 : f32
+    %empty = tensor.empty() : tensor<64x64xf32>
+    scf.for %i = %c0_i32 to %n step %c1_i32 : i32 {
+      %vec = hivm.hir.vbrc ins(%zero : f32) outs(%empty : tensor<64x64xf32>) -> tensor<64x64xf32>
+      hivm.hir.store ins(%vec : tensor<64x64xf32>) outs(%gm0 : memref<64x64xf32>)
+      %cond = arith.cmpi eq, %flag, %c0_i32 : i32
+      %alloc = memref.alloc() : memref<64x64xf32, #hivm.address_space<ub>>
+      %cast = memref.memory_space_cast %alloc : memref<64x64xf32, #hivm.address_space<ub>> to memref<64x64xf32>
+      %buf = bufferization.to_tensor %cast restrict writable : memref<64x64xf32>
+      %selected = scf.if %cond -> (tensor<64x64xf32>) {
+        scf.yield %vec : tensor<64x64xf32>
+      } else {
+        hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%a : tensor<4x4x16x16xf32>) outs(%alloc : memref<64x64xf32, #hivm.address_space<ub>>)
+        scf.yield %buf : tensor<64x64xf32>
+      }
+      %s0 = tensor.extract_slice %selected[0, 0] [32, 64] [1, 1] : tensor<64x64xf32> to tensor<32x64xf32>
+      hivm.hir.store ins(%s0 : tensor<32x64xf32>) outs(%gm1 : memref<32x64xf32>)
+      %s1 = tensor.extract_slice %selected[32, 0] [32, 64] [1, 1] : tensor<64x64xf32> to tensor<32x64xf32>
+      hivm.hir.store ins(%s1 : tensor<32x64xf32>) outs(%gm2 : memref<32x64xf32>)
     }
     return
   }
