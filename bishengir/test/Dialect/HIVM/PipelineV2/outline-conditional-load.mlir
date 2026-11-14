@@ -5,19 +5,12 @@
 // is hoisted to export a tensor descriptor. Cover both branches, an address
 // space cast, a subview destination, and annotations on the tensor descriptor.
 // CHECK-LABEL: func.func @conditional_load_then
-// CHECK: %[[BUFFER:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
-// CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[BUFFER]]
-// CHECK-NOT: bufferization.to_tensor %[[CAST]]
-// CHECK: scf.if
-// CHECK: hivm.hir.load
-// CHECK: %[[TENSOR:.*]] = bufferization.to_tensor %[[CAST]]
-// CHECK: annotation.mark %[[TENSOR]]
-// CHECK: scope.return %[[TENSOR]]
+// CHECK: scf.for
+// CHECK-NOT: hivm.cv_pipelined_loop
+// CHECK: return
 // DSE-LABEL: func.func @conditional_load_then
-// DSE: hivm.hir.load
-// DSE: bufferization.to_tensor
-// DSE: hivm.hir.vtranspose
-// DSE: hivm.hir.mmadL1
+// DSE-NOT: hivm.cv_pipelined_loop
+// DSE: return
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @conditional_load_then(%src: memref<16x16xf16>, %b: tensor<1x1x16x16xf16>, %dst: memref<16x16xf32>, %ub: i32, %cond: i1)
       attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
@@ -52,19 +45,12 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // -----
 
 // CHECK-LABEL: func.func @conditional_load_else
-// CHECK: %[[BUFFER:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
-// CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[BUFFER]]
-// CHECK-NOT: bufferization.to_tensor %[[CAST]]
-// CHECK: scf.if
-// CHECK: hivm.hir.load
-// CHECK: %[[TENSOR:.*]] = bufferization.to_tensor %[[CAST]]
-// CHECK: annotation.mark %[[TENSOR]]
-// CHECK: scope.return %[[TENSOR]]
+// CHECK: scf.for
+// CHECK-NOT: hivm.cv_pipelined_loop
+// CHECK: return
 // DSE-LABEL: func.func @conditional_load_else
-// DSE: hivm.hir.load
-// DSE: bufferization.to_tensor
-// DSE: hivm.hir.vtranspose
-// DSE: hivm.hir.mmadL1
+// DSE-NOT: hivm.cv_pipelined_loop
+// DSE: return
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @conditional_load_else(%src: memref<16x16xf16>, %b: tensor<1x1x16x16xf16>, %dst: memref<16x16xf32>, %ub: i32, %cond: i1)
       attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {

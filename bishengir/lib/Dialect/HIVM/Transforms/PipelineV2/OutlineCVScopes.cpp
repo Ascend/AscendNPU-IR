@@ -200,6 +200,7 @@ private:
   ConditionalOps &getOrCreateCondOps(WorkItem &item, scf::IfOp ifOp,
                                      Operation *branchOp = nullptr);
   bool hasMultipleNestedIf();
+  bool hasIfBranchWithCoreOp();
   bool hasIllegalRegionedOp();
   void addLocalOutput(Value val);
   void addGMOutputOp(Operation *op);
@@ -895,6 +896,25 @@ bool CVScopeOutliner::hasMultipleNestedIf() {
       ->walk([&](scf::IfOp ifOp) {
         return ifOp->getParentOfType<scf::IfOp>() ? WalkResult::interrupt()
                                                   : WalkResult::advance();
+      })
+      .wasInterrupted();
+}
+
+// Preload v2 keeps every buffer in an outlined scope live across the pipeline
+// stages. A core op inside an scf.if cannot be staged that way without
+// holding both branches' buffers, so leave the loop to the non-v2 path.
+bool CVScopeOutliner::hasIfBranchWithCoreOp() {
+  return loopOp
+      ->walk([&](scf::IfOp ifOp) {
+        if (!loopOp->isProperAncestor(ifOp))
+          return WalkResult::advance();
+        WalkResult branch = ifOp->walk([&](Operation *op) {
+          if (op == ifOp.getOperation())
+            return WalkResult::advance();
+          return isCoreOp(op) ? WalkResult::interrupt() : WalkResult::advance();
+        });
+        return branch.wasInterrupted() ? WalkResult::interrupt()
+                                       : WalkResult::advance();
       })
       .wasInterrupted();
 }
@@ -2875,6 +2895,12 @@ LogicalResult CVScopeOutliner::run() {
   }
 
   // Mixed loop legality checks
+  if (hasIfBranchWithCoreOp()) {
+    loopOp->emitWarning("[OutlineCVScopes] if branch contains a core op; "
+                        "skipping preload v2");
+    return success();
+  }
+
   if (hasMultipleNestedIf()) {
     loopOp->emitWarning(
         "[OutlineCVScopes] multiple nested scf.if detected; skipping loop");
