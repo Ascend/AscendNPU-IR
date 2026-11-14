@@ -491,22 +491,24 @@ static int findArgNeedMark(vector::TransferWriteOp writeOp) {
   return res;
 }
 
-// Davinci recommends the vsstb stride align to (512*N + 32) Byte.
-// In isTransferWriteSuitForStoreWithStride, the memref last dim has been
-// guaranteed always 32 Byte (256 bit / element bit width).
-// So the alignment of the sub-tail dim is derived as (16*N + 1) elements,
-// where 16 = 512 Byte / 32 Byte (the ratio of alignment to last-dim size).
-static constexpr int32_t kVsstbBankConflictAlignUnit = 16;
+// Davinci recommends the vsstb stride align to (32*bankGroupCount*N + 32)
+// Byte, i.e. (512*N + 32) Byte with 16 bank groups and (1024*N + 32) Byte
+// with 32 bank groups. In isTransferWriteSuitForStoreWithStride, the memref
+// last dim has been guaranteed always 32 Byte (256 bit / element bit width).
+// So the alignment of the sub-tail dim is derived as
+// (bankGroupCount*N + 1) elements, where bankGroupCount is the ratio of
+// alignment to last-dim size.
 static constexpr int32_t kVsstbSubTailDimOffset = 2;
 
 // calculate align size to avoid bank conflict
-static int32_t alignSizeForBankConflict(MemRefType memrefTy) {
+static int32_t alignSizeForBankConflict(MemRefType memrefTy,
+                                        int32_t bankGroupCount) {
   ArrayRef<int64_t> shape = memrefTy.getShape();
   int32_t alignDim =
       static_cast<int32_t>(memrefTy.getRank()) - kVsstbSubTailDimOffset;
   int32_t alignSize =
-      shape[alignDim] * kVsstbBankConflictAlignUnit /
-          std::gcd(shape[alignDim], kVsstbBankConflictAlignUnit) +
+      shape[alignDim] * bankGroupCount /
+          std::gcd(shape[alignDim], bankGroupCount) +
       1;
   // In enable-stride-align, the alignSize will be divided by type width.
   // So the marked align size will be multiplied by type width.
@@ -529,7 +531,10 @@ static void markForVsstb(OpBuilder &builder, func::CallOp &callOp,
                          ModuleOp moduleOp) {
   StringRef callee = callOp.getCallee();
   if (auto func = moduleOp.lookupSymbol<func::FuncOp>(callee)) {
-    func->walk([&builder, &callOp](vector::TransferWriteOp writeOp) {
+    int32_t bankGroupCount =
+        static_cast<int32_t>(hacc::utils::getBankGroupCount(moduleOp));
+    func->walk([&builder, &callOp,
+                bankGroupCount](vector::TransferWriteOp writeOp) {
       if (!utils::isTransferWriteSuitForStoreWithStride(writeOp))
         return WalkResult::skip();
       int argIdx = findArgNeedMark(writeOp);
@@ -557,7 +562,7 @@ static void markForVsstb(OpBuilder &builder, func::CallOp &callOp,
       int32_t alignDim =
           static_cast<int32_t>(memrefTy.getRank()) - kVsstbSubTailDimOffset;
       createAlignMarkOp(builder, callOp->getLoc(), operand, {alignDim},
-                        {alignSizeForBankConflict(memrefTy)});
+                        {alignSizeForBankConflict(memrefTy, bankGroupCount)});
       return WalkResult::advance();
     });
   }

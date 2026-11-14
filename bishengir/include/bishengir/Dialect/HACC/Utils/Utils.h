@@ -143,6 +143,10 @@ void setNPUTargetSpec(ModuleOp op, HACCTargetDeviceSpecInterface spec);
 /// Get integer value from the spec entry.
 int64_t getIntegerSpecValue(DataLayoutEntryInterface entry);
 
+/// Get the number of UB bank groups defined by the module's target spec.
+/// Returns the default count when the spec entry is absent.
+uint32_t getBankGroupCount(ModuleOp op);
+
 std::optional<llvm::VersionTuple> getHIVMCVersion(ModuleOp op);
 
 bool isAscend910_95(ModuleOp op);
