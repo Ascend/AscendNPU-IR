@@ -506,10 +506,9 @@ static int32_t alignSizeForBankConflict(MemRefType memrefTy,
   ArrayRef<int64_t> shape = memrefTy.getShape();
   int32_t alignDim =
       static_cast<int32_t>(memrefTy.getRank()) - kVsstbSubTailDimOffset;
-  int32_t alignSize =
-      shape[alignDim] * bankGroupCount /
-          std::gcd(shape[alignDim], bankGroupCount) +
-      1;
+  int32_t alignSize = shape[alignDim] * bankGroupCount /
+                          std::gcd(shape[alignDim], bankGroupCount) +
+                      1;
   // In enable-stride-align, the alignSize will be divided by type width.
   // So the marked align size will be multiplied by type width.
   int64_t dataWidth = memrefTy.getElementTypeBitWidth() / utils::kBitsToByte;
@@ -854,6 +853,12 @@ void MarkStrideAlignPass::runOnOperation() {
   auto moduleOp = funcOp->getParentOfType<ModuleOp>();
   bool archIsRegbased = hacc::utils::isRegBasedArch(moduleOp);
   bool archIs950 = hacc::utils::isAscend950(moduleOp);
+  // Ascend960 shares the regbased UB bank-group layout of the A5 family, so
+  // UB call operands whose element width is not 1 must skip the plain
+  // stride-align pre-marking here as well. Otherwise the operand is already
+  // marked when markForVsstb runs and the bank-conflict aware align size
+  // computed by alignSizeForBankConflict is never applied.
+  bool skipUbCallPreMark = archIs950 || hacc::utils::isAscend960(moduleOp);
   WalkResult result = funcOp->walk([&builder, archIsRegbased,
                                     archIs950](Operation *op) {
     LDBG("Walk operation : " << *op);
@@ -1074,7 +1079,8 @@ void MarkStrideAlignPass::runOnOperation() {
 
   if (archIsRegbased) {
     WalkResult resultVF = funcOp->walk([&builder, &moduleOp, archIsRegbased,
-                                        archIs950](func::CallOp callOp) {
+                                        archIs950, skipUbCallPreMark](
+                                           func::CallOp callOp) {
       for (Value operand : callOp.getArgOperands()) {
         if (isMarked(operand))
           continue;
@@ -1091,7 +1097,7 @@ void MarkStrideAlignPass::runOnOperation() {
           continue;
         if (!isAnyOfLocalBuffer(memrefTypes))
           continue;
-        if (archIs950) {
+        if (skipUbCallPreMark) {
           if (llvm::any_of(memrefTypes, [](MemRefType mtype) {
                 auto elemWidth = mtype.getElementType().getIntOrFloatBitWidth();
                 return elemWidth != 1;
