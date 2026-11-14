@@ -1703,11 +1703,58 @@ static bool callOperandMayBeWritten(func::CallOp callOp,
   return mayWriteThroughFuncArg(callee.getArgument(operandNumber), visited);
 }
 
+/// Collect the values through which `use` forwards the storage it names.
+///
+/// Some ops hand a memref on without touching it: `arith.select` picks one of
+/// its operands, and a region op carries a value in through an init operand
+/// and out through the matching result. A write through what comes out is a
+/// write through what went in, but these ops are neither view-like nor do they
+/// report a memory effect on the operand, so findWriteOp would otherwise stop
+/// here and the write would stay invisible.
+///
+/// A select only *may* forward this particular operand, so the writes found
+/// past it are may-writes. That is the safe direction for the fallback: the
+/// copy it inserts is a value no-op when the write went to the other operand,
+/// because the shared buffer still holds what the seed copy put there.
+static void collectForwardedStorage(OpOperand &use,
+                                    SmallVectorImpl<Value> &forwarded) {
+  Operation *user = use.getOwner();
+  if (isa<arith::SelectOp>(user)) {
+    forwarded.append(user->getResults().begin(), user->getResults().end());
+    return;
+  }
+  if (auto forOp = dyn_cast<scf::ForOp>(user)) {
+    OpResult tied = forOp.getTiedLoopResult(&use);
+    if (!tied)
+      return;
+    forwarded.push_back(tied);
+    forwarded.push_back(forOp.getRegionIterArg(tied.getResultNumber()));
+    return;
+  }
+  if (isa<scf::YieldOp, scope::ReturnOp>(user)) {
+    Operation *parent = user->getParentOp();
+    if (parent && use.getOperandNumber() < parent->getNumResults())
+      forwarded.push_back(parent->getResult(use.getOperandNumber()));
+    return;
+  }
+}
+
 static void findWriteOp(Value mem, SmallVector<Operation *> &writeOps) {
   SmallVector<Value, 8> worklist;
+  // Forwarding through scf.for is cyclic (init -> iter arg -> yield -> result),
+  // so the walk needs a visited set to terminate.
+  DenseSet<Value> visited;
+  // One copy per write, not one per path that reaches it.
+  DenseSet<Operation *> recorded;
+  auto record = [&recorded, &writeOps](Operation *op) {
+    if (recorded.insert(op).second)
+      writeOps.push_back(op);
+  };
   worklist.push_back(mem);
   while (!worklist.empty()) {
     Value v = worklist.pop_back_val();
+    if (!visited.insert(v).second)
+      continue;
     for (OpOperand &use : v.getUses()) {
       Operation *user = use.getOwner();
       if (isa<ViewLikeOpInterface>(user)) {
@@ -1715,9 +1762,15 @@ static void findWriteOp(Value mem, SmallVector<Operation *> &writeOps) {
           worklist.push_back(r);
         continue;
       }
+      SmallVector<Value, 2> forwarded;
+      collectForwardedStorage(use, forwarded);
+      if (!forwarded.empty()) {
+        worklist.append(forwarded.begin(), forwarded.end());
+        continue;
+      }
       if (auto callOp = dyn_cast<func::CallOp>(user)) {
         if (callOperandMayBeWritten(callOp, use.getOperandNumber()))
-          writeOps.push_back(user);
+          record(user);
         continue;
       }
       if (auto memOp = dyn_cast<MemoryEffectOpInterface>(user)) {
@@ -1727,7 +1780,7 @@ static void findWriteOp(Value mem, SmallVector<Operation *> &writeOps) {
         memOp.getEffectsOnValue(v, effects);
         for (auto &e : effects) {
           if (isa<MemoryEffects::Write>(e.getEffect()))
-            writeOps.push_back(user);
+            record(user);
         }
       }
     }
@@ -1769,7 +1822,7 @@ static void findWriteOp(Value mem, SmallVector<Operation *> &writeOps) {
                      setOp.getDynamicFlagId() == waitOp.getDynamicFlagId();
             });
         if (matchingWait) {
-          writeOps.push_back(op);
+          record(op);
           break;
         }
       }
@@ -1787,38 +1840,48 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
     if (!conversion->hasAttr(propagateFailureName))
       return WalkResult::skip();
 
-    auto src = conversion.getInputs()[0];
+    // The cast result is one buffer. Its users are views (collapse, subview),
+    // not independent snapshots. A private alloc per user copies the aligned
+    // source at each view, so a later write through one view never reaches the
+    // readers of another view.
+    SmallVector<OpOperand *> failedUses;
+    for (OpOperand &use : conversion->getUses()) {
+      if (use.getOwner()->hasAttr(propagateFailureName))
+        failedUses.push_back(&use);
+    }
+    if (failedUses.empty())
+      return WalkResult::advance();
+
+    Location loc = conversion.getLoc();
+    Value src = conversion.getInputs()[0];
+    Value dst = conversion.getOutputs()[0];
+    // The cast dominates every user, so one buffer inserted here does too.
+    rewriter.setInsertionPoint(conversion);
+    Value shared = utils::createEmptyOp(rewriter, loc, dst);
+    Operation *seedCopy =
+        rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, shared);
+    for (OpOperand *use : failedUses)
+      rewriter.modifyOpInPlace(use->getOwner(),
+                               [use, shared] { use->set(shared); });
+
+    // Find writes after retargeting. findWriteOp does not look through the
+    // cast, so a load or fill is visible only once it uses `shared`.
+    SmallVector<Operation *> writeShared;
+    findWriteOp(shared, writeShared);
     SmallVector<Operation *> writeSrc;
     findWriteOp(src, writeSrc);
-    for (OpOperand &use : make_early_inc_range(conversion->getUses())) {
-      Operation *user = use.getOwner();
-      if (!user->hasAttr(propagateFailureName))
+    DominanceInfo domInfo(seedCopy);
+    for (Operation *writeOp : writeShared) {
+      if (writeOp == seedCopy || !domInfo.dominates(seedCopy, writeOp))
         continue;
-      auto loc = conversion.getLoc();
-      auto dst = conversion.getOutputs()[0];
-      rewriter.setInsertionPoint(user);
-      auto newDst = utils::createEmptyOp(rewriter, loc, dst);
-      Operation *newCopy =
-          rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, newDst);
-      rewriter.modifyOpInPlace(user, [&] { use.set(newDst); });
-
-      SmallVector<Operation *> writeNewDst;
-      findWriteOp(newDst, writeNewDst);
-      DominanceInfo domInfo(newCopy);
-      for (Operation *writeOp : writeNewDst) {
-        if (writeOp == newCopy)
-          continue;
-        if (domInfo.dominates(newCopy, writeOp)) {
-          rewriter.setInsertionPointAfter(writeOp);
-          rewriter.create<hivm::CopyOp>(loc, TypeRange{}, newDst, src);
-        }
-      }
-      for (Operation *writeOp : writeSrc) {
-        if (domInfo.dominates(newCopy, writeOp)) {
-          rewriter.setInsertionPointAfter(writeOp);
-          rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, newDst);
-        }
-      }
+      rewriter.setInsertionPointAfter(writeOp);
+      rewriter.create<hivm::CopyOp>(loc, TypeRange{}, shared, src);
+    }
+    for (Operation *writeOp : writeSrc) {
+      if (!domInfo.dominates(seedCopy, writeOp))
+        continue;
+      rewriter.setInsertionPointAfter(writeOp);
+      rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, shared);
     }
     if (conversion->use_empty())
       rewriter.eraseOp(conversion);

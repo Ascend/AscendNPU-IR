@@ -355,22 +355,20 @@ func.func @copy_before_collapse() {
 
 // -----
 
+// All three collapses are views of one allocation, so they have to stay views
+// of one buffer. A private buffer per collapse would make a write through one
+// view invisible to a read through another.
 // CHECK-LABEL: func.func @copy_before_multiple_collapse
 // CHECK-NOT: unrealized_conversion_cast
 // CHECK: %[[ALIGNED:.*]] = memref.alloc() : memref<2x2x2x16x1xbf16, #hivm.address_space<ub>>
 // CHECK: %[[SUBVIEW:.*]] = memref.subview %[[ALIGNED]]
 // CHECK-NOT: unrealized_conversion_cast
-// CHECK: %[[CONTIGUOUS_0:.*]] = memref.alloc() : memref<2x2x2x4xbf16, #hivm.address_space<ub>>
-// CHECK: hivm.hir.copy ins(%[[SUBVIEW]] : memref<2x2x2x4xbf16, strided<[64, 32, 16, 1]>, #hivm.address_space<ub>>) outs(%[[CONTIGUOUS_0]] : memref<2x2x2x4xbf16, #hivm.address_space<ub>>)
-// CHECK: memref.collapse_shape %[[CONTIGUOUS_0]] {{.*}} into memref<2x2x8xbf16, #hivm.address_space<ub>>
-// CHECK-NOT: unrealized_conversion_cast
-// CHECK: %[[CONTIGUOUS_1:.*]] = memref.alloc() : memref<2x2x2x4xbf16, #hivm.address_space<ub>>
-// CHECK: hivm.hir.copy ins(%[[SUBVIEW]] : memref<2x2x2x4xbf16, strided<[64, 32, 16, 1]>, #hivm.address_space<ub>>) outs(%[[CONTIGUOUS_1]] : memref<2x2x2x4xbf16, #hivm.address_space<ub>>)
-// CHECK: memref.collapse_shape %[[CONTIGUOUS_1]] {{.*}} into memref<2x16xbf16, #hivm.address_space<ub>>
-// CHECK-NOT: unrealized_conversion_cast
-// CHECK: %[[CONTIGUOUS_2:.*]] = memref.alloc() : memref<2x2x2x4xbf16, #hivm.address_space<ub>>
-// CHECK: hivm.hir.copy ins(%[[SUBVIEW]] : memref<2x2x2x4xbf16, strided<[64, 32, 16, 1]>, #hivm.address_space<ub>>) outs(%[[CONTIGUOUS_2]] : memref<2x2x2x4xbf16, #hivm.address_space<ub>>)
-// CHECK: memref.collapse_shape %[[CONTIGUOUS_2]] {{.*}} into memref<4x8xbf16, #hivm.address_space<ub>>
+// CHECK: %[[SHARED:.*]] = memref.alloc() : memref<2x2x2x4xbf16, #hivm.address_space<ub>>
+// CHECK: hivm.hir.copy ins(%[[SUBVIEW]] : memref<2x2x2x4xbf16, strided<[64, 32, 16, 1]>, #hivm.address_space<ub>>) outs(%[[SHARED]] : memref<2x2x2x4xbf16, #hivm.address_space<ub>>)
+// CHECK-NOT: memref.alloc() : memref<2x2x2x4xbf16
+// CHECK-DAG: memref.collapse_shape %[[SHARED]] {{.*}} into memref<2x2x8xbf16, #hivm.address_space<ub>>
+// CHECK-DAG: memref.collapse_shape %[[SHARED]] {{.*}} into memref<2x16xbf16, #hivm.address_space<ub>>
+// CHECK-DAG: memref.collapse_shape %[[SHARED]] {{.*}} into memref<4x8xbf16, #hivm.address_space<ub>>
 // CHECK-NOT: unrealized_conversion_cast
 // CHECK: return
 func.func @copy_before_multiple_collapse() {
