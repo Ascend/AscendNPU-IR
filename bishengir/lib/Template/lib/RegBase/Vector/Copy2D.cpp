@@ -68,6 +68,55 @@ align_pad_for_load_b64_2d(memref_t<__ubuf__ T, 2> *dst, int64_t pad_value,
 }
 
 #if BISHENG_TPL_REGBASE
+#if BISHENG_TPL_920R1
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool canUseNddmaForOrdinaryLoad2d(
+    const memref_t<__gm__ T, 2> *src, const memref_t<__ubuf__ T, 2> *dst,
+    PadMode pad_mode, int64_t left_padding_num, AtomicKind atomic_kind) {
+  const int64_t rows = src->sizes[0];
+  const int64_t width = src->sizes[1];
+  const int64_t stride0_gm = src->strides[0];
+  const int64_t stride0_ub = dst->strides[0];
+  const int64_t stride1_gm = src->strides[1];
+  const int64_t stride1_ub = dst->strides[1];
+  return pad_mode == PadMode::Null && left_padding_num == 0 &&
+         atomic_kind == AtomicKind::None && rows > 0 && rows <= 0xfffff &&
+         width > 0 && width <= 0xfffff && width % (128 / sizeof(T)) == 0 &&
+         rows == dst->sizes[0] && width == dst->sizes[1] && stride1_gm == 1 &&
+         stride1_ub == 1 && stride0_gm >= width && stride0_gm <= 0xffffffffLL &&
+         stride0_ub >= width && stride0_ub <= 0xfffff && src->offset >= 0 &&
+         dst->offset >= 0 &&
+         src->offset <=
+             INT64_MAX / sizeof(T) - (rows - 1) * stride0_gm - width &&
+         dst->offset <= INT64_MAX / sizeof(T) - (rows - 1) * stride0_ub - width;
+}
+
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+isBroadcastLoad2dValid(const memref_t<__gm__ T, 2> *src,
+                       const memref_t<__ubuf__ T, 2> *dst,
+                       AtomicKind atomic_kind, bool axis0, bool axis1) {
+  return sizeof(T) <= 4 && atomic_kind == AtomicKind::None &&
+         (!axis0 || (src->sizes[0] == 1 && dst->sizes[0] <= 0xfffff)) &&
+         (!axis1 || (src->sizes[1] == 1 && dst->sizes[1] <= 0xfffff)) &&
+         src->sizes[0] > 0 &&
+         src->sizes[1] > 0 && dst->sizes[0] > 0 && dst->sizes[1] > 0 &&
+         src->strides[1] == 1 && dst->strides[1] == 1 &&
+         src->strides[0] >= src->sizes[1] && dst->strides[0] >= dst->sizes[1] &&
+         src->offset >= 0 && dst->offset >= 0 &&
+         src->offset <= INT64_MAX / sizeof(T) &&
+         dst->offset <= INT64_MAX / sizeof(T) &&
+         src->sizes[1] <= INT64_MAX / sizeof(T) - src->offset &&
+         dst->sizes[1] <= INT64_MAX / sizeof(T) - dst->offset &&
+         src->sizes[0] - 1 <=
+             (INT64_MAX / sizeof(T) - src->offset - src->sizes[1]) /
+                 src->strides[0] &&
+         dst->sizes[0] - 1 <=
+             (INT64_MAX / sizeof(T) - dst->offset - dst->sizes[1]) /
+                 dst->strides[0];
+}
+#endif
+
 /// Core func of loading gm -> ub, 2D
 /// UB starting address must be 32B aligned; otherwise, it degrades to looped
 /// scalar transfer:
@@ -103,6 +152,47 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     return;
   }
 
+#if BISHENG_TPL_920R1
+  if (pad_mode == PadMode::Null && left_padding_num == 0 &&
+      (src->sizes[0] != dst->sizes[0] || src->sizes[1] != dst->sizes[1]) &&
+      is_no_op<2>(dst->sizes))
+    return;
+  // Carry verified unit-source broadcast geometry through the existing ABI,
+  // before ordinary alignment checks and source-sized fallbacks.
+  // Any extent difference enters the broadcast contract, mirroring the 3D
+  // path: a differing axis is legal only when the source extent is 1, and the
+  // validity check traps otherwise. Inferring the axes from
+  // 'src == 1 && dst != 1' alone would skip the check when the destination
+  // broadcast axis happens to be 1 at run time.
+  const bool axis0 = src->sizes[0] != dst->sizes[0];
+  const bool axis1 = src->sizes[1] != dst->sizes[1];
+  if (pad_mode == PadMode::Null && left_padding_num == 0 && (axis0 || axis1)) {
+    const bool valid =
+        isBroadcastLoad2dValid<T>(src, dst, atomic_kind, axis0, axis1);
+    if (!valid) {
+      __builtin_cce_trap_mov(1);
+      return;
+    }
+    const unsigned axes = (axis0 ? 1 : 0) | (axis1 ? 2 : 0);
+    if constexpr (sizeof(T) <= 4) {
+      // The new broadcast contract does not inherit ALIGN_V2's UB-start
+      // alignment gate. Admission is the expanded row-width policy plus
+      // descriptor field bounds; narrow rows use the shared scalar path.
+      if (dst->sizes[1] % (128 / sizeof(T)) == 0 && dst->sizes[0] <= 0xfffff &&
+          dst->sizes[1] <= 0xfffff && dst->strides[0] <= 0xfffff &&
+          src->strides[0] <= 0xffffffffLL) {
+        load_gm_to_ubuf_2d_by_nddma<T>(src, dst, pad_mode, pad_value, 0,
+                                       static_cast<uint8_t>(eviction_policy),
+                                       axes);
+        return;
+      }
+    }
+    // Reuse the ordinary scalar cache reads and MTE2/S event protocol.
+    load_gm_to_ubuf_2d_by_scalar_brc_pad<T, DisableDCache>(src, dst, axes);
+    return;
+  }
+#endif
+
   // Input parameter constraints assert.
   check_inputs_of_load_gm_to_ubuf_2d_core(src, dst, left_padding_num);
 
@@ -128,6 +218,21 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst);
     return;
   }
+
+#if BISHENG_TPL_920R1
+  // Admission is an instruction-selection policy, not a load restriction.
+  // Keep all other shapes on the existing MOV/scalar paths below. In
+  // particular, do not truncate SDK count/dst-step (20 bits) or the src-step
+  // constructor's uint32_t argument. No single-buffer capacity is assumed.
+  if constexpr (sizeof(T) <= 4) {
+    if (canUseNddmaForOrdinaryLoad2d<T>(src, dst, pad_mode,
+                                        left_padding_num, atomic_kind)) {
+      load_gm_to_ubuf_2d_by_nddma<T>(src, dst, pad_mode, pad_value, 0,
+                                     static_cast<uint8_t>(eviction_policy));
+      return;
+    }
+  }
+#endif
 
   // The pulled-back, padded vector DMA below is only sound for a unit-stride
   // innermost axis: MTE's leftPaddingNum addresses whole contiguous rows, so
@@ -834,6 +939,20 @@ copy_ubuf_to_cbuf_2d_core(memref_t<__ubuf__ T, 2> *src,
 #endif
 
 extern "C" {
+#if BISHENG_TPL_920R1
+REGISTE_DMA_SPAN_LOAD(2, int8_t);
+REGISTE_DMA_SPAN_LOAD(2, uint8_t);
+REGISTE_DMA_SPAN_LOAD(2, int16_t);
+REGISTE_DMA_SPAN_LOAD(2, uint16_t);
+REGISTE_DMA_SPAN_LOAD(2, int32_t);
+REGISTE_DMA_SPAN_LOAD(2, uint32_t);
+REGISTE_DMA_SPAN_LOAD(2, half);
+REGISTE_DMA_SPAN_LOAD(2, float);
+REGISTE_DMA_SPAN_LOAD(2, bfloat16_t);
+REGISTE_DMA_SPAN_LOAD(2, float8_e4m3_t);
+REGISTE_DMA_SPAN_LOAD(2, float8_e5m2_t);
+#endif
+
 //===-------------------------------------------------------------------===//
 // Load gm to ub, 2 dim
 //===-------------------------------------------------------------------===//
