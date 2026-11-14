@@ -334,3 +334,183 @@ func.func @mark_vector_scope_ifs(%cond: i1, %init: tensor<16xf32>) {
   return
 }
 }
+
+// -----
+
+// CHECK-LABEL: func.func @hoist_tcb_returned_via_scf_if
+// CHECK:       scf.for
+// CHECK:         %[[INIT:.*]] = scope.scope : () -> tensor<16xf32> {
+// CHECK:         } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 2 : i32, no_inline}
+// CHECK-NEXT:    %[[TCB:.*]] = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+// CHECK-NEXT:    annotation.mark %[[TCB]] {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>}
+// CHECK-NEXT:    %[[CUBE:.*]] = scope.scope : () -> tensor<16xf32> {
+// CHECK:           scf.for
+// CHECK:             %[[LOCAL:.*]] = memref.alloc() : memref<16xf32>
+// CHECK:             memref.copy {{.*}}, %[[LOCAL]]
+// CHECK:           %[[CAST:.*]] = memref.memory_space_cast %[[TCB]]
+// CHECK:           %[[TENSOR:.*]] = bufferization.to_tensor %[[CAST]] restrict writable
+// CHECK:           %[[IF:.*]] = scf.if %{{.*}} -> (tensor<16xf32>) {
+// CHECK:             scf.yield %[[INIT]]
+// CHECK:           } else {
+// CHECK:             hivm.hir.fixpipe {{.*}} outs(%[[TCB]] : memref<16xf32, #hivm.address_space<ub>>)
+// CHECK:             scf.yield %[[TENSOR]]
+// CHECK:           }
+// CHECK:           scope.return %[[IF]]
+// CHECK-NEXT:    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 1 : i32, no_inline}
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @hoist_tcb_returned_via_scf_if(%src: tensor<16xf32>, %gm: memref<16xf32>, %cond: i1) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  scf.for %i = %c0 to %c1 step %c1 {
+    %init = scope.scope : () -> tensor<16xf32> {
+      %out = tensor.empty() : tensor<16xf32>
+      %v = hivm.hir.vadd ins(%src, %src : tensor<16xf32>, tensor<16xf32>) outs(%out : tensor<16xf32>) -> tensor<16xf32>
+      scope.return %v : tensor<16xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    %cube = scope.scope : () -> tensor<16xf32> {
+      scf.for %k = %c0 to %c1 step %c1 {
+        %local = memref.alloc() : memref<16xf32>
+        memref.copy %gm, %local : memref<16xf32> to memref<16xf32>
+      }
+      %alloc = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+      annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<16xf32, #hivm.address_space<ub>>
+      %cast = memref.memory_space_cast %alloc : memref<16xf32, #hivm.address_space<ub>> to memref<16xf32>
+      %t = bufferization.to_tensor %cast restrict writable : memref<16xf32>
+      %res = scf.if %cond -> (tensor<16xf32>) {
+        scf.yield %init : tensor<16xf32>
+      } else {
+        hivm.hir.fixpipe ins(%src : tensor<16xf32>) outs(%alloc : memref<16xf32, #hivm.address_space<ub>>)
+        scf.yield %t : tensor<16xf32>
+      }
+      scope.return %res : tensor<16xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+    scope.scope : () -> () {
+      %dim = tensor.dim %cube, %c0 : tensor<16xf32>
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+  } {hivm.cv_pipelined_loop}
+  return
+}
+}
+
+// -----
+
+// CHECK-LABEL: func.func @hoist_tcb_from_nested_merged_scope
+// CHECK:       scf.for
+// CHECK-NEXT:    %[[ALLOC:.*]] = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+// CHECK-NEXT:    annotation.mark %[[ALLOC]] {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>}
+// CHECK-NEXT:    %[[MERGED:.*]] = scope.scope : () -> tensor<16xf32> {
+// CHECK:           scope.scope : () -> () {
+// CHECK:             hivm.hir.fixpipe {{.*}} outs(%[[ALLOC]] : memref<16xf32, #hivm.address_space<ub>>)
+// CHECK:           } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK:           %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]]
+// CHECK:           %[[T:.*]] = bufferization.to_tensor %[[CAST]] restrict writable
+// CHECK:           %[[VEC:.*]] = scope.scope : () -> tensor<16xf32> {
+// CHECK:             hivm.hir.vadd ins(%[[T]], %[[T]]
+// CHECK:           } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK:           scope.return %[[VEC]]
+// CHECK-NEXT:    } {cv_merged_scope, hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>, hivm.max_preload_num = 2 : i32, hivm.preload_num = 1 : i32, no_inline}
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @hoist_tcb_from_nested_merged_scope(%src: tensor<16xf32>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  scf.for %i = %c0 to %c1 step %c1 {
+    %merged = scope.scope : () -> tensor<16xf32> {
+      %inner_cube = scope.scope : () -> tensor<16xf32> {
+        %alloc = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+        annotation.mark %alloc {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<16xf32, #hivm.address_space<ub>>
+        hivm.hir.fixpipe ins(%src : tensor<16xf32>) outs(%alloc : memref<16xf32, #hivm.address_space<ub>>)
+        %cast = memref.memory_space_cast %alloc : memref<16xf32, #hivm.address_space<ub>> to memref<16xf32>
+        %t = bufferization.to_tensor %cast restrict writable : memref<16xf32>
+        scope.return %t : tensor<16xf32>
+      } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+      %inner_vec = scope.scope : () -> tensor<16xf32> {
+        %empty = tensor.empty() : tensor<16xf32>
+        %add = hivm.hir.vadd ins(%inner_cube, %inner_cube : tensor<16xf32>, tensor<16xf32>) outs(%empty : tensor<16xf32>) -> tensor<16xf32>
+        scope.return %add : tensor<16xf32>
+      } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+      scope.return %inner_vec : tensor<16xf32>
+    } {cv_merged_scope, hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>}
+    scope.scope : () -> () {
+      %dim = tensor.dim %merged, %c0 : tensor<16xf32>
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+  } {hivm.cv_pipelined_loop}
+  return
+}
+}
+
+// -----
+
+// CHECK-LABEL: func.func @hoist_tcb_before_multi_scope_stage_wrapper
+// CHECK:       scf.for
+// CHECK:         scope.scope : () -> i32 {
+// CHECK:           arith.constant 20 : i32
+// CHECK:         } {{.*}}hivm.preload_num = 3 : i32
+// CHECK-NEXT:    %[[ALLOC:.*]] = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+// CHECK-NEXT:    annotation.mark %[[ALLOC]] {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>}
+// CHECK-NEXT:    %[[FIRST:.*]] = scope.scope : () -> i32 {
+// CHECK:           arith.constant 10 : i32
+// CHECK:         } {{.*}}hivm.preload_num = 2 : i32
+// CHECK-NEXT:    scope.scope : () -> tensor<16xf32> {
+// CHECK:           scf.if
+// CHECK:             hivm.hir.fixpipe {{.*}} outs(%[[ALLOC]] : memref<16xf32, #hivm.address_space<ub>>)
+// CHECK:         } {{.*}}hivm.preload_num = 2 : i32
+//
+// WRAP-LABEL: func.func @hoist_tcb_before_multi_scope_stage_wrapper
+// WRAP:        scf.for
+// WRAP:          scope.scope : () -> i32 {
+// WRAP:            arith.constant 20 : i32
+// WRAP:          } {{.*}}hivm.preload_num = 3 : i32
+// WRAP-NEXT:     %[[ALLOC:.*]] = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+// WRAP-NEXT:     annotation.mark %[[ALLOC]] {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>}
+// WRAP-NEXT:     %[[STAGE:.*]] = scope.scope : () -> i32 {
+// WRAP-NEXT:       %[[INNER_A:.*]] = scope.scope : () -> i32 {
+// WRAP:            } {{.*}}no_inline
+// WRAP-NEXT:       scope.scope : () -> tensor<16xf32> {
+// WRAP:              hivm.hir.fixpipe {{.*}} outs(%[[ALLOC]] : memref<16xf32, #hivm.address_space<ub>>)
+// WRAP:            } {{.*}}no_inline
+// WRAP-NEXT:       scope.return %[[INNER_A]] : i32
+// WRAP-NEXT:     } {hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 2 : i32, no_inline}
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @hoist_tcb_before_multi_scope_stage_wrapper(%src: tensor<16xf32>, %cond: i1) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c16 = arith.constant 16 : index
+  scf.for %i = %c0 to %c16 step %c1 {
+    %a = scope.scope : () -> i32 {
+      %v = arith.constant 10 : i32
+      scope.return %v : i32
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    %b = scope.scope : () -> i32 {
+      %v = arith.constant 20 : i32
+      scope.return %v : i32
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    %c = scope.scope : () -> tensor<16xf32> {
+      %alloc = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+      annotation.mark %alloc {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<16xf32, #hivm.address_space<ub>>
+      %cast = memref.memory_space_cast %alloc : memref<16xf32, #hivm.address_space<ub>> to memref<16xf32>
+      %t = bufferization.to_tensor %cast restrict writable : memref<16xf32>
+      %res = scf.if %cond -> (tensor<16xf32>) {
+        scf.yield %src : tensor<16xf32>
+      } else {
+        hivm.hir.fixpipe ins(%src : tensor<16xf32>) outs(%alloc : memref<16xf32, #hivm.address_space<ub>>)
+        scf.yield %t : tensor<16xf32>
+      }
+      scope.return %res : tensor<16xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+    %d = scope.scope : () -> i32 {
+      %v = arith.constant 40 : i32
+      scope.return %v : i32
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    %e = scope.scope : () -> i32 {
+      %v = arith.addi %a, %a : i32
+      scope.return %v : i32
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+  } {hivm.cv_pipelined_loop}
+  return
+}
+}
