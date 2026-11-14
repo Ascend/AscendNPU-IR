@@ -516,7 +516,7 @@ static LogicalResult verifySpanLoad(LoadOp op) {
     auto type = cast<MemRefType>(value.getType());
     SmallVector<int64_t> strides;
     int64_t offset;
-    if (failed(getStridesAndOffset(type, strides, offset)) ||
+    if (failed(utils::getStridesAndOffsetCompat(type, strides, offset)) ||
         (!ShapedType::isDynamic(strides.back()) && strides.back() != 1) ||
         (!ShapedType::isDynamic(offset) && offset < 0))
       return op.emitOpError(
@@ -565,7 +565,8 @@ static LogicalResult verifySpanLoad(LoadOp op) {
     int64_t rootOffset;
     if (span && *span > 0 && !ShapedType::isDynamic(offset) &&
         rootType.hasStaticShape() &&
-        succeeded(getStridesAndOffset(rootType, rootStrides, rootOffset)) &&
+        succeeded(utils::getStridesAndOffsetCompat(rootType, rootStrides,
+                                                   rootOffset)) &&
         !ShapedType::isDynamic(rootOffset) && rootOffset >= 0) {
       std::optional<int64_t> bound = rootOffset;
       bool empty = false;
