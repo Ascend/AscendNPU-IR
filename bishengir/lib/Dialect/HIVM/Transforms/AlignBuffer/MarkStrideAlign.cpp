@@ -120,11 +120,20 @@ static bool isNotTailJumpOrStrideAlign(MemRefType type) {
   int64_t dataWidth = type.getElementTypeBitWidth();
   if (dim == 1)
     return true;
-  if (succeeded(successStrides) && !strides.empty() &&
-      !type.isDynamicDim(dim - 1))
-    return (type.getDimSize(dim - 1) == strides[dim - 2]) ||
-           (strides[dim - 2] * dataWidth % hwAlignBits == 0);
-  return false;
+  if (failed(successStrides) || strides.empty())
+    return false;
+  // A hardware-aligned sub-low stride puts every row on an aligned boundary no
+  // matter how many elements a row actually carries, so this half of the test
+  // holds for a dynamic lowest dimension too. A dynamic stride carries the
+  // ShapedType::kDynamic sentinel, which must not reach the modulo.
+  if (!ShapedType::isDynamic(strides[dim - 2]) &&
+      strides[dim - 2] * dataWidth % hwAlignBits == 0)
+    return true;
+  // The tail-jump half compares the lowest dimension against that stride and
+  // needs both to be static.
+  if (type.isDynamicDim(dim - 1))
+    return false;
+  return type.getDimSize(dim - 1) == strides[dim - 2];
 }
 
 // Return "true" if the dim of the given type greater than 2 and the stride of
