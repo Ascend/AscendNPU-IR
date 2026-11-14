@@ -220,7 +220,6 @@ int64_t getIntegerSpecValue(DataLayoutEntryInterface entry) {
 
 uint32_t getBankGroupCount(ModuleOp op) {
   constexpr uint32_t kDefaultUbBankGroupCount = 16;
-  constexpr uint32_t kAscend960UbBankGroupCount = 32;
   auto maybeSpecInterface = getNPUTargetSpec(op);
   if (maybeSpecInterface.has_value()) {
     DataLayoutEntryInterface entry =
@@ -231,10 +230,12 @@ uint32_t getBankGroupCount(ModuleOp op) {
         return static_cast<uint32_t>(intAttr.getInt());
     }
   }
-  // Fall back to the target attribute for IR that has no device spec
-  // attached yet (e.g. standalone opt invocations).
-  if (isAscend960(op))
-    return kAscend960UbBankGroupCount;
+  // Fall back to the generated target spec table for IR that has no device
+  // spec attached yet (e.g. standalone opt invocations).
+  if (auto target = getTargetDevice(op); target.has_value()) {
+    if (auto spec = lookupTargetSpec(*target); spec.has_value())
+      return static_cast<uint32_t>(spec.value()->UbBankGroupCount);
+  }
   return kDefaultUbBankGroupCount;
 }
 

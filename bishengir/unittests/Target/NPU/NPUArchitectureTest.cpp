@@ -216,8 +216,7 @@ TEST(NPUArchitectureTest, PublicHACCPassPreservesDeviceSpecSerialization) {
     }
     expectInteger(DeviceSpec::MINIMAL_D_CACHE_SIZE, expected.minimalDCacheSize);
     expectInteger(DeviceSpec::MAXIMUM_D_CACHE_SIZE, expected.maximumDCacheSize);
-    expectInteger(DeviceSpec::UB_BANK_GROUP_COUNT,
-                  expected.ubBankGroupCount);
+    expectInteger(DeviceSpec::UB_BANK_GROUP_COUNT, expected.ubBankGroupCount);
     DataLayoutEntryInterface arch =
         spec->getSpecForIdentifierEnum(DeviceSpec::ARCH);
     ASSERT_TRUE(arch);
