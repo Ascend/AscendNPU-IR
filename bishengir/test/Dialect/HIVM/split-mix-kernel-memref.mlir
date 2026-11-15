@@ -265,3 +265,48 @@ module {
     return
   }
 }
+
+// -----
+
+// Both copies need the same anchor positions, even when the only executable
+// operation in an opposite-core stage has been removed.
+// CHECK-LABEL: func.func @cv_handshake_mix_aic(
+// CHECK: scf.for
+// CHECK: scope.scope
+// CHECK-NEXT: hivm.hir.anchor {id = 10 : i64}
+// CHECK-NEXT: scope.return
+// CHECK: scope.scope
+// CHECK-NEXT: hivm.hir.anchor {id = 20 : i64}
+// CHECK-NEXT: hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_S>] flag = 1
+// CHECK-LABEL: func.func @cv_handshake_mix_aiv(
+// CHECK: scf.for
+// CHECK: scope.scope
+// CHECK-NEXT: hivm.hir.anchor {id = 10 : i64}
+// CHECK-NEXT: hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_S>] flag = 1
+// CHECK: scope.scope
+// CHECK-NEXT: hivm.hir.anchor {id = 20 : i64}
+// CHECK-NEXT: scope.return
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @cv_handshake(%n: index) attributes {
+      hivm.func_core_type = #hivm.func_core_type<MIX>,
+      hivm.core_ratio = #hivm.core_ratio<1, 1>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    scf.for %i = %c0 to %n step %c1 {
+      scope.scope : () -> () {
+        hivm.hir.anchor {id = 10 : i64}
+        hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_S>] flag = 1
+        scope.return
+      } {hivm.max_preload_num = 2 : i32, hivm.preload_num = 1 : i32,
+         hivm.task_name = "produce", hivm.tcore_type = #hivm.tcore_type<VECTOR>, no_inline}
+      scope.scope : () -> () {
+        hivm.hir.anchor {id = 20 : i64}
+        hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_S>] flag = 1
+        scope.return
+      } {hivm.max_preload_num = 2 : i32, hivm.preload_num = 0 : i32,
+         hivm.task_name = "consume", hivm.tcore_type = #hivm.tcore_type<CUBE>, no_inline}
+    } {hivm.cv_pipelined_loop}
+    return
+  }
+}

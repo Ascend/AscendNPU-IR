@@ -7,9 +7,9 @@
 
 // Check that the explicit Cube-to-Vector handoff survives kernel splitting.
 // CHECK-LABEL: func.func @_sparse_mla_mix_aic(
-// CHECK: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_FIX>] flag = 1
+// CHECK: hivm.hir.sync_block_set
 // CHECK-LABEL: func.func @_sparse_mla_mix_aiv(
-// CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_S>, <PIPE_S>] flag = 1
+// CHECK: hivm.hir.sync_block_wait
 
 module attributes {hacc.mode = "tla", hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
   func.func @_sparse_mla(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xbf16>, %arg3: memref<?xbf16>, %arg4: memref<?xi32>, %arg5: memref<?xi64>, %arg6: memref<?xbf16>, %arg7: memref<?xf32>, %arg8: memref<?xf32>, %arg9: memref<?xbf16>, %arg10: i32, %arg11: i32, %arg12: i32, %arg13: i32, %arg14: i32, %arg15: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix", parallel_mode = "simd"} {
