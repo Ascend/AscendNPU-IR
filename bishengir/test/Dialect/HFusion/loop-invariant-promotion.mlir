@@ -525,6 +525,9 @@ func.func @forward_masked_fill() -> tensor<16xf32> {
 // CHECK-LABEL: func.func @copy_reader_vf
 //   CHECK-NOT:   vector.transfer_read
 //       CHECK:   arith.constant dense<1.000000e+00> : vector<16xf32>
+// CHECK-LABEL: func.func @slice_reader_vf
+//   CHECK-NOT:   vector.transfer_read
+//       CHECK:   arith.constant dense<1.000000e+00> : vector<16xf32>
 
 func.func @copy_fill_vf(%out: tensor<16xf32>) -> tensor<16xf32>
     attributes {hivm.vector_function, no_inline, hfusion.has_fill} {
@@ -554,14 +557,25 @@ func.func @wide_fill_vf(%out: tensor<32xf32>) -> tensor<32xf32>
   return %0 : tensor<32xf32>
 }
 
-func.func @forward_fill_through_copy() -> tensor<16xf32> {
+func.func @slice_reader_vf(%a: tensor<16xf32>) -> tensor<16xf32>
+    attributes {hivm.vector_function, no_inline} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : f32
+  %v = vector.transfer_read %a[%c0], %cst {in_bounds = [true]} : tensor<16xf32>, vector<16xf32>
+  %r = vector.transfer_write %v, %a[%c0] {in_bounds = [true]} : vector<16xf32>, tensor<16xf32>
+  return %r : tensor<16xf32>
+}
+
+func.func @forward_fill_through_copy() -> (tensor<16xf32>, tensor<16xf32>) {
   %e16 = tensor.empty() : tensor<16xf32>
   %e32 = tensor.empty() : tensor<32xf32>
   %wide = call @wide_fill_vf(%e32) : (tensor<32xf32>) -> tensor<32xf32>
   %f = call @copy_fill_vf(%e16) : (tensor<16xf32>) -> tensor<16xf32>
   %dup = linalg.copy ins(%f : tensor<16xf32>) outs(%e16 : tensor<16xf32>) -> tensor<16xf32>
+  %slice = tensor.extract_slice %wide[0] [16] [1] : tensor<32xf32> to tensor<16xf32>
   %r = call @copy_reader_vf(%wide, %dup) : (tensor<32xf32>, tensor<16xf32>) -> tensor<16xf32>
-  return %r : tensor<16xf32>
+  %s = call @slice_reader_vf(%slice) : (tensor<16xf32>) -> tensor<16xf32>
+  return %r, %s : tensor<16xf32>, tensor<16xf32>
 }
 
 // -----
