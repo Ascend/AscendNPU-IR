@@ -20,6 +20,15 @@ file(GLOB BUFFER_POOL CONFIGURE_DEPENDS
 file(GLOB PIPELINE_V2 CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/PipelineV2/*.cpp)
 
+set(HIVM_VECTORIZE_SEQUENCE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/HIVMVectorize/Sequences/HIVMVectorize.mlir")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${HIVM_VECTORIZE_SEQUENCE_FILE}")
+file(READ "${HIVM_VECTORIZE_SEQUENCE_FILE}" HIVM_VECTORIZE_SEQUENCE)
+string(REPLACE "\\" "\\\\" HIVM_VECTORIZE_SEQUENCE "${HIVM_VECTORIZE_SEQUENCE}")
+string(REPLACE "\"" "\\\"" HIVM_VECTORIZE_SEQUENCE "${HIVM_VECTORIZE_SEQUENCE}")
+string(REPLACE "\n" "\\n\"\n    \"" HIVM_VECTORIZE_SEQUENCE "${HIVM_VECTORIZE_SEQUENCE}")
+set(HIVM_VECTORIZE_SEQUENCE "\"${HIVM_VECTORIZE_SEQUENCE}\"")
+configure_file(HIVMVectorize/HIVMVectorize.inc.in HIVMVectorize/HIVMVectorize.inc @ONLY)
+
 add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ${Mix_PASSES}
   ${ALIGN_BUFFER}
@@ -87,6 +96,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   HIVMOptFuncOutput.cpp
   HIVMOptSinglePoint.cpp
   HIVMVectorize.cpp
+  HIVMVectorizeBuffers.cpp
   HIVMVectorizeLowering.cpp
   HoistTightlyCoupledAlloc.cpp
   InferFuncCoreType.cpp
@@ -193,6 +203,8 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   BiShengIRSyncCapabilityBindingIncGen
 
   LINK_LIBS PUBLIC
+  BiShengIRArithTransforms
+  BiShengIRVectorTransforms
   MLIRAffineDialect
   MLIRAffineTransforms
   MLIRAnalysis
@@ -211,16 +223,21 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   BiShengIRNPUSyncCapability
   BiShengIRHIVMAnalysis
   BiShengIRHIVMDialect
+  BiShengIRHIVMVectorizeTransformOps
   BiShengIRMathExtDialect
   BiShengIRScopeDialect
   MLIRIR
   MLIRLinalgDialect
+  MLIRLinalgTransforms
   MLIRLinalgUtils
   MLIRLLVMCommonConversion
   MLIRLLVMDialect
   MLIRMathDialect
   MLIRMemRefDialect
   MLIRMemRefTransforms
+  MLIRParser
+  MLIRTransformDialect
+  MLIRTransformDialectTransforms
   MLIRVectorDialect
   BiShengIRMemRefExtDialect
   BiShengIRDialectUtils

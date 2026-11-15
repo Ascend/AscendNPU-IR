@@ -126,6 +126,11 @@ def GenericUnroller : Pass<"hfusion-generic-unroller", "func::FuncOp"> {
                          "transform::TransformDialect",
                          "arith::ArithDialect",
                          "vector::VectorDialect"];
+  let options = [Option<
+      "onlyScalarizeTagged", "only-scalarize-tagged", "bool",
+      /*default=*/"false",
+      "Only scalarize linalg.reduce ops explicitly marked for "
+      "scalarization">];
 }
 
 def AutoVectorizeVerifier

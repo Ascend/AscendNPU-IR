@@ -1481,9 +1481,13 @@ def HIVMVectorize : HIVMPass<"hivm-vectorize", "ModuleOp"> {
   let summary = "Vectorize tensor-level HIVM computation";
   let description = [{
     Module-level entry point for tensor-level HIVM vectorization.
+    Applies the embedded @hivm_vectorize sequence to the module.
   }];
+  let options = [Option<"phase", "phase", "std::string", [{"tensor"}],
+                        "Vectorizer-owned phase: tensor, buffers, "
+                        "prepare-buffers, align, tail, backend">];
   let constructor = "mlir::hivm::createHIVMVectorizePass()";
-  let dependentDialects = [];
+  let dependentDialects = ["transform::TransformDialect"];
 }
 
 def InsertInitAndFinishForDebug
