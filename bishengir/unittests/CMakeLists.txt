@@ -22,6 +22,7 @@ function(add_bishengir_unittest test_name)
   add_dependencies(BiShengIRUnitTests ${test_name})
 endfunction()
 
+add_subdirectory(Analysis)
 add_subdirectory(Conversion)
 add_subdirectory(Dialect)
 add_subdirectory(Pass)

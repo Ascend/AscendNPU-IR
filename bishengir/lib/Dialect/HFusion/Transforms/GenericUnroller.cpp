@@ -545,15 +545,23 @@ static LogicalResult lowerReduceWithIndex(PatternRewriter &rewriter,
   return success();
 }
 
+constexpr llvm::StringLiteral kForceScalarizeReduceAttr =
+    "hivm.vectorize.scalarize";
+
 struct HandleReduceOpPattern : public OpRewritePattern<linalg::ReduceOp> {
-  using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
+  HandleReduceOpPattern(MLIRContext *context, bool onlyScalarizeTagged)
+      : OpRewritePattern<linalg::ReduceOp>(context),
+        onlyScalarizeTagged(onlyScalarizeTagged) {}
 
   LogicalResult matchAndRewrite(linalg::ReduceOp op,
                                 PatternRewriter &rewriter) const override {
     if (hacc::isSkippable(op)) {
       return failure();
     }
-    if (hacc::isLegalToAutoVectorizeReduce(op)) {
+    bool tagged = op->hasAttr(kForceScalarizeReduceAttr);
+    if (onlyScalarizeTagged && !tagged)
+      return failure();
+    if (!tagged && hacc::isLegalToAutoVectorizeReduce(op)) {
       // will be processed by AutoVectorize/v2
       return failure();
     }
@@ -564,6 +572,9 @@ struct HandleReduceOpPattern : public OpRewritePattern<linalg::ReduceOp> {
                        op.getDpsInitOperand(0)->get(), op.getRegion(),
                        llvm::to_vector_of<int64_t>(reduceDims));
   }
+
+private:
+  bool onlyScalarizeTagged;
 };
 
 struct HandleReduceWithIndexOpPattern
@@ -608,7 +619,7 @@ struct GenericUnroller final
   void runOnOperation() override {
     auto *ctx = &getContext();
     RewritePatternSet patterns{&getContext()};
-    patterns.add<HandleReduceOpPattern>(ctx);
+    patterns.add<HandleReduceOpPattern>(ctx, onlyScalarizeTagged);
     patterns.add<HandleReduceWithIndexOpPattern>(ctx);
 
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {

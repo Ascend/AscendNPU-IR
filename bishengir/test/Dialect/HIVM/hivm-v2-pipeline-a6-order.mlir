@@ -1,4 +1,5 @@
 // RUN: bishengir-opt %s --pass-pipeline="builtin.module(hivm-v2-pipeline{target=Ascend960})" --dump-pass-pipeline -o /dev/null 2>&1 | tr ',' '\n' | FileCheck %s --check-prefixes=CHECK,FULL --implicit-check-not=hivm-inject-sync --implicit-check-not=hivm-inject-block-sync --implicit-check-not=hivm-delayed-cross-core-gss --implicit-check-not=hivm-insert-anchors-and-backup
+// RUN: bishengir-opt %s --pass-pipeline="builtin.module(hivm-v2-pipeline{target=Ascend960})" --dump-pass-pipeline -o /dev/null 2>&1 | FileCheck %s --check-prefix=NO-MERGE --implicit-check-not=hfusion-merge-vf
 // RUN: bishengir-opt %s --pass-pipeline="builtin.module(hivm-v2-pre-vectorize-pipeline{target=Ascend960})" --dump-pass-pipeline -o /dev/null 2>&1 | tr ',' '\n' | FileCheck %s --check-prefixes=CHECK,PRE --implicit-check-not=hivm-vectorize --implicit-check-not=bufferiz
 // RUN: bishengir-opt %s --pass-pipeline="builtin.module(hivm-v2-pipeline{target=Ascend960})" | FileCheck %s --check-prefix=SPLIT
 // RUN: bishengir-opt %s --hivm-v2-split-kernel | FileCheck %s --check-prefix=SPLIT
@@ -17,7 +18,6 @@
 // RUN: (bishengir-compile %s --target=Ascend960 --use-pipeline-version=2 --enable-lir-compile=false --mlir-disable-threading --disable-auto-inject-block-sync=true --mlir-print-ir-before=hivm-cross-core-gss,hivm-graph-sync-solver,hivm-v2-split-kernel -o %t.ll 2>&1 || true) | FileCheck %s --check-prefix=DRIVER-NO-CROSS --implicit-check-not="IR Dump Before CrossCoreGSS"
 // RUN: (bishengir-compile %s --target=Ascend960 --use-pipeline-version=2 --enable-lir-compile=false --mlir-disable-threading --enable-hivm-inject-barrier-all-sync=true --enable-hivm-inject-block-all-sync=true --mlir-print-ir-before=hivm-inject-block-sync,hivm-inject-sync,hivm-cross-core-gss,hivm-graph-sync-solver -o %t.ll 2>&1 || true) | FileCheck %s --check-prefix=DRIVER-ALL --implicit-check-not="IR Dump Before InjectBlockSync" --implicit-check-not="IR Dump Before GraphSyncSolver"
 
-// The v2 pipeline reuses InsertLoadStoreForMixCV after TCB insertion.
 // CHECK: hivm-insert-cv-tight-coupled-buffer
 // CHECK: hivm-insert-load-store-for-mix-cv
 // CHECK: hivm-mark-tightly-coupled-buffer
@@ -29,7 +29,8 @@
 // PRE: hivm-convert-layout-to-transpose
 // PRE: cv-pipelining
 // PRE: hivm-normalize-matmul
-// FULL: hivm-vectorize{{[[:space:]]*$}}
+// FULL: hivm-vectorize{phase=tensor}
+// FULL-NOT: hfusion-merge-vf
 // FULL: hfusion-simplify-vf-arg
 // FULL: tensor-copy-insertion
 // FULL: bufferize-module-op
@@ -39,6 +40,7 @@
 // FULL: hivm-graph-sync-solver
 // FULL-SAME: enable-unit-flag=false
 // FULL-SAME: solver-version=v2
+// FULL: hivm-vectorize{phase=tail}
 
 // The same solver version reaches both solves, with unit flags on the per-core
 // solver. Each disable flag affects only its own solve.
@@ -77,8 +79,9 @@
 // DRIVER-ALL: IR Dump Before CrossCoreGSS (hivm-cross-core-gss)
 // DRIVER-ALL: IR Dump Before InjectSync (hivm-inject-sync)
 
-// Driver order: HFusion auto-vectorize, then hivm-vectorize.
-// Use an empty module here: HFusion auto-scheduling requires tensor work.
+// NO-MERGE: hivm-vectorize
+// NO-MERGE: hfusion-simplify-vf-arg
+
 // ORDER: IR Dump Before SelectHIVMVectorize (hfusion-select-hivm-vectorize)
 // ORDER: IR Dump Before AutoVectorizeV2 (hfusion-auto-vectorize-v2)
 // ORDER: IR Dump Before HIVMVectorize (hivm-vectorize)
