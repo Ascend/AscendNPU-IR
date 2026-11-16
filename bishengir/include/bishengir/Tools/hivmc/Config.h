@@ -116,6 +116,21 @@ public:
   }
   bool shouldCompileTriton() const { return enableTritonKernelCompileFlag; }
 
+  /// True when the kernel originates from the Triton frontend, either through
+  /// the triton-adaptor flow (--enable-triton-kernel-compile) or the
+  /// pure-SIMT triton-dialect flow (--enable-triton-ir-compile). Catlass DSL
+  /// and every other frontend set neither flag, so Triton-only backend
+  /// options must be gated on this predicate.
+  ///
+  /// This is a provenance marker, not a compile-shape classifier: flags such
+  /// as --pure-simt or --enable-simd-simt-mix-compile describe how a kernel
+  /// is lowered, not where it came from, and are deliberately out of scope.
+  /// Every triton-ascend entry point forwards one of the two markers above,
+  /// so a triton kernel cannot reach the backend without setting one.
+  bool isTritonFrontend() const {
+    return enableTritonKernelCompileFlag || enableTritonIRCompileFlag;
+  }
+
   HIVMCMainConfig &compileHFusion(bool compile) {
     enableHFusionCompileFlag = compile;
     return *this;
@@ -430,9 +445,7 @@ public:
     simtOptimizationModeFlag = mode;
     return *this;
   }
-  int simtOptimizationMode() const {
-    return simtOptimizationModeFlag;
-  }
+  int simtOptimizationMode() const { return simtOptimizationModeFlag; }
 
   HIVMCMainConfig &enableSIMTFastDiv(bool enable) {
     enableSIMTFastDivFlag = enable;
@@ -664,7 +677,8 @@ public:
     return targetBackendFlag;
   }
 
-  HIVMCMainConfig &setExtraDeviceBCPaths(const std::vector<std::string> &paths) {
+  HIVMCMainConfig &
+  setExtraDeviceBCPaths(const std::vector<std::string> &paths) {
     extraDeviceBCPathsFlag = paths;
     return *this;
   }
@@ -792,8 +806,6 @@ protected:
   /// Enable BiShengHIR Torch compile.
   bool enableTorchCompileFlag{false};
 #endif
-
-
 
   /// Enable symbol analysis flag
   bool enableSymbolAnalysisFlag{false};
