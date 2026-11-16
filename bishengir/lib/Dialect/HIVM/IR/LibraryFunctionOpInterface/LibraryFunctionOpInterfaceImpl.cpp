@@ -704,9 +704,19 @@ struct StaticMaxRankExternalModel
             getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(srcType));
         std::string offsetTypeStr =
             getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(offsetType));
-        return concreteOp.getOpName().str() +
-               (concreteOp.getIsVolatile() ? "" : "_nonvolatile") + "_" +
-               libCallDim + "_" + srcTypeStr + "_" + offsetTypeStr;
+        std::string otherTypeStr;
+        if (auto other = concreteOp.getOther()) {
+          Type otherType = other.getType();
+          otherTypeStr =
+              getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(otherType));
+        }
+        std::string name = concreteOp.getOpName().str() +
+                           (concreteOp.getIsVolatile() ? "" : "_nonvolatile") +
+                           "_" + libCallDim + "_" + srcTypeStr + "_" +
+                           offsetTypeStr;
+        if (!otherTypeStr.empty() && otherTypeStr != srcTypeStr)
+          name += "_" + otherTypeStr;
+        return name;
       }
       if constexpr (std::is_same_v<ConcreteOp, StrideLoadOp>) {
         auto dstType = cast<ShapedType>(concreteOp.getDst().getType());

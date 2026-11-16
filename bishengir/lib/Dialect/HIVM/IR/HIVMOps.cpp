@@ -1010,7 +1010,10 @@ LogicalResult IndirectLoadOp::verify() {
 
     auto otherElementType = otherMemrefType ? otherMemrefType.getElementType()
                                             : otherTensorType.getElementType();
-    if (otherElementType != srcElementType) {
+    auto mod = (*this)->getParentOfType<ModuleOp>();
+    bool isReg = mod && hacc::utils::isRegBasedArch(mod);
+    bool isF64ToF32Other = srcElementType.isF64() && otherElementType.isF32();
+    if (otherElementType != srcElementType && !(isReg && isF64ToF32Other)) {
       return emitOpError("other of hfusion::IndirectLoadOp must have the same "
                          "element type as src");
     }

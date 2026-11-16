@@ -10,6 +10,18 @@ func.func @test_addf(%arg0 : tensor<6x6xf32>, %arg1 : tensor<6x6xf32>) -> tensor
 
 // -----
 
+// CHECK-LABEL: func.func @test_regbase_truncf_f64_to_f32
+// CHECK: %[[EMPTY:.*]] = tensor.empty()
+// CHECK: hfusion.cast {{.*}}ins(%{{.*}} : tensor<6xf64>) outs(%[[EMPTY]] : tensor<6xf32>)
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_regbase_truncf_f64_to_f32(%arg0 : tensor<6xf64>) -> tensor<6xf32> {
+    %ret = arith.truncf %arg0 : tensor<6xf64> to tensor<6xf32>
+    return %ret : tensor<6xf32>
+  }
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_addi
 func.func @test_addi(%arg0 : tensor<6x6xi32>, %arg1 : tensor<6x6xi32>) -> tensor<6x6xi32> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()
