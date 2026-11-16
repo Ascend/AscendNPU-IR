@@ -947,10 +947,37 @@ vdiv_int_scalar(memref_t<__ubuf__ T, dim> *src0,
 
 #define REGISTE_INDIRECT_LOAD(dim, dtype, itype)                               \
   DECLARE_INDIRECT_LOAD(dim, dtype, itype) {                                   \
-    indirect_load<dim, dtype, itype, true>(src, idx, dst, mask, other);        \
+    indirect_load<dim, dtype, itype, dtype, true>(src, idx, dst, mask, other); \
   }                                                                            \
   DECLARE_INDIRECT_LOAD_NONVOLATILE(dim, dtype, itype) {                       \
-    indirect_load<dim, dtype, itype, false>(src, idx, dst, mask, other);       \
+    indirect_load<dim, dtype, itype, dtype, false>(src, idx, dst, mask,        \
+                                                   other);                     \
+  }
+
+#define DECLARE_INDIRECT_LOAD_MIXED(dim, dtype, itype, otherty)                \
+  __aiv__ __attribute__((always_inline)) void                                  \
+      _mlir_ciface_indirect_load_##dim##d_##dtype##_##itype##_##otherty(       \
+          memref_t<__gm__ dtype, 1> *src, memref_t<__ubuf__ itype, dim> *idx,  \
+          memref_t<__ubuf__ dtype, dim> *dst,                                  \
+          memref_t<__ubuf__ bool, dim> *mask,                                  \
+          memref_t<__ubuf__ otherty, dim> *other)
+
+#define DECLARE_INDIRECT_LOAD_MIXED_NONVOLATILE(dim, dtype, itype, otherty)          \
+  __aiv__ __attribute__((always_inline)) void                                        \
+      _mlir_ciface_indirect_load_nonvolatile_##dim##d_##dtype##_##itype##_##otherty( \
+          memref_t<__gm__ dtype, 1> *src, memref_t<__ubuf__ itype, dim> *idx,        \
+          memref_t<__ubuf__ dtype, dim> *dst,                                        \
+          memref_t<__ubuf__ bool, dim> *mask,                                        \
+          memref_t<__ubuf__ otherty, dim> *other)
+
+#define REGISTE_INDIRECT_LOAD_MIXED(dim, dtype, itype, otherty)                \
+  DECLARE_INDIRECT_LOAD_MIXED(dim, dtype, itype, otherty) {                    \
+    indirect_load<dim, dtype, itype, otherty, true>(src, idx, dst, mask,       \
+                                                    other);                    \
+  }                                                                            \
+  DECLARE_INDIRECT_LOAD_MIXED_NONVOLATILE(dim, dtype, itype, otherty) {        \
+    indirect_load<dim, dtype, itype, otherty, false>(src, idx, dst, mask,      \
+                                                     other);                   \
   }
 
 #define DECLARE_STRIDE_LOAD(dim, dtype, itype, ...)                            \
