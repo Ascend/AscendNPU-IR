@@ -220,6 +220,9 @@ void buildAffinityPipeline(OpPassManager &pm,
   planMemoryOptions.disableVFReachableCheck =
       config.getDisableVFReachableCheck();
   planMemoryOptions.planMemoryStrategy = config.getPlanMemoryStrategy();
+  // TLA mode requires a deterministic local plan: disable the plan-memory
+  // retry loop (fallback stages and shuffle-seed retries).
+  planMemoryOptions.enableTLAmode = config.getEnableTlaMode();
   pm.addPass(hivm::createPlanMemoryPass(planMemoryOptions));
 
   if (!config.getDisableAutoInjectBlockSync()) {

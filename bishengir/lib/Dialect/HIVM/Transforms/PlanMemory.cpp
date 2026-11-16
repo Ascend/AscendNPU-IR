@@ -2358,8 +2358,7 @@ void MemPlan::MemLifeDebugInfo(const StorageEntry *storageEntry) const {
   }
   LLVM_DEBUG({
     storageEntry->bufferLifeVec.forEach([](BufferLifeView bufferLife) {
-      llvm::dbgs() << "bufferLife : "
-                   << "allocTime : " << bufferLife.allocTime
+      llvm::dbgs() << "bufferLife : " << "allocTime : " << bufferLife.allocTime
                    << " , freeTime : " << bufferLife.freeTime << "\n";
     });
   });
@@ -3395,6 +3394,26 @@ PlanRecord MemPlan::RollbackOutline(PlanRecHis &history,
 }
 
 namespace {
+
+/// Outcome of one memory-planning attempt.
+enum class PlanAttemptStatus {
+  /// The attempt produced a valid plan.
+  Succeeded,
+  /// The attempt failed, but a later attempt may still succeed.
+  Retryable,
+  /// The attempt ended early in a way that no retry can recover from.
+  EarlyEnd
+};
+
+/// Describes one memory-planning retry stage. The fallback is applied once
+/// before planning is retried with different deterministic shuffle seeds.
+struct PlanRetryStage {
+  std::function<void(func::FuncOp &)> fallback;
+  int attemptCount;
+};
+
+constexpr int kDefaultAttemptsPerStage = 3;
+
 struct PlanMemoryPass : public impl::PlanMemoryBase<PlanMemoryPass> {
 public:
   explicit PlanMemoryPass(const PlanMemoryOptions &planMemoryOption)
@@ -3404,12 +3423,27 @@ public:
 
 private:
   void markTempBufForMemoryDisplay(func::FuncOp funcOp);
+
+  // Whether the current function uses standalone MMAD L0 planning. Selected
+  // once per function before planning starts.
+  bool enableMmadL0Planning = false;
+
+  // VF inplace-reuse analysis for the planned module, built once at the
+  // start of runOnOperation.
+  VFInplaceReuseAnalysis vfInplaceReuseAnalysis;
+
   // Returning nullopt means that memory plan for funcOp failed. On success,
   // first is buffer2Offsets and second is preload-local alloc roots.
-  std::optional<std::pair<Buffer2Offsets, DenseSet<Value>>>
-  planMemoryForFuncOp(func::FuncOp &funcOp,
-                      VFInplaceReuseAnalysis &vfInplaceReuseAnalysis,
-                      bool enableMmadL0Planning);
+  std::optional<PlanResult> planMemoryForFuncOp(func::FuncOp &funcOp);
+
+  // Runs a single planning attempt. Writes the plan to `planned` and returns
+  // Succeeded on success, Retryable when the attempt failed but can be
+  // retried, and EarlyEnd when the failure is not recoverable.
+  PlanAttemptStatus planMemoryAttempt(func::FuncOp &funcOp, int attempt,
+                                      int totalAttemptCount,
+                                      TcbPoolPlan &tcbPoolPlan,
+                                      bool startTcbPoolPlan,
+                                      PlanResult &planned);
 
   // Retry fallback: remove the multi-buffer marks of AIV functions in mix
   // modules, but keep those of preload local buffers.
@@ -3456,10 +3490,8 @@ void PlanMemoryPass::disableAIVMultibuffer(func::FuncOp &funcOp) {
        << "attrs as a retry fallback\n");
 }
 
-std::optional<std::pair<Buffer2Offsets, DenseSet<Value>>>
-PlanMemoryPass::planMemoryForFuncOp(
-    func::FuncOp &funcOp, VFInplaceReuseAnalysis &vfInplaceReuseAnalysis,
-    bool enableMmadL0Planning) {
+std::optional<PlanResult>
+PlanMemoryPass::planMemoryForFuncOp(func::FuncOp &funcOp) {
   // Add a attr to the memref alloc for the tempbuf.
   if (this->enableMemoryDisplay) {
     markTempBufForMemoryDisplay(funcOp);
@@ -3468,45 +3500,48 @@ PlanMemoryPass::planMemoryForFuncOp(
   // Each retry stage owns one fallback, which is applied once when the stage
   // starts and stays in effect for all later stages. Within a stage, planning
   // is retried with different shuffle seeds.
-  SmallVector<std::function<LogicalResult(func::FuncOp &)>>
-      retryStageFallbacks = {
-          // Stage 0: no fallback, only retry with different shuffle seeds.
-          [](func::FuncOp &) { return success(); },
-      };
+  SmallVector<PlanRetryStage> retryStages = {
+      // First try without applying a fallback.
+      {[](func::FuncOp &) {}, kDefaultAttemptsPerStage},
+  };
   auto moduleOp = getOperation();
   // Only AIV functions in mix (CV) modules can drop multi-buffering.
   if (isMixModule(moduleOp) &&
       queryFuncCoreType(funcOp) == TFuncCoreType::AIV) {
-    retryStageFallbacks.push_back([this](func::FuncOp &funcOp) {
-      disableAIVMultibuffer(funcOp);
-      return success();
-    });
+    retryStages.push_back(
+        {[this](func::FuncOp &funcOp) { disableAIVMultibuffer(funcOp); },
+         kDefaultAttemptsPerStage});
+  } else {
+    retryStages.push_back({[](func::FuncOp &) {}, kDefaultAttemptsPerStage});
   }
   // Disable the VF reachable check on reg-based arch AIV functions as the
   // last resort, to allow more aggressive reuse of VF buffers.
   if (hacc::utils::isRegBasedArch(moduleOp) &&
       queryFuncCoreType(funcOp) == TFuncCoreType::AIV) {
-    retryStageFallbacks.push_back([this](func::FuncOp &) {
-      this->disableVFReachableCheck = true;
-      return success();
-    });
+    retryStages.push_back(
+        {[this](func::FuncOp &) { this->disableVFReachableCheck = true; },
+         kDefaultAttemptsPerStage});
+  } else {
+    retryStages.push_back({[](func::FuncOp &) {}, kDefaultAttemptsPerStage});
   }
 
   TcbPoolPlan tcbPoolPlan;
-  const int nativeStageCount = retryStageFallbacks.size();
-  const bool enablePoolFallback =
-      memMode == MemPlanMode::LOCAL_MEM_PLAN && TcbPoolPlan::canTryPool(funcOp);
-  if (enablePoolFallback)
-    retryStageFallbacks.push_back([&](func::FuncOp &funcOp) {
-      return tcbPoolPlan.prepareAttempt(funcOp, 0);
-    });
+  bool startTcbPoolPlan = false;
+  if (memMode == MemPlanMode::LOCAL_MEM_PLAN &&
+      TcbPoolPlan::canTryPool(funcOp) &&
+      succeeded(tcbPoolPlan.prepareAttempt(funcOp, 0))) {
+    retryStages.push_back({[&](func::FuncOp &) { startTcbPoolPlan = true; },
+                           /*attemptCount=*/1});
+  }
 
-  constexpr int singleTrytime = 3;
-  constexpr int kPoolRetryCount = 1;
-  int retryOptionsNum = retryStageFallbacks.size();
-  int nativeRetryCount = singleTrytime * nativeStageCount;
-  int kPlanRetryCount =
-      nativeRetryCount + (enablePoolFallback ? kPoolRetryCount : 0);
+  // TLA mode requires a deterministic plan: disable the fallback stages and
+  // the shuffle-seed retries, and plan exactly once.
+  if (this->enableTLAmode)
+    retryStages = {{[](func::FuncOp &) {}, /*attemptCount=*/1}};
+
+  int totalAttemptCount = 0;
+  for (const PlanRetryStage &stage : retryStages)
+    totalAttemptCount += stage.attemptCount;
   // The current plan-memory algorithm is sensitive to the order in which
   // some candidate buffers are considered. We retry planning with different
   // deterministic shuffle seeds to improve the chance of finding a valid
@@ -3515,83 +3550,85 @@ PlanMemoryPass::planMemoryForFuncOp(
   // to produce a stable valid plan in a single attempt.
   // The outer loop walks the fallback stages; the inner loop retries the
   // current stage with different shuffle seeds.
-  for (int stage = 0; stage < retryOptionsNum; ++stage) {
-    if (failed(retryStageFallbacks[stage](funcOp)))
-      return std::nullopt;
-    const bool usePoolFallback = stage == nativeStageCount;
-    const int trials = usePoolFallback ? kPoolRetryCount : singleTrytime;
-    for (int trial = 0; trial < trials; ++trial) {
-      const int attempt = stage * singleTrytime + trial;
-      LDBG("Memory planning attempt " << attempt + 1 << "/" << kPlanRetryCount
+  int attempt = 0;
+  PlanResult planned;
+  for (PlanRetryStage &stage : retryStages) {
+    stage.fallback(funcOp);
+    for (int trial = 0; trial < stage.attemptCount; ++trial, ++attempt) {
+      LDBG("Memory planning attempt " << attempt + 1 << "/" << totalAttemptCount
                                       << "\n");
-
-      MemLivenessAnalysis memLiveness(
-          funcOp, this->memMode, this->disableTightlyCoupledBufferReuse,
-          /*randomSeed=*/usePoolFallback ? 0 : attempt, enableMmadL0Planning);
-      memLiveness.build();
-      if (usePoolFallback && failed(tcbPoolPlan.adaptLiveness(memLiveness)))
+      auto status = planMemoryAttempt(funcOp, attempt, totalAttemptCount,
+                                      tcbPoolPlan, startTcbPoolPlan, planned);
+      if (status == PlanAttemptStatus::EarlyEnd)
         return std::nullopt;
-
-      MemPlan memPlan(this->memMode, this->enableGlobalReuse,
-                      this->enableMemoryDisplay, this->restrictInplaceAsISA,
-                      this->simtVFDynamicSize, this->disableVFReachableCheck,
-                      this->planMemoryStrategy, enableMmadL0Planning);
-      if (failed(memPlan.InitMemSpecsFromModule(funcOp))) {
-        return std::nullopt;
-      }
-      memPlan.func_ = funcOp;
-      memPlan.SetLinearOperation(memLiveness.linearOperation);
-      memPlan.SetBufferInfos(memLiveness.bufferInfos);
-      memPlan.SetBuffer2Life(memLiveness.buffer2Life);
-      memPlan.SetGenKillMap(memLiveness.genKillMap);
-      memPlan.SetBuffer2MultiNum(memLiveness.buffer2MultiNum);
-      memPlan.SetInplacePairList(memLiveness.inplacePairList);
-      memPlan.SetVFInplaceReuseInfo(
-          vfInplaceReuseAnalysis.getVFCallInplaceReuseInfo(funcOp));
-      memPlan.SetPreloadBufferReuseableInfo(
-          memLiveness.preloadBufferReuseableInfo);
-
-      const bool isLastNativeAttempt = attempt == nativeRetryCount - 1;
-      const bool isLastAttempt = attempt == kPlanRetryCount - 1;
-      if (succeeded(memPlan.plan(/*emitErrors=*/false))) {
-        if (usePoolFallback)
-          tcbPoolPlan.recordPlan(moduleOp);
-        if (memPlan.enableMemoryDisplay) {
-          SmallVector<MemoryDisplayInfo> memoryDisplayInfoList;
-          // Collect plan success memory info for memory display tools.
-          collectMemoryInfoForDebug(
-              memoryDisplayInfoList, memPlan.GetMemscope2rootStorageEntry(),
-              memPlan.GetBuffer2Offsets(), memPlan.errorInfo, false);
-          createJsonForMemoryDisplay(funcOp, memoryDisplayInfoList);
-        }
-        return std::make_pair(memPlan.GetBuffer2Offsets(),
-                              memPlan.GetPreloadLocalBuffers());
-      }
-
-      if (!usePoolFallback && !isLastNativeAttempt)
-        continue;
-      if (!isLastAttempt && memPlan.failedOnlyInUB())
-        continue;
-
-      memPlan.EmitPlanMemoryFailureInfo();
-      if (memPlan.enableMemoryDisplay) {
-        SmallVector<MemoryDisplayInfo> memoryDisplayInfoList;
-        // Collect plan fail memory info for memory display tools.
-        collectMemoryInfoForDebug(
-            memoryDisplayInfoList, memPlan.GetMemscope2rootFailStorageEntry(),
-            memPlan.GetBuffer2Offsets(), memPlan.errorInfo, true);
-        memPlan.SetMemscope2rootSuccessStorageEntry();
-        // Collect plan success memory info for memory display tools.
-        collectMemoryInfoForDebug(memoryDisplayInfoList,
-                                  memPlan.GetMemscope2rootSuccessStorageEntry(),
-                                  memPlan.GetBuffer2Offsets(),
-                                  memPlan.errorInfo, false);
-        createJsonForMemoryDisplay(funcOp, memoryDisplayInfoList);
-      }
-      return std::nullopt;
+      else if (status == PlanAttemptStatus::Succeeded)
+        return planned;
     }
   }
   return std::nullopt;
+}
+
+PlanAttemptStatus PlanMemoryPass::planMemoryAttempt(
+    func::FuncOp &funcOp, int attempt, int totalAttemptCount,
+    TcbPoolPlan &tcbPoolPlan, bool startTcbPoolPlan, PlanResult &planned) {
+
+  MemLivenessAnalysis memLiveness(
+      funcOp, this->memMode, this->disableTightlyCoupledBufferReuse,
+      /*randomSeed=*/startTcbPoolPlan ? 0 : attempt, enableMmadL0Planning);
+  memLiveness.build();
+  if (startTcbPoolPlan && failed(tcbPoolPlan.adaptLiveness(memLiveness)))
+    return PlanAttemptStatus::EarlyEnd;
+
+  MemPlan memPlan(this->memMode, this->enableGlobalReuse,
+                  this->enableMemoryDisplay, this->restrictInplaceAsISA,
+                  this->simtVFDynamicSize, this->disableVFReachableCheck,
+                  this->planMemoryStrategy, enableMmadL0Planning);
+  if (failed(memPlan.InitMemSpecsFromModule(funcOp)))
+    return PlanAttemptStatus::EarlyEnd;
+  memPlan.func_ = funcOp;
+  memPlan.SetLinearOperation(memLiveness.linearOperation);
+  memPlan.SetBufferInfos(memLiveness.bufferInfos);
+  memPlan.SetBuffer2Life(memLiveness.buffer2Life);
+  memPlan.SetGenKillMap(memLiveness.genKillMap);
+  memPlan.SetBuffer2MultiNum(memLiveness.buffer2MultiNum);
+  memPlan.SetInplacePairList(memLiveness.inplacePairList);
+  memPlan.SetVFInplaceReuseInfo(
+      vfInplaceReuseAnalysis.getVFCallInplaceReuseInfo(funcOp));
+  memPlan.SetPreloadBufferReuseableInfo(memLiveness.preloadBufferReuseableInfo);
+
+  bool isLastAttempt = attempt == totalAttemptCount - 1;
+  if (succeeded(memPlan.plan(/*emitErrors=*/isLastAttempt))) {
+    if (startTcbPoolPlan)
+      tcbPoolPlan.recordPlan(getOperation());
+    if (memPlan.enableMemoryDisplay) {
+      SmallVector<MemoryDisplayInfo> memoryDisplayInfoList;
+      // Collect plan success memory info for memory display tools.
+      collectMemoryInfoForDebug(
+          memoryDisplayInfoList, memPlan.GetMemscope2rootStorageEntry(),
+          memPlan.GetBuffer2Offsets(), memPlan.errorInfo, false);
+      createJsonForMemoryDisplay(funcOp, memoryDisplayInfoList);
+    }
+    planned = std::make_pair(memPlan.GetBuffer2Offsets(),
+                             memPlan.GetPreloadLocalBuffers());
+    return PlanAttemptStatus::Succeeded;
+  }
+
+  bool isEarlyEnd = startTcbPoolPlan && !memPlan.failedOnlyInUB();
+  if ((isEarlyEnd || isLastAttempt) && memPlan.enableMemoryDisplay) {
+    SmallVector<MemoryDisplayInfo> memoryDisplayInfoList;
+    // Collect plan fail memory info for memory display tools.
+    collectMemoryInfoForDebug(
+        memoryDisplayInfoList, memPlan.GetMemscope2rootFailStorageEntry(),
+        memPlan.GetBuffer2Offsets(), memPlan.errorInfo, true);
+    memPlan.SetMemscope2rootSuccessStorageEntry();
+    // Collect plan success memory info for memory display tools.
+    collectMemoryInfoForDebug(
+        memoryDisplayInfoList, memPlan.GetMemscope2rootSuccessStorageEntry(),
+        memPlan.GetBuffer2Offsets(), memPlan.errorInfo, false);
+    createJsonForMemoryDisplay(funcOp, memoryDisplayInfoList);
+  }
+  return isEarlyEnd ? PlanAttemptStatus::EarlyEnd
+                    : PlanAttemptStatus::Retryable;
 }
 
 void PlanMemoryPass::updateId2Offsets(
@@ -3761,12 +3798,11 @@ void PlanMemoryPass::runOnOperation() {
   if (memMode == MemPlanMode::LOCAL_MEM_PLAN &&
       failed(validateBufferPoolMarks(moduleOp)))
     return signalPassFailure();
-  VFInplaceReuseAnalysis vfInplaceReuseAnalysis(moduleOp);
+  vfInplaceReuseAnalysis = VFInplaceReuseAnalysis(moduleOp);
   // Cache per-func plan results (buffer2Offsets + preload-local roots) from
   // the first walk; the second walk uses them to populate addresses on
   // allocOps.
-  DenseMap<func::FuncOp, std::pair<Buffer2Offsets, DenseSet<Value>>>
-      planResultMap;
+  DenseMap<func::FuncOp, PlanResult> planResultMap;
   // map cvMixId to the address will be used in both aic and aiv.
   DenseMap<int32_t, SmallVector<uint64_t>> id2Offsets;
   // planMem for variables and update Id2Offsets.
@@ -3777,9 +3813,9 @@ void PlanMemoryPass::runOnOperation() {
       continue;
     // Select once per function. MMAD L1 and functions without MMAD L0 retain
     // the legacy policy, even when another function in the module uses MMAD L0.
-    bool enableMmadL0Planning = this->memMode == MemPlanMode::LOCAL_MEM_PLAN &&
-                                hasStandaloneMmad(funcOp);
-    if (enableMmadL0Planning) {
+    this->enableMmadL0Planning = this->memMode == MemPlanMode::LOCAL_MEM_PLAN &&
+                                 hasStandaloneMmad(funcOp);
+    if (this->enableMmadL0Planning) {
       if (!hacc::utils::isAscend950(moduleOp)) {
         funcOp.emitError("mmadL0 memory planning supports only A5");
         signalPassFailure();
@@ -3791,8 +3827,7 @@ void PlanMemoryPass::runOnOperation() {
       }
     }
     LDBG("\n-----funcOp " << funcOp.getName() << " mem plan start !! -----\n");
-    auto planned = planMemoryForFuncOp(funcOp, vfInplaceReuseAnalysis,
-                                       enableMmadL0Planning);
+    auto planned = planMemoryForFuncOp(funcOp);
     if (planned.has_value()) {
       planResultMap[funcOp] = std::move(planned.value());
     } else {
