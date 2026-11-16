@@ -1063,6 +1063,24 @@ def SinkOpToConsumerInLoop
   let dependentDialects = ["hivm::HIVMDialect"];
 }
 
+def SinkScalarReadback : HIVMPass<"hivm-sink-scalar-readback", "func::FuncOp"> {
+  let summary = "Sink scalar readback chains to their consumers.";
+  let description = [{
+    Move a scalar readback chain (`tensor.extract` of a single element of a
+    tensor produced by a vector function call, plus the pure scalar
+    computation that depends on it) down to its earliest consumer in the same
+    block.
+
+    The chain is memory-effect-free, so no alias analysis is needed.  The pass
+    runs in the tensor/SSA stage, before bufferization and before
+    graph-sync-solver, so the sync solver derives the V->S flags from the
+    consumer position instead of blocking the scalar core right after the
+    producer call.
+  }];
+  let constructor = "mlir::hivm::createSinkScalarReadbackPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "tensor::TensorDialect"];
+}
+
 def AlignAllocSize : HIVMPass<"hivm-align-alloc-size", "mlir::ModuleOp"> {
   let summary =
       "Automatically align memref.alloc size for special hivm op that "
