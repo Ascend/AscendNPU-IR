@@ -485,6 +485,9 @@ std::unique_ptr<Pass> createCombineOptimizedConvertLayoutPass();
 /// Create a pass to normalize conv1d operation.
 std::unique_ptr<Pass> createNormalizeConvOpsPass();
 
+/// Prepare storage versions for iteration-local preload buffers.
+std::unique_ptr<Pass> createMarkPreloadBuffersPass();
+
 /// Create a pass to create preload for CV pipelining
 std::unique_ptr<Pass>
 createCreatePreloadPass(const CreatePreloadOptions &options = {});

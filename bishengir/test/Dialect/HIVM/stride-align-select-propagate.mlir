@@ -17,10 +17,15 @@
 // CHECK-LABEL: func.func @mark_on_allocation_not_carried_to_select
 // CHECK: %[[W:.*]] = memref.alloc() : memref<32x256x1xf16, #hivm.address_space<ub>>
 // CHECK: %[[V:.*]] = memref.subview %[[W]]
-// CHECK: %[[OTHER:.*]] = memref.alloc() : memref<32x128xf16, #hivm.address_space<ub>>
+// The fallback buffer is created at the cast, which dominates every failing
+// use, so it precedes the unmarked allocation here.
 // CHECK: %[[FALLBACK:.*]] = memref.alloc() : memref<32x128xf16, #hivm.address_space<ub>>
 // CHECK: hivm.hir.copy ins(%[[V]] : {{.*}}strided<[256, 1]>{{.*}}) outs(%[[FALLBACK]]
+// CHECK: %[[OTHER:.*]] = memref.alloc() : memref<32x128xf16, #hivm.address_space<ub>>
 // CHECK: arith.select %{{.*}}, %[[FALLBACK]], %[[OTHER]] : memref<32x128xf16, #hivm.address_space<ub>>
+// The write reaches the fallback through the select, so it is carried back to
+// the aligned view before the direct read of it.
+// CHECK: hivm.hir.copy ins(%[[FALLBACK]]{{.*}}) outs(%[[V]]
 module attributes {
   hacc.target = #hacc.target<"Ascend950PR_9579">,
   hivm.module_core_type = #hivm.module_core_type<AIV>

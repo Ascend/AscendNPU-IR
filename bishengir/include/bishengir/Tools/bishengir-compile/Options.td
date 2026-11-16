@@ -81,6 +81,14 @@ def EnableTlaMode : FeatureControlOptions<
   let optionScope = ["A5_ONLY"];
 }
 
+def EnableTlaCvPipelining : FeatureControlOptions<
+  "Expand staged TLA loops through native preload in affinity mode.",
+  "bool",
+  "false"
+> {
+  let optionScope = ["A5_ONLY"];
+}
+
 def EnableUbufSaving : FeatureControlOptions<
   "Enable ub buffer saving mode.",
   "bool",

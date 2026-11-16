@@ -71,6 +71,9 @@ static bool isSharedRegion(Operation *op) {
 }
 
 static FailureOr<bool> isFiltered(Operation *op, hivm::TCoreType filteredCore) {
+  // Delayed synchronization uses the same anchor positions on both cores.
+  if (isa<hivm::AnchorOp>(op))
+    return false;
   auto coreType = getSplitCoreType(op);
   if (failed(coreType))
     return failure();
