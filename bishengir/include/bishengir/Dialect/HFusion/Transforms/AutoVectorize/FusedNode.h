@@ -125,6 +125,9 @@ private:
   void insertOrdered(Operation *op);
 
   bool useAsDpsInits(Operation *op) const;
+
+  // Whether a node member captures a producer result in its nested region.
+  bool hasNestedProducerUse(Operation *producer) const;
 };
 
 } // namespace hfusion
