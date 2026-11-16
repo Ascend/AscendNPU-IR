@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/Sync/SyncCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Transforms.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -26,6 +27,7 @@
 #include "llvm/Support/LogicalResult.h"
 
 #include <cstdint>
+#include <type_traits>
 
 using namespace mlir;
 using namespace mlir::hivm;
@@ -140,12 +142,11 @@ struct HIVMTryWaitOpLowering : public ConvertOpToLLVMPattern<TryWaitOp> {
   matchAndRewrite(TryWaitOp op, TryWaitOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     ModuleOp module = op->getParentOfType<ModuleOp>();
-    // try_wait is introduced on A5 and later generations have to support it
-    // as well. Reject the legacy memory-based (A3) pipeline instead of
-    // naming a single generation.
-    if (hacc::utils::isMemBasedArch(module))
+    // Only a confirmed native try_wait row permits the lowering. A missing
+    // #hacc.target is Unknown, not an affirmative.
+    if (!isNativeTryWaitCreate(op, op.getSyncMode()))
       return op.emitOpError(
-          "is not supported on memory-based (A3) architectures");
+          "is not natively supported on the enclosing target");
 
     constexpr StringLiteral name = "llvm.hivm.TRY.WAIT.mode";
     auto i64 = rewriter.getI64Type();
@@ -183,9 +184,16 @@ struct HIVMBufferSyncOpLowering : public ConvertOpToLLVMPattern<Op> {
   LogicalResult
   matchAndRewrite(Op op, typename Op::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    auto module = op->template getParentOfType<ModuleOp>();
-    if (!hacc::utils::isAscend950(module))
-      return op.emitOpError("requires an Ascend950 target");
+    // Only a confirmed native buffer-sync row permits the lowering. A
+    // missing #hacc.target is Unknown, not an affirmative.
+    bool native;
+    if constexpr (std::is_same_v<Op, GetBufOp>)
+      native = isNativeGetBufCreate(op);
+    else
+      native = isNativeRlsBufCreate(op);
+    if (!native)
+      return op.emitOpError(
+          "is not natively supported on the enclosing target");
     std::optional<int64_t> constantId;
     if (auto id = op.getStaticBufId())
       constantId = id->getInt();

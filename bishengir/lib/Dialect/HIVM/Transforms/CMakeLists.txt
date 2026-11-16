@@ -189,6 +189,8 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   BiShengIRFixpipeCapabilityBindingIncGen
   BiShengIRCubeLoadCapabilityIncGen
   BiShengIRCubeLoadCapabilityBindingIncGen
+  BiShengIRSyncCapabilityIncGen
+  BiShengIRSyncCapabilityBindingIncGen
 
   LINK_LIBS PUBLIC
   MLIRAffineDialect
@@ -206,6 +208,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   BiShengIRHACCDialect
   BiShengIRNPUMmadCapability
   BiShengIRNPUFixpipeCapability
+  BiShengIRNPUSyncCapability
   BiShengIRHIVMAnalysis
   BiShengIRHIVMDialect
   BiShengIRMathExtDialect
