@@ -1352,13 +1352,13 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %c32 = arith.constant 32 : index
     %c64 = arith.constant 64 : index
     %empty0 = tensor.empty() : tensor<64x64xf32>
-    %mmad0 = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c}
+    %mmad0 = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32]}
         ins(%a, %b, %true, %c64, %c32, %c64
             : tensor<64x32xbf16>, tensor<32x64xbf16>, i1, index, index, index)
         outs(%empty0 : tensor<64x64xf32>) -> tensor<64x64xf32>
     %empty1 = tensor.empty() : tensor<64x64xf32>
     %if_res = scf.if %cond -> (tensor<64x64xf32>) {
-      %mmad1 = hivm.hir.mmadL1 {a_transpose, already_set_real_mkn, hivm.remain_in_l0c}
+      %mmad1 = hivm.hir.mmadL1 {a_transpose, already_set_real_mkn, hivm.remain_in_l0c = [0 : i32]}
           ins(%c, %d, %false, %c64, %c64, %c64
               : tensor<64x64xbf16>, tensor<64x64xbf16>, i1, index, index, index)
           outs(%empty1 : tensor<64x64xf32>) -> tensor<64x64xf32>

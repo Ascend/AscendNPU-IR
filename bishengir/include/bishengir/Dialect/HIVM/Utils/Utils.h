@@ -151,6 +151,8 @@ bool isRemainInL0c(OpOperand &use);
 
 bool isResultInL0C(OpResult result);
 
+bool isResultRemainInL0C(OpResult result);
+
 /// Set the input type's memory scope to the input HIVM Address Space.
 void setBaseMemRefTypeScope(Value val, AddressSpaceAttr targetMemScope);
 
