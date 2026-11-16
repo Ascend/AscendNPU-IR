@@ -1724,6 +1724,16 @@ static bool emitTargetCapabilityBindings(const RecordKeeper &records,
        << "    visit(op.getOperation(), false, false, builder->build());\n"
        << "  });\n";
   }
+  // Free-function calls that take an NPUArchitectureKind argument would pick
+  // up another catalogue's overload in bishengir::npu through ADL once two
+  // catalogue headers share one translation unit. Qualify every catalogue
+  // call with the scope namespace so emission order between catalogues does
+  // not matter. The default catalogue stays unqualified and keeps its
+  // original output.
+  std::string scopePrefix;
+  if (!scope.extraNamespace.empty())
+    scopePrefix = "::bishengir::npu::" + scope.extraNamespace + "::";
+
   os << "}\n\n"
         "struct CapabilityCatalogue {\n"
         "  using RequestStorage = CapabilityRequestStorage;\n"
@@ -1739,28 +1749,42 @@ static bool emitTargetCapabilityBindings(const RecordKeeper &records,
         "\n"
         "  template <typename Fn>\n"
         "  static void visit(::mlir::Operation *root, Fn &&fn) {\n"
-        "    visitBoundCapabilityOps(root, std::forward<Fn>(fn));\n"
+        "    "
+     << scopePrefix
+     << "visitBoundCapabilityOps(root, std::forward<Fn>(fn));\n"
         "  }\n"
         "  static Support query(Architecture architecture, const Request "
         "&request) {\n"
-        "    return queryNativeSupport(architecture, request);\n"
+        "    return "
+     << scopePrefix
+     << "queryNativeSupport(architecture, request);\n"
         "  }\n"
         "  static const ArchitectureCapabilityProfileDesc *\n"
         "  profile(Architecture architecture) {\n"
-        "    return lookupArchitectureCapabilityProfile(architecture);\n"
+        "    return "
+     << scopePrefix
+     << "lookupArchitectureCapabilityProfile(architecture);\n"
         "  }\n"
         "  static ::llvm::StringRef completeness(Completeness value) {\n"
-        "    return stringifyProfileCompleteness(value);\n"
+        "    return "
+     << scopePrefix
+     << "stringifyProfileCompleteness(value);\n"
         "  }\n"
         "  static ::llvm::StringRef property(PropertyKind kind) {\n"
-        "    return stringifyCapabilitySlotPropertyKind(kind);\n"
+        "    return "
+     << scopePrefix
+     << "stringifyCapabilitySlotPropertyKind(kind);\n"
         "  }\n"
         "  static ::llvm::StringRef parameter(ParameterKind kind) {\n"
-        "    return stringifyCapabilityParameterKind(kind);\n"
+        "    return "
+     << scopePrefix
+     << "stringifyCapabilityParameterKind(kind);\n"
         "  }\n"
         "  static ::std::optional<::llvm::StringRef> value(StoredValue stored) "
         "{\n"
-        "    return stringifyCapabilityValue(stored);\n"
+        "    return "
+     << scopePrefix
+     << "stringifyCapabilityValue(stored);\n"
         "  }\n"
         "};\n\n";
   emitNamespaceClose(os, scope);
