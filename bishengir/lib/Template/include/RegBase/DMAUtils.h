@@ -2149,7 +2149,7 @@ load_gm_to_ubuf_by_nddma(memref_t<__gm__ T, Rank> *src,
 #if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
       std::is_same_v<T, hifloat8_t> ||
 #endif
-      std::is_same_v<T, float8_e4m3_t> || std::is_same_v<T, float8_e5m2_t>,
+          std::is_same_v<T, float8_e4m3_t> || std::is_same_v<T, float8_e5m2_t>,
       uint8_t, T>;
   auto *sp = reinterpret_cast<__gm__ DmaType *>(src->aligned + src->offset);
   auto *dp = reinterpret_cast<__ubuf__ DmaType *>(dst->aligned + dst->offset -
@@ -2197,9 +2197,12 @@ load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
   // nddma_out_to_ub does not support FP8, and this is only data movement which
   // has no impact on precision. Conversion to U8 is feasible as long as the bit
   // width is the same.
-  using DmaType = std::conditional_t<std::is_same_v<T, float8_e4m3_t> ||
-                                         std::is_same_v<T, float8_e5m2_t>,
-                                     uint8_t, T>;
+  using DmaType = std::conditional_t<
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+      std::is_same_v<T, hifloat8_t> ||
+#endif
+          std::is_same_v<T, float8_e4m3_t> || std::is_same_v<T, float8_e5m2_t>,
+      uint8_t, T>;
 
   // NDDMA expresses padding natively in the descriptor: every loop_desc
   // level carries 8-bit element-granular lp/rp counts, and the pad_val
@@ -2308,9 +2311,12 @@ load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
       "DMA only supports types up to 64-bit. "
       "Larger types (e.g., long double, __int128) are not supported.");
 
-  using DmaType = std::conditional_t<std::is_same_v<T, float8_e4m3_t> ||
-                                         std::is_same_v<T, float8_e5m2_t>,
-                                     uint8_t, T>;
+  using DmaType = std::conditional_t<
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+      std::is_same_v<T, hifloat8_t> ||
+#endif
+          std::is_same_v<T, float8_e4m3_t> || std::is_same_v<T, float8_e5m2_t>,
+      uint8_t, T>;
 
   __gm__ DmaType *src_ptr =
       reinterpret_cast<__gm__ DmaType *>(src->aligned + src->offset);

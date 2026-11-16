@@ -269,6 +269,9 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
       left_padding_num == 0 ||
       (stride1_ub == 1 && pad_mode != PadMode::FirstElem &&
        !std::is_same_v<T, int64_t> && !std::is_same_v<T, uint64_t> &&
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+       !std::is_same_v<T, hifloat8_t> &&
+#endif
        !std::is_same_v<T, float8_e4m3_t> && !std::is_same_v<T, float8_e5m2_t> &&
        isStrideAligned<T>(stride0_ub) &&
        CEIL_FACTOR(left_padding_num + dst->sizes[1],
