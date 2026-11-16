@@ -178,3 +178,49 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     return
   }
 }
+
+// -----
+// A sync-block critical section still needs one iteration per logical block
+// after canonicalization erases get_block_idx.
+// CHECK-LABEL: func.func @blockify_lock_without_program_id(
+// CHECK:         %[[IDX:.*]] = hivm.hir.get_block_idx
+// CHECK:         %[[STEP:.*]] = arith.constant 56 : i32
+// CHECK:         %[[LB:.*]] = arith.trunci %[[IDX]]
+// CHECK:         scf.for %{{.*}} = %[[LB]] to %{{.*}} step %[[STEP]]
+// CHECK:           hivm.hir.sync_block_lock
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, hivm.module_core_type = #hivm.module_core_type<AIV>} {
+  func.func @blockify_lock_without_program_id(%n: i32, %lock: memref<1xi64>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    annotation.mark %n {logical_block_num} : i32
+    hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%lock : memref<1xi64>)
+    hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%lock : memref<1xi64>)
+    return
+  }
+}
+
+// -----
+// A hardware atomic store is still present at this pass.
+// CHECK-LABEL: func.func @blockify_atomic_without_program_id(
+// CHECK:         scf.for
+// CHECK:           hivm.hir.store {{.*}} atomic = <add>
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, hivm.module_core_type = #hivm.module_core_type<AIV>} {
+  func.func @blockify_atomic_without_program_id(%n: i32, %src: memref<1xi32>, %dst: memref<1xi32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    annotation.mark %n {logical_block_num} : i32
+    hivm.hir.store ins(%src : memref<1xi32>) outs(%dst : memref<1xi32>) atomic = <add>
+    return
+  }
+}
+
+// -----
+// No atomic and no sync-block lock: do not invent a stride loop. That loop
+// multi-buffers every load in the body.
+// CHECK-LABEL: func.func @blockify_skipped_without_atomic(
+// CHECK-NOT: hivm.hir.get_block_idx
+// CHECK-NOT: scf.for
+// CHECK: hivm.hir.set_mask_norm
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, hivm.module_core_type = #hivm.module_core_type<AIV>} {
+  func.func @blockify_skipped_without_atomic(%n: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    annotation.mark %n {logical_block_num} : i32
+    hivm.hir.set_mask_norm
+    return
+  }
+}
