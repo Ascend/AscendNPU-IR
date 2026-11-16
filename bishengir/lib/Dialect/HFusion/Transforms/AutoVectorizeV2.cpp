@@ -15,6 +15,7 @@
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/TilingUtils.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Attrs.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/LiftScalarProducer.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/PlanContext.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Verify.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
@@ -38,15 +39,11 @@
 #include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
 #include "mlir/Dialect/Transform/Transforms/TransformInterpreterUtils.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
-#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/PassManager.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -1340,75 +1337,6 @@ void AutoVectorizeV2::emitTransformSequenceIR(func::FuncOp func,
                      hfusion::auto_vectorize::getTransformRootTag(funcName)));
 }
 
-/// Lift one producer per match; retain scalar definitions until this driver
-/// ends. Keeping the cache keys alive avoids rewrite-listener bookkeeping.
-using LiftedScalarMap = DenseMap<std::pair<Value, Type>, Value>;
-struct LiftBroadcastScalarProducer final
-    : OpRewritePattern<vector::BroadcastOp> {
-  LiftBroadcastScalarProducer(MLIRContext *context, LiftedScalarMap &lifted)
-      : OpRewritePattern(context), lifted(lifted) {}
-  LiftedScalarMap &lifted;
-
-  LogicalResult matchAndRewrite(vector::BroadcastOp broadcast,
-                                PatternRewriter &rewriter) const override {
-    Operation *scalar = broadcast.getSource().getDefiningOp();
-    if (!scalar || scalar->getBlock() != broadcast->getBlock() ||
-        scalar->getNumRegions() != 0 || scalar->getNumResults() != 1 ||
-        scalar->getNumOperands() == 0 || !isMemoryEffectFree(scalar) ||
-        !OpTrait::hasElementwiseMappableTraits(scalar) ||
-        !scalar->getResult(0).getType().isIntOrFloat() ||
-        !llvm::all_of(scalar->getOperandTypes(),
-                      [](Type type) { return type.isIntOrFloat(); }))
-      return failure();
-
-    // Measured on Ascend950PR with this build (2026-11-14, f32): the vector
-    // form of float division flushes subnormal operands, so lifting a scalar
-    // division into the vector domain is not value preserving. Lane 0 bit
-    // patterns, scalar route vs vector route, same operands:
-    //   1e-38 / 3e-38 -> 0x3eaaaaaa vs 0x00000000
-    //   3e-38 / 1e-38 -> 0x40400001 vs 0x7f800000
-    //   1e-38 / 1e-38 -> 0x3f800000 vs 0x7fffffff
-    // addf, subf, mulf, negf, maxf, minf, sqrt, exp and log stayed bit
-    // identical over the same operand set, so only division-like ops are
-    // excluded. arith::RemFOp is excluded by analogy and was not measured.
-    if (isa<arith::DivFOp, arith::RemFOp>(scalar))
-      return failure();
-
-    // Never pull a producer across an outlined or control-flow boundary.
-    bool inVectorRegion = false;
-    for (Operation *parent = scalar->getParentOp(); parent;
-         parent = parent->getParentOp())
-      for (NamedAttribute attr : parent->getAttrs())
-        inVectorRegion |=
-            attr.getName().strref().starts_with("outlined-loop-target-");
-    if (!inVectorRegion)
-      return failure();
-
-    auto resultType = cast<VectorType>(broadcast.getType());
-    auto key = std::make_pair(broadcast.getSource(), Type(resultType));
-    auto found = lifted.find(key);
-    if (found != lifted.end()) {
-      rewriter.replaceOp(broadcast, found->second);
-      return success();
-    }
-    OpBuilder::InsertionGuard guard(rewriter);
-    rewriter.setInsertionPointAfter(scalar);
-    IRMapping mapping;
-    for (Value operand : scalar->getOperands()) {
-      if (mapping.contains(operand))
-        continue;
-      auto operandType = resultType.cloneWith(std::nullopt, operand.getType());
-      mapping.map(operand, rewriter.create<vector::BroadcastOp>(
-                               broadcast.getLoc(), operandType, operand));
-    }
-    Operation *vectorOp = rewriter.clone(*scalar, mapping);
-    vectorOp->getResult(0).setType(resultType);
-    lifted[key] = vectorOp->getResult(0);
-    rewriter.replaceOp(broadcast, vectorOp->getResults());
-    return success();
-  }
-};
-
 LogicalResult AutoVectorizeV2::vectorize(func::FuncOp func,
                                          RetriedOptions &retryCtx,
                                          OpBuilder &builder) {
@@ -1422,34 +1350,11 @@ LogicalResult AutoVectorizeV2::vectorize(func::FuncOp func,
   if (failed(result))
     return failure();
 
-  LiftedScalarMap lifted;
-  RewritePatternSet patterns(func.getContext());
-  patterns.add<LiftBroadcastScalarProducer>(func.getContext(), lifted);
-  GreedyRewriteConfig config;
-  config.enableRegionSimplification = GreedySimplifyRegionLevel::Disabled;
-  // Only the collected broadcast roots may enter the worklist: scalar keys,
-  // cached vector results and unrelated outlined markers must stay alive.
-  config.strictMode = GreedyRewriteStrictness::ExistingOps;
-  config.fold = false;
-  FrozenRewritePatternSet frozenPatterns(std::move(patterns));
-  size_t remainingRounds = 1;
-  func.walk([&](Operation *) { ++remainingRounds; });
-  while (remainingRounds--) {
-    SmallVector<Operation *> broadcasts;
-    func.walk([&](vector::BroadcastOp op) { broadcasts.push_back(op); });
-    bool changed = false;
-    if (failed(applyOpPatternsGreedily(broadcasts, frozenPatterns, config,
-                                       &changed)))
-      return failure();
-    if (!changed)
-      break;
-    if (remainingRounds == 0)
-      return failure();
-  }
+  if (failed(hfusion::liftScalarProducers(func)))
+    return failure();
 
   hfusion::AutoVectorizeVerifier verifier;
   return failure(
-      failed(result) ||
       failed(verifier.verifyFreeVectorRegion(true).emitDiagnostics(false).check(
           func)));
 }
