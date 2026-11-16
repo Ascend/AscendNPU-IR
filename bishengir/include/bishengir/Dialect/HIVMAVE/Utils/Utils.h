@@ -18,7 +18,6 @@
 namespace mlir {
 namespace hivmave {
 
-
 Value castToDstVectorType(Value src, VectorType dstTy, OpBuilder &b);
 
 /// Get the indices that the given load/store operation is operating on.
@@ -29,9 +28,14 @@ ValueRange getIndices(mlir::Operation *op);
 Value computeLinearMemRefOffset(OpBuilder &builder, Location loc, Value memref,
                                 ValueRange indices, Type resultType);
 
-/// Check whether the memref with indices is aligned by 32B.
+/// Check whether the memref with indices meets the default hardware alignment.
 bool isLoadStoreIndexAligned(Value memrefVal,
                              mlir::Operation::operand_range indices);
+
+/// Check whether the memref with indices meets the specified alignment.
+bool isLoadStoreIndexAligned(Value memrefVal,
+                             mlir::Operation::operand_range indices,
+                             uint32_t requiredAlignBytes);
 
 /// Get lowest element number from PGE pattern.
 uint32_t getNumfromPgePattern(VFPgeOp pge);
@@ -47,7 +51,7 @@ Value getElemSizeByStoreMask(Value mask, Type dElemType, Location loc,
 
 /// Create mask using PGE
 Value createMaskByPGE(VectorType vecTy, PatternRewriter &rewriter, Location loc,
-                     bool allTrue = true);
+                      bool allTrue = true);
 
 /// Find the reuseable mask for the masked op.
 Value findReuseableMask(Operation *maskedOp, PatternRewriter &rewriter);
@@ -67,7 +71,8 @@ struct ForOpLegalization : public OpRewritePattern<scf::ForOp> {
 };
 
 /// Safely extracts a constant integer value from a Value.
-/// Supports arith.constant, llvm.constant, casts, and function arguments attributes.
+/// Supports arith.constant, llvm.constant, casts, and function arguments
+/// attributes.
 std::optional<int64_t> getConstantIntValue(Value val);
 
 /// Tags constant arguments on callee FuncOps for inter-procedural analysis.
@@ -99,8 +104,7 @@ Value constrainVectorLayout(Value src, VecMemType targetLayout,
 
 /// Checks if a Vector Store/Write operation accesses memory continuously.
 /// Logic: LoopStep * MemRefStride == VectorLength
-template <typename SourceOp>
-bool checkVectorStoreContinuity(SourceOp op) {
+template <typename SourceOp> bool checkVectorStoreContinuity(SourceOp op) {
   // 1. Locate the outer loop (scf::ForOp)
   auto forOp = op->template getParentOfType<scf::ForOp>();
   if (!forOp) {
