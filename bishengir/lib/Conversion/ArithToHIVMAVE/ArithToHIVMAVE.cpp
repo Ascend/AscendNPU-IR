@@ -1722,8 +1722,11 @@ struct ConstantOpToHivmSegmentedVCILowering
       if (stepAt < 0)
         break;
 
-      // Segments must tile the vector evenly, and there must be >= 2 of them.
-      if (n % stepAt != 0 || n / stepAt < 2)
+      // Require the first boundary to be followed by one complete segment,
+      // rather than inferring a staircase from a jump near the end.  A later
+      // final segment may be partial: masked gathers commonly end their active
+      // prefix in the middle of one.
+      if (n / stepAt < 2)
         return std::nullopt;
       if (static_cast<int64_t>(form.terms.size()) >= kMaxGapTerms)
         return std::nullopt;

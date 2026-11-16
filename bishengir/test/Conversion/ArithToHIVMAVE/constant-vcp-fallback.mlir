@@ -2,10 +2,16 @@
 // VCP-only candidates must fall through to segmented VCI, not abort.
 
 // CHECK-LABEL: @vcp_4_8_i16_plain(
-// CHECK: ave.hir.vci
-// CHECK: ave.hir.vdiv
-// CHECK: ave.hir.vadd
-// CHECK: return
+// CHECK: %[[MASK:.*]] = ave.hir.pge <ALL> : vector<32xi1>
+// CHECK: %[[ZERO:.*]] = arith.constant 0 : i16
+// CHECK: %[[IDX:.*]] = ave.hir.vci %[[ZERO]], <INCREASE> : i16, vector<32xi16>
+// CHECK: %[[LEN:.*]] = arith.constant 4 : i16
+// CHECK: %[[LEN_VEC:.*]] = ave.hir.broadcast %[[LEN]], %[[MASK]] : i16, vector<32xi1> -> vector<32xi16>
+// CHECK: %[[SEG:.*]] = ave.hir.vdiv %[[IDX]], %[[LEN_VEC]], %[[MASK]] {cast = #hivm.cast<cast_unsigned>} : vector<32xi16>, vector<32xi1>
+// CHECK: %[[GAP:.*]] = arith.constant 4 : i16
+// CHECK: %[[GAP_TERM:.*]] = ave.hir.vmuls %[[SEG]], %[[GAP]], %[[MASK]] : vector<32xi16>, i16, vector<32xi1>
+// CHECK: %[[RESULT:.*]] = ave.hir.vadd %[[IDX]], %[[GAP_TERM]], %[[MASK]] : vector<32xi16>, vector<32xi1>
+// CHECK: return %[[RESULT]] : vector<32xi16>
 func.func @vcp_4_8_i16_plain() -> vector<32xi16> attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
   %c = arith.constant dense<[0, 1, 2, 3, 8, 9, 10, 11, 16, 17, 18, 19, 24, 25, 26, 27, 32, 33, 34, 35, 40, 41, 42, 43, 48, 49, 50, 51, 56, 57, 58, 59]> : vector<32xi16>
   return %c : vector<32xi16>
@@ -14,10 +20,20 @@ func.func @vcp_4_8_i16_plain() -> vector<32xi16> attributes {hivm.func_core_type
 // -----
 
 // CHECK-LABEL: @vcp_4_8_i16_scaled(
-// CHECK: ave.hir.vci
-// CHECK: ave.hir.vdiv
-// CHECK: ave.hir.vadd
-// CHECK: return
+// CHECK: %[[MASK:.*]] = ave.hir.pge <ALL> : vector<32xi1>
+// CHECK: %[[ZERO:.*]] = arith.constant 0 : i16
+// CHECK: %[[IDX:.*]] = ave.hir.vci %[[ZERO]], <INCREASE> : i16, vector<32xi16>
+// CHECK: %[[TWO:.*]] = arith.constant 2 : i16
+// CHECK: %[[LINEAR:.*]] = ave.hir.vmuls %[[IDX]], %[[TWO]], %[[MASK]] : vector<32xi16>, i16, vector<32xi1>
+// CHECK: %[[LEN:.*]] = arith.constant 4 : i16
+// CHECK: %[[LEN_VEC:.*]] = ave.hir.broadcast %[[LEN]], %[[MASK]] : i16, vector<32xi1> -> vector<32xi16>
+// CHECK: %[[SEG:.*]] = ave.hir.vdiv %[[IDX]], %[[LEN_VEC]], %[[MASK]] {cast = #hivm.cast<cast_unsigned>} : vector<32xi16>, vector<32xi1>
+// CHECK: %[[GAP:.*]] = arith.constant 8 : i16
+// CHECK: %[[GAP_TERM:.*]] = ave.hir.vmuls %[[SEG]], %[[GAP]], %[[MASK]] : vector<32xi16>, i16, vector<32xi1>
+// CHECK: %[[SUM:.*]] = ave.hir.vadd %[[LINEAR]], %[[GAP_TERM]], %[[MASK]] : vector<32xi16>, vector<32xi1>
+// CHECK: %[[BASE:.*]] = arith.constant 7 : i16
+// CHECK: %[[RESULT:.*]] = ave.hir.vadds %[[SUM]], %[[BASE]], %[[MASK]] : vector<32xi16>, i16, vector<32xi1>
+// CHECK: return %[[RESULT]] : vector<32xi16>
 func.func @vcp_4_8_i16_scaled() -> vector<32xi16> attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
   %c = arith.constant dense<[7, 9, 11, 13, 23, 25, 27, 29, 39, 41, 43, 45, 55, 57, 59, 61, 71, 73, 75, 77, 87, 89, 91, 93, 103, 105, 107, 109, 119, 121, 123, 125]> : vector<32xi16>
   return %c : vector<32xi16>
@@ -26,10 +42,20 @@ func.func @vcp_4_8_i16_scaled() -> vector<32xi16> attributes {hivm.func_core_typ
 // -----
 
 // CHECK-LABEL: @vcp_4_8_i16_decreasing(
-// CHECK: ave.hir.vci
-// CHECK: ave.hir.vdiv
-// CHECK: ave.hir.vadd
-// CHECK: return
+// CHECK: %[[MASK:.*]] = ave.hir.pge <ALL> : vector<32xi1>
+// CHECK: %[[ZERO:.*]] = arith.constant 0 : i16
+// CHECK: %[[IDX:.*]] = ave.hir.vci %[[ZERO]], <INCREASE> : i16, vector<32xi16>
+// CHECK: %[[NEG_ONE:.*]] = arith.constant -1 : i16
+// CHECK: %[[LINEAR:.*]] = ave.hir.vmuls %[[IDX]], %[[NEG_ONE]], %[[MASK]] : vector<32xi16>, i16, vector<32xi1>
+// CHECK: %[[LEN:.*]] = arith.constant 4 : i16
+// CHECK: %[[LEN_VEC:.*]] = ave.hir.broadcast %[[LEN]], %[[MASK]] : i16, vector<32xi1> -> vector<32xi16>
+// CHECK: %[[SEG:.*]] = ave.hir.vdiv %[[IDX]], %[[LEN_VEC]], %[[MASK]] {cast = #hivm.cast<cast_unsigned>} : vector<32xi16>, vector<32xi1>
+// CHECK: %[[NEG_GAP:.*]] = arith.constant -4 : i16
+// CHECK: %[[GAP_TERM:.*]] = ave.hir.vmuls %[[SEG]], %[[NEG_GAP]], %[[MASK]] : vector<32xi16>, i16, vector<32xi1>
+// CHECK: %[[SUM:.*]] = ave.hir.vadd %[[LINEAR]], %[[GAP_TERM]], %[[MASK]] : vector<32xi16>, vector<32xi1>
+// CHECK: %[[BASE:.*]] = arith.constant 200 : i16
+// CHECK: %[[RESULT:.*]] = ave.hir.vadds %[[SUM]], %[[BASE]], %[[MASK]] : vector<32xi16>, i16, vector<32xi1>
+// CHECK: return %[[RESULT]] : vector<32xi16>
 func.func @vcp_4_8_i16_decreasing() -> vector<32xi16> attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
   %c = arith.constant dense<[200, 199, 198, 197, 192, 191, 190, 189, 184, 183, 182, 181, 176, 175, 174, 173, 168, 167, 166, 165, 160, 159, 158, 157, 152, 151, 150, 149, 144, 143, 142, 141]> : vector<32xi16>
   return %c : vector<32xi16>
@@ -357,6 +383,32 @@ func.func @vcp_8_32_i32_scaled() -> vector<32xi32> attributes {hivm.func_core_ty
 func.func @vcp_8_32_i32_decreasing() -> vector<32xi32> attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
   %c = arith.constant dense<[200, 199, 198, 197, 196, 195, 194, 193, 168, 167, 166, 165, 164, 163, 162, 161, 136, 135, 134, 133, 132, 131, 130, 129, 104, 103, 102, 101, 100, 99, 98, 97]> : vector<32xi32>
   return %c : vector<32xi32>
+}
+
+// -----
+
+// The active prefix ends in the middle of a 4-lane segment.  The segmented
+// matcher must accept the partial final segment, while the select restores the
+// zero padding on lanes 14..31.
+// CHECK-LABEL: @vcp_partial_segment_tail_i16(
+// CHECK: %[[MASK:.*]] = ave.hir.pge <ALL> : vector<32xi1>
+// CHECK: %[[ZERO:.*]] = arith.constant 0 : i16
+// CHECK: %[[IDX:.*]] = ave.hir.vci %[[ZERO]], <INCREASE> : i16, vector<32xi16>
+// CHECK: %[[LEN:.*]] = arith.constant 4 : i16
+// CHECK: %[[LEN_VEC:.*]] = ave.hir.broadcast %[[LEN]], %[[MASK]] : i16, vector<32xi1> -> vector<32xi16>
+// CHECK: %[[SEG:.*]] = ave.hir.vdiv %[[IDX]], %[[LEN_VEC]], %[[MASK]] {cast = #hivm.cast<cast_unsigned>} : vector<32xi16>, vector<32xi1>
+// CHECK: %[[GAP:.*]] = arith.constant 4 : i16
+// CHECK: %[[GAP_TERM:.*]] = ave.hir.vmuls %[[SEG]], %[[GAP]], %[[MASK]] : vector<32xi16>, i16, vector<32xi1>
+// CHECK: %[[SEQ:.*]] = ave.hir.vadd %[[IDX]], %[[GAP_TERM]], %[[MASK]] : vector<32xi16>, vector<32xi1>
+// CHECK: %[[TAIL_ZERO:.*]] = arith.constant 0 : i16
+// CHECK: %[[ZERO_TAIL:.*]] = ave.hir.broadcast %[[TAIL_ZERO]], %[[MASK]] : i16, vector<32xi1> -> vector<32xi16>
+// CHECK: %[[C14:.*]] = arith.constant 14 : index
+// CHECK: %[[PREFIX:.*]], %{{.*}} = ave.hir.plt %[[C14]] : vector<32xi1>, index
+// CHECK: %[[RESULT:.*]] = ave.hir.vsel %[[PREFIX]], %[[SEQ]], %[[ZERO_TAIL]] : vector<32xi1>, vector<32xi16>
+// CHECK: return %[[RESULT]] : vector<32xi16>
+func.func @vcp_partial_segment_tail_i16() -> vector<32xi16> attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %c = arith.constant dense<[0, 1, 2, 3, 8, 9, 10, 11, 16, 17, 18, 19, 24, 25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]> : vector<32xi16>
+  return %c : vector<32xi16>
 }
 
 // -----
