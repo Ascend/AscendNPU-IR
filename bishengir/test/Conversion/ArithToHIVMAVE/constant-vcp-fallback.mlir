@@ -6,7 +6,8 @@
 // CHECK: %[[ZERO:.*]] = arith.constant 0 : i16
 // CHECK: %[[IDX:.*]] = ave.hir.vci %[[ZERO]], <INCREASE> : i16, vector<32xi16>
 // CHECK: %[[LEN:.*]] = arith.constant 4 : i16
-// CHECK: %[[LEN_VEC:.*]] = ave.hir.broadcast %[[LEN]], %[[MASK]] : i16, vector<32xi1> -> vector<32xi16>
+// CHECK: %[[LEN_MASK:.*]] = ave.hir.pge <ALL> : vector<32xi1>
+// CHECK: %[[LEN_VEC:.*]] = ave.hir.broadcast %[[LEN]], %[[LEN_MASK]] : i16, vector<32xi1> -> vector<32xi16>
 // CHECK: %[[SEG:.*]] = ave.hir.vdiv %[[IDX]], %[[LEN_VEC]], %[[MASK]] {cast = #hivm.cast<cast_unsigned>} : vector<32xi16>, vector<32xi1>
 // CHECK: %[[GAP:.*]] = arith.constant 4 : i16
 // CHECK: %[[GAP_TERM:.*]] = ave.hir.vmuls %[[SEG]], %[[GAP]], %[[MASK]] : vector<32xi16>, i16, vector<32xi1>
@@ -26,7 +27,8 @@ func.func @vcp_4_8_i16_plain() -> vector<32xi16> attributes {hivm.func_core_type
 // CHECK: %[[TWO:.*]] = arith.constant 2 : i16
 // CHECK: %[[LINEAR:.*]] = ave.hir.vmuls %[[IDX]], %[[TWO]], %[[MASK]] : vector<32xi16>, i16, vector<32xi1>
 // CHECK: %[[LEN:.*]] = arith.constant 4 : i16
-// CHECK: %[[LEN_VEC:.*]] = ave.hir.broadcast %[[LEN]], %[[MASK]] : i16, vector<32xi1> -> vector<32xi16>
+// CHECK: %[[LEN_MASK:.*]] = ave.hir.pge <ALL> : vector<32xi1>
+// CHECK: %[[LEN_VEC:.*]] = ave.hir.broadcast %[[LEN]], %[[LEN_MASK]] : i16, vector<32xi1> -> vector<32xi16>
 // CHECK: %[[SEG:.*]] = ave.hir.vdiv %[[IDX]], %[[LEN_VEC]], %[[MASK]] {cast = #hivm.cast<cast_unsigned>} : vector<32xi16>, vector<32xi1>
 // CHECK: %[[GAP:.*]] = arith.constant 8 : i16
 // CHECK: %[[GAP_TERM:.*]] = ave.hir.vmuls %[[SEG]], %[[GAP]], %[[MASK]] : vector<32xi16>, i16, vector<32xi1>
@@ -48,7 +50,8 @@ func.func @vcp_4_8_i16_scaled() -> vector<32xi16> attributes {hivm.func_core_typ
 // CHECK: %[[NEG_ONE:.*]] = arith.constant -1 : i16
 // CHECK: %[[LINEAR:.*]] = ave.hir.vmuls %[[IDX]], %[[NEG_ONE]], %[[MASK]] : vector<32xi16>, i16, vector<32xi1>
 // CHECK: %[[LEN:.*]] = arith.constant 4 : i16
-// CHECK: %[[LEN_VEC:.*]] = ave.hir.broadcast %[[LEN]], %[[MASK]] : i16, vector<32xi1> -> vector<32xi16>
+// CHECK: %[[LEN_MASK:.*]] = ave.hir.pge <ALL> : vector<32xi1>
+// CHECK: %[[LEN_VEC:.*]] = ave.hir.broadcast %[[LEN]], %[[LEN_MASK]] : i16, vector<32xi1> -> vector<32xi16>
 // CHECK: %[[SEG:.*]] = ave.hir.vdiv %[[IDX]], %[[LEN_VEC]], %[[MASK]] {cast = #hivm.cast<cast_unsigned>} : vector<32xi16>, vector<32xi1>
 // CHECK: %[[NEG_GAP:.*]] = arith.constant -4 : i16
 // CHECK: %[[GAP_TERM:.*]] = ave.hir.vmuls %[[SEG]], %[[NEG_GAP]], %[[MASK]] : vector<32xi16>, i16, vector<32xi1>
@@ -395,13 +398,15 @@ func.func @vcp_8_32_i32_decreasing() -> vector<32xi32> attributes {hivm.func_cor
 // CHECK: %[[ZERO:.*]] = arith.constant 0 : i16
 // CHECK: %[[IDX:.*]] = ave.hir.vci %[[ZERO]], <INCREASE> : i16, vector<32xi16>
 // CHECK: %[[LEN:.*]] = arith.constant 4 : i16
-// CHECK: %[[LEN_VEC:.*]] = ave.hir.broadcast %[[LEN]], %[[MASK]] : i16, vector<32xi1> -> vector<32xi16>
+// CHECK: %[[LEN_MASK:.*]] = ave.hir.pge <ALL> : vector<32xi1>
+// CHECK: %[[LEN_VEC:.*]] = ave.hir.broadcast %[[LEN]], %[[LEN_MASK]] : i16, vector<32xi1> -> vector<32xi16>
 // CHECK: %[[SEG:.*]] = ave.hir.vdiv %[[IDX]], %[[LEN_VEC]], %[[MASK]] {cast = #hivm.cast<cast_unsigned>} : vector<32xi16>, vector<32xi1>
 // CHECK: %[[GAP:.*]] = arith.constant 4 : i16
 // CHECK: %[[GAP_TERM:.*]] = ave.hir.vmuls %[[SEG]], %[[GAP]], %[[MASK]] : vector<32xi16>, i16, vector<32xi1>
 // CHECK: %[[SEQ:.*]] = ave.hir.vadd %[[IDX]], %[[GAP_TERM]], %[[MASK]] : vector<32xi16>, vector<32xi1>
 // CHECK: %[[TAIL_ZERO:.*]] = arith.constant 0 : i16
-// CHECK: %[[ZERO_TAIL:.*]] = ave.hir.broadcast %[[TAIL_ZERO]], %[[MASK]] : i16, vector<32xi1> -> vector<32xi16>
+// CHECK: %[[TAIL_MASK:.*]] = ave.hir.pge <ALL> : vector<32xi1>
+// CHECK: %[[ZERO_TAIL:.*]] = ave.hir.broadcast %[[TAIL_ZERO]], %[[TAIL_MASK]] : i16, vector<32xi1> -> vector<32xi16>
 // CHECK: %[[C14:.*]] = arith.constant 14 : index
 // CHECK: %[[PREFIX:.*]], %{{.*}} = ave.hir.plt %[[C14]] : vector<32xi1>, index
 // CHECK: %[[RESULT:.*]] = ave.hir.vsel %[[PREFIX]], %[[SEQ]], %[[ZERO_TAIL]] : vector<32xi1>, vector<32xi16>
