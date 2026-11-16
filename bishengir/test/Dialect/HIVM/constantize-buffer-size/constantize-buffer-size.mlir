@@ -1,4 +1,5 @@
-// RUN: bishengir-opt --hivm-constantize-buffer-size=bypass-shape-registry=true -split-input-file -allow-unregistered-dialect %s | FileCheck %s
+// RUN: bishengir-opt --hivm-constantize-buffer-size -split-input-file -allow-unregistered-dialect %s | FileCheck %s
+// RUN: bishengir-opt --hivm-constantize-buffer-size="enable-preload=true set-workspace-multibuffer=2" -split-input-file -allow-unregistered-dialect %s | FileCheck %s
 
 #map = affine_map<(d0) -> (d0, 32)>
 func.func @test0(%arg0 : index) {
@@ -163,4 +164,43 @@ func.func @affine_max_all_branches_bounded(%arg0 : index, %arg1 : index) {
   %alloc = memref.alloc(%size2) : memref<?x16xi32>
   annotation.mark %alloc {buffer_size_in_byte = 2048 : i64} : memref<?x16xi32>
   "some_use"(%alloc) : (memref<?x16xi32>) -> ()
+}
+
+// -----
+
+// Compare the allocation size and annotation in bytes.
+#map = affine_map<(d0) -> (d0, 32)>
+// CHECK-LABEL: func.func @test_unregistered_byte_compare
+func.func @test_unregistered_byte_compare(%arg0 : index) {
+  %size = affine.min #map(%arg0)
+  // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<2048xi8>
+  // CHECK: %[[VIEW:.*]] = memref.view %[[ALLOC]]
+  // CHECK: "some_use"(%[[VIEW]])
+  %alloc = memref.alloc(%size) : memref<?x16xi32>
+  annotation.mark %alloc {buffer_size_in_byte = 2048 : i64} : memref<?x16xi32>
+  "some_use"(%alloc) : (memref<?x16xi32>) -> ()
+}
+
+// -----
+
+// Runtime extents from dot_mask_2_kernel must not resolve to exact zero.
+// Reduced from SyncSolver/hivm-ccgss-reg.mlir.
+// CHECK-LABEL: func.func @masked_dot_extent
+func.func @masked_dot_extent(%m: i32, %n: i32) {
+  %c0 = arith.constant 0 : index
+  %c16 = arith.constant 16 : index
+  %mi = arith.index_cast %m : i32 to index
+  %m0 = arith.maxsi %mi, %c0 : index
+  %m1 = arith.minsi %m0, %c16 : index
+  %ni = arith.index_cast %n : i32 to index
+  %n0 = arith.maxsi %ni, %c0 : index
+  %n1 = arith.minsi %n0, %c16 : index
+  %rows = arith.minsi %m1, %c16 : index
+  %cols = arith.minsi %n1, %c16 : index
+  // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<1024xi8, #hivm.address_space<ub>>
+  // CHECK: %[[VIEW:.*]] = memref.view %[[ALLOC]]
+  // CHECK: "some_use"(%[[VIEW]])
+  %alloc = memref.alloc(%rows, %cols) : memref<?x?xf32, #hivm.address_space<ub>>
+  annotation.mark %alloc {buffer_size_in_byte = 1024 : i64} : memref<?x?xf32, #hivm.address_space<ub>>
+  "some_use"(%alloc) : (memref<?x?xf32, #hivm.address_space<ub>>) -> ()
 }
