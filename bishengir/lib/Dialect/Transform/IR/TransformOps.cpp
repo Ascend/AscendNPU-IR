@@ -152,9 +152,10 @@ FailureOr<Value> traceReshapeOrSliceSingleProducer(Value input) {
 }
 
 bool hasAttrWithPrefix(Operation *op, StringRef prefix) {
-  return llvm::any_of(op->getAttrs(), [&](NamedAttribute attr) {
-    return attr.getName().strref().starts_with(prefix);
-  });
+  return llvm::any_of(op->getRawDictionaryAttrs().getValue(),
+                      [&](NamedAttribute attr) {
+                        return attr.getName().strref().starts_with(prefix);
+                      });
 }
 
 bool isTiledSliceBoundary(LoopLikeOpInterface loop) {
@@ -162,36 +163,29 @@ bool isTiledSliceBoundary(LoopLikeOpInterface loop) {
          hasAttrWithPrefix(loop.getOperation(), "outlined-loop-target-");
 }
 
-// Existing AV2 target labels cover both fusion and vectorization candidates.
-// Include the root operation and nested operations when checking a move.
-bool hasPendingFusionOp(Operation *op) {
-  auto walker = [](Operation *nested) {
-    return hasAttrWithPrefix(nested, "hfusion-auto-vectorize-target-")
-               ? WalkResult::interrupt()
-               : WalkResult::advance();
+// Moving a region operation also moves its contents, so check the entire subtree.
+bool canMoveAcrossAV2Boundary(Operation *op, bool preserveSlices) {
+  auto walker = [preserveSlices](Operation *nested) {
+    if (preserveSlices && isa<tensor::ExtractSliceOp>(nested))
+      return WalkResult::interrupt();
+    if (hasAttrWithPrefix(nested, "hfusion-auto-vectorize-target-"))
+      return WalkResult::interrupt();
+    return WalkResult::advance();
   };
-  return op->walk(walker).wasInterrupted();
-}
-
-bool hasExtractSlice(Operation *op) {
-  auto walker = [](tensor::ExtractSliceOp) { return WalkResult::interrupt(); };
-  return op->walk(walker).wasInterrupted();
+  return !op->walk(walker).wasInterrupted();
 }
 
 // Check region operations as well: moving an entire region can otherwise carry
 // an extract_slice across the boundary without moving the slice individually.
 void moveLoopInvariantCodeWithSliceBoundary(LoopLikeOpInterface loop) {
+  const bool preserveSlices = isTiledSliceBoundary(loop);
   moveLoopInvariantCode(
       loop.getLoopRegions(),
       [&](Value value, Region *) { return loop.isDefinedOutsideOfLoop(value); },
       [&](Operation *op, Region *) {
-        // A region is also immovable if it contains an AV2 operation that is
-        // still tracked by the fusion/vectorization plan.
-        if (hasPendingFusionOp(op))
+        if (!isMemoryEffectFree(op) || !isSpeculatable(op))
           return false;
-        if (isTiledSliceBoundary(loop) && hasExtractSlice(op))
-          return false;
-        return isMemoryEffectFree(op) && isSpeculatable(op);
+        return canMoveAcrossAV2Boundary(op, preserveSlices);
       },
       [&](Operation *op, Region *) { loop.moveOutOfLoop(op); });
 }
