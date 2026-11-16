@@ -1834,6 +1834,13 @@ FailureOr<Operation *> Flattener::expandForTail(OpTy &tensorOutOp,
     return failure();
   }
 
+  if (!hasCollapseGroup(collapsedVal)) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "Source is not expandable, collapse group not found"
+               << "\n");
+    return failure();
+  }
+
   CollapseGroup collapseGroup = getCollapseGroup(collapsedVal);
   if (collapseGroup.empty()) {
     LLVM_DEBUG(llvm::dbgs() << "Collapse group invalid"
@@ -1916,6 +1923,8 @@ void Flattener::adjustTensorOutOpSource(OpTy tensorOutOp, OpBuilder &builder) {
     return;
   if (isValueFromHead(source))
     return;
+  if (!hasCollapseGroup(source))
+    return;
   auto expandOp = expandForTail(tensorOutOp, source, builder);
   if (succeeded(expandOp)) {
     tensorOutOp.getSourceMutable().assign(expandOp.value()->getResult(0));
@@ -1930,6 +1939,8 @@ void Flattener::adjustTensorOutOpDest(OpTy tensorOutOp, OpBuilder &builder) {
   if (!utils::getShapeRank(dest).value_or(0))
     return;
   if (isValueFromHead(dest))
+    return;
+  if (!hasCollapseGroup(dest))
     return;
   auto expandOp = expandForTail(tensorOutOp, dest, builder);
   if (!failed(expandOp)) {
@@ -1946,6 +1957,8 @@ void Flattener::adjustTensorOutOpSrc(OpTy tensorOutOp, OpBuilder &builder) {
     return;
   if (!utils::getShapeRank(source).value_or(0))
     return;
+  if (!hasCollapseGroup(source))
+    return;
   auto expandOp = expandForTail(tensorOutOp, source, builder);
   if (!failed(expandOp)) {
     tensorOutOp.getSrcMutable().assign(expandOp.value()->getResult(0));
@@ -1960,6 +1973,8 @@ void Flattener::adjustMemrefOutOpSrc(OpTy memrefOutOp, OpBuilder &builder) {
   if (isValueFromHead(source))
     return;
   if (!utils::getShapeRank(source).value_or(0))
+    return;
+  if (!hasCollapseGroup(source))
     return;
   auto expandOp = expandForTail(memrefOutOp, source, builder);
   if (!failed(expandOp)) {
