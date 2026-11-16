@@ -828,7 +828,13 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
                                                        "getIndexingMaps"]>,
                        DeclareOpInterfaceMethods<
                            HIVMInferCoreTypeInterface, ["inferCoreType"]>,
-                       CustomLikeOpInterface],
+                       CustomLikeOpInterface,
+                       // Flattening is driven by the user-declared
+                       // `iterator_types` and `flatten_ranks` /
+                       // `flatten_symbols`. See CustomOpFlatten.cpp.
+                       DeclareOpInterfaceMethods<
+                           FlattenInterface, ["getFlattened", "getLimitedAxes",
+                                              "adjustTargetDimensions"]>],
                       traits)> {
 
   string customOpSummary = [{
@@ -992,6 +998,12 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       static constexpr StringLiteral kMaxRankAttrName = "max_rank";
       static constexpr StringLiteral kInplaceOutsAttrName = "inplace_outs";
       static constexpr StringLiteral kInlineModeAttrName = "hivm.inline_mode";
+      // Implementations for the ranks `hivm-flatten-ops` may collapse the op
+      // to: `flatten_symbols[i]` is called once the operands have been
+      // collapsed to rank `flatten_ranks[i]`. Ranks without an entry are never
+      // produced; the op then keeps its rank and `symbol`.
+      static constexpr StringLiteral kFlattenRanksAttrName = "flatten_ranks";
+      static constexpr StringLiteral kFlattenSymbolsAttrName = "flatten_symbols";
 
       int getMaxRank() {
         if (auto maxRankAttr =
