@@ -18,6 +18,7 @@
 #include "bishengir/Conversion/ArithToHFusion/ArithToHFusion.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
+#include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -312,69 +313,27 @@ struct ElementwiseOpToHFusionCompare : public OpRewritePattern<CompareOp> {
   using OpRewritePattern<CompareOp>::OpRewritePattern;
 
   static hfusion::CompareFn selectPredicate(arith::CmpFOp op) {
-    switch (op.getPredicate()) {
-    case arith::CmpFPredicate::OEQ:
-    case arith::CmpFPredicate::UEQ:
-      return CompareFn::veq;
-    case arith::CmpFPredicate::ONE:
-    case arith::CmpFPredicate::UNE:
-      return CompareFn::vne;
-    case arith::CmpFPredicate::OLE:
-    case arith::CmpFPredicate::ULE:
-      return CompareFn::vle;
-    case arith::CmpFPredicate::OLT:
-    case arith::CmpFPredicate::ULT:
-      return CompareFn::vlt;
-    case arith::CmpFPredicate::OGE:
-    case arith::CmpFPredicate::UGE:
-      return CompareFn::vge;
-    case arith::CmpFPredicate::OGT:
-    case arith::CmpFPredicate::UGT:
-      return CompareFn::vgt;
-    default:
+    auto predicate = utils::selectPredicate(op);
+    if (failed(predicate)) {
       llvm::report_fatal_error("unsupported arith cmp predicate to hfusion");
     }
+    return *predicate;
   }
 
   static hfusion::CompareFn selectPredicate(arith::CmpIOp op) {
-    switch (op.getPredicate()) {
-    case arith::CmpIPredicate::eq:
-      return CompareFn::veq;
-    case arith::CmpIPredicate::ne:
-      return CompareFn::vne;
-    case arith::CmpIPredicate::slt:
-      return CompareFn::vlt;
-    case arith::CmpIPredicate::sgt:
-      return CompareFn::vgt;
-    case arith::CmpIPredicate::sle:
-      return CompareFn::vle;
-    case arith::CmpIPredicate::sge:
-      return CompareFn::vge;
-    case arith::CmpIPredicate::ule:
-      return CompareFn::vule;
-    case arith::CmpIPredicate::uge:
-      return CompareFn::vuge;
-    case arith::CmpIPredicate::ugt:
-      return CompareFn::vugt;
-    case arith::CmpIPredicate::ult:
-      return CompareFn::vult;
+    auto predicate = utils::selectPredicate(op);
+    if (failed(predicate)) {
+      llvm::report_fatal_error("unsupported arith cmp predicate to hfusion");
     }
-    llvm::report_fatal_error("unsupported arith cmp predicate to hfusion");
+    return *predicate;
   }
 
   static hfusion::CompareFn selectI1Predicate(arith::CmpIOp op) {
-    switch (op.getPredicate()) {
-    case arith::CmpIPredicate::ult:
-      return CompareFn::vlt;
-    case arith::CmpIPredicate::ugt:
-      return CompareFn::vgt;
-    case arith::CmpIPredicate::ule:
-      return CompareFn::vle;
-    case arith::CmpIPredicate::uge:
-      return CompareFn::vge;
-    default:
+    auto predicate = utils::selectI1Predicate(op);
+    if (failed(predicate)) {
       llvm::report_fatal_error("i1 type cannot have signness information");
     }
+    return *predicate;
   }
 
   LogicalResult matchAndRewrite(CompareOp op,
