@@ -135,6 +135,10 @@ else:
     config.available_features.add("noasserts")
 
 
+if config.expensive_pattern_api_checks:
+    config.available_features.add("expensive-pattern-api-checks")
+
+
 # The execution-engine feature additionally requires the mlir-cpu-runner tool
 # and the runner runtime libraries to be present in the build tree, so tests
 # using them are skipped (instead of failing) in builds where they are absent.

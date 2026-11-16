@@ -74,7 +74,8 @@ void FlattenResult::fillWithIdentity() {
   int rank = 0;
   auto hivmOp = cast<HIVMStructuredOp>(op);
   for (auto opr : hivmOp.getHIVMOperands(false)) {
-    if (auto shapedType = dyn_cast<ShapedType>(opr->get().getType())) {
+    if (auto shapedType = dyn_cast<ShapedType>(opr->get().getType());
+        shapedType && shapedType.hasRank()) {
       rank = shapedType.getRank();
     }
     operandTypes.emplace_back(hivmOp.isDpsInput(opr), opr->get().getType());

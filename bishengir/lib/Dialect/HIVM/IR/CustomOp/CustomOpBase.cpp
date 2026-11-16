@@ -412,6 +412,56 @@ void printForCustomOps(CustomOpT op, OpAsmPrinter &p) {
 }
 
 template <typename CustomOpT>
+static LogicalResult verifyCustomOpFlattenSymbols(CustomOpT op) {
+  Attribute ranks = op->getAttr(CustomOpT::kFlattenRanksAttrName);
+  Attribute symbols = op->getAttr(CustomOpT::kFlattenSymbolsAttrName);
+  if (!ranks && !symbols)
+    return success();
+  if (!ranks || !symbols)
+    return op.emitOpError()
+           << "Either " << CustomOpT::kFlattenRanksAttrName << " or "
+           << CustomOpT::kFlattenSymbolsAttrName << " missing";
+  auto ranksAttr = dyn_cast<ArrayAttr>(ranks);
+  auto symbolsAttr = dyn_cast<ArrayAttr>(symbols);
+  if (!ranksAttr || !symbolsAttr)
+    return op.emitOpError()
+           << CustomOpT::kFlattenRanksAttrName << " and "
+           << CustomOpT::kFlattenSymbolsAttrName << " must be arrays";
+  if (ranksAttr.size() != symbolsAttr.size())
+    return op.emitOpError()
+           << CustomOpT::kFlattenRanksAttrName << " and "
+           << CustomOpT::kFlattenSymbolsAttrName << " size mismatch";
+
+  // Signed DenseMap keys reserve valid boundary ranks as sentinels. All ranks
+  // are positive and fit in int64_t, so unsigned sentinels are out of range.
+  llvm::DenseSet<uint64_t> seenRanks;
+  for (Attribute rankAttr : ranksAttr) {
+    auto intAttr = dyn_cast<IntegerAttr>(rankAttr);
+    if (!intAttr || intAttr.getValue().isNegative() ||
+        intAttr.getValue().isZero())
+      return op.emitOpError() << CustomOpT::kFlattenRanksAttrName
+                              << " must be an array of positive integers";
+    // Check the APInt before converting: a wider value can truncate to a
+    // different rank in release builds (for example, 2^64 + 1 becomes 1).
+    if (!intAttr.getValue().isSignedIntN(64))
+      return op.emitOpError() << CustomOpT::kFlattenRanksAttrName
+                              << " ranks must fit in a signed 64-bit integer";
+    int64_t rank = intAttr.getInt();
+    if (!seenRanks.insert(static_cast<uint64_t>(rank)).second)
+      return op.emitOpError() << CustomOpT::kFlattenRanksAttrName
+                              << " contains duplicate rank " << rank;
+  }
+  for (Attribute symbolAttr : symbolsAttr) {
+    auto strAttr = dyn_cast<StringAttr>(symbolAttr);
+    if (!strAttr || strAttr.getValue().empty())
+      return op.emitOpError() << CustomOpT::kFlattenSymbolsAttrName
+                              << " must be an array of non-empty strings";
+  }
+
+  return success();
+}
+
+template <typename CustomOpT>
 static LogicalResult verifyCustomOpExtraBufferAttrs(CustomOpT op) {
   const auto typesAttr =
       op->template getAttrOfType<ArrayAttr>(CustomOpT::kExtraBuffersTypesName);
@@ -540,6 +590,9 @@ template <typename CustomOpT> LogicalResult verifyBuiltins(CustomOpT op) {
 
 template <typename CustomOpT> LogicalResult verifyCustomOp(CustomOpT op) {
   if (failed(verifyCustomOpInplaceOperandsAttr(op)))
+    return failure();
+
+  if (failed(verifyCustomOpFlattenSymbols(op)))
     return failure();
 
   if (op.isBuiltin())
