@@ -37,6 +37,7 @@
 #include "bishengir/Conversion/HIVMToLLVM/TritonGlobalKernelArgsToLLVM.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMProtonOps.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
@@ -317,9 +318,33 @@ void TritonGlobalKernelArgsToLLVM::runOnOperation() {
   RewritePatternSet patterns(&getContext());
 
   patterns.insert<ReplaceGlobalKernelArgsToLLVM>(patterns.getContext());
-  if (failed(applyPatternsGreedily(op, std::move(patterns)))) {
-    signalPassFailure();
-  }
+  if (failed(applyPatternsGreedily(op, std::move(patterns))))
+    return signalPassFailure();
+  auto module = dyn_cast<ModuleOp>(op);
+  if (!module ||
+      !module.lookupSymbol<LLVM::LLVMFuncOp>("proton_scope_boundary"))
+    return;
+  // Emit the final drain after blockification loops and generated waits.
+  module.walk([&](LLVM::LLVMFuncOp function) {
+    if (function.isExternal() || !hacc::utils::isDeviceEntry(function) ||
+        function->hasAttr("proton.instrumentation_epilogue"))
+      return;
+    bool instrumented = false;
+    function.walk([&](LLVM::CallOp call) {
+      instrumented |= call.getCallee().value_or("") == "proton_scope_boundary";
+    });
+    if (!instrumented)
+      return;
+    function.walk([&](LLVM::ReturnOp ret) {
+      OpBuilder builder(ret);
+      auto flag = builder.create<LLVM::ConstantOp>(
+          ret.getLoc(), builder.getI32Type(), hivm::proton::kKernelExitDrain);
+      builder.create<LLVM::CallOp>(ret.getLoc(), TypeRange{},
+                                   "proton_scope_boundary", ValueRange{flag});
+    });
+    function->setAttr("proton.instrumentation_epilogue",
+                      UnitAttr::get(&getContext()));
+  });
 }
 
 std::unique_ptr<Pass> mlir::createTritonGlobalKernelArgsToLLVMPass() {
