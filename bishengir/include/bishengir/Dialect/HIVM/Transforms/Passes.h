@@ -463,6 +463,9 @@ std::unique_ptr<Pass> createNonContiguousReshapeToCopyPass();
 
 std::unique_ptr<Pass> createSinkOpToConsumerInLoopPass();
 
+/// Create a pass to sink scalar readback chains to their consumers.
+std::unique_ptr<Pass> createSinkScalarReadbackPass();
+
 // Create a pass to flatten nested moduleOp
 std::unique_ptr<Pass> createFlattenModulePass();
 
