@@ -735,14 +735,14 @@ struct FoldConvertLayoutFixpipePattern
               builder->channelSplit(true);
               builder->srcAddressSpace(AddressSpace::L0C);
               builder->dstAddressSpace(AddressSpace::L1);
-              std::optional<bishengir::npu::NPUArchitectureKind>
-                  architecture = lookupModuleArchitecture(fixpipeOp);
+              std::optional<bishengir::npu::NPUArchitectureKind> architecture =
+                  lookupModuleArchitecture(fixpipeOp);
               if (!architecture)
                 return false;
               auto storage = builder->build();
-              return bishengir::npu::queryNativeSupport(
-                        *architecture, storage.getRequest()) ==
-                    bishengir::npu::NativeSupport::Native;
+              return bishengir::npu::queryNativeSupport(*architecture,
+                                                        storage.getRequest()) ==
+                     bishengir::npu::NativeSupport::Native;
             }()) {
           fixpipeOp.setChannelSplit(true);
         }
