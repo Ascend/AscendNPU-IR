@@ -1283,7 +1283,7 @@ def EnableFuseReductionIntoLoop : GeneralOptimizationControlOptions<
 
 def SimtOptimizationMode : GeneralOptimizationControlOptions<
   "set bishengir simt optimization modes",
-  "int",
+  "uint32_t",
   "900101"
 > {
   bit isSharedWithDownstreamToolchain = 1;
