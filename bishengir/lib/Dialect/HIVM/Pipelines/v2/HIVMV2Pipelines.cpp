@@ -221,6 +221,7 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
 
   // LOCAL plan on the unsplit MIX.
   PlanMemoryOptions localPlanOptions;
+  localPlanOptions.planMemoryUBCopyBankMode = options.planMemoryUBCopyBankMode;
   pm.addPass(createPlanMemoryPass(localPlanOptions));
 
   // Expand slots before the split clones the counters.

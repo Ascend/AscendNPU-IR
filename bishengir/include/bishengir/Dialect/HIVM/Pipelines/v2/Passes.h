@@ -13,6 +13,7 @@
 #ifndef BISHENGIR_DIALECT_HIVM_PIPELINES_V2_PASSES_H
 #define BISHENGIR_DIALECT_HIVM_PIPELINES_V2_PASSES_H
 
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "mlir/Pass/PassOptions.h"
 
 namespace mlir {
@@ -67,6 +68,14 @@ struct V2PipelineOptions : public mlir::PassPipelineOptions<V2PipelineOptions> {
       *this, "hivm-sync-solver-version",
       llvm::cl::desc("Select the auto-sync solver implementation"),
       llvm::cl::init("v2")};
+  PassOptions::Option<PlanMemoryUBCopyBankMode> planMemoryUBCopyBankMode{
+      *this, "plan-memory-ub-copy-bank-mode",
+      llvm::cl::desc("PlanMemory UB-to-UB copy bank conflict avoidance mode"),
+      llvm::cl::values(
+          clEnumValN(PlanMemoryUBCopyBankMode::OFF, "off", "Disable"),
+          clEnumValN(PlanMemoryUBCopyBankMode::PREFER, "prefer", "Prefer"),
+          clEnumValN(PlanMemoryUBCopyBankMode::REQUIRE, "require", "Require")),
+      llvm::cl::init(PlanMemoryUBCopyBankMode::OFF)};
 };
 
 /// Phase builders shared by the opt pipeline and the compile driver.
