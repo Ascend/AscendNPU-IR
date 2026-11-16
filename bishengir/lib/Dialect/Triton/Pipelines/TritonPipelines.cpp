@@ -102,6 +102,9 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   bishengir::SetBishengirSimtOptAttrOptions optionsSimtOpt;
   optionsSimtOpt.simtOptimizationMode =
       options.simtOptimizationMode;
+  
+  pm.addPass(bishengir::triton::createConvertZeroDimTensorsPass());
+  
   if (!options.disableSliceOptimizations) {
     pm.addPass(bishengir::triton::createRewriteSliceOpToMemoryOpsPass());
   }
