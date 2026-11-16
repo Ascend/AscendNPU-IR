@@ -325,14 +325,23 @@ static void applyPadFillPolicy(PadFillPolicy policy, TileView &dst,
   }
 }
 
-/// Maximum rank supported by the NDDMA descriptor (loop0 .. loop4).
-constexpr int64_t kMaxNDDMARank = 5;
+/// Field widths of the NDDMA descriptor (nddma_desc in
+/// __clang_cce_aicore_functions.h: loop0 .. loop4, each with a 20-bit size and
+/// a 40-bit source stride).
+///
+/// Only the source-side widths are needed here; the destination stride and the
+/// padding are checked by the template at run time.
+struct NddmaDescLimits {
+  static constexpr int64_t kLoops = 5;
+  static constexpr int64_t kSizeBits = 20;
+  static constexpr int64_t kSrcStrideBits = 40;
+};
 
 /// Whether the transpose can be represented by an NDDMA load permutation:
-/// any non-identity permutation with rank in [2, kMaxNDDMARank].
+/// any non-identity permutation with rank in [2, NddmaDescLimits::kLoops].
 static bool isSupportedNDDMAPermutation(ArrayRef<int64_t> permutation) {
   const int64_t rank = static_cast<int64_t>(permutation.size());
-  if (rank < 2 || rank > kMaxNDDMARank)
+  if (rank < 2 || rank > NddmaDescLimits::kLoops)
     return false;
   // Reject entries that are not dimension indices first: the shared helper
   // asserts non-negativity and only checks uniqueness, not the range.
@@ -357,15 +366,26 @@ static bool permutationKeepsLastAxis(ArrayRef<int64_t> permutation) {
 
 /// How a fused permutation reaches the DMA templates. A6 adds one class on top
 /// of the historical last-two-dim swap; other targets accept only that one.
+/// The template cannot tell the two tail classes apart - only the strides
+/// matter - and both leave the fused source without a unit-stride innermost
+/// axis, so NDDMA is their only engine. Only InnerAxisSwap leaves the template
+/// a choice; the pass keeps the tail classes apart because admission, rank cap
+/// and the descriptor check differ.
 ///
-///   LastTwoDim    [1,0], [0,2,1]      tail pair swapped, moved by NDDMA
-///   InnerAxisSwap [1,0,2], [0,2,1,3]  tail axis untouched: rows stay
-///                                     contiguous, so the template picks block
-///                                     DMA for 32B-aligned rows, else NDDMA
+///   LastTwoDim    [1,0], [0,2,1], [0,1,3,2], [0,1,2,4,3]
+///                 the tail axis is moved one place down
+///   InnerAxisSwap [1,0,2], [0,2,1,3], [0,1,3,2,4]
+///                 the tail axis stays in place, so rows stay contiguous:
+///                 block DMA for 32B-aligned rows, else NDDMA
+///   TailSplit     [2,1,0], [0,3,2,1], [4,1,2,3,0]
+///                 the tail axis is moved further out, not into the rank-2
+///                 slot; NDDMA-only, and its descriptor bounds are checked
+///                 before fusing
 ///
-/// Both classes: a single load in the alias tree, no padding on the load, a
-/// contiguous tile, and the load dominating to_tensor.
-enum class PermutationKind { LastTwoDim, InnerAxisSwap };
+/// All classes: a single load in the alias tree, no padding on the load, a
+/// contiguous tile, and the load dominating to_tensor. Rank <= 5 applies to the
+/// two A6-only classes; the last-two-dim swap keeps its historical rank.
+enum class PermutationKind { LastTwoDim, InnerAxisSwap, TailSplit };
 
 /// Classify `perm` for the target described by `module`; std::nullopt means the
 /// permutation must stay as a linalg.transpose.
@@ -381,9 +401,42 @@ classifyPermutation(ModuleOp module, ArrayRef<int64_t> perm) {
   if (!module || !hacc::utils::isAscend960(module))
     return std::nullopt;
 
-  if (!isSupportedNDDMAPermutation(perm) || !permutationKeepsLastAxis(perm))
+  if (!isSupportedNDDMAPermutation(perm))
     return std::nullopt;
-  return PermutationKind::InnerAxisSwap;
+  return permutationKeepsLastAxis(perm) ? PermutationKind::InnerAxisSwap
+                                        : PermutationKind::TailSplit;
+}
+
+/// Source-side descriptor check for the tail-split scenario
+/// (PermutationKind::TailSplit). A tail split leaves NDDMA as the only engine,
+/// and an unrepresentable tile would have its descriptor fields truncated
+/// silently, so such a transpose must not be fused. The destination needs no
+/// check (fresh contiguous tile); the template's canFitNddmaDescriptor covers
+/// it, plus padding.
+static bool canPermutedSourceFitNddma(const TileView &srcTile,
+                                      ArrayRef<int64_t> srcPerm,
+                                      unsigned elementBytes) {
+  // No 64-bit NDDMA instantiation.
+  constexpr int64_t kMaxSize = (int64_t{1} << NddmaDescLimits::kSizeBits) - 1;
+  constexpr int64_t kMaxSrcStride =
+      (int64_t{1} << NddmaDescLimits::kSrcStrideBits) - 1;
+  if (elementBytes == 0 || elementBytes > 4)
+    return false;
+  MemRefType type = srcTile.viewType;
+  if (type.getRank() != static_cast<int64_t>(srcPerm.size()))
+    return false;
+  SmallVector<int64_t> strides;
+  int64_t offset = 0;
+  if (failed(getStridesAndOffset(type, strides, offset)))
+    return false;
+  for (int64_t dim : srcPerm) {
+    if (type.isDynamicDim(dim) || type.getShape()[dim] > kMaxSize)
+      return false;
+    const int64_t stride = strides[dim];
+    if (ShapedType::isDynamic(stride) || stride < 0 || stride > kMaxSrcStride)
+      return false;
+  }
+  return true;
 }
 
 struct FuseTransposeIntoLoadPattern
@@ -452,6 +505,19 @@ struct FuseTransposeIntoLoadPattern
     }
     LDBG("loadSrcTile: " << *loadSrcTile);
     LDBG("loadDstTile: " << *loadDstTile);
+
+    // Tail-split loads have no block-DMA path, so an unrepresentable tile would
+    // fall back to scalar; refuse the fusion instead.
+    if (*kind == PermutationKind::TailSplit) {
+      const Type elementType = loadSrcTile->rootType.getElementType();
+      const unsigned elementBytes =
+          elementType.isIntOrFloat() ? elementType.getIntOrFloatBitWidth() / 8
+                                     : 0;
+      if (!canPermutedSourceFitNddma(*loadSrcTile, perm, elementBytes)) {
+        return rewriter.notifyMatchFailure(
+            transposeOp, "NDDMA cannot represent the permuted load");
+      }
+    }
 
     rewriter.setInsertionPoint(loadOp);
 
