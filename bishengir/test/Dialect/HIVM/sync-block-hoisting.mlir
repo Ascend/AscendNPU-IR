@@ -102,3 +102,84 @@ func.func @unordered_lock_stays_in_for_loop(%arg0: memref<16xi32>, %arg1: memref
   }
   return
 }
+
+// -----
+
+// Unordered sections share one lock variable. Each section keeps its own
+// lock/unlock. Ordered locks stay on their own variables.
+//
+// CHECK-LABEL: func.func @unordered_locks_share_one_var(
+// CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
+// CHECK-NOT: hivm.hir.create_sync_block_lock
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: %[[ORDERED:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
+// CHECK: hivm.hir.sync_block_lock lock_var(%[[ORDERED]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock lock_var(%[[ORDERED]] : memref<1xi64>)
+func.func @unordered_locks_share_one_var() {
+  %0 = hivm.hir.create_sync_block_lock : memref<1xi64>
+  hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%0 : memref<1xi64>)
+  hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%0 : memref<1xi64>)
+  %1 = hivm.hir.create_sync_block_lock : memref<1xi64>
+  hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%1 : memref<1xi64>)
+  hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%1 : memref<1xi64>)
+  %2 = hivm.hir.create_sync_block_lock : memref<1xi64>
+  hivm.hir.sync_block_lock lock_var(%2 : memref<1xi64>)
+  hivm.hir.sync_block_unlock lock_var(%2 : memref<1xi64>)
+  return
+}
+
+// -----
+
+// After the shared variable is substituted, a lock already inside that
+// critical section is removed with its unlock.
+//
+// CHECK-LABEL: func.func @unordered_nested_lock_is_removed(
+// CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
+// CHECK-NOT: hivm.hir.create_sync_block_lock
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK-NOT: hivm.hir.sync_block_lock
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK-NOT: hivm.hir.sync_block_unlock
+func.func @unordered_nested_lock_is_removed(%arg0: i1) {
+  %0 = hivm.hir.create_sync_block_lock : memref<1xi64>
+  hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%0 : memref<1xi64>)
+  scf.if %arg0 {
+    %1 = hivm.hir.create_sync_block_lock : memref<1xi64>
+    hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%1 : memref<1xi64>)
+    hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%1 : memref<1xi64>)
+    scf.yield
+  }
+  hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%0 : memref<1xi64>)
+  return
+}
+
+// -----
+
+// Creates inside the loop are hoisted, then folded onto one variable.
+// The two critical sections stay inside the loop.
+//
+// CHECK-LABEL: func.func @unordered_locks_in_loop_share_one_var(
+// CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
+// CHECK-NOT: hivm.hir.create_sync_block_lock
+// CHECK: scf.for
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
+func.func @unordered_locks_in_loop_share_one_var() {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c8 = arith.constant 8 : index
+  scf.for %i = %c0 to %c8 step %c1 {
+    %0 = hivm.hir.create_sync_block_lock : memref<1xi64>
+    hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%0 : memref<1xi64>)
+    hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%0 : memref<1xi64>)
+    %1 = hivm.hir.create_sync_block_lock : memref<1xi64>
+    hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%1 : memref<1xi64>)
+    hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%1 : memref<1xi64>)
+  }
+  return
+}
