@@ -579,9 +579,9 @@ inline bool isSimpleCastOp(CastOp op) {
 // of the scf.for and sinks the exit cast behind it, so the carried value
 // stays in the body type across iterations. Before the rewrite every
 // iteration sends the value through `cast(carried -> body) ... cast(body ->
-// carried)`; the rewrite is unobservable only when that back-edge round trip
-// is the identity on every value the body can produce, which requires the
-// carried element type to exactly represent every value of the in-loop
+// carried)`; the deleted rounding is unobservable only when the value
+// survives that back-edge round trip unchanged, whose type-level requirement
+// is that the carried element type can represent every value of the in-loop
 // element type. A narrower carried type rounds on every iteration: a bf16
 // accumulator updated in f32 loses one rounding per iteration and drifts
 // against the per-iteration-bf16 reference. Mantissa width alone is not
@@ -597,11 +597,15 @@ inline bool isSimpleCastOp(CastOp op) {
 // rounding).
 // ---------------------------------------------------------------------------
 
-// True when the `body -> carried -> body` round trip on the loop back edge is
-// the identity, i.e. every value of `body` is exactly representable in
-// `carried` and the two types differ (same-type casts are intentional value
-// changes, see above).
-static bool isExactLoopCastRoundTrip(Type carried, Type body) {
+// Type-level capacity check for the loop back edge `body -> carried -> body`
+// (compute_ty -> arg_ty -> compute_ty): true when every value of the in-loop
+// element type is exactly representable in the carried element type and the
+// two types differ (same-type casts are intentional value changes, see
+// above). This inspects types only, not the concrete cast attributes
+// (saturation, signedness), so it is a necessary condition for the hoist,
+// not a proof that the concrete cast pair or the rewrite as a whole
+// preserves values.
+static bool canRepresentLoopBodyTypeWithoutLoss(Type carried, Type body) {
   if (carried == body)
     return false;
   if (auto carriedFloat = dyn_cast<FloatType>(carried)) {
@@ -621,6 +625,17 @@ static bool isExactLoopCastRoundTrip(Type carried, Type body) {
   }
   return false;
 }
+
+// TODO: share one value-preservation analysis with the cast-chain folding
+// above. It should answer whether an abstract sequence of casts preserves
+// the source value, taking the concrete CastOps in execution order so that
+// type, saturation, and signedness attributes are all visible, without
+// requiring the casts to be SSA-connected; the loop back edge would pass
+// {exitCast, entryCast}, i.e. `body -> carried -> body`. The width-only
+// integer comparison above does not cover all attribute combinations, and
+// getCastChainBlockReason() mixes in the contract/matmul escape policy, so
+// neither serves as a strict identity proof today; separate the pure
+// semantic check from that policy when unifying.
 
 struct LoopedCastOpPattern : public OpRewritePattern<CastOp> {
 public:
@@ -670,12 +685,21 @@ public:
       return failure();
 
     // The rewrite deletes the per-iteration rounding to the carried element
-    // type on the loop back edge. It is only unobservable when the back-edge
-    // round trip through the carried type is the identity, i.e. the carried
-    // element type exactly represents the in-loop element type; see the
-    // loop cast hoisting guard above for why fastmath<contract> does not
-    // license the lossy case.
-    if (!isExactLoopCastRoundTrip(
+    // type on the loop back edge. That is unobservable only when the carried
+    // element type can represent every value of the in-loop element type;
+    // see the loop cast hoisting guard above for why fastmath<contract>
+    // does not license the lossy case.
+    //
+    // TODO: zero-trip loops. The check below covers only the deleted back
+    // edge (exitCast -> entryCast); when the loop runs at least once, the
+    // first entry cast and the final exit cast still both execute. A loop
+    // that runs zero times used to return the initializer directly, but
+    // after the hoist the initializer goes through entryCast -> exitCast,
+    // the opposite-direction round trip, which may change the value (an f32
+    // initializer converted through bf16 and back to f32 is not necessarily
+    // preserved). Either prove the loop executes at least once, or prove
+    // the initializer's entryCast -> exitCast round trip separately.
+    if (!canRepresentLoopBodyTypeWithoutLoss(
             getElementTypeOrSelf(castSrc),
             getElementTypeOrSelf(castOp.getResults().front())))
       return failure();
