@@ -309,3 +309,140 @@ module attributes {
     return
   }
 }
+
+// -----
+
+// A tightly-coupled buffer is written by the other core, so this walk sees no
+// write to it and the refresh copy depends on matching the completion
+// handshake - which findWriteOp scans for linearly within one block. Here the
+// producer completes inside the work loop, out of reach of that scan, so the
+// seed copy has to stay at the consumption point: one copy per iteration,
+// after the wait, rather than one snapshot of the uninitialized buffer before
+// the loop.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @producer_loop_tcb(%n: index) attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %cc = memref.alloc() : memref<4x4xf32, #hivm.address_space<cc>>
+    %ub = memref.alloc() : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<25>} : memref<4x4xf32, #hivm.address_space<ub>>
+    scf.for %i = %c0 to %n step %c1 {
+      hivm.hir.sync_block_wait[<CUBE>, <PIPE_V>, <PIPE_FIX>] flag = 3
+      hivm.hir.fixpipe ins(%cc : memref<4x4xf32, #hivm.address_space<cc>>) outs(%ub : memref<4x4xf32, #hivm.address_space<ub>>)
+      hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_V>] flag = 3
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @consumer_loop_tcb
+  // CHECK: %[[PHYSICAL:.*]] = memref.alloc() : memref<4x8x1xf32, #hivm.address_space<ub>>
+  // CHECK: %[[ALIGNED:.*]] = memref.subview %[[PHYSICAL]]
+  // The buffer is allocated where it dominates the use; the copy is not.
+  // CHECK: %[[SHARED:.*]] = memref.alloc() : memref<4x4xf32, #hivm.address_space<ub>>
+  // CHECK-NOT: hivm.hir.copy
+  // CHECK: scf.for
+  // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>] flag = 3
+  // CHECK-NEXT: hivm.hir.copy ins(%[[ALIGNED]]{{.*}}) outs(%[[SHARED]]
+  // CHECK-NEXT: arith.select %{{.*}}, %[[SHARED]], %{{.*}}
+  func.func @consumer_loop_tcb(%n: index, %has_blocks: i1, %zero: memref<4x4xf32, #hivm.address_space<ub>>, %out: memref<4x4xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %ub = memref.alloc() : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<25>} : memref<4x4xf32, #hivm.address_space<ub>>
+    hivm.hir.sync_block_set[<VECTOR>, <PIPE_V>, <PIPE_FIX>] flag = 3
+    scf.for %i = %c0 to %n step %c1 {
+      hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>] flag = 3
+      %selected = arith.select %has_blocks, %ub, %zero : memref<4x4xf32, #hivm.address_space<ub>>
+      hivm.hir.copy ins(%selected : memref<4x4xf32, #hivm.address_space<ub>>) outs(%out : memref<4x4xf32, #hivm.address_space<ub>>)
+      hivm.hir.sync_block_set[<VECTOR>, <PIPE_V>, <PIPE_FIX>] flag = 3
+    }
+    return
+  }
+}
+
+// -----
+
+// Same cross-core buffer, other control flow: the producer writes in a nested
+// branch and signals completion outside it, where the scan that starts at the
+// `hivm.hir.fixpipe` stops at the region terminator. The seed copy stays at
+// the yield that consumes the result.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @producer_nested_if_tcb(%flag: i1, %flag1: i1) attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
+    %cc = memref.alloc() : memref<4x4xf32, #hivm.address_space<cc>>
+    %ub = memref.alloc() : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<26>} : memref<4x4xf32, #hivm.address_space<ub>>
+    scf.if %flag {
+      scf.if %flag1 {
+        hivm.hir.fixpipe ins(%cc : memref<4x4xf32, #hivm.address_space<cc>>) outs(%ub : memref<4x4xf32, #hivm.address_space<ub>>)
+      }
+    }
+    hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_MTE3>] flag = 2
+    return
+  }
+
+  // CHECK-LABEL: func.func @consumer_nested_if_tcb
+  // CHECK: %[[PHYSICAL:.*]] = memref.alloc() : memref<4x8x1xf32, #hivm.address_space<ub>>
+  // CHECK: %[[ALIGNED:.*]] = memref.subview %[[PHYSICAL]]
+  // CHECK: %[[SHARED:.*]] = memref.alloc() : memref<4x4xf32, #hivm.address_space<ub>>
+  // CHECK-NOT: hivm.hir.copy
+  // CHECK: scf.if
+  // CHECK: scf.if
+  // CHECK: hivm.hir.copy ins(%[[ALIGNED]]{{.*}}) outs(%[[SHARED]]
+  // CHECK-NEXT: scf.yield %[[SHARED]]
+  func.func @consumer_nested_if_tcb(%flag: i1, %flag1: i1, %zero: memref<4x4xf32, #hivm.address_space<ub>>, %out: memref<4x4xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %ub = memref.alloc() : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<26>} : memref<4x4xf32, #hivm.address_space<ub>>
+    %res = scf.if %flag -> (memref<4x4xf32, #hivm.address_space<ub>>) {
+      %inner = scf.if %flag1 -> (memref<4x4xf32, #hivm.address_space<ub>>) {
+        scf.yield %ub : memref<4x4xf32, #hivm.address_space<ub>>
+      } else {
+        scf.yield %zero : memref<4x4xf32, #hivm.address_space<ub>>
+      }
+      scf.yield %inner : memref<4x4xf32, #hivm.address_space<ub>>
+    } else {
+      scf.yield %zero : memref<4x4xf32, #hivm.address_space<ub>>
+    }
+    hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_MTE3>] flag = 2
+    hivm.hir.copy ins(%res : memref<4x4xf32, #hivm.address_space<ub>>) outs(%out : memref<4x4xf32, #hivm.address_space<ub>>)
+    return
+  }
+}
+
+// -----
+
+// Two failing uses of one cross-core buffer. They share a single compact
+// buffer - a buffer per use would cut the data flow through it - and each
+// consumption point carries its own seed copy.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  // CHECK-LABEL: func.func @consumer_two_failing_uses_tcb
+  // CHECK: %[[PHYSICAL:.*]] = memref.alloc() : memref<4x8x1xf32, #hivm.address_space<ub>>
+  // CHECK: %[[ALIGNED:.*]] = memref.subview %[[PHYSICAL]]
+  // CHECK: %[[SHARED:.*]] = memref.alloc() : memref<4x4xf32, #hivm.address_space<ub>>
+  // CHECK-NOT: memref.alloc
+  // CHECK-NOT: hivm.hir.copy
+  // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>] flag = 4
+  // CHECK-NEXT: hivm.hir.copy ins(%[[ALIGNED]]{{.*}}) outs(%[[SHARED]]
+  // CHECK-NEXT: arith.select %{{.*}}, %[[SHARED]], %{{.*}}
+  // CHECK: scf.if
+  // CHECK-NEXT: hivm.hir.copy ins(%[[ALIGNED]]{{.*}}) outs(%[[SHARED]]
+  // CHECK-NEXT: scf.yield %[[SHARED]]
+  func.func @consumer_two_failing_uses_tcb(%c: i1, %zero: memref<4x4xf32, #hivm.address_space<ub>>, %out0: memref<4x4xf32, #hivm.address_space<ub>>, %out1: memref<4x4xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %ub = memref.alloc() : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<27>} : memref<4x4xf32, #hivm.address_space<ub>>
+    hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>] flag = 4
+    %selected = arith.select %c, %ub, %zero : memref<4x4xf32, #hivm.address_space<ub>>
+    hivm.hir.copy ins(%selected : memref<4x4xf32, #hivm.address_space<ub>>) outs(%out0 : memref<4x4xf32, #hivm.address_space<ub>>)
+    %res = scf.if %c -> (memref<4x4xf32, #hivm.address_space<ub>>) {
+      scf.yield %ub : memref<4x4xf32, #hivm.address_space<ub>>
+    } else {
+      scf.yield %zero : memref<4x4xf32, #hivm.address_space<ub>>
+    }
+    hivm.hir.copy ins(%res : memref<4x4xf32, #hivm.address_space<ub>>) outs(%out1 : memref<4x4xf32, #hivm.address_space<ub>>)
+    return
+  }
+}
