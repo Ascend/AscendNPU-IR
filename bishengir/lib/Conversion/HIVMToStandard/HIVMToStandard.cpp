@@ -909,8 +909,8 @@ public:
             op.getPadModeAttr().getPadmode() != PadMode::PadNull) ||
            op.getPadValue() || op.getLeftPaddingNum() ||
            op.getRightPaddingNum()))
-        return op.emitOpError(
-            "broadcast_axes cannot be combined with padding in the legacy load form");
+        return op.emitOpError("broadcast_axes cannot be combined with padding "
+                              "in the legacy load form");
     }
     MemRefType srcType = dyn_cast<MemRefType>(op.getSrcOperandType());
 

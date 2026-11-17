@@ -1710,8 +1710,7 @@ struct ConvertHIVMToUpstream
     // Diagnose before the EE type conversion strips GM/UB memory spaces.
     WalkResult unsupportedCheck = getOperation()->walk([](hivm::LoadOp load) {
       if (load.getBroadcastAxesAttr()) {
-        load.emitOpError(
-            "broadcast_axes is not supported by ExecutionEngine");
+        load.emitOpError("broadcast_axes is not supported by ExecutionEngine");
         return WalkResult::interrupt();
       }
       return WalkResult::advance();

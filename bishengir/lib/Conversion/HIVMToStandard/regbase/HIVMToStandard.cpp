@@ -1505,18 +1505,17 @@ public:
             op.getPadModeAttr().getPadmode() != PadMode::PadNull) ||
            op.getPadValue() || op.getLeftPaddingNum() ||
            op.getRightPaddingNum()))
-        return op.emitOpError(
-            "broadcast_axes cannot be combined with padding in the legacy load form");
+        return op.emitOpError("broadcast_axes cannot be combined with padding "
+                              "in the legacy load form");
       if (op.isSpanPaddedLoad()) {
         // The span templates are instantiated for rank 2/3 only, and the
         // element-type set they register excludes 64-bit types.
         Type elementType = srcType.getElementType();
-        bool supportedType = elementType.isInteger(8) ||
-                             elementType.isInteger(16) ||
-                             elementType.isInteger(32) || elementType.isF16() ||
-                             elementType.isBF16() || elementType.isF32() ||
-                             elementType.isFloat8E4M3FN() ||
-                             elementType.isFloat8E5M2();
+        bool supportedType =
+            elementType.isInteger(8) || elementType.isInteger(16) ||
+            elementType.isInteger(32) || elementType.isF16() ||
+            elementType.isBF16() || elementType.isF32() ||
+            elementType.isFloat8E4M3FN() || elementType.isFloat8E5M2();
         if ((rank != 2 && rank != 3) || !supportedType)
           return op.emitOpError(
               "span padding is only available for rank 2/3 loads of the "
@@ -1713,7 +1712,6 @@ private:
               axes |= 1u << axis;
           inputOperands.push_back(
               this->constantI32(rewriter, op.getLoc(), axes));
-
         }
       }
     }

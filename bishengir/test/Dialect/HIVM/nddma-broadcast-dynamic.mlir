@@ -100,7 +100,7 @@ func.func @suffix_bound(%gm: memref<32xf32, #hivm.address_space<gm>>, %raw: inde
  %src = memref.expand_shape %sv [[0,1]] output_shape [%n,1] : memref<?xf32, strided<[1]>, #hivm.address_space<gm>> into memref<?x1xf32, #hivm.address_space<gm>>
  %root = memref.alloc() : memref<32x4xf32, #hivm.address_space<ub>>
  %dst = memref.subview %root[%suffix,0][%n,4][1,1] : memref<32x4xf32, #hivm.address_space<ub>> to memref<?x4xf32, strided<[4,1], offset: ?>, #hivm.address_space<ub>>
- 
+
  hivm.hir.load ins(%src : memref<?x1xf32, #hivm.address_space<gm>>) outs(%dst : memref<?x4xf32, strided<[4,1], offset: ?>, #hivm.address_space<ub>>) broadcast_axes = [1]
  return
 }

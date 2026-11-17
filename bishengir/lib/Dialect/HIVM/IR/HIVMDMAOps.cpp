@@ -20,8 +20,8 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
-#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/NddmaBroadcastUtils.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRef/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
@@ -257,7 +257,8 @@ static LogicalResult verifyPadValueContract(LoadOp op, PadMode mode) {
     return op.emitOpError(
         "if padmode is PadFirstElem, pad_value should not be set!");
   if (mode == PadMode::PadNull && padValue)
-    return op.emitOpError("pad_mode unset or PadNull: pad_value must not be set!");
+    return op.emitOpError(
+        "pad_mode unset or PadNull: pad_value must not be set!");
   return success();
 }
 
@@ -271,8 +272,8 @@ static LogicalResult verifyPadMode(LoadOp op) {
   // paired on every target.
   if (srcShape.empty() || dstShape.empty()) {
     auto padModeAttr = op.getPadMode();
-    return verifyPadValueContract(
-        op, padModeAttr ? padModeAttr->getPadmode() : PadMode::PadNull);
+    return verifyPadValueContract(op, padModeAttr ? padModeAttr->getPadmode()
+                                                  : PadMode::PadNull);
   }
 
   auto padModeAttr = op.getPadMode();
@@ -338,9 +339,9 @@ static LogicalResult verifyBroadcastAxes(LoadOp &op) {
   // so reaching here means the legacy templates will be used. They carry
   // neither an axis mask nor a right count, so the combination cannot lower.
   auto padMode = op.getPadMode();
-  const bool padded =
-      (padMode && padMode->getPadmode() != PadMode::PadNull) ||
-      op.getPadValue() || op.getLeftPaddingNum() || op.getRightPaddingNum();
+  const bool padded = (padMode && padMode->getPadmode() != PadMode::PadNull) ||
+                      op.getPadValue() || op.getLeftPaddingNum() ||
+                      op.getRightPaddingNum();
   if (padded)
     return op.emitOpError(
         "broadcast_axes cannot be combined with padding in the legacy load "
@@ -378,8 +379,9 @@ static LogicalResult verifyBroadcastAxes(LoadOp &op) {
        !nddma::isBoundedBroadcastView(op.getSrc(), false)) ||
       (!dstOperType.hasStaticShape() &&
        !nddma::isBoundedBroadcastView(op.getDst(), true)))
-    return op.emitOpError("dynamic broadcast requires a bounded static-backed "
-                          "view; allocation length is unavailable in the legacy ABI");
+    return op.emitOpError(
+        "dynamic broadcast requires a bounded static-backed "
+        "view; allocation length is unavailable in the legacy ABI");
 
   SmallVector<bool> isBroadcast(rank, false);
   for (int64_t axis : axes) {
@@ -418,7 +420,8 @@ static LogicalResult verifyBroadcastAxes(LoadOp &op) {
     return op.emitOpError("broadcast_axes has an unsupported element type");
 
   // broadcast_axes only applies to a resolved GM -> UB transfer. Never assert
-  // on an unresolved bufferization space, or reinterpret an unknown tensor as GM.
+  // on an unresolved bufferization space, or reinterpret an unknown tensor as
+  // GM.
   auto srcMemref = dyn_cast<MemRefType>(srcOperType);
   auto dstMemref = dyn_cast<MemRefType>(dstOperType);
   auto srcSpace =
@@ -504,7 +507,7 @@ static LogicalResult verifySpanLoad(LoadOp op) {
   }
   auto lp = getConstantIntValue(op.getLeftPaddingNum());
   if (!op.getLeftPaddingNum())
-    lp = 0;  // an absent left count reads as zero
+    lp = 0; // an absent left count reads as zero
   auto rp = getConstantIntValue(op.getRightPaddingNum());
   if ((lp && *lp < 0) || (rp && *rp < 0))
     return op.emitOpError("span padding counts must be nonnegative");
@@ -639,7 +642,6 @@ LogicalResult LoadOp::verify() {
     return emitOpError("src and dst should have the same dimensions!");
   }
 
-
   // The in-row form owns its whole contract: the legacy padding and
   // broadcast rules below describe the destination-anchored form and must
   // not be applied to it.
@@ -651,7 +653,6 @@ LogicalResult LoadOp::verify() {
 
   if (failed(verifyBroadcastAxes(*this)))
     return failure();
-
 
   // check mem space in case of memref
   if (hasPureBufferSemantics()) {

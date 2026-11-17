@@ -114,8 +114,8 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
 #if BISHENG_TPL_920R1
     if constexpr (sizeof(T) <= 4) {
       const int64_t width = src->sizes[0];
-      if (canUseNddmaForOrdinaryLoad1d<T>(src, dst, pad_mode,
-                                          left_padding_num, atomic_kind)) {
+      if (canUseNddmaForOrdinaryLoad1d<T>(src, dst, pad_mode, left_padding_num,
+                                          atomic_kind)) {
         // A single row uses the existing descriptor emitter and public ABI.
         memref_t<__gm__ T, 2> gm = {
             src->allocated, src->aligned, src->offset, {1, width}, {width, 1}};

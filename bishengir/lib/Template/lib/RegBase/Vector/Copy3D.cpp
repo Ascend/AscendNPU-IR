@@ -85,13 +85,14 @@ isUbufTileFullyPacked3d(const memref_t<__gm__ T, 3> *gm,
 // Address arithmetic guard only: the memref allocation remains the producer's
 // responsibility. Never replace the missing allocation length with UB capacity.
 template <typename T>
-__aiv__ __attribute__((always_inline)) bool isBroadcastLayout3dValid(
-    int64_t offset, int64_t planes, int64_t rows, int64_t width,
-    int64_t planeStride, int64_t rowStride, int64_t innerStride) {
+__aiv__ __attribute__((always_inline)) bool
+isBroadcastLayout3dValid(int64_t offset, int64_t planes, int64_t rows,
+                         int64_t width, int64_t planeStride, int64_t rowStride,
+                         int64_t innerStride) {
   constexpr int64_t limit = INT64_MAX / sizeof(T);
-  if (offset < 0 || offset > limit || planes <= 0 || rows <= 0 ||
-      width <= 0 || width > limit - offset || innerStride != 1 ||
-      rowStride < width || rows - 1 > (limit - offset - width) / rowStride)
+  if (offset < 0 || offset > limit || planes <= 0 || rows <= 0 || width <= 0 ||
+      width > limit - offset || innerStride != 1 || rowStride < width ||
+      rows - 1 > (limit - offset - width) / rowStride)
     return false;
   const int64_t planeSpan = (rows - 1) * rowStride + width;
   return planeStride >= planeSpan &&
@@ -203,12 +204,12 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
     const unsigned axes = (src->sizes[0] != dst->sizes[0] ? 1 : 0) |
                           (src->sizes[1] != dst->sizes[1] ? 2 : 0) |
                           (src->sizes[2] != dst->sizes[2] ? 4 : 0);
-    const bool valid =
-        isBroadcastLoad3dValid<T>(src, dst, atomic_kind, axes);
-    const bool encodable = dst->sizes[0] <= 0xfffff &&
-        dst->sizes[1] <= 0xfffff && dst->sizes[2] <= 0xfffff &&
-        dst->strides[0] <= 0xfffff && dst->strides[1] <= 0xfffff &&
-        src->strides[0] <= 0xffffffffLL && src->strides[1] <= 0xffffffffLL;
+    const bool valid = isBroadcastLoad3dValid<T>(src, dst, atomic_kind, axes);
+    const bool encodable =
+        dst->sizes[0] <= 0xfffff && dst->sizes[1] <= 0xfffff &&
+        dst->sizes[2] <= 0xfffff && dst->strides[0] <= 0xfffff &&
+        dst->strides[1] <= 0xfffff && src->strides[0] <= 0xffffffffLL &&
+        src->strides[1] <= 0xffffffffLL;
     if (!valid) {
       __builtin_cce_trap_mov(1);
       return;
@@ -264,8 +265,8 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
   if constexpr (sizeof(T) <= 4) {
     // The existing 3D emitter has the default cache policy. Leave other
     // policies on the original path instead of silently dropping them.
-    if (canUseNddmaForOrdinaryLoad3d<T>(
-            src, dst, pad_mode, has_padding, eviction_policy, atomic_kind)) {
+    if (canUseNddmaForOrdinaryLoad3d<T>(src, dst, pad_mode, has_padding,
+                                        eviction_policy, atomic_kind)) {
       load_gm_to_ubuf_3d_by_nddma<T>(src, dst);
       return;
     }

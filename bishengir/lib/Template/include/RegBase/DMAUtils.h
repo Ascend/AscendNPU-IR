@@ -532,8 +532,8 @@ __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_2d_by_scalar_brc_pad(memref_t<__gm__ T, 2> *src,
                                      memref_t<__ubuf__ T, 2> *dst,
                                      unsigned broadcast_axes = 0,
-                                     bool span = false,
-                                     int64_t lp = 0, int64_t rp = 0,
+                                     bool span = false, int64_t lp = 0,
+                                     int64_t rp = 0,
                                      const T *pad_value = nullptr) {
   auto src_ptr = src->aligned + src->offset;
   auto dst_ptr = dst->aligned + dst->offset;
@@ -599,8 +599,8 @@ __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_by_scalar_brc_pad(memref_t<__gm__ T, 3> *src,
                                      memref_t<__ubuf__ T, 3> *dst,
                                      unsigned broadcast_axes = 0,
-                                     bool span = false,
-                                     int64_t lp = 0, int64_t rp = 0,
+                                     bool span = false, int64_t lp = 0,
+                                     int64_t rp = 0,
                                      const T *pad_value = nullptr) {
   auto src_ptr = src->aligned + src->offset;
   auto dst_ptr = dst->aligned + dst->offset;
@@ -613,14 +613,12 @@ load_gm_to_ubuf_3d_by_scalar_brc_pad(memref_t<__gm__ T, 3> *src,
 
   for (int64_t i = 0;
        i < ((broadcast_axes & 1) ? dst->sizes[0] : src->sizes[0]); ++i) {
-    memref_t<__gm__ T, 2> src_2d{src->allocated,
-                                 src->aligned,
-                                 src->offset +
-                                     ((broadcast_axes & 1)
-                                          ? 0
-                                          : i * src->strides[0]),
-                                 {src->sizes[1], src->sizes[2]},
-                                 {src->strides[1], src->strides[2]}};
+    memref_t<__gm__ T, 2> src_2d{
+        src->allocated,
+        src->aligned,
+        src->offset + ((broadcast_axes & 1) ? 0 : i * src->strides[0]),
+        {src->sizes[1], src->sizes[2]},
+        {src->strides[1], src->strides[2]}};
     memref_t<__ubuf__ T, 2> dst_2d{dst->allocated,
                                    dst->aligned,
                                    dst->offset + i * dst->strides[0],
@@ -2172,15 +2170,13 @@ load_gm_to_ubuf_by_nddma(memref_t<__gm__ T, Rank> *src,
     }
   }
 }
-#endif  // BISHENG_TPL_920R1
+#endif // BISHENG_TPL_920R1
 
 template <typename T>
-__aiv__ __attribute__((always_inline)) void
-load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
-                            memref_t<__ubuf__ T, 2> *dst, PadMode pad_mode,
-                            typename PadValueType<T>::type pad_value,
-                            int64_t left_padding_num, uint8_t l2_cache_ctl,
-                            unsigned broadcast_axes = 0) {
+__aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_by_nddma(
+    memref_t<__gm__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst, PadMode pad_mode,
+    typename PadValueType<T>::type pad_value, int64_t left_padding_num,
+    uint8_t l2_cache_ctl, unsigned broadcast_axes = 0) {
   static_assert(
       sizeof(T) <= 8,
       "DMA only supports types up to 64-bit. "
@@ -2289,11 +2285,9 @@ load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
 }
 
 template <typename T>
-__aiv__ __attribute__((always_inline)) void
-load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
-                            memref_t<__ubuf__ T, 3> *dst,
-                            uint8_t l2_cache_ctl = 0,
-                            unsigned broadcast_axes = 0) {
+__aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_by_nddma(
+    memref_t<__gm__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst,
+    uint8_t l2_cache_ctl = 0, unsigned broadcast_axes = 0) {
   static_assert(
       sizeof(T) <= 8,
       "DMA only supports types up to 64-bit. "
@@ -2411,13 +2405,11 @@ load_gm_to_ubuf_span_core(memref_t<__gm__ T, Rank> *src,
         &bytes_src, &bytes_dst, mode, byte, lp, rp, eviction, axes);
   } else {
     const int64_t w = src->sizes[Rank - 1], d = dst->sizes[Rank - 1];
-    bool valid = mode == PadMode::Value && lp >= 0 && rp >= 0 && w >= 0 &&
-                 d >= 0 && lp <= d && w <= d - lp && rp == d - lp - w &&
-                 !(axes >> (Rank - 1)) &&
-                 span_layout_valid<T, Rank>(src->offset, src->sizes,
-                                            src->strides) &&
-                 span_layout_valid<T, Rank>(dst->offset, dst->sizes,
-                                            dst->strides);
+    bool valid =
+        mode == PadMode::Value && lp >= 0 && rp >= 0 && w >= 0 && d >= 0 &&
+        lp <= d && w <= d - lp && rp == d - lp - w && !(axes >> (Rank - 1)) &&
+        span_layout_valid<T, Rank>(src->offset, src->sizes, src->strides) &&
+        span_layout_valid<T, Rank>(dst->offset, dst->sizes, dst->strides);
     bool empty = d == 0;
     bool fields = w > 0 && w <= 0xfffff && lp <= 255 && rp <= 255;
     for (unsigned i = 0; i < Rank - 1; ++i) {
@@ -2465,33 +2457,31 @@ load_gm_to_ubuf_span_core(memref_t<__gm__ T, Rank> *src,
       _mlir_ciface_load_gm_to_ubuf_##dim##d_##type##_span(                     \
           memref_t<__gm__ type, dim> *src, memref_t<__ubuf__ type, dim> *dst,  \
           PadMode mode, PadValueT<type> pad, int64_t lp, int64_t rp,           \
-          EvictionPolicy eviction, uint32_t axes) {                           \
-    load_gm_to_ubuf_span_core<type, dim>(                                      \
-        src, dst, mode, pad, lp, rp, eviction, axes);                          \
+          EvictionPolicy eviction, uint32_t axes) {                            \
+    load_gm_to_ubuf_span_core<type, dim>(src, dst, mode, pad, lp, rp,          \
+                                         eviction, axes);                      \
   }                                                                            \
   __aiv__ __attribute__((always_inline)) void                                  \
       _mlir_ciface_load_gm_to_ubuf_##dim##d_##type##_span_nocache(             \
           memref_t<__gm__ type, dim> *src, memref_t<__ubuf__ type, dim> *dst,  \
           PadMode mode, PadValueT<type> pad, int64_t lp, int64_t rp,           \
-          EvictionPolicy eviction, uint32_t axes) {                           \
-    load_gm_to_ubuf_span_core<type, dim, true>(                                \
-        src, dst, mode, pad, lp, rp, eviction, axes);                          \
+          EvictionPolicy eviction, uint32_t axes) {                            \
+    load_gm_to_ubuf_span_core<type, dim, true>(src, dst, mode, pad, lp, rp,    \
+                                               eviction, axes);                \
   }
 #endif
 
 template <typename T>
-__aiv__ __attribute__((always_inline)) void
-load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
-                            memref_t<__ubuf__ T, 2> *dst, PadMode pad_mode,
-                            typename PadValueType<T>::type pad_value,
-                            int64_t left_padding_num, uint8_t l2_cache_ctl,
-                            unsigned broadcast_axes);
+__aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_by_nddma(
+    memref_t<__gm__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst, PadMode pad_mode,
+    typename PadValueType<T>::type pad_value, int64_t left_padding_num,
+    uint8_t l2_cache_ctl, unsigned broadcast_axes);
 
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
-                            memref_t<__ubuf__ T, 3> *dst,
-                            uint8_t l2_cache_ctl, unsigned broadcast_axes);
+                            memref_t<__ubuf__ T, 3> *dst, uint8_t l2_cache_ctl,
+                            unsigned broadcast_axes);
 
 #endif
 

@@ -1,4 +1,5 @@
-//===- NddmaBroadcastUtils.h - bounded broadcast views -----------*- C++ -*-===//
+//===- NddmaBroadcastUtils.h - bounded broadcast views -----------*- C++
+//-*-===//
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -121,7 +122,7 @@ inline bool isBoundedBroadcastView(Value value, bool requireAllocation) {
     auto end = sub ? getConstantIntValue(sub.getLhs()) : std::nullopt;
     if (!end || *end < 0 || *end > capacity || *bound > *end ||
         !isEqualConstantIntOrValue(normalizeBroadcastExtent(sub.getRhs()),
-                                  normalizeBroadcastExtent(sizes[i])))
+                                   normalizeBroadcastExtent(sizes[i])))
       return false;
   }
   return true;

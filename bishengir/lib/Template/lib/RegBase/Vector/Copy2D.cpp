@@ -99,9 +99,8 @@ isBroadcastLoad2dValid(const memref_t<__gm__ T, 2> *src,
   return sizeof(T) <= 4 && atomic_kind == AtomicKind::None &&
          (!axis0 || (src->sizes[0] == 1 && dst->sizes[0] <= 0xfffff)) &&
          (!axis1 || (src->sizes[1] == 1 && dst->sizes[1] <= 0xfffff)) &&
-         src->sizes[0] > 0 &&
-         src->sizes[1] > 0 && dst->sizes[0] > 0 && dst->sizes[1] > 0 &&
-         src->strides[1] == 1 && dst->strides[1] == 1 &&
+         src->sizes[0] > 0 && src->sizes[1] > 0 && dst->sizes[0] > 0 &&
+         dst->sizes[1] > 0 && src->strides[1] == 1 && dst->strides[1] == 1 &&
          src->strides[0] >= src->sizes[1] && dst->strides[0] >= dst->sizes[1] &&
          src->offset >= 0 && dst->offset >= 0 &&
          src->offset <= INT64_MAX / sizeof(T) &&
@@ -225,8 +224,8 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
   // particular, do not truncate SDK count/dst-step (20 bits) or the src-step
   // constructor's uint32_t argument. No single-buffer capacity is assumed.
   if constexpr (sizeof(T) <= 4) {
-    if (canUseNddmaForOrdinaryLoad2d<T>(src, dst, pad_mode,
-                                        left_padding_num, atomic_kind)) {
+    if (canUseNddmaForOrdinaryLoad2d<T>(src, dst, pad_mode, left_padding_num,
+                                        atomic_kind)) {
       load_gm_to_ubuf_2d_by_nddma<T>(src, dst, pad_mode, pad_value, 0,
                                      static_cast<uint8_t>(eviction_policy));
       return;

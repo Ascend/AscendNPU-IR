@@ -31,7 +31,7 @@ def ConvertNonPowerTwoTensors
   ];
 }
 
-def ConvertZeroDimTensors 
+def ConvertZeroDimTensors
   : Pass<"convert-zero-dim-tensors", "mlir::ModuleOp"> {
   let summary = "Converts 0D tensors into either scalars or 1D tensors depending on usage";
   let constructor = "bishengir::triton::createConvertZeroDimTensorsPass()";

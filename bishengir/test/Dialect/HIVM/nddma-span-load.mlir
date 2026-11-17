@@ -94,4 +94,3 @@ module attributes {hacc.target = #hacc.target<"Ascend960">} {
   return
  }
 }
-
