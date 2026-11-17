@@ -29,6 +29,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/OpDefinition.h"
@@ -48,6 +49,8 @@ FailureOr<std::tuple<SmallVector<OpFoldResult, 4>, SmallVector<OpFoldResult, 4>,
 getSubViewParamsFromPropagatorResult(UnrealizedConversionCastOp propagateOp,
                                      PatternRewriter &rewriter) {
   auto parentType = dyn_cast<MemRefType>(propagateOp.getInputs()[0].getType());
+  if (!parentType)
+    return failure();
   auto [tilingDim, tiledOffset, tiledSize] = getTilingDimInfo(propagateOp);
   if (tilingDim == -1)
     return failure();
@@ -415,6 +418,22 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownLoadOp(
   return success();
 }
 
+/// handleParallelLoop rewrites the parent scf.for bounds from the tile. That
+/// is only valid when the tiled-axis offset is the loop IV itself (typically
+/// `subview %alloc[%iv, 0]`). A nested dynamic column subview uses a constant
+/// 0 offset on that axis and must take the generic path.
+static bool subviewIndexesTilingDimWithLoopIV(memref::SubViewOp subViewOp,
+                                              scf::ForOp loop,
+                                              int64_t tilingDim) {
+  if (tilingDim < 0)
+    return false;
+  auto offsets = subViewOp.getMixedOffsets();
+  if (static_cast<size_t>(tilingDim) >= offsets.size())
+    return false;
+  Value offsetVal = dyn_cast<Value>(offsets[tilingDim]);
+  return offsetVal && offsetVal == loop.getInductionVar();
+}
+
 static LogicalResult handleParallelLoop(scf::ForOp parallelLoopOp,
                                         memref::SubViewOp subViewOp,
                                         UnrealizedConversionCastOp propagateOp,
@@ -436,6 +455,7 @@ static LogicalResult handleParallelLoop(scf::ForOp parallelLoopOp,
     lb.set(offsetVal);
     ub.set(newUb);
   });
+
   rewriter.setInsertionPoint(subViewOp);
   auto offsets = subViewOp.getMixedOffsets();
   auto sizes = subViewOp.getMixedSizes();
@@ -471,7 +491,7 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownSubView(
   auto [tilingDim, tiledOffset, tiledSize] = getTilingDimInfo(propagateOp);
   if (auto parallelLoopOp = dyn_cast<scf::ForOp>(subViewOp->getParentOp());
       parallelLoopOp && parallelLoopOp->hasAttr(hivm::ParallelLoopAttr::name) &&
-      getExtractOrInsertDim(subViewOp).contains(tilingDim)) {
+      subviewIndexesTilingDimWithLoopIV(subViewOp, parallelLoopOp, tilingDim)) {
     return handleParallelLoop(parallelLoopOp, subViewOp, propagateOp, rewriter);
   }
 
@@ -484,9 +504,33 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownSubView(
   auto droppedDims = subViewOp.getDroppedDims();
 
   rewriter.setInsertionPoint(subViewOp);
-  mlir::hivm::handleExtractOfExtract(newOffsets[tilingDim], newSizes[tilingDim],
-                                     tiledOffset, tiledSize, subViewOp.getLoc(),
-                                     rewriter);
+  // Rebase a complete tile in its own coordinates to avoid slicing twice.
+  bool isCompleteTileView =
+      resultType.hasStaticShape() && slicedSourceType.hasStaticShape() &&
+      resultType.getShape() == slicedSourceType.getShape() &&
+      droppedDims.none();
+  for (int64_t dim = 0; isCompleteTileView && dim < oldSourceType.getRank();
+       ++dim) {
+    isCompleteTileView &= getConstantIntValue(newStrides[dim]) == 1;
+    if (dim == tilingDim) {
+      isCompleteTileView &=
+          isEqualConstantIntOrValue(newOffsets[dim], tiledOffset) &&
+          isEqualConstantIntOrValue(newSizes[dim], tiledSize);
+    } else {
+      isCompleteTileView &=
+          getConstantIntValue(newOffsets[dim]) == 0 &&
+          getConstantIntValue(newSizes[dim]) == oldSourceType.getDimSize(dim);
+    }
+  }
+  if (isCompleteTileView) {
+    newOffsets[tilingDim] = rewriter.getIndexAttr(0);
+    newSizes[tilingDim] =
+        rewriter.getIndexAttr(resultType.getDimSize(tilingDim));
+  } else {
+    mlir::hivm::handleExtractOfExtract(newOffsets[tilingDim],
+                                       newSizes[tilingDim], tiledOffset,
+                                       tiledSize, subViewOp.getLoc(), rewriter);
+  }
 
   auto fullShape =
       cast<MemRefType>(memref::SubViewOp::inferResultType(
@@ -515,8 +559,10 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownSubView(
     if (!newOp->hasAttr(attr.getName()))
       newOp->setAttr(attr.getName(), attr.getValue());
   }
-  insertDownPropagators(subViewOp, newOp, tiledOffset, tiledSize, tilingDim,
-                        rewriter);
+  OpFoldResult propagatedOffset =
+      isCompleteTileView ? OpFoldResult(rewriter.getIndexAttr(0)) : tiledOffset;
+  insertDownPropagators(subViewOp, newOp, propagatedOffset, tiledSize,
+                        tilingDim, rewriter);
   rewriter.eraseOp(subViewOp);
   if (propagateOp->use_empty())
     rewriter.eraseOp(propagateOp);

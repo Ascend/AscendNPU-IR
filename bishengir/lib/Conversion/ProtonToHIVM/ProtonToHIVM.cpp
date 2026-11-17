@@ -160,10 +160,11 @@ ProtonScopePlan::analyzeRecord(mlir::triton::proton::RecordOp record,
         })) {
       return record.emitError("scope name '") << name << "' is already active";
     }
-    if (scopes.size() >= hivm::proton::kMaxScopeCount) {
+    // Higher IDs are reserved for the experimental collector drain protocol.
+    if (scopes.size() >= hivm::proton::kMaxInstrumentedScopeCount) {
       return record.emitError(
-          "too many A5 Proton scopes; 10-bit logical region IDs allow at "
-          "most 1024 scopes per module");
+          "too many A5 Proton scopes; the experimental drain protocol allows "
+          "at most 392 scopes per module");
     }
 
     uint32_t logicalId = static_cast<std::uint32_t>(scopes.size());
@@ -217,7 +218,10 @@ void attachMetadata(ModuleOp module, ArrayRef<ScopeDescriptor> scopes) {
   module->setAttr(
       "proton.metadata",
       builder.getDictionaryAttr(
-          {builder.getNamedAttr("format_version", builder.getI32IntegerAttr(1)),
+          {builder.getNamedAttr(
+               "format_version",
+               builder.getI32IntegerAttr(
+                   hivm::proton::kInstrumentationFormatVersion)),
            builder.getNamedAttr("scopes", builder.getArrayAttr(scopeAttrs))}));
 }
 
@@ -258,6 +262,14 @@ void ConvertProtonToHIVMPass::runOnOperation() {
     boundary.setPipe(hivm::PIPE::PIPE_S);
     boundary.setVFMode(hivm::VFMode::SIMD);
     boundary.setInlineMode(hivm::InlineMode::AlwaysInline);
+    auto scopeId =
+        plan->getRegionId(record) & (hivm::proton::kMaxScopeCount - 1);
+    // The validated plan assigns every record a logical ID within scopes.
+    if (!record.getIsStart() && plan->getScopes()[scopeId].parentId < 0) {
+      Value drain = builder.create<arith::ConstantIntOp>(
+          record.getLoc(), hivm::proton::kOuterScopeDrain, 32);
+      builder.clone(*boundary)->setOperand(0, drain);
+    }
     record->erase();
   }
 

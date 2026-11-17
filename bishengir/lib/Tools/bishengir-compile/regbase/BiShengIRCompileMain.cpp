@@ -18,6 +18,7 @@
 #include "bishengir/Tools/Utils/Utils.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/bishengir-compile/regbase/PassPipeline.h"
+#include "bishengir/Tools/bishengir-compile/regbase/TreeReduceSkipSignature.h"
 #include "bishengir/Tools/bishengir-compile/regbase/Utility.h"
 #include "bishengir/Tools/bishengir-compile/regbase/VectorizationFailure.h"
 #include "bishengir/Tools/hivmc/BishengAsyncRuntime.h"
@@ -26,6 +27,7 @@
 #include "bishengir/Tools/hivmc/HIVMCA5.h"
 #include "bishengir/Tools/hivmc/Utility.h"
 #include "bishengir/Version/Version.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -591,7 +593,7 @@ LogicalResult handleSaveTemps(ModuleOp module,
 }
 
 HIVMCMainConfig HIVMCFromBiShengIRConfig(BiShengIRCompileMainConfig &config,
-                                        BishengAsyncRuntime *runtime) {
+                                         BishengAsyncRuntime *runtime) {
   HIVMCMainConfig hivmcConfig;
 
   /// TODO: add flag difference logic for hivmc and bishengir flags in
@@ -662,6 +664,12 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
                                        BishengAsyncRuntime *runtime) {
   if (failed(checkInOutOptionsValidity(config))) {
     return failure();
+  }
+
+  if (regbase::isSpecialCaseCloseNewTreeReduce(mod)) {
+    LDBG("Matched a known new-TreeReduce regression signature; disabling "
+         "TreeReduce");
+    config.setEnableTreeReduce(false);
   }
 
   if (isReduceOnlyModule(mod)) {

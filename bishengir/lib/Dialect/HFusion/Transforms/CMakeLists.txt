@@ -31,7 +31,6 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   ConstantizeTilingData.cpp
   ConvertGenericToNamedOp.cpp
   Decompose.cpp
-  DecomposeAtomicSync.cpp
   DecomposeOpInterfaceImpl.cpp
   DecomposeMulti.cpp
   DropSymbols.cpp
@@ -72,7 +71,6 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   UnfoldSymbolicDim.cpp
   UpliftWhileToFor.cpp
   LegalizeScalar.cpp
-  LegalizeNarrowFloatKernelArguments.cpp
   OptimizeScalarTransfers.cpp
   VectorizeOps.cpp
   LegalizeBF16.cpp

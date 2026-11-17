@@ -339,7 +339,7 @@ PropagateUpPattern::matchAndRewrite(UnrealizedConversionCastOp propagateOp,
     return failure();
   return TypeSwitch<Operation *, LogicalResult>(defOp)
       .Case([&](RegionBranchOpInterface branch) {
-        if (step != PropagationStep::ALL || isResultInL0C(res))
+        if (step != PropagationStep::ALL || isResultRemainInL0C(res))
           return failure();
 
         // Unstructured load case should be propagated from the inside.

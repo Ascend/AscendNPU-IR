@@ -2243,6 +2243,12 @@ namespace {
 
 bool isF64Type(Type type) { return getElementTypeOrSelf(type).isF64(); }
 
+bool isRank1F64Type(Type type) {
+  auto shapedType = dyn_cast<ShapedType>(type);
+  return shapedType && shapedType.hasRank() && shapedType.getRank() == 1 &&
+         isF64Type(type);
+}
+
 /// Whether the op belongs to a dialect whose ops compute on their operands.
 bool isComputeDialectOp(Operation *op) {
   Dialect *dialect = op->getDialect();
@@ -2266,6 +2272,16 @@ bool isAllowedF64Op(Operation *op) {
   // scalar cast uses; no value is computed.
   if (isa<hivm::PointerCastOp>(op))
     return true;
+  // Only the rank-1 DMA load template supports f64. SIMT indirect loads have
+  // separate templates and support f64 through rank 5.
+  if (auto loadOp = dyn_cast<hivm::LoadOp>(op))
+    return isRank1F64Type(loadOp.getSrc().getType()) &&
+           isRank1F64Type(loadOp.getDst().getType());
+  // Indirect load gathers f64 raw bits from GM to UB; dst must match src.
+  if (auto indirectLoadOp = dyn_cast<hivm::IndirectLoadOp>(op)) {
+    Type dstElem = getElementTypeOrSelf(indirectLoadOp.getDst().getType());
+    return isF64Type(indirectLoadOp.getSrc().getType()) && dstElem.isF64();
+  }
   // The f64 -> f32 vcast is a software cast implemented by the template
   // library, see DoubleToFloatRNE.h.
   if (auto castOp = dyn_cast<hivm::VCastOp>(op))

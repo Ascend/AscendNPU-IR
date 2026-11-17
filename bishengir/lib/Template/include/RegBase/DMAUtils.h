@@ -523,6 +523,51 @@ load_gm_to_ubuf_2d_by_scalar(memref_t<__gm__ T, 2> *src,
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
 }
 
+/// Scalar fallback for the A6 broadcast and in-row padded forms:
+/// \p broadcast_axes names the unit-source axes replicated in place, and
+/// \p span writes [lp pad][row][rp pad] inside the destination row. The A3/A5
+/// forms use neither, so they keep the two-argument overload above.
+template <typename T, bool DisableDCache = false>
+__aiv__ __attribute__((always_inline)) void
+load_gm_to_ubuf_2d_by_scalar_brc_pad(memref_t<__gm__ T, 2> *src,
+                                     memref_t<__ubuf__ T, 2> *dst,
+                                     unsigned broadcast_axes = 0,
+                                     bool span = false,
+                                     int64_t lp = 0, int64_t rp = 0,
+                                     const T *pad_value = nullptr) {
+  auto src_ptr = src->aligned + src->offset;
+  auto dst_ptr = dst->aligned + dst->offset;
+  // A span fill writes pad_value at the padding positions, so a span caller
+  // must supply one.
+  if (span && pad_value == nullptr) {
+    __builtin_cce_trap_mov(1);
+    return;
+  }
+  INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+  const int64_t rows = (broadcast_axes & 1) ? dst->sizes[0] : src->sizes[0];
+  const int64_t cols =
+      span ? dst->sizes[1]
+           : ((broadcast_axes & 2) ? dst->sizes[1] : src->sizes[1]);
+  const int64_t srcStep0 = (broadcast_axes & 1) ? 0 : src->strides[0];
+  const int64_t srcStep1 = (broadcast_axes & 2) ? 0 : src->strides[1];
+  for (int64_t i = 0; i < rows; ++i) {
+    for (int64_t j = 0; j < cols; ++j) {
+      // Span padding is in the destination view, never before its origin.
+      // This branch also handles W=0 without reading the source.
+      if (span && (j < lp || j - lp >= src->sizes[1])) {
+        *(dst_ptr + i * dst->strides[0] + j * dst->strides[1]) = *pad_value;
+      } else {
+        *(dst_ptr + i * dst->strides[0] + j * dst->strides[1]) =
+            load_gm_scalar<T, DisableDCache>(src_ptr + i * srcStep0 +
+                                             (span ? j - lp : j) * srcStep1);
+      }
+    }
+  }
+  INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+}
+
 template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_by_scalar(memref_t<__gm__ T, 3> *src,
@@ -542,6 +587,47 @@ load_gm_to_ubuf_3d_by_scalar(memref_t<__gm__ T, 3> *src,
                                    {dst->sizes[1], dst->sizes[2]},
                                    {dst->strides[1], dst->strides[2]}};
     load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(&src_2d, &dst_2d);
+  }
+}
+
+/// Scalar fallback for the A6 broadcast and in-row padded forms:
+/// \p broadcast_axes names the unit-source axes replicated in place, and
+/// \p span writes [lp pad][row][rp pad] inside the destination row. The A3/A5
+/// forms use neither, so they keep the two-argument overload above.
+template <typename T, bool DisableDCache = false>
+__aiv__ __attribute__((always_inline)) void
+load_gm_to_ubuf_3d_by_scalar_brc_pad(memref_t<__gm__ T, 3> *src,
+                                     memref_t<__ubuf__ T, 3> *dst,
+                                     unsigned broadcast_axes = 0,
+                                     bool span = false,
+                                     int64_t lp = 0, int64_t rp = 0,
+                                     const T *pad_value = nullptr) {
+  auto src_ptr = src->aligned + src->offset;
+  auto dst_ptr = dst->aligned + dst->offset;
+  // A span fill writes pad_value at the padding positions, so a span caller
+  // must supply one.
+  if (span && pad_value == nullptr) {
+    __builtin_cce_trap_mov(1);
+    return;
+  }
+
+  for (int64_t i = 0;
+       i < ((broadcast_axes & 1) ? dst->sizes[0] : src->sizes[0]); ++i) {
+    memref_t<__gm__ T, 2> src_2d{src->allocated,
+                                 src->aligned,
+                                 src->offset +
+                                     ((broadcast_axes & 1)
+                                          ? 0
+                                          : i * src->strides[0]),
+                                 {src->sizes[1], src->sizes[2]},
+                                 {src->strides[1], src->strides[2]}};
+    memref_t<__ubuf__ T, 2> dst_2d{dst->allocated,
+                                   dst->aligned,
+                                   dst->offset + i * dst->strides[0],
+                                   {dst->sizes[1], dst->sizes[2]},
+                                   {dst->strides[1], dst->strides[2]}};
+    load_gm_to_ubuf_2d_by_scalar_brc_pad<T, DisableDCache>(
+        &src_2d, &dst_2d, broadcast_axes >> 1, span, lp, rp, pad_value);
   }
 }
 
@@ -2038,12 +2124,63 @@ copy_ubuf_to_cbuf_3d_core_with_contiguous_last_dim(
   }
 }
 
+#if BISHENG_TPL_920R1
+// Common <=32-bit emitter shared by the A6 forms: the ordinary load, the
+// broadcast load and the in-row padded (span) load. span changes only loop0's
+// count and DMA origin. A3/A5 build their descriptors in place below.
+template <typename T, size_t Rank>
+__aiv__ __attribute__((always_inline)) void
+load_gm_to_ubuf_by_nddma(memref_t<__gm__ T, Rank> *src,
+                         memref_t<__ubuf__ T, Rank> *dst, int64_t lp,
+                         int64_t rp, uint32_t pad_bits, uint8_t cache,
+                         unsigned axes, bool span, bool first_elem) {
+  // Descriptors count 32-bit units: a 64-bit element has to be widened at the
+  // call site (see the sizeof(T) == 8 branches), never passed in here.
+  static_assert(sizeof(T) <= 4,
+                "NDDMA descriptors are 32-bit granular; widen 64-bit types at "
+                "the call site");
+  using DmaType = std::conditional_t<std::is_same_v<T, float8_e4m3_t> ||
+                                         std::is_same_v<T, float8_e5m2_t>,
+                                     uint8_t, T>;
+  auto *sp = reinterpret_cast<__gm__ DmaType *>(src->aligned + src->offset);
+  auto *dp = reinterpret_cast<__ubuf__ DmaType *>(dst->aligned + dst->offset -
+                                                  (span ? 0 : lp));
+  nddma_desc::loop_desc loop0(
+      span ? src->sizes[Rank - 1] : dst->sizes[Rank - 1],
+      dst->strides[Rank - 1],
+      (axes & (1u << (Rank - 1))) ? 0 : src->strides[Rank - 1], lp, rp);
+  nddma_desc::loop_desc loop1(
+      dst->sizes[Rank - 2], dst->strides[Rank - 2],
+      (axes & (1u << (Rank - 2))) ? 0 : src->strides[Rank - 2]);
+  if constexpr (Rank == 2) {
+    nddma_desc desc(loop1, loop0);
+    if (first_elem) {
+      INTRINSIC(nddma_out_to_ub, dp, sp, 0, desc, 0, NEAREST_PADDING, cache);
+    } else {
+      INTRINSIC(nddma_out_to_ub, dp, sp, 0, desc, pad_bits, CONSTANT_PADDING,
+                cache);
+    }
+  } else {
+    nddma_desc::loop_desc loop2(dst->sizes[0], dst->strides[0],
+                                (axes & 1) ? 0 : src->strides[0]);
+    nddma_desc desc(loop2, loop1, loop0);
+    if (first_elem) {
+      INTRINSIC(nddma_out_to_ub, dp, sp, 0, desc, 0, NEAREST_PADDING, cache);
+    } else {
+      INTRINSIC(nddma_out_to_ub, dp, sp, 0, desc, pad_bits, CONSTANT_PADDING,
+                cache);
+    }
+  }
+}
+#endif  // BISHENG_TPL_920R1
+
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
                             memref_t<__ubuf__ T, 2> *dst, PadMode pad_mode,
                             typename PadValueType<T>::type pad_value,
-                            int64_t left_padding_num, uint8_t l2_cache_ctl) {
+                            int64_t left_padding_num, uint8_t l2_cache_ctl,
+                            unsigned broadcast_axes = 0) {
   static_assert(
       sizeof(T) <= 8,
       "DMA only supports types up to 64-bit. "
@@ -2106,7 +2243,13 @@ load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
       reinterpret_cast<__ubuf__ DmaType *>(dst->aligned + dst->offset - lp);
 
   if constexpr (sizeof(T) <= 4) {
-    // 32-bit and below version
+#if BISHENG_TPL_920R1
+    load_gm_to_ubuf_by_nddma<T, 2>(src, dst, lp, rp, nddma_pad_val,
+                                   l2_cache_ctl, broadcast_axes, false,
+                                   pad_mode == PadMode::FirstElem);
+#else
+    // A3/A5 keep the descriptor built in place, exactly as before the A6
+    // shared emitter existed.
     nddma_desc::loop_desc loop0(dst->sizes[1], dst->strides[1], src->strides[1],
                                 lp, rp);
     nddma_desc::loop_desc loop1(dst->sizes[0], dst->strides[0],
@@ -2120,7 +2263,7 @@ load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
       INTRINSIC(nddma_out_to_ub, dst_ptr, src_ptr, 0, desc, nddma_pad_val,
                 CONSTANT_PADDING, l2_cache_ctl);
     }
-
+#endif
   } else if constexpr (sizeof(T) == 8) {
     // 64-bit version
     using T32 = typename std::conditional<std::is_same_v<T, int64_t>, int32_t,
@@ -2148,7 +2291,9 @@ load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
-                            memref_t<__ubuf__ T, 3> *dst) {
+                            memref_t<__ubuf__ T, 3> *dst,
+                            uint8_t l2_cache_ctl = 0,
+                            unsigned broadcast_axes = 0) {
   static_assert(
       sizeof(T) <= 8,
       "DMA only supports types up to 64-bit. "
@@ -2164,7 +2309,12 @@ load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
       reinterpret_cast<__ubuf__ DmaType *>(dst->aligned + dst->offset);
 
   if constexpr (sizeof(T) <= 4) {
-    // 32-bit and below version
+#if BISHENG_TPL_920R1
+    load_gm_to_ubuf_by_nddma<T, 3>(src, dst, 0, 0, 0, l2_cache_ctl,
+                                   broadcast_axes, false, true);
+#else
+    // A3/A5 keep the descriptor built in place, exactly as before the A6
+    // shared emitter existed.
     nddma_desc::loop_desc loop0(dst->sizes[2], dst->strides[2],
                                 src->strides[2]);
     nddma_desc::loop_desc loop1(dst->sizes[1], dst->strides[1],
@@ -2175,7 +2325,7 @@ load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
 
     INTRINSIC(nddma_out_to_ub, dst_ptr, src_ptr, 0, desc, 0, NEAREST_PADDING,
               0);
-
+#endif
   } else if constexpr (sizeof(T) == 8) {
     // 64-bit version
     using T32 = typename std::conditional<std::is_same_v<T, int64_t>, int32_t,
@@ -2196,17 +2346,152 @@ load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
   }
 }
 
+#if BISHENG_TPL_920R1
+// Validate layout and byte-offset arithmetic before forming pointers. Like
+// ordinary loads/copies, allocation validity is the source program contract.
+// Both paths below touch only view indices: DMA uses exact W and zero source
+// steps on singleton broadcast axes; scalar padding never reads the source.
+template <typename T, size_t Rank>
+__aiv__ __attribute__((always_inline)) bool
+span_layout_valid(int64_t offset, const int64_t *sizes,
+                  const int64_t *strides) {
+  constexpr int64_t limit = INT64_MAX / sizeof(T);
+  if (offset < 0 || offset > limit || strides[Rank - 1] != 1)
+    return false;
+  bool empty = false;
+  for (unsigned i = 0; i < Rank; ++i) {
+    if (sizes[i] < 0 || strides[i] < 0)
+      return false;
+    empty |= sizes[i] == 0;
+  }
+  // Empty sources have no read interval, including natural zero row strides.
+  if (empty)
+    return true;
+  int64_t extent = 1;
+  for (int i = Rank - 1; i >= 0; --i) {
+    const int64_t n = sizes[i], step = strides[i];
+    if (n < 0 || step < 0 || (i < Rank - 1 && step < extent))
+      return false;
+    if (n > 1) {
+      if (step > (limit - extent) / (n - 1))
+        return false;
+      extent += (n - 1) * step;
+    }
+  }
+  return extent <= limit - offset;
+}
+
+template <typename T, size_t Rank, bool DisableDCache = false>
+__aiv__ __attribute__((always_inline)) void
+load_gm_to_ubuf_span_core(memref_t<__gm__ T, Rank> *src,
+                          memref_t<__ubuf__ T, Rank> *dst, PadMode mode,
+                          PadValueT<T> pad, int64_t lp, int64_t rp,
+                          EvictionPolicy eviction, unsigned axes) {
+  static_assert(Rank == 2 || Rank == 3);
+  static_assert(sizeof(T) <= 4);
+  if constexpr (std::is_same_v<T, float8_e4m3_t> ||
+                std::is_same_v<T, float8_e5m2_t>) {
+    // The existing f32 ABI carries zero-extended FP8 bits, not a numerical
+    // float. Reuse byte movement on BOTH paths: the SDK forbids FP8 scalar
+    // arithmetic/constants, and a numerical cast would change the pad value.
+    memref_t<__gm__ uint8_t, Rank> bytes_src{
+        reinterpret_cast<__gm__ uint8_t *>(src->allocated),
+        reinterpret_cast<__gm__ uint8_t *>(src->aligned), src->offset};
+    memref_t<__ubuf__ uint8_t, Rank> bytes_dst{
+        reinterpret_cast<__ubuf__ uint8_t *>(dst->allocated),
+        reinterpret_cast<__ubuf__ uint8_t *>(dst->aligned), dst->offset};
+    for (unsigned i = 0; i < Rank; ++i) {
+      bytes_src.sizes[i] = src->sizes[i];
+      bytes_src.strides[i] = src->strides[i];
+      bytes_dst.sizes[i] = dst->sizes[i];
+      bytes_dst.strides[i] = dst->strides[i];
+    }
+    uint8_t byte = static_cast<uint8_t>(*reinterpret_cast<uint32_t *>(&pad));
+    load_gm_to_ubuf_span_core<uint8_t, Rank, DisableDCache>(
+        &bytes_src, &bytes_dst, mode, byte, lp, rp, eviction, axes);
+  } else {
+    const int64_t w = src->sizes[Rank - 1], d = dst->sizes[Rank - 1];
+    bool valid = mode == PadMode::Value && lp >= 0 && rp >= 0 && w >= 0 &&
+                 d >= 0 && lp <= d && w <= d - lp && rp == d - lp - w &&
+                 !(axes >> (Rank - 1)) &&
+                 span_layout_valid<T, Rank>(src->offset, src->sizes,
+                                            src->strides) &&
+                 span_layout_valid<T, Rank>(dst->offset, dst->sizes,
+                                            dst->strides);
+    bool empty = d == 0;
+    bool fields = w > 0 && w <= 0xfffff && lp <= 255 && rp <= 255;
+    for (unsigned i = 0; i < Rank - 1; ++i) {
+      const bool broadcast = axes & (1u << i);
+      valid &= broadcast ? (src->sizes[i] == 1 && dst->sizes[i] >= 1 &&
+                            dst->sizes[i] <= 0xfffff)
+                         : src->sizes[i] == dst->sizes[i];
+      empty |= dst->sizes[i] == 0;
+      fields &= dst->sizes[i] <= 0xfffff && dst->strides[i] <= 0xfffff &&
+                (broadcast || src->strides[i] <= 0xffffffffLL);
+    }
+    if (!valid) {
+      __builtin_cce_trap_mov(1);
+      return;
+    }
+    if (empty)
+      return;
+    if (fields) {
+      uint32_t bits = 0;
+      if constexpr (sizeof(T) == 1)
+        bits = *reinterpret_cast<uint8_t *>(&pad);
+      else if constexpr (sizeof(T) == 2)
+        bits = *reinterpret_cast<uint16_t *>(&pad);
+      else
+        bits = *reinterpret_cast<uint32_t *>(&pad);
+      load_gm_to_ubuf_by_nddma<T, Rank>(src, dst, lp, rp, bits,
+                                        static_cast<uint8_t>(eviction), axes,
+                                        true, false);
+      return;
+    }
+    // Includes zero W (all pad), wide pad/count/stride fields. The existing
+    // scalar helper owns cache reads and MTE2/S event handshakes for both
+    // ranks.
+    if constexpr (Rank == 2)
+      load_gm_to_ubuf_2d_by_scalar_brc_pad<T, DisableDCache>(
+          src, dst, axes, true, lp, rp, &pad);
+    else
+      load_gm_to_ubuf_3d_by_scalar_brc_pad<T, DisableDCache>(
+          src, dst, axes, true, lp, rp, &pad);
+  }
+}
+
+#define REGISTE_DMA_SPAN_LOAD(dim, type)                                       \
+  __aiv__ __attribute__((always_inline)) void                                  \
+      _mlir_ciface_load_gm_to_ubuf_##dim##d_##type##_span(                     \
+          memref_t<__gm__ type, dim> *src, memref_t<__ubuf__ type, dim> *dst,  \
+          PadMode mode, PadValueT<type> pad, int64_t lp, int64_t rp,           \
+          EvictionPolicy eviction, uint32_t axes) {                           \
+    load_gm_to_ubuf_span_core<type, dim>(                                      \
+        src, dst, mode, pad, lp, rp, eviction, axes);                          \
+  }                                                                            \
+  __aiv__ __attribute__((always_inline)) void                                  \
+      _mlir_ciface_load_gm_to_ubuf_##dim##d_##type##_span_nocache(             \
+          memref_t<__gm__ type, dim> *src, memref_t<__ubuf__ type, dim> *dst,  \
+          PadMode mode, PadValueT<type> pad, int64_t lp, int64_t rp,           \
+          EvictionPolicy eviction, uint32_t axes) {                           \
+    load_gm_to_ubuf_span_core<type, dim, true>(                                \
+        src, dst, mode, pad, lp, rp, eviction, axes);                          \
+  }
+#endif
+
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
                             memref_t<__ubuf__ T, 2> *dst, PadMode pad_mode,
                             typename PadValueType<T>::type pad_value,
-                            int64_t left_padding_num, uint8_t l2_cache_ctl);
+                            int64_t left_padding_num, uint8_t l2_cache_ctl,
+                            unsigned broadcast_axes);
 
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
-                            memref_t<__ubuf__ T, 3> *dst);
+                            memref_t<__ubuf__ T, 3> *dst,
+                            uint8_t l2_cache_ctl, unsigned broadcast_axes);
 
 #endif
 

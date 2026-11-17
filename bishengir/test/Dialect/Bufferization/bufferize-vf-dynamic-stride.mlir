@@ -3,8 +3,7 @@
 // RUN:   -inline-func-to-scope \
 // RUN:   -bufferize-module-op="function-boundary-type-conversion=identity-layout-map unknown-type-conversion=identity-layout-map" \
 // RUN:   -canonicalize -drop-equivalent-buffer-results \
-// RUN:   -outline-scope="outline-marked-scopes-only=true" \
-// RUN:   -hivm-verify-vector-function-top-level-copy %s | FileCheck %s
+// RUN:   -outline-scope="outline-marked-scopes-only=true" %s | FileCheck %s
 
 // End-to-end coverage of the RegBase bufferization flow for vector functions
 // fed by dynamic strided slices: the VF is inlined into a scope before
@@ -12,8 +11,8 @@
 // caller-side subview is inferred, and the VF is outlined again afterwards
 // with that layout kept in its signature. The slices are taken from a static
 // tensor.empty (never from a block argument), which bufferizes to a single
-// static allocation. No identity-layout copy is inserted around the call, and
-// the final VF top-level-copy check passes.
+// static allocation. Loads and stores inside each VF use the caller layout
+// directly, without an identity-layout copy inside the VF.
 
 // -----
 
@@ -274,5 +273,54 @@ module {
     %r = func.call @vf_rows(%s) {hivm.vector_function} : (tensor<126x32xf32>) -> tensor<126x32xf32>
     %o = tensor.insert_slice %r into %e[2, 0] [126, 32] [1, 1] : tensor<126x32xf32> into tensor<128x32xf32>
     return %o : tensor<128x32xf32>
+  }
+}
+
+// -----
+
+// Reduced from triton_conv1d_3d_kernel_mix_aiv_outlined_vf_4: the VF input is a
+// 2x30x126 view obtained by expanding a 60x126 slice of a 60x128 buffer, so the
+// row stride (128) differs from the row size (126). The non-contiguous layout
+// strided<[3840, 128, 1]> propagates through expand_shape into the VF signature.
+// CHECK-LABEL: func.func @triton_conv1d_3d_kernel_mix_aiv_outlined_vf_4(
+// CHECK-SAME: %[[ARG:.*]]: memref<2x30x126xf32, strided<[3840, 128, 1]>>)
+// CHECK-SAME: -> memref<2x30x126xf32, strided<[3840, 128, 1]>>
+// CHECK-SAME: attributes {hivm.vector_function}
+// CHECK: memref.load %[[ARG]]
+// CHECK: memref.store {{.*}}, %[[ARG]]
+// CHECK-LABEL: func.func @caller_expand(
+// CHECK-SAME: -> memref<60x128xf32>
+// CHECK: %[[BUF:.*]] = memref.alloc() {{.*}} : memref<60x128xf32>
+// CHECK: %[[SV:.*]] = memref.subview %[[BUF]][0, 0] [60, 126] [1, 1]
+// CHECK-SAME: to memref<60x126xf32, strided<[128, 1]>>
+// CHECK: %[[EXP:.*]] = memref.expand_shape %[[SV]] {{\[\[0, 1\], \[2\]\]}} output_shape [2, 30, 126]
+// CHECK-SAME: into memref<2x30x126xf32, strided<[3840, 128, 1]>>
+// CHECK: %[[RES:.*]] = call @triton_conv1d_3d_kernel_mix_aiv_outlined_vf_4(%[[EXP]]) {hivm.vector_function}
+// CHECK-SAME: (memref<2x30x126xf32, strided<[3840, 128, 1]>>) -> memref<2x30x126xf32, strided<[3840, 128, 1]>>
+// CHECK: %[[COL:.*]] = memref.collapse_shape %[[RES]]
+// CHECK: %[[DST:.*]] = memref.subview %[[BUF]][0, 0] [60, 126] [1, 1]
+// CHECK: memref.copy %[[COL]], %[[DST]]
+module {
+  func.func @triton_conv1d_3d_kernel_mix_aiv_outlined_vf_4(%arg0: tensor<2x30x126xf32>) -> tensor<2x30x126xf32> attributes {hivm.vector_function} {
+    %cst = arith.constant 1.0 : f32
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %c1 = arith.constant 1 : index
+    %r = scf.for %i = %c0 to %c2 step %c1 iter_args(%t = %arg0) -> (tensor<2x30x126xf32>) {
+      %v = tensor.extract %t[%i, %c0, %c0] : tensor<2x30x126xf32>
+      %a = arith.addf %v, %cst : f32
+      %n = tensor.insert %a into %t[%i, %c0, %c0] : tensor<2x30x126xf32>
+      scf.yield %n : tensor<2x30x126xf32>
+    }
+    return %r : tensor<2x30x126xf32>
+  }
+  func.func @caller_expand() -> tensor<60x128xf32> {
+    %e = tensor.empty() : tensor<60x128xf32>
+    %s = tensor.extract_slice %e[0, 0] [60, 126] [1, 1] : tensor<60x128xf32> to tensor<60x126xf32>
+    %x = tensor.expand_shape %s [[0, 1], [2]] output_shape [2, 30, 126] : tensor<60x126xf32> into tensor<2x30x126xf32>
+    %r = func.call @triton_conv1d_3d_kernel_mix_aiv_outlined_vf_4(%x) {hivm.vector_function} : (tensor<2x30x126xf32>) -> tensor<2x30x126xf32>
+    %c = tensor.collapse_shape %r [[0, 1], [2]] : tensor<2x30x126xf32> into tensor<60x126xf32>
+    %o = tensor.insert_slice %c into %e[0, 0] [60, 126] [1, 1] : tensor<60x126xf32> into tensor<60x128xf32>
+    return %o : tensor<60x128xf32>
   }
 }

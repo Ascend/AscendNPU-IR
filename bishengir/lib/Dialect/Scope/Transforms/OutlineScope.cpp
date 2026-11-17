@@ -61,7 +61,7 @@ public:
 /// call, not on the outlined function.
 static void copyCallSiteAttrs(ScopeOp scopeOp, Operation *callOp) {
   if (auto callAttrs =
-          scopeOp->getAttrOfType<CallAttrsVecAttr>(CallAttrsVecAttr::name))
+          scopeOp->getAttrOfType<CallAttrsAttr>(CallAttrsAttr::name))
     for (NamedAttribute attr : callAttrs.getAttrs())
       callOp->setAttr(attr.getName(), attr.getValue());
 }
@@ -141,11 +141,11 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
         moduleOp->getLoc(), prefixFunctionName, funcTy, scopeOp->getAttrs());
     // Drop the bookkeeping attributes of the scope: `outline` is only the
     // marker selecting the scope to outline, `sym_func_name` is a temporary
-    // naming hint and `call_attrs_vec` holds call-site attributes restored on
+    // naming hint and `call_attrs` holds call-site attributes restored on
     // the recreated call below.
     newFuncOp->removeAttr(OutlineAttr::getMnemonic());
     newFuncOp->removeAttr(SymFuncNameAttr::name);
-    newFuncOp->removeAttr(CallAttrsVecAttr::name);
+    newFuncOp->removeAttr(CallAttrsAttr::name);
     // Transfer layout attribute from the defining op of an input to the
     // outlined function argument, if present.
     for (auto [idx, input] : llvm::enumerate(inputs)) {

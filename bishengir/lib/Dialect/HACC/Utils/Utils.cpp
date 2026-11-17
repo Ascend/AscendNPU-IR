@@ -380,8 +380,12 @@ bool isAscend950(llvm::StringRef targetDevice) {
 
 bool isAscend960(TargetDevice targetDevice) {
   static const std::unordered_set<TargetDevice> ascend960Devices = {
-      TargetDevice::Ascend960, TargetDevice::Ascend960DT_969B5,
-      TargetDevice::Ascend960DT_968B7, TargetDevice::Ascend960DT_961BX};
+      TargetDevice::Ascend960,         TargetDevice::Ascend960DT_969B5,
+      TargetDevice::Ascend960DT_969B6, TargetDevice::Ascend960DT_968B7,
+      TargetDevice::Ascend960DT_966B7, TargetDevice::Ascend960DT_966B8,
+      TargetDevice::Ascend960DT_961BY, TargetDevice::Ascend960DT_961BZ,
+      TargetDevice::Ascend960PR_969A1, TargetDevice::Ascend960PR_964A1,
+      TargetDevice::Ascend960PR_936A1};
 
   return ascend960Devices.find(targetDevice) != ascend960Devices.end();
 }
@@ -619,13 +623,6 @@ ModuleOp filterFuncsInModule(ModuleOp &op,
     }
   });
   return module;
-}
-
-bool isEntry(Operation *func) {
-  if (!func)
-    return false;
-  return func->hasAttr(
-      hacc::stringifyEnum(hacc::HACCToLLVMIRTranslateAttr::ENTRY));
 }
 
 bool isMixEntry(Operation *func) {

@@ -95,15 +95,10 @@ void bufferizationPipelineBase(OpPassManager &pm, bool isRegBased) {
   }
   pm.addPass(
       bishengir::bufferization::createBufferizeModuleOpPass(oneShotOptions));
-  canonicalizationHIVMPipeline(pm);
-  pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
   if (isRegBased) {
     // Restore only the inlined VFs with their inferred buffer layouts.
-    OutlineScopeOptions outlineScopeOptions;
-    outlineScopeOptions.outlineMarkedScopesOnly = true;
-    pm.addPass(scope::createOutlineScopePass(outlineScopeOptions));
-    pm.nest<func::FuncOp>().addPass(
-        createVerifyVectorFunctionTopLevelCopyPass());
+    pm.addPass(scope::createOutlineScopePass(
+        OutlineScopeOptions{/*outlineMarkedScopesOnly*/ true}));
   }
 }
 
@@ -133,6 +128,8 @@ void bufferizationPipeline(OpPassManager &pm,
     vfMergeOpsOpt.mergeLevel = 2;
     pm.addPass(hfusion::createMergeVecScopePass(vfMergeOpsOpt));
   }
+  canonicalizationHIVMPipeline(pm);
+  pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
   if (hivmPipelineOptions.enableTritonKernelCompile) {
     // For triton kernels, bufferization will generate `memref.copy` ops,
     // and they need to be converted to `hivm.copy` ops.

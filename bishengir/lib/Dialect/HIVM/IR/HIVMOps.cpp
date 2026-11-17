@@ -33,6 +33,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/DialectImplementation.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
@@ -212,6 +213,17 @@ void PointerCastOp::build(OpBuilder &odsBuilder, OperationState &odsState,
 
 TypedValue<IntegerType> PointerCastOp::getSingleAddr() {
   return cast<TypedValue<IntegerType>>(getAddrs()[0]);
+}
+
+LogicalResult PoolSlotOp::verify() {
+  auto root = getSource().getDefiningOp<PointerCastOp>();
+  if (!root || root.getAddrs().empty())
+    return emitOpError("source must be a planned pointer_cast address table");
+  APInt slot;
+  if (matchPattern(getSlot(), m_ConstantInt(&slot)) &&
+      (slot.isNegative() || slot.getZExtValue() >= root.getAddrs().size()))
+    return emitOpError("constant slot is outside the source address table");
+  return success();
 }
 
 LogicalResult PointerCastOp::verify() {
@@ -998,7 +1010,10 @@ LogicalResult IndirectLoadOp::verify() {
 
     auto otherElementType = otherMemrefType ? otherMemrefType.getElementType()
                                             : otherTensorType.getElementType();
-    if (otherElementType != srcElementType) {
+    auto mod = (*this)->getParentOfType<ModuleOp>();
+    bool isReg = mod && hacc::utils::isRegBasedArch(mod);
+    bool isF64ToF32Other = srcElementType.isF64() && otherElementType.isF32();
+    if (otherElementType != srcElementType && !(isReg && isF64ToF32Other)) {
       return emitOpError("other of hfusion::IndirectLoadOp must have the same "
                          "element type as src");
     }

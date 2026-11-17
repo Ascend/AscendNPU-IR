@@ -31,25 +31,39 @@ include "mlir/Interfaces/SideEffectInterfaces.td"
 //===----------------------------------------------------------------------===//
 
 def ApplyLoopInvariantCodeMotionWithSliceBoundaryOp :
-    Op<Transform_Dialect, "apply_licm_with_slice_boundary",
-       [DeclareOpInterfaceMethods<TransformOpInterface>,
-        DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
-        ReportTrackingListenerFailuresOpTrait]> {
-  let summary = "Run LICM within explicit slice boundaries";
+    TransformDialectOp<"apply_licm_with_slice_boundary",
+                       [TransformOpInterface, TransformEachOpTrait,
+                        DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+                        ReportTrackingListenerFailuresOpTrait]> {
+  let summary = "Move loop-invariant code out of a loop-like op";
   let description = [{
-    Each target must be an scf.for that explicitly defines a slice boundary.
-    Walks its loop-like operations in post-order, applying ordinary LICM to
-    nested loops. At the target loop, tensor.extract_slice operations and
-    their dependent operations stay inside, while other invariant operations
-    use the usual LICM legality checks. Enclosing loops are not processed.
+    This transform moves side-effect free, loop invariant code out of the
+    targeted loop-like op. The targeted op must implement the
+    `LoopLikeOpInterface`.
 
-    Targets must not contain one another, so that processing one boundary
-    cannot hoist slices across another. An empty target handle is a no-op.
-    This operation reads the target handle and modifies the payload.
+    Like `apply_licm`, this operation processes each targeted loop without
+    recursively applying LICM to nested loops. At an scf.for carrying an
+    `outlined-loop-target-*` attribute, extract_slice operations cannot leave
+    the loop. This includes moving a region operation containing a slice.
+    Other invariant operations use the ordinary LICM legality checks.
+    Unmarked loops retain upstream slice-hoisting behavior. Operations carrying
+    an `hfusion-auto-vectorize-target-*` attribute cannot be hoisted from any
+    loop, including as part of a larger region operation. These existing AV2
+    plan labels conservatively identify operations still tracked for fusion
+    or vectorization; this transform does not consume or remove the labels.
   }];
+
   let arguments = (ins TransformHandleTypeInterface:$target);
   let results = (outs);
   let assemblyFormat = "`to` $target attr-dict `:` type($target)";
+
+  let extraClassDeclaration = [{
+    ::mlir::DiagnosedSilenceableFailure applyToOne(
+      ::mlir::transform::TransformRewriter &rewriter,
+      ::mlir::LoopLikeOpInterface target,
+      ::mlir::transform::ApplyToEachResultList &results,
+      ::mlir::transform::TransformState &state);
+  }];
 }
 
 //===----------------------------------------------------------------------===//

@@ -7,15 +7,16 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Conversion/HFusionToHIVM/Utils.h"
+#include "bishengir/Dialect/Analysis/VFFusion/Transforms/Transforms.h"
+#include "bishengir/Dialect/Analysis/VFFusion/VFStackInfo.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "bishengir/Dialect/Analysis/VFFusion/Transforms/Transforms.h"
-#include "bishengir/Dialect/Analysis/VFFusion/VFStackInfo.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/IR/PatternMatch.h"
@@ -68,6 +69,12 @@ static void generalizeBroadcastOp(PatternRewriter &rewriter,
       SmallVector<utils::IteratorType>(resultType.getRank(),
                                        utils::IteratorType::parallel),
       nestedBody);
+}
+
+static bool isF64ToF32Cast(hfusion::CastOp op) {
+  Type inputType = getElementTypeOrSelf(op.getDpsInputs()[0].getType());
+  Type resultType = getElementTypeOrSelf(op.getResult(0).getType());
+  return inputType.isF64() && resultType.isF32();
 }
 
 FailureOr<linalg::GenericOp> generalizeGatherOp(RewriterBase &rewriter,
@@ -152,6 +159,12 @@ struct HFusionGeneralizationPatterns
         // TODO: Handle single element fillop
         hfusion::isMatmulOps(op) || isa<hfusion::ReduceWithIndexOp>(op) ||
         hfusion::opCanFuseIntoMatmul(op) || isa<linalg::TransposeOp>(op))
+      return failure();
+    // This pass is scheduled only by the regbase pipeline. Keep f64-to-f32
+    // casts as HFusion ops so they lower through VCastOp and the vector
+    // template library rather than being outlined as scalar loops.
+    if (auto castOp = dyn_cast<hfusion::CastOp>(op.getOperation());
+        castOp && isF64ToF32Cast(castOp))
       return failure();
     if (hfusion::isSingleElementLinalgOp(op) && isa<linalg::FillOp>(op)) {
       Type elemType = op.getDpsInputs()[0].getType();

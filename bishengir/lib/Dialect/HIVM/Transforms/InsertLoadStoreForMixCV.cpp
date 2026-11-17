@@ -73,39 +73,6 @@ namespace {
 static const llvm::StringLiteral kConvertLayoutOperand =
     "converted-layout-operand";
 
-llvm::SmallVector<size_t> getIntegersOfArrayAttr(Operation *op,
-                                                 llvm::StringLiteral attrName) {
-  ArrayAttr arr = op->getAttrOfType<ArrayAttr>(attrName);
-  llvm::SmallVector<size_t> result;
-  if (!arr)
-    return result;
-  result.reserve(arr.size());
-  for (Attribute attr : arr) {
-    auto intAttr = dyn_cast<IntegerAttr>(attr);
-    // In production you may want to assert or handle errors.
-    assert(intAttr && "ArrayAttr element is not an IntegerAttr");
-    // Use getValue().getZExtValue() to interpret as unsigned.
-    result.push_back(intAttr.getValue().getZExtValue());
-  }
-  return result;
-}
-
-void insertToIntegerAttrOfArrayAttr(Operation *op, llvm::StringLiteral attrName,
-                                    size_t value, PatternRewriter &rewriter) {
-  auto arr = getIntegersOfArrayAttr(op, attrName);
-  if (std::find(arr.begin(), arr.end(), value) != arr.end())
-    return;
-  arr.push_back(value);
-  std::sort(arr.begin(), arr.end());
-
-  SmallVector<Attribute> newAttrs;
-  for (auto idx : arr) {
-    newAttrs.push_back(
-        rewriter.getIntegerAttr(rewriter.getIntegerType(64), idx));
-  }
-  op->setAttr(attrName, rewriter.getArrayAttr(newAttrs));
-}
-
 struct InsertLoadStoreForMixCVPass
     : public impl::InsertLoadStoreForMixCVBase<InsertLoadStoreForMixCVPass> {
 public:
@@ -1316,7 +1283,7 @@ struct AddConvertLayoutUBToL1 : public OpRewritePattern<hivm::MmadL1Op> {
     for (OpOperand *operand : op.getDpsInputOperands()) {
       Value beforeValue = operand->get();
       auto operandIdx = operand->getOperandNumber();
-      auto inserted = getIntegersOfArrayAttr(op, kConvertLayoutOperand);
+      auto inserted = utils::getIntegersOfArrayAttr(op, kConvertLayoutOperand);
       if (std::find(inserted.begin(), inserted.end(), operandIdx) !=
           inserted.end())
         continue;
@@ -1402,8 +1369,8 @@ struct AddConvertLayoutUBToL1 : public OpRewritePattern<hivm::MmadL1Op> {
           insertConvertLayout(rewriter, op, consumerOperands);
       if (failed(result))
         continue;
-      insertToIntegerAttrOfArrayAttr(op, kConvertLayoutOperand, operandIdx,
-                                     rewriter);
+      utils::insertIntegerAttrToArrayAttr(op, kConvertLayoutOperand, operandIdx,
+                                          rewriter);
 
       // Handle case where multiple operands of `op` are same SSA value.
       // e.g., `hivm.hir.mmadL1 ins(%vec, %vec, ...)` where both operands are
@@ -1418,8 +1385,8 @@ struct AddConvertLayoutUBToL1 : public OpRewritePattern<hivm::MmadL1Op> {
           if (operand->get() != beforeValue)
             continue;
           op->setOperand(operand->getOperandNumber(), converted);
-          insertToIntegerAttrOfArrayAttr(op, kConvertLayoutOperand,
-                                         operand->getOperandNumber(), rewriter);
+          utils::insertIntegerAttrToArrayAttr(
+              op, kConvertLayoutOperand, operand->getOperandNumber(), rewriter);
         }
       });
 
@@ -1444,7 +1411,7 @@ struct AddConvertLayoutUBToL1<hivm::FixpipeOp>
 
     for (OpOperand &operand : op->getOpOperands()) {
       auto operandIdx = operand.getOperandNumber();
-      auto inserted = getIntegersOfArrayAttr(op, kConvertLayoutOperand);
+      auto inserted = utils::getIntegersOfArrayAttr(op, kConvertLayoutOperand);
       if (std::find(inserted.begin(), inserted.end(), operandIdx) !=
           inserted.end())
         continue;
@@ -1474,8 +1441,9 @@ struct AddConvertLayoutUBToL1<hivm::FixpipeOp>
           insertConvertLayout(rewriter, op, consumerOperands);
       if (failed(l1Result))
         continue;
-      insertToIntegerAttrOfArrayAttr(op.getOperation(), kConvertLayoutOperand,
-                                     operand.getOperandNumber(), rewriter);
+      utils::insertIntegerAttrToArrayAttr(op.getOperation(),
+                                          kConvertLayoutOperand,
+                                          operand.getOperandNumber(), rewriter);
 
       Value convertedToL1 = operand.get();
       if (valueAfterUb != convertedToL1) {

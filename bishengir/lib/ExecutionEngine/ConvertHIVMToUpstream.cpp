@@ -1064,6 +1064,11 @@ struct RewriteLoadOp : public OpRewritePattern<hivm::LoadOp> {
 
   LogicalResult matchAndRewrite(hivm::LoadOp op,
                                 PatternRewriter &rewriter) const final {
+    // A broadcast descriptor has no upstream (linalg) equivalent here: the
+    // shapes differ, so it must not silently degrade to linalg.copy.
+    if (op.getBroadcastAxesAttr())
+      return op.emitOpError(
+          "broadcast_axes is not supported by ExecutionEngine");
     if (const auto padMode = op.getPadModeAttr();
         !padMode || padMode.getPadmode() == hivm::PadMode::PadNull) {
       rewriter.replaceOpWithNewOp<linalg::CopyOp>(op, op.getResultTypes(),
@@ -1702,6 +1707,19 @@ struct ConvertHIVMToUpstream
   void runOnOperation() override {
     auto &ctx = getContext();
 
+    // Diagnose before the EE type conversion strips GM/UB memory spaces.
+    WalkResult unsupportedCheck = getOperation()->walk([](hivm::LoadOp load) {
+      if (load.getBroadcastAxesAttr()) {
+        load.emitOpError(
+            "broadcast_axes is not supported by ExecutionEngine");
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    });
+    if (unsupportedCheck.wasInterrupted()) {
+      signalPassFailure();
+      return;
+    }
     if (failed(applyTypeConversion())) {
       signalPassFailure();
       return;

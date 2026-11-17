@@ -3688,6 +3688,20 @@ bool TreeReduceV2Pass::shouldSkipModule(ModuleOp module) {
   return false;
 }
 
+// Element types TreeReduceV2 can lower: f32, plus f16/bf16 which are promoted
+// to f32 while lowering. Everything else is out of scope.
+static bool isSupportedReductionElementType(Type type) {
+  return type.isF32() || type.isF16() || type.isBF16();
+}
+
+// A `vector.multi_reduction` accumulator may be a scalar or a vector, so the
+// element type has to be recovered from either form.
+static Type getReductionElementType(Type type) {
+  if (auto shaped = dyn_cast<ShapedType>(type))
+    return shaped.getElementType();
+  return type;
+}
+
 std::optional<ReductionMatch>
 TreeReduceV2Pass::matchReduction(vector::MultiDimReductionOp reduceOp) {
   LDBG("--- Processing MultiDimReductionOp: " << *reduceOp);
@@ -3696,6 +3710,23 @@ TreeReduceV2Pass::matchReduction(vector::MultiDimReductionOp reduceOp) {
   if (reduceOp.getKind() != vector::CombiningKind::ADD) {
     LDBG("Skipping - not an ADD reduction (kind="
          << vector::stringifyCombiningKind(reduceOp.getKind()) << ")");
+    return std::nullopt;
+  }
+
+  // The rewrite only models f32/f16/bf16 arithmetic. Check the reduction
+  // operands as well as the recovered input tensor (later in
+  // createRewritePlan): the source may be widened or narrowed to another
+  // element type (e.g. f64) while the traced tensor still looks supported.
+  // Rewriting such an op as a same-type float reduction would drop the
+  // conversion and change its semantics.
+  Type sourceElementType =
+      getReductionElementType(reduceOp.getSource().getType());
+  Type accumulatorElementType =
+      getReductionElementType(reduceOp.getAcc().getType());
+  if (!isSupportedReductionElementType(sourceElementType) ||
+      !isSupportedReductionElementType(accumulatorElementType)) {
+    LDBG("Skipping - unsupported reduction element type: source="
+         << sourceElementType << " acc=" << accumulatorElementType);
     return std::nullopt;
   }
 
@@ -3876,9 +3907,8 @@ TreeReduceV2Pass::createRewritePlan(const ReductionMatch &match,
                                     scf::ForOp rewriteLoop) {
   // Element types and vector geometry are lowering-independent.
   Type inputElementType = match.inputType.getElementType();
-  if (!inputElementType.isF32() && !inputElementType.isF16() &&
-      !inputElementType.isBF16()) {
-    LDBG("Skipping - unsupported element type: " << inputElementType);
+  if (!isSupportedReductionElementType(inputElementType)) {
+    LDBG("Skipping - unsupported input element type: " << inputElementType);
     return std::nullopt;
   }
 

@@ -426,6 +426,25 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
                 [&](auto op) { return solveProblem(op); })
             .Case<hivmave::VFPregTypeCastOp>(
                 [&](auto op) { return solveProblem(op); })
+            .Case<hivmave::PregPackOp>(
+                [&](auto op) { return inferPregPackLayout(op); })
+            .Case<hivmave::PregUnpackOp>(
+                [&](auto op) { return inferPregUnpackLayout(op); })
+            .Case<hivmave::PregInterleaveOp>(
+                [&](auto op) { return inferPregInterleaveLayout(op); })
+            .Case<hivmave::PregDeinterleaveOp>(
+                [&](auto op) { return inferPregInterleaveLayout(op); })
+            .Case<hivmave::VFRegisterGatherOp>(
+                [&](auto op) { return inferRegisterGatherLayout(op); })
+            .Case<hivmave::VFBlockGatherOp>([&](auto op) {
+              if (getState(op.getRes()) != State::B32)
+                return TreeSolves{};
+              return TreeSolves{
+                  wrapThis(FunctionType::NONE, {{op.getIndexVec(), State::B32},
+                                                {op.getMask(), State::B32}})};
+            })
+            .Case<hivmave::GroupReductionOp>(
+                [&](auto op) { return inferGroupReductionLayout(op); })
             .Case<hivmave::VFPltOp>(
                 [&](auto op) { return solvePregGenProblem(op); })
             .Case<hivmave::VFSelectOp, hivmave::VFAddsOp, hivmave::VFExpOp,
@@ -677,6 +696,75 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
     default:
       return {};
     }
+  }
+
+  TreeSolves inferPregPackLayout(hivmave::PregPackOp op) {
+    auto src = op.getSrc();
+    auto srcType = cast<VectorType>(src.getType());
+    switch (COMB_CASE(srcType.getNumElements(), getState(op.getRes()))) {
+    case COMB_CASE(64, State::B16):
+      return {wrapThis(FunctionType::NONE, {{src, State::B32}})};
+    case COMB_CASE(128, State::B8):
+      return {wrapThis(FunctionType::NONE, {{src, State::B16}})};
+    default:
+      return {};
+    }
+  }
+
+  TreeSolves inferPregUnpackLayout(hivmave::PregUnpackOp op) {
+    auto src = op.getSrc();
+    auto srcType = cast<VectorType>(src.getType());
+    switch (COMB_CASE(srcType.getNumElements(), getState(op.getRes()))) {
+    case COMB_CASE(128, State::B32):
+      return {wrapThis(FunctionType::NONE, {{src, State::B16}})};
+    case COMB_CASE(256, State::B16):
+      return {wrapThis(FunctionType::NONE, {{src, State::B8}})};
+    default:
+      return {};
+    }
+  }
+
+  template <typename OpTy> TreeSolves inferPregInterleaveLayout(OpTy op) {
+    auto src0 = op.getSrc0();
+    auto src1 = op.getSrc1();
+    auto srcType = cast<VectorType>(src0.getType());
+    if (getState(op.getRes0()) != getState(op.getRes1()))
+      return {};
+    switch (COMB_CASE(srcType.getNumElements(), getState(op.getRes0()))) {
+    case COMB_CASE(64, State::B32):
+      return {wrapThis(FunctionType::NONE,
+                       {{src0, State::B32}, {src1, State::B32}})};
+    case COMB_CASE(128, State::B16):
+      return {wrapThis(FunctionType::NONE,
+                       {{src0, State::B16}, {src1, State::B16}})};
+    case COMB_CASE(256, State::B8):
+      return {
+          wrapThis(FunctionType::NONE, {{src0, State::B8}, {src1, State::B8}})};
+    default:
+      return {};
+    }
+  }
+
+  TreeSolves inferRegisterGatherLayout(hivmave::VFRegisterGatherOp op) {
+    State natural = elemBitwidthOf(op.getSrc()) == 8    ? State::B8
+                    : elemBitwidthOf(op.getSrc()) == 16 ? State::B16
+                                                        : State::B32;
+    if (getState(op.getRes()) != natural)
+      return {};
+    return {wrapThis(FunctionType::NONE, {{op.getSrc(), natural},
+                                          {op.getIndex(), natural},
+                                          {op.getMask(), natural}})};
+  }
+
+  TreeSolves inferGroupReductionLayout(hivmave::GroupReductionOp op) {
+    State srcState =
+        elemBitwidthOf(op.getSrc()) == 16 ? State::B16 : State::B32;
+    State resState =
+        elemBitwidthOf(op.getRes()) == 16 ? State::B16 : State::B32;
+    if (getState(op.getRes()) != resState)
+      return {};
+    return {wrapThis(FunctionType::NONE, {{op.getSrc(), srcState}},
+                     {{op.getMask(), srcState}})};
   }
 
   template <typename MaskOp> TreeSolves solveMaskProblem(MaskOp op) {

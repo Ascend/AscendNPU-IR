@@ -54,7 +54,7 @@ def Scope_SymFuncNameAttr : Scope_Attr<"SymFuncName", "sym_func_name"> {
   }];
 }
 
-def Scope_CallAttrsVecAttr : Scope_Attr<"CallAttrsVec", "call_attrs_vec"> {
+def Scope_CallAttrs : Scope_Attr<"CallAttrs", "call_attrs"> {
   let parameters = (ins "::mlir::DictionaryAttr":$attrs);
   let assemblyFormat = "`<` $attrs `>`";
   let builders = [

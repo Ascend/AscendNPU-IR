@@ -1073,6 +1073,13 @@ void MarkStrideAlignPass::runOnOperation() {
       for (Value operand : callOp.getArgOperands()) {
         if (isMarked(operand))
           continue;
+        // Explicit cube buffers follow their own packed layouts. The call
+        // operand alignment below is not a layout rule for L0A/L0B/BT.
+        auto space = GetBufferSpaceAttr(operand);
+        if (space && (space->getAddressSpace() == AddressSpace::L0A ||
+                      space->getAddressSpace() == AddressSpace::L0B ||
+                      space->getAddressSpace() == AddressSpace::BiasBUF))
+          continue;
         auto type = operand.getType();
         auto memrefTypes = util::getMemRefTypes({type});
         if (isAllRank0(memrefTypes))

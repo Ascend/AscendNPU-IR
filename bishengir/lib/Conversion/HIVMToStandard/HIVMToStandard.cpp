@@ -903,6 +903,15 @@ public:
     auto opWithLibCall = cast<OpWithLibraryFunction>(op.getOperation());
     assert(op.hasPureBufferSemantics() &&
            "Operating on tensor, please bufferize.");
+    if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>) {
+      if (op.getBroadcastAxesAttr() &&
+          ((op.getPadMode() &&
+            op.getPadModeAttr().getPadmode() != PadMode::PadNull) ||
+           op.getPadValue() || op.getLeftPaddingNum() ||
+           op.getRightPaddingNum()))
+        return op.emitOpError(
+            "broadcast_axes cannot be combined with padding in the legacy load form");
+    }
     MemRefType srcType = dyn_cast<MemRefType>(op.getSrcOperandType());
 
     int64_t rank = srcType.getRank();

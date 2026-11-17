@@ -13,6 +13,7 @@ add_bishengir_conversion_library(BiShengIRFuncToLLVM
 
   LINK_LIBS PUBLIC
   MLIRAnalysis
+  MLIRArithDialect
   MLIRArithToLLVM
   MLIRControlFlowToLLVM
   MLIRDataLayoutInterfaces

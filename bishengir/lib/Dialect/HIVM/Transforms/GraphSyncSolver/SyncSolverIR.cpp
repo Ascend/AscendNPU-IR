@@ -34,7 +34,7 @@ using namespace hivm::syncsolver;
 
 namespace mlir::hivm::syncsolver {
 
-int OperationBase::globalIndex = 0;
+std::atomic<int> OperationBase::globalIndex{0};
 
 namespace {
 
@@ -201,6 +201,10 @@ std::string MemInfo::str() {
   if (this->allocLikeInfo) {
     ret += comma.get();
     ret += this->allocLikeInfo->str();
+  }
+  if (this->poolInfo) {
+    ret += comma.get();
+    ret += "pool-address: " + op2str(this->poolInfo->address);
   }
   if (this->subviewInfo) {
     ret += comma.get();

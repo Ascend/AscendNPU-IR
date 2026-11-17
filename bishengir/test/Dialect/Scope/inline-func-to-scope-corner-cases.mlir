@@ -30,14 +30,14 @@ func.func @multi_block_caller(%arg0: i1, %arg1: f32, %arg2: f32) -> f32 {
 // -----
 
 // A call carrying the inherent `no_inline` marker records it in
-// `call_attrs_vec`; the callee has none, so the scope itself carries no
+// `call_attrs`; the callee has none, so the scope itself carries no
 // `no_inline`. The callee is erased after inlining and the marker is restored
 // on the recreated call.
 
 // CHECK-LABEL: func.func @call_no_inline_caller
 // CHECK: scope.scope
 // CHECK: scope.return
-// CHECK: } {hivm.vector_function, outline, scope.call_attrs_vec = #scope.call_attrs_vec<{no_inline}>, scope.sym_func_name = #scope.sym_func_name<"call_no_inline_callee">}
+// CHECK: } {hivm.vector_function, outline, scope.call_attrs = #scope.call_attrs<{no_inline}>, scope.sym_func_name = #scope.sym_func_name<"call_no_inline_callee">}
 // CHECK-NOT: call @
 // CHECK-NOT: func.func @call_no_inline_callee
 // ROUNDTRIP-LABEL: func.func @call_no_inline_callee

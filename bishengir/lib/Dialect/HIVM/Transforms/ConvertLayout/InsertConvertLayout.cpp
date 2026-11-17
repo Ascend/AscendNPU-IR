@@ -18,6 +18,7 @@
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/DMA/CubeLoad/CubeLoadCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/ConvertLayoutUtils.h"
@@ -247,9 +248,13 @@ struct InsertConvertLayoutAroundConv : public OpRewritePattern<ConvOpType> {
 
   LogicalResult matchAndRewrite(ConvOpType op,
                                 PatternRewriter &rewriter) const override {
-    ModuleOp module = op->template getParentOfType<ModuleOp>();
-    if (!module || !hacc::utils::isAscend950(module))
-      return rewriter.notifyMatchFailure(op, "not an A5 target");
+    Type elementType = getElementTypeOrSelf(op.getInput().getType());
+    bool nchwNative = isNativeNchw2Nc1hwc0(op, elementType, AddressSpace::GM,
+                                           AddressSpace::L1) ||
+                      isNativeNchw2C1hwnc0(op, elementType, AddressSpace::GM,
+                                           AddressSpace::L1);
+    if (!nchwNative)
+      return rewriter.notifyMatchFailure(op, "NCHW DMA is not Native");
     if (!op.hasPureTensorSemantics())
       return rewriter.notifyMatchFailure(op, "not tensor based");
 
@@ -474,9 +479,12 @@ struct InsertConvertLayoutAroundMmadMxL1 : public OpRewritePattern<MmadMxL1Op> {
 
   LogicalResult matchAndRewrite(MmadMxL1Op op,
                                 PatternRewriter &rewriter) const override {
-    ModuleOp module = op->getParentOfType<ModuleOp>();
-    if (!module || !hacc::utils::isRegBasedArch(module))
-      return rewriter.notifyMatchFailure(op, "not regbase arch");
+    // load_scale is the GM-to-L1 MX scale move this layout feeds. Enter only
+    // when that untransposed i8 form is Native.
+    if (!isNativeLoadScale(op, IntegerType::get(op.getContext(), 8),
+                           AddressSpace::GM, AddressSpace::L1,
+                           /*isTransposed=*/false))
+      return rewriter.notifyMatchFailure(op, "load_scale is not Native");
 
     auto opWithLayout = dyn_cast<OpWithLayoutInterface>(op.getOperation());
     if (!opWithLayout)

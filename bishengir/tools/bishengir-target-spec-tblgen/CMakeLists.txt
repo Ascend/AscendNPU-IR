@@ -10,6 +10,7 @@ add_tablegen(bishengir-target-spec-tblgen BISHENGIR_TARGET_SPEC
   NPUArchitectureGen.cpp
   NPUArchitectureFeatureGen.cpp
   TargetCapabilityGen.cpp
+  MmadCapabilityBindingGen.cpp
   TargetSpecGen.cpp
 )
 
