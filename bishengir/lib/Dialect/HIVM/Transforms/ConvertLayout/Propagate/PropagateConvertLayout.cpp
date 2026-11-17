@@ -41,6 +41,76 @@ using namespace mlir::hivm;
 
 namespace {
 
+/// Move a static expand through its private UB-to-L1 copy. This exposes a
+/// direct to_tensor source to the existing layout-conversion rewrite.
+struct MoveExpandBeforeUBToCBufCopy
+    : public OpRewritePattern<tensor::ExpandShapeOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::ExpandShapeOp expand,
+                                PatternRewriter &rewriter) const override {
+    // Static result types can still carry SSA output extents.
+    if (!expand->hasOneUse() || !expand.getType().hasStaticShape() ||
+        !expand.getOutputShape().empty() ||
+        expand.getResultType().getEncoding())
+      return failure();
+    auto convertLayout = dyn_cast<ConvertLayoutOp>(*expand->user_begin());
+    if (!convertLayout || !convertLayout.getOutputShape().empty())
+      return failure();
+    auto convertedType = dyn_cast<RankedTensorType>(convertLayout.getType());
+    if (!convertedType || !convertedType.hasStaticShape() ||
+        convertedType.getEncoding())
+      return failure();
+
+    auto toTensor = expand.getSrc().getDefiningOp<bufferization::ToTensorOp>();
+    if (!toTensor || !toTensor->hasOneUse())
+      return failure();
+    auto alloc = toTensor.getMemref().getDefiningOp<memref::AllocOp>();
+    if (!alloc ||
+        getOptionalHIVMAddressSpace(alloc.getType()) != AddressSpace::L1)
+      return failure();
+
+    // The allocation must have exactly one writer and no other readers.
+    CopyOp copy;
+    for (Operation *user : alloc->getUsers()) {
+      if (user == toTensor)
+        continue;
+      auto writer = dyn_cast<CopyOp>(user);
+      if (!writer || copy || writer.getDst() != alloc.getResult())
+        return failure();
+      copy = writer;
+    }
+    if (!copy || copy.getResultTensor() ||
+        copy.getSrc().getType() != expand.getSrcType() || copy.getPadMode() ||
+        copy.getPadValue() || copy.getCollapseReassociation())
+      return failure();
+    if (copy->getBlock() != expand->getBlock() ||
+        !copy->isBeforeInBlock(expand))
+      return failure();
+
+    rewriter.setInsertionPoint(alloc);
+    auto expandedType = MemRefType::get(
+        expand.getType().getShape(), expand.getType().getElementType(),
+        MemRefLayoutAttrInterface(), alloc.getType().getMemorySpace());
+    auto expandedAlloc = rewriter.create<memref::AllocOp>(
+        alloc.getLoc(), expandedType, alloc.getAlignmentAttr());
+    auto expandedTensor = rewriter.create<bufferization::ToTensorOp>(
+        toTensor.getLoc(), expandedAlloc, toTensor.getRestrict(),
+        toTensor.getWritable());
+
+    rewriter.modifyOpInPlace(
+        expand, [&] { expand.getSrcMutable().assign(copy.getSrc()); });
+    rewriter.moveOpBefore(expand, copy);
+    rewriter.modifyOpInPlace(copy, [&] {
+      copy.getSrcMutable().assign(expand.getResult());
+      copy.getDstMutable().assign(expandedAlloc);
+    });
+    rewriter.replaceAllUsesExcept(expand.getResult(),
+                                  expandedTensor.getResult(), copy);
+    return success();
+  }
+};
+
 //===----------------------------------------------------------------------===//
 // Move ConvertLayout from UB->CBuf copy destination to its source
 //===----------------------------------------------------------------------===//
@@ -250,6 +320,7 @@ struct PropagateConvertLayoutPass
     // Run these prioritized copy-boundary rewrites before the generic
     // propagation patterns, so later patterns see the intended converted value.
     RewritePatternSet firstPatterns(context);
+    firstPatterns.add<MoveExpandBeforeUBToCBufCopy>(context);
     firstPatterns.add<MoveConvertLayoutToSourceOfUBToCBufCopy>(context);
     firstPatterns.add<MoveConvertLayoutBeforeTensorCopy>(context);
     if (failed(applyPatternsGreedily(module, std::move(firstPatterns))))
