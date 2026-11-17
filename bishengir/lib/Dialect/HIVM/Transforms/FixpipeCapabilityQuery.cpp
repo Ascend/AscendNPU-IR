@@ -18,9 +18,6 @@
 #include "bishengir/Dialect/HIVM/Transforms/FixpipeCapabilityQuery.h"
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
-#include "bishengir/Dialect/HIVM/IR/Capability/DMA/Fixpipe/FixpipeCapabilityBinding.h"
-
-using namespace bishengir::npu;
 
 namespace mlir::hivm {
 
@@ -99,42 +96,6 @@ lookupModuleArchitecture(Operation *op) {
   if (std::optional<CachedModuleTarget> target = findEnclosingModuleTarget(op))
     return target->architecture;
   return std::nullopt;
-}
-
-NativeSupport queryFixpipeCreate(Operation *anchor, Type srcElementType,
-                                 Type dstElementType, FixpipeDMAMode dmaMode,
-                                 FixpipePreQuantMode preQuantMode,
-                                 FixpipePreReluMode preRelu, bool channelSplit,
-                                 std::optional<AddressSpace> srcAddressSpace,
-                                 std::optional<AddressSpace> dstAddressSpace,
-                                 bool quantScalePresent) {
-  if (!srcElementType || !dstElementType)
-    return NativeSupport::InvalidRequest;
-  if (!srcAddressSpace || !dstAddressSpace)
-    return NativeSupport::Unknown;
-  CapabilityRequestStorage storage =
-      FixpipeCapabilityRequestBuilder::create(
-          srcElementType, *srcAddressSpace, dstElementType, *dstAddressSpace,
-          dmaMode, preQuantMode, preRelu, channelSplit, quantScalePresent)
-          .build();
-  std::optional<bishengir::npu::NPUArchitectureKind> architecture =
-      lookupModuleArchitecture(anchor);
-  if (!architecture)
-    return NativeSupport::Unknown;
-  return queryNativeSupport(*architecture, storage.getRequest());
-}
-
-bool isNativeFixpipeCreate(Operation *anchor, Type srcElementType,
-                           Type dstElementType, FixpipeDMAMode dmaMode,
-                           FixpipePreQuantMode preQuantMode,
-                           FixpipePreReluMode preRelu, bool channelSplit,
-                           std::optional<AddressSpace> srcAddressSpace,
-                           std::optional<AddressSpace> dstAddressSpace,
-                           bool quantScalePresent) {
-  return queryFixpipeCreate(anchor, srcElementType, dstElementType, dmaMode,
-                            preQuantMode, preRelu, channelSplit,
-                            srcAddressSpace, dstAddressSpace,
-                            quantScalePresent) == NativeSupport::Native;
 }
 
 bool hasUnmodeledNz2dnConflict(FixpipeOp op) {

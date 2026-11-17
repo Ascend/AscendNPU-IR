@@ -16,7 +16,6 @@
 #include "bishengir/Conversion/HIVMToStandard/HIVMToStandard.h"
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Conversion/ProtonToHIVM/ProtonToHIVM.h"
-#include "bishengir/Conversion/TensorViewToHIVM/TensorViewToHIVM.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/AscendDPX/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
@@ -26,7 +25,6 @@
 #include "bishengir/Dialect/HFusion/Pipelines/Passes.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Pipelines/ConvertToHIVMPipeline.h"
-#include "bishengir/Dialect/HIVM/Pipelines/HIVMBufferizationPipeline.h"
 #include "bishengir/Dialect/HIVM/Pipelines/regbase/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVMAVE/Pipelines/Passes.h"
@@ -173,14 +171,25 @@ void buildAffinityPipeline(OpPassManager &pm,
   pm.addPass(hivm::createTritonGlobalKernelArgsToHIVMOpPass());
   pm.addPass(createCanonicalizeModulePass());
 
-  pm.nest<func::FuncOp>().addPass(hivm::createMarkTightlyCoupledBufferPass());
-  pm.addPass(hivm::createSplitMixKernelPass());
-  pm.addPass(createCanonicalizerPass());
+  if (config.getEnableTlaCvPipelining()) {
+    // TODO: Use MarkMultiBuffer after better support for staged preload with
+    // memref alloc.
+    pm.addPass(hivm::createMarkPreloadBuffersPass());
+  }
 
+  // Outline marked VFs before SplitMix so it can classify the calls as
+  // VECTOR. The surrounding task scopes retain their preload boundaries.
   OutlineScopeOptions outlineScopeOptions;
   outlineScopeOptions.outlineMarkedScopesOnly = true;
   pm.addPass(scope::createOutlineScopePass(outlineScopeOptions));
-  // Expose C/V core operations to memory inference and planning.
+
+  // Resolve scalar ownership before inlining erases the MIX task scopes.
+  // Kernel splitting uses these annotations with or without automatic sync.
+  MarkRealCoreTypeOptions markOptions;
+  markOptions.bypassShapeRegistry = true;
+  pm.addPass(hivm::createMarkRealCoreTypePass(markOptions));
+
+  // Inline ordinary scopes while retaining the original CV task boundaries.
   pm.addPass(scope::createInlineScopePass());
 
   // The input AVE specifies predicates, layouts and instruction modes.
@@ -193,32 +202,46 @@ void buildAffinityPipeline(OpPassManager &pm,
   // Decompose explicit HIVM operations, including set_atomic into set_ctrl.
   pm.nest<func::FuncOp>().addPass(hivm::createHIVMDecomposeOpPass());
 
-  pm.addPass(createConvertElementwiseToLinalgPass());
-  hivm::bufferizationPipelineBase(pm, /*isRegBased=*/true);
-  pm.addPass(createTensorViewToHIVMConversionPass());
-
   // Frontend ttadapter codegen does not yet mark kernel memref arguments as GM.
   // TODO: Remove scope inference once the frontend guarantees explicit address
   // spaces for all memref values.
   pm.addPass(hivm::createInferHIVMMemScopePass());
-  pm.addPass(hivm::createConvertToHIVMOpPass());
-  pm.nest<func::FuncOp>().addPass(createConvertLinalgToLoopsPass());
+
+  pm.nest<func::FuncOp>().addPass(hivm::createMarkTightlyCoupledBufferPass());
 
   PlanMemoryOptions planMemoryOptions;
   planMemoryOptions.enableMemoryDisplay =
       config.getEnablePrintMemoryAllocatedSize() ||
       config.getEnableMemoryDisplay();
-  // Explicit synchronization cannot cover new aliases introduced by planning.
-  // Independent local allocations carry mem_unique; views express sharing.
-  planMemoryOptions.disableTightlyCoupledBufferReuse = true;
+  // An explicit block protocol cannot synchronize newly introduced TCB aliases.
+  planMemoryOptions.disableTightlyCoupledBufferReuse =
+      config.getDisableTightlyCoupledBufferReuse() ||
+      config.getDisableAutoInjectBlockSync();
   planMemoryOptions.disableVFReachableCheck =
       config.getDisableVFReachableCheck();
   planMemoryOptions.planMemoryStrategy = config.getPlanMemoryStrategy();
+  // TLA mode requires a deterministic local plan: disable the plan-memory
+  // retry loop (fallback stages and shuffle-seed retries).
+  planMemoryOptions.enableTLAmode = config.getEnableTlaMode();
   pm.addPass(hivm::createPlanMemoryPass(planMemoryOptions));
 
+  if (!config.getDisableAutoInjectBlockSync()) {
+    CrossCoreGSSOptions crossCoreOptions;
+    crossCoreOptions.solverVersion = config.getHIVMSyncSolverVersion();
+    pm.nest<func::FuncOp>().addPass(
+        hivm::createCrossCoreGSSPass(crossCoreOptions));
+  }
+  pm.addPass(hivm::createV2SplitKernelPass());
+
+  if (config.getEnableTlaCvPipelining()) {
+    CreatePreloadOptions preloadOptions;
+    preloadOptions.bypassShapeRegistry = true;
+    pm.addPass(hivm::createCreatePreloadPass(preloadOptions));
+  }
+
   // Fold addresses and views while preserving input instruction choices.
-  pm.addPass(createCanonicalizerPass());
   pm.nest<func::FuncOp>().addPass(createCSEPass());
+  pm.addPass(createCanonicalizerPass());
 
   // Affinity auto-sync is enabled by default and always uses GraphSyncSolver.
   // Algorithm selection and barrier-all options do not select InjectSync.
@@ -228,15 +251,13 @@ void buildAffinityPipeline(OpPassManager &pm,
     syncOptions.solverVersion = config.getHIVMSyncSolverVersion();
     pm.nest<func::FuncOp>().addPass(
         hivm::createGraphSyncSolverPass(syncOptions));
-
-    // Materialize declared slots after GSS so synchronization and buffer
-    // selection share the same loop counter. Frontends must reject multibuffer
-    // hints when auto-sync is disabled; users then manage slots explicitly.
-    pm.nest<func::FuncOp>().addPass(hivm::createEnableMultiBufferPass());
-    pm.nest<func::FuncOp>().addPass(hivm::createLowerMultiBufferCounterPass());
-    pm.addPass(createCanonicalizerPass());
-    pm.nest<func::FuncOp>().addPass(createCSEPass());
   }
+
+  // Lower rotating addresses and counters even with explicit synchronization.
+  pm.nest<func::FuncOp>().addPass(hivm::createEnableMultiBufferPass());
+  pm.nest<func::FuncOp>().addPass(hivm::createLowerMultiBufferCounterPass());
+  pm.addPass(createCanonicalizerPass());
+  pm.nest<func::FuncOp>().addPass(createCSEPass());
 
   // Lower the prepared AVE directly, without the shared AVE optimizations.
   buildLowerToLLVMPipeline(pm, config);

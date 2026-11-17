@@ -214,6 +214,27 @@ static Operation *consumerInsertPoint(scope::ScopeOp consumer) {
   return body.getTerminator();
 }
 
+/// True when moving `cluster` to `landing` would read a value that `consumer`
+/// defines at or after that point.
+static bool clusterOperandAfterLanding(ArrayRef<Operation *> cluster,
+                                       Operation *landing,
+                                       scope::ScopeOp consumer) {
+  DenseSet<Operation *> inCluster(cluster.begin(), cluster.end());
+  for (Operation *op : cluster) {
+    for (Value operand : op->getOperands()) {
+      Operation *def = operand.getDefiningOp();
+      if (!def || inCluster.contains(def) || !consumer->isAncestor(def))
+        continue;
+      Operation *top = def;
+      while (top && top->getParentOp() != consumer.getOperation())
+        top = top->getParentOp();
+      if (!top || !top->isBeforeInBlock(landing))
+        return true;
+    }
+  }
+  return false;
+}
+
 static void collectMarks(Value v, SmallVectorImpl<Operation *> &ops) {
   for (Operation *user : v.getUsers()) {
     if (isa<annotation::MarkOp>(user))
@@ -1134,6 +1155,7 @@ sinkReturnedTensorsToConsumerImpl(scf::ForOp &forOp,
         unsigned resIdx;
         Value dest;
         scope::ScopeOp consumer;
+        Operation *landing = nullptr;
         SmallVector<Value> extras;
         SmallVector<Value> destEmpties;
         SmallVector<Operation *> cluster;
@@ -1179,10 +1201,17 @@ sinkReturnedTensorsToConsumerImpl(scf::ForOp &forOp,
         if (llvm::any_of(cluster,
                          [&](Operation *op) { return claimed.contains(op); }))
           continue;
+        // Land at the front of the consumer so a sibling result, such as a
+        // mask, dominates every use in that scope. Refuse the move when the
+        // cluster reads a value this scope defines at or after that point.
+        Operation *landing = consumerInsertPoint(consumer);
+        if (!landing || clusterOperandAfterLanding(cluster, landing, consumer))
+          continue;
 
         Move m;
         m.resIdx = idx;
         m.dest = retVal;
+        m.landing = landing;
         m.consumer = consumer;
         m.extras = std::move(extras);
         m.destEmpties = std::move(destEmpties);
@@ -1249,7 +1278,7 @@ sinkReturnedTensorsToConsumerImpl(scf::ForOp &forOp,
           rebuildScopeLeavingOps(producer, newReturns, leaveBehind);
 
       for (const Move &m : moves) {
-        Operation *insertBefore = firstUseInScope(m.dest, m.consumer);
+        Operation *insertBefore = m.landing;
         if (!insertBefore)
           insertBefore = consumerInsertPoint(m.consumer);
 
@@ -1702,8 +1731,22 @@ static void remapClonedScalarOperands(const DenseMap<Value, Value> &cloned,
   }
 }
 
+/// True when the sink chain carries no work besides the copy itself: no
+/// MTE2 load, no vector computation and no call. Sinking such a lone copy
+/// past unused mmad scopes only relocates the DMA, so the move is abandoned.
+static bool clusterHasOnlyCopy(ArrayRef<Operation *> cluster) {
+  return llvm::all_of(cluster, [](Operation *op) {
+    if (isa<hivm::CopyOp, annotation::MarkOp>(op))
+      return true;
+    if (isa<func::CallOp>(op))
+      return false;
+    return !op->getDialect() || op->getDialect()->getNamespace() != "hivm";
+  });
+}
+
 /// Move a load→VF→hir.copy chain past unused mmad scopes so the copy sits
 /// in the VECTOR immediately before the mmad that actually reads it.
+/// A chain that holds nothing but the copy is left in place.
 static LogicalResult sinkCopyChainPastUnusedMmad(scf::ForOp &forOp) {
   for (int iter = 0; iter < 32; ++iter) {
     SmallVector<scope::ScopeOp> scopes;
@@ -1726,6 +1769,9 @@ static LogicalResult sinkCopyChainPastUnusedMmad(scf::ForOp &forOp) {
 
       hivm::CopyOp copy;
       scope::ScopeOp consumer;
+      SmallVector<Operation *> cluster;
+      SmallVector<Value> destEmpties;
+      SmallVector<Value> extras;
       for (hivm::CopyOp candidate : copies) {
         if (!isLoopLevelCopyDest(candidate, producer, forOp))
           continue;
@@ -1735,8 +1781,19 @@ static LogicalResult sinkCopyChainPastUnusedMmad(scf::ForOp &forOp) {
           continue;
         if (!hasInterveningMmadScope(producer, later))
           continue;
+        SmallVector<Operation *> candidateCluster;
+        SmallVector<Value> candidateEmpties;
+        SmallVector<Value> candidateExtras;
+        if (!collectExclusiveCopyCluster(candidate, producer, candidateCluster,
+                                         candidateEmpties, candidateExtras))
+          continue;
+        if (clusterHasOnlyCopy(candidateCluster))
+          continue;
         copy = candidate;
         consumer = later;
+        cluster = std::move(candidateCluster);
+        destEmpties = std::move(candidateEmpties);
+        extras = std::move(candidateExtras);
         break;
       }
       if (!copy)
@@ -1747,12 +1804,6 @@ static LogicalResult sinkCopyChainPastUnusedMmad(scf::ForOp &forOp) {
       if (!destScope || destScope == producer)
         continue;
 
-      SmallVector<Operation *> cluster;
-      SmallVector<Value> destEmpties;
-      SmallVector<Value> extras;
-      if (!collectExclusiveCopyCluster(copy, producer, cluster, destEmpties,
-                                       extras))
-        continue;
       collectForwardedDepsForScalarExtras(producer, extras);
       SmallVector<unsigned> privatizeIdx;
       if (!adoptIterationOpsForCrossStageSink(cluster, extras, producer,
@@ -2917,9 +2968,10 @@ void SinkExclusivePreloadWorkPass::runOnOperation() {
     funcOp.walk([&](scf::ForOp forOp) { forOps.push_back(forOp); });
     for (scf::ForOp forOp : forOps) {
       if (sinkAcrossScopes) {
-        // All-zero scopes must preserve reads of the old state.
-        if (!allScopesPinnedToZero(forOp) &&
-            failed(sinkReturnedTensorsToConsumerImpl(forOp)))
+        // All-zero loops sink too. The cluster lands at the front of the
+        // consumer, so a mask used before the primary result still dominates
+        // that use.
+        if (failed(sinkReturnedTensorsToConsumerImpl(forOp)))
           return signalPassFailure();
         if (failed(sinkCopyChainPastUnusedMmad(forOp)))
           return signalPassFailure();
@@ -3156,23 +3208,23 @@ static LogicalResult prefetchTopLevelMmadInput(func::FuncOp funcOp) {
     mmads.push_back(mmad);
   });
 
-  auto hasMmadBetweenProducerAndMmad =
-      [](hivm::MmadL1Op mmad, ArrayRef<Operation *> chain) {
-        if (chain.empty())
-          return false;
-        Operation *chainHead = chain.front();
-        Operation *producer = chainHead->getOperand(0).getDefiningOp();
-        if (!producer || producer->getBlock() != mmad->getBlock())
-          return false;
-        if (!producer->isBeforeInBlock(mmad.getOperation()))
-          return false;
-        for (Operation *cur = producer->getNextNode();
-             cur && cur != mmad.getOperation(); cur = cur->getNextNode()) {
-          if (isa<hivm::MmadL1Op>(cur))
-            return true;
-        }
-        return false;
-      };
+  auto hasMmadBetweenProducerAndMmad = [](hivm::MmadL1Op mmad,
+                                          ArrayRef<Operation *> chain) {
+    if (chain.empty())
+      return false;
+    Operation *chainHead = chain.front();
+    Operation *producer = chainHead->getOperand(0).getDefiningOp();
+    if (!producer || producer->getBlock() != mmad->getBlock())
+      return false;
+    if (!producer->isBeforeInBlock(mmad.getOperation()))
+      return false;
+    for (Operation *cur = producer->getNextNode();
+         cur && cur != mmad.getOperation(); cur = cur->getNextNode()) {
+      if (isa<hivm::MmadL1Op>(cur))
+        return true;
+    }
+    return false;
+  };
 
   for (auto mmad : llvm::reverse(mmads)) {
     auto prepInfo = matchStdPrepChain(mmad);
@@ -3247,10 +3299,18 @@ void RepositionPreloadWorkPass::runOnOperation() {
   for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
     if (!this->enablePreload)
       continue;
+    if (!this->bypassShapeRegistry &&
+        !hivm::isLoopShapeRegistered(funcOp.getName()))
+      continue;
     if (failed(prefetchTopLevelMmadInput(funcOp)))
       return signalPassFailure();
   }
   for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
+    // The registry gates the entire pass, including closed recurrences and
+    // the iter-arg verifier, rather than just the cross-scope heuristics.
+    if (!this->bypassShapeRegistry &&
+        !hivm::isLoopShapeRegistered(funcOp.getName()))
+      continue;
     bool sinkAcrossScopes = hivm::allowLoopShapeHeuristics(
         this->bypassShapeRegistry, funcOp.getName(), this->enablePreload,
         this->workspaceMultiBufferNum);
@@ -3263,10 +3323,10 @@ void RepositionPreloadWorkPass::runOnOperation() {
     for (scf::ForOp forOp : forOps) {
       if (sinkAcrossScopes) {
         clusterSharedLeftMatrixMads(forOp);
-        // Only returned-tensor sinking is unsafe for all-zero scopes: moving
-        // its writer can place writeback before a read of the old state.
-        if (!allScopesPinnedToZero(forOp) &&
-            failed(sinkReturnedTensorsToConsumerImpl(forOp)))
+        // All-zero loops sink too. The cluster lands at the front of the
+        // consumer, so a mask used before the primary result still dominates
+        // that use.
+        if (failed(sinkReturnedTensorsToConsumerImpl(forOp)))
           return signalPassFailure();
         if (failed(sinkCopyChainPastUnusedMmad(forOp)))
           return signalPassFailure();

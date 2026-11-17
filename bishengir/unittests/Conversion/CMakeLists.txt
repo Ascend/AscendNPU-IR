@@ -1,0 +1,3 @@
+if(BISHENGIR_ENABLE_TRITON_COMPILE AND BSPUB_DAVINCI_BISHENGIR)
+  add_subdirectory(TritonAscendGPUToLLVM)
+endif()

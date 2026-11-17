@@ -10,6 +10,18 @@ func.func @test_addf(%arg0 : tensor<6x6xf32>, %arg1 : tensor<6x6xf32>) -> tensor
 
 // -----
 
+// CHECK-LABEL: func.func @test_regbase_truncf_f64_to_f32
+// CHECK: %[[EMPTY:.*]] = tensor.empty()
+// CHECK: hfusion.cast {{.*}}ins(%{{.*}} : tensor<6xf64>) outs(%[[EMPTY]] : tensor<6xf32>)
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_regbase_truncf_f64_to_f32(%arg0 : tensor<6xf64>) -> tensor<6xf32> {
+    %ret = arith.truncf %arg0 : tensor<6xf64> to tensor<6xf32>
+    return %ret : tensor<6xf32>
+  }
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_addi
 func.func @test_addi(%arg0 : tensor<6x6xi32>, %arg1 : tensor<6x6xi32>) -> tensor<6x6xi32> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()
@@ -538,20 +550,20 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
     %eq = arith.cmpi eq, %arg1, %arg2 : tensor<32xi1>
     // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vne>} ins({{.*}}, {{.*}} : tensor<32xi1>, tensor<32xi1>) outs({{.*}} : tensor<32xi1>) -> tensor<32xi1>
     %ne = arith.cmpi ne, %arg1, %arg2 : tensor<32xi1>
-    // CHECK: %[[ULT_ARG1:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins({{.*}} : tensor<32xi1>) outs({{.*}} : tensor<32xi8>) -> tensor<32xi8>
-    // CHECK: %[[ULT_ARG2:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins({{.*}} : tensor<32xi1>) outs({{.*}} : tensor<32xi8>) -> tensor<32xi8>
+    // CHECK: %[[ULT_ARG1:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<rint>} ins({{.*}} : tensor<32xi1>) outs({{.*}} : tensor<32xi8>) -> tensor<32xi8>
+    // CHECK: %[[ULT_ARG2:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<rint>} ins({{.*}} : tensor<32xi1>) outs({{.*}} : tensor<32xi8>) -> tensor<32xi8>
     // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%[[ULT_ARG1]], %[[ULT_ARG2]] : tensor<32xi8>, tensor<32xi8>) outs({{.*}} : tensor<32xi1>) -> tensor<32xi1>
     %ult = arith.cmpi ult, %arg1, %arg2 : tensor<32xi1>
-    // CHECK: %[[UGT_ARG1:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins({{.*}} : tensor<32xi1>) outs({{.*}} : tensor<32xi8>) -> tensor<32xi8>
-    // CHECK: %[[UGT_ARG2:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins({{.*}} : tensor<32xi1>) outs({{.*}} : tensor<32xi8>) -> tensor<32xi8>
+    // CHECK: %[[UGT_ARG1:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<rint>} ins({{.*}} : tensor<32xi1>) outs({{.*}} : tensor<32xi8>) -> tensor<32xi8>
+    // CHECK: %[[UGT_ARG2:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<rint>} ins({{.*}} : tensor<32xi1>) outs({{.*}} : tensor<32xi8>) -> tensor<32xi8>
     // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vgt>} ins(%[[UGT_ARG1]], %[[UGT_ARG2]] : tensor<32xi8>, tensor<32xi8>) outs({{.*}} : tensor<32xi1>) -> tensor<32xi1>
     %ugt = arith.cmpi ugt, %arg1, %arg2 : tensor<32xi1>
-    // CHECK: %[[ULE_ARG1:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins({{.*}} : tensor<32xi1>) outs({{.*}} : tensor<32xi8>) -> tensor<32xi8>
-    // CHECK: %[[ULE_ARG2:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins({{.*}} : tensor<32xi1>) outs({{.*}} : tensor<32xi8>) -> tensor<32xi8>
+    // CHECK: %[[ULE_ARG1:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<rint>} ins({{.*}} : tensor<32xi1>) outs({{.*}} : tensor<32xi8>) -> tensor<32xi8>
+    // CHECK: %[[ULE_ARG2:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<rint>} ins({{.*}} : tensor<32xi1>) outs({{.*}} : tensor<32xi8>) -> tensor<32xi8>
     // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vle>} ins(%[[ULE_ARG1]], %[[ULE_ARG2]] : tensor<32xi8>, tensor<32xi8>) outs({{.*}} : tensor<32xi1>) -> tensor<32xi1>
     %ule = arith.cmpi ule, %arg1, %arg2 : tensor<32xi1>
-    // CHECK: %[[UGE_ARG1:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins({{.*}} : tensor<32xi1>) outs({{.*}} : tensor<32xi8>) -> tensor<32xi8>
-    // CHECK: %[[UGE_ARG2:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins({{.*}} : tensor<32xi1>) outs({{.*}} : tensor<32xi8>) -> tensor<32xi8>
+    // CHECK: %[[UGE_ARG1:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<rint>} ins({{.*}} : tensor<32xi1>) outs({{.*}} : tensor<32xi8>) -> tensor<32xi8>
+    // CHECK: %[[UGE_ARG2:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<rint>} ins({{.*}} : tensor<32xi1>) outs({{.*}} : tensor<32xi8>) -> tensor<32xi8>
     // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vge>} ins(%[[UGE_ARG1]], %[[UGE_ARG2]] : tensor<32xi8>, tensor<32xi8>) outs({{.*}} : tensor<32xi1>) -> tensor<32xi1>
     %uge = arith.cmpi uge, %arg1, %arg2 : tensor<32xi1>
     return %eq, %ne, %ult, %ugt, %ule, %uge : tensor<32xi1>, tensor<32xi1>, tensor<32xi1>, tensor<32xi1>, tensor<32xi1>, tensor<32xi1>

@@ -73,7 +73,7 @@ LogicalResult inlineCall(func::CallOp callOp, func::FuncOp callee) {
   //   no_inline, ...) go onto the scope and are restored on the outlined
   //   function.
   // - Call-site annotations (e.g. ptc_simdvf) belong to the caller: they are
-  //   recorded in `call_attrs_vec` and unwrapped onto the recreated call.
+  //   recorded in `call_attrs` and unwrapped onto the recreated call.
   // The call's `callee` symbol reference is dropped: keeping it would pin the
   // dead callee and block its erasure below; the original name is kept as a
   // plain string in `sym_func_name` instead.
@@ -85,8 +85,7 @@ LogicalResult inlineCall(func::CallOp callOp, func::FuncOp callee) {
   if (callOp.getNoInline())
     callAttrs.emplace_back(callOp.getNoInlineAttrName(), builder.getUnitAttr());
   if (!callAttrs.empty())
-    scopeOp->setAttr(CallAttrsVecAttr::name,
-                     CallAttrsVecAttr::get(ctx, callAttrs));
+    scopeOp->setAttr(CallAttrsAttr::name, CallAttrsAttr::get(ctx, callAttrs));
   // callee attrs
   for (NamedAttribute attr : callee->getDiscardableAttrs())
     scopeOp->setAttr(attr.getName(), attr.getValue());

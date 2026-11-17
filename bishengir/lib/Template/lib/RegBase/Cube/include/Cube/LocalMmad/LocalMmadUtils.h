@@ -432,7 +432,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
 
 #define DECLARE_MMA_MX(a_type, b_type, dst_type, bias_type)                    \
   __aicore__ __attribute__((always_inline)) void                               \
-      _mlir_ciface_mmadmxL1_##a_type##_##b_type##_to_##dst_type(                          \
+      _mlir_ciface_mmadmxL1_##a_type##_##b_type##_to_##dst_type(               \
           memref_t<__cc__ dst_type, 4> *l0C,                                   \
           memref_t<__cbuf__ a_type, 4> *l1A,                                   \
           memref_t<__cbuf__ b_type, 4> *l1B,                                   \
@@ -444,23 +444,23 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           uint32_t l1ScaleAMTE1MTE2EventId, uint32_t l1BMTE1MTE2EventId,       \
           uint32_t l1ScaleBMTE1MTE2EventId)
 
-#define DECLARE_MMA_MX_BIAS(a_type, b_type, dst_type, bias_type)                 \
-  __aicore__ __attribute__((always_inline)) void                                \
-      _mlir_ciface_mmadmxL1_with_##bias_type##_bias_##a_type##_##b_type##_to_##dst_type(  \
-          memref_t<__cc__ dst_type, 4> *l0C,                                    \
-          memref_t<__cbuf__ a_type, 4> *l1A,                                  \
-          memref_t<__cbuf__ b_type, 4> *l1B,                                  \
-          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                            \
-          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m,     \
-          uint32_t k, uint32_t n, memref_t<__cbuf__ bias_type, 4> *bias,        \
-          uint32_t l1AMTE2MTE1EventId, uint32_t l1ScaleAMTE2MTE1EventId,        \
-          uint32_t l1BMTE2MTE1EventId, uint32_t l1ScaleBMTE2MTE1EventId,        \
-          uint32_t l1AMTE1MTE2EventId, uint32_t l1ScaleAMTE1MTE2EventId,        \
+#define DECLARE_MMA_MX_BIAS(a_type, b_type, dst_type, bias_type)                         \
+  __aicore__ __attribute__((always_inline)) void                                         \
+      _mlir_ciface_mmadmxL1_with_##bias_type##_bias_##a_type##_##b_type##_to_##dst_type( \
+          memref_t<__cc__ dst_type, 4> *l0C,                                             \
+          memref_t<__cbuf__ a_type, 4> *l1A,                                             \
+          memref_t<__cbuf__ b_type, 4> *l1B,                                             \
+          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                                     \
+          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m,              \
+          uint32_t k, uint32_t n, memref_t<__cbuf__ bias_type, 4> *bias,                 \
+          uint32_t l1AMTE2MTE1EventId, uint32_t l1ScaleAMTE2MTE1EventId,                 \
+          uint32_t l1BMTE2MTE1EventId, uint32_t l1ScaleBMTE2MTE1EventId,                 \
+          uint32_t l1AMTE1MTE2EventId, uint32_t l1ScaleAMTE1MTE2EventId,                 \
           uint32_t l1BMTE1MTE2EventId, uint32_t l1ScaleBMTE1MTE2EventId)
 
 #define DECLARE_MMA_MX_TRANS(a_type, b_type, dst_type, bias_type, suffix)      \
   __aicore__ __attribute__((always_inline)) void                               \
-      _mlir_ciface_mmadmxL1_##a_type##_##b_type##_to_##dst_type##suffix(                  \
+      _mlir_ciface_mmadmxL1_##a_type##_##b_type##_to_##dst_type##suffix(       \
           memref_t<__cc__ dst_type, 4> *l0C,                                   \
           memref_t<__cbuf__ a_type, 4> *l1A,                                   \
           memref_t<__cbuf__ b_type, 4> *l1B,                                   \
@@ -472,18 +472,18 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           uint32_t l1ScaleAMTE1MTE2EventId, uint32_t l1BMTE1MTE2EventId,       \
           uint32_t l1ScaleBMTE1MTE2EventId)
 
-#define DECLARE_MMA_MX_BIAS_TRANS(a_type, b_type, dst_type, bias_type, suffix)            \
-  __aicore__ __attribute__((always_inline)) void                                        \
+#define DECLARE_MMA_MX_BIAS_TRANS(a_type, b_type, dst_type, bias_type, suffix)                   \
+  __aicore__ __attribute__((always_inline)) void                                                 \
       _mlir_ciface_mmadmxL1_with_##bias_type##_bias_##a_type##_##b_type##_to_##dst_type##suffix( \
-          memref_t<__cc__ dst_type, 4> *l0C,                                            \
-          memref_t<__cbuf__ a_type, 4> *l1A,                                          \
-          memref_t<__cbuf__ b_type, 4> *l1B,                                          \
-          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                                    \
-          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m,             \
-          uint32_t k, uint32_t n, memref_t<__cbuf__ bias_type, 4> *bias,                \
-          uint32_t l1AMTE2MTE1EventId, uint32_t l1ScaleAMTE2MTE1EventId,                \
-          uint32_t l1BMTE2MTE1EventId, uint32_t l1ScaleBMTE2MTE1EventId,                \
-          uint32_t l1AMTE1MTE2EventId, uint32_t l1ScaleAMTE1MTE2EventId,                \
+          memref_t<__cc__ dst_type, 4> *l0C,                                                     \
+          memref_t<__cbuf__ a_type, 4> *l1A,                                                     \
+          memref_t<__cbuf__ b_type, 4> *l1B,                                                     \
+          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                                             \
+          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m,                      \
+          uint32_t k, uint32_t n, memref_t<__cbuf__ bias_type, 4> *bias,                         \
+          uint32_t l1AMTE2MTE1EventId, uint32_t l1ScaleAMTE2MTE1EventId,                         \
+          uint32_t l1BMTE2MTE1EventId, uint32_t l1ScaleBMTE2MTE1EventId,                         \
+          uint32_t l1AMTE1MTE2EventId, uint32_t l1ScaleAMTE1MTE2EventId,                         \
           uint32_t l1BMTE1MTE2EventId, uint32_t l1ScaleBMTE1MTE2EventId)
 
 #define DECLARE_MMA_MX_FORMAT(src_type, dst_type, bias_type, a_format,                                  \
@@ -546,9 +546,9 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           uint32_t l1AMTE1MTE2EventId, uint32_t l1ScaleAMTE1MTE2EventId,                                                                \
           uint32_t l1BMTE1MTE2EventId, uint32_t l1ScaleBMTE1MTE2EventId)
 
-#define REGISTER_MMA_MX(a_type, b_type, dst_type, bias_type)                  \
-  DECLARE_MMA_MX(a_type, b_type, dst_type, bias_type) {                       \
-    mmamx_tile_core<a_type, b_type, dst_type, bias_type>(                     \
+#define REGISTER_MMA_MX(a_type, b_type, dst_type, bias_type)                   \
+  DECLARE_MMA_MX(a_type, b_type, dst_type, bias_type) {                        \
+    mmamx_tile_core<a_type, b_type, dst_type, bias_type>(                      \
         l0C, l1A, l1B,                                                         \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
@@ -557,9 +557,9 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId, l1ScaleBMTE1MTE2EventId); \
   }
 
-#define REGISTER_MMA_MX_BIAS(a_type, b_type, dst_type, bias_type)               \
-  DECLARE_MMA_MX_BIAS(a_type, b_type, dst_type, bias_type) {                    \
-    mmamx_tile_bias<a_type, b_type, dst_type, bias_type>(                     \
+#define REGISTER_MMA_MX_BIAS(a_type, b_type, dst_type, bias_type)              \
+  DECLARE_MMA_MX_BIAS(a_type, b_type, dst_type, bias_type) {                   \
+    mmamx_tile_bias<a_type, b_type, dst_type, bias_type>(                      \
         l0C, l1A, l1B,                                                         \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
@@ -570,8 +570,8 @@ load2d_transpose_cbuf_to_ca_intrin_core(
 
 #define REGISTER_MMA_MX_TRANS(a_type, b_type, dst_type, bias_type, suffix, ta, \
                               tb)                                              \
-  DECLARE_MMA_MX_TRANS(a_type, b_type, dst_type, bias_type, suffix) {           \
-    mmamx_tile_core<a_type, b_type, dst_type, bias_type, ta, tb>(             \
+  DECLARE_MMA_MX_TRANS(a_type, b_type, dst_type, bias_type, suffix) {          \
+    mmamx_tile_core<a_type, b_type, dst_type, bias_type, ta, tb>(              \
         l0C, l1A, l1B,                                                         \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
@@ -580,10 +580,10 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId, l1ScaleBMTE1MTE2EventId); \
   }
 
-#define REGISTER_MMA_MX_BIAS_TRANS(a_type, b_type, dst_type, bias_type, suffix, \
-                                  ta, tb)                                      \
-  DECLARE_MMA_MX_BIAS_TRANS(a_type, b_type, dst_type, bias_type, suffix) {    \
-    mmamx_tile_bias<a_type, b_type, dst_type, bias_type, ta, tb>(             \
+#define REGISTER_MMA_MX_BIAS_TRANS(a_type, b_type, dst_type, bias_type,        \
+                                   suffix, ta, tb)                             \
+  DECLARE_MMA_MX_BIAS_TRANS(a_type, b_type, dst_type, bias_type, suffix) {     \
+    mmamx_tile_bias<a_type, b_type, dst_type, bias_type, ta, tb>(              \
         l0C, l1A, l1B,                                                         \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
@@ -660,6 +660,69 @@ load2d_transpose_cbuf_to_ca_intrin_core(
                                b_format, suffix, ta, tb,                       \
                                Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T, \
                                Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T)
+
+// Heterogeneous A/B MX forms (Ascend960 only).  A is a native 16-bit or fp8
+// element, while B is a packed sub-byte format carried in an int8_t buffer.
+// The library symbol therefore has distinct A/B storage types plus both
+// format strings.
+#define DECLARE_MMA_MX_HETERO_FORMAT(a_type, b_type, dst_type, a_format,                                         \
+                                     b_format)                                                                   \
+  __aicore__ __attribute__((always_inline)) void                                                                 \
+      _mlir_ciface_mmadmxL1_##a_type##_##b_type##_to_##dst_type##_lhs_format_##a_format##_rhs_format_##b_format( \
+          memref_t<__cc__ dst_type, 4> *l0C,                                                                     \
+          memref_t<__cbuf__ a_type, 4> *l1A,                                                                     \
+          memref_t<__cbuf__ b_type, 4> *l1B,                                                                     \
+          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                                                             \
+          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m,                                      \
+          uint32_t k, uint32_t n, uint32_t l1AMTE2MTE1EventId,                                                   \
+          uint32_t l1ScaleAMTE2MTE1EventId, uint32_t l1BMTE2MTE1EventId,                                         \
+          uint32_t l1ScaleBMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,                                         \
+          uint32_t l1ScaleAMTE1MTE2EventId, uint32_t l1BMTE1MTE2EventId,                                         \
+          uint32_t l1ScaleBMTE1MTE2EventId)
+
+#define DECLARE_MMA_MX_HETERO_BIAS_FORMAT(a_type, b_type, dst_type, bias_type,                                                           \
+                                          a_format, b_format)                                                                            \
+  __aicore__ __attribute__((always_inline)) void                                                                                         \
+      _mlir_ciface_mmadmxL1_with_##bias_type##_bias_##a_type##_##b_type##_to_##dst_type##_lhs_format_##a_format##_rhs_format_##b_format( \
+          memref_t<__cc__ dst_type, 4> *l0C,                                                                                             \
+          memref_t<__cbuf__ a_type, 4> *l1A,                                                                                             \
+          memref_t<__cbuf__ b_type, 4> *l1B,                                                                                             \
+          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                                                                                     \
+          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m,                                                              \
+          uint32_t k, uint32_t n, memref_t<__cbuf__ bias_type, 4> *bias,                                                                 \
+          uint32_t l1AMTE2MTE1EventId, uint32_t l1ScaleAMTE2MTE1EventId,                                                                 \
+          uint32_t l1BMTE2MTE1EventId, uint32_t l1ScaleBMTE2MTE1EventId,                                                                 \
+          uint32_t l1AMTE1MTE2EventId, uint32_t l1ScaleAMTE1MTE2EventId,                                                                 \
+          uint32_t l1BMTE1MTE2EventId, uint32_t l1ScaleBMTE1MTE2EventId)
+
+#define REGISTER_MMA_MX_HETERO_FORMAT(a_type, b_type, dst_type, bias_type,     \
+                                      a_format, b_format, lhs_format,          \
+                                      rhs_format)                              \
+  DECLARE_MMA_MX_HETERO_FORMAT(a_type, b_type, dst_type, a_format, b_format) { \
+    mmamx_tile_core<a_type, b_type, dst_type, bias_type>(                      \
+        l0C, l1A, l1B,                                                         \
+        reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
+        reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
+        init, m, k, n, l1AMTE2MTE1EventId, l1ScaleAMTE2MTE1EventId,            \
+        l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId, l1AMTE1MTE2EventId,       \
+        l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId, l1ScaleBMTE1MTE2EventId,  \
+        lhs_format, rhs_format);                                               \
+  }
+
+#define REGISTER_MMA_MX_HETERO_BIAS_FORMAT(a_type, b_type, dst_type,           \
+                                           bias_type, a_format, b_format,      \
+                                           lhs_format, rhs_format)             \
+  DECLARE_MMA_MX_HETERO_BIAS_FORMAT(a_type, b_type, dst_type, bias_type,       \
+                                    a_format, b_format) {                      \
+    mmamx_tile_bias<a_type, b_type, dst_type, bias_type>(                      \
+        l0C, l1A, l1B,                                                         \
+        reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
+        reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
+        init, m, k, n, bias, l1AMTE2MTE1EventId, l1ScaleAMTE2MTE1EventId,      \
+        l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId, l1AMTE1MTE2EventId,       \
+        l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId, l1ScaleBMTE1MTE2EventId,  \
+        lhs_format, rhs_format);                                               \
+  }
 
 extern "C" {
 DECLARE_MMA_TILE(cbuf, cc, 4, half, float, float);

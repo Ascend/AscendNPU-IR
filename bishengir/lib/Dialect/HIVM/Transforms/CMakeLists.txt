@@ -21,6 +21,8 @@ set(TILE_AND_BIND_SUB_BLOCK
     ${CMAKE_CURRENT_SOURCE_DIR}/TileAndBindSubBlock/TileUtils.cpp)
 file(GLOB PARTITION_AND_BIND_SUB_BLOCK CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/PartitionAndBindSubBlock/*.cpp)
+file(GLOB BUFFER_POOL CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/BufferPool/*.cpp)
 file(GLOB PIPELINE_V2 CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/PipelineV2/*.cpp)
 
@@ -36,6 +38,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ${TILE_AND_BIND_SUB_BLOCK}
   ${PARTITION_AND_BIND_SUB_BLOCK}
   ${PIPELINE_V2}
+  ${BUFFER_POOL}
   ${NORMALIZE}
   ${SMS_ALG_UTILS}
   ${MS_COST_MODEL_UTILS}
@@ -76,6 +79,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ConvertLayout/Propagate/PropagateConvertLayoutExtractSlice.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutInsertSlice.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutVBrc.cpp
+  MarkPreloadBuffers.cpp
   CreatePreload.cpp
   PeelPreload.cpp
   CVPipelining.cpp
@@ -152,6 +156,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   OptimizeTransposePlacement/RootReachability.cpp
   OptimizeTransposePlacement/Utils.cpp
   OutlineAllocInVF.cpp
+  OutlineCopyInVF.cpp
   PlanMemory.cpp
   RecognizeDeinterleaveOp.cpp
   RecognizeDiscontiguousStore.cpp
@@ -162,10 +167,12 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   RepositionPreloadWork.cpp
   SinkOpToConsumerInLoop.cpp
   SIMTVFSubTiling.cpp
+  SplitKernelUtils.cpp
   SplitSimtModule.cpp
   SplitMixedIfConditionals.cpp
   SplitMixKernel.cpp
   SyncBlockHoisting.cpp
+  TcbPoolOpInsertion.cpp
   TcbPoolPlan.cpp
   TileAndBindSubBlock.cpp
   TileBatchMMIntoLoop.cpp
@@ -174,7 +181,6 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   TritonGlobalKernelArgsToHIVMOp.cpp
   UnitFlagInfoBase.cpp
   VerifyCapability.cpp
-  VerifyVectorFunctionTopLevelCopy.cpp
   VFOperandSubstitution.cpp
   AnalyzeArithVectorMask.cpp
   WriteBackShared.cpp
@@ -186,8 +192,14 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   DEPENDS
   BiShengIRHIVMTransformsIncGen
   BiShengIRNPUArchitectureFeaturesIncGen
+  BiShengIRMmadCapabilityIncGen
+  BiShengIRMmadCapabilityBindingIncGen
   BiShengIRFixpipeCapabilityIncGen
   BiShengIRFixpipeCapabilityBindingIncGen
+  BiShengIRCubeLoadCapabilityIncGen
+  BiShengIRCubeLoadCapabilityBindingIncGen
+  BiShengIRSyncCapabilityIncGen
+  BiShengIRSyncCapabilityBindingIncGen
 
   LINK_LIBS PUBLIC
   MLIRAffineDialect
@@ -203,7 +215,9 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MLIRDialectUtils
   BiShengIRHACCUtils
   BiShengIRHACCDialect
+  BiShengIRNPUMmadCapability
   BiShengIRNPUFixpipeCapability
+  BiShengIRNPUSyncCapability
   BiShengIRHIVMAnalysis
   BiShengIRHIVMDialect
   BiShengIRMathExtDialect

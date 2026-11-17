@@ -38,6 +38,7 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -53,6 +54,17 @@ using namespace mlir::hfusion;
 static bool operateOnTensors(Operation *op) {
   return llvm::all_of(op->getOperandTypes(),
                       [](Type type) { return isa<RankedTensorType>(type); });
+}
+
+/// Returns the outermost loop-like ancestor of `op`.
+static Operation *getOutermostLoop(Operation *op) {
+  Operation *anchor = op;
+  for (Operation *parent = op->getParentOp(); parent;
+       parent = parent->getParentOp()) {
+    if (isa<LoopLikeOpInterface>(parent))
+      anchor = parent;
+  }
+  return anchor;
 }
 
 template <typename UnaryOp, linalg::UnaryFn linalgFn>
@@ -214,7 +226,7 @@ static bool isF16Bracketed(Value input, Operation *op) {
 /// the template-lib SIMT algorithm be used.
 ///
 /// Everything the template library cannot handle - f16/bf16 inputs and ranks
-/// above kMaxTemplateLibTrigRank - falls back to the HFusion Normalize
+/// outside [1, kMaxTemplateLibTrigRank] - falls back to the HFusion Normalize
 /// expansion here, so this pattern is also the fallback for math.sin/math.cos.
 template <typename MathOp>
 struct MathTrigToTemplateLib : public OpRewritePattern<MathOp> {
@@ -227,7 +239,7 @@ struct MathTrigToTemplateLib : public OpRewritePattern<MathOp> {
     Value inner = op.getOperand();
     auto inType = cast<RankedTensorType>(inner.getType());
 
-    if (inType.getElementType().isF32() &&
+    if (inType.getElementType().isF32() && inType.getRank() >= 1 &&
         inType.getRank() <= kMaxTemplateLibTrigRank) {
       // f16 in and f16 out (both through casts): use the low-precision
       // Normalize recipe inline (pi reduction + Taylor degree 9). The f16
@@ -288,9 +300,12 @@ struct MathTrigToTemplateLib : public OpRewritePattern<MathOp> {
       ModuleOp module = op->template getParentOfType<ModuleOp>();
       if (!module)
         return failure();
+      // Hoist the constant 2/pi table staging out of the enclosing loop
+      Operation *tableAnchor = getOutermostLoop(op.getOperation());
       FailureOr<Value> tableOr =
           emitTrigTableFromUI32ArrayAndLoadAsTensorI32<320>(
-              rewriter, op, module, op.getLoc(), "tbl", kPayneHanekTable);
+              rewriter, tableAnchor, module, op.getLoc(), "tbl",
+              kPayneHanekTable);
       if (failed(tableOr))
         return failure();
       Value tableArg = *tableOr;
@@ -331,6 +346,116 @@ struct MathTrigToTemplateLib : public OpRewritePattern<MathOp> {
     auto fnAttr = rewriter.getNamedAttr("fun", unaryAttr);
     rewriter.replaceOpWithNewOp<hfusion::ElemwiseUnaryOp>(
         op, ValueRange{inner}, ValueRange{dsts}, ArrayRef{fnAttr});
+    return success();
+  }
+};
+
+/// Fuse a `math.sin`/`math.cos` pair that reads the same f32 tile into a single
+/// template-library `sincos_fp32_simt_<rank>d` call.
+///
+/// f16 pairs are fused into an inline low-precision Normalize.
+struct FuseSinCosToTemplateLib : public OpRewritePattern<math::SinOp> {
+  explicit FuseSinCosToTemplateLib(MLIRContext *context)
+      : OpRewritePattern<math::SinOp>(context, /*benefit=*/2) {}
+
+  LogicalResult matchAndRewrite(math::SinOp sinOp,
+                                PatternRewriter &rewriter) const final {
+    if (!operateOnTensors(sinOp))
+      return failure();
+    Value input = sinOp.getOperand();
+    auto inType = dyn_cast<RankedTensorType>(input.getType());
+    if (!inType || !inType.getElementType().isF32() || inType.getRank() < 1 ||
+        inType.getRank() > kMaxTemplateLibTrigRank)
+      return failure();
+    math::CosOp cosOp;
+    for (Operation *user : input.getUsers()) {
+      auto candidate = dyn_cast<math::CosOp>(user);
+      if (!candidate || candidate.getOperand() != input)
+        continue;
+      // Keep the fusion in one block so the shared result dominates both uses.
+      if (candidate->getBlock() != sinOp->getBlock())
+        continue;
+      cosOp = candidate;
+      break;
+    }
+    if (!cosOp)
+      return failure();
+
+    bool sinBracketed = isF16Bracketed(input, sinOp);
+    bool cosBracketed = isF16Bracketed(input, cosOp);
+    if (sinBracketed != cosBracketed)
+      return failure();
+
+    // Insert the shared result before whichever op comes first so both uses
+    // are dominated by it.
+    Operation *first = sinOp->isBeforeInBlock(cosOp.getOperation())
+                           ? sinOp.getOperation()
+                           : cosOp.getOperation();
+
+    if (sinBracketed) {
+      Location loc = sinOp.getLoc();
+      rewriter.setInsertionPoint(first);
+      Value sinEmpty = utils::createEmptyOp(rewriter, loc, input);
+      Value cosEmpty = utils::createEmptyOp(rewriter, loc, input);
+      Value roundedPiMultiple =
+          buildRoundedPiMultiple<hfusion::NormalizeTraitsBase>(
+              rewriter, loc, input, rewriter.getF32Type());
+      Value rangeReducedInput =
+          buildRangeReducedTrigInput<hfusion::NormalizeTraitsBase>(
+              rewriter, loc, input, roundedPiMultiple, kPiApproximations, 0.0);
+      Value sinApproximation =
+          buildTaylorApproximation<hfusion::NormalizeTraitsBase>(
+              rewriter, loc, rangeReducedInput,
+              getTaylorSeriesCoefficients(mlir::TaylerMode::SIN, 5));
+      Value cosApproximation =
+          buildCosTaylorApproximation<hfusion::NormalizeTraitsBase>(
+              rewriter, loc, rangeReducedInput, getCosineSeriesCoefficients(6));
+      Value sign = buildSinParitySign<hfusion::NormalizeTraitsBase>(
+          rewriter, loc, roundedPiMultiple);
+      Value sinResult = hfusion::NormalizeTraitsBase::createBinaryOp(
+          rewriter, loc, sinApproximation, sign, sinEmpty, BinaryKind::Mul);
+      Value cosResult = hfusion::NormalizeTraitsBase::createBinaryOp(
+          rewriter, loc, cosApproximation, sign, cosEmpty, BinaryKind::Mul);
+      rewriter.replaceOp(sinOp.getOperation(), sinResult);
+      rewriter.replaceOp(cosOp.getOperation(), cosResult);
+      return success();
+    }
+
+    Location loc = sinOp.getLoc();
+    ModuleOp module = sinOp->template getParentOfType<ModuleOp>();
+    if (!module)
+      return failure();
+
+    rewriter.setInsertionPoint(first);
+
+    // Hoist the constant 2/pi table staging out of the enclosing loop(s). The
+    // fused call itself stays at `first`; only the table copy moves to the loop
+    // preheader.
+    Operation *tableAnchor = getOutermostLoop(first);
+    FailureOr<Value> tableOr =
+        emitTrigTableFromUI32ArrayAndLoadAsTensorI32<320>(
+            rewriter, tableAnchor, module, loc, "tbl", kPayneHanekTable);
+    if (failed(tableOr))
+      return failure();
+    Value tableArg = *tableOr;
+
+    Value dstSin = utils::createEmptyOp(rewriter, loc, input);
+    Value dstCos = utils::createEmptyOp(rewriter, loc, input);
+
+    std::string symbol =
+        "sincos_fp32_simt_" + std::to_string(inType.getRank()) + "d";
+    auto customOp = rewriter.create<hivm::CustomOp>(
+        loc, symbol, ValueRange{input, tableArg}, ValueRange{dstSin, dstCos});
+    customOp.setCoreType(hivm::TCoreType::VECTOR);
+    customOp.setVFMode(hivm::VFMode::SIMT);
+    customOp.setPipe(hivm::PIPE::PIPE_V);
+    customOp.setInlineMode(hivm::InlineMode::AlwaysInline);
+    customOp->setAttr("symbol", rewriter.getStringAttr(symbol));
+    customOp->setAttr("bitcode", rewriter.getStringAttr(""));
+    customOp->setAttr("arg_attrs", rewriter.getArrayAttr({}));
+
+    rewriter.replaceOp(sinOp.getOperation(), customOp.getResults()[0]);
+    rewriter.replaceOp(cosOp.getOperation(), customOp.getResults()[1]);
     return success();
   }
 };
@@ -541,6 +666,16 @@ void MathToHFusionConversionPass::runOnOperation() {
     }
   }
 
+  // Fuse sin/cos pairs before the conversion patterns run.
+  if (isRegBased) {
+    RewritePatternSet fusePatterns(&getContext());
+    fusePatterns.add<FuseSinCosToTemplateLib>(&getContext());
+    if (failed(applyPatternsGreedily(module, std::move(fusePatterns)))) {
+      signalPassFailure();
+      return;
+    }
+  }
+
   ConversionTarget target(getContext());
   target.addLegalDialect<linalg::LinalgDialect, tensor::TensorDialect,
                          hfusion::HFusionDialect, hivm::HIVMDialect,
@@ -555,7 +690,7 @@ void MathToHFusionConversionPass::runOnOperation() {
   RewritePatternSet patterns(&getContext());
   bool shouldEnableFma =
       moduleOp && hacc::utils::isAscend950(moduleOp) && enableFma;
-  if (moduleOp && hacc::utils::isRegBasedArch(moduleOp))
+  if (isRegBased)
     populateMathToHFusionConversionPatterns_regbase(patterns, shouldEnableFma);
   else
     populateMathToHFusionConversionPatterns_membase(patterns);

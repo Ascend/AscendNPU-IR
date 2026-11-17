@@ -416,11 +416,15 @@ public:
                             // a tiling start point.
         }
       }
-      // If the copy input is memref, we cannot tile it.
-      if (isa<mlir::MemRefType>(inputType)) {
-        Op->emitWarning(
-            "Copy input memref is not supported, skip tile and bind.");
-        return failure();
+      // Tile elementwise buffer copies along the axis selected for both sides.
+      if (auto srcType = dyn_cast<MemRefType>(inputType)) {
+        auto dstType = dyn_cast<MemRefType>(dstOpr->get().getType());
+        if (!dstType || !srcType.hasStaticShape() ||
+            srcType.getShape() != dstType.getShape() || Op.getPadMode() ||
+            Op.getPadValue() || Op.getCollapseReassociation() ||
+            !isUbToUbCopy(Op) || tilingDim == -1 ||
+            tilingDim != analyzer.getTilingDim(dstOpr->get()))
+          return failure();
       }
     }
     LLVM_DEBUG(DBGS() << "The " << Op->getName().getStringRef()
@@ -845,7 +849,78 @@ static void modifyDebugOpToSliced(RewriterBase &rewriter, hivm::DebugOp debugOp,
   });
 }
 
-/// try to tile debug ops and bind sub block mapping
+class TileAndSliceExtract : public OpRewritePattern<tensor::ExtractOp> {
+public:
+  TileAndSliceExtract(MLIRContext *context,
+                      hivm::detail::DimensionAnalyzer &analyzer)
+      : OpRewritePattern<tensor::ExtractOp>(context), analyzer(analyzer) {}
+
+  LogicalResult matchAndRewrite(tensor::ExtractOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op->hasAttr("DiscreteMemAccess") || op->hasAttr(tiledOp))
+      return failure();
+    auto parallelLoop = dyn_cast<scf::ForOp>(op->getParentOp());
+    if (!parallelLoop || !parallelLoop->hasAttr(hivm::ParallelLoopAttr::name))
+      return failure();
+
+    Value source = op.getTensor();
+    int64_t dim = analyzer.getTilingDim(source);
+    auto containingLoop = findContainingSubblockLoop(op);
+    if (dim < 0 || failed(containingLoop))
+      return failure();
+    auto loc = op.getLoc();
+    auto tileSize =
+        getSingleTileSize(rewriter, loc, source, dim, *containingLoop);
+    if (failed(tileSize))
+      return failure();
+
+    rewriter.setInsertionPointToStart(containingLoop->getBody());
+    auto offset =
+        calculateOffsetAtTilingDim(rewriter, loc, *containingLoop, source, dim);
+    rewriter.setInsertionPoint(op);
+    Value sliced =
+        sliceExtractSource(source, dim, offset, *tileSize, loc, rewriter);
+    Value offsetValue = getValueOrCreateConstantIndexOp(rewriter, loc, offset);
+    Value localIndex =
+        rewriter.create<arith::SubIOp>(loc, op.getIndices()[dim], offsetValue);
+    rewriter.modifyOpInPlace(op, [&]() {
+      op.getTensorMutable().set(sliced);
+      op.getIndicesMutable()[dim].set(localIndex);
+      op->setAttr(tiledOp, rewriter.getUnitAttr());
+    });
+    return success();
+  }
+
+private:
+  static Value sliceExtractSource(Value source, int64_t dim,
+                                  OpFoldResult tiledOffset,
+                                  OpFoldResult tiledSize, Location loc,
+                                  PatternRewriter &rewriter) {
+    auto shapedType = cast<RankedTensorType>(source.getType());
+    int64_t rank = shapedType.getRank();
+    SmallVector<OpFoldResult> offsets(rank, rewriter.getIndexAttr(0));
+    SmallVector<OpFoldResult> sizes;
+    SmallVector<OpFoldResult> strides(rank, rewriter.getIndexAttr(1));
+    offsets[dim] = tiledOffset;
+    for (int64_t i = 0; i < rank; ++i) {
+      if (i == dim)
+        sizes.push_back(tiledSize);
+      else if (shapedType.isDynamicDim(i))
+        sizes.push_back(getAsOpFoldResult(
+            rewriter.createOrFold<tensor::DimOp>(loc, source, i)));
+      else
+        sizes.push_back(rewriter.getIndexAttr(shapedType.getDimSize(i)));
+    }
+    auto sliceOp = rewriter.create<tensor::ExtractSliceOp>(loc, source, offsets,
+                                                           sizes, strides);
+    markCreatedExtractSliceOp(rewriter, sliceOp);
+    return sliceOp;
+  }
+
+  hivm::detail::DimensionAnalyzer &analyzer;
+};
+
+/// Try to tile debug ops and bind sub-block mapping.
 class TileAndSliceDebugOp : public OpRewritePattern<hivm::DebugOp> {
 public:
   hivm::detail::DimensionAnalyzer &analyzer;
@@ -1244,14 +1319,14 @@ tileAndSliceOp(func::FuncOp func,
   // when no Store/Copy anchor exists, plus a leaf-aware success criterion.
   // CustomOp tiling in this version must be driven by a downstream Store/Copy
   // slice and handled later by CustomOpBubbleUpStrategy.
-  patterns.add<TileAndSliceStoreCopyOp<hivm::StoreOp>,
-               TileAndSliceStoreCopyOp<hivm::CopyOp>,
-               TileAndSliceStoreCopyOp<
-                   bufferization::MaterializeInDestinationOp>,
-               TileAndSliceIndirectStore, TileAndSliceStrideStore,
-               TileAndSliceDebugOp,
-               TileAndSliceLeaf<scf::ForOp>, TileAndSliceLeaf<scf::WhileOp>,
-               TileAndSliceLeaf<scf::IfOp>>(func->getContext(), analyzer);
+  patterns
+      .add<TileAndSliceStoreCopyOp<hivm::StoreOp>,
+           TileAndSliceStoreCopyOp<hivm::CopyOp>,
+           TileAndSliceStoreCopyOp<bufferization::MaterializeInDestinationOp>,
+           TileAndSliceIndirectStore, TileAndSliceStrideStore,
+           TileAndSliceDebugOp, TileAndSliceExtract,
+           TileAndSliceLeaf<scf::ForOp>, TileAndSliceLeaf<scf::WhileOp>,
+           TileAndSliceLeaf<scf::IfOp>>(func->getContext(), analyzer);
   if (hacc::utils::isRegBasedArch(func->getParentOfType<ModuleOp>())) {
     patterns.add<TileAndSliceReduceOp>(func->getContext(), analyzer);
   }
@@ -1539,10 +1614,13 @@ void TileAndBindSubBlockPass::runOnOperation() {
     return;
   }
 
-  // If there is a possibility that loadOp and storeOp accessing the same
-  // address, skip this pass
-  if (!hacc::utils::isRegBasedArch(moduleOp) &&
-      areLoadAndStoreSameAddress(aivFunctions)) {
+  // Different GM views at the same offset may choose incompatible sub-block
+  // partitions for a load and store.
+  // Intra-core synchronization cannot order those cross-sub-block accesses.
+  // Preserve the membase guard and reject these view hazards on regbase.
+  if (areLoadAndStoreSameAddress(
+          aivFunctions,
+          /*checkRegbaseHazards=*/hacc::utils::isRegBasedArch(moduleOp))) {
     (void)limitAllAivToSubBlock0();
     return;
   }

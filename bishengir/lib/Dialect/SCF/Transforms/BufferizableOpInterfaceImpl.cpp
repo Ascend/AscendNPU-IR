@@ -202,8 +202,7 @@ LogicalResult resolveConflicts(Operation *op, RewriterBase &rewriter,
     auto initValue = forOp.getInitArgs()[it.index()];
     DominanceInfo domInfo(forOp->getParentOfType<func::FuncOp>());
     oneShotState.applyOnAliases(initValue, [&](Value alias) {
-      auto *owner = getOwnerOfValue(alias);
-      if (domInfo.properlyDominates(owner, forOp) &&
+      if (domInfo.properlyDominates(alias, forOp) &&
           llvm::any_of(alias.getUsers(), [&](Operation *user) {
             return forOp->isProperAncestor(user);
           }))
@@ -323,32 +322,35 @@ LogicalResult resolveConflicts(Operation *op, RewriterBase &rewriter,
   OpBuilder::InsertionGuard g(rewriter);
   auto yieldOp = cast<scf::YieldOp>(op);
   for (const auto &pair : llvm::enumerate(yieldOp->getOperands())) {
-    auto *defOp = pair.value().getDefiningOp();
-    if (!isa_and_nonnull<bufferization::AllocTensorOp>(defOp)) {
+    auto allocTensor = llvm::dyn_cast_if_present<bufferization::AllocTensorOp>(
+        pair.value().getDefiningOp());
+    if (!allocTensor) {
       continue;
     }
-    auto scopeResult = defOp->getOperand(0);
+    assert(allocTensor.getCopy() && " must have a copy if it's yielded");
+    auto scopeResult = allocTensor.getCopy();
     if (!isa_and_nonnull<scope::ScopeOp>(scopeResult.getDefiningOp()) ||
         !scopeResult.getDefiningOp()->hasAttr(hivm::PreloadNumAttr::name)) {
       continue;
     }
-    // Remove old copy out of scopeOp
-    rewriter.setInsertionPoint(yieldOp);
+    assert(allocTensor->hasOneUse() && " allocTensor must have one use");
+    // Move the existing copy into the scope. Erasing it would invalidate
+    // values retained by OneShotAnalysisState: the enclosing loop still
+    // queries those aliases when resolving its conflicts.
     rewriter.modifyOpInPlace(
         yieldOp, [&]() { yieldOp.setOperand(pair.index(), scopeResult); });
-    rewriter.eraseOp(defOp);
-    // Add new copy in scopeOp
     auto scopeOp = cast<scope::ScopeOp>(scopeResult.getDefiningOp());
-    auto *returnOp = &scopeOp.getBody()->back();
+    auto *returnOp = scopeOp.getBody()->getTerminator();
+    rewriter.moveOpBefore(allocTensor, returnOp);
+
     auto returnOpIdx = cast<OpResult>(scopeResult).getResultNumber();
     auto returnValue = returnOp->getOperand(returnOpIdx);
-    rewriter.setInsertionPoint(returnOp);
-    FailureOr<Value> alloc = allocateTensorForShapedValue(
-        rewriter, returnOp->getLoc(), returnValue, state.getOptions());
-    if (failed(alloc))
-      return failure();
-    rewriter.modifyOpInPlace(
-        returnOp, [&]() { returnOp->setOperand(returnOpIdx, *alloc); });
+    rewriter.modifyOpInPlace(allocTensor, [&]() {
+      allocTensor.getCopyMutable().assign(returnValue);
+    });
+    rewriter.modifyOpInPlace(returnOp, [&]() {
+      returnOp->setOperand(returnOpIdx, allocTensor.getResult());
+    });
   }
   return success();
 }

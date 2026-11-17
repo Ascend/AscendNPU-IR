@@ -255,6 +255,26 @@ def ConvertLayoutOp : HIVM_Op<"convert_layout",
   let hasCanonicalizer = 1;
 }
 
+def PoolSlotOp : HIVM_Op<"experimental.pool_slot", [
+    Pure, CubeVectorCoreTypeTrait, ViewLikeOpInterface,
+    AllTypesMatch<["source", "result"]>]> {
+  let summary = "Select a physical slot for one independent buffer access";
+  let description = [{
+    Binds an access to one slot of a planned multi-address pointer_cast.
+    The result aliases the source; this operation allocates no memory and
+    performs no synchronization. The index must be in [0, address count).
+    Load and Compute may bind different slots of the same source.
+    EnableMultiBuffer lowers the binding after synchronization insertion.
+  }];
+  let arguments = (ins AnyMemRef:$source, Index:$slot);
+  let results = (outs AnyMemRef:$result);
+  let assemblyFormat = "$source `[` $slot `]` attr-dict `:` type($source)";
+  let extraClassDeclaration = [{
+    Value getViewSource() { return getSource(); }
+  }];
+  let hasVerifier = 1;
+}
+
 def PointerCastOp : HIVM_Op<"pointer_cast",
   [CubeVectorCoreTypeTrait, AttrSizedOperandSegments]> {
   let summary = "HIVM pointer cast op at specific i64 addr";
@@ -943,6 +963,8 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       static constexpr StringLiteral kBuiltinIndirectAtomicName = "__builtin_indirect_atomic";
       static constexpr StringLiteral kBuiltinOnlineSoftmaxNZName = "__builtin_online_softmax_nz";
       static constexpr StringLiteral kBuiltinHistogramName = "__builtin_histogram";
+      static constexpr StringLiteral kBuiltinSparseGatherLoadToL1BufferName =
+          "__builtin_sparse_gather_load_to_L1buffer";
       static constexpr StringLiteral kBuiltinProtonGetSysCntName =
           "__builtin_proton_get_sys_cnt";
       static constexpr StringLiteral kBuiltinProtonCircularStoreName =
@@ -970,6 +992,9 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       static constexpr StringLiteral kMaxRankAttrName = "max_rank";
       static constexpr StringLiteral kInplaceOutsAttrName = "inplace_outs";
       static constexpr StringLiteral kInlineModeAttrName = "hivm.inline_mode";
+
+      std::optional<int32_t>
+      getInplaceInputIndexForOutput(int64_t outputIndex);
 
       int getMaxRank() {
         if (auto maxRankAttr =
@@ -1001,6 +1026,7 @@ def CustomOp : HIVM_CustomOp<"custom", [
 
   let description = customOpDescription#customOpAttrsDescription#[{
       - Pipe     : which pipe to execute on, refer to PipeAttr.
+      - inplace_outs : input-to-output storage binding.
   }];
 
   let arguments = args;
@@ -1014,7 +1040,8 @@ def CustomOp : HIVM_CustomOp<"custom", [
     struct BuiltinInfo {
       TCoreType coreType;
       PIPE pipe;
-      VFMode vfMode;
+      // std::nullopt for cube-core builtins, which have no VF mode.
+      std::optional<VFMode> vfMode;
       const SmallVector<size_t> gmAddrArgsIndices;
       std::optional<InlineMode> inlineMode = std::nullopt;
     };
@@ -1400,7 +1427,8 @@ def CustomMacroOp : HIVM_CustomOp<"custom_macro", [MacroOpTrait, CustomLikeOpInt
       TCoreType coreType;
       PIPE inPipe;
       PIPE outPipe;
-      VFMode vfMode;
+      // std::nullopt for cube-core builtins, which have no VF mode.
+      std::optional<VFMode> vfMode;
       const SmallVector<size_t> gmAddrArgsIndices;
     };
 

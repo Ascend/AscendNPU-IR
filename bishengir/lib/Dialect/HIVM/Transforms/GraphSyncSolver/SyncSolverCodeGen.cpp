@@ -443,6 +443,48 @@ Value CodeGenerator::getNestedIndexModular(IRRewriter &rewriter,
   return modularIndex;
 }
 
+Value CodeGenerator::getPoolSlotEventId(IRRewriter &rewriter,
+                                        SetWaitOp *syncOp) {
+  Value slot = syncOp->eventIdInfo.bufferSlot;
+  Value &cached = explicitBufferSelectedMem[slot][syncOp->eventIds];
+  if (cached)
+    return cached;
+  PatternRewriter::InsertionGuard guard(rewriter);
+  if (Operation *def = slot.getDefiningOp())
+    rewriter.setInsertionPointAfter(def);
+  else
+    rewriter.setInsertionPointToStart(cast<BlockArgument>(slot).getOwner());
+
+  bool consecutive = true;
+  for (size_t i = 1; i < syncOp->eventIds.size(); ++i)
+    consecutive &= syncOp->eventIds[i - 1] + 1 == syncOp->eventIds[i];
+  if (!consecutive) {
+    Value selected;
+    for (auto [i, eventId] : llvm::enumerate(syncOp->eventIds)) {
+      Value value = rewriter.create<arith::ConstantOp>(
+          slot.getLoc(), rewriter.getI64IntegerAttr(eventId));
+      if (!selected) {
+        selected = value;
+        continue;
+      }
+      Value index = rewriter.create<arith::ConstantIndexOp>(slot.getLoc(), i);
+      Value matches = rewriter.create<arith::CmpIOp>(
+          slot.getLoc(), arith::CmpIPredicate::eq, slot, index);
+      selected = rewriter.create<arith::SelectOp>(slot.getLoc(), matches, value,
+                                                  selected);
+    }
+    return cached = selected;
+  }
+
+  Value eventId = slot;
+  if (int64_t base = syncOp->eventIds.front())
+    eventId = rewriter.create<arith::AddIOp>(
+        slot.getLoc(), slot,
+        rewriter.create<arith::ConstantIndexOp>(slot.getLoc(), base));
+  return cached = rewriter.createOrFold<arith::IndexCastOp>(
+             slot.getLoc(), rewriter.getI64Type(), eventId);
+}
+
 Value CodeGenerator::getMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
                                                        SetWaitOp *syncOp) {
   assert(syncOp != nullptr);
@@ -493,6 +535,8 @@ Value CodeGenerator::getMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
 Value CodeGenerator::getMultiBufferSelectOp(IRRewriter &rewriter,
                                             SetWaitOp *syncOp) {
   assert(syncOp != nullptr);
+  if (syncOp->eventIdInfo.bufferSlot)
+    return getPoolSlotEventId(rewriter, syncOp);
 
   int64_t preloadOffset = 0;
   Loop *multibufferLoopOp{nullptr};
@@ -976,6 +1020,7 @@ void CodeGenerator::generateResultOps() {
     insertMmadL1SyncArgs(rewriter);
     insertMmadMxL1SyncArgs(rewriter);
     customMacroCodegen.populateSyncRelatedArgs(funcOp, rewriter);
+    bufferPoolSync.eraseBoundaries();
     insertPipeMPipeMte1OuterBwdPairs(rewriter);
     handleUnitFlagEnabledOps(rewriter);
     insertBarrierAllBeforeReturn(rewriter);

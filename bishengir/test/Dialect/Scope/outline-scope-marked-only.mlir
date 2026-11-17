@@ -25,13 +25,13 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
 
 // -----
 
-// The `outline`, `sym_func_name` and `call_attrs_vec` bookkeeping attributes
+// The `outline`, `sym_func_name` and `call_attrs` bookkeeping attributes
 // are dropped from the outlined function. `sym_func_name` names the function
-// when the symbol is free, and `call_attrs_vec` is restored on the call.
+// when the symbol is free, and `call_attrs` is restored on the call.
 // CHECK-LABEL: func.func @named_callee(
 // CHECK-NOT: outline
 // CHECK-NOT: scope.sym_func_name
-// CHECK-NOT: scope.call_attrs_vec
+// CHECK-NOT: scope.call_attrs
 // CHECK-SAME: attributes {hivm.vector_function}
 // CHECK-LABEL: func.func @named_scope_caller(
 // CHECK: call @named_callee({{.*}}) {hivm.vector_function, ptc_simdvf}
@@ -40,7 +40,7 @@ module {
     %0 = scope.scope : () -> (f32) {
       scope.return %arg0 : f32
     } {hivm.vector_function, outline,
-       scope.call_attrs_vec = #scope.call_attrs_vec<{ptc_simdvf}>,
+       scope.call_attrs = #scope.call_attrs<{ptc_simdvf}>,
        scope.sym_func_name = #scope.sym_func_name<"named_callee">}
     return %0 : f32
   }
@@ -84,7 +84,7 @@ module attributes {"hivm.tile_and_bind_subblock_reverted"} {
       memref.store %cst, %arg0[] : memref<f32>
       scope.return
     } {hivm.vf_mode = #hivm.vf_mode<SIMT>, outline,
-       scope.call_attrs_vec = #scope.call_attrs_vec<{ptc_simdvf}>,
+       scope.call_attrs = #scope.call_attrs<{ptc_simdvf}>,
        scope.sym_func_name = #scope.sym_func_name<"simt_named">}
     return
   }

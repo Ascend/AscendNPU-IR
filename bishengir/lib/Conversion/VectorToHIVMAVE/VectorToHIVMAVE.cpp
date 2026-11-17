@@ -145,17 +145,10 @@ struct MaskedLoadOpPattern : public OpRewritePattern<vector::MaskedLoadOp> {
       return rewriter.notifyMatchFailure(op, "failed to get legalized op");
     }
 
-    // Analyze whether the VFSelectOp could be optimized, according to the
-    // annotation of this MaskedLoadOp op is same with all its users
-    auto loadResult = op.getResult();
-    bool maskReuseable = false;
-    if (utils::getAnnotateOpWithAttr(loadResult, utils::reachedMaskOpsIdx)) {
-      Value mask = hivmave::findReuseableMask(op, rewriter);
-      if (mask && dyn_cast<VectorType>(mask.getType()).getShape().size() ==
-                      resType.getShape().size()) {
-        maskReuseable = true;
-      }
-    }
+    // Reachability alone does not prove that every demanded lane is loaded.
+    // Identical masks guarantee coverage; otherwise preserve the passthrough
+    // select until coverage between different masks can be proved.
+    bool maskReuseable = hivmave::findReuseableMask(op, rewriter) == mask;
     if (maskReuseable) {
       // If the mask in MaskedLoadOp could be reused to one masked op or more,
       // then load all data without mask to reduce the select instruction
@@ -1572,14 +1565,14 @@ struct VectorToHIVMAVEPass
 
 void mlir::hivmave::populateVectorToHIVMAVEConversionPatterns(
     RewritePatternSet &patterns) {
-  patterns
-      .add<MaskedLoadOpPattern, LoadOpRewritePattern, StoreOpPattern,
-           MaskedStoreOpPattern, ConstantMaskOpConversionPattern,
-           CreateMaskOpConversionPattern, BroadcastOpPattern, VecInterleaveOpPattern,
-           VecInterleaveOpPattern, VecDeinterleaveOpPattern,
-           TransferReadOpPattern, TransferWriteOpPattern, VecGatherOpPattern,
-           VecScatterOpPattern, VecBroadcastOpPattern, ShapeCastOpPattern>(
-          patterns.getContext());
+  patterns.add<MaskedLoadOpPattern, LoadOpRewritePattern, StoreOpPattern,
+               MaskedStoreOpPattern, ConstantMaskOpConversionPattern,
+               CreateMaskOpConversionPattern, BroadcastOpPattern,
+               VecInterleaveOpPattern, VecInterleaveOpPattern,
+               VecDeinterleaveOpPattern, TransferReadOpPattern,
+               TransferWriteOpPattern, VecGatherOpPattern, VecScatterOpPattern,
+               VecBroadcastOpPattern, ShapeCastOpPattern>(
+      patterns.getContext());
 }
 
 std::unique_ptr<Pass> mlir::createVectorToHIVMAVEConversionPass(

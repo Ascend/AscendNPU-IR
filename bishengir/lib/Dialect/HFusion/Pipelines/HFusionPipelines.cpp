@@ -90,8 +90,6 @@ static void preProcess(OpPassManager &pm,
     pm.addPass(createSymbolDCEPass());
     pm.addPass(createGPUToHFusionConversionPass());
     pm.addPass(createAdaptTritonKernelPass());
-    pm.nest<func::FuncOp>().addPass(
-        createLegalizeNarrowFloatKernelArgumentsPass());
   }
   pm.addPass(createTensorToHFusionConversionPass());
   pm.nest<func::FuncOp>().addPass(

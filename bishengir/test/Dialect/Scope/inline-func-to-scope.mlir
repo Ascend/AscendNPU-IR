@@ -4,14 +4,14 @@
 // The VF callee is inlined into a scope.scope at the call site; callee
 // arguments map to the call operands, function-level attributes are
 // transferred to the scope, and call-site attributes are recorded in the
-// `call_attrs_vec` dictionary.
+// `call_attrs` dictionary.
 
 // CHECK-LABEL: func.func @caller
 func.func @caller(%arg0: tensor<2x2xf32>, %arg1: tensor<2x2xf32>) -> tensor<2x2xf32> {
   // CHECK: %[[SCOPE:.*]] = scope.scope : () -> tensor<2x2xf32> {
   // CHECK: %[[ADD:.*]] = arith.addf %arg0, %arg1 : tensor<2x2xf32>
   // CHECK: scope.return %[[ADD]] : tensor<2x2xf32>
-  // CHECK: } {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline, outline, scope.call_attrs_vec = #scope.call_attrs_vec<{hivm.vector_function, ptc_simdvf}>, scope.sym_func_name = #scope.sym_func_name<"vf_add">}
+  // CHECK: } {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline, outline, scope.call_attrs = #scope.call_attrs<{hivm.vector_function, ptc_simdvf}>, scope.sym_func_name = #scope.sym_func_name<"vf_add">}
   %0 = func.call @vf_add(%arg0, %arg1) {hivm.vector_function, ptc_simdvf} : (tensor<2x2xf32>, tensor<2x2xf32>) -> tensor<2x2xf32>
   // CHECK: return %[[SCOPE]] : tensor<2x2xf32>
   return %0 : tensor<2x2xf32>
@@ -47,7 +47,7 @@ func.func @plain(%arg0: tensor<2x2xf32>) -> tensor<2x2xf32> {
 // name recorded in `sym_func_name`, with an equivalent signature. Function
 // attributes match the original callee; call-site attributes are restored on
 // the call, and the bookkeeping attributes (`outline`, `sym_func_name`,
-// `call_attrs_vec`) are dropped.
+// `call_attrs`) are dropped.
 //
 // ROUNDTRIP-LABEL: func.func @vf_add
 // ROUNDTRIP-SAME: {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline}

@@ -51,6 +51,30 @@ using namespace mlir::hivm;
 
 namespace {
 
+// Count work assigned to each core, including operations in nested regions.
+static std::pair<bool, bool> analyzeCoreTypesForAnchors(Block *block) {
+  bool hasCube = false;
+  bool hasVector = false;
+  for (Operation &op : *block) {
+    auto coreType = getCoreType(&op);
+    if (failed(coreType))
+      return {true, true};
+    hasCube |=
+        *coreType == TCoreType::CUBE || *coreType == TCoreType::CUBE_AND_VECTOR;
+    hasVector |= *coreType == TCoreType::VECTOR ||
+                 *coreType == TCoreType::CUBE_AND_VECTOR;
+    for (Region &region : op.getRegions()) {
+      for (Block &nestedBlock : region) {
+        auto [nestedHasCube, nestedHasVector] =
+            analyzeCoreTypesForAnchors(&nestedBlock);
+        hasCube |= nestedHasCube;
+        hasVector |= nestedHasVector;
+      }
+    }
+  }
+  return {hasCube, hasVector};
+}
+
 // Pre-split instrumentation pass for the delayed cross-core GSS flow.
 //
 // Two responsibilities:
@@ -82,6 +106,8 @@ private:
   void insertAnchorsInBlock(Block &block, OpBuilder &builder,
                             int64_t &nextAnchorId,
                             bool onlyInsertFrontBack = false);
+
+  void createElseBranchesForPreloadSync(func::FuncOp funcOp);
 
   func::FuncOp backupFunc(func::FuncOp funcOp);
   func::FuncOp
@@ -216,6 +242,18 @@ private:
     return false;
   }
 
+  bool isInCVPreloadingScope(Operation *op) const {
+    for (Operation *parentOp = op->getParentOp(); parentOp != nullptr;
+         parentOp = parentOp->getParentOp()) {
+      if (auto scopeOp = dyn_cast<scope::ScopeOp>(parentOp)) {
+        if (scopeOp->hasAttr(hivm::PreloadNumAttr::name)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   bool isSIMTScope(Operation *op) const {
     // Skip anchor-insert in simt scope
     if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
@@ -228,6 +266,22 @@ private:
     return false;
   }
 
+  // A result-free if with work on only one core can be removed from the other
+  // split kernel without retaining an anchor-only control-flow skeleton.
+  bool isSingleCoreIf(Operation *op) const {
+    if (this->insertAnchorOpsBeforeAll ||
+        this->insertAnchorOpsBeforeMemEffectOps ||
+        this->insertAnchorOnlyBeforeCubeOps ||
+        this->insertAnchorOnlyBeforeVectorOps) {
+      return false;
+    }
+    auto ifOp = dyn_cast<scf::IfOp>(op);
+    if (!ifOp || ifOp.getNumResults() != 0 || !ifOp.getElseRegion().empty())
+      return false;
+    auto [hasCube, hasVector] = analyzeCoreTypesForAnchors(ifOp.thenBlock());
+    return hasCube != hasVector;
+  }
+
   bool isRegionsToBeAnchored(Operation *op) const {
     if (isCVPipeliningLoop(op) || isCVPreloadingScope(op)) {
       return true;
@@ -236,6 +290,9 @@ private:
       return false;
     }
     if (isOpToBeAnchored(op, /*insertBefore=*/true)) {
+      return false;
+    }
+    if (isSingleCoreIf(op)) {
       return false;
     }
     for (Region &region : op->getRegions()) {
@@ -299,6 +356,26 @@ void InsertAnchorsAndBackupPass::insertAnchor(Operation *op, OpBuilder &builder,
   }
   builder.create<AnchorOp>(op->getLoc(),
                            builder.getI64IntegerAttr(nextAnchorId++), nullptr);
+}
+
+void InsertAnchorsAndBackupPass::createElseBranchesForPreloadSync(
+    func::FuncOp funcOp) {
+  SmallVector<scf::IfOp> conditions;
+  funcOp.walk([&](scf::IfOp ifOp) {
+    if (!ifOp.getElseRegion().empty() || !isInCVPreloadingScope(ifOp) ||
+        !isRegionsToBeAnchored(ifOp)) {
+      return;
+    }
+    conditions.push_back(ifOp);
+  });
+
+  OpBuilder builder(&getContext());
+  for (scf::IfOp ifOp : conditions) {
+    assert(ifOp.getNumResults() == 0);
+    Block *elseBlock = builder.createBlock(&ifOp.getElseRegion());
+    builder.setInsertionPointToEnd(elseBlock);
+    builder.create<scf::YieldOp>(ifOp.getLoc());
+  }
 }
 
 void InsertAnchorsAndBackupPass::insertAnchorsInBlock(
@@ -483,6 +560,8 @@ void InsertAnchorsAndBackupPass::runOnOperation() {
   OpBuilder builder(&getContext());
   llvm::DenseMap<Operation *, func::FuncOp> backupFuncs;
   for (func::FuncOp funcOp : mixFuncOps) {
+    createElseBranchesForPreloadSync(funcOp);
+
     // Anchor ids restart at zero per function: ids only need to be unique
     // within a single (mix, cube, vector) triplet's translator scope.
     int64_t nextAnchorId = 0;

@@ -1,0 +1,52 @@
+name: compile-pkg
+
+on:
+  pull_request_comment:
+    branches:  ["ci/workflow", "master"]
+    types:
+      - created
+      - edited
+      - deleted
+    comments:
+      - '/compile-pkg'
+  workflow_dispatch:
+  schedule:
+    # cron 按 UTC 解析，对应北京时间 20:00 与 00:00
+    - cron: '40 22 * * *'
+    - cron: '0 02 * * *'
+
+jobs:
+  build_x86_64:
+    name: build (x86_64)
+    uses: ./.gitcode/workflows/build.yml
+    with:
+      arch: x86_64
+      runner_os: ubuntu
+      runner_arch: x86
+      image: swr.cn-north-4.myhuaweicloud.com/hw-ascend/ascendnpuir_build_ubuntu20.04_x86:20260509
+      cmake_path: /opt/buildtools/CMake/bin
+      ninja_path: /opt/buildtools/ninja
+      llvm_path: /opt/buildtools/llvm15/build/bin
+      atomgit_sha: ${{ atomgit.event.pull_request.head.sha }}
+      CANN_RUN_URL: https://ascend-cann-open.obs.cn-north-4.myhuaweicloud.com/Triton_Innersource/npu-ir-dependence/CANN_9.3.0-1103/Ascend-cann-toolkit_9.3.0_linux-x86_64.run
+      cann_path: /Ascend
+      cann_version: "9.3.0"
+      package_version: "2.0.0"
+
+  build_aarch64:
+    name: build (aarch64)
+    uses: ./.gitcode/workflows/build.yml
+    with:
+      arch: aarch64
+      runner_os: euler
+      runner_arch: aarch64
+      image: swr.cn-north-4.myhuaweicloud.com/hw-ascend/ubuntu:20.04.260226.arm.npuIR
+      # ARM 镜像内工具路径若与 x86 不同，在这里按实际调整
+      cmake_path: /opt/buildtools/CMake/bin
+      ninja_path: /opt/buildtools/ninja/ninja
+      llvm_path: /opt/buildtools/llvm15/build/bin
+      atomgit_sha: ${{ atomgit.event.pull_request.head.sha }}
+      CANN_RUN_URL: https://ascend-cann-open.obs.cn-north-4.myhuaweicloud.com/Triton_Innersource/npu-ir-dependence/CANN_9.3.0-1103/Ascend-cann-toolkit_9.3.0_linux-aarch64.run
+      cann_path: /Ascend
+      cann_version: "9.3.0"
+      package_version: "2.0.0"

@@ -8,8 +8,10 @@
 
 #include "bishengir/Tools/hivmc/Utility.h"
 #include "mlir/Parser/Parser.h"
+#include "mlir/Target/LLVMIR/Export.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/ManagedStatic.h"
@@ -134,25 +136,9 @@ std::string modifyForVersionMismatch(std::string src) {
   auto downgradeStacksaveStr =
       std::regex_replace(downgradeMemStr, downgradeStackRe, "");
 
-  std::regex dbgValueRe(
-      R"(#dbg_value\(([^,]+),\s*([^,]+),\s*(!DIExpression\([^)]*\)),\s*([^)]+)\))");
-
-  std::string dbgValuePattern = "call void @llvm.dbg.value(metadata $1, "
-                                "metadata $2, metadata $3), !dbg $4";
-  auto downgradeDbgValueStr =
-      std::regex_replace(downgradeStacksaveStr, dbgValueRe, dbgValuePattern);
-
-  std::regex dbgDeclareRe(
-      R"(#dbg_declare\(([^,]+),\s*([^,]+),\s*(!DIExpression\([^)]*\)),\s*([^)]+)\))");
-
-  std::string dbgDeclarePattern = "call void @llvm.dbg.declare(metadata $1, "
-                                  "metadata $2, metadata $3), !dbg $4";
-  auto downgradeDbgDeclareStr =
-      std::regex_replace(downgradeDbgValueStr, dbgDeclareRe, dbgDeclarePattern);
-
   std::regex dlvRegex(R"((!+\d+\s*=\s*!DILocalVariable\([^)]*?)(\)))");
-  auto addAttrType = std::regex_replace(downgradeDbgDeclareStr, dlvRegex,
-                                        "$1, attrtype: 64$2");
+  auto addAttrType =
+      std::regex_replace(downgradeStacksaveStr, dlvRegex, "$1, attrtype: 64$2");
   std::regex dspRegex(
       R"((!+\d+\s*=\s*(?:distinct\s+)?!DISubprogram\([^)]*name:\s*"[^"]*_vf_[^"]*"[^)]*?)(\)))");
   return std::regex_replace(addAttrType, dspRegex, "$1, functype: 256$2");
@@ -298,6 +284,15 @@ std::optional<std::pair<ModuleOp, ModuleOp>> splitMixModule(ModuleOp mod) {
   return std::make_pair(aicModule, aivModule);
 }
 
+std::unique_ptr<llvm::Module>
+translateModuleToLegacyLLVMIR(mlir::Operation *module,
+                              llvm::LLVMContext &context) {
+  auto llvmModule = mlir::translateModuleToLLVMIR(module, context);
+  if (llvmModule)
+    llvmModule->setIsNewDbgInfoFormat(false);
+  return llvmModule;
+}
+
 std::string moduleToIrString(const llvm::Module &module) {
   std::string moduleStr;
   llvm::raw_string_ostream rso(moduleStr);
@@ -335,11 +330,7 @@ saveToFiles(const SmallVector<IRModulePair> &llvmModules,
           tryAppendFileName(tryReplaceExtension(outputFile, "ll"), append);
     }
 
-    std::string moduleStr;
-    llvm::raw_string_ostream rso(moduleStr);
-    llvmModule->print(rso, nullptr);
-    rso << "\n";
-    std::string newModuleStr = modifyForVersionMismatch(moduleStr);
+    std::string newModuleStr = moduleToIrString(*llvmModule);
 
     // TODO: how to handle stdout for multiple files
     std::string errorMessage;

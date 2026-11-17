@@ -182,6 +182,16 @@ static bool isCoreOp(Operation &op) {
           isa<DestinationStyleOpInterface>(op));
 }
 
+/// True if `op` is the `__builtin_sparse_gather_load_to_L1buffer`, gathers
+/// sparse-attention KV regions GM->L1 in zN. It has the same memref-dst shape
+/// as `hivm.hir.load`/`hivm.hir.nd2nz`.
+static bool isSparseGatherLoadCustomOp(Operation *op) {
+  auto customOp = dyn_cast<CustomOp>(op);
+  if (!customOp)
+    return false;
+  return customOp.getName() == CustomOp::kBuiltinSparseGatherLoadToL1BufferName;
+}
+
 /// True if `op` is a HIVM DMA op whose alloc-backed memref destination may have
 /// a `bufferization.to_tensor` reader that crosses CV-pipelining workitem
 /// boundaries — i.e. we need `traceMemrefSubnet` to register it in
@@ -190,15 +200,17 @@ static bool isCoreOp(Operation &op) {
 /// producers for CVPipelining and must not enter the memref subnet tracer.
 ///
 /// Includes memref-dst `hivm.hir.load`, `hivm.hir.fixpipe`, the cross-core
-/// variant of `hivm.hir.copy`, and memref-dst `hivm.hir.nd2nz` (the fused
+/// variant of `hivm.hir.copy`, memref-dst `hivm.hir.nd2nz` (the fused
 /// GM->L1 load with NZ layout conversion that `CombineOptimizedConvertLayout`
-/// emits in place of a LoadOp under `--enable-layout-optimization=true`).
+/// emits in place of a LoadOp under `--enable-layout-optimization=true`), and
+/// the `__builtin_sparse_gather_load_to_L1buffer` CustomOp.
 static bool isMemrefSubnetWriter(Operation *op) {
   auto dps = dyn_cast<DestinationStyleOpInterface>(op);
   if (!dps || dps.getNumDpsInits() != 1 ||
       !isa<MemRefType>(dps.getDpsInitOperand(0)->get().getType()))
     return isCrossCoreCopy(op);
-  return isa<LoadOp, FixpipeOp, ND2NZOp>(op) || isCrossCoreCopy(op);
+  return isa<LoadOp, FixpipeOp, ND2NZOp>(op) || isCrossCoreCopy(op) ||
+         isSparseGatherLoadCustomOp(op);
 }
 
 /// True if `op` is a HIVM "load-like" DMA op that pulls data from GM into
@@ -207,10 +219,16 @@ static bool isMemrefSubnetWriter(Operation *op) {
 /// tracing. Under `enableLazyLoading`, they may be cloned into multiple
 /// consumer workitems so each stage loads independently from GM.
 ///
-/// Currently covers `hivm.hir.load` and `hivm.hir.nd2nz` — both read GM and
-/// write to a UB/L1 alloc that the consumer mmadL1/vector op will read via
-/// `bufferization.to_tensor`.
-static bool isLoadLikeOp(Operation *op) { return isa<LoadOp, ND2NZOp>(op); }
+/// Currently covers `hivm.hir.load`, `hivm.hir.nd2nz` and the
+/// `__builtin_sparse_gather_load_to_L1buffer` CustomOp — all read GM and write
+/// to a UB/L1 alloc that the consumer mmadL1/vector op will read via
+/// `bufferization.to_tensor`. The custom op has to be named explicitly: it
+/// reaches the pipeliner as a generic `hivm.hir.custom`, so without this it is
+/// treated as ordinary compute and never hoisted a stage ahead, which leaves
+/// the gather unable to overlap the mmad chain it feeds.
+static bool isLoadLikeOp(Operation *op) {
+  return isa<LoadOp, ND2NZOp>(op) || isSparseGatherLoadCustomOp(op);
+}
 
 static Value unwrapTensorViews(Value val) {
   while (val) {
@@ -1015,6 +1033,17 @@ LogicalResult WorklistBuilder::populateDependencies(Operation &separator) {
   return success();
 }
 
+static TCoreType inferBitcastOpCoreType(BitcastOp op);
+
+/// Resolve the core for same-core carry deferral, including bitcast users.
+static TCoreType resolveLoopCarryCoreType(Operation *op) {
+  if (auto bitcast = dyn_cast<BitcastOp>(op))
+    return inferBitcastOpCoreType(bitcast);
+  if (isCrossCoreCopy(op))
+    return TCoreType::VECTOR;
+  return queryCoreTypeHelper(op).value_or(TCoreType::CUBE_OR_VECTOR);
+}
+
 /// Populate dependencies that are carried between loop iterations (iter args,
 /// yield operands). Only meaningful in loop mode; no-op in block mode.
 void WorklistBuilder::populateLoopCarriedDependencies() {
@@ -1026,28 +1055,55 @@ void WorklistBuilder::populateLoopCarriedDependencies() {
     for (auto [iterArg, yieldedVal] :
          llvm::zip(pipelineLoop.getRegionIterArgs(),
                    pipelineLoop.getYieldedValues())) {
-      SmallVector<Operation *> userTraceStack;
-      for (Operation *user : iterArg.getUsers()) {
-        Operation *scopedUsr = getContainedParent(scopeOp, *user);
-        if (scopedUsr && scopedUsr->getParentOp() == scopeOp &&
-            !isa<scf::YieldOp, scf::ConditionOp>(scopedUsr))
-          userTraceStack.push_back(scopedUsr);
-      }
+      if (!isa<TensorType>(iterArg.getType()))
+        continue;
       Operation *yieldedOp = yieldedVal.getDefiningOp();
+      if (!yieldedOp)
+        continue;
+      TCoreType producerCore = resolveLoopCarryCoreType(yieldedOp);
+      if (producerCore != TCoreType::VECTOR && producerCore != TCoreType::CUBE)
+        continue;
+
+      // Follow views and bitcasts to the first core consumers. Defer these
+      // seeds until the yield producer is ready, without deferring an entire
+      // chain that may need to execute before an opposite-core stage.
+      SmallVector<Operation *> userTraceStack;
+      DenseSet<Operation *> visited;
+      for (Operation *user : iterArg.getUsers())
+        userTraceStack.push_back(user);
+
       while (!userTraceStack.empty()) {
-        Operation *op = userTraceStack.pop_back_val();
+        Operation *op =
+            getContainedParent(scopeOp, *userTraceStack.pop_back_val());
+        if (op->getParentOp() != scopeOp ||
+            isa<scf::YieldOp, scf::ConditionOp>(op) ||
+            !visited.insert(op).second)
+          continue;
+
+        // Follow glue and bitcasts, stopping at the first core consumers.
+        if (!isCoreOp(*op) || isa<BitcastOp>(op)) {
+          for (Value res : op->getResults())
+            for (Operation *user : res.getUsers())
+              userTraceStack.push_back(user);
+        }
         if (!(isCoreOp(*op) || isa<BitcastOp>(op)))
           continue;
+
         auto it = dependenceMap.find(op);
-        if (yieldedOp && it != dependenceMap.end() && it->second &&
+        if (it != dependenceMap.end() && it->second &&
             it->second->contains(yieldedOp))
           continue;
-        if (yieldedOp) {
-          auto &setPtr = loopCarriedDependenceMap[op];
-          if (!setPtr)
-            setPtr = std::make_unique<DenseSet<Operation *>>();
-          setPtr->insert(yieldedOp);
-        }
+
+        // Cross-core carries cannot share a work item; leave them to the
+        // existing cross-WI check / LCD backup path.
+        TCoreType consumerCore = resolveLoopCarryCoreType(op);
+        if (consumerCore != producerCore)
+          continue;
+
+        auto &setPtr = loopCarriedDependenceMap[op];
+        if (!setPtr)
+          setPtr = std::make_unique<DenseSet<Operation *>>();
+        setPtr->insert(yieldedOp);
       }
     }
     // Off-registry kernels keep the pre-3530 standard path: only the
@@ -1866,10 +1922,8 @@ FailureOr<WorklistBuildResult> WorklistBuilder::build() {
   bool extractionSuccess =
       succeeded(runRoundExtraction()) && toBePipelined.empty();
 
-  // Backup attempt: if loop mode and original extraction failed due to LCD.
-  // Off-registry kernels keep the pre-LCD behavior: leftover core ops fail
-  // the build and CVP leaves the loop un-pipelined. Registered kernels (or
-  // LIT `--bypass-shape-registry`) may retry with LCD-aware extraction.
+  // Registered kernels retain the LCD-aware v1 fallback when standard work
+  // item extraction cannot separate a loop-carried dependence.
   if (isLoopMode && !extractionSuccess && allowPreferredLoopHeuristics) {
     LLVM_DEBUG(dbgs() << "[WorklistBuilder] Standard extraction failed, "
                          "retrying with LCD backup handling\n");

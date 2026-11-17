@@ -1,0 +1,202 @@
+name: compile-reusable
+
+# ============================================================================
+# 可复用编译工作流（on.workflow_call）。
+#
+# 本文件不直接响应 push / pull_request，由入口流水线（compile_npuir.yml）
+# 传参调用；入口决定分支、架构、镜像与 CANN 包，本文件只做通用构建逻辑。
+#
+# 输入: 
+#   branch           检出分支，留空表示使用触发流水线的 ref
+#   arch             目标架构 x86_64 / aarch64，用于 CANN 包名与制品名
+#   runner_arch      runner 标签中的 arch 值: x86 / arm
+#   image            构建容器镜像
+#   CANN_RUN_URL     CANN toolkit 安装包下载地址
+#   cann_path        CANN 安装根目录
+#   cann_version     CANN 版本号，用于拼安装包文件名
+#   package_version  交付制品版本号
+#
+# 依赖: 自托管 runner，且 image 已在 runner 本地存在或可从 registry 拉取
+# （镜像需自带 clang/lld/cmake/ninja/python3/ccache/git）。
+# ============================================================================
+
+on:
+  workflow_call:
+    inputs:
+      arch:
+        description: '目标架构: x86_64 或 aarch64'
+        required: true
+        type: string
+      runner_os:
+        description: 'runner 标签 os 的值，如 ubuntu 或 euler'
+        required: false
+        type: string
+        default: 'ubuntu'
+      runner_arch:
+        description: 'runner 标签 arch 的值，如 x86 或 arm'
+        required: false
+        type: string
+        default: 'x86'
+      image:
+        description: '构建容器镜像'
+        required: true
+        type: string
+      CANN_RUN_URL:
+        description: 'CANN toolkit 安装包地址'
+        required: true
+        type: string
+      cann_path:
+        description: 'CANN 安装根目录'
+        required: false
+        type: string
+        default: './Ascend'
+      cann_version:
+        description: 'CANN 版本号'
+        required: false
+        type: string
+        default: '9.3.0'
+      package_version:
+        description: '制品版本号'
+        required: false
+        type: string
+        default: '2.0.0'
+      cmake_path:
+        description: 'cmake 所在目录'
+        required: false
+        type: string
+        default: '/opt/buildtools/CMake/bin'
+      ninja_path:
+        description: 'ninja 所在目录'
+        required: false
+        type: string
+        default: '/opt/buildtools/ninja'
+      llvm_path:
+        description: 'clang / clang++ / lld 所在目录'
+        required: false
+        type: string
+        default: '/opt/buildtools/llvm15/build/bin'
+      atomgit_sha:
+        description: '提交 SHA，用于制品名拼接'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  build_binaries:
+    name: build binaries
+    runs-on:
+      - self-hosted
+      - os=${{ inputs.runner_os }}
+      - arch=${{ inputs.runner_arch }}
+    container:
+      image: ${{ inputs.image }}
+      options: --user root
+    env:
+      CANN_RUN_URL: ${{ inputs.CANN_RUN_URL }}
+      CANN_VERSION: ${{ inputs.cann_version }}
+      CANN_PATH: ${{ inputs.cann_path }}
+      ARCH: ${{ inputs.arch }}
+      PACKAGE_VERSION: ${{ inputs.package_version }}
+      CMAKE_PATH: ${{ inputs.cmake_path }}
+      NINJA_PATH: ${{ inputs.ninja_path }}
+      LLVM_PATH: ${{ inputs.llvm_path }}
+    steps:
+      - name: Checkout code
+        uses: checkout
+
+      - name: Configure git safe directory
+        run: git config --global --add safe.directory '*'
+
+      - name: Download and install CANN toolkit
+        run: |
+          set -euxo pipefail
+          CANN_RUN_FILE="Ascend-cann-toolkit_${CANN_VERSION}_linux-${ARCH}.run"
+          curl -fL "$CANN_RUN_URL" -o "$CANN_RUN_FILE"
+          bash "$CANN_RUN_FILE" --full --quiet --install-path="$CANN_PATH"
+
+      - name: Verify tools
+        run: |
+          set -euxo pipefail
+          which cmake && cmake --version | head -1
+          which ninja && ninja --version
+          which clang && clang --version | head -1
+          which ld.lld && ld.lld --version | head -1
+          python3 --version
+
+      - name: Initialize submodules
+        run: |
+          set -euxo pipefail
+          git submodule update --init third-party/llvm-project
+          git submodule update --init third-party/torch-mlir
+          git submodule update --init third-party/shmem
+
+      - name: Restore ccache
+        uses: cache
+        with:
+          path: .ccache
+          key: ccache-${{ inputs.arch }}-${{ atomgit.pr_id }}
+          restore-keys: |
+            ccache-${{ inputs.arch }}-
+
+      - name: Build ascendnpu-ir binaries
+        run: |
+          set -euxo pipefail
+          echo "pr_id: ${{ atomgit.event.pull_request.number }}"
+          echo "sha: ${{ inputs.atomgit_sha }}"
+          source "$CANN_PATH/cann/set_env.sh"
+          export BISHENG_INSTALL_PATH="$CANN_PATH/cann/bin"
+          export PATH="$NINJA_PATH:$CMAKE_PATH:$PATH"
+          export CCACHE_DIR="$PWD/.ccache"
+          mkdir -p "$CCACHE_DIR"
+          chmod +x build-tools/build.sh
+          ./build-tools/build.sh \
+            -o ./build \
+            --build-type Release \
+            -t \
+            --bisheng-compiler="${BISHENG_INSTALL_PATH}" \
+            --c-compiler="${LLVM_PATH}/clang" \
+            --cxx-compiler="${LLVM_PATH}/clang++" \
+            --build-torch-mlir \
+            --add-cmake-options="-DCMAKE_LINKER=${LLVM_PATH}/lld -DLLVM_ENABLE_LLD=ON" \
+            --build-triton \
+            --safety-options \
+            --safety-ld-options \
+            --skip-rpath \
+            --build-shmem-template \
+            --bishengir-publish ON \
+            --collect-binary
+
+      - name: Package binaries
+        id: package
+        run: |
+          set -euxo pipefail
+          # build run package
+          git clone -q --depth 1 -b npuir-ci https://gitcode.com/NPU-IR/CICD.git cicd
+
+          export BISHENGIR_ARTIFACT=./bishengir-output
+
+          bash cicd/CI/make-run.sh -a "$ARCH" -v "$PACKAGE_VERSION"
+
+          # PR 构建追加 PR 号与 SHA；定时任务追加分支与日期；其他保持原名
+          PR_ID="${{ atomgit.event.pull_request.number }}"
+          SHA="$(printf '%s' "${{ inputs.atomgit_sha }}" | cut -c1-13)"
+          EVENT_NAME="${{ atomgit.event_name }}"
+          PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}_linux-${ARCH}"
+          if [ -n "$PR_ID" ]; then
+            PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}-pr${PR_ID}-${SHA}_linux-${ARCH}"
+          elif [ "$EVENT_NAME" = "schedule" ]; then
+            REF_NAME="$(printf '%s' "${{ atomgit.ref_name }}" | tr '/' '-')"
+            BUILD_DATE="$(date -u -d '+8 hours' +%y-%m-%d)"
+            PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}-${REF_NAME}-daily-${BUILD_DATE}_linux-${ARCH}"
+          fi
+          mv "./cicd/CI/ascendnpu-ir_${PACKAGE_VERSION}_linux-${ARCH}.run" "./${PKG_NAME}.run"
+
+          # 供 Upload artifact 复用同一个包名
+          echo "pkg_name=${PKG_NAME}" >> "$ATOMGIT_OUTPUT"
+
+      - name: Upload artifact
+        id: upload
+        uses: upload-artifact
+        with:
+          name: ${{ steps.package.outputs.pkg_name }}
+          path: ascendnpu-ir_*_linux-*.run

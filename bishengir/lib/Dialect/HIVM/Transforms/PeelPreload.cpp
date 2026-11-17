@@ -380,7 +380,8 @@ static Value sharedNestedAlloca(Block *body, Value parentAlloca) {
 /// private alloca. A nested loop that yields a parent buffer reuses
 /// `sharedAlloca` and does not increment it. Nested if reuses `sharedAlloca`.
 static void processMultiBufferInBlock(RewriterBase &rewriter, Block *block,
-                                      Value sharedAlloca, func::FuncOp funcOp) {
+                                      Value sharedAlloca, func::FuncOp funcOp,
+                                      bool allowBorrowParent = true) {
   Value alloca = sharedAlloca;
   bool hasTopLevelCounter =
       llvm::any_of(block->without_terminator(),
@@ -392,8 +393,8 @@ static void processMultiBufferInBlock(RewriterBase &rewriter, Block *block,
       });
   // Borrowed parent buffer: read the parent counter, do not bump it per
   // inner trip and do not allocate a second counter.
-  bool borrowParent =
-      sharedAlloca && !hasTopLevelCounter && yieldsMultiBufferCast(block);
+  bool borrowParent = allowBorrowParent && sharedAlloca &&
+                      !hasTopLevelCounter && yieldsMultiBufferCast(block);
   if ((hasTopLevelCounter || hasTopLevelMultiCast) && !alloca)
     alloca = createCounterAlloca(rewriter, block->front().getLoc(), funcOp);
 
@@ -629,7 +630,7 @@ static void peelPreloadLoop(scf::ForOp forOp, size_t maxPreloadNum) {
     if (counterAlloca) {
       auto funcOp = forOp->getParentOfType<func::FuncOp>();
       processMultiBufferInBlock(rewriter, middle.getBody(), counterAlloca,
-                                funcOp);
+                                funcOp, /*allowBorrowParent=*/false);
     }
     erasePreloadNumMarks(middle);
   }

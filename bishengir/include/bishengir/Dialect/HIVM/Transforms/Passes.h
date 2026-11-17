@@ -118,6 +118,15 @@ createMarkMultiBufferPass(const MarkMultiBufferOptions &options = {});
 /// Create a pass to enable multi buffer.
 std::unique_ptr<Pass> createEnableMultiBufferPass();
 
+/// Separate Cube GM loads and assign their preload stages.
+std::unique_ptr<Pass> createSeparateLoadComputePass();
+
+/// Mark shared local buffer capacity for separated loads.
+std::unique_ptr<Pass> createMarkBufferPoolPass();
+
+/// Materialize independent load submission and explicit access slots.
+std::unique_ptr<Pass> createEnableBufferPoolPass();
+
 /// Create a pass to add FFTS (arg0) to every SyncBlockSetOp
 std::unique_ptr<Pass> createAddFFTSToSyncBlockSetOpPass();
 
@@ -127,6 +136,9 @@ std::unique_ptr<Pass> createLowerMultiBufferCounterPass();
 /// Create a pass to plan memory.
 std::unique_ptr<Pass>
 createPlanMemoryPass(const PlanMemoryOptions &planMemoryOption = {});
+
+/// Insert pool operations for a successful TCB memory-planning fallback.
+std::unique_ptr<Pass> createTcbPoolOpInsertionPass();
 
 /// Create a pass to inject sync
 std::unique_ptr<Pass>
@@ -181,13 +193,12 @@ std::unique_ptr<Pass> createAllocExtraBufferPass();
 /// Create a pass to outline memref.alloc with static shape in VF
 std::unique_ptr<Pass> createOutlineAllocInVFPass();
 
+/// Create a pass to outline hivm.load in VF by rewriting it to hivm.copy.
+std::unique_ptr<Pass> createOutlineCopyInVFPass();
+
 /// Create a pass that promotes temporary tensor buffers inside vector
 /// functions into enclosing loop iter_args.
 std::unique_ptr<Pass> createNormalizeTmpBufferInVfPass();
-
-/// Create a post-bufferization checkpoint that fails when a vector function
-/// holds a memref.copy in its top-level block.
-std::unique_ptr<Pass> createVerifyVectorFunctionTopLevelCopyPass();
 
 /// Create a pass to rewrite bufferization.alloc_tensor(copy...) into a
 /// bufferization.alloc_tensor + hivm.hir.copy pair.
@@ -413,8 +424,38 @@ std::unique_ptr<Pass> createAutoBlockifyParallelLoopPass();
 std::unique_ptr<Pass>
 createCVPipeliningPass(const CVPipeliningOptions &options = {});
 
+// Create Normalize Workspace Store pass for CV pipelining v2
+std::unique_ptr<Pass> createNormalizeWorkspaceStorePass();
+
 // Create Outline CV Scopes pass for CV pipelining v2
 std::unique_ptr<Pass> createOutlineCVScopesPass();
+
+// Create Merge CV Scopes pass for CV pipelining v2
+std::unique_ptr<Pass> createMergeCVScopesPass();
+
+// Create Intra Stage Scheduling pass for CV pipelining v2
+std::unique_ptr<Pass> createIntraStageSchedulingPass();
+
+// Create a CV Pipelining Staging pass
+std::unique_ptr<Pass>
+createPipelineStagingPass(const PipelineStagingOptions &options = {});
+
+/// Reload GM tensors in their consuming PipelineV2 preload stages.
+std::unique_ptr<Pass> createCVLazyLoadPass();
+
+/// Clone functions before OutlineCVScopes so preload can be rolled back.
+std::unique_ptr<Pass> createSaveCVPipelineSnapshotPass();
+
+/// Restore or inline PipelineV2 when the cross-scope UB estimate exceeds
+/// budget.
+std::unique_ptr<Pass>
+createGuardCVPipelineUBPass(const GuardCVPipelineUBOptions &options = {});
+
+/// Delete the private clones created by SaveCVPipelineSnapshot.
+std::unique_ptr<Pass> createEraseCVPipelineSnapshotsPass();
+
+/// Wrap scopes belonging to the same PipelineV2 preload stage.
+std::unique_ptr<Pass> createWrapCVPreloadScopesPass();
 
 // Create a pass to compose expands and collapses ops
 std::unique_ptr<Pass> createComposeCollapseExpandPass();
@@ -479,6 +520,9 @@ std::unique_ptr<Pass> createCombineOptimizedConvertLayoutPass();
 
 /// Create a pass to normalize conv1d operation.
 std::unique_ptr<Pass> createNormalizeConvOpsPass();
+
+/// Prepare storage versions for iteration-local preload buffers.
+std::unique_ptr<Pass> createMarkPreloadBuffersPass();
 
 /// Create a pass to create preload for CV pipelining
 std::unique_ptr<Pass>

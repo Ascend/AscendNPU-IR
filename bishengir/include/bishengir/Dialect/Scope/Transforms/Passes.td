@@ -146,7 +146,7 @@ def InlineFuncToScope : Pass<"inline-func-to-scope", "mlir::ModuleOp"> {
     callee) with a `scope.scope` holding an inlined copy of the callee
     body. Callee arguments map to the call operands; the callee's
     function-level attributes are transferred to the scope, call-site
-    attributes are recorded in an `call_attrs_vec` dictionary, and the callee
+    attributes are recorded in a `call_attrs` dictionary, and the callee
     name is recorded in `sym_func_name` for restoration by outline-scope.
     Intended to run before one-shot-bufferize so that the scope region is
     bufferized without a function boundary and buffer layouts stay precise at

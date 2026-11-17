@@ -19,7 +19,6 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Dominance.h"
@@ -467,139 +466,6 @@ static VFResultExtractKind getVFResultExtractKind(func::CallOp call) {
   return VFResultExtractKind::NotExtracted;
 }
 
-/// Returns the allocation a VF call operand ultimately views, looking through
-/// the tensor/memref view and bufferization casts that sit between a VF operand
-/// and the buffer it aliases.
-static Operation *getUnderlyingAlloc(Value operand) {
-  auto alloc = hivm::traceDefOp<memref::AllocOp>(operand);
-  return alloc.has_value() ? *alloc : nullptr;
-}
-
-/// Collects the allocations filled by a DMA that re-runs on every trip of the
-/// loop enclosing \p call, i.e. the buffers whose release gates the next trip.
-/// A DMA outside that loop runs once, so delaying its release costs nothing and
-/// must not be counted.
-static DenseSet<Operation *> collectLoopCarriedDmaAllocs(func::CallOp call) {
-  DenseSet<Operation *> allocs;
-  auto loop = call->getParentOfType<LoopLikeOpInterface>();
-  if (!loop)
-    return allocs;
-  loop->walk([&](hivm::LoadOp dma) {
-    if (Operation *alloc = getUnderlyingAlloc(dma.getDst()))
-      allocs.insert(alloc);
-  });
-  return allocs;
-}
-
-/// Returns true when a vector function that runs after \p call2 still reads
-/// \p alloc. The releasing flag sits after the *last* vector reader, so such a
-/// call keeps the flag behind \p call2 already: relocating call2's body to an
-/// earlier VF then moves work that was in front of the flag anyway, and the
-/// flag does not move. Only vector calls count, because the flag this guard
-/// reasons about releases the buffer from PIPE_V specifically.
-///
-/// Program order comes from a pre-order walk rather than from DominanceInfo:
-/// the merge loop that consults this erases and creates calls as it goes, so a
-/// dominance tree cached before it would go stale underneath us.
-static bool hasLaterVectorReader(Operation *alloc, func::CallOp call2,
-                                 Operation *loop) {
-  bool afterCall2 = false;
-  bool found = false;
-  loop->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (op == call2.getOperation()) {
-      afterCall2 = true;
-      return WalkResult::advance();
-    }
-    if (!afterCall2 || !hivm::isVFCall(op))
-      return WalkResult::advance();
-    for (Value operand : op->getOperands()) {
-      if (getUnderlyingAlloc(operand) == alloc) {
-        found = true;
-        return WalkResult::interrupt();
-      }
-    }
-    return WalkResult::advance();
-  });
-  return found;
-}
-
-/// Number of loops in \p vf whose trip count is not provably one. A loop that
-/// provably runs once delays no more than the straight-line code it contains,
-/// so it must not count as a multi-trip loop.
-static unsigned countMultiTripLoops(func::FuncOp vf) {
-  unsigned n = 0;
-  vf.walk([&](Operation *op) {
-    if (auto forOp = dyn_cast<scf::ForOp>(op)) {
-      std::optional<int64_t> trip = constantTripCount(
-          forOp.getLowerBound(), forOp.getUpperBound(), forOp.getStep());
-      if (!trip || *trip != 1)
-        ++n;
-    } else if (isa<scf::WhileOp>(op)) {
-      ++n;
-    }
-  });
-  return n;
-}
-
-/// Returns true when merging \p call2 into \p call1 would push vector work past
-/// the point where a DMA-refilled buffer stops being read.
-///
-/// A VF is one atomic region for the sync solver: it places the
-/// PIPE_V -> PIPE_MTE2 flag that releases such a buffer immediately after the
-/// *last VF that reads it*, which is the earliest legal point. Appending work
-/// that does not read the buffer moves that flag later by the appended
-/// duration, so the next trip's DMA is issued late and every pipe idles for
-/// nothing. The appended work could just as well have run after the flag.
-///
-/// What this cannot weigh is how much the delay costs, and a local magnitude
-/// comparison is the wrong instrument for it: measured, one such merge gates
-/// only two 128-byte loads yet loses 3.85%, because the serialization repeats
-/// on every trip of every program rather than once per transfer. So the test is
-/// structural. A straight-line candidate is exempt, because its delay is
-/// bounded by its own length and measures as harmless; a candidate carrying a
-/// multi-trip loop is refused, because the loop multiplies its body by the trip
-/// count. Against that, what a merge buys is a handful of VF launch
-/// instructions, so refusing is the cheaper side of the trade when in doubt.
-static bool delaysDmaBufferRelease(func::FuncOp vf2, func::CallOp call1,
-                                   func::CallOp call2) {
-  auto loop = call1->getParentOfType<LoopLikeOpInterface>();
-  if (!loop)
-    return false;
-  DenseSet<Operation *> dmaAllocs = collectLoopCarriedDmaAllocs(call1);
-  if (dmaAllocs.empty())
-    return false;
-
-  if (countMultiTripLoops(vf2) == 0)
-    return false;
-
-  DenseSet<Operation *> readByVf2;
-  for (Value operand : call2.getOperands())
-    if (Operation *alloc = getUnderlyingAlloc(operand))
-      readByVf2.insert(alloc);
-
-  // vf1 must be the last vector reader of a DMA-refilled buffer, otherwise the
-  // flag already sits behind call2 and merging moves nothing.
-  Operation *gated = nullptr;
-  for (Value operand : call1.getOperands()) {
-    Operation *alloc = getUnderlyingAlloc(operand);
-    if (!alloc || !dmaAllocs.contains(alloc) || readByVf2.contains(alloc))
-      continue;
-    if (hasLaterVectorReader(alloc, call2, loop))
-      continue;
-    gated = alloc;
-    break;
-  }
-  if (!gated)
-    return false;
-
-  LLVM_DEBUG(llvm::dbgs() << "[merge-vf] refusing to merge " << vf2.getName()
-                          << " into " << call1.getCallee()
-                          << ": would delay the release of a DMA-refilled "
-                          << "buffer by " << countMultiTripLoops(vf2)
-                          << " loop(s)\n");
-  return true;
-}
-
 static bool hasCompatibleResultExtractKind(func::CallOp call1,
                                            func::CallOp call2) {
   VFResultExtractKind kind1 = getVFResultExtractKind(call1);
@@ -900,22 +766,6 @@ void MergeVecScopePass::runOnOperation() {
         scoreIdx++;
         continue;
       }
-    }
-    // Merging appends vf2's body to vf1, which also pushes back the sync flag
-    // the solver places right after vf1. Refuse when that would delay a
-    // DMA-refilled buffer for work that does not even read it.
-    // Look the call sites up here rather than in func2callMap: vf1 may itself
-    // be a VF created by an earlier merge, which that map predates.
-    if (llvm::any_of(findCallOpsForFunction(root, vf1Obj),
-                     [&](func::CallOp call1) {
-                       return llvm::any_of(findCallOpsForFunction(root, vf2Obj),
-                                           [&](func::CallOp call2) {
-                                             return delaysDmaBufferRelease(
-                                                 vf2Obj, call1, call2);
-                                           });
-                     })) {
-      scoreIdx++;
-      continue;
     }
     // Such & operator extract the iterator. Later in tryMerge function,
     // we insert new created merged VF at this iterator.
