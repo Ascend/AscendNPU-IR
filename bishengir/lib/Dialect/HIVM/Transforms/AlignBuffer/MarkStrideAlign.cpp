@@ -532,8 +532,9 @@ static void markForVsstb(OpBuilder &builder, func::CallOp &callOp,
   if (auto func = moduleOp.lookupSymbol<func::FuncOp>(callee)) {
     int32_t bankGroupCount =
         static_cast<int32_t>(hacc::utils::getBankGroupCount(moduleOp));
-    func->walk([&builder, &callOp,
-                bankGroupCount](vector::TransferWriteOp writeOp) {
+    const bool archIs960 = hacc::utils::isAscend960(moduleOp);
+    func->walk([&builder, &callOp, bankGroupCount,
+                archIs960](vector::TransferWriteOp writeOp) {
       if (!utils::isTransferWriteSuitForStoreWithStride(writeOp))
         return WalkResult::skip();
       int argIdx = findArgNeedMark(writeOp);
@@ -546,6 +547,25 @@ static void markForVsstb(OpBuilder &builder, func::CallOp &callOp,
       auto memrefTy = dyn_cast<MemRefType>(operand.getType());
       if (!memrefTy)
         return WalkResult::skip();
+      // Conservative guards for the newly enabled Ascend960 path. They are
+      // gated to Ascend960 so Ascend950 behavior is left untouched.
+      if (archIs960) {
+        // A rank-reducing subview between the call operand and the write
+        // invalidates the rank-2 based dim mapping (findArgNeedMark only
+        // recovers the argument number). Skip rather than pad a wrong
+        // dimension.
+        auto writeMemrefTy =
+            dyn_cast<MemRefType>(writeOp.getSource().getType());
+        if (!writeMemrefTy || writeMemrefTy.getRank() != memrefTy.getRank())
+          return WalkResult::skip();
+        // A sub-tail dim already of the form (bankGroupCount*N + 1) needs no
+        // padding; applying the lcm formula would inflate the allocation by
+        // up to bankGroupCount times.
+        int32_t subTailDim =
+            static_cast<int32_t>(memrefTy.getRank()) - kVsstbSubTailDimOffset;
+        if (memrefTy.getShape()[subTailDim] % bankGroupCount == 1)
+          return WalkResult::skip();
+      }
       // TODO: Currently vsstb can make continuous shape into discontinous
       // shape, which may cause reshape & collaspse operation users that not
       // correct, because these operation relys on continous shape feature. So

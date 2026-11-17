@@ -72,3 +72,72 @@ module attributes {hacc.target = #hacc.target<"Ascend960">} {
     return
   }
 }
+
+// -----
+
+// A rank-reducing subview between the call operand and the vsstb candidate
+// write breaks the rank-2 dim mapping. The Ascend960 path must conservatively
+// skip instead of padding the wrong dim (which would also inflate the
+// allocation by ~bankGroupCount times).
+// CHECK-LABEL:func.func @test_vsstb_align_a6_rank_reduced()
+// CHECK-NOT: annotation.mark %alloc_0
+
+module attributes {hacc.target = #hacc.target<"Ascend960">} {
+  func.func @vf_a6_rank_reduced(%arg0: memref<8x48x1x16xf16, #hivm.address_space<ub>>)
+                attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+    %cst = arith.constant 0.000000e+00 : f16
+    %c1 = arith.constant 1 : index
+    %c8v = arith.constant 8 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c0 = arith.constant 0 : index
+    scf.for %arg3 = %c0 to %c8v step %c1 {
+      scf.for %arg4 = %c0 to %c8 step %c4 {
+        %subview = memref.subview %arg0[%arg4, %arg3, 0, 0] [4, 1, 1, 16] [1, 1, 1, 1] : memref<8x48x1x16xf16, #hivm.address_space<ub>> to memref<4x1x16xf16, strided<[768, 16, 1], offset: ?>, #hivm.address_space<ub>>
+        %0 = vector.transfer_read %subview[%c0, %c0, %c0], %cst {in_bounds = [true, true, true]} : memref<4x1x16xf16, strided<[768, 16, 1], offset: ?>, #hivm.address_space<ub>>, vector<4x1x16xf16>
+        vector.transfer_write %0, %subview[%c0, %c0, %c0] {in_bounds = [true, true, true]} : vector<4x1x16xf16>, memref<4x1x16xf16, strided<[768, 16, 1], offset: ?>, #hivm.address_space<ub>>
+      } {unroll_for_vsstb}
+    }
+    return
+  }
+
+  func.func @test_vsstb_align_a6_rank_reduced() attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, true, true, false, false, false]> : vector<11xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix", parallel_mode = "simd"} {
+    %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<8x48x1x16xf16, #hivm.address_space<ub>>
+    func.call @vf_a6_rank_reduced(%alloc_0) {hivm.vector_function, no_inline} : (memref<8x48x1x16xf16, #hivm.address_space<ub>>) -> ()
+    return
+  }
+}
+
+// -----
+
+// The sub-tail dim 33 already satisfies the (bankGroupCount*N + 1) form with
+// 32 bank groups, so the stride is already bank-conflict free. The Ascend960
+// path must skip instead of padding it to lcm(33,32)+1 = 1057.
+// CHECK-LABEL:func.func @test_vsstb_align_a6_already_aligned()
+// CHECK-NOT: annotation.mark %alloc_0
+
+module attributes {hacc.target = #hacc.target<"Ascend960">} {
+  func.func @vf_a6_already_aligned(%arg0: memref<8x33x16xf16, #hivm.address_space<ub>>)
+                attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+    %cst = arith.constant 0.000000e+00 : f16
+    %c1 = arith.constant 1 : index
+    %c8v = arith.constant 8 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c0 = arith.constant 0 : index
+    scf.for %arg3 = %c0 to %c8v step %c1 {
+      scf.for %arg4 = %c0 to %c8 step %c4 {
+        %subview = memref.subview %arg0[%arg4, %arg3, 0] [4, 1, 16] [1, 1, 1] : memref<8x33x16xf16, #hivm.address_space<ub>> to memref<4x1x16xf16, strided<[528, 16, 1], offset: ?>, #hivm.address_space<ub>>
+        %0 = vector.transfer_read %subview[%c0, %c0, %c0], %cst {in_bounds = [true, true, true]} : memref<4x1x16xf16, strided<[528, 16, 1], offset: ?>, #hivm.address_space<ub>>, vector<4x1x16xf16>
+        vector.transfer_write %0, %subview[%c0, %c0, %c0] {in_bounds = [true, true, true]} : vector<4x1x16xf16>, memref<4x1x16xf16, strided<[528, 16, 1], offset: ?>, #hivm.address_space<ub>>
+      } {unroll_for_vsstb}
+    }
+    return
+  }
+
+  func.func @test_vsstb_align_a6_already_aligned() attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, true, true, false, false, false]> : vector<11xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix", parallel_mode = "simd"} {
+    %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<8x33x16xf16, #hivm.address_space<ub>>
+    func.call @vf_a6_already_aligned(%alloc_0) {hivm.vector_function, no_inline} : (memref<8x33x16xf16, #hivm.address_space<ub>>) -> ()
+    return
+  }
+}
