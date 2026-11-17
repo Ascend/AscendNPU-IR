@@ -900,7 +900,9 @@ def RepositionPreloadWork
       "Reposition ops between and inside preload scopes after CVPipelining.";
   let description = [{
     Runs after CVPipelining and before MarkMultiBuffer, on the unsplit MIX
-    function. It repositions ops both between preload scopes and inside a
+    function. All transformations require a registered kernel name unless
+    bypass-shape-registry is explicitly enabled. It repositions ops both
+    between preload scopes and inside a
     scope. A later `mmadL1` that reads the same left matrix as an earlier
     one is moved, with its fixpipe, to just after that earlier matmul when
     every operand it needs is already available there. Inside a VECTOR
@@ -1566,6 +1568,19 @@ def CVPipelining
               "Enable registered-kernel CV-pipelining heuristics">];
 }
 
+def NormalizeWorkspaceStore
+    : HIVMPass<"normalize-workspace-store", "func::FuncOp",
+               [MixKernel, PureAicKernel]> {
+  let summary = "Rewrite workspace tensor stores to memref stores followed by "
+                "to_tensor for CV pipelining v2";
+  let constructor = "mlir::hivm::createNormalizeWorkspaceStorePass()";
+  let dependentDialects = ["annotation::AnnotationDialect",
+                           "hivm::HIVMDialect",
+                           "bishengir::memref_ext::MemRefExtDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect"];
+}
+
 def OutlineCVScopes
     : HIVMPass<"outline-cv-scopes", "func::FuncOp", [MixKernel, PureAicKernel]> {
   let summary = "Partition mixed-core loops into scoped work items for CV pipelining v2";
@@ -1575,6 +1590,134 @@ def OutlineCVScopes
                            "bishengir::memref_ext::MemRefExtDialect",
                            "bufferization::BufferizationDialect",
                            "memref::MemRefDialect"];
+}
+
+def MergeCVScopes
+    : HIVMPass<"merge-cv-scopes", "func::FuncOp", [MixKernel, PureAicKernel]> {
+  let summary = "Merge compatible CV scopes according to pipelining v2 rules";
+  let constructor = "mlir::hivm::createMergeCVScopesPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
+                           "mlir::scope::ScopeDialect",
+                           "bishengir::memref_ext::MemRefExtDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect", "tensor::TensorDialect",
+                           "arith::ArithDialect"];
+}
+
+def IntraStageScheduling
+    : HIVMPass<"intra-stage-scheduling", "func::FuncOp",
+               [MixKernel, PureAicKernel]> {
+  let summary = "Hoist the cube-facing dependencies of each vector scope into "
+                "a leading sub-scope";
+  let description = [{
+    Runs after MergeCVScopes, scheduling inside a stage rather than across
+    stages. For every vector scope followed by a cube scope in the same block,
+    the operations producing the values that cube scope reads are grouped into
+    one new scope placed at the beginning of the vector scope's body, so the
+    cube can start as soon as that group retires. The group is closed under
+    its dependencies, including the cross-core copy that fills the L1 buffer
+    the cube reads, and carries a `vf-scope` attribute. A vector scope is left
+    unchanged when it returns no value,
+    when no following cube scope reads its results, or when every one of its
+    results feeds that cube scope.
+  }];
+  let constructor = "mlir::hivm::createIntraStageSchedulingPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "mlir::scope::ScopeDialect",
+                           "memref::MemRefDialect"];
+}
+
+def PipelineStaging
+    : HIVMPass<"pipeline-staging", "func::FuncOp"> {
+  let summary = "Assign preload number to scopes";
+  let constructor = "mlir::hivm::createPipelineStagingPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
+                           "mlir::scope::ScopeDialect",
+                           "bishengir::memref_ext::MemRefExtDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect"];
+  let options = [Option<"maxPipelineMultibuffer", "max-pipeline-multibuffer", "unsigned",
+                        /*default=*/"0",
+                        "Maximum pipeline multibuffer.">];
+}
+
+def CVLazyLoad : HIVMPass<"cv-lazy-load", "func::FuncOp"> {
+  let summary = "Reload read-only GM tensors in consuming preload stages";
+  let description = [{
+    Runs after PipelineStaging and before WrapCVPreloadScopes. Clones a GM
+    load and its address, padding, cast and tensor-view operations into a consuming
+    VECTOR scope only when its preload number differs from the producer's.
+    Retains early loads needed for Cube inputs and removes unused scope results
+    to avoid keeping tensor snapshots live across preload stages.
+
+    Distinct GM roots are assumed independent. A write through any view of the
+    loaded GM root in the pipelined loop prevents rematerialization, including
+    writes in other stages or iterations. Unknown effects also prevent it.
+  }];
+  let constructor = "mlir::hivm::createCVLazyLoadPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "mlir::scope::ScopeDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect", "tensor::TensorDialect"];
+}
+
+def SaveCVPipelineSnapshot
+    : HIVMPass<"save-cv-pipeline-snapshot", "func::FuncOp"> {
+  let summary = "Clone a function before OutlineCVScopes";
+  let description = [{
+    Runs immediately before OutlineCVScopes. Stores a private clone of each
+    function that contains a loop. GuardCVPipelineUB restores that clone when
+    the cross-scope UB estimate exceeds capacity. The clone is marked with
+    `hivm.cv_pipeline_snapshot` and is skipped by the PipelineV2 passes.
+  }];
+  let constructor = "mlir::hivm::createSaveCVPipelineSnapshotPass()";
+  let dependentDialects = ["func::FuncDialect"];
+}
+
+def EraseCVPipelineSnapshots
+    : HIVMPass<"erase-cv-pipeline-snapshots", "ModuleOp"> {
+  let summary = "Erase PipelineV2 function snapshots";
+  let description = [{
+    Runs after GuardCVPipelineUB. Deletes the private clones created by
+    SaveCVPipelineSnapshot once the guard has either kept preload or copied
+    a clone back into its function.
+  }];
+  let constructor = "mlir::hivm::createEraseCVPipelineSnapshotsPass()";
+  let dependentDialects = ["func::FuncDialect"];
+}
+
+def GuardCVPipelineUB
+    : HIVMPass<"guard-cv-pipeline-ub", "func::FuncOp"> {
+  let summary = "Drop PipelineV2 preload when cross-scope UB exceeds capacity";
+  let description = [{
+    Runs after CVLazyLoad. Estimates UB for tensors passed across scopes and
+    for UB tightly-coupled buffers. The multibuffer factor of a value is one
+    plus the largest preload_num gap between its producer and any consumer.
+    Because cube:vector is 1:2, the estimate is compared with twice the UB
+    budget. Above that budget the function body is replaced with the clone
+    saved before OutlineCVScopes. Without that clone, the pipelined scopes
+    are inlined and preload attributes are removed.
+  }];
+  let constructor = "mlir::hivm::createGuardCVPipelineUBPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
+                           "mlir::scope::ScopeDialect",
+                           "annotation::AnnotationDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect"];
+  let options = [Option<"simtVFDynamicSize", "simt-vf-dynamic-size", "int",
+                        /*default=*/"216",
+                        "MIX/SIMT UB budget in KiB. Matches PlanMemory.">];
+}
+
+def WrapCVPreloadScopes
+    : HIVMPass<"wrap-cv-preload-scopes", "func::FuncOp"> {
+  let summary = "Wrap same-stage CV scopes in one preload scope";
+  let description = [{
+    Runs last in PipelineV2, after PipelineStaging. Preserves inner core
+    scopes and intervening operations while moving preload metadata to one
+    enclosing scope per stage. Values used outside a group are returned by
+    its wrapper. Singleton stages and unrelated loops are left unchanged.
+  }];
+  let constructor = "mlir::hivm::createWrapCVPreloadScopesPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "mlir::scope::ScopeDialect"];
 }
 
 def AutoBlockifyParallelLoop
@@ -1755,6 +1898,10 @@ def CombineOptimizedConvertLayout
       "Fold some convert layout patterns and change it into optimized form";
   let constructor = "mlir::hivm::createCombineOptimizedConvertLayoutPass()";
   let dependentDialects = ["hivm::HIVMDialect", ];
+  let options =
+      [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+              /*default=*/"false",
+              "Bypass shape registry check for duplicate inserted L1 staging">];
 }
 
 def MarkPreloadBuffers : HIVMPass<"hivm-mark-preload-buffers", "ModuleOp"> {

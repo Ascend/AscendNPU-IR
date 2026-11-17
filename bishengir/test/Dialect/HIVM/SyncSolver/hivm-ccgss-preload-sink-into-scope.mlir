@@ -1,5 +1,27 @@
 // RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(hivm-cross-core-gss{solver-version=v1}))" %s | FileCheck %s
 // RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(hivm-cross-core-gss{solver-version=v2}))" %s | FileCheck %s
+// RUN: sed 's/hivm.preload_num = 0/hivm.preload_num = 1/g' %s | bishengir-opt -hivm-cross-core-gss=solver-version=v1 | FileCheck %s --check-prefix=SAME
+// RUN: sed 's/hivm.preload_num = 0/hivm.preload_num = 1/g' %s | bishengir-opt -hivm-cross-core-gss=solver-version=v2 | FileCheck %s --check-prefix=SAME
+
+// Separate scopes may share a preload stage. Keep the forward notification
+// from the producing fixpipe to the consuming copy for both flat and nested
+// scopes, as well as the reverse notification protecting buffer reuse.
+// SAME-LABEL: func.func @k_flat
+// SAME: hivm.hir.sync_block_wait[<CUBE>, <PIPE_V>, <PIPE_FIX>]
+// SAME-NEXT: hivm.hir.fixpipe
+// SAME-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_V>]
+// SAME: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>]
+// SAME-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>]
+// SAME-NEXT: hivm.hir.copy
+// SAME-NEXT: hivm.hir.sync_block_set[<VECTOR>, <PIPE_V>, <PIPE_FIX>]
+// SAME-LABEL: func.func @k_nested
+// SAME: hivm.hir.sync_block_wait[<CUBE>, <PIPE_V>, <PIPE_FIX>]
+// SAME-NEXT: hivm.hir.fixpipe
+// SAME-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_V>]
+// SAME: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>]
+// SAME-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>]
+// SAME-NEXT: hivm.hir.copy
+// SAME-NEXT: hivm.hir.sync_block_set[<VECTOR>, <PIPE_V>, <PIPE_FIX>]
 
 // cv-preloading set/wait placement on the non-delayed cross-core path, flat
 // preload scope vs. one extra scope level in between. This is the same pair of

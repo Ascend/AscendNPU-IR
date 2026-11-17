@@ -1716,6 +1716,9 @@ LogicalResult CVPipelineImpl::createNewLoops() {
   newLoop =
       builder.create<scf::ForOp>(loc, lb, ub, newStep, pipelineLoop.getInits());
   newLoop->setAttr(hivm::CVPipelinedLoopAttr::name, builder.getUnitAttr());
+  // TODO: Temporary transition measure so PipelineV2 ignores loops already
+  // pipelined by legacy CVPipelining.
+  newLoop->setAttr(hivm::LegacyCVPipelineAttr::name, builder.getUnitAttr());
   newLoop->setAttr(hivm::kCVUnrolledLoopName, builder.getUnitAttr());
   if (newLoop->getNumResults() == 0)
     newLoop.getBody()->getTerminator()->erase();
@@ -2445,8 +2448,11 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
       Value toTensor = createToTensor(builder, loc, localOutput.second);
       if (!toTensor)
         return failure();
-      if (allowShapeHeuristics &&
-          toTensor.getType() != localOutput.first.getType()) {
+      if (toTensor.getType() != localOutput.first.getType()) {
+        // Keep the common path conservative: only the registered v1 path can
+        // reconstruct a logical view of differently typed physical storage.
+        if (!allowShapeHeuristics)
+          return failure();
         // Registered / bypass kernels keep the physical TCB storage and
         // rebuild the logical view in each consumer scope.
         toTensor.getDefiningOp()->erase();
@@ -2790,6 +2796,10 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
       newLoop->getParentOfType<func::FuncOp>()->dump();
   });
   pipelineLoop->setAttr(hivm::CVPipelinedLoopAttr::name, builder.getUnitAttr());
+  // TODO: Temporary transition measure so PipelineV2 ignores loops already
+  // pipelined by legacy CVPipelining.
+  pipelineLoop->setAttr(hivm::LegacyCVPipelineAttr::name,
+                        builder.getUnitAttr());
   checkpoint->erase();
   return success();
 }

@@ -3208,23 +3208,23 @@ static LogicalResult prefetchTopLevelMmadInput(func::FuncOp funcOp) {
     mmads.push_back(mmad);
   });
 
-  auto hasMmadBetweenProducerAndMmad =
-      [](hivm::MmadL1Op mmad, ArrayRef<Operation *> chain) {
-        if (chain.empty())
-          return false;
-        Operation *chainHead = chain.front();
-        Operation *producer = chainHead->getOperand(0).getDefiningOp();
-        if (!producer || producer->getBlock() != mmad->getBlock())
-          return false;
-        if (!producer->isBeforeInBlock(mmad.getOperation()))
-          return false;
-        for (Operation *cur = producer->getNextNode();
-             cur && cur != mmad.getOperation(); cur = cur->getNextNode()) {
-          if (isa<hivm::MmadL1Op>(cur))
-            return true;
-        }
-        return false;
-      };
+  auto hasMmadBetweenProducerAndMmad = [](hivm::MmadL1Op mmad,
+                                          ArrayRef<Operation *> chain) {
+    if (chain.empty())
+      return false;
+    Operation *chainHead = chain.front();
+    Operation *producer = chainHead->getOperand(0).getDefiningOp();
+    if (!producer || producer->getBlock() != mmad->getBlock())
+      return false;
+    if (!producer->isBeforeInBlock(mmad.getOperation()))
+      return false;
+    for (Operation *cur = producer->getNextNode();
+         cur && cur != mmad.getOperation(); cur = cur->getNextNode()) {
+      if (isa<hivm::MmadL1Op>(cur))
+        return true;
+    }
+    return false;
+  };
 
   for (auto mmad : llvm::reverse(mmads)) {
     auto prepInfo = matchStdPrepChain(mmad);
@@ -3299,10 +3299,18 @@ void RepositionPreloadWorkPass::runOnOperation() {
   for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
     if (!this->enablePreload)
       continue;
+    if (!this->bypassShapeRegistry &&
+        !hivm::isLoopShapeRegistered(funcOp.getName()))
+      continue;
     if (failed(prefetchTopLevelMmadInput(funcOp)))
       return signalPassFailure();
   }
   for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
+    // The registry gates the entire pass, including closed recurrences and
+    // the iter-arg verifier, rather than just the cross-scope heuristics.
+    if (!this->bypassShapeRegistry &&
+        !hivm::isLoopShapeRegistered(funcOp.getName()))
+      continue;
     bool sinkAcrossScopes = hivm::allowLoopShapeHeuristics(
         this->bypassShapeRegistry, funcOp.getName(), this->enablePreload,
         this->workspaceMultiBufferNum);
