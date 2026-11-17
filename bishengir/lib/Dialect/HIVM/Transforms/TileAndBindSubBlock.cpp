@@ -1020,7 +1020,10 @@ public:
       // customs. Presence alone does not imply a GM side effect: guarding an
       // NZ softmax here would skip the second AIV's independent row slice.
       auto gmArgs = op.getGMAddrArgsIndices();
-      if (!gmArgs || gmArgs->empty())
+      // Distributed calls can mutate remote memory or queue state even when
+      // their GM-address metadata is empty. Keep their single-lane contract.
+      if (!gmArgs ||
+          (gmArgs->empty() && !isDistributedTypeCustomOp(op.getOperation())))
         return failure();
     }
 
