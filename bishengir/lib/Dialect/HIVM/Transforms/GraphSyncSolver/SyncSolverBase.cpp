@@ -3089,9 +3089,17 @@ bool SyncSolverBase::checkMergeable(Scope *scopeOp, CorePipeInfo corePipeSrc,
     }
   }
   if (auto *conditionOp = llvm::dyn_cast<Condition>(scopeOp)) {
-    return checkMergeable(conditionOp->getTrueScope(), corePipeSrc, corePipeDst,
-                          eventId, true) &&
-           checkMergeable(conditionOp->getFalseScope(), corePipeSrc,
+    if (!checkMergeable(conditionOp->getTrueScope(), corePipeSrc, corePipeDst,
+                        eventId, true))
+      return false;
+
+    // Support hoisting backward events for an if without an else branch
+    // directly inside a loop body: for { if (cond) { inner loop } }.
+    if (conditionOp->isFalseScopeSynthetic && conditionOp->parentOp &&
+        isa_and_present<Loop>(conditionOp->parentOp->parentOp))
+      return true;
+
+    return checkMergeable(conditionOp->getFalseScope(), corePipeSrc,
                           corePipeDst, eventId, true);
   }
   if (auto *loopOp = llvm::dyn_cast<Loop>(scopeOp)) {
