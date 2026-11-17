@@ -79,6 +79,15 @@ def EnableTlaMode : FeatureControlOptions<
   "false"
 > {
   let optionScope = ["A5_ONLY"];
+  let passGroup = ["HIVM"];
+}
+
+def EnableTlaCvPipelining : FeatureControlOptions<
+  "Expand staged TLA loops through native preload in affinity mode.",
+  "bool",
+  "false"
+> {
+  let optionScope = ["A5_ONLY"];
 }
 
 def EnableUbufSaving : FeatureControlOptions<
@@ -788,8 +797,13 @@ llvm::cl::values(
                 // Ascend960 series
                 REGISTER_TARGET(Ascend960),
                 // Ascend960DT series
-                REGISTER_TARGET(Ascend960DT_969B5), REGISTER_TARGET(Ascend960DT_968B7),
-                REGISTER_TARGET(Ascend960DT_961BX),
+                REGISTER_TARGET(Ascend960DT_969B5), REGISTER_TARGET(Ascend960DT_969B6),
+                REGISTER_TARGET(Ascend960DT_968B7), REGISTER_TARGET(Ascend960DT_966B7),
+                REGISTER_TARGET(Ascend960DT_966B8), REGISTER_TARGET(Ascend960DT_961BY),
+                REGISTER_TARGET(Ascend960DT_961BZ),
+                // Ascend960PR series
+                REGISTER_TARGET(Ascend960PR_969A1), REGISTER_TARGET(Ascend960PR_964A1),
+                REGISTER_TARGET(Ascend960PR_936A1),
                 REGISTER_TARGET(Unknown)
   #undef REGISTER_TARGET
   #undef TO_STRING
@@ -1358,6 +1372,12 @@ def InlineQuantScaleInFixpipe : HIVMOptimizationControlOptions<
 > {
   let passGroup = ["HIVM"];
 }
+
+def DecoupledMemoryComputeScheduling : HIVMOptimizationControlOptions<
+  "Enable decoupled memory and compute scheduling for Cube loads (RegBase only).",
+  "bool",
+  "true"
+>;
 
 def UsePipelinev2 : HIVMOptimizationControlOptions<
   "Enable pipeline v2, bypassing cv-pipelining pass and using pipeline v2 passes (RegBase only for now).",

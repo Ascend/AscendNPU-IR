@@ -17,6 +17,12 @@ inline constexpr uint32_t kRequiredRegionIdMask = 1U << 10;
 inline constexpr uint32_t kStartEndBit = 11;
 inline constexpr uint32_t kStartEndMask = 1U << kStartEndBit;
 
+// Experimental collector protocol; reserved markers are not user scopes.
+inline constexpr uint32_t kInstrumentationFormatVersion = 2;
+inline constexpr uint32_t kMaxInstrumentedScopeCount = 0x188;
+inline constexpr uint32_t kOuterScopeDrain = 0xfff;
+inline constexpr uint32_t kKernelExitDrain = 0x10000;
+
 constexpr uint32_t getStartRegionId(uint32_t logicalScopeId) {
   return logicalScopeId | kRequiredRegionIdMask;
 }

@@ -306,6 +306,7 @@ LogicalResult VCastOp::verify() {
 
   static const std::set<std::string> kRegBasedSoftCasts{
       "int32_t_to_uint8_t_truncmode",
+      "double_to_float_rintmode",
       "float_to_bool_truncmode",
       "float_to_int8_t_roundmode",
       "float_to_int8_t_rintmode",
@@ -325,9 +326,9 @@ LogicalResult VCastOp::verify() {
       "int32_t_to_bool_rintmode",
       "int64_t_to_bool_rintmode",
       "bool_to_int8_t_rintmode",
+      "bool_to_uint8_t_rintmode",
       "bool_to_float_rintmode",
       "bool_to_half_rintmode",
-      "bool_to_int32_t_rintmode",
       "bool_to_float_truncmode",
       "bool_to_half_truncmode",
       "bool_to_bfloat16_t_truncmode",
@@ -376,6 +377,7 @@ LogicalResult VCastOp::verify() {
       "int32_t_to_int16_t_truncmode"};
 
   static const std::set<std::string> kMemBasedSoftCasts{
+      "double_to_float_rintmode",
       "float_to_int8_t_roundmode",
       "float_to_int8_t_rintmode",
       "float_to_int8_t_floormode",

@@ -31,7 +31,6 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   ConstantizeTilingData.cpp
   ConvertGenericToNamedOp.cpp
   Decompose.cpp
-  DecomposeAtomicSync.cpp
   DecomposeOpInterfaceImpl.cpp
   DecomposeMulti.cpp
   DropSymbols.cpp
@@ -56,7 +55,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   PackTilingData.cpp
   PrepareI1Nx1ForVectorization.cpp
   PreVectorizationFusion.cpp
-  PullSliceIntoVectorFunction.cpp
+  PullFillIntoVectorFunction.cpp
   ReCacheIO.cpp
   RemoveCacheIO.cpp
   RemoveMaskFromUnalignedReductionLoop.cpp
@@ -93,12 +92,14 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   BiShengIRDialectUtils
   BiShengIRSchedule
   BiShengIRSCFTransformOps
+  BiShengIRSCFUtils
   BiShengIRTensorTransforms
   BiShengIRTransform
   BiShengIRHACCDialect
   BiShengIRHACCUtils
   BiShengIRHIVMDialect
   BiShengIRHIVMTransforms
+  BiShengIRTensorViewDialect
   BiShengIRHFusionAnalysis
   BiShengIRMathExtDialect
   BiShengIRAnnotationDialect

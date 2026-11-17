@@ -18,7 +18,6 @@
 #define BISHENGIR_DIALECT_HIVM_TRANSFORMS_INLINEFIXPIPEUTILS_H
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "mlir/IR/PatternMatch.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -32,15 +31,19 @@ namespace mlir::hivm {
 inline constexpr llvm::StringLiteral kFallbackNotExec = "fallback_not_exec";
 
 bool isInsideVectorScope(Operation *op);
-LogicalResult matchFixpipeStoreInlinable(PatternRewriter &rewriter,
-                                         hivm::FixpipeOp fixpipeOp,
-                                         hivm::StoreOp storeOp);
+bool isFixpipeStoreInlinable(hivm::StoreOp storeOp);
 Operation *getSingleSiftedUser(Value v);
 SmallVector<VCastOp> collectVCastChain(VCastOp firstCast);
 std::optional<FixpipePreQuantMode> getQuantModeForCastChain(
     ArrayRef<VCastOp> castChain,
     FixpipePreQuantMode preQuant = FixpipePreQuantMode::NO_QUANT);
 std::optional<FixpipePreQuantMode> getQuantMode(hivm::VCastOp castOp);
+/// Structural NZ2DN transpose checks only (permutation, current NZ2ND mode,
+/// unmodeled attrs). Used by fallback chain collection before cast fusion.
+bool isUserTransposeStructurallyInlinable(FixpipeOp op, Operation *user);
+
+/// Structural checks plus Native on the candidate Fixpipe
+/// (dst = transpose result type, dma_mode = NZ2DN).
 bool isUserTransposeInlinable(FixpipeOp op, Operation *user);
 
 template <typename OpType>

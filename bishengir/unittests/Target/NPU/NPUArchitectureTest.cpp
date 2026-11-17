@@ -141,9 +141,23 @@ TEST(NPUArchitectureTest, PublicHACCPassPreservesDeviceSpecSerialization) {
        4194304, 2097152, true, 262144, 1048576},
       {TargetDevice::Ascend960DT_969B5, "Ascend960DT_969B5", 32, 32, 2555904,
        4194304, 2097152, true, 262144, 983040},
+      {TargetDevice::Ascend960DT_969B6, "Ascend960DT_969B6", 32, 32, 2555904,
+       4194304, 2097152, true, 262144, 983040},
       {TargetDevice::Ascend960DT_968B7, "Ascend960DT_968B7", 36, 36, 2555904,
        4194304, 2097152, true, 262144, 983040},
-      {TargetDevice::Ascend960DT_961BX, "Ascend960DT_961BX", 48, 48, 2555904,
+      {TargetDevice::Ascend960DT_966B7, "Ascend960DT_966B7", 36, 36, 2555904,
+       4194304, 2097152, true, 262144, 983040},
+      {TargetDevice::Ascend960DT_966B8, "Ascend960DT_966B8", 36, 36, 2555904,
+       4194304, 2097152, true, 262144, 983040},
+      {TargetDevice::Ascend960DT_961BY, "Ascend960DT_961BY", 48, 48, 2555904,
+       4194304, 2097152, true, 262144, 983040},
+      {TargetDevice::Ascend960DT_961BZ, "Ascend960DT_961BZ", 48, 48, 2555904,
+       4194304, 2097152, true, 262144, 983040},
+      {TargetDevice::Ascend960PR_969A1, "Ascend960PR_969A1", 48, 48, 2555904,
+       4194304, 2097152, true, 262144, 983040},
+      {TargetDevice::Ascend960PR_964A1, "Ascend960PR_964A1", 48, 48, 2555904,
+       4194304, 2097152, true, 262144, 983040},
+      {TargetDevice::Ascend960PR_936A1, "Ascend960PR_936A1", 48, 48, 2555904,
        4194304, 2097152, true, 262144, 983040},
       {TargetDevice::Ascend960, "Ascend960", 32, 64, 2555904, 4194304, 2097152,
        true, 262144, 983040},
@@ -235,13 +249,13 @@ TEST(NPUArchitectureTest, Ascend960MapsToDav920R1Architecture) {
   EXPECT_EQ(attr.getValue(), "dav-920r1");
 }
 
-TEST(NPUArchitectureTest, Ascend960DTFamilyMapsToDav920R1Architecture) {
-  // Every Ascend960DT SKU is backed by dav-920r1 (A6) silicon, identical to
+TEST(NPUArchitectureTest, Ascend960FamilyMapsToDav920R1Architecture) {
+  // Every Ascend960DT/PR SKU is backed by dav-920r1 silicon, identical to
   // the plain Ascend960 target, and must select the same 920r1 toolchain path
   // (template bitcodes, hivmc arch string and V2 vector intrinsics).
   for (TargetDevice device : targetDevices) {
     StringRef name = stringifyTargetDeviceEnum(device);
-    if (!name.starts_with("Ascend960DT_"))
+    if (!name.starts_with("Ascend960DT_") && !name.starts_with("Ascend960PR_"))
       continue;
     SCOPED_TRACE(name.str());
     EXPECT_EQ(getArchitecture(device), NPUArchitectureKind::kDav920R1);
@@ -260,6 +274,10 @@ TEST(NPUArchitectureTest, Ascend960IsFFTSSupported) {
   EXPECT_TRUE(hacc::utils::isAscend960(StringRef("Ascend960")));
   EXPECT_TRUE(hacc::utils::isAscend960(TargetDevice::Ascend960DT_969B5));
   EXPECT_TRUE(hacc::utils::isAscend960(StringRef("Ascend960DT_969B5")));
+  EXPECT_TRUE(hacc::utils::isAscend960(TargetDevice::Ascend960DT_969B6));
+  EXPECT_TRUE(hacc::utils::isAscend960(StringRef("Ascend960DT_969B6")));
+  EXPECT_TRUE(hacc::utils::isAscend960(TargetDevice::Ascend960PR_969A1));
+  EXPECT_TRUE(hacc::utils::isAscend960(StringRef("Ascend960PR_969A1")));
   EXPECT_FALSE(hacc::utils::isAscend960(StringRef("Ascend960DT_9999")));
   EXPECT_FALSE(hacc::utils::isAscend960(TargetDevice::Ascend910B1));
   EXPECT_FALSE(hacc::utils::isAscend960(TargetDevice::Ascend950PR_9589));
@@ -268,7 +286,7 @@ TEST(NPUArchitectureTest, Ascend960IsFFTSSupported) {
 
   EXPECT_TRUE(hacc::utils::isFFTSSupportedArch(TargetDevice::Ascend960));
   EXPECT_TRUE(
-      hacc::utils::isFFTSSupportedArch(TargetDevice::Ascend960DT_961BX));
+      hacc::utils::isFFTSSupportedArch(TargetDevice::Ascend960DT_961BY));
   EXPECT_TRUE(hacc::utils::isFFTSSupportedArch(TargetDevice::Ascend910B1));
   EXPECT_TRUE(hacc::utils::isFFTSSupportedArch(TargetDevice::Ascend950PR_9589));
   EXPECT_FALSE(hacc::utils::isFFTSSupportedArch(TargetDevice::Unknown));

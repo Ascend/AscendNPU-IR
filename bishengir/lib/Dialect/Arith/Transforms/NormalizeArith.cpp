@@ -149,7 +149,6 @@ struct NormalizeArithMathScalarUnary : public OpRewritePattern<UnaryOp> {
       return success();
     }
     return failure();
-
   }
 };
 

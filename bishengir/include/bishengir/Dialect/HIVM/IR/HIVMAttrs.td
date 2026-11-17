@@ -249,8 +249,9 @@ def HIVM_AddressSpaceAttr : HIVM_Attr<"AddressSpace", "address_space",
   let assemblyFormat = "`<` params `>`";
   let description = [{
     HIVM address space mapping attribute. Maps to GM, L1, L0A, L0B, L0C, UB and SSBUF.
-    FixBUF and BiasBUF are annotation-only spaces that do not participate in
-    memory planning or scope inference.
+    FixBUF does not participate in memory planning or scope inference. BiasBUF
+    supports explicit allocation planning on A5; its scope must be specified
+    explicitly rather than inferred.
   }];
 }
 
@@ -992,7 +993,9 @@ include
     "bishengir/Dialect/HIVM/IR/Contracts/DMA/Fixpipe/FixpipePreQuantContract.td"
 
 def HIVM_FIXPIPEPREQUANT_NO_QUANT :
-    HIVM_FixpipePreQuantCase<"NO_QUANT", 0, [Sig_F32_F32, Sig_I32_I32]>;
+    HIVM_FixpipePreQuantCase<"NO_QUANT", 0,
+                             [Sig_F32_F32, Sig_I32_I32, Sig_I32_I16, Sig_I32_F16,
+                              Sig_I32_UI8, Sig_F32_I8, Sig_F32_UI8]>;
 def HIVM_FIXPIPEPREQUANT_F322F16 :
     HIVM_FixpipePreQuantCase<"F322F16", 1, [Sig_F32_F16]>;
 def HIVM_FIXPIPEPREQUANT_S322I8 :
@@ -1152,11 +1155,13 @@ def HIVM_LocalMatmul_BiasModeEnum : HIVM_I32Enum<"MatmulBiasMode", "bias mode fo
   HIVM_LocalMatmul_ReuseL0c
 ]>;
 
+def HIVM_MatmulFormat_FP8E5M2 : I32EnumAttrCase<"FP8E5M2_T", 1, "fp8_e5m2_t">;
+def HIVM_MatmulFormat_FP8E4M3 : I32EnumAttrCase<"FP8E4M3_T", 2, "fp8_e4m3_t">;
+def HIVM_MatmulFormat_FP4E2M1 : I32EnumAttrCase<"FP4E2M1_T", 3, "fp4_e2m1_t">;
 def HIVM_LocalMatmulMx_DataFormat
     : HIVM_I32Enum<"HIVMMatmulDataformat", "",
-                   [I32EnumAttrCase<"FP8E5M2_T", 1, "fp8_e5m2_t">,
-                    I32EnumAttrCase<"FP8E4M3_T", 2, "fp8_e4m3_t">,
-                    I32EnumAttrCase<"FP4E2M1_T", 3, "fp4_e2m1_t">]>;
+                   [HIVM_MatmulFormat_FP8E5M2, HIVM_MatmulFormat_FP8E4M3,
+                    HIVM_MatmulFormat_FP4E2M1]>;
 
 //===----------------------------------------------------------------------===//
 // Metadata
@@ -1494,6 +1499,64 @@ def HIVM_PreloadLocalBufferAttr
     : HIVM_Attr<"PreloadLocalBuffer", "preload_local_buffer"> {
   let description = [{
     Specifies that related op is preload local buffer.
+  }];
+}
+
+def HIVM_LoadPreloadAttr : HIVM_Attr<"LoadPreload", "load_preload"> {
+  let description = [{
+    Specifies the i32 scheduling stage of an independent Load scope.
+    SeparateLoadCompute sets this attribute; MarkBufferPool preserves it.
+    EnableBufferPool orders tasks by task index plus max(stage) minus stage,
+    breaking ties in favor of the larger stage.
+  }];
+}
+
+def HIVM_MemPoolIdAttr : HIVM_Attr<"MemPoolId", "mempool_id"> {
+  let description = [{
+    Specifies an i32 buffer pool identifier unique within a function.
+    MarkBufferPool sets the same identifier on member Load scopes and their
+    root buffer annotation.mark operations. PlanMemory shares the slot address
+    table, and EnableBufferPool and GSS group members by this identifier.
+  }];
+}
+
+def HIVM_MemPoolSizeAttr : HIVM_Attr<"MemPoolSize", "mempool_size"> {
+  let description = [{
+    Specifies the positive i32 number of physical slots in a buffer pool.
+    MarkBufferPool sets this attribute on each member's root buffer
+    annotation.mark, with the same value as multi_buffer. PlanMemory allocates
+    the slots; EnableBufferPool and GSS use this capacity for slot selection
+    and synchronization.
+  }];
+}
+
+def HIVM_ExperimentalBufferSlotsAttr
+    : HIVM_Attr<"ExperimentalBufferSlots", "experimental_buffer_slots"> {
+  let description = [{
+    Marks a planned pointer_cast with a unit attribute when its accesses use
+    explicit experimental.pool_slot bindings. EnableBufferPool sets it; GSS
+    and EnableMultiBuffer use each binding's slot for synchronization and
+    address selection. It is removed when the address bindings are lowered.
+  }];
+}
+
+def HIVM_ExperimentalPoolReadyAttr
+    : HIVM_Attr<"ExperimentalPoolReady", "experimental_pool_ready"> {
+  let description = [{
+    Marks the producer boundary of an independent buffer access with a unit
+    attribute. EnableBufferPool attaches it to annotation.mark of the
+    experimental.pool_slot result after the Load writes. GSS consumes and
+    removes the mark when generating synchronization for that slot.
+  }];
+}
+
+def HIVM_ExperimentalPoolReleaseAttr
+    : HIVM_Attr<"ExperimentalPoolRelease", "experimental_pool_release"> {
+  let description = [{
+    Marks the consumer boundary of an independent buffer access with a unit
+    attribute. EnableBufferPool attaches it to annotation.mark of the
+    experimental.pool_slot result after its consumers. GSS consumes and
+    removes the mark when generating synchronization for that slot.
   }];
 }
 

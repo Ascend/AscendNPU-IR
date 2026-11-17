@@ -184,6 +184,31 @@ def MarkMultiBuffer : HIVMPass<"hivm-mark-multi-buffer", "func::FuncOp"> {
   ];
 }
 
+def EnableBufferPool : HIVMPass<"hivm-enable-buffer-pool", "ModuleOp"> {
+  let summary = "Materialize independent loads and explicit buffer access slots";
+  let constructor = "mlir::hivm::createEnableBufferPoolPass()";
+  let dependentDialects = ["mlir::hivm::HIVMDialect", "mlir::scf::SCFDialect",
+                          "mlir::arith::ArithDialect", "mlir::scope::ScopeDialect",
+                          "mlir::annotation::AnnotationDialect"];
+}
+
+def MarkBufferPool : HIVMPass<"hivm-mark-buffer-pool", "ModuleOp"> {
+  let summary = "Mark shared local buffer pools for independent loads";
+  let constructor = "mlir::hivm::createMarkBufferPoolPass()";
+  let dependentDialects = ["mlir::hivm::HIVMDialect",
+                          "mlir::annotation::AnnotationDialect"];
+}
+
+def SeparateLoadCompute
+    : HIVMPass<"hivm-separate-load-compute", "ModuleOp"> {
+  let summary = "Separate Cube GM loads and assign their preload stages";
+  let constructor = "mlir::hivm::createSeparateLoadComputePass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
+                           "mlir::scope::ScopeDialect",
+                           "annotation::AnnotationDialect",
+                           "arith::ArithDialect", "memref::MemRefDialect"];
+}
+
 def EnableMultiBuffer : HIVMPass<"hivm-enable-multi-buffer", "func::FuncOp"> {
   let summary = "Enable multi buffer";
   let description = [{
@@ -303,7 +328,17 @@ def PlanMemory : HIVMPass<"hivm-plan-memory", "ModuleOp"> {
        Option<"disableVFReachableCheck", "disable-vf-reachable-check", "bool",
               /*default=*/"false",
               "Disable VF reachable check, default : false">,
+       Option<"enableTLAmode", "enable-tla-mode", "bool",
+              /*default=*/"false",
+              "Enable TLA mode and plan memory only once, default : false">,
   ];
+}
+
+def TcbPoolOpInsertion : HIVMPass<"hivm-tcb-pool-op-insertion", "ModuleOp"> {
+  let summary = "Insert TCB pool operations after memory planning";
+  let constructor = "mlir::hivm::createTcbPoolOpInsertionPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "arith::ArithDialect",
+                           "scf::SCFDialect", "memref::MemRefDialect"];
 }
 
 def InjectSync : HIVMPass<"hivm-inject-sync", "func::FuncOp"> {
@@ -378,7 +413,8 @@ def GraphSyncSolver : HIVMPass<"hivm-graph-sync-solver", "func::FuncOp"> {
        ListOption<"syncTesterOptions", "sync-tester-options", "int64_t",
                   "Sync-tester options (num_runs, init_seed, "
                   "num_ops, num_ptrs, enable-multibuffer, "
-                  "enable-cross-core[, performance-only=0])">,
+                  "enable-cross-core[, performance-only=0[, "
+                  "preload-mode=0]])">,
   ];
 }
 
@@ -1726,6 +1762,12 @@ def CombineOptimizedConvertLayout
   let dependentDialects = ["hivm::HIVMDialect", ];
 }
 
+def MarkPreloadBuffers : HIVMPass<"hivm-mark-preload-buffers", "ModuleOp"> {
+  let summary = "Mark loop-local buffer slots for preload stages";
+  let constructor = "mlir::hivm::createMarkPreloadBuffersPass()";
+  let dependentDialects = ["annotation::AnnotationDialect"];
+}
+
 def CreatePreload
     : HIVMPass<"create-preload", AnyOp, [MixKernel, PureAicKernel]> {
   let summary = "Create preload for CV pipelining";
@@ -1822,11 +1864,60 @@ def FlattenModule : HIVMPass<"hivm-flatten-module", "ModuleOp"> {
 def V2SplitKernel : HIVMPass<"hivm-v2-split-kernel", "ModuleOp"> {
   let summary = "Split a MIX kernel on memref IR";
   let constructor = "mlir::hivm::createV2SplitKernelPass()";
-  let dependentDialects = ["func::FuncDialect", "hivm::HIVMDialect",
-                           "scf::SCFDialect"];
+  let dependentDialects = ["arith::ArithDialect", "func::FuncDialect",
+                           "hivm::HIVMDialect", "scf::SCFDialect",
+                           "scope::ScopeDialect"];
+}
+
+// Compute ModuleTargetAnalysis and preserve it. Does not rewrite IR.
+def CacheModuleTarget : HIVMPass<"hivm-cache-module-target"> {
+  let summary = "Cache the resolved #hacc.target for each module";
+  let description = [{
+    Builds `ModuleTargetAnalysis` for this pass anchor and preserves it.
+    An inner module still overrides an outer module. This is not a
+    process-wide target. A later pass that changes `#hacc.target` must not
+    preserve the analysis.
+  }];
+  let constructor = "mlir::hivm::createCacheModuleTargetPass()";
+  let dependentDialects = ["hacc::HACCDialect"];
+}
+
+// Explicit capability check. Do not add this to a default pipeline.
+// The pass walks every CapabilityBinding whose Verify bit is true. A new
+// bound op is checked without a hand-written checker.
+def VerifyCapability : HIVMPass<"hivm-verify-capability"> {
+  let summary = "Check HIVM ops against the selected target capability";
+  let description = [{
+    Explicitly invoked capability check. It is not part of the default
+    pipeline. The pass does not replace a target-independent op verifier.
+
+    Every generated capability binding with Verify=1 is checked. The pass
+    builds the request from that binding and queries that binding's profile.
+    A binding that shares an operation with another key, such as batched
+    ND2NZ, sets Verify=0 so the operation is not checked twice. A new
+    catalogue namespace is one call in the pass. A new op inside an existing
+    catalogue needs no C++ checker.
+
+    `#hacc.target` is read with `hacc::utils::getTargetDevice` from the nearest
+    enclosing module. A nested module overrides an outer module. A missing
+    attribute is reported as missing; this pass does not assume Ascend910B.
+
+    `unknown` means a partial profile, or a missing profile, has no confirmed
+    native row. It does not mean the hardware rejects the operation.
+    `unsupported` means a complete profile has no native row.
+    `invalid-request` means the request does not match the schema. A binding
+    that cannot read the operation is reported separately and is not a
+    hardware result.
+
+    `strict=true` accepts only `native`. `strict=false` prints the same facts
+    as remarks and then succeeds. A successful report-mode run does not prove
+    that the operation is legal.
+  }];
+  let constructor = "mlir::hivm::createVerifyCapabilityPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "hacc::HACCDialect"];
   let options = [
-    Option<"ghost", "ghost", "bool", /*default=*/"true",
-           "Keep the MIX function unsplit">
+    Option<"strict", "strict", "bool", /*default=*/"true",
+           "Accept only a native capability request">
   ];
 }
 

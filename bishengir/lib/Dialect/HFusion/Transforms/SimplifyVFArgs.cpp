@@ -8,7 +8,6 @@
 
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -22,10 +21,6 @@ namespace mlir {
 using namespace mlir;
 
 namespace {
-
-static bool isSupportedFP8Type(Type type) {
-  return type.isFloat8E4M3FN() || type.isFloat8E5M2();
-}
 
 static FailureOr<SmallVector<func::CallOp>>
 collectDirectCallSites(func::FuncOp funcOp, ModuleOp module) {
@@ -77,61 +72,6 @@ static void simplifyUnusedArguments(func::FuncOp funcOp,
   }
 }
 
-// CCEC accepts FP8 SSA values, but it cannot parse a typed FP8 literal at a
-// call boundary. LLVM constant folding can turn a scalar FP8 argument into
-// exactly such a literal. Keep the numerical conversion at the caller, carry
-// its raw eight-bit payload through the internal VF ABI, and restore the FP8
-// type inside the callee.
-static void legalizeFP8ScalarABI(func::FuncOp funcOp,
-                                 ArrayRef<func::CallOp> callSites) {
-  if (callSites.empty())
-    return;
-
-  auto funcType = funcOp.getFunctionType();
-  SmallVector<Type> inputTypes(funcType.getInputs());
-  SmallVector<std::pair<unsigned, Type>> fp8Arguments;
-  for (auto [index, type] : llvm::enumerate(inputTypes)) {
-    if (isSupportedFP8Type(type))
-      fp8Arguments.emplace_back(index, type);
-  }
-  if (fp8Arguments.empty())
-    return;
-
-  for (func::CallOp callOp : callSites) {
-    if (callOp.getNumOperands() != inputTypes.size())
-      return;
-    for (auto [index, fp8Type] : fp8Arguments) {
-      if (callOp.getOperand(index).getType() != fp8Type)
-        return;
-    }
-  }
-
-  Type i8Type = IntegerType::get(funcOp.getContext(), 8);
-  for (func::CallOp callOp : callSites) {
-    OpBuilder builder(callOp);
-    for (auto [index, fp8Type] : fp8Arguments) {
-      Value payload = builder.create<arith::BitcastOp>(
-          callOp.getLoc(), i8Type, callOp.getOperand(index));
-      callOp->setOperand(index, payload);
-    }
-  }
-
-  for (auto [index, fp8Type] : fp8Arguments)
-    inputTypes[index] = i8Type;
-  funcOp.setFunctionType(FunctionType::get(funcOp.getContext(), inputTypes,
-                                           funcType.getResults()));
-
-  Block &entryBlock = funcOp.getBody().front();
-  OpBuilder builder = OpBuilder::atBlockBegin(&entryBlock);
-  for (auto [index, fp8Type] : fp8Arguments) {
-    BlockArgument payload = entryBlock.getArgument(index);
-    payload.setType(i8Type);
-    Value fp8Value =
-        builder.create<arith::BitcastOp>(payload.getLoc(), fp8Type, payload);
-    payload.replaceAllUsesExcept(fp8Value, fp8Value.getDefiningOp());
-  }
-}
-
 struct SimplifyVFArgsPass
     : public impl::SimplifyVFArgsBase<SimplifyVFArgsPass> {
   using SimplifyVFArgsBase<SimplifyVFArgsPass>::SimplifyVFArgsBase;
@@ -153,7 +93,6 @@ void SimplifyVFArgsPass::runOnOperation() {
       return;
 
     simplifyUnusedArguments(funcOp, *callSites);
-    legalizeFP8ScalarABI(funcOp, *callSites);
   });
 }
 

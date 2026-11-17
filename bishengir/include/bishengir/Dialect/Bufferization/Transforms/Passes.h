@@ -41,6 +41,13 @@ std::unique_ptr<mlir::Pass> createTensorCopyInsertionPass();
 std::unique_ptr<mlir::Pass> createTensorCopyInsertionPass(
     const mlir::bufferization::OneShotBufferizationOptions &options);
 
+/// Create a pass that bufferizes a module and its function boundaries. This
+/// is the rewrite phase of `one-shot-bufferize` and pairs with
+/// `tensor-copy-insertion`.
+std::unique_ptr<mlir::Pass> createBufferizeModuleOpPass();
+std::unique_ptr<mlir::Pass> createBufferizeModuleOpPass(
+    const mlir::bufferization::OneShotBufferizationOptions &options);
+
 #define GEN_PASS_REGISTRATION
 #include "bishengir/Dialect/Bufferization/Transforms/Passes.h.inc"
 } // namespace bufferization

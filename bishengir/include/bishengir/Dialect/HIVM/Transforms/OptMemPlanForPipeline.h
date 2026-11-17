@@ -23,12 +23,17 @@ namespace hivm {
 #ifndef BISHENG_DIALECT_HIVM_OPT_MEM_PLAN_FOR_PIPELINE_H
 #define BISHENG_DIALECT_HIVM_OPT_MEM_PLAN_FOR_PIPELINE_H
 
+/// Filter local spaces by the function's planning policy. Classification stays
+/// in isLocalBuffer; explicit L0A/L0B/BT planning requires standalone MMAD L0.
+bool isLocalBufferForMemoryPlanning(std::optional<AddressSpaceAttr> space,
+                                    bool enableMmadL0Planning);
+
 class OptMemPlanForDma {
 public:
   OptMemPlanForDma(){};
 
   /// Main interface for OptMemPlanForDma.
-  void build(func::FuncOp func);
+  void build(func::FuncOp func, bool useMmadL0Planning);
 
   /// Check if buf1 and buf2 is dma and scalar pipe conflict.
   bool BufferPipeConflict(const Value buf1, const Value buf2) const;
@@ -42,6 +47,8 @@ public:
   bool IsScalarBuffer(const Value buf) const;
 
 private:
+  bool enableMmadL0Planning = false;
+
   /// Verify that HIVMOpPipe has a pipe type.
   LogicalResult VerifyExistHivmPipe(hivm::OpPipeInterface hivmPipeOp) const;
 

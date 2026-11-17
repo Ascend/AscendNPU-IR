@@ -1,0 +1,7 @@
+set(LLVM_TARGET_DEFINITIONS CubeLoadCapabilityBinding.td)
+bishengir_target_tablegen(CubeLoadCapabilityBinding.h.inc
+  -gen-target-capability-binding)
+add_public_tablegen_target(BiShengIRCubeLoadCapabilityBindingIncGen)
+add_dependencies(BiShengIRCubeLoadCapabilityBindingIncGen
+  BiShengIRCubeLoadCapabilityIncGen)
+add_dependencies(mlir-headers BiShengIRCubeLoadCapabilityBindingIncGen)

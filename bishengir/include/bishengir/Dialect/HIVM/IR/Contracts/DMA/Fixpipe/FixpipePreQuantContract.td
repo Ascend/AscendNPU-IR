@@ -34,6 +34,12 @@ def Sig_I32_I32 : ElemTypeSignature<I32, I32>;
 def Sig_F32_F16 : ElemTypeSignature<F32, F16>;
 def Sig_I32_I8 : ElemTypeSignature<I32, I8>;
 def Sig_F32_BF16 : ElemTypeSignature<F32, BF16>;
+// Cube-library pairs that the template programs as NoQuant.
+def Sig_I32_I16 : ElemTypeSignature<I32, I16>;
+def Sig_I32_F16 : ElemTypeSignature<I32, F16>;
+def Sig_I32_UI8 : ElemTypeSignature<I32, UI8>;
+def Sig_F32_I8 : ElemTypeSignature<F32, I8>;
+def Sig_F32_UI8 : ElemTypeSignature<F32, UI8>;
 
 // Typed Fixpipe pre-quant enum case: the case record itself is the single
 // source of truth for both the mode identity and its target-independent

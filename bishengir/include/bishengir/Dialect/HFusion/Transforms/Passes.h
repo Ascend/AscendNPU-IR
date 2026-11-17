@@ -283,8 +283,8 @@ std::unique_ptr<Pass> createSimplifyVFArgsPass();
 std::unique_ptr<Pass>
 createMergeVecScopePass(const MergeVecScopeOptions &options = {});
 
-/// Create a pass to pull slice into vector function.
-std::unique_ptr<Pass> createPullSliceIntoVectorFunctionPass();
+/// Create a pass to pull constant fills into vector function.
+std::unique_ptr<Pass> createPullFillIntoVectorFunctionPass();
 
 // Create a pass to vectorize hfusion ops.
 std::unique_ptr<Pass>

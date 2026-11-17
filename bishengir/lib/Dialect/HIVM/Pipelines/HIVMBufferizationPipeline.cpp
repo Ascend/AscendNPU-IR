@@ -21,6 +21,8 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
+#include "bishengir/Dialect/Scope/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
@@ -65,18 +67,13 @@ void bufferizationPipelineBase(OpPassManager &pm, bool isRegBased) {
       LayoutMapOption::IdentityLayoutMap);
   oneShotOptions.allowReturnAllocsFromLoops = true;
   oneShotOptions.allowUnknownOps = true;
-  if (!isRegBased) {
-    // We don't expect dynamic shape beacuse LiftLowestStride pass will generate
-    // extract_strided_metadata op, which can't be lowered in planMemory pass.
-    // So static identity layout for unknown type conversion should be used to
-    // avoid dynamic layout map in the generated memref type.
-    oneShotOptions.unknownTypeConverterFn =
-        [=](Value value, Attribute memorySpace,
-            const BufferizationOptions &options) {
-          auto tensorType = cast<TensorType>(value.getType());
-          return getMemRefTypeWithStaticIdentityLayout(tensorType, memorySpace);
-        };
-  }
+  // We don't expect dynamic shape.
+  oneShotOptions.unknownTypeConverterFn =
+      [=](Value value, Attribute memorySpace,
+          const BufferizationOptions &options) {
+        auto tensorType = cast<TensorType>(value.getType());
+        return getMemRefTypeWithStaticIdentityLayout(tensorType, memorySpace);
+      };
   oneShotOptions.analysisHeuristic =
       OneShotBufferizationOptions::AnalysisHeuristic::TopDown;
   pm.addPass(createDecomposeAllocTensorCopyPass());
@@ -84,7 +81,25 @@ void bufferizationPipelineBase(OpPassManager &pm, bool isRegBased) {
   pm.addPass(
       bishengir::bufferization::createTensorCopyInsertionPass(oneShotOptions));
   pm.addPass(createDecomposeAllocTensorCopyPass());
-  pm.addPass(createOneShotBufferizePass(oneShotOptions));
+  pm.addPass(
+      bishengir::bufferization::createTensorCopyInsertionPass(oneShotOptions));
+  // one-shot-bufferize is split into tensor copy insertion and module
+  // bufferization so that other passes can run in between. In particular, once
+  // vector functions are inlined into their callers, running tensor copy
+  // insertion after the inlining would place the copies at unexpected
+  // locations, so it must run before the inlining while the bufferization
+  // itself runs after it.
+  if (isRegBased) {
+    // Inline VFs so bufferization can infer precise layouts at call sites.
+    pm.addPass(scope::createInlineFuncToScopePass(hivm::isVF));
+  }
+  pm.addPass(
+      bishengir::bufferization::createBufferizeModuleOpPass(oneShotOptions));
+  if (isRegBased) {
+    // Restore only the inlined VFs with their inferred buffer layouts.
+    pm.addPass(scope::createOutlineScopePass(
+        OutlineScopeOptions{/*outlineMarkedScopesOnly*/ true}));
+  }
 }
 
 void bufferizationPipeline(OpPassManager &pm,
@@ -114,12 +129,12 @@ void bufferizationPipeline(OpPassManager &pm,
     pm.addPass(hfusion::createMergeVecScopePass(vfMergeOpsOpt));
   }
   canonicalizationHIVMPipeline(pm);
+  pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
   if (hivmPipelineOptions.enableTritonKernelCompile) {
     // For triton kernels, bufferization will generate `memref.copy` ops,
     // and they need to be converted to `hivm.copy` ops.
     pm.addPass(createConvertToHIVMOpPass());
   }
-  pm.addPass(createDropEquivalentBufferResultsPass());
   canonicalizationHIVMPipeline(pm);
   pm.addPass(createDropEquivalentBufferResultsPass());
   if (!hivmPipelineOptions.enableTritonKernelCompile) {

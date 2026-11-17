@@ -203,7 +203,7 @@ void InferVFModePass::runOnOperation() {
   if (!hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>()))
     return;
 
-  if (!hacc::utils::isDeviceEntry(op))
+  if (!hacc::utils::isCompilationRoot(op))
     return;
 
   Op2VFModeMap op2VfMode;

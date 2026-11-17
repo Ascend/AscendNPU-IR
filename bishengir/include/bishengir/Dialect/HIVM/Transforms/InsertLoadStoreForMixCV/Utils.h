@@ -39,6 +39,10 @@ constexpr llvm::StringLiteral kPropagateDownAttr = "propagate_down";
 
 bool isConstZero(Value v);
 bool isCubeAndVectorBroadcast(VBrcOp vbrcOp);
+
+/// Assign unplaced allocations to UB without changing user types.
+void ensureAllocInUbAddressSpaceIfNeeded(PatternRewriter &rewriter,
+                                         memref::AllocOp allocOp);
 namespace PropagatorUtil {
 
 const llvm::SmallDenseMap<hivm::AddressSpace, TCoreType, 2>

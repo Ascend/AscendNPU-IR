@@ -34,6 +34,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
+#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
@@ -415,11 +416,15 @@ public:
                             // a tiling start point.
         }
       }
-      // If the copy input is memref, we cannot tile it.
-      if (isa<mlir::MemRefType>(inputType)) {
-        Op->emitWarning(
-            "Copy input memref is not supported, skip tile and bind.");
-        return failure();
+      // Tile elementwise buffer copies along the axis selected for both sides.
+      if (auto srcType = dyn_cast<MemRefType>(inputType)) {
+        auto dstType = dyn_cast<MemRefType>(dstOpr->get().getType());
+        if (!dstType || !srcType.hasStaticShape() ||
+            srcType.getShape() != dstType.getShape() || Op.getPadMode() ||
+            Op.getPadValue() || Op.getCollapseReassociation() ||
+            !isUbToUbCopy(Op) || tilingDim == -1 ||
+            tilingDim != analyzer.getTilingDim(dstOpr->get()))
+          return failure();
       }
     }
     LLVM_DEBUG(DBGS() << "The " << Op->getName().getStringRef()
@@ -991,7 +996,11 @@ public:
       if (isDistributedTypeCustomOp(op.getOperation()) &&
           op->getNumResults() > op.getOutputs().size())
         return failure();
-      if (!op.getGMAddrArgsIndices())
+      // Builtin canonicalization materializes an empty list for UB-only
+      // customs. Presence alone does not imply a GM side effect: guarding an
+      // NZ softmax here would skip the second AIV's independent row slice.
+      auto gmArgs = op.getGMAddrArgsIndices();
+      if (!gmArgs || gmArgs->empty())
         return failure();
     }
 
@@ -1440,9 +1449,23 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   return newFunc;
 }
 
+static bool shouldSkipBindSubBlockByName(ArrayRef<func::FuncOp> functions) {
+  return llvm::any_of(functions, [](func::FuncOp func) {
+    return shouldSkipBindSubBlock(func.getName());
+  });
+}
+
 static bool shouldLimitAllAivToSubBlock0(ArrayRef<func::FuncOp> aivFunctions,
                                          ArrayRef<func::FuncOp> aicFunctions,
                                          ModuleOp moduleOp) {
+  // Temporary name-based CV1:2 skip (paged-decode kernels). Keep these on
+  // CV1:1 until DimensionAnalyzer can pick a profitable tile dim.
+  if (shouldSkipBindSubBlockByName(aivFunctions) ||
+      shouldSkipBindSubBlockByName(aicFunctions)) {
+    LDBG("shape-registry skip-list matched; limit all AIV to sub-block 0");
+    return true;
+  }
+
   // Unranked custom operands or results cannot be tiled. Limit all AIV
   // functions before attempting to tile any of them.
   if (llvm::any_of(aivFunctions, hasUnrankedCustomLikeValue))
@@ -1516,10 +1539,13 @@ void TileAndBindSubBlockPass::runOnOperation() {
     return;
   }
 
-  // If there is a possibility that loadOp and storeOp accessing the same
-  // address, skip this pass
-  if (!hacc::utils::isRegBasedArch(moduleOp) &&
-      areLoadAndStoreSameAddress(aivFunctions)) {
+  // Different GM views at the same offset may choose incompatible sub-block
+  // partitions for a load and store.
+  // Intra-core synchronization cannot order those cross-sub-block accesses.
+  // Preserve the membase guard and reject these view hazards on regbase.
+  if (areLoadAndStoreSameAddress(
+          aivFunctions,
+          /*checkRegbaseHazards=*/hacc::utils::isRegBasedArch(moduleOp))) {
     (void)limitAllAivToSubBlock0();
     return;
   }

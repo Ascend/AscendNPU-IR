@@ -109,9 +109,9 @@ static bool isAffineExprKnownMultipleOf(AffineExpr expr, ValueRange operands,
     AffineExpr rhs = binaryExpr.getRHS();
     // For lhs * rhs to be a multiple, a constant factor can satisfy all or part
     // of the requested factor; the other side must satisfy the rest.
-    auto proveConstMul =
-        [operands, numDims, factor](AffineExpr maybeConst,
-                                    AffineExpr other) -> std::optional<bool> {
+    auto proveConstMul = [operands, numDims,
+                          factor](AffineExpr maybeConst,
+                                  AffineExpr other) -> std::optional<bool> {
       auto constExpr = dyn_cast<AffineConstantExpr>(maybeConst);
       if (!constExpr)
         return std::nullopt;
@@ -122,8 +122,7 @@ static bool isAffineExprKnownMultipleOf(AffineExpr expr, ValueRange operands,
           return false;
         constantFactor = -constantFactor;
       }
-      if (constantFactor == 0 ||
-          isIntegerMultipleOf(constantFactor, factor))
+      if (constantFactor == 0 || isIntegerMultipleOf(constantFactor, factor))
         return true;
       if (factor % constantFactor != 0)
         return false;
@@ -241,48 +240,6 @@ bool static isOffsetAligned(Value memrefVal,
   return true;
 }
 
-static bool hasUnalignedFoldOffsetCast(BlockArgument blockArg,
-                                       int64_t hwAlignBits, int64_t elemBits) {
-  auto funcOp = cast<func::FuncOp>(blockArg.getOwner()->getParentOp());
-  auto checkCall = [blockArg, elemBits, funcOp,
-                    hwAlignBits](func::CallOp callOp) {
-    func::FuncOp callee =
-        mlir::utils::getCalledFunction<func::FuncOp, func::CallOp>(callOp);
-    if (callee == funcOp) {
-      auto castOp = callOp.getOperand(blockArg.getArgNumber())
-                        .getDefiningOp<memref::CastOp>();
-      if (castOp && castOp->hasAttr(mlir::utils::KFoldOffsetMarker)) {
-        // The marker guarantees that the source has a dynamic offset and a
-        // valid static-stride layout.
-        auto sourceType = cast<MemRefType>(castOp.getSource().getType());
-        SmallVector<int64_t> strides;
-        int64_t offset;
-        LogicalResult layoutResult =
-            getStridesAndOffset(sourceType, strides, offset);
-        assert(succeeded(layoutResult) &&
-               offset == ShapedType::kDynamic && !strides.empty());
-        (void)layoutResult;
-
-        bool aligned;
-        if (strides.size() == 1) {
-          int64_t size = sourceType.getDimSize(0);
-          aligned = !ShapedType::isDynamic(size) &&
-                    (size * elemBits) % hwAlignBits == 0;
-        } else {
-          aligned = llvm::all_of(
-              llvm::drop_end(strides), [elemBits, hwAlignBits](int64_t stride) {
-                return (stride * elemBits) % hwAlignBits == 0;
-              });
-        }
-        if (!aligned)
-          return WalkResult::interrupt();
-      }
-    }
-    return WalkResult::advance();
-  };
-  return funcOp->getParentOfType<ModuleOp>().walk(checkCall).wasInterrupted();
-}
-
 // Analyze whether the starting address of the memref object meets the alignment
 // requirements.
 static bool isMemrefAligned(Value memrefVal, int64_t hwAlignBits,
@@ -294,11 +251,6 @@ static bool isMemrefAligned(Value memrefVal, int64_t hwAlignBits,
     defOp = memrefVal.getDefiningOp();
   }
   if (dyn_cast<func::FuncOp>(defOp)) {
-    // Check whether the memref object is a function parameter.
-    if (hasUnalignedFoldOffsetCast(cast<BlockArgument>(memrefVal), hwAlignBits,
-                                   elemBits))
-      return false;
-
     MemRefType memRefTy = cast<MemRefType>(memrefVal.getType());
     SmallVector<int64_t> strides(memRefTy.getRank());
     int64_t offset = 0;
@@ -360,10 +312,18 @@ static bool isMemrefAligned(Value memrefVal, int64_t hwAlignBits,
 bool hivmave::isLoadStoreIndexAligned(Value memrefVal,
                                       mlir::Operation::operand_range indices) {
   auto srcMemRefType = mlir::cast<MemRefType>(memrefVal.getType());
+  return isLoadStoreIndexAligned(
+      memrefVal, indices,
+      hivm::getHWAlignBytes(srcMemRefType.getMemorySpace()));
+}
+
+bool hivmave::isLoadStoreIndexAligned(Value memrefVal,
+                                      mlir::Operation::operand_range indices,
+                                      uint32_t requiredAlignBytes) {
+  auto srcMemRefType = mlir::cast<MemRefType>(memrefVal.getType());
   int64_t elemBits = static_cast<int64_t>(
       getElementTypeOrSelf(srcMemRefType).getIntOrFloatBitWidth());
-  int64_t hwAlignBits = static_cast<int64_t>(
-      hivm::getHWAlignBytes(srcMemRefType.getMemorySpace()) * 8);
+  int64_t hwAlignBits = static_cast<int64_t>(requiredAlignBytes) * 8;
   if (!isMemrefAligned(memrefVal, hwAlignBits, elemBits)) {
     return false;
   }
@@ -547,50 +507,47 @@ Value hivmave::createMaskByPGE(VectorType vecTy, PatternRewriter &rewriter,
       hivmave::PgePatternAttr::get(rewriter.getContext(), pgePattern));
   mask = maskOp->getResult(0);
   if (vecTy.getElementTypeBitWidth() == 1 && vecTy != maskType)
-    mask = rewriter
-               .create<UnrealizedConversionCastOp>(loc, vecTy, maskOp.getResult())
-               ->getResult(0);
+    mask =
+        rewriter
+            .create<UnrealizedConversionCastOp>(loc, vecTy, maskOp.getResult())
+            ->getResult(0);
   return mask;
 }
 
 Value hivmave::findReuseableMask(Operation *maskedOp,
                                  PatternRewriter &rewriter) {
-  Value mask;
-  if (utils::getAnnotateOpWithAttr(maskedOp->getResults()[0],
-                                   utils::reachedMaskOpsIdx)) {
-    annotation::MarkOp mark = dyn_cast<annotation::MarkOp>(
-        utils::getAnnotateOpWithAttr(maskedOp->getResults()[0],
-                                     utils::reachedMaskOpsIdx)
-            .value());
-    int reachedMaskOpIdx = static_cast<int>(
-        mark->template getAttrOfType<IntegerAttr>(utils::reachedMaskOpsIdx)
-            .getValue()
-            .getZExtValue());
-    auto funcOp = maskedOp->getParentOfType<func::FuncOp>();
-    funcOp->walk([&](Operation *op) {
-      if (op->getNumResults() > 0 &&
-          utils::getAnnotateOpWithAttr(op->getResults()[0], utils::maskOpIdx)) {
-        annotation::MarkOp candidateMaskOpMark = dyn_cast<annotation::MarkOp>(
-            utils::getAnnotateOpWithAttr(op->getResults()[0], utils::maskOpIdx)
-                .value());
-        int candidateMaskOpIdx =
-            candidateMaskOpMark
-                ->template getAttrOfType<IntegerAttr>(utils::maskOpIdx)
-                .getValue()
-                .getZExtValue();
-        if (reachedMaskOpIdx == candidateMaskOpIdx) {
-          DominanceInfo domInfo(op);
-          if (domInfo.dominates(op, maskedOp)) {
-            mask = op->getResults()[0];
-          } else if (op->getBlock() == maskedOp->getBlock()) {
-            Operation *cloneOp = rewriter.clone(*op);
-            mask = cloneOp->getResults()[0];
-          }
-        }
-      }
-    });
+  auto markOpt = utils::getAnnotateOpWithAttr(maskedOp->getResults()[0],
+                                              utils::reachedMaskOpsIdx);
+  if (!markOpt)
+    return {};
+  auto mark = dyn_cast<annotation::MarkOp>(markOpt.value());
+  // The dynamic reference is written by AnalyzeArithVectorMask on the keep
+  // path only, so it stays consistent with the static reached_mask_ops_idx.
+  // The isAnnotatedByDynamicAttr guard also protects against the null-keys
+  // case inside getDynamicAttrValue.
+  if (!mark || !mark.isAnnotatedByDynamicAttr(utils::reachedMaskValue))
+    return {};
+  Value mask = mark.getDynamicAttrValue(utils::reachedMaskValue);
+  if (!mask)
+    return {};
+  Operation *defOp = mask.getDefiningOp();
+  if (!defOp)
+    return {};
+  DominanceInfo domInfo(maskedOp);
+  if (domInfo.dominates(defOp, maskedOp))
+    return mask;
+  if (defOp->getBlock() == maskedOp->getBlock()) {
+    // Cloning keeps the original operands. They must be available before the
+    // insertion point even when the mask itself is defined later in the block.
+    auto insertionPoint = rewriter.getInsertionPoint();
+    if (insertionPoint == rewriter.getInsertionBlock()->end() ||
+        !llvm::all_of(defOp->getOperands(), [&](Value operand) {
+          return domInfo.properlyDominates(operand, &*insertionPoint);
+        }))
+      return {};
+    return rewriter.clone(*defOp)->getResult(0);
   }
-  return mask;
+  return {};
 }
 
 Value hivmave::findReuseableMaskOrCreateOne(Operation *maskedOp,
@@ -793,9 +750,10 @@ Value hivmave::sparseByIntlv(Value src, RewriterBase &rewriter,
 
 Value hivmave::denseByDIntlv(Value src, RewriterBase &rewriter,
                              const Location &loc) {
-  hivmave::VFDeInterleaveOp deionOp = rewriter.create<hivmave::VFDeInterleaveOp>(
-      loc, ArrayRef<Type>({src.getType(), src.getType()}),
-      ValueRange{src, src});
+  hivmave::VFDeInterleaveOp deionOp =
+      rewriter.create<hivmave::VFDeInterleaveOp>(
+          loc, ArrayRef<Type>({src.getType(), src.getType()}),
+          ValueRange{src, src});
   return deionOp.getResult(0);
 }
 

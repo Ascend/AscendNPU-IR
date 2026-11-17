@@ -836,3 +836,203 @@ module {
     return %inserted : tensor<1xf16>
   }
 }
+
+// -----
+
+// Positive: an intermediate f32 comparison is lifted to a tensor<1xf32>
+// comparison producing a tensor<1xi1> result.
+// CHECK-LABEL: func.func @lift_cmpf(
+// CHECK-NOT: tensor.extract
+// CHECK-NOT: tensor.insert
+// CHECK: %[[CST:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<1xf32>
+// CHECK: %[[FILL:.*]] = linalg.fill ins(%[[CST]] : f32) outs(%[[EMPTY]] : tensor<1xf32>) -> tensor<1xf32>
+// CHECK: %[[CMP:.*]] = arith.cmpf olt, %arg0, %[[FILL]] : tensor<1xf32>
+// CHECK: return %[[CMP]] : tensor<1xi1>
+module {
+  func.func @lift_cmpf(%arg: tensor<1xf32>) -> tensor<1xi1> attributes { mix_mode = "aiv" } {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.0 : f32
+    %ext = tensor.extract %arg[%c0] : tensor<1xf32>
+    %cmp = arith.cmpf olt, %ext, %cst : f32
+    %empty = tensor.empty() : tensor<1xi1>
+    %ins = tensor.insert %cmp into %empty[%c0] : tensor<1xi1>
+    return %ins : tensor<1xi1>
+  }
+}
+
+// -----
+
+// Negative: a comparison with an unsupported predicate stays scalar.
+// CHECK-LABEL: func.func @dont_lift_cmpf_with_unsupported_predicate(
+// CHECK: %[[EXT:.*]] = tensor.extract %arg0[
+// CHECK: %[[CMP:.*]] = arith.cmpf uno, %[[EXT]], %{{.*}} : f32
+// CHECK: %[[INS:.*]] = tensor.insert %[[CMP]] into
+// CHECK: return %[[INS]] : tensor<1xi1>
+module {
+  func.func @dont_lift_cmpf_with_unsupported_predicate(%arg: tensor<1xf32>) -> tensor<1xi1> attributes { mix_mode = "aiv" } {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.0 : f32
+    %ext = tensor.extract %arg[%c0] : tensor<1xf32>
+    %cmp = arith.cmpf uno, %ext, %cst : f32
+    %empty = tensor.empty() : tensor<1xi1>
+    %ins = tensor.insert %cmp into %empty[%c0] : tensor<1xi1>
+    return %ins : tensor<1xi1>
+  }
+}
+
+// -----
+
+// Negative: predicates whose NaN semantics differ from their direct HFusion
+// mappings stay scalar.
+// CHECK-LABEL: func.func @dont_lift_cmpf_with_different_nan_semantics(
+// CHECK: %[[EXT:.*]] = tensor.extract %arg0[
+// CHECK: %[[UEQ:.*]] = arith.cmpf ueq, %[[EXT]], %{{.*}} : f32
+// CHECK: %[[ONE:.*]] = arith.cmpf one, %[[EXT]], %{{.*}} : f32
+// CHECK: %[[ULT:.*]] = arith.cmpf ult, %[[EXT]], %{{.*}} : f32
+// CHECK: %[[ULE:.*]] = arith.cmpf ule, %[[EXT]], %{{.*}} : f32
+// CHECK: %[[UGT:.*]] = arith.cmpf ugt, %[[EXT]], %{{.*}} : f32
+// CHECK: %[[UGE:.*]] = arith.cmpf uge, %[[EXT]], %{{.*}} : f32
+// CHECK: %[[UEQ_INS:.*]] = tensor.insert %[[UEQ]] into
+// CHECK: %[[ONE_INS:.*]] = tensor.insert %[[ONE]] into
+// CHECK: %[[ULT_INS:.*]] = tensor.insert %[[ULT]] into
+// CHECK: %[[ULE_INS:.*]] = tensor.insert %[[ULE]] into
+// CHECK: %[[UGT_INS:.*]] = tensor.insert %[[UGT]] into
+// CHECK: %[[UGE_INS:.*]] = tensor.insert %[[UGE]] into
+// CHECK: return %[[UEQ_INS]], %[[ONE_INS]], %[[ULT_INS]], %[[ULE_INS]], %[[UGT_INS]], %[[UGE_INS]]
+module {
+  func.func @dont_lift_cmpf_with_different_nan_semantics(%arg: tensor<1xf32>) -> (tensor<1xi1>, tensor<1xi1>, tensor<1xi1>, tensor<1xi1>, tensor<1xi1>, tensor<1xi1>) attributes { mix_mode = "aiv" } {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.0 : f32
+    %ext = tensor.extract %arg[%c0] : tensor<1xf32>
+    %ueq = arith.cmpf ueq, %ext, %cst : f32
+    %one = arith.cmpf one, %ext, %cst : f32
+    %ult = arith.cmpf ult, %ext, %cst : f32
+    %ule = arith.cmpf ule, %ext, %cst : f32
+    %ugt = arith.cmpf ugt, %ext, %cst : f32
+    %uge = arith.cmpf uge, %ext, %cst : f32
+    %empty = tensor.empty() : tensor<1xi1>
+    %ueq_ins = tensor.insert %ueq into %empty[%c0] : tensor<1xi1>
+    %one_ins = tensor.insert %one into %empty[%c0] : tensor<1xi1>
+    %ult_ins = tensor.insert %ult into %empty[%c0] : tensor<1xi1>
+    %ule_ins = tensor.insert %ule into %empty[%c0] : tensor<1xi1>
+    %ugt_ins = tensor.insert %ugt into %empty[%c0] : tensor<1xi1>
+    %uge_ins = tensor.insert %uge into %empty[%c0] : tensor<1xi1>
+    return %ueq_ins, %one_ins, %ult_ins, %ule_ins, %ugt_ins, %uge_ins : tensor<1xi1>, tensor<1xi1>, tensor<1xi1>, tensor<1xi1>, tensor<1xi1>, tensor<1xi1>
+  }
+}
+
+// -----
+
+// Negative: f64 is unsupported by AVE vector and scalar-broadcast lowering.
+// The extf operation must be rejected as well, so the entire chain stays scalar
+// instead of creating tensor<1xf64> operations and broadcast adaptors.
+// CHECK-LABEL: func.func @dont_lift_f64_extf_cmpf(
+// CHECK: tensor.extract %arg
+// CHECK: arith.extf {{.*}} : f32 to f64
+// CHECK: arith.cmpf olt, %{{.*}} : f64
+// CHECK: tensor.insert
+module {
+  func.func @dont_lift_f64_extf_cmpf(%arg: tensor<1xf32>) -> tensor<1xi1> attributes { mix_mode = "aiv" } {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.0 : f64
+    %ext = tensor.extract %arg[%c0] : tensor<1xf32>
+    %extf = arith.extf %ext : f32 to f64
+    %cmp = arith.cmpf olt, %extf, %cst : f64
+    %empty = tensor.empty() : tensor<1xi1>
+    %ins = tensor.insert %cmp into %empty[%c0] : tensor<1xi1>
+    return %ins : tensor<1xi1>
+  }
+}
+
+// -----
+
+// Negative: an unsupported value type cannot enter the vector context through
+// a select, even when its scalar condition requires a broadcast adaptor.
+// CHECK-LABEL: func.func @dont_lift_f64_select(
+// CHECK: tensor.extract
+// CHECK: arith.select %{{.*}} : f64
+// CHECK: tensor.insert
+module {
+  func.func @dont_lift_f64_select(%arg: tensor<1xf64>, %cond: i1) -> tensor<1xf64> attributes { mix_mode = "aiv" } {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.0 : f64
+    %ext = tensor.extract %arg[%c0] : tensor<1xf64>
+    %sel = arith.select %cond, %ext, %cst : f64
+    %empty = tensor.empty() : tensor<1xf64>
+    %ins = tensor.insert %sel into %empty[%c0] : tensor<1xf64>
+    return %ins : tensor<1xf64>
+  }
+}
+
+// -----
+
+// Positive: an intermediate integer comparison is lifted to a tensor<1xi32>
+// comparison producing a tensor<1xi1> result.
+// CHECK-LABEL: func.func @lift_cmpi(
+// CHECK-NOT: tensor.extract
+// CHECK-NOT: tensor.insert
+// CHECK: %[[CST:.*]] = arith.constant 0 : i32
+// CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<1xi32>
+// CHECK: %[[FILL:.*]] = linalg.fill ins(%[[CST]] : i32) outs(%[[EMPTY]] : tensor<1xi32>) -> tensor<1xi32>
+// CHECK: %[[CMP:.*]] = arith.cmpi slt, %arg0, %[[FILL]] : tensor<1xi32>
+// CHECK: return %[[CMP]] : tensor<1xi1>
+module {
+  func.func @lift_cmpi(%arg: tensor<1xi32>) -> tensor<1xi1> attributes { mix_mode = "aiv" } {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0 : i32
+    %ext = tensor.extract %arg[%c0] : tensor<1xi32>
+    %cmp = arith.cmpi slt, %ext, %cst : i32
+    %empty = tensor.empty() : tensor<1xi1>
+    %ins = tensor.insert %cmp into %empty[%c0] : tensor<1xi1>
+    return %ins : tensor<1xi1>
+  }
+}
+
+// -----
+
+// Positive: an intermediate select with a scalar (non-intermediate) i1
+// condition is lifted; the condition is broadcast to tensor<1xi1> through a
+// linalg.fill adaptor.
+// CHECK-LABEL: func.func @lift_select(
+// CHECK-NOT: tensor.extract
+// CHECK-NOT: tensor.insert
+// CHECK: %[[COND_FILL:.*]] = linalg.fill {{.*}} -> tensor<1xi1>
+// CHECK: %[[FALSE_CST:.*]] = arith.constant 2.000000e+00 : f32
+// CHECK: %[[FALSE_FILL:.*]] = linalg.fill ins(%[[FALSE_CST]] : f32) outs({{.*}} : tensor<1xf32>) -> tensor<1xf32>
+// CHECK: %[[SEL:.*]] = arith.select %[[COND_FILL]], %arg0, %[[FALSE_FILL]] : tensor<1xi1>, tensor<1xf32>
+// CHECK: return %[[SEL]] : tensor<1xf32>
+module {
+  func.func @lift_select(%arg: tensor<1xf32>, %cond: i1) -> tensor<1xf32> attributes { mix_mode = "aiv" } {
+    %c0 = arith.constant 0 : index
+    %cst_false = arith.constant 2.0 : f32
+    %ext = tensor.extract %arg[%c0] : tensor<1xf32>
+    %sel = arith.select %cond, %ext, %cst_false : f32
+    %empty = tensor.empty() : tensor<1xf32>
+    %ins = tensor.insert %sel into %empty[%c0] : tensor<1xf32>
+    return %ins : tensor<1xf32>
+  }
+}
+
+// -----
+
+// Positive: an intermediate comparison feeding a select condition is lifted
+// together, reusing the tensor<1xi1> condition (no adaptor fills).
+// CHECK-LABEL: func.func @lift_cmp_select(
+// CHECK-NOT: tensor.extract
+// CHECK-NOT: tensor.insert
+// CHECK: %[[CMP:.*]] = arith.cmpf {{.*}} : tensor<1xf32>
+// CHECK: %[[SEL:.*]] = arith.select %[[CMP]], %arg0, %arg1 : tensor<1xi1>, tensor<1xf32>
+// CHECK: return %[[SEL]] : tensor<1xf32>
+module {
+  func.func @lift_cmp_select(%arg: tensor<1xf32>, %other: tensor<1xf32>) -> tensor<1xf32> attributes { mix_mode = "aiv" } {
+    %c0 = arith.constant 0 : index
+    %lhs = tensor.extract %arg[%c0] : tensor<1xf32>
+    %rhs = tensor.extract %other[%c0] : tensor<1xf32>
+    %cmp = arith.cmpf olt, %lhs, %rhs : f32
+    %sel = arith.select %cmp, %lhs, %rhs : f32
+    %empty = tensor.empty() : tensor<1xf32>
+    %ins = tensor.insert %sel into %empty[%c0] : tensor<1xf32>
+    return %ins : tensor<1xf32>
+  }
+}

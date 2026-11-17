@@ -17,6 +17,7 @@
 
 #include "bishengir/Conversion/FixCallUnknownLoc/FixCallUnknownLoc.h"
 #include "bishengir/Conversion/Passes.h"
+#include "bishengir/Conversion/TensorViewToHIVM/TensorViewToHIVM.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/Arith/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
@@ -185,6 +186,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   // After Insert/Inline split, InlineFixpipe only folds into existing fixpipe.
   // A3 mem-based path still needs InsertFixpipe (MR 2052 /
   // compile-bisheng-distributed).
+  pm.addPass(mlir::hivm::createCacheModuleTargetPass());
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   {
     InlineFixpipeOptions inlineFixpipeOpts;
@@ -205,6 +207,7 @@ static void hivmPreBufferizationOptimizationPipeline(
 
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
   pm.addPass(createInsertNZ2NDForDebugPass());
+  pm.addPass(mlir::hivm::createCacheModuleTargetPass());
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   {
     InlineFixpipeOptions inlineFixpipeOpts;
@@ -511,6 +514,7 @@ void buildOptimizeHIVMPipeline(OpPassManager &pm,
   if (!options.disableHIVMTensorCompile) {
     hivmPreBufferizationOptimizationPipeline(pm, options);
     bufferizationPipeline(pm, options);
+    pm.addPass(createTensorViewToHIVMConversionPass());
     // Self-gated: only rewrites guards whose get_sub_block_idx carries the
     // partition provenance stamp; a no-op in non-partitioned modules.
     pm.addPass(createSubBlockGuardCleanupPass());

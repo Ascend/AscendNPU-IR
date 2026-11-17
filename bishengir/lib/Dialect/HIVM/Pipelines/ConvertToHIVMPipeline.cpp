@@ -42,7 +42,7 @@ void buildConvertToHIVMPipeline(OpPassManager &pm,
     pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
   pm.addPass(createHFusionToHIVMConversionPass(hfs2hivmOptions));
   if (options.enableTritonKernelCompile) {
-    pm.addPass(createTritonGlobalKernelArgsToHIVMOpPass());
+    pm.nest<func::FuncOp>().addPass(createTritonGlobalKernelArgsToHIVMOpPass());
   }
   pm.addPass(createTensorToHIVMConversionPass());
   pm.addPass(createConvertToHIVMOpPass());

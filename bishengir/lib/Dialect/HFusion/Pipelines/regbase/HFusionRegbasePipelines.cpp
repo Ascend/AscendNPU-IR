@@ -466,6 +466,10 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
                             treeReduceFlags.enableRA;
     vecOptions.enableCrossIfFusion = hfusionOptions.hfusionEnableCrossIfFusion;
     pm.addPass(createHFusionAutoVectorizeV2Pass(vecOptions));
+    // Refine loop-carried tensor shapes before outlining loses the connection
+    // between static initial values and the generated VF arguments.
+    pm.nest<func::FuncOp>().addPass(tensor::createNormalizeTensorOpsPass(
+        /*skipAlignedSlice=*/hfusionOptions.enableTritonKernelCompile));
     pm.addPass(createOutlineVectorFunctionPass());
     pm.addPass(hivm::createInlineVFScopePass());
   } else {
@@ -504,8 +508,8 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     // Eliminate VFFusion outline
     pm.addPass(mlir::createInlinerPass());
   }
-  // Run after Inliner so VFFusion can pull cross-scope extract_slices into VF.
-  pm.addPass(createPullSliceIntoVectorFunctionPass());
+  // Run after Inliner so constant fills can be pulled into the VF callee.
+  pm.addPass(createPullFillIntoVectorFunctionPass());
   pm.addPass(createSimplifyVFArgsPass());
   pm.addPass(createLoopInvariantSubsetHoistingPass());
   canonicalizationPipeline(pm, hfusionOptions);

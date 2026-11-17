@@ -44,7 +44,7 @@ struct StageState {
   SmallVector<func::FuncOp> deviceFuncs;
   SmallVector<func::FuncOp> mixFuncs;
   SmallVector<func::FuncOp> partOfMixFuncs;
-  unsigned entryCount = 0;
+  unsigned compilationRootCount = 0;
 };
 
 static LogicalResult fail(StageState &state, const Twine &message) {
@@ -176,8 +176,8 @@ struct V2VerifyStagePass : public impl::V2VerifyStageBase<V2VerifyStagePass> {
         return;
 
       state.deviceFuncs.push_back(func);
-      if (hacc::utils::isDeviceEntry(func))
-        ++state.entryCount;
+      if (hacc::utils::isCompilationRoot(func))
+        ++state.compilationRootCount;
 
       auto coreType = func->getAttrOfType<hivm::TFuncCoreTypeAttr>(
           hivm::TFuncCoreTypeAttr::name);
@@ -187,12 +187,12 @@ struct V2VerifyStagePass : public impl::V2VerifyStageBase<V2VerifyStagePass> {
         state.partOfMixFuncs.push_back(func);
     });
 
-    // Both clones are entries after the split; one entry before it.
+    // One compilation root before the split; two per-core roots after it.
     if (state.stageName != "split" && state.stageName != "tail" &&
-        state.entryCount != 1) {
+        state.compilationRootCount != 1) {
       state.module.emitError() << "hivm-v2-verify-stage: expected exactly one "
-                                  "device entry function, found "
-                               << state.entryCount;
+                                  "compilation root, found "
+                               << state.compilationRootCount;
       return signalPassFailure();
     }
 

@@ -1,0 +1,7 @@
+set(LLVM_TARGET_DEFINITIONS SyncCapabilityBinding.td)
+bishengir_target_tablegen(SyncCapabilityBinding.h.inc
+  -gen-target-capability-binding)
+add_public_tablegen_target(BiShengIRSyncCapabilityBindingIncGen)
+add_dependencies(BiShengIRSyncCapabilityBindingIncGen
+  BiShengIRSyncCapabilityIncGen)
+add_dependencies(mlir-headers BiShengIRSyncCapabilityBindingIncGen)

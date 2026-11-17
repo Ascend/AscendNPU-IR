@@ -158,3 +158,38 @@ module {
     return
   }
 }
+
+// -----
+
+// Three buffers force reuse, but two fit with an independent TCB.
+// CHECK-LABEL: func.func @test_unique_memory_for_tightly_coupled_buffer_in_mix
+// CHECK: hivm.hir.pointer_cast(%[[MIX_ADDR:[^)]+]]) : memref<24576xf32, #hivm.address_space<ub>>
+// CHECK-COUNT-2: hivm.hir.pointer_cast(%[[MIX_ADDR]]) : memref<24576xf32, #hivm.address_space<ub>>
+// CHECK-NOREUSE-LABEL: func.func @test_unique_memory_for_tightly_coupled_buffer_in_mix
+// CHECK-NOREUSE-DAG: %[[MIX_TCB:[^ ]+]] = arith.constant 0 : i64
+// CHECK-NOREUSE-DAG: %[[MIX_LOCAL:[^ ]+]] = arith.constant {{[1-9][0-9]*}} : i64
+// CHECK-NOREUSE: hivm.hir.pointer_cast(%[[MIX_TCB]]) : memref<24576xf32, #hivm.address_space<ub>>
+// CHECK-NOREUSE-COUNT-2: hivm.hir.pointer_cast(%[[MIX_LOCAL]]) : memref<24576xf32, #hivm.address_space<ub>>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_950z">} {
+  func.func @test_unique_memory_for_tightly_coupled_buffer_in_mix(%x: f32, %y: f32, %out: memref<3xf32, #hivm.address_space<gm>>)
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %a = memref.alloc() : memref<24576xf32, #hivm.address_space<ub>>
+    annotation.mark %a {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>}
+        : memref<24576xf32, #hivm.address_space<ub>>
+    memref.store %x, %a[%c0] : memref<24576xf32, #hivm.address_space<ub>>
+    %first = memref.load %a[%c0] : memref<24576xf32, #hivm.address_space<ub>>
+    memref.store %first, %out[%c0] : memref<3xf32, #hivm.address_space<gm>>
+    %b = memref.alloc() : memref<24576xf32, #hivm.address_space<ub>>
+    memref.store %y, %b[%c0] : memref<24576xf32, #hivm.address_space<ub>>
+    %second = memref.load %b[%c0] : memref<24576xf32, #hivm.address_space<ub>>
+    memref.store %second, %out[%c1] : memref<3xf32, #hivm.address_space<gm>>
+    %c = memref.alloc() : memref<24576xf32, #hivm.address_space<ub>>
+    memref.store %x, %c[%c0] : memref<24576xf32, #hivm.address_space<ub>>
+    %third = memref.load %c[%c0] : memref<24576xf32, #hivm.address_space<ub>>
+    memref.store %third, %out[%c2] : memref<3xf32, #hivm.address_space<gm>>
+    return
+  }
+}

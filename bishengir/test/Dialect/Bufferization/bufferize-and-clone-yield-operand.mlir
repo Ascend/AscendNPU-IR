@@ -1,5 +1,6 @@
 // RUN: bishengir-opt %s -one-shot-bufferize="allow-return-allocs-from-loops bufferize-function-boundaries analysis-heuristic=top-down function-boundary-type-conversion=identity-layout-map unknown-type-conversion=identity-layout-map" -split-input-file | FileCheck %s
-// RUN: bishengir-opt %s -tensor-copy-insertion="analysis-heuristic=top-down allow-return-allocs-from-loops bufferize-function-boundaries" -hivm-decompose-alloc-tensor-copy -one-shot-bufferize="allow-return-allocs-from-loops bufferize-function-boundaries analysis-heuristic=top-down function-boundary-type-conversion=identity-layout-map unknown-type-conversion=identity-layout-map" -split-input-file | FileCheck %s --check-prefix=CHECK-DOUBLE
+// RUN: bishengir-opt %s -tensor-copy-insertion="analysis-heuristic=top-down allow-return-allocs-from-loops bufferize-function-boundaries" -hivm-decompose-alloc-tensor-copy -tensor-copy-insertion="allow-return-allocs-from-loops bufferize-function-boundaries analysis-heuristic=top-down" \
+// RUN:   -bufferize-module-op="function-boundary-type-conversion=identity-layout-map unknown-type-conversion=identity-layout-map" -split-input-file | FileCheck %s --check-prefix=CHECK-DOUBLE
 
 // -----
 // CHECK-LABEL: func.func @test_clone_same_yield_operands

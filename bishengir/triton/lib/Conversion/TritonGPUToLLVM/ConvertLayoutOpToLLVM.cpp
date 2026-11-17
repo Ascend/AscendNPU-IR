@@ -193,6 +193,10 @@ struct ConvertLayoutOpConversion
     // and we don't have broadcasting in the registers
     auto bitwidth = llvmElemTy.getIntOrFloatBitWidth();
     auto smem = optimalSwizzlingLdSt(srcLayout, dstLayout, bitwidth);
+#ifdef BSPUB_DAVINCI_BISHENGIR
+    if (!switchToGM)
+      targetInfo.refineSharedMemoryLayout(srcLayout, dstLayout, bitwidth, smem);
+#endif
 
     // Extract reps from smem
     auto kReg = str_attr("register");

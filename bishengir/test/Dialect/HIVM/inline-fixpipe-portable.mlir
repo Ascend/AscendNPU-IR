@@ -49,6 +49,90 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
+// C220 has no NZ2DN Native row: keep fixpipe + transpose.
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
+  // CHECK-LABEL: func.func @no_inline_nz2dn_transpose_on_c220
+  // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+  // CHECK: hivm.hir.vtranspose
+  func.func @no_inline_nz2dn_transpose_on_c220(
+      %arg0: tensor<128x64xf32>, %arg1: tensor<128x64xf32>,
+      %arg2: tensor<64x128xf32>) -> tensor<64x128xf32> {
+    %0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%arg0 : tensor<128x64xf32>) outs(%arg1 : tensor<128x64xf32>)
+        -> tensor<128x64xf32>
+    %1 = hivm.hir.vtranspose ins(%0 : tensor<128x64xf32>)
+        outs(%arg2 : tensor<64x128xf32>) permutation = [1, 0]
+        -> tensor<64x128xf32>
+    return %1 : tensor<64x128xf32>
+  }
+}
+
+// -----
+
+// M300 has no Fixpipe profile: keep fixpipe + transpose.
+module attributes {hacc.target = #hacc.target<"Ascend310B1">} {
+  // CHECK-LABEL: func.func @no_inline_nz2dn_transpose_on_m300
+  // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+  // CHECK: hivm.hir.vtranspose
+  func.func @no_inline_nz2dn_transpose_on_m300(
+      %arg0: tensor<128x64xf32>, %arg1: tensor<128x64xf32>,
+      %arg2: tensor<64x128xf32>) -> tensor<64x128xf32> {
+    %0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%arg0 : tensor<128x64xf32>) outs(%arg1 : tensor<128x64xf32>)
+        -> tensor<128x64xf32>
+    %1 = hivm.hir.vtranspose ins(%0 : tensor<128x64xf32>)
+        outs(%arg2 : tensor<64x128xf32>) permutation = [1, 0]
+        -> tensor<64x128xf32>
+    return %1 : tensor<64x128xf32>
+  }
+}
+
+// -----
+
+// dual_dst is outside the execution schema; refuse NZ2DN fusion even on C310.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // CHECK-LABEL: func.func @no_inline_nz2dn_transpose_with_dual_dst
+  // CHECK: hivm.hir.fixpipe
+  // CHECK-SAME: dual_dst_mode
+  // CHECK: hivm.hir.vtranspose
+  func.func @no_inline_nz2dn_transpose_with_dual_dst(
+      %arg0: tensor<128x64xf32>, %arg1: tensor<128x64xf32>,
+      %arg2: tensor<64x128xf32>) -> tensor<64x128xf32> {
+    %0 = hivm.hir.fixpipe {
+        dma_mode = #hivm.dma_mode<nz2nd>,
+        dual_dst_mode = #hivm.fixpipe_dual_dst_mode<ROW_SPLIT>}
+        ins(%arg0 : tensor<128x64xf32>) outs(%arg1 : tensor<128x64xf32>)
+        -> tensor<128x64xf32>
+    %1 = hivm.hir.vtranspose ins(%0 : tensor<128x64xf32>)
+        outs(%arg2 : tensor<64x128xf32>) permutation = [1, 0]
+        -> tensor<64x128xf32>
+    return %1 : tensor<64x128xf32>
+  }
+}
+
+// -----
+
+// Original NZ2ND f32->f32 is Native on C220, but the NZ2DN candidate is not:
+// prove the check uses the candidate, not the original op.
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
+  // CHECK-LABEL: func.func @no_inline_nz2dn_when_original_is_native
+  // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+  // CHECK: hivm.hir.vtranspose
+  func.func @no_inline_nz2dn_when_original_is_native(
+      %arg0: tensor<16x16xf32>, %arg1: tensor<16x16xf32>,
+      %arg2: tensor<16x16xf32>) -> tensor<16x16xf32> {
+    %0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%arg0 : tensor<16x16xf32>) outs(%arg1 : tensor<16x16xf32>)
+        -> tensor<16x16xf32>
+    %1 = hivm.hir.vtranspose ins(%0 : tensor<16x16xf32>)
+        outs(%arg2 : tensor<16x16xf32>) permutation = [1, 0]
+        -> tensor<16x16xf32>
+    return %1 : tensor<16x16xf32>
+  }
+}
+
+// -----
+
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: func.func @inline_quant_scale_fixpipe_vmul_store
   // CHECK: hivm.hir.fixpipe
@@ -89,6 +173,51 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
         -> tensor<16x16xi32>
     %1 = hivm.hir.vcast {
         enable_overflow = true, enable_saturate = false}
+        ins(%0 : tensor<16x16xi32>) outs(%arg2 : tensor<16x16xi8>)
+        round_mode = <truncwithoverflow> -> tensor<16x16xi8>
+    hivm.hir.store ins(%1 : tensor<16x16xi8>)
+        outs(%arg3 : memref<16x16xi8>)
+    return
+  }
+}
+
+// -----
+
+// Absent enable_saturate is not a yes for S322I8 on any architecture.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // CHECK-LABEL: func.func @no_fuse_i32_to_i8_absent_saturate
+  // CHECK: hivm.hir.fixpipe
+  // CHECK-NOT: pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>
+  // CHECK: hivm.hir.vcast
+  func.func @no_fuse_i32_to_i8_absent_saturate(
+      %arg0: tensor<16x16xi32>, %arg1: tensor<16x16xi32>,
+      %arg2: tensor<16x16xi8>, %arg3: memref<16x16xi8>) {
+    %0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%arg0 : tensor<16x16xi32>) outs(%arg1 : tensor<16x16xi32>)
+        -> tensor<16x16xi32>
+    %1 = hivm.hir.vcast {enable_overflow = true}
+        ins(%0 : tensor<16x16xi32>) outs(%arg2 : tensor<16x16xi8>)
+        round_mode = <truncwithoverflow> -> tensor<16x16xi8>
+    hivm.hir.store ins(%1 : tensor<16x16xi8>)
+        outs(%arg3 : memref<16x16xi8>)
+    return
+  }
+}
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
+  // CHECK-LABEL: func.func @no_fuse_i32_to_i8_absent_saturate_c220
+  // CHECK: hivm.hir.fixpipe
+  // CHECK-NOT: pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>
+  // CHECK: hivm.hir.vcast
+  func.func @no_fuse_i32_to_i8_absent_saturate_c220(
+      %arg0: tensor<16x16xi32>, %arg1: tensor<16x16xi32>,
+      %arg2: tensor<16x16xi8>, %arg3: memref<16x16xi8>) {
+    %0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%arg0 : tensor<16x16xi32>) outs(%arg1 : tensor<16x16xi32>)
+        -> tensor<16x16xi32>
+    %1 = hivm.hir.vcast {enable_overflow = true}
         ins(%0 : tensor<16x16xi32>) outs(%arg2 : tensor<16x16xi8>)
         round_mode = <truncwithoverflow> -> tensor<16x16xi8>
     hivm.hir.store ins(%1 : tensor<16x16xi8>)

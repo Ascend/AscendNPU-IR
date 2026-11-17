@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/DMA/CubeLoad/CubeLoadCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/IR/CustomOp/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMDialectExtension.h"
@@ -703,9 +704,19 @@ struct StaticMaxRankExternalModel
             getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(srcType));
         std::string offsetTypeStr =
             getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(offsetType));
-        return concreteOp.getOpName().str() +
-               (concreteOp.getIsVolatile() ? "" : "_nonvolatile") + "_" +
-               libCallDim + "_" + srcTypeStr + "_" + offsetTypeStr;
+        std::string otherTypeStr;
+        if (auto other = concreteOp.getOther()) {
+          Type otherType = other.getType();
+          otherTypeStr =
+              getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(otherType));
+        }
+        std::string name = concreteOp.getOpName().str() +
+                           (concreteOp.getIsVolatile() ? "" : "_nonvolatile") +
+                           "_" + libCallDim + "_" + srcTypeStr + "_" +
+                           offsetTypeStr;
+        if (!otherTypeStr.empty() && otherTypeStr != srcTypeStr)
+          name += "_" + otherTypeStr;
+        return name;
       }
       if constexpr (std::is_same_v<ConcreteOp, StrideLoadOp>) {
         auto dstType = cast<ShapedType>(concreteOp.getDst().getType());
@@ -1456,13 +1467,15 @@ std::string NoMaxRankExternalModel<ND2NZOp>::getOpLibraryCallName(
         callName = callName + "_forbias";
     }
   }
-  // A rank-3 source carries a leading batch dimension and maps to the batched
-  // library function, which folds the batch into one MTE2 descriptor. Only
-  // regbase registers that variant.
-  auto mod = op->getParentOfType<ModuleOp>();
-  auto srcType = dyn_cast<MemRefType>(concreteOp.getDpsInputs()[0].getType());
-  if (mod && hacc::utils::isRegBasedArch(mod) && srcType &&
-      srcType.getRank() == 3)
+  // A rank-3 source carries a leading batch dimension. Append _batch only
+  // when that batched symbol is Native for this type and these scopes.
+  auto srcValue = concreteOp.getDpsInputs()[0];
+  auto srcType = dyn_cast<MemRefType>(srcValue.getType());
+  if (srcType && srcType.getRank() == 3 &&
+      isNativeNd2NzBatch(
+          op, srcType.getElementType(),
+          cubeLoadSpaceOr(srcType, AddressSpace::GM),
+          cubeLoadSpaceOr(concreteOp.getDst().getType(), AddressSpace::L1)))
     callName = callName + "_batch";
 
   Type eleType = getElementTypeOrSelf(concreteOp.getDpsInputs()[0].getType());
@@ -1679,6 +1692,18 @@ static std::string getIndexSelectLibraryCallName(CustomOpT op) {
          idxTypeStr;
 }
 
+// Keyed on the gathered tensor's element type and the region metadata's
+// element type, matching REGISTER_SPARSE_GATHER_LOAD_TO_L1BUFFER in
+// RegBase/Cube/include/DMA/SparseGatherNd2nz.h.
+template <typename CustomOpT>
+static std::string getSparseGatherLoadToL1BufferLibraryCallName(CustomOpT op) {
+  const std::string baseTypeStr = getTypeName(
+      op->getLoc(), getElementTypeOrSelf(op->getOperand(0).getType()));
+  const std::string idxTypeStr = getTypeName(
+      op->getLoc(), getElementTypeOrSelf(op->getOperand(1).getType()));
+  return "sparse_gather_load_to_L1buffer_" + baseTypeStr + "_" + idxTypeStr;
+}
+
 template <typename CustomOpT>
 static std::string getIndirectAtomicLibraryCallName(CustomOpT op) {
   std::string opName = "unknown";
@@ -1749,6 +1774,9 @@ std::string customOpLibraryCallName(Operation *op,
     }
     if (concreteOp.getName() == CustomOpT::kBuiltinHistogramName)
       return getHistogramLibraryCallName(concreteOp);
+    if (concreteOp.getName() ==
+        CustomOpT::kBuiltinSparseGatherLoadToL1BufferName)
+      return getSparseGatherLoadToL1BufferLibraryCallName(concreteOp);
     if (concreteOp.getName() == CustomOpT::kBuiltinProtonGetSysCntName)
       return "proton_get_sys_cnt";
     if (concreteOp.getName() == CustomOpT::kBuiltinProtonCircularStoreName)

@@ -182,6 +182,16 @@ static bool isCoreOp(Operation &op) {
           isa<DestinationStyleOpInterface>(op));
 }
 
+/// True if `op` is the `__builtin_sparse_gather_load_to_L1buffer`, gathers
+/// sparse-attention KV regions GM->L1 in zN. It has the same memref-dst shape
+/// as `hivm.hir.load`/`hivm.hir.nd2nz`.
+static bool isSparseGatherLoadCustomOp(Operation *op) {
+  auto customOp = dyn_cast<CustomOp>(op);
+  if (!customOp)
+    return false;
+  return customOp.getName() == CustomOp::kBuiltinSparseGatherLoadToL1BufferName;
+}
+
 /// True if `op` is a HIVM DMA op whose alloc-backed memref destination may have
 /// a `bufferization.to_tensor` reader that crosses CV-pipelining workitem
 /// boundaries — i.e. we need `traceMemrefSubnet` to register it in
@@ -190,15 +200,17 @@ static bool isCoreOp(Operation &op) {
 /// producers for CVPipelining and must not enter the memref subnet tracer.
 ///
 /// Includes memref-dst `hivm.hir.load`, `hivm.hir.fixpipe`, the cross-core
-/// variant of `hivm.hir.copy`, and memref-dst `hivm.hir.nd2nz` (the fused
+/// variant of `hivm.hir.copy`, memref-dst `hivm.hir.nd2nz` (the fused
 /// GM->L1 load with NZ layout conversion that `CombineOptimizedConvertLayout`
-/// emits in place of a LoadOp under `--enable-layout-optimization=true`).
+/// emits in place of a LoadOp under `--enable-layout-optimization=true`), and
+/// the `__builtin_sparse_gather_load_to_L1buffer` CustomOp.
 static bool isMemrefSubnetWriter(Operation *op) {
   auto dps = dyn_cast<DestinationStyleOpInterface>(op);
   if (!dps || dps.getNumDpsInits() != 1 ||
       !isa<MemRefType>(dps.getDpsInitOperand(0)->get().getType()))
     return isCrossCoreCopy(op);
-  return isa<LoadOp, FixpipeOp, ND2NZOp>(op) || isCrossCoreCopy(op);
+  return isa<LoadOp, FixpipeOp, ND2NZOp>(op) || isCrossCoreCopy(op) ||
+         isSparseGatherLoadCustomOp(op);
 }
 
 /// True if `op` is a HIVM "load-like" DMA op that pulls data from GM into
@@ -207,10 +219,16 @@ static bool isMemrefSubnetWriter(Operation *op) {
 /// tracing. Under `enableLazyLoading`, they may be cloned into multiple
 /// consumer workitems so each stage loads independently from GM.
 ///
-/// Currently covers `hivm.hir.load` and `hivm.hir.nd2nz` — both read GM and
-/// write to a UB/L1 alloc that the consumer mmadL1/vector op will read via
-/// `bufferization.to_tensor`.
-static bool isLoadLikeOp(Operation *op) { return isa<LoadOp, ND2NZOp>(op); }
+/// Currently covers `hivm.hir.load`, `hivm.hir.nd2nz` and the
+/// `__builtin_sparse_gather_load_to_L1buffer` CustomOp — all read GM and write
+/// to a UB/L1 alloc that the consumer mmadL1/vector op will read via
+/// `bufferization.to_tensor`. The custom op has to be named explicitly: it
+/// reaches the pipeliner as a generic `hivm.hir.custom`, so without this it is
+/// treated as ordinary compute and never hoisted a stage ahead, which leaves
+/// the gather unable to overlap the mmad chain it feeds.
+static bool isLoadLikeOp(Operation *op) {
+  return isa<LoadOp, ND2NZOp>(op) || isSparseGatherLoadCustomOp(op);
+}
 
 static Value unwrapTensorViews(Value val) {
   while (val) {

@@ -8,6 +8,7 @@
 
 #include "bishengir/Conversion/ArithToAffine/ArithToAffine.h"
 #include "bishengir/Conversion/LowerMemRefExt/LowerMemRefExt.h"
+#include "bishengir/Conversion/TensorViewToHIVM/TensorViewToHIVM.h"
 #include "bishengir/Dialect/Arith/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
@@ -368,6 +369,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.addPass(mlir::scf::createRemoveRedundantLoopInitPass());
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
   pm.addPass(mlir::hivm::createNormalizeConvOpsPass());
+  pm.addPass(mlir::hivm::createCacheModuleTargetPass());
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   // Sink vtranspose[1,0] onto an nz2nd fixpipe so the next pass can fold it.
   pm.addPass(mlir::hivm::createOptimizeTransposePlacementPass());
@@ -401,6 +403,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   } else {
     pm.addPass(createInsertNZ2NDForDebugPass());
   }
+  pm.addPass(mlir::hivm::createCacheModuleTargetPass());
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   // Sink vtranspose[1,0] onto an nz2nd fixpipe so the next pass can fold it.
   pm.addPass(mlir::hivm::createOptimizeTransposePlacementPass());
@@ -492,6 +495,9 @@ static void hivmPreBufferizationOptimizationPipeline(
           createMarkMultiBufferPass(multiBufferOptions));
     }
   }
+
+  if (hivmPipelineOptions.decoupledMemoryComputeScheduling)
+    pm.addPass(createSeparateLoadComputePass());
 
   pm.addPass(createPartitionAndBindSubBlockPass());
   pm.nest<func::FuncOp>().addPass(createInferVFModePass());
@@ -723,6 +729,7 @@ static void hivmPostBufferizationOptimizationPipeline(
   multiBufferOptions.gmMultiBufferNum = 1;
   pm.nest<func::FuncOp>().addPass(
       createMarkMultiBufferPass(multiBufferOptions));
+  pm.addPass(createMarkBufferPoolPass());
   if (hivmPipelineOptions.enableVFOperandSubstitution) {
     pm.addPass(createVFOperandSubstitutionPass());
   }
@@ -736,8 +743,10 @@ static void hivmPostBufferizationOptimizationPipeline(
       hivmPipelineOptions.disableTightlyCoupledBufferReuse;
   planMemoryOption.disableVFReachableCheck =
       hivmPipelineOptions.disableVFReachableCheck;
+  planMemoryOption.enableTLAmode = hivmPipelineOptions.enableTlaMode;
   planMemoryOption.planMemoryStrategy = hivmPipelineOptions.planMemoryStrategy;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
+  pm.addPass(createTcbPoolOpInsertionPass());
 
   // Cross-Core Auto-Sync passes STEP=2
   hivmCrossCoreAutoSyncPipeline(pm, hivmPipelineOptions,
@@ -757,6 +766,7 @@ static void hivmPostBufferizationOptimizationPipeline(
         hivmPipelineOptions.setWorkspaceMultibuffer;
     pm.addPass(createCreatePreloadPass(preloadOpts));
   }
+  pm.addPass(createEnableBufferPoolPass());
   // Intra-Core Auto-Sync passes (Inject-Sync, GSS)
   hivmIntraCoreSyncPipeline(pm, hivmPipelineOptions);
   if (hivmPipelineOptions.enablePreload)
@@ -774,6 +784,7 @@ static void hivmPostBufferizationOptimizationPipeline(
         vector::createPeelLoopsContainingTransposePass());
     pm.addPass(createCanonicalizerPass());
     pm.nest<func::FuncOp>().addPass(vector::createNormalizeVectorPass());
+    pm.nest<func::FuncOp>().addPass(vector::createHoistConstantMasksPass());
     pm.nest<func::FuncOp>().addPass(createCSEPass());
     pm.nest<func::FuncOp>().addPass(createArithVectorMaskAnalysisPass());
   }
@@ -791,6 +802,7 @@ void buildLowerHIVMPipelines(OpPassManager &pm,
                              const HIVMPipelineOptions &hivmPipelineOptions) {
   registerKernelKindPassesForRegbase();
   bufferizationPipeline(pm, hivmPipelineOptions);
+  pm.addPass(createTensorViewToHIVMConversionPass());
   // Self-gated: only rewrites guards whose get_sub_block_idx carries the
   // partition provenance stamp
   pm.addPass(createSubBlockGuardCleanupPass());

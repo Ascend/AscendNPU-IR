@@ -72,9 +72,54 @@ add_bishengir_unittest(BiShengIRFixpipeCapabilityTests
 )
 add_dependencies(BiShengIRFixpipeCapabilityTests
   BiShengIRFixpipeCapabilityIncGen
+  BiShengIRFixpipeCapabilityBindingIncGen
 )
 target_link_libraries(BiShengIRFixpipeCapabilityTests PRIVATE
   BiShengIRHIVMDialect
   BiShengIRNPUFixpipeCapability
+  MLIRIR
+)
+
+add_bishengir_unittest(BiShengIRMmadCapabilityTests
+  PARTIAL_SOURCES_INTENDED
+  MmadCapabilityTest.cpp
+)
+add_dependencies(BiShengIRMmadCapabilityTests
+  BiShengIRMmadCapabilityIncGen
+  BiShengIRMmadCapabilityBindingIncGen
+)
+target_link_libraries(BiShengIRMmadCapabilityTests PRIVATE
+  BiShengIRHIVMDialect
+  BiShengIRNPUMmadCapability
+  MLIRIR
+)
+
+add_bishengir_unittest(BiShengIRCubeLoadCapabilityTests
+  PARTIAL_SOURCES_INTENDED
+  CubeLoadCapabilityTest.cpp
+)
+add_dependencies(BiShengIRCubeLoadCapabilityTests
+  BiShengIRCubeLoadCapabilityIncGen
+  BiShengIRCubeLoadCapabilityBindingIncGen
+)
+target_link_libraries(BiShengIRCubeLoadCapabilityTests PRIVATE
+  BiShengIRHIVMDialect
+  BiShengIRNPUCubeLoadCapability
+  MLIRIR
+)
+
+# Production sync profiles. The sync catalogue is its own TableGen unit
+# rooted at SyncCapabilityProfile.td and links beside the Fixpipe catalogue.
+add_bishengir_unittest(BiShengIRSyncCapabilityTests
+  PARTIAL_SOURCES_INTENDED
+  SyncCapabilityTest.cpp
+)
+add_dependencies(BiShengIRSyncCapabilityTests
+  BiShengIRSyncCapabilityIncGen
+  BiShengIRSyncCapabilityBindingIncGen
+)
+target_link_libraries(BiShengIRSyncCapabilityTests PRIVATE
+  BiShengIRHIVMDialect
+  BiShengIRNPUSyncCapability
   MLIRIR
 )

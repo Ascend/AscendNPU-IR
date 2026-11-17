@@ -1,5 +1,4 @@
-//===- TcbPool.cpp - Vector TCB pool lookup
-//---------------------------------===//
+//===- TcbPool.cpp - Vector TCB pool lookup -------------------------------===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
@@ -9,18 +8,42 @@
 #include "RegBase/TcbPoolUtils.h"
 
 extern "C" {
-__aiv__ __attribute__((always_inline)) uint64_t
-_mlir_ciface_tcb_pool_get_address(tcb_pool::MetadataMemRef *metadata,
-                                  uint64_t poolBase, uint32_t slotBytes,
-                                  uint32_t entryOffset, uint32_t depth,
-                                  uint32_t seq) {
-  TCB_POOL_ASSERT(uint64_t(entryOffset) + depth <=
-                  uint64_t(metadata->sizes[0]));
-  uint32_t start = tcb_pool::metadataPointer(
-      metadata)[tcb_pool::entryIndex(entryOffset, depth, seq)];
-  TCB_POOL_ASSERT(start < tcb_pool::kMaxSlotCount && slotBytes > 0);
-  TCB_POOL_ASSERT(poolBase <
-                  tcb_pool::kAllocFailed - uint64_t(start) * slotBytes);
-  return poolBase + uint64_t(start) * slotBytes;
+__aiv__ __attribute__((always_inline)) void
+_mlir_ciface_tcb_pool_get_address(tcb_pool::Allocation *result,
+                                  tcb_pool::MetadataMemRef *metadata,
+                                  uint64_t poolBase, uint32_t queueId) {
+  uint32_t subBlockId = get_subblockid();
+  TCB_POOL_ASSERT(queueId < tcb_pool::kQueueCount &&
+                  subBlockId < tcb_pool::kVectorCoreCount);
+  auto meta = tcb_pool::getMetadataPointer(metadata);
+  tcb_pool::PoolMetadata pool{meta};
+  const uint32_t slotCount = pool.slotCount();
+  const uint32_t slotBytes = pool.slotBytes();
+  const uint32_t indexOffset = pool.getIndexOffset(subBlockId, queueId);
+  const uint32_t index = meta[indexOffset];
+  const uint32_t addressOffset =
+      pool.addressEntryOffset(queueId, index, slotCount);
+  uint32_t startSlot = meta[addressOffset];
+  uint32_t id = meta[addressOffset + 1];
+  meta[indexOffset] = pool.nextAddressIndex(index);
+  result->address = poolBase + uint64_t(startSlot) * slotBytes;
+  result->id = id;
+  if (subBlockId == 0) {
+    uint32_t tail = pool.releaseTail();
+    // Capacity equals the number of reserved IDs. Every unpopped record owns at
+    // least one slot, so a get of another live allocation always has room for
+    // its feedback.
+    TCB_POOL_ASSERT(tail - pool.releaseHead() < pool.flagCount());
+    const uint32_t flagCount = pool.flagCount();
+    uint32_t releaseOffset =
+        pool.releaseEntryOffset(tail, slotCount, flagCount);
+    meta[releaseOffset] = queueId;
+    meta[releaseOffset + 1] = startSlot;
+    meta[releaseOffset + 2] = id;
+    // Publish the complete record last. The caller protects the address-ring
+    // entry until both AIVs have read it; this feedback does not replace that
+    // descriptor lifetime guarantee.
+    meta[tcb_pool::kReleaseTailOffset] = tail + 1;
+  }
 }
 }

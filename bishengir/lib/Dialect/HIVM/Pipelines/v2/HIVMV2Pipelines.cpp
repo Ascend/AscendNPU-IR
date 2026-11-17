@@ -15,6 +15,7 @@
 #include "bishengir/Dialect/HIVM/Pipelines/v2/TargetUtils.h"
 
 #include "bishengir/Conversion/LowerMemRefExt/LowerMemRefExt.h"
+#include "bishengir/Conversion/TensorViewToHIVM/TensorViewToHIVM.h"
 #include "bishengir/Dialect/HACC/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Pipelines/HIVMBufferizationPipeline.h"
@@ -37,46 +38,8 @@ namespace mlir {
 namespace hivm {
 namespace v2 {
 
-namespace {
-enum class Stage { Tensor, Bufferized, Planned, Solved, Split, Tail };
-
-static StringRef stageName(Stage stage) {
-  switch (stage) {
-  case Stage::Tensor:
-    return "tensor";
-  case Stage::Bufferized:
-    return "bufferized";
-  case Stage::Planned:
-    return "planned";
-  case Stage::Solved:
-    return "solved";
-  case Stage::Split:
-    return "split";
-  case Stage::Tail:
-    return "tail";
-  }
-  llvm_unreachable("unknown stage");
-}
-
 static void addFuncPass(OpPassManager &pm, std::unique_ptr<Pass> pass) {
   pm.nest<func::FuncOp>().addPass(std::move(pass));
-}
-} // namespace
-
-static void buildCanonicalization(OpPassManager &pm) {
-  canonicalizationHIVMPipeline(pm);
-}
-
-static void addStageVerifier(OpPassManager &pm,
-                             const V2PipelineOptions &options, Stage stage) {
-  // TODO(v2): debug-only stage checker, remove from the final pipeline.
-  StringRef requested = options.verifyStage.getValue();
-  StringRef name = stageName(stage);
-  if (requested != name && requested != "all")
-    return;
-  V2VerifyStageOptions verifyOptions;
-  verifyOptions.stage = name.str();
-  pm.addPass(createV2VerifyStagePass(verifyOptions));
 }
 
 /// Resolve and validate the pipeline target once.
@@ -90,11 +53,11 @@ static hacc::TargetDevice resolveTarget(const V2PipelineOptions &options) {
   return device;
 }
 
-/// HIVM tensor phase: everything still runs on the unsplit MIX function.
-void buildV2TensorPhase(OpPassManager &pm, const V2PipelineOptions &options) {
+static void buildPreVectorizationPhase(OpPassManager &pm,
+                                       const V2PipelineOptions &options) {
   regbase::registerKernelKindPassesForRegbase();
   addFuncPass(pm, createInitEntryKernelPass());
-  buildCanonicalization(pm);
+  canonicalizationHIVMPipeline(pm);
   pm.addPass(createNormalizeMatmulPass());
 
   // Reuse the existing CV movement pass; TCB insertion owns UB -> L1.
@@ -108,6 +71,7 @@ void buildV2TensorPhase(OpPassManager &pm, const V2PipelineOptions &options) {
   addFuncPass(pm, createHoistTightlyCoupledAllocPass());
 
   // TCB ids must exist on the MIX before the split.
+  pm.addPass(createCacheModuleTargetPass());
   pm.addPass(createInsertFixpipePass());
   pm.addPass(createInlineFixpipePass());
 
@@ -130,11 +94,13 @@ void buildV2TensorPhase(OpPassManager &pm, const V2PipelineOptions &options) {
   // CV 1:2 needs operand-parallel sub-block partitioning; 1:1 targets skip it.
   if (needsCV12(hacc::symbolizeTargetDeviceEnum(options.target)))
     pm.addPass(createPartitionAndBindSubBlockPass());
+}
 
-  if (options.enableVectorize)
-    pm.addPass(createHIVMVectorizePass());
+/// Tensor phase on the unsplit MIX.
+void buildV2TensorPhase(OpPassManager &pm, const V2PipelineOptions &options) {
+  buildPreVectorizationPhase(pm, options);
 
-  addStageVerifier(pm, options, Stage::Tensor);
+  pm.addPass(createHIVMVectorizePass());
 }
 
 /// The tensor -> memref anchor.
@@ -144,20 +110,50 @@ void buildV2BufferizationPhase(OpPassManager &pm,
 
   // The v2 pipeline only supports reg-based targets.
   bufferizationPipelineBase(pm, /*isRegBased=*/true);
-  buildCanonicalization(pm);
+  pm.addPass(createTensorViewToHIVMConversionPass());
+  canonicalizationHIVMPipeline(pm);
   pm.addPass(createConvertToHIVMOpPass());
   pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
 
   if (needsCV12(hacc::symbolizeTargetDeviceEnum(options.target)))
     pm.addPass(createSubBlockGuardCleanupPass());
-
-  addStageVerifier(pm, options, Stage::Bufferized);
 }
 
 static void buildAlignStorage(OpPassManager &pm) {
   pm.addPass(createAlignAllocSizePass());
   addFuncPass(pm, memref::createFoldAllocReshapePass());
   pm.addPass(createEnableStrideAlignPass());
+}
+
+static void hivmIntraCoreSyncPipeline(OpPassManager &pm,
+                                      const V2PipelineOptions &options) {
+  if (options.disableHIVMAutoInjectSync)
+    return;
+
+  if (options.enableHIVMInjectBarrierAllSync) {
+    InjectSyncOptions syncOptions;
+    syncOptions.enableUnitFlag = options.enableHIVMUnitFlagSync;
+    syncOptions.syncMode = SyncMode::BARRIERALL;
+    addFuncPass(pm, createInjectSyncPass(syncOptions));
+    return;
+  }
+
+  GraphSyncSolverOptions gssOptions;
+  gssOptions.enableUnitFlag = options.enableHIVMUnitFlagSync;
+  gssOptions.solverVersion = options.hivmSyncSolverVersion;
+  addFuncPass(pm, createGraphSyncSolverPass(gssOptions));
+}
+
+static void hivmCrossCoreAutoSyncPipeline(OpPassManager &pm,
+                                          const V2PipelineOptions &options) {
+  if (options.disableAutoInjectBlockSync)
+    return;
+
+  CrossCoreGSSOptions crossCoreOptions;
+  crossCoreOptions.forceIsRegBased = true;
+  crossCoreOptions.blockAllSync = options.enableHIVMInjectBlockAllSync;
+  crossCoreOptions.solverVersion = options.hivmSyncSolverVersion;
+  addFuncPass(pm, createCrossCoreGSSPass(crossCoreOptions));
 }
 
 /// Post-bufferization: both memory plans and the solve see the unsplit MIX.
@@ -205,7 +201,7 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
   addFuncPass(pm, createLiftLowestStridePass());
   addFuncPass(pm, createAllocExtraBufferPass());
   pm.addPass(createInferHIVMMemScopePass());
-  buildCanonicalization(pm);
+  canonicalizationHIVMPipeline(pm);
 
   // GLOBAL workspace plan on the unsplit MIX.
   PlanMemoryOptions globalPlanOptions;
@@ -227,19 +223,9 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
   if (options.enableMultiBuffer)
     addFuncPass(pm, createEnableMultiBufferPass());
 
-  addStageVerifier(pm, options, Stage::Planned);
-
   // Single-shot cross-core solve on the MIX.
-  buildCanonicalization(pm);
-  if (options.enableCrossCoreGSS) {
-    CrossCoreGSSOptions crossCoreOptions;
-    crossCoreOptions.forceIsRegBased = true;
-    addFuncPass(pm, createCrossCoreGSSPass(crossCoreOptions));
-  } else {
-    InjectBlockSyncOptions blockSyncOptions;
-    blockSyncOptions.blockAllSync = options.useBlockAllSync;
-    addFuncPass(pm, createInjectBlockSyncPass(blockSyncOptions));
-  }
+  canonicalizationHIVMPipeline(pm);
+  hivmCrossCoreAutoSyncPipeline(pm, options);
 
   if (options.enablePreload) {
     CreatePreloadOptions preloadOptions;
@@ -247,14 +233,8 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
     pm.addPass(createCreatePreloadPass(preloadOptions));
   }
 
-  addStageVerifier(pm, options, Stage::Solved);
-
   // Last structural pass.
-  V2SplitKernelOptions splitOptions;
-  splitOptions.ghost = options.ghostSplitMix;
-  pm.addPass(createV2SplitKernelPass(splitOptions));
-  if (!options.ghostSplitMix)
-    addStageVerifier(pm, options, Stage::Split);
+  pm.addPass(createV2SplitKernelPass());
 }
 
 /// Per-core tail.
@@ -263,15 +243,12 @@ void buildV2PerCoreTail(OpPassManager &pm, const V2PipelineOptions &options) {
   addFuncPass(pm, createHIVMDecomposeOpPass());
   pm.addPass(createInferHIVMMemScopePass());
 
-  GraphSyncSolverOptions gssOptions;
-  addFuncPass(pm, createGraphSyncSolverPass(gssOptions));
+  hivmIntraCoreSyncPipeline(pm, options);
 
   pm.addPass(mlir::createMemrefExtLoweringPass());
   addFuncPass(pm, createLowerMultiBufferCounterPass());
   addFuncPass(pm, createLiftLowestStridePass());
-  buildCanonicalization(pm);
-
-  addStageVerifier(pm, options, Stage::Tail);
+  canonicalizationHIVMPipeline(pm);
 }
 
 void buildV2HIVMPipeline(OpPassManager &pm, const V2PipelineOptions &options) {
@@ -288,6 +265,17 @@ void buildV2HIVMPipeline(OpPassManager &pm, const V2PipelineOptions &options) {
 }
 
 void registerV2HIVMPipelines() {
+  PassPipelineRegistration<V2PipelineOptions>(
+      "hivm-v2-pre-vectorize-pipeline",
+      "Prepare HIVM tensor IR up to the v2 vectorization boundary",
+      [](OpPassManager &pm, const V2PipelineOptions &options) {
+        auto device = resolveTarget(options);
+        if (options.setTargetSpec)
+          pm.addPass(hacc::createAppendDeviceSpecPass(
+              {device, /*customAICNumber=*/-1, /*customAIVNumber=*/-1,
+               /*hivmcVersion=*/{}}));
+        buildPreVectorizationPhase(pm, options);
+      });
   PassPipelineRegistration<V2PipelineOptions>(
       "hivm-v2-pipeline", "MIX HIVM pipeline (unsplit until the memref split)",
       [](OpPassManager &pm, const V2PipelineOptions &options) {

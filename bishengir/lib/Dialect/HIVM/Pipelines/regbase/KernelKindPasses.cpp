@@ -49,7 +49,7 @@ void clearFuncCoreTypeAttrs(ModuleOp module) {
   // alone. That member does not cancel the clear for the other functions.
   bool partOfMix = false;
   module.walk([&](func::FuncOp func) {
-    if (!hacc::utils::isDeviceEntry(func))
+    if (!hacc::utils::isCompilationRoot(func))
       return;
     if (func->hasAttr(hivm::TPartOfMixAttr::name)) {
       partOfMix = true;

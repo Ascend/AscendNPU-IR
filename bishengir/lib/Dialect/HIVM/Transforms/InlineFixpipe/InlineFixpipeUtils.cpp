@@ -19,17 +19,17 @@
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/DMA/Fixpipe/FixpipeCapabilityBinding.h"
 #include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/FixpipeCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/Transforms/FixpipeUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/Twine.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace mlir;
@@ -45,68 +45,11 @@ bool isInsideVectorScope(Operation *op) {
   return coreTypeAttr && coreTypeAttr.getTcoretype() == hivm::TCoreType::VECTOR;
 }
 
-/// Prove that the destination's innermost (column) stride is one. A dynamic
-/// stride can be recovered through memref.cast; an unproven stride keeps the
-/// store on the vector-side strided-store path.
-static LogicalResult proveUnitInnermostStride(PatternRewriter &rewriter,
-                                              hivm::StoreOp storeOp) {
-  Value dst = storeOp.getDst();
-  while (true) {
-    auto dstType = dyn_cast<MemRefType>(dst.getType());
-    if (!dstType)
-      return rewriter.notifyMatchFailure(
-          storeOp, "ND fixpipe destination must be a ranked memref");
-    if (dstType.getRank() == 0)
-      return rewriter.notifyMatchFailure(
-          storeOp, "ND fixpipe destination must have rank >= 1");
-
-    SmallVector<int64_t> strides;
-    int64_t offset;
-    if (failed(getStridesAndOffset(dstType, strides, offset)))
-      return rewriter.notifyMatchFailure(
-          storeOp, "ND fixpipe destination must have a strided layout");
-
-    int64_t columnStride = strides.back();
-    if (!ShapedType::isDynamic(columnStride)) {
-      if (columnStride == 1)
-        return success();
-      return rewriter.notifyMatchFailure(
-          storeOp, llvm::Twine("ND fixpipe destination innermost stride is ") +
-                       llvm::Twine(columnStride) + ", expected 1");
-    }
-
-    // A cast may erase a known unit stride or refine a dynamic one. Check
-    // each type before looking through it for more precise stride information.
-    auto castOp = dst.getDefiningOp<memref::CastOp>();
-    if (!castOp)
-      return rewriter.notifyMatchFailure(
-          storeOp, "ND fixpipe destination innermost stride is dynamic and "
-                   "cannot be proven 1");
-    dst = castOp.getSource();
-  }
-}
-
-LogicalResult matchFixpipeStoreInlinable(PatternRewriter &rewriter,
-                                         hivm::FixpipeOp fixpipeOp,
-                                         hivm::StoreOp storeOp) {
+bool isFixpipeStoreInlinable(hivm::StoreOp storeOp) {
   auto attr = storeOp.getAtomicKindAttr();
   auto kind = attr ? attr.getValue() : hivm::AtomicKind::NONE;
-  if (kind != AtomicKind::NONE && kind != AtomicKind::ADD &&
-      kind != AtomicKind::MAX && kind != AtomicKind::MIN)
-    return rewriter.notifyMatchFailure(
-        storeOp, llvm::Twine("fixpipe store fusion does not support atomic "
-                             "kind '") +
-                     stringifyAtomicKind(kind) + "'");
-
-  // ND fixpipe DMA only programs the destination row stride. NZ2NZ preserves
-  // the fractal layout, whose innermost dimension is also consumed as
-  // contiguous. Require a positively proven unit column stride for all three
-  // modes; row-strided (packed rows) remaps remain foldable.
-  FixpipeDMAMode dmaMode = fixpipeOp.getDmaMode();
-  if (dmaMode == FixpipeDMAMode::NZ2NZ || dmaMode == FixpipeDMAMode::NZ2ND ||
-      dmaMode == FixpipeDMAMode::NZ2DN)
-    return proveUnitInnermostStride(rewriter, storeOp);
-  return success();
+  return kind == AtomicKind::NONE || kind == AtomicKind::ADD ||
+         kind == AtomicKind::MAX || kind == AtomicKind::MIN;
 }
 
 Operation *getSingleSiftedUser(Value v) {
@@ -122,7 +65,8 @@ Operation *getSingleSiftedUser(Value v) {
 }
 
 /// Fixpipe pre-quant cannot implement integer narrowing casts that disable
-/// saturation (e.g. trunc-with-overflow semantics).
+/// saturation (e.g. trunc-with-overflow semantics). S322I8 fusion requires an
+/// explicit enable_saturate=true on every architecture; absent is not a yes.
 static bool isIntegerNarrowingCastInlinable(Type inputType, Type outputType,
                                             Operation *castOp) {
   if (!inputType.isIntOrIndex() || !outputType.isIntOrIndex())
@@ -133,15 +77,11 @@ static bool isIntegerNarrowingCastInlinable(Type inputType, Type outputType,
   if (srcBitWidth <= dstBitWidth || outputType.isInteger(1))
     return true;
 
-  if (auto enableSaturate = castOp->getAttrOfType<BoolAttr>("enable_saturate"))
-    return enableSaturate.getValue();
-
-  return true;
+  auto enableSaturate = castOp->getAttrOfType<BoolAttr>("enable_saturate");
+  return enableSaturate && enableSaturate.getValue();
 }
 
 static bool isVCastInlinableIntoFixpipe(hivm::VCastOp castOp) {
-  if (!isOnRegBasedArch(castOp))
-    return true;
   auto inputType = getElementTypeOrSelf(castOp.getSrc()[0].getType());
   auto outputType = getElementTypeOrSelf(castOp.getDst()[0].getType());
   return isIntegerNarrowingCastInlinable(inputType, outputType, castOp);
@@ -212,9 +152,10 @@ getQuantModeForCastChain(ArrayRef<hivm::VCastOp> castChain,
   Type outputType = getElementTypeOrSelf(lastCast.getDst()[0].getType());
 
   // For overall integer narrowing (e.g. i32->i8):
-  // - Integer-narrowing steps must not disable saturation.
+  // - Integer-narrowing steps must explicitly enable saturation.
   // - Float intermediates (i32->f32->f16->i8) often set enable_saturate=false;
-  //   ignore those and instead require the last cast to allow saturation.
+  //   ignore those and instead require the last cast to set
+  //   enable_saturate=true explicitly. Absent is not enough.
   if (isIntegerNarrowing(inputType, outputType)) {
     bool sawIntegerNarrowingCast = false;
     for (hivm::VCastOp castOp : castChain) {
@@ -223,18 +164,15 @@ getQuantModeForCastChain(ArrayRef<hivm::VCastOp> castChain,
       if (!isIntegerNarrowing(castIn, castOut))
         continue;
       sawIntegerNarrowingCast = true;
-      if (auto enableSaturate =
-              castOp->getAttrOfType<BoolAttr>("enable_saturate")) {
-        if (!enableSaturate.getValue())
-          return std::nullopt;
-      }
+      auto enableSaturate = castOp->getAttrOfType<BoolAttr>("enable_saturate");
+      if (!enableSaturate || !enableSaturate.getValue())
+        return std::nullopt;
     }
     if (!sawIntegerNarrowingCast) {
-      if (auto enableSaturate =
-              lastCast->getAttrOfType<BoolAttr>("enable_saturate")) {
-        if (!enableSaturate.getValue())
-          return std::nullopt;
-      }
+      auto enableSaturate =
+          lastCast->getAttrOfType<BoolAttr>("enable_saturate");
+      if (!enableSaturate || !enableSaturate.getValue())
+        return std::nullopt;
     }
   }
 
@@ -255,6 +193,45 @@ getQuantModeForCastChain(ArrayRef<hivm::VCastOp> castChain,
 
 std::optional<FixpipePreQuantMode> getQuantMode(hivm::VCastOp castOp) {
   return getQuantModeForCastChain(collectVCastChain(castOp));
+}
+
+bool isUserTransposeStructurallyInlinable(hivm::FixpipeOp op, Operation *user) {
+  auto transpose = dyn_cast<hivm::VTransposeOp>(user);
+  if (!transpose || op.getDmaMode() != FixpipeDMAMode::NZ2ND)
+    return false;
+  ArrayRef<int64_t> permutation = transpose.getPermutation();
+  if (permutation.size() != 2 || permutation[0] != 1 || permutation[1] != 0)
+    return false;
+  return !hasUnmodeledNz2dnConflict(op);
+}
+
+bool isUserTransposeInlinable(hivm::FixpipeOp op, Operation *user) {
+  if (!isUserTransposeStructurallyInlinable(op, user))
+    return false;
+  auto transpose = cast<hivm::VTransposeOp>(user);
+  // A memref destination has no result. The destination operand carries the
+  // element type for both forms.
+  Type dstElementType = getElementTypeOrSelf(transpose.getDst().getType());
+  // Query the candidate Fixpipe, not the current one: same src/pre_quant/
+  // pre_relu/channel_split, dst element type from the transpose destination,
+  // dma_mode forced to NZ2DN.
+  using bishengir::npu::FixpipeCapabilityRequestBuilder;
+  std::optional<FixpipeCapabilityRequestBuilder> builder =
+      FixpipeCapabilityRequestBuilder::from(op);
+  if (!builder)
+    return false;
+  builder->dstElementType(dstElementType);
+  builder->dmaMode(FixpipeDMAMode::NZ2DN);
+  builder->srcAddressSpace(AddressSpace::L0C);
+  builder->dstAddressSpace(AddressSpace::GM);
+  std::optional<bishengir::npu::NPUArchitectureKind> architecture =
+      lookupModuleArchitecture(op);
+  if (!architecture)
+    return false;
+  auto storage = builder->build();
+  return bishengir::npu::queryNativeSupport(*architecture,
+                                            storage.getRequest()) ==
+         bishengir::npu::NativeSupport::Native;
 }
 
 } // namespace mlir::hivm

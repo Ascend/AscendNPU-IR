@@ -22,10 +22,33 @@
 #define BISHENGIR_DIALECT_HIVM_IR_CAPABILITY_DMA_COMMON_TD
 
 include "bishengir/Dialect/HIVM/IR/Capability/Common.td"
+include "bishengir/Dialect/HIVM/IR/HIVMAttrs.td"
 
-def Src : CapabilitySlot<[ElementType], "Src", "src">;
-def Dst : CapabilitySlot<[ElementType], "Dst", "dst">;
+// Address space of the SSA value. Read from a memref memory space. An unscoped
+// tensor leaves the field unset.
+def AddressSpace
+    : CapabilitySlotProperty<EnumAttrCapabilityDomain<HIVM_AddressSpaceAttr>,
+                             "AddressSpace", "address_space">;
+
+def Src : CapabilitySlot<[ElementType, AddressSpace], "Src", "src">;
+def Dst : CapabilitySlot<[ElementType, AddressSpace], "Dst", "dst">;
 def SrcType : SlotField<Src, ElementType>;
 def DstType : SlotField<Dst, ElementType>;
+def SrcSpace : SlotField<Src, AddressSpace>;
+def DstSpace : SlotField<Dst, AddressSpace>;
+
+// ODS operands named src and dst. A DMA binding inherits these and adds the
+// op-specific parameters.
+defvar DmaSrcDstExtractors = [
+  CapabilityExtractor<OperandBindingSource<"src">, ElementTypeProjection, SrcType>,
+  CapabilityExtractor<OperandBindingSource<"src">, AddressSpaceProjection, SrcSpace>,
+  CapabilityExtractor<OperandBindingSource<"dst">, ElementTypeProjection, DstType>,
+  CapabilityExtractor<OperandBindingSource<"dst">, AddressSpaceProjection, DstSpace>
+];
+
+class DmaCapabilityBinding<CapabilityKey capability, Op operation,
+                           list<CapabilityExtractor> extraExtractors>
+    : CapabilityBinding<capability, operation,
+                        !listconcat(DmaSrcDstExtractors, extraExtractors)>;
 
 #endif // BISHENGIR_DIALECT_HIVM_IR_CAPABILITY_DMA_COMMON_TD

@@ -25,6 +25,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -176,6 +177,8 @@ struct HoistingSyncBlockPattern
       return changed;
     };
 
+    // Unordered lock/unlock stay in the loop. A later function-level step
+    // makes every unordered section share one lock variable.
     if (hasUnorderedLock) {
       bool changed = hoistCreateOpsNestedInLoop();
       if (hasCrossBlockSync && !loopOp->hasAttr(kPostLoopAllVectorSyncAttr)) {
@@ -216,6 +219,72 @@ struct HoistingSyncBlockPattern
   }
 };
 
+/// Hack: every unordered lock in the function uses one lock variable.
+/// Nested acquire/release of that variable is dropped so the same block
+/// cannot take the bakery lock twice. infer-sync-block-num counts the
+/// remaining create_sync_block_lock ops.
+static void unifyUnorderedSyncBlockLocks(func::FuncOp funcOp,
+                                         IRRewriter &rewriter) {
+  SmallVector<CreateSyncBlockLockOp> creates;
+  funcOp.walk([&](CreateSyncBlockLockOp createOp) {
+    if (getSyncBlockLockOrdering(createOp.getMemref()) ==
+        SyncBlockLockOrdering::Unordered)
+      creates.push_back(createOp);
+  });
+
+  if (creates.size() > 1) {
+    CreateSyncBlockLockOp primary = creates.front();
+    for (CreateSyncBlockLockOp createOp : creates) {
+      if (createOp.getLockArg()) {
+        primary = createOp;
+        break;
+      }
+    }
+    Block &entry = funcOp.getBody().front();
+    if (primary->getBlock() != &entry ||
+        primary.getOperation() != &entry.front())
+      rewriter.moveOpBefore(primary, &entry.front());
+    for (CreateSyncBlockLockOp createOp : creates) {
+      if (createOp == primary)
+        continue;
+      rewriter.replaceAllUsesWith(createOp.getMemref(), primary.getMemref());
+      rewriter.eraseOp(createOp);
+    }
+  }
+
+  struct OpenLock {
+    Value lockVar;
+    bool redundant = false;
+  };
+  SmallVector<OpenLock> openLocks;
+  SmallVector<Operation *> redundantOps;
+  funcOp.walk([&](Operation *op) {
+    if (auto lockOp = dyn_cast<SyncBlockLockOp>(op)) {
+      if (getSyncBlockLockOpOrdering(lockOp) !=
+          SyncBlockLockOrdering::Unordered)
+        return;
+      bool redundant = llvm::any_of(openLocks, [&](const OpenLock &open) {
+        return open.lockVar == lockOp.getLockVar();
+      });
+      openLocks.push_back({lockOp.getLockVar(), redundant});
+      if (redundant)
+        redundantOps.push_back(lockOp);
+      return;
+    }
+    if (auto unlockOp = dyn_cast<SyncBlockUnlockOp>(op)) {
+      if (getSyncBlockLockOpOrdering(unlockOp) !=
+              SyncBlockLockOrdering::Unordered ||
+          openLocks.empty())
+        return;
+      OpenLock open = openLocks.pop_back_val();
+      if (open.redundant && open.lockVar == unlockOp.getLockVar())
+        redundantOps.push_back(unlockOp);
+    }
+  });
+  for (Operation *op : llvm::reverse(redundantOps))
+    rewriter.eraseOp(op);
+}
+
 } // namespace
 
 void SyncBlockHoistingPass::runOnOperation() {
@@ -225,6 +294,8 @@ void SyncBlockHoistingPass::runOnOperation() {
   if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
     signalPassFailure();
   }
+  IRRewriter rewriter(&getContext());
+  unifyUnorderedSyncBlockLocks(getOperation(), rewriter);
 }
 
 std::unique_ptr<Pass> mlir::hivm::createSyncBlockHoistingPass() {

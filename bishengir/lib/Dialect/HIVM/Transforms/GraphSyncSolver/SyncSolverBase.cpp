@@ -71,6 +71,27 @@ std::unique_ptr<SyncSolverBase> mlir::hivm::syncsolver::createSolver(
   llvm_unreachable("unsupported SyncSolver version");
 }
 
+LogicalResult SyncSolverBase::prepareBufferPoolSync() {
+  return bufferPoolSync.collect(funcOp, funcIr.get(), options);
+}
+
+void SyncSolverBase::processBufferPoolDependencies() {
+  bufferPoolSyncFailed = failed(bufferPoolSync.forEachDependency(
+      opAllOccurrences,
+      [&](Occurrence *set, Occurrence *wait, PIPE src, PIPE dst,
+          EventIdInfo info) -> LogicalResult {
+        if (handleSetWaitConflict(set, wait,
+                                  CorePipeInfo(TCoreType::CUBE_OR_VECTOR, src),
+                                  CorePipeInfo(TCoreType::CUBE_OR_VECTOR, dst),
+                                  info, getSetWaitOcc(set, wait, info), false))
+          return success();
+        return info.bufferPoolInfo->loop->op->emitError(
+                   "insufficient event IDs for buffer pool of size ")
+               << info.eventIdNum << " on " << stringifyPIPE(src) << " -> "
+               << stringifyPIPE(dst);
+      }));
+}
+
 void SyncSolverBase::reset(bool resetEventIdRanOutOpts) {
   if (resetEventIdRanOutOpts) {
     reusePairs.clear();
@@ -98,6 +119,10 @@ void SyncSolverBase::reset(bool resetEventIdRanOutOpts) {
       [&](hivm::PIPE pipeSrc,
           hivm::PIPE pipeDst) -> std::unique_ptr<EventIdSolver> & {
         return getEventIdSolverRef(pipeSrc, pipeDst);
+      });
+  bufferPoolSync.reset(
+      [&](PIPE src, PIPE dst) -> std::unique_ptr<EventIdSolver> & {
+        return getEventIdSolverRef(src, dst);
       });
 }
 
@@ -181,18 +206,22 @@ Occurrence *SyncSolverBase::getScopeEndPlaceHolderOcc(Occurrence *occ) {
   return placeHolderOcc;
 }
 
-Occurrence *SyncSolverBase::getElseBranchOcc(Occurrence *ifOcc, bool isSet) {
-  assert(ifOcc != nullptr);
+Occurrence *SyncSolverBase::getSiblingBranchOcc(Occurrence *ifOcc,
+                                                Occurrence *occ, bool isSet) {
+  assert(ifOcc != nullptr && occ != nullptr);
   auto *condition = cast<Condition>(ifOcc->op);
   if (!condition->hasFalseScope())
     return nullptr;
 
-  auto *falseScope = condition->getFalseScope();
-  for (auto *childOcc : ifOcc->childOccs) {
-    if (childOcc->op == falseScope) {
-      return isSet ? getScopeEndPlaceHolderOcc(childOcc)
-                   : getScopeBeginPlaceHolderOcc(childOcc);
+  for (auto *branchOcc : ifOcc->childOccs) {
+    if (branchOcc->op != condition->getTrueScope() &&
+        branchOcc->op != condition->getFalseScope()) {
+      continue;
     }
+    if (branchOcc->isProperAncestor(occ))
+      continue;
+    return isSet ? getScopeEndPlaceHolderOcc(branchOcc)
+                 : getScopeBeginPlaceHolderOcc(branchOcc);
   }
   return nullptr;
 }
@@ -205,7 +234,7 @@ SyncSolverBase::buildSiblingIfExtraConflictOccs(
   auto collectBranchOccs = [&](Occurrence *occ, Occurrence *ifOcc, bool isSet) {
     llvm::SmallVector<Occurrence *, 2> branchOccs{occ};
     if (ifOcc != nullptr) {
-      if (auto *mirrorOcc = getElseBranchOcc(ifOcc, isSet))
+      if (auto *mirrorOcc = getSiblingBranchOcc(ifOcc, occ, isSet))
         branchOccs.push_back(mirrorOcc);
     }
     return branchOccs;
@@ -222,12 +251,21 @@ SyncSolverBase::buildSiblingIfExtraConflictOccs(
   llvm::SmallVector<ExtraConflictOccPair, 5> extraOccPairs;
   for (auto *extraSetOcc : setOccs)
     for (auto *extraWaitOcc : waitOccs)
-      extraOccPairs.push_back({extraSetOcc, extraWaitOcc, nullptr});
+      extraOccPairs.push_back({extraSetOcc, extraWaitOcc,
+                               extraSetOcc->parentOcc, extraWaitOcc->parentOcc,
+                               setWaitPairInfo.isCVPreloading});
 
-  auto *ifOcc = setWaitPairInfo.setIfOcc != nullptr ? setWaitPairInfo.setIfOcc
-                                                    : setWaitPairInfo.waitIfOcc;
-  assert(ifOcc != nullptr);
-  extraOccPairs.push_back({setOcc, waitOcc, ifOcc->parentOcc});
+  if (!setWaitPairInfo.isCVPreloading) {
+    auto *setParentOcc = setWaitPairInfo.setIfOcc != nullptr
+                             ? setWaitPairInfo.setIfOcc->parentOcc
+                             : setOcc->parentOcc;
+    auto *waitParentOcc = setWaitPairInfo.waitIfOcc != nullptr
+                              ? setWaitPairInfo.waitIfOcc->parentOcc
+                              : waitOcc->parentOcc;
+    assert(setParentOcc != nullptr && waitParentOcc != nullptr);
+    extraOccPairs.push_back(
+        {setOcc, waitOcc, setParentOcc, waitParentOcc, /*couldNotRun=*/false});
+  }
   return extraOccPairs;
 }
 
@@ -649,6 +687,50 @@ SyncSolverBase::checkUnitFlagPatterns(Occurrence *occ1, Occurrence *occ2) {
     return std::optional<UnitFlagInfo>(unitFlagInfo);
   }
   return {};
+}
+
+// Different dynamic allocations may reuse the same UB pool slots. Pool
+// alloc/release reclaim entries in AIV0 feedback order and enqueue FIX waits
+// for both AIVs' V-to-FIX completion notifications before recycling slots/IDs.
+// These notifications follow the consumers' last buffer accesses; feedback
+// alone does not imply completion. Subsequent FIX writes follow the enqueued
+// waits on PIPE_FIX, so the pool protocol orders writes to recycled slots.
+// Skip only pairs whose entire conflict set consists of these destination
+// WAWs; FIX source accesses and other memory still require normal analysis.
+bool SyncSolverBase::checkSkipPoolManagedFixPair(Occurrence *occ1,
+                                                 Occurrence *occ2) {
+  if (!options.isIntraCoreMode())
+    return false;
+  auto *rwOp1 = dyn_cast<RWOperation>(occ1->op);
+  auto *rwOp2 = dyn_cast<RWOperation>(occ2->op);
+  if (!rwOp1 || !rwOp2 || !isa_and_present<hivm::FixpipeOp>(rwOp1->op) ||
+      !isa_and_present<hivm::FixpipeOp>(rwOp2->op))
+    return false;
+  auto conflicts = getMemInfoConflict(rwOp1, rwOp2);
+  auto writes1 = llvm::make_pointer_range(rwOp1->writeMemInfo);
+  auto writes2 = llvm::make_pointer_range(rwOp2->writeMemInfo);
+  return !conflicts.empty() && llvm::all_of(conflicts, [&](const auto &pair) {
+    const MemInfo *first = pair.first;
+    const MemInfo *second = pair.second;
+    if (!llvm::is_contained(writes1, first) ||
+        !llvm::is_contained(writes2, second) || !first->poolInfo ||
+        !second->poolInfo)
+      return false;
+    auto alloc1 =
+        first->poolInfo->address.getDefiningOp<hivm::TcbPoolAllocOp>();
+    auto alloc2 =
+        second->poolInfo->address.getDefiningOp<hivm::TcbPoolAllocOp>();
+    if (!alloc1 || !alloc2 || alloc1.getPool() != alloc2.getPool() ||
+        alloc1.getMetadata() != alloc2.getMetadata())
+      return false;
+    if (alloc1 != alloc2)
+      return true;
+    // Two writes using the same allocation are not ordered by reclamation.
+    // Across iterations, the allocation must execute again in the LCA loop.
+    auto *loop = getBackwardLCALoop(occ1, occ2);
+    auto allocationLoop = alloc1->getParentOfType<LoopLikeOpInterface>();
+    return loop && allocationLoop && loop->op == allocationLoop.getOperation();
+  });
 }
 
 bool SyncSolverBase::checkMemInfoConflict(
@@ -1216,7 +1298,6 @@ SyncSolverBase::checkCVPreloadingEventIdInfo(Occurrence *occ1, Occurrence *occ2,
                                  : 1;
 
     if (options.isCrossCoreMode()) {
-      assert(preloadDiff % 2 == 1 || preloadDiff == 0);
       if (multibufferNum >= eventIdNum) {
         EventIdInfo eventIdInfo(multibufferNum);
         eventIdInfo.cvPreloadingInfo =
@@ -1298,6 +1379,8 @@ SyncSolverBase::getEventIdSetWaitPairInfo(Occurrence *occ1, Occurrence *occ2,
 EventIdNode *
 SyncSolverBase::getOldEventIdNodeIfExists(ConflictPair *conflictPair) {
   assert(conflictPair != nullptr);
+  if (const auto &pool = conflictPair->eventIdInfo.bufferPoolInfo)
+    return bufferPoolSync.getEventIdNode(*pool);
   auto oldConflictPairs = getMemorizedSyncedPairs(conflictPair);
   if (oldConflictPairs.empty()) {
     return {};
@@ -1316,6 +1399,10 @@ SyncSolverBase::getMemorizedSyncedPairs(ConflictPair *conflictPair) {
 }
 
 void SyncSolverBase::memorizeSyncedPair(ConflictPair *conflictPair) {
+  if (const auto &pool = conflictPair->eventIdInfo.bufferPoolInfo) {
+    bufferPoolSync.setEventIdNode(*pool, conflictPair->eventIdNode);
+    return;
+  }
   auto key = std::make_tuple(
       conflictPair->backwardSyncLoopOp, conflictPair->op1, conflictPair->op2,
       conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo);
@@ -1334,6 +1421,46 @@ void SyncSolverBase::memorizeReusedSyncedPair(
       conflictPair->backwardSyncLoopOp, conflictPair->op1, conflictPair->op2,
       conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo);
   replacedWithReusableSyncedPairs[key] = reusedConflictPair;
+}
+
+static int getNestingNum(Occurrence *occ, Occurrence *scopeOcc,
+                         Occurrence *&nestingOcc) {
+  nestingOcc = nullptr;
+  int nestingNum = 0;
+  for (auto *curOcc = occ; curOcc->parentOcc != scopeOcc;
+       curOcc = curOcc->parentOcc) {
+    auto *parOcc = curOcc->parentOcc;
+    assert((llvm::isa_and_present<Scope, Loop, Condition>(parOcc->op)));
+    if (!llvm::isa_and_present<Loop, Condition>(parOcc->op)) {
+      continue;
+    }
+    nestingOcc = parOcc;
+    ++nestingNum;
+  }
+  return nestingNum;
+}
+
+Occurrence *SyncSolverBase::sinkIntoPreloadScope(Occurrence *occ,
+                                                 Occurrence *scopeOcc,
+                                                 bool isSet,
+                                                 Occurrence *&mirrorIfOcc) {
+  mirrorIfOcc = nullptr;
+  assert(occ != nullptr && scopeOcc != nullptr);
+  assert(scopeOcc->isProperAncestor(occ));
+
+  Occurrence *nestingOcc = nullptr;
+  int nestingNum = getNestingNum(occ, scopeOcc, nestingOcc);
+  if (nestingNum == 0) {
+    return occ;
+  }
+  auto *condition = llvm::dyn_cast_if_present<Condition>(nestingOcc->op);
+  if (nestingNum == 1 && condition != nullptr &&
+      !condition->isFalseScopeSynthetic &&
+      getSiblingBranchOcc(nestingOcc, occ, isSet)) {
+    mirrorIfOcc = nestingOcc;
+    return occ;
+  }
+  return nestingOcc;
 }
 
 SetWaitPairInfo
@@ -1403,6 +1530,8 @@ SyncSolverBase::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
       auto *scopeOcc2 = ret.waitOcc;
       if (eventIdInfo->cvPreloadingInfo->preloadScope1 == scopeOp1 &&
           eventIdInfo->cvPreloadingInfo->preloadScope2 == scopeOp2) {
+        ret.setPreloadScopeOcc = scopeOcc1;
+        ret.waitPreloadScopeOcc = scopeOcc2;
         if (eventIdInfo->cvPreloadingInfo->useUnlikely) {
           if (scopeOp1->preloadNum > scopeOp2->preloadNum) {
             occ1 = getScopeBeginPlaceHolderOcc(
@@ -1424,8 +1553,21 @@ SyncSolverBase::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
           ret.isCVPreloading = true;
         } else {
           assert(scopeOp1->maxPreloadNum == scopeOp2->maxPreloadNum);
-          ret.setOcc = occ1->getNthParent(occ1->depth - scopeOcc1->depth - 2);
-          ret.waitOcc = occ2->getNthParent(occ2->depth - scopeOcc2->depth - 2);
+          Occurrence *setMirrorIfOcc = nullptr;
+          Occurrence *waitMirrorIfOcc = nullptr;
+          ret.setOcc = sinkIntoPreloadScope(occ1, scopeOcc1, /*isSet=*/true,
+                                            setMirrorIfOcc);
+          ret.waitOcc = sinkIntoPreloadScope(occ2, scopeOcc2, /*isSet=*/false,
+                                             waitMirrorIfOcc);
+          assert(ret.setOcc->depth - scopeOcc1->depth -
+                     (setMirrorIfOcc != nullptr ? 2 : 0) ==
+                 ret.waitOcc->depth - scopeOcc2->depth -
+                     (waitMirrorIfOcc != nullptr ? 2 : 0));
+          if (setMirrorIfOcc != nullptr || waitMirrorIfOcc != nullptr) {
+            ret.setWaitInside = true;
+            ret.setIfOcc = setMirrorIfOcc;
+            ret.waitIfOcc = waitMirrorIfOcc;
+          }
           ret.isCVPreloading = true;
         }
       }
@@ -1739,6 +1881,42 @@ SyncSolverBase::getUnlikelyCondSetWaitOcc(Occurrence *occ1, Occurrence *occ2) {
 SetWaitPairInfo
 SyncSolverBase::getSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
                               std::optional<EventIdInfo> eventIdInfo) {
+  if (eventIdInfo && eventIdInfo->bufferPoolInfo) {
+    const auto &pool = *eventIdInfo->bufferPoolInfo;
+    SetWaitPairInfo ret;
+    // Keep pool endpoints inside their task scope, including MMAD's virtual
+    // readers. Nested control flow follows the preload placement rule without
+    // requiring the newer CV-preloading interfaces on this branch.
+    auto sinkIntoPoolScope = [](Occurrence *occ, Scope *scope,
+                                Occurrence *&mirrorIfOcc) {
+      auto *scopeOcc = occ->getParentWithOp(scope);
+      Occurrence *nestingOcc = nullptr;
+      unsigned nestingNum = 0;
+      for (auto *cur = occ; cur->parentOcc != scopeOcc; cur = cur->parentOcc) {
+        if (isa<Loop, Condition>(cur->parentOcc->op)) {
+          nestingOcc = cur->parentOcc;
+          ++nestingNum;
+        }
+      }
+      if (!nestingOcc)
+        return occ;
+      auto *condition = dyn_cast<Condition>(nestingOcc->op);
+      auto ifOp =
+          dyn_cast_or_null<scf::IfOp>(condition ? condition->op : nullptr);
+      if (nestingNum == 1 && ifOp && !ifOp.getElseRegion().empty() &&
+          condition->hasFalseScope()) {
+        mirrorIfOcc = nestingOcc;
+        return occ;
+      }
+      return nestingOcc;
+    };
+    ret.setOcc = sinkIntoPoolScope(occ1, pool.setScope, ret.setIfOcc);
+    ret.waitOcc = sinkIntoPoolScope(occ2, pool.waitScope, ret.waitIfOcc);
+    ret.setWaitInside = true;
+    ret.isOpForwardPair = pool.ready;
+    ret.isSetWaitBackwardPair = !pool.ready;
+    return ret;
+  }
   if (auto functionBlockOpt = getFunctionBlockSetWaitOcc(occ1, occ2)) {
     std::tie(occ1, occ2) = functionBlockOpt.value();
   }
@@ -1932,6 +2110,8 @@ ConflictPair *SyncSolverBase::getReusableConflictPair(
 bool SyncSolverBase::reuseConflictPair(ConflictPair *conflictPair,
                                        Occurrence *scopeOcc1,
                                        Occurrence *scopeOcc2) {
+  if (conflictPair->eventIdInfo.bufferPoolInfo)
+    return false;
   if (!options.reuseSyncPairToSaveEventIds) {
     return false;
   }
@@ -2108,10 +2288,36 @@ bool SyncSolverBase::checkSkipCVPreloadingPair(Occurrence *occ1,
   auto *scopeOp2 = dyn_cast<Scope>(parOcc2->op);
   if (scopeOp1 != nullptr && scopeOp2 != nullptr) {
     if (scopeOp1->preloadNum.has_value() && scopeOp2->preloadNum.has_value()) {
+      assert(scopeOp1 != scopeOp2 &&
+             *scopeOp1->preloadNum != *scopeOp2->preloadNum);
       return true;
     }
   }
   return false;
+}
+
+bool SyncSolverBase::checkBufferPoolCoveredConflict(RWOperation *rwOp1,
+                                                    RWOperation *rwOp2,
+                                                    CorePipeInfo corePipeSrc,
+                                                    CorePipeInfo corePipeDst) {
+  if (!bufferPoolSync.hasAccess(rwOp1) || !bufferPoolSync.hasAccess(rwOp2))
+    return false;
+  auto getPipeInfo = [](RWOperation *op, const MemInfo *info) {
+    bool write = llvm::any_of(
+        op->writeMemInfo, [&](const MemInfo &entry) { return &entry == info; });
+    return CorePipeInfo(
+        info->coreType.value_or(op->coreType),
+        info->pipe.value_or(write ? op->pipeWrite : op->pipeRead));
+  };
+  // Reuse the original alias query; only this pool path filters covered
+  // hazards.
+  return llvm::all_of(getMemInfoConflict(rwOp1, rwOp2), [&](auto conflict) {
+    auto pipes = getFixedCorePipeInfoPair(getPipeInfo(rwOp1, conflict.first),
+                                          getPipeInfo(rwOp2, conflict.second));
+    return pipes != std::make_pair(corePipeSrc, corePipeDst) ||
+           bufferPoolSync.covers(rwOp1, rwOp2, *conflict.first,
+                                 *conflict.second);
+  });
 }
 
 // TODO: refactor handleSetWaitConflict and split it into 3 cases (intra-core,
@@ -2124,6 +2330,9 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
   auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
+  if (!eventIdInfo.bufferPoolInfo &&
+      checkBufferPoolCoveredConflict(rwOp1, rwOp2, corePipeSrc, corePipeDst))
+    return nullptr;
   assert(corePipeSrc != corePipeDst);
   assert(tempInsertedConflictPairs.empty());
 
@@ -2152,6 +2361,12 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   if (setWaitPairInfo.isCVPipelining) {
     parOcc1 = setOcc->getNthParent(3);
     parOcc2 = waitOcc->getNthParent(3);
+  } else if (setWaitPairInfo.isCVPreloading) {
+    parOcc1 = setWaitPairInfo.setPreloadScopeOcc;
+    parOcc2 = setWaitPairInfo.waitPreloadScopeOcc;
+    assert(parOcc1 != nullptr && parOcc2 != nullptr);
+    assert(cast<Scope>(parOcc1->op)->preloadNum.has_value() &&
+           cast<Scope>(parOcc2->op)->preloadNum.has_value());
   }
   assert(parOcc1->op == parOcc2->op || setWaitPairInfo.isCVPreloading ||
          setWaitPairInfo.setWaitInside);
@@ -2168,6 +2383,11 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
       !setWaitPairInfo.isOpForwardPair && setWaitPairInfo.isSetWaitBackwardPair;
   conflictPair->isUseless = isUseless;
   conflictPair->eventIdInfo = eventIdInfo;
+  // Pool tokens order selected slots, not every access in the scalar iteration.
+  // Keep their allocation lifetimes, but do not use them to elide ordinary
+  // memory hazards or replace another binding's required notification.
+  conflictPair->couldNotRun = bool(eventIdInfo.bufferPoolInfo);
+  conflictPair->dontReuse = bool(eventIdInfo.bufferPoolInfo);
   conflictPair->setWaitPairInfo = setWaitPairInfo;
   conflictPair->parOcc1 = parOcc1;
   conflictPair->parOcc2 = parOcc2;
@@ -2184,11 +2404,14 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   }
 
   // calc parent-loop occ (for backward pairs)
-  if (conflictPair->isOccBackwardPair) {
+  if (conflictPair->isOccBackwardPair || eventIdInfo.bufferPoolInfo) {
     auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
     assert(parOcc1 != nullptr && parOcc2 != nullptr);
 
-    parentLCALoopOcc = parOcc1->getParentOfType<Loop>();
+    parentLCALoopOcc =
+        eventIdInfo.bufferPoolInfo
+            ? occ1->getParentWithOp(eventIdInfo.bufferPoolInfo->loop)
+            : parOcc1->getParentOfType<Loop>();
     if (moveBackwardSyncPairsToOutmostLoop) {
       while (auto *grandParentLoopOcc =
                  parentLCALoopOcc->getParentOfType<Loop>()) {
@@ -2222,9 +2445,10 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   bool keepMultiEventId =
       conflictPair->eventIdInfo.cvPipeliningInfo.has_value() ||
       conflictPair->eventIdInfo.cvPreloadingInfo.has_value();
-  if (!conflictPair->isInnerBackwardPair ||
-      (!keepMultiEventId &&
-       disabledMultiEventIdPairs.contains({corePipeSrc, corePipeDst}))) {
+  if (!eventIdInfo.bufferPoolInfo &&
+      (!conflictPair->isInnerBackwardPair ||
+       (!keepMultiEventId &&
+        disabledMultiEventIdPairs.contains({corePipeSrc, corePipeDst})))) {
     conflictPair->eventIdInfo = EventIdInfo(1);
   }
   if (checkRepeatMultiBufferFlagId(conflictPair.get())) {
@@ -2247,7 +2471,7 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
     curEventIdSolver->insertConflictPair(oldEventIdNode, conflictPair.get());
   } else {
     bool reversedPriority = false;
-    if (conflictPair->isInnerBackwardPair) {
+    if (conflictPair->isInnerBackwardPair && !eventIdInfo.bufferPoolInfo) {
       // Reverse the default ordering only when both occurrences are direct
       // children of the LCA loop occurrence; this identifies an intra-loop
       // backward relation at the same nesting level.
@@ -2263,15 +2487,20 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   assert(conflictPair->eventIdNode != nullptr);
 
   auto checkColorable = [&]() -> bool {
+    // Pool reservations also apply to ordinary nodes sharing this pipe pair.
+    if (bufferPoolSync.managesEventIds(corePipeSrc.pipe, corePipeDst.pipe))
+      curEventIdSolver->calcEventIds();
     if (curEventIdSolver->isColorable()) {
       return true;
     }
-    LLVM_DEBUG(llvm::dbgs() << "will-be-converted-to-barrier-all "
-                            << conflictPair->str() << '\n';);
-    auto *waitOcc = getBarrierWaitOcc(occ1, occ2);
-    insertBarrierAllBeforeOp(waitOcc->op, conflictPair->isUseless,
-                             /*isPersistent=*/false);
-    barrierAllPairs.insert({corePipeSrc, corePipeDst});
+    if (!eventIdInfo.bufferPoolInfo) {
+      LLVM_DEBUG(llvm::dbgs() << "will-be-converted-to-barrier-all "
+                              << conflictPair->str() << '\n';);
+      auto *waitOcc = getBarrierWaitOcc(occ1, occ2);
+      insertBarrierAllBeforeOp(waitOcc->op, conflictPair->isUseless,
+                               /*isPersistent=*/false);
+      barrierAllPairs.insert({corePipeSrc, corePipeDst});
+    }
     tempInsertedConflictPairs.clear();
     curEventIdSolver->undoActions();
     return false;
@@ -2296,23 +2525,26 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
 
   // add extra conflict-pairs to cover liveliness ranges for ids (for backward
   // pairs)
-  llvm::SmallVector<std::pair<std::unique_ptr<ConflictPair>, Occurrence *>>
-      extraConflictPairs;
-  auto insertExtraConflictPair = [&](Occurrence *setOcc, Occurrence *waitOcc,
-                                     Occurrence *parentScope,
-                                     bool couldNotRun) -> bool {
+  llvm::SmallVector<std::unique_ptr<ConflictPair>> extraConflictPairs;
+  auto insertExtraConflictPairOnScopes =
+      [&](Occurrence *setOcc, Occurrence *waitOcc, Occurrence *setParentScope,
+          Occurrence *waitParentScope, bool couldNotRun) -> bool {
     assert(setOcc != nullptr && waitOcc != nullptr);
+    assert(setParentScope != nullptr && waitParentScope != nullptr);
     auto extraConflictPair = conflictPair->clone(setOcc, waitOcc);
+    extraConflictPair->parOcc1 = setParentScope;
+    extraConflictPair->parOcc2 = waitParentScope;
     extraConflictPair->isUseless = true;
     extraConflictPair->dontReuse = true;
-    extraConflictPair->couldNotRun = couldNotRun;
+    extraConflictPair->couldNotRun =
+        couldNotRun || bool(eventIdInfo.bufferPoolInfo);
     LLVM_DEBUG({
       llvm::dbgs() << "extra-conflict-pair: " << extraConflictPair->str()
                    << "\n";
     });
     curEventIdSolver->insertConflictPair(conflictPair->eventIdNode,
                                          extraConflictPair.get());
-    insertTempConflictPair(extraConflictPair.get(), parentScope);
+    insertTempConflictPair(extraConflictPair.get());
     auto intersectingEventIdNodes =
         getIntersectingEventIdNodes(extraConflictPair.get());
     curEventIdSolver->addConflicts(extraConflictPair->eventIdNode,
@@ -2320,9 +2552,14 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
     if (!checkColorable()) {
       return false;
     }
-    extraConflictPairs.push_back(
-        std::make_pair(std::move(extraConflictPair), parentScope));
+    extraConflictPairs.push_back(std::move(extraConflictPair));
     return true;
+  };
+  auto insertExtraConflictPair = [&](Occurrence *setOcc, Occurrence *waitOcc,
+                                     Occurrence *parentScope,
+                                     bool couldNotRun) -> bool {
+    return insertExtraConflictPairOnScopes(setOcc, waitOcc, parentScope,
+                                           parentScope, couldNotRun);
   };
   // A linearized copy of the parent loop never yields this pair as backward,
   // so every reservation below is repeated on each of them.
@@ -2384,8 +2621,8 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
       }
     }
   }
-  if (conflictPair->isSetWaitBackwardPair) {
-    bool insertOuterBwdConflictPair = false;
+  if (conflictPair->isSetWaitBackwardPair || eventIdInfo.bufferPoolInfo) {
+    bool insertOuterBwdConflictPair = bool(eventIdInfo.bufferPoolInfo);
     if (conflictPair->eventIdInfo.getEventIdNum() > 1) {
       insertOuterBwdConflictPair = true;
     } else if (options.isCrossCoreMode()) {
@@ -2433,12 +2670,85 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
       return nullptr;
     }
   }
-  if (setWaitPairInfo.setWaitInside) {
-    for (auto [extraSetOcc, extraWaitOcc, parentOcc] :
+  llvm::SmallVector<std::unique_ptr<ConflictPair>> poolExtraConflictPairs;
+  if (eventIdInfo.bufferPoolInfo && setWaitPairInfo.setWaitInside &&
+      (setWaitPairInfo.setIfOcc || setWaitPairInfo.waitIfOcc)) {
+    auto getPoolSiblingBranchOcc = [&](Occurrence *ifOcc, Occurrence *occ,
+                                       bool isSet) -> Occurrence * {
+      auto *condition = cast<Condition>(ifOcc->op);
+      if (!condition->hasFalseScope())
+        return nullptr;
+      for (auto *branchOcc : ifOcc->childOccs) {
+        if (branchOcc->op != condition->getTrueScope() &&
+            branchOcc->op != condition->getFalseScope())
+          continue;
+        if (branchOcc->isProperAncestor(occ))
+          continue;
+        return isSet ? getScopeEndPlaceHolderOcc(branchOcc)
+                     : getScopeBeginPlaceHolderOcc(branchOcc);
+      }
+      return nullptr;
+    };
+    // Keep pool sibling placement independent of the ordinary CV interfaces.
+    auto insertPoolExtraConflictPair =
+        [&](Occurrence *extraSetOcc, Occurrence *extraWaitOcc,
+            Occurrence *setParentOcc, Occurrence *waitParentOcc) -> bool {
+      auto extra = conflictPair->clone(extraSetOcc, extraWaitOcc);
+      extra->parOcc1 = setParentOcc;
+      extra->parOcc2 = waitParentOcc;
+      extra->isUseless = true;
+      extra->dontReuse = true;
+      extra->couldNotRun = true;
+      LLVM_DEBUG(llvm::dbgs()
+                     << "extra-conflict-pair: " << extra->str() << '\n';);
+      curEventIdSolver->insertConflictPair(conflictPair->eventIdNode,
+                                           extra.get());
+      insertTempConflictPair(extra.get());
+      auto intersecting = getIntersectingEventIdNodes(extra.get());
+      curEventIdSolver->addConflicts(extra->eventIdNode, intersecting);
+      if (!checkColorable())
+        return false;
+      poolExtraConflictPairs.push_back(std::move(extra));
+      return true;
+    };
+    auto *mirrorSetOcc =
+        setWaitPairInfo.setIfOcc
+            ? getPoolSiblingBranchOcc(setWaitPairInfo.setIfOcc, setOcc, true)
+            : nullptr;
+    auto *mirrorWaitOcc =
+        setWaitPairInfo.waitIfOcc
+            ? getPoolSiblingBranchOcc(setWaitPairInfo.waitIfOcc, waitOcc, false)
+            : nullptr;
+    conflictPair->mirrorSetIfOcc = mirrorSetOcc;
+    conflictPair->mirrorWaitIfOcc = mirrorWaitOcc;
+    for (auto *extraSetOcc : {setOcc, mirrorSetOcc}) {
+      for (auto *extraWaitOcc : {waitOcc, mirrorWaitOcc}) {
+        if (!extraSetOcc || !extraWaitOcc)
+          continue;
+        if (!insertPoolExtraConflictPair(extraSetOcc, extraWaitOcc,
+                                         extraSetOcc->parentOcc,
+                                         extraWaitOcc->parentOcc))
+          return nullptr;
+      }
+    }
+    auto *setParentOcc = setWaitPairInfo.setIfOcc
+                             ? setWaitPairInfo.setIfOcc->parentOcc
+                             : setOcc->parentOcc;
+    auto *waitParentOcc = setWaitPairInfo.waitIfOcc
+                              ? setWaitPairInfo.waitIfOcc->parentOcc
+                              : waitOcc->parentOcc;
+    if (!insertPoolExtraConflictPair(setOcc, waitOcc, setParentOcc,
+                                     waitParentOcc))
+      return nullptr;
+  }
+  if (!eventIdInfo.bufferPoolInfo && setWaitPairInfo.setWaitInside) {
+    for (auto [extraSetOcc, extraWaitOcc, setParentOcc, waitParentOcc,
+               couldNotRun] :
          buildSiblingIfExtraConflictOccs(setWaitPairInfo, *conflictPair, setOcc,
                                          waitOcc)) {
-      if (!insertExtraConflictPair(extraSetOcc, extraWaitOcc, parentOcc,
-                                   /*couldNotRun=*/false)) {
+      if (!insertExtraConflictPairOnScopes(extraSetOcc, extraWaitOcc,
+                                           setParentOcc, waitParentOcc,
+                                           couldNotRun)) {
         return nullptr;
       }
     }
@@ -2452,9 +2762,11 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
 
   // add created conflict-pairs to the list of chosen-conflicts
   insertConflictPair(std::move(conflictPair));
-  for (auto &[extraConflictPair, parentScope] : extraConflictPairs) {
-    insertConflictPair(std::move(extraConflictPair), parentScope);
+  for (auto &extraConflictPair : extraConflictPairs) {
+    insertConflictPair(std::move(extraConflictPair));
   }
+  for (auto &extraConflictPair : poolExtraConflictPairs)
+    insertConflictPair(std::move(extraConflictPair));
   return newConflictPair;
 }
 
@@ -2465,6 +2777,8 @@ ConflictPair *SyncSolverBase::handleBarrierConflict(
   auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
   auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
+  if (checkBufferPoolCoveredConflict(rwOp1, rwOp2, corePipeSrc, corePipeDst))
+    return nullptr;
 
   assert(corePipeSrc == corePipeDst);
   if (corePipeSrc.pipe == hivm::PIPE::PIPE_S) {
@@ -2546,6 +2860,8 @@ ConflictPair *SyncSolverBase::handleUnitFlagConflict(
   auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
   auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
+  if (checkBufferPoolCoveredConflict(rwOp1, rwOp2, corePipeSrc, corePipeDst))
+    return nullptr;
   assert(corePipeSrc != corePipeDst);
 
   auto *setOcc = occ1;
@@ -2773,9 +3089,17 @@ bool SyncSolverBase::checkMergeable(Scope *scopeOp, CorePipeInfo corePipeSrc,
     }
   }
   if (auto *conditionOp = llvm::dyn_cast<Condition>(scopeOp)) {
-    return checkMergeable(conditionOp->getTrueScope(), corePipeSrc, corePipeDst,
-                          eventId, true) &&
-           checkMergeable(conditionOp->getFalseScope(), corePipeSrc,
+    if (!checkMergeable(conditionOp->getTrueScope(), corePipeSrc, corePipeDst,
+                        eventId, true))
+      return false;
+
+    // Support hoisting backward events for an if without an else branch
+    // directly inside a loop body: for { if (cond) { inner loop } }.
+    if (conditionOp->isFalseScopeSynthetic && conditionOp->parentOp &&
+        isa_and_present<Loop>(conditionOp->parentOp->parentOp))
+      return true;
+
+    return checkMergeable(conditionOp->getFalseScope(), corePipeSrc,
                           corePipeDst, eventId, true);
   }
   if (auto *loopOp = llvm::dyn_cast<Loop>(scopeOp)) {
@@ -2948,6 +3272,14 @@ void SyncSolverBase::mergeBackwardSyncPairs(SyncMap &syncMapBefore,
 void SyncSolverBase::calcAllEventIds() {
   for (auto &[pipes, eventIdSolver] : eventIdSolver) {
     assert(eventIdSolver != nullptr);
+    // Explicit pool IDs may have reserved holes. Keep this bank's full range.
+    if (bufferPoolSync.managesEventIds(std::get<0>(pipes),
+                                       std::get<1>(pipes))) {
+      eventIdSolver->calcEventIds();
+      eventIdSolver->clearActionStack();
+      assert(eventIdSolver->isColorable());
+      continue;
+    }
     [[maybe_unused]] auto result =
         eventIdSolver->shrinkEventIdMaxToEventIdNum();
     assert(llvm::succeeded(result));
@@ -2960,6 +3292,8 @@ SyncBeforeAfterMap SyncSolverBase::getBeforeAfterSyncMaps() {
   calcAllEventIds();
   collectUnitFlagGroupIds();
   SyncMap syncMapBefore, syncMapAfter;
+  DenseSet<std::tuple<OperationBase *, EventIdNode *, Value, unsigned>>
+      poolEndpoints;
   for (auto *conflictPair : getAllChosenConflictPairs()) {
     if (conflictPair->isUseless) {
       continue;
@@ -2992,6 +3326,19 @@ SyncBeforeAfterMap SyncSolverBase::getBeforeAfterSyncMaps() {
       }
       setOp->eventIdInfo = conflictPair->eventIdInfo;
       waitOp->eventIdInfo = conflictPair->eventIdInfo;
+      bool emitSet = true, emitWait = true;
+      if (const auto &pool = conflictPair->eventIdInfo.bufferPoolInfo) {
+        setOp->eventIdInfo.bufferSlot = pool->setSlot;
+        waitOp->eventIdInfo.bufferSlot = pool->waitSlot;
+        emitSet = poolEndpoints
+                      .insert({conflictPair->setOp, conflictPair->eventIdNode,
+                               pool->setSlot, true})
+                      .second;
+        emitWait = poolEndpoints
+                       .insert({conflictPair->waitOp, conflictPair->eventIdNode,
+                                pool->waitSlot, false})
+                       .second;
+      }
       setOp->checkLastIter = conflictPair->setOnLastIterOnly;
       waitOp->checkFirstIter = conflictPair->waitOnFirstIterOnly;
       LLVM_DEBUG({
@@ -2999,14 +3346,14 @@ SyncBeforeAfterMap SyncSolverBase::getBeforeAfterSyncMaps() {
         waitOp->debugId = conflictPair->id;
       });
       assert(setOp != nullptr && waitOp != nullptr);
-      if (conflictPair->mirrorSetIfOcc != nullptr) {
+      if (emitSet && conflictPair->mirrorSetIfOcc != nullptr) {
         auto setMirror =
             setOp->clone(conflictPair->mirrorSetIfOcc->op->op,
                          conflictPair->mirrorSetIfOcc->op->parentOp);
         syncMapAfter[conflictPair->mirrorSetIfOcc->op].push_back(
             std::move(setMirror));
       }
-      if (conflictPair->mirrorWaitIfOcc != nullptr) {
+      if (emitWait && conflictPair->mirrorWaitIfOcc != nullptr) {
         auto waitMirror =
             waitOp->clone(conflictPair->mirrorWaitIfOcc->op->op,
                           conflictPair->mirrorWaitIfOcc->op->parentOp);
@@ -3014,8 +3361,10 @@ SyncBeforeAfterMap SyncSolverBase::getBeforeAfterSyncMaps() {
             std::move(waitMirror));
       }
 
-      syncMapAfter[conflictPair->setOp].push_back(std::move(setOp));
-      syncMapBefore[conflictPair->waitOp].push_front(std::move(waitOp));
+      if (emitSet)
+        syncMapAfter[conflictPair->setOp].push_back(std::move(setOp));
+      if (emitWait)
+        syncMapBefore[conflictPair->waitOp].push_front(std::move(waitOp));
     }
   }
 
@@ -3237,6 +3586,9 @@ llvm::LogicalResult SyncSolverBase::runSolver(bool enableOpts1,
 
     reset();
     insertMergedBackwardSyncPairs();
+    processBufferPoolDependencies();
+    if (bufferPoolSyncFailed)
+      return failure();
     processOrders();
 
     if (llvm::succeeded(tryMovingOutBackwardSyncPairsToOuterLoops())) {
@@ -3279,6 +3631,9 @@ llvm::LogicalResult SyncSolverBase::runSolver(bool enableOpts1,
 
   reset();
   insertMergedBackwardSyncPairs();
+  processBufferPoolDependencies();
+  if (bufferPoolSyncFailed)
+    return failure();
   processOrders();
 
   return llvm::success(runNum < maxRunNum);
@@ -3302,15 +3657,17 @@ void SyncSolverBase::solve() {
     solveBlockAllMode();
     return;
   }
-  if (llvm::succeeded(runSolver())) {
+  if (llvm::succeeded(runSolver()) || bufferPoolSyncFailed) {
     return;
   }
   if (!options.isTestMode()) {
-    if (llvm::succeeded(runSolver(/*enableOpts1=*/false))) {
+    if (llvm::succeeded(runSolver(/*enableOpts1=*/false)) ||
+        bufferPoolSyncFailed) {
       return;
     }
     if (llvm::succeeded(
-            runSolver(/*enableOpts1=*/false, /*enableOpts2=*/false))) {
+            runSolver(/*enableOpts1=*/false, /*enableOpts2=*/false)) ||
+        bufferPoolSyncFailed) {
       return;
     }
   }

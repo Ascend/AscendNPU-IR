@@ -21,7 +21,7 @@ if(Python3_Interpreter_FOUND)
   set(SKEW_SHAPE_TABLE_TARGET BiShengIRSkewShapeTable)
 else()
   file(WRITE ${SKEW_SHAPE_TABLE}
-       "namespace {\nconstexpr unsigned kSpanKeyCount = 0;\nconstexpr uint64_t kSpanKeys[kSpanKeyCount] = {0ULL};\n}\n")
+       "namespace {\nconstexpr unsigned kSpanKeyCount = 0;\nconstexpr uint64_t kSpanKeys[1] = {0ULL};\nconstexpr unsigned kSkipBindKeyCount = 0;\nconstexpr uint64_t kSkipBindKeys[1] = {0ULL};\n}\n")
 endif()
 
 file(GLOB HIVM_FLATTEN ${CMAKE_CURRENT_SOURCE_DIR}/FlattenInterface/*.cpp)
@@ -37,6 +37,18 @@ file(GLOB HIVM_VECTOR_BASE ${CMAKE_CURRENT_SOURCE_DIR}/VectorOpBase/*.cpp)
 file(GLOB_RECURSE HIVM_CONTRACT ${CMAKE_CURRENT_SOURCE_DIR}/Contracts/*.cpp)
 file(GLOB HIVM_CANONICALIZATIONS ${CMAKE_CURRENT_SOURCE_DIR}/Canonicalizations/*.cpp)
 file(GLOB HIVM_CUSTOM_OP ${CMAKE_CURRENT_SOURCE_DIR}/CustomOp/*.cpp)
+
+# Standalone IR builds never configure lib/Target. Compile the CubeLoad
+# query into this dialect there, and link BiShengIRNPUCubeLoadCapability
+# in the normal build.
+set(CUBELOAD_CAPABILITY_SOURCES)
+set(CUBELOAD_CAPABILITY_LIBS)
+if(BISHENGIR_BUILD_STANDALONE_IR_ONLY)
+  list(APPEND CUBELOAD_CAPABILITY_SOURCES
+       ../../../Target/NPU/DMA/CubeLoad/CubeLoadCapability.cpp)
+else()
+  list(APPEND CUBELOAD_CAPABILITY_LIBS BiShengIRNPUCubeLoadCapability)
+endif()
 
 add_bishengir_dialect_library(BiShengIRHIVMDialect
   ${HIVM_FLATTEN}
@@ -74,6 +86,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   ../Utils/MultiBufferLoopAdapter.cpp
   ../Utils/WorklistBuilder.cpp
   ../Utils/MemrefAliasAnalysisState.cpp
+  ${CUBELOAD_CAPABILITY_SOURCES}
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM
@@ -93,6 +106,8 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   BiShengIRHIVMVectorOpsIncGen
   BiShengIRHIVMSynchronizationOpsIncGen
   BiShengIRScopeIncGen
+  BiShengIRCubeLoadCapabilityIncGen
+  BiShengIRCubeLoadCapabilityBindingIncGen
 
   LINK_LIBS PUBLIC
   BiShengIRAnnotationDialect
@@ -113,6 +128,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   MLIRSCFDialect
   MLIRTransformUtils
   MLIRTensorDialect
+  MLIRTensorUtils
   MLIRValueBoundsOpInterface
   MLIRVectorDialect
   MLIRViewLikeInterface
@@ -120,6 +136,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   BiShengIRDialectUtils
   BiShengIRHACCDialect
   BiShengIRHACCUtils
+  ${CUBELOAD_CAPABILITY_LIBS}
 )
 
 target_include_directories(BiShengIRHIVMDialect PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

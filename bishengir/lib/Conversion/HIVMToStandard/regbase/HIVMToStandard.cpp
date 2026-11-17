@@ -29,11 +29,13 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
@@ -390,6 +392,402 @@ static SmallVector<Value> reduceMemrefsToNestedFor(PatternRewriter &rewriter,
 // Patterns to convert a HIVMOp to func.call @external library
 // implementation.
 //===----------------------------------------------------------------------===//
+class L12L0OpToLibraryCallPattern : public OpRewritePattern<hivm::L12L0Op> {
+public:
+  using OpRewritePattern<hivm::L12L0Op>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(L12L0Op op,
+                                PatternRewriter &rewriter) const final {
+    // RegBase also includes later architectures. This wrapper is built only
+    // into the A5/c310 library and must not fall back to a membase symbol.
+    if (!hacc::utils::isAscend950(op->getParentOfType<ModuleOp>()))
+      return op.emitOpError("RegBase l12l0 currently supports only A5 targets");
+    if (op->hasAttr("actual_batch"))
+      return op.emitOpError("A5 l12l0 does not support actual_batch");
+
+    auto src = dyn_cast<MemRefType>(op.getSrc().getType());
+    auto dst = dyn_cast<MemRefType>(op.getDst().getType());
+    if (!src || !dst || src.getRank() != 4 || dst.getRank() != 4 ||
+        !src.hasStaticShape() || !dst.hasStaticShape())
+      return op.emitOpError("A5 l12l0 requires static rank-4 physical memrefs");
+    if (getOptionalHIVMAddressSpace(src) != AddressSpace::L1 ||
+        (!op.isToL0A() && !op.isToL0B()))
+      return op.emitOpError("A5 l12l0 requires cbuf to ca/cb address spaces");
+    Type elem = src.getElementType();
+    if (elem != dst.getElementType() ||
+        !(elem.isF16() || elem.isBF16() || elem.isF32()))
+      return op.emitOpError(
+          "A5 l12l0 requires matching f16, bf16 or f32 types");
+
+    const int64_t elemBytes = elem.getIntOrFloatBitWidth() / 8;
+    const int64_t c0 = 32 / elemBytes;
+    if (failed(verifyLayout(op, src, c0, 512 * 1024 / elemBytes)) ||
+        failed(verifyLayout(op, dst, c0, 64 * 1024 / elemBytes)))
+      return failure();
+
+    // All L1 descriptors use physical [outer, inner, 16, C0] order.
+    // Transposition changes its interpretation from zN to nZ, not its rank.
+    bool transposed = op.getIsTransposed();
+    int64_t srcRows =
+        transposed ? src.getDimSize(0) * c0 : src.getDimSize(1) * 16;
+    int64_t srcCols =
+        transposed ? src.getDimSize(1) * 16 : src.getDimSize(0) * c0;
+    int64_t srcK = op.isToL0A() ? srcCols : srcRows;
+    int64_t srcMN = op.isToL0A() ? srcRows : srcCols;
+    int64_t idx = op.getKPartIdxAttr().getInt();
+    int64_t part = op.getKPartAttr().getInt();
+    int64_t ceil = op.getKPartCeilAttr().getInt();
+    int64_t loops = op.getKPartLoopAttr().getInt();
+    int64_t actual = op.getKPartActualAttr().getInt();
+    int64_t mn = op.getMAttr().getInt();
+    // Bound values before multiplication/rounding, including malformed i64
+    // attributes. A partial final K tile reads the padded source fractals.
+    if (idx < 0 || loops <= idx || part <= 0 || part > 512 * 1024 / elemBytes ||
+        loops > (srcK + part - 1) / part || part % 16 != 0 || actual <= 0 ||
+        actual > part || ceil != (actual + 15) / 16 * 16 ||
+        (idx != loops - 1 && actual != part) || mn <= 0 || mn % 16 != 0 ||
+        mn > srcMN || idx > srcK / part || ceil > srcK - idx * part)
+      return op.emitOpError("invalid A5 l12l0 K partition or M/N extent");
+    // A5 L0A=zN and L0B=nZ both have K as physical dimension zero.
+    if (ceil > dst.getDimSize(0) * c0 || mn > dst.getDimSize(1) * 16)
+      return op.emitOpError("A5 l12l0 destination is too small for the tile");
+
+    SmallVector<Value> libParams = {op.getSrc(), op.getDst()};
+    for (int64_t value : {idx, part, ceil, loops, actual, mn})
+      libParams.push_back(rewriter.create<arith::ConstantIntOp>(
+          op.getLoc(), value, /*width=*/64));
+    // L12L0Op has no OpWithLibraryFunction model. Match the A5 template
+    // exports using the destination space and element type validated above.
+    std::string libName = "l12l0_cbuf_to_";
+    libName += op.isToL0A() ? "ca_" : "cb_";
+    libName += elem.isF16() ? "half" : (elem.isBF16() ? "bfloat16_t" : "float");
+    if (transposed)
+      libName += "_transpose";
+    replaceWithLibCall(rewriter, op, libName, libParams, {});
+    return success();
+  }
+
+private:
+  static LogicalResult verifyLayout(L12L0Op op, MemRefType type, int64_t c0,
+                                    int64_t capacity) {
+    if (type.getDimSize(0) <= 0 || type.getDimSize(1) <= 0 ||
+        type.getDimSize(0) > capacity || type.getDimSize(1) > capacity ||
+        type.getDimSize(2) != 16 || type.getDimSize(3) != c0)
+      return op.emitOpError("A5 l12l0 expects physical [outer, inner, 16, C0]");
+    SmallVector<int64_t> strides;
+    int64_t offset;
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+    if (failed(getStridesAndOffset(type, strides, offset)))
+#else
+    if (failed(type.getStridesAndOffset(strides, offset)))
+#endif
+      return op.emitOpError("A5 l12l0 requires strided physical memrefs");
+    const int64_t fractal = 16 * c0;
+    // Only the outer stride can contain a parent-view gap. Inner fractals
+    // must be dense; the CATLASS LoadData2D specialization cannot encode
+    // arbitrary inner striding. Bound the span to the physical memory size.
+    if (strides[3] != 1 || strides[2] != c0 || strides[1] != fractal ||
+        strides[0] < type.getDimSize(1) * fractal || strides[0] > capacity ||
+        strides[0] % fractal != 0 ||
+        type.getDimSize(0) - 1 >
+            (capacity - type.getDimSize(1) * fractal) / strides[0])
+      return op.emitOpError("unsupported A5 l12l0 physical strides or span");
+    int64_t span =
+        (type.getDimSize(0) - 1) * strides[0] + type.getDimSize(1) * fractal;
+    if (!ShapedType::isDynamic(offset) &&
+        (offset < 0 || offset % fractal != 0 || offset > capacity - span))
+      return op.emitOpError("A5 l12l0 offset must be 512-byte aligned and fit "
+                            "the memory space");
+    // Dynamic offsets are checked against the effective hardware address
+    // by the template, before narrowing it to LocalTensor's uint32_t address.
+    return success();
+  }
+};
+
+class L12BTOpToLibraryCallPattern : public OpRewritePattern<hivm::L12BTOp> {
+public:
+  using OpRewritePattern<hivm::L12BTOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(L12BTOp op,
+                                PatternRewriter &rewriter) const final {
+    if (!hacc::utils::isAscend950(op->getParentOfType<ModuleOp>()))
+      return op.emitOpError("RegBase l12bt currently supports only A5 targets");
+    auto src = dyn_cast<MemRefType>(op.getSrc().getType());
+    auto dst = dyn_cast<MemRefType>(op.getDst().getType());
+    if (!src || !dst || getOptionalHIVMAddressSpace(src) != AddressSpace::L1 ||
+        getOptionalHIVMAddressSpace(dst) != AddressSpace::BiasBUF)
+      return op.emitOpError("A5 l12bt requires cbuf and biasbuf memrefs");
+
+    Type srcElem = src.getElementType();
+    Type dstElem = dst.getElementType();
+    std::string types;
+    // BT holds accumulator elements. Do not select the same-type half/bf16
+    // DataCopy overload: its footprint is not this 32-bit BT contract.
+    if (dstElem.isF32() && srcElem.isF16())
+      types = "half_to_float";
+    else if (dstElem.isF32() && srcElem.isBF16())
+      types = "bfloat16_t_to_float";
+    else if (dstElem.isF32() && srcElem.isF32())
+      types = "float_to_float";
+    else if (dstElem.isSignlessInteger(32) && srcElem.isSignlessInteger(32))
+      types = "int32_t_to_int32_t";
+    else
+      return op.emitOpError(
+          "A5 l12bt supports only f16/bf16/f32 to f32, or i32 to i32");
+
+    // The frontend can emit index_cast of an integer constant for n.
+    Value nValue = op.getN();
+    if (auto cast = nValue.getDefiningOp<arith::IndexCastOp>())
+      nValue = cast.getIn();
+    APInt nBits;
+    if (!matchPattern(nValue, m_ConstantInt(&nBits)))
+      return op.emitOpError("A5 l12bt requires a constant n");
+    if (nBits.isNegative() || nBits.getLimitedValue() == 0 ||
+        nBits.getLimitedValue() > 1024)
+      return op.emitOpError("A5 l12bt requires n in [1, 1024] elements");
+    int64_t n = nBits.getZExtValue();
+    // CATLASS uses 32-byte source blocks, with an even blockLen for B32.
+    // All four supported pairs therefore transfer roundUp(n, 16) elements.
+    int64_t paddedN = (n + 15) / 16 * 16;
+    int64_t srcOffset, dstOffset;
+    if (failed(verifyVector(op, src, paddedN, /*alignmentBytes=*/32,
+                            /*capacityBytes=*/512 * 1024, srcOffset)) ||
+        failed(verifyVector(op, dst, paddedN, /*alignmentBytes=*/64,
+                            /*capacityBytes=*/4096, dstOffset)))
+      return failure();
+
+    Location loc = op.getLoc();
+    Value srcVector = op.getSrc();
+    if (src.getRank() > 1) {
+      ReassociationIndices indices;
+      for (int64_t i = 0; i < src.getRank(); ++i)
+        indices.push_back(i);
+      SmallVector<ReassociationIndices> groups{indices};
+      auto vectorType =
+          memref::CollapseShapeOp::computeCollapsedType(src, groups);
+      srcVector = rewriter.create<memref::CollapseShapeOp>(loc, vectorType,
+                                                           srcVector, groups);
+    }
+
+    // BiasBUF is annotation-only (LLVM address space 12), not a CCE pointer
+    // qualifier. Pass its effective BYTE address instead of inventing __bt__.
+    // extract_aligned_pointer excludes the element offset; add it exactly once.
+    Value baseIndex = rewriter.create<memref::ExtractAlignedPointerAsIndexOp>(
+        loc, op.getDst());
+    Value base = rewriter.create<arith::IndexCastUIOp>(
+        loc, rewriter.getI64Type(), baseIndex);
+    auto i64 = [&](int64_t value) -> Value {
+      return rewriter.create<arith::ConstantIntOp>(loc, value, 64);
+    };
+    // Check before narrowing in the template. Even an overflowing add cannot
+    // turn an invalid base into a valid BT address: select an invalid sentinel.
+    int64_t offsetBytes = dstOffset * 4;
+    Value inRange = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::ule, base,
+        i64(4096 - offsetBytes - dst.getDimSize(dst.getRank() - 1) * 4));
+    Value address = rewriter.create<arith::AddIOp>(loc, base, i64(offsetBytes));
+    Value checkedAddress =
+        rewriter.create<arith::SelectOp>(loc, inRange, address, i64(-1));
+    // A5 uses a different ABI from the existing membase descriptor/descriptor/
+    // index call. Explicitly choose a different symbol here; leave A3 intact.
+    replaceWithLibCall(rewriter, op, "l12bt_a5_" + types,
+                       {srcVector, checkedAddress, i64(n)}, {});
+    return success();
+  }
+
+private:
+  static LogicalResult verifyVector(L12BTOp op, MemRefType type,
+                                    int64_t paddedN, int64_t alignmentBytes,
+                                    int64_t capacityBytes, int64_t &offset) {
+    if (!type.hasStaticShape() || type.getRank() < 1 || type.getRank() > 4)
+      return op.emitOpError(
+          "A5 l12bt requires static rank-1 to rank-4 vectors");
+    for (int64_t i = 0; i < type.getRank() - 1; ++i)
+      if (type.getDimSize(i) != 1)
+        return op.emitOpError("A5 l12bt requires singleton leading dimensions");
+    SmallVector<int64_t> strides;
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+    if (failed(getStridesAndOffset(type, strides, offset)))
+#else
+    if (failed(type.getStridesAndOffset(strides, offset)))
+#endif
+      return op.emitOpError("A5 l12bt requires strided memrefs");
+    // Parent strides on singleton dimensions never participate in the copy.
+    // VectorLayout itself has unit stride and cannot gather a strided vector.
+    if (strides.back() != 1 || llvm::any_of(strides, [](int64_t stride) {
+          return ShapedType::isDynamic(stride) || stride <= 0;
+        }))
+      return op.emitOpError("A5 l12bt requires static positive strides and "
+                            "unit innermost stride");
+    if (ShapedType::isDynamic(offset))
+      return op.emitOpError("A5 l12bt requires a static memref offset");
+    int64_t elemBytes = type.getElementType().getIntOrFloatBitWidth() / 8;
+    int64_t size = type.getDimSize(type.getRank() - 1);
+    int64_t capacity = capacityBytes / elemBytes;
+    if (size < paddedN)
+      return op.emitOpError("A5 l12bt requires source and destination storage "
+                            "for roundUp(n, 16) elements");
+    if (size > capacity || offset < 0 || offset > capacity - size ||
+        offset % (alignmentBytes / elemBytes) != 0)
+      return op.emitOpError(
+          "A5 l12bt offset/extent exceeds the memory space or "
+          "violates L1 32-byte / BT 64-byte alignment");
+    return success();
+  }
+};
+
+// The independent L0 instruction has no L1 scheduling or implicit storage.
+class MmadL0OpToLibraryCallPattern : public OpRewritePattern<MmadL0Op> {
+public:
+  using OpRewritePattern<MmadL0Op>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(MmadL0Op op,
+                                PatternRewriter &rewriter) const final {
+    if (op->hasAttr("actual_batch") || op.getEnable_HF32() || op.getEnable_I4())
+      return op.emitOpError("A5 mmadL0 does not support batch, HF32 or I4");
+    if (!op.getDisableGemv() ||
+        !matchPattern(op.getKDirectionAlign(), m_Zero()))
+      return op.emitOpError("A5 mmadL0 requires disable_gemv = true and "
+                            "constant k_direction_align = false");
+    if ((!op.getBias() && !matchPattern(op.getIsWithBias(), m_Zero())) ||
+        (op.getBias() && !matchPattern(op.getIsWithBias(), m_One())))
+      return op.emitOpError("A5 mmadL0 requires constant is_with_bias "
+                            "matching the explicit bias operand");
+    if (!op.getUnitFlagCond().empty() || op.getUnitFlagGroupIdAttr())
+      return op.emitOpError("A5 mmadL0 supports only unconditional DISABLED "
+                            "unit flag without a group");
+    if (auto modes = op.getUnitFlagModeAttr())
+      for (Attribute mode : modes)
+        if (cast<UnitFlagAttr>(mode).getUnitFlag() != UNIT_FLAG::DISABLED)
+          return op.emitOpError("A5 mmadL0 supports only DISABLED unit flag");
+
+    int64_t m, k, n;
+    if (failed(getExtent(op, op.getRealM(), m)) ||
+        failed(getExtent(op, op.getRealK(), k)) ||
+        failed(getExtent(op, op.getRealN(), n)))
+      return failure();
+    auto a = dyn_cast<MemRefType>(op.getA().getType());
+    auto b = dyn_cast<MemRefType>(op.getB().getType());
+    auto c = dyn_cast<MemRefType>(op.getC().getType());
+    if (!a || !b || !c || op->getNumResults() != 0)
+      return op.emitOpError("A5 mmadL0 requires buffer semantics");
+    if (getOptionalHIVMAddressSpace(a) != AddressSpace::L0A ||
+        getOptionalHIVMAddressSpace(b) != AddressSpace::L0B ||
+        getOptionalHIVMAddressSpace(c) != AddressSpace::L0C)
+      return op.emitOpError("A5 mmadL0 requires ca/cb/cc address spaces");
+    Type operandType = a.getElementType();
+    if (!(operandType.isF16() || operandType.isBF16()) ||
+        operandType != b.getElementType() || !c.getElementType().isF32())
+      return op.emitOpError(
+          "A5 mmadL0 requires matching f16 or bf16 inputs and "
+          "an f32 accumulator");
+
+    int64_t offset;
+    // TileMmadTla uses .data() and M/N/K, not layout strides. Require exact
+    // compact physical tiles; a capacity-sized or parent-strided view cannot
+    // be made correct by merely attaching a different CATLASS layout.
+    if (failed(verifyStorage(op, a, {k / 16, m / 16, 16, 16}, 64 * 1024, 512,
+                             offset)) ||
+        failed(verifyStorage(op, b, {k / 16, n / 16, 16, 16}, 64 * 1024, 512,
+                             offset)) ||
+        failed(verifyStorage(op, c, {n / 16, m / 16, 16, 16}, 256 * 1024, 1024,
+                             offset)))
+      return failure();
+    int64_t biasOffset = 0;
+    if (op.getBias()) {
+      auto bias = dyn_cast<MemRefType>(op.getBias().getType());
+      if (!bias || !bias.getElementType().isF32() ||
+          getOptionalHIVMAddressSpace(bias) != AddressSpace::BiasBUF)
+        return op.emitOpError("A5 mmadL0 bias requires an f32 biasbuf memref");
+      if (failed(verifyStorage(op, bias, {n}, 4096, 64, biasOffset)))
+        return failure();
+      // Unlike L0 descriptors, BT crosses the library boundary as a byte
+      // address, using its statically verified offset exactly once.
+      if (ShapedType::isDynamic(biasOffset))
+        return op.emitOpError("A5 mmadL0 requires a static BT offset");
+    }
+
+    Location loc = op.getLoc();
+    auto i64 = [&](int64_t value) -> Value {
+      return rewriter.create<arith::ConstantIntOp>(loc, value, 64);
+    };
+    SmallVector<Value> params{op.getA(), op.getB(), op.getC()};
+    std::string name = operandType.isBF16() ? "mmadl0_a5_bfloat16_t_to_float"
+                                            : "mmadl0_a5_half_to_float";
+    if (op.getBias()) {
+      Value baseIndex = rewriter.create<memref::ExtractAlignedPointerAsIndexOp>(
+          loc, op.getBias());
+      Value base = rewriter.create<arith::IndexCastUIOp>(
+          loc, rewriter.getI64Type(), baseIndex);
+      Value inRange =
+          rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ule, base,
+                                         i64(4096 - biasOffset * 4 - n * 4));
+      Value address =
+          rewriter.create<arith::AddIOp>(loc, base, i64(biasOffset * 4));
+      params.push_back(
+          rewriter.create<arith::SelectOp>(loc, inRange, address, i64(-1)));
+      name += "_bias";
+    }
+    // Explicit i64 scalars avoid dependence on the index width and C++ bool
+    // extension conventions. ABI order is A, B, C, [BT], M, K, N, [clear].
+    llvm::append_range(params, SmallVector<Value>{i64(m), i64(k), i64(n)});
+    if (!op.getBias())
+      params.push_back(rewriter.create<arith::ExtUIOp>(
+          loc, rewriter.getI64Type(), op.getInitCondition()));
+    replaceWithLibCall(rewriter, op, name, params, {});
+    return success();
+  }
+
+private:
+  static LogicalResult getExtent(MmadL0Op op, Value value, int64_t &extent) {
+    if (auto cast = value.getDefiningOp<arith::IndexCastOp>())
+      value = cast.getIn();
+    APInt bits;
+    if (!matchPattern(value, m_ConstantInt(&bits)))
+      return op.emitOpError("A5 mmadL0 requires constant M/K/N");
+    // With f16 and all dimensions >= 16, a 64 KiB L0A/B bounds each
+    // dimension by 2048, before checking the full product below.
+    if (bits.isNegative() || bits.getLimitedValue() == 0 ||
+        bits.getLimitedValue() > 2048 || bits.getLimitedValue() % 16 != 0)
+      return op.emitOpError("A5 mmadL0 requires M/K/N in [16, 2048] "
+                            "and divisible by 16");
+    extent = bits.getZExtValue();
+    return success();
+  }
+
+  static LogicalResult verifyStorage(MmadL0Op op, MemRefType type,
+                                     ArrayRef<int64_t> shape,
+                                     int64_t capacityBytes,
+                                     int64_t alignmentBytes, int64_t &offset) {
+    if (type.getShape() != shape)
+      return op.emitOpError("A5 mmadL0 requires exact static physical tile "
+                            "shapes: A=[K/16,M/16,16,16], "
+                            "B=[K/16,N/16,16,16], C=[N/16,M/16,16,16], BT=[N]");
+    SmallVector<int64_t> strides;
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+    if (failed(getStridesAndOffset(type, strides, offset)))
+#else
+    if (failed(type.getStridesAndOffset(strides, offset)))
+#endif
+      return op.emitOpError("A5 mmadL0 requires strided physical memrefs");
+    int64_t size = 1;
+    for (int64_t i = type.getRank() - 1; i >= 0; --i) {
+      if (strides[i] != size)
+        return op.emitOpError("A5 mmadL0 requires compact physical strides");
+      size *= shape[i];
+    }
+    int64_t bytes = type.getElementType().getIntOrFloatBitWidth() / 8;
+    if (size > capacityBytes / bytes ||
+        (!ShapedType::isDynamic(offset) &&
+         (offset < 0 || offset > capacityBytes / bytes - size ||
+          offset % (alignmentBytes / bytes) != 0)))
+      return op.emitOpError("A5 mmadL0 offset/extent exceeds capacity or "
+                            "violates L0A/B 512-byte, L0C 1024-byte, "
+                            "BT 64-byte alignment");
+    return success();
+  }
+};
+
 class MmadL1OpToLibraryCallPattern : public OpRewritePattern<hivm::MmadL1Op> {
 public:
   using OpRewritePattern<hivm::MmadL1Op>::OpRewritePattern;
@@ -1102,6 +1500,29 @@ public:
             .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
 
     if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>) {
+      if (!op.isSpanPaddedLoad() && op.getBroadcastAxesAttr() &&
+          ((op.getPadMode() &&
+            op.getPadModeAttr().getPadmode() != PadMode::PadNull) ||
+           op.getPadValue() || op.getLeftPaddingNum() ||
+           op.getRightPaddingNum()))
+        return op.emitOpError(
+            "broadcast_axes cannot be combined with padding in the legacy load form");
+      if (op.isSpanPaddedLoad()) {
+        // The span templates are instantiated for rank 2/3 only, and the
+        // element-type set they register excludes 64-bit types.
+        Type elementType = srcType.getElementType();
+        bool supportedType = elementType.isInteger(8) ||
+                             elementType.isInteger(16) ||
+                             elementType.isInteger(32) || elementType.isF16() ||
+                             elementType.isBF16() || elementType.isF32() ||
+                             elementType.isFloat8E4M3FN() ||
+                             elementType.isFloat8E5M2();
+        if ((rank != 2 && rank != 3) || !supportedType)
+          return op.emitOpError(
+              "span padding is only available for rank 2/3 loads of the "
+              "registered element types");
+        fnName += "_span";
+      }
       if (op->hasAttr(kDisableDCacheAttr) &&
           getHIVMAddressSpace(op.getSrc().getType()) == AddressSpace::GM &&
           getHIVMAddressSpace(op.getDst().getType()) == AddressSpace::UB)
@@ -1172,6 +1593,8 @@ private:
             : rewriter.create<arith::ConstantIndexOp>(op->getLoc(), 0)
                   .getResult();
     inputOperands.push_back(leftPaddingNum);
+    if (op.isSpanPaddedLoad())
+      inputOperands.push_back(op.getRightPaddingNum());
   }
   void addPadOperands(PatternRewriter &rewriter, CopyOpType op,
                       SmallVector<Value> &inputOperands,
@@ -1194,9 +1617,23 @@ private:
       padValue = op.getPadValue();
       Type elemType = getElementTypeOrSelf(op.getSrc().getType());
       if (isa<Float8E4M3FNType>(elemType) || isa<Float8E5M2Type>(elemType)) {
-        auto constantOp = rewriter.create<arith::ConstantOp>(
-            op.getLoc(), rewriter.getFloatAttr(rewriter.getF32Type(), 0.0));
-        padValue = constantOp.getResult();
+        bool isSpan = false;
+        if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>)
+          isSpan = op.isSpanPaddedLoad();
+        if (isSpan) {
+          // Preserve the already-converted FP8 value in the existing f32
+          // bit carrier. Do not numerically extend it or replace it with zero.
+          Value byte = rewriter.create<arith::BitcastOp>(
+              op.getLoc(), rewriter.getIntegerType(8), padValue);
+          Value bits = rewriter.create<arith::ExtUIOp>(
+              op.getLoc(), rewriter.getI32Type(), byte);
+          padValue = rewriter.create<arith::BitcastOp>(
+              op.getLoc(), rewriter.getF32Type(), bits);
+        } else {
+          // Default-anchor and non-span targets retain their existing ABI.
+          padValue = rewriter.create<arith::ConstantOp>(
+              op.getLoc(), rewriter.getF32FloatAttr(0.0));
+        }
       }
     } else {
       Type elemType = getElementTypeOrSelf(op.getSrc().getType());
@@ -1269,6 +1706,15 @@ private:
       }
       if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>) {
         addEvictionOperands(rewriter, op, inputOperands);
+        if (op.isSpanPaddedLoad()) {
+          uint32_t axes = 0;
+          if (auto attr = op.getBroadcastAxesAttr())
+            for (int64_t axis : attr.asArrayRef())
+              axes |= 1u << axis;
+          inputOperands.push_back(
+              this->constantI32(rewriter, op.getLoc(), axes));
+
+        }
       }
     }
     if constexpr (std::is_same_v<CopyOpType, hivm::StoreOp>) {
@@ -2133,10 +2579,10 @@ class CustomOpToLibraryCallPattern : public OpRewritePattern<CustomOpT> {
     } else {
       libParams.assign(op.getOperands().begin(), op.getOperands().end());
     }
-    replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation())
-                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       libParams, op.getResultTypes());
+    auto libCallName = cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    replaceWithLibCall(rewriter, op, libCallName, libParams,
+                       op.getResultTypes());
     return success();
   }
 };
@@ -2153,42 +2599,81 @@ class PlainOpToLibraryCallPattern : public OpRewritePattern<T> {
   }
 };
 
-// The pool is already planned; alloc/get return absolute byte addresses.
-template <typename OpTy>
-class TcbPoolOpToLibraryCallPattern : public OpRewritePattern<OpTy> {
+class TcbPoolInitOpToLibraryCallPattern
+    : public OpRewritePattern<TcbPoolInitOp> {
 public:
-  using OpRewritePattern<OpTy>::OpRewritePattern;
-  LogicalResult matchAndRewrite(OpTy op,
+  using OpRewritePattern<TcbPoolInitOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(TcbPoolInitOp op,
                                 PatternRewriter &rewriter) const final {
-    SmallVector<Value> operands{op.getMetadata()};
     auto i32 = [&](int64_t value) -> Value {
       return rewriter.create<arith::ConstantIntOp>(op.getLoc(), value, 32);
     };
-    std::string name;
-    if constexpr (std::is_same_v<OpTy, TcbPoolInitOp>) {
-      name = "tcb_pool_init";
-    } else if constexpr (std::is_same_v<OpTy, TcbPoolReleaseOp>) {
-      name = "tcb_pool_release";
-      operands.append({i32(op.getEntryOffset()), i32(op.getQueueDepth()),
-                       op.getSeq(), i32(op.getSlots())});
-    } else {
-      auto pointer = op.getPool().template getDefiningOp<PointerCastOp>();
-      if (!pointer || pointer.getAddrs().size() != 1)
-        return rewriter.notifyMatchFailure(
-            op, "expected a planned pool pointer_cast");
-      operands.append({pointer.getSingleAddr(), i32(op.getSlotBytes()),
-                       i32(op.getEntryOffset()), i32(op.getQueueDepth()),
-                       op.getSeq()});
-      if constexpr (std::is_same_v<OpTy, TcbPoolAllocOp>) {
-        name = "tcb_pool_alloc";
-        auto type = cast<MemRefType>(op.getPool().getType());
-        operands.append({i32(op.getSlots()),
-                         i32(type.getNumElements() / op.getSlotBytes())});
-      } else {
-        name = "tcb_pool_get_address";
-      }
-    }
-    replaceWithLibCall(rewriter, op, name, operands, op->getResultTypes());
+    SmallVector<Value> operands{op.getMetadata(),
+                                i32(op.getSlotBytes()),
+                                i32(op.getSlotCount()),
+                                i32(op.getSlotsPerBuffer()[0]),
+                                i32(op.getSlotsPerBuffer()[1]),
+                                i32(op.getSearchBegin()[0]),
+                                i32(op.getSearchBegin()[1]),
+                                i32(op.getSearchEnd()[0]),
+                                i32(op.getSearchEnd()[1]),
+                                i32(op.getFlagMask())};
+    replaceWithLibCall(rewriter, op, "tcb_pool_init", operands,
+                       op->getResultTypes());
+    return success();
+  }
+};
+
+// The pool is already planned; return its absolute byte address and flag ID.
+class TcbPoolAllocOpToLibraryCallPattern
+    : public OpRewritePattern<TcbPoolAllocOp> {
+public:
+  using OpRewritePattern<TcbPoolAllocOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(TcbPoolAllocOp op,
+                                PatternRewriter &rewriter) const final {
+    auto pointer = op.getPool().getDefiningOp<PointerCastOp>();
+    if (!pointer || pointer.getAddrs().size() != 1)
+      return rewriter.notifyMatchFailure(
+          op, "expected a planned pool pointer_cast");
+    Value segment =
+        rewriter.create<arith::ConstantIntOp>(op.getLoc(), op.getSegment(), 32);
+    SmallVector<Value> operands{op.getMetadata(), pointer.getSingleAddr(),
+                                segment};
+    replaceWithLibCall(rewriter, op, "tcb_pool_alloc", operands,
+                       op->getResultTypes());
+    return success();
+  }
+};
+
+// The pool is already planned; return its absolute byte address and flag ID.
+class TcbPoolGetOpToLibraryCallPattern : public OpRewritePattern<TcbPoolGetOp> {
+public:
+  using OpRewritePattern<TcbPoolGetOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(TcbPoolGetOp op,
+                                PatternRewriter &rewriter) const final {
+    auto pointer = op.getPool().getDefiningOp<PointerCastOp>();
+    if (!pointer || pointer.getAddrs().size() != 1)
+      return rewriter.notifyMatchFailure(
+          op, "expected a planned pool pointer_cast");
+    Value segment =
+        rewriter.create<arith::ConstantIntOp>(op.getLoc(), op.getSegment(), 32);
+    SmallVector<Value> operands{op.getMetadata(), pointer.getSingleAddr(),
+                                segment};
+    replaceWithLibCall(rewriter, op, "tcb_pool_get_address", operands,
+                       op->getResultTypes());
+    return success();
+  }
+};
+
+class TcbPoolReleaseOpToLibraryCallPattern
+    : public OpRewritePattern<TcbPoolReleaseOp> {
+public:
+  using OpRewritePattern<TcbPoolReleaseOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(TcbPoolReleaseOp op,
+                                PatternRewriter &rewriter) const final {
+    SmallVector<Value> operands{op.getMetadata()};
+    replaceWithLibCall(rewriter, op, "tcb_pool_release", operands,
+                       op->getResultTypes());
     return success();
   }
 };
@@ -2228,7 +2713,9 @@ public:
 void populateHIVMToStandardConversionPatternsRegBase(
     RewritePatternSet &patterns, bool isOpsAligned) {
   // clang-format off
-  patterns.add<MmadL1OpToLibraryCallPattern,
+  patterns.add<L12L0OpToLibraryCallPattern,
+               L12BTOpToLibraryCallPattern,
+               MmadL1OpToLibraryCallPattern,
                Conv1DL1OpToLibraryCallPattern,
                Conv2DL1OpToLibraryCallPattern,
                BatchMmadL1OpToLibraryCallPattern,
@@ -2283,10 +2770,10 @@ void populateHIVMToStandardConversionPatternsRegBase(
                VInterleaveOpToLibraryCallPattern,
                PlainOpToLibraryCallPattern<hivm::InitDebugOp>,
                PlainOpToLibraryCallPattern<hivm::FinishDebugOp>,
-               TcbPoolOpToLibraryCallPattern<hivm::TcbPoolInitOp>,
-               TcbPoolOpToLibraryCallPattern<hivm::TcbPoolAllocOp>,
-               TcbPoolOpToLibraryCallPattern<hivm::TcbPoolGetOp>,
-               TcbPoolOpToLibraryCallPattern<hivm::TcbPoolReleaseOp>,
+               TcbPoolInitOpToLibraryCallPattern,
+               TcbPoolAllocOpToLibraryCallPattern,
+               TcbPoolGetOpToLibraryCallPattern,
+               TcbPoolReleaseOpToLibraryCallPattern,
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockLockOp>,
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockUnlockOp>,
                SyncBlockOpToLibraryCallPattern<hivm::FreeLockVarOp>,
@@ -2320,7 +2807,10 @@ LogicalResult ConvertHIVMToStandardRegBasePass::runOnOperation(
   target.addLegalOp<hivm::PointerCastOp>();
   // Abstract Intrinsic Ops must be converted.
   // clang-format off
-  target.addIllegalOp<hivm::MmadL1Op,
+  target.addIllegalOp<hivm::L12L0Op,
+                      hivm::L12BTOp,
+                      hivm::MmadL0Op,
+                      hivm::MmadL1Op,
                       hivm::BatchMmadL1Op,
                       hivm::Conv1DL1Op,
                       hivm::Conv2DL1Op,
@@ -2397,6 +2887,10 @@ LogicalResult ConvertHIVMToStandardRegBasePass::runOnOperation(
 
   RewritePatternSet patterns(module->getContext());
   populateHIVMToStandardConversionPatternsRegBase(patterns, isOpsAligned);
+  // The standalone MMAD wrapper is exported only by the A5 template library.
+  // Keep the op illegal on other RegBase targets without selecting that ABI.
+  if (hacc::utils::isAscend950(module))
+    patterns.add<MmadL0OpToLibraryCallPattern>(patterns.getContext());
   if (failed(applyPartialConversion(module, target, std::move(patterns)))) {
     return failure();
   }

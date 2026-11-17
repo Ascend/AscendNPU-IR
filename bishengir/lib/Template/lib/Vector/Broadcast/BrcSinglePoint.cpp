@@ -20,20 +20,28 @@
 #include <type_traits>
 
 template <typename T>
-__aiv__ __attribute__((always_inline)) uint16_t merge_b8_to_u16(T src_val) {
-  static_assert((sizeof(T) == 1) &&
-                "Brc_scalar_core do not support this data type");
-  uint16_t val_low = ((uint16_t)((uint16_t)src_val << 8ULL)) >> 8ULL;
-  uint16_t dst_val = ((uint16_t)(val_low << 8ULL)) + val_low;
-
-  return dst_val;
-}
-
-template <typename T>
 __aiv__ __attribute__((always_inline)) void
 brc_scalar_core_1d(T src_val, __ubuf__ T *dst_ptr, int64_t count) {
-  static_assert((sizeof(T) == 2 || sizeof(T) == 4 || sizeof(T) == 8) &&
-                "Brc_scalar_core_1d do not support this data type");
+  static_assert(
+      (sizeof(T) == 1 || sizeof(T) == 2 || sizeof(T) == 4 || sizeof(T) == 8) &&
+      "Brc_scalar_core_1d do not support this data type");
+
+  // For 1 byte data type, merge the byte into both halves of a uint16 and
+  // broadcast the duplicated pair with the 16-bit vector_dup path.
+  if constexpr (sizeof(T) == 1) {
+    bool is_count_odd = (count & 1) == 1;
+    if (is_count_odd) {
+      // when count is odd, the last element will be reg_mov.
+      *(dst_ptr + count - 1) = src_val;
+      INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+    }
+    uint16_t src_u16 = merge_b8_to_u16<T>(src_val);
+    brc_scalar_core_1d<uint16_t>(src_u16, (__ubuf__ uint16_t *)dst_ptr,
+                                 count / 2);
+    if (is_count_odd) {
+      INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+    }
+  }
 
   if constexpr (sizeof(T) == 2 || sizeof(T) == 4) {
     INTRINSIC_NO_ARGS(set_mask_count);
@@ -52,11 +60,11 @@ brc_scalar_core_1d(T src_val, __ubuf__ T *dst_ptr, int64_t count) {
   // For 8 bytes data type, use broadcast_scalar_b64 to broadcast
   if constexpr (sizeof(T) == 8) {
     memref_t<__ubuf__ T, 1> dst_memref = {
-      dst_ptr,
-      dst_ptr,
-      0,       // offset
-      {count}, // sizes
-      {1}      // strides
+        dst_ptr,
+        dst_ptr,
+        0,       // offset
+        {count}, // sizes
+        {1}      // strides
     };
     broadcast_scalar_b64<T>(src_val, &dst_memref);
   }
@@ -439,6 +447,8 @@ REGISTE_BRC_SCALAR(2, int64_t);
 //===-------------------------------------------------------------------===//
 // Registe brc_scalar func
 //===-------------------------------------------------------------------===//
+REGISTE_BRC_SCALAR_CORE_1D(int8_t);
+REGISTE_BRC_SCALAR_CORE_1D(uint8_t);
 REGISTE_BRC_SCALAR_CORE_1D(int16_t);
 REGISTE_BRC_SCALAR_CORE_1D(uint16_t);
 REGISTE_BRC_SCALAR_CORE_1D(half);
@@ -447,6 +457,12 @@ REGISTE_BRC_SCALAR_CORE_1D(uint32_t);
 REGISTE_BRC_SCALAR_CORE_1D(float);
 REGISTE_BRC_SCALAR_CORE_1D(int64_t);
 REGISTE_BRC_SCALAR_CORE_1D(uint64_t);
+
+//===-------------------------------------------------------------------===//
+// Registe merge_b8_to_u16 func
+//===-------------------------------------------------------------------===//
+REGISTE_MERGE_B8_TO_U16(int8_t);
+REGISTE_MERGE_B8_TO_U16(uint8_t);
 
 //===-------------------------------------------------------------------===//
 // Vector broadcast scalar to 1d

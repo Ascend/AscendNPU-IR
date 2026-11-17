@@ -29,6 +29,7 @@
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/Support/LogicalResult.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
 #include <optional>
 
@@ -52,6 +53,87 @@ struct SyncBlockLockGuard {
                                 hivm::SyncBlockLockOrdering::Unordered);
   }
 };
+
+inline constexpr llvm::StringLiteral kAtomicAlreadySync = "already_sync";
+
+/// Unmatched `sync_block_lock` in this block, or in a block that contains an
+/// ancestor of `anchor`.
+inline bool isInsideSyncBlockCriticalRegion(Operation *anchor) {
+  for (Operation *current = anchor; current;) {
+    Block *block = current->getBlock();
+    if (!block)
+      return false;
+
+    int openLocks = 0;
+    bool found = false;
+    for (Operation &iter : *block) {
+      if (&iter == current) {
+        found = true;
+        break;
+      }
+      if (isa<hivm::SyncBlockLockOp>(iter))
+        ++openLocks;
+      else if (isa<hivm::SyncBlockUnlockOp>(iter) && openLocks > 0)
+        --openLocks;
+    }
+    if (!found)
+      return false;
+    if (openLocks > 0)
+      return true;
+    current = block->getParentOp();
+  }
+  return false;
+}
+
+inline Value getAtomicSnapshotBuffer(Operation *snapshotOp) {
+  if (auto copyOp = dyn_cast<memref::CopyOp>(snapshotOp))
+    return copyOp.getTarget();
+  if (auto loadOp = dyn_cast<hivm::LoadOp>(snapshotOp))
+    return loadOp.getDst();
+  return nullptr;
+}
+
+inline bool atomicSnapshotHasReturnedUsers(Operation *snapshotOp) {
+  Value buffer = getAtomicSnapshotBuffer(snapshotOp);
+  if (!buffer)
+    return false;
+  return llvm::range_size(buffer.getUsers()) > 1;
+}
+
+/// Preceding `memref.copy` or `hivm.load` of `gmTarget` whose destination is
+/// still used as the returned old GM value.
+inline Operation *findReturnedValueSnapshotOp(Operation *atomicOp,
+                                              Value gmTarget) {
+  for (Operation *op = atomicOp->getPrevNode(); op; op = op->getPrevNode()) {
+    if (auto copyOp = dyn_cast<memref::CopyOp>(op)) {
+      if (copyOp.getSource() == gmTarget)
+        return copyOp;
+    }
+    if (auto loadOp = dyn_cast<hivm::LoadOp>(op)) {
+      if (loadOp.getSrc() == gmTarget)
+        return loadOp;
+    }
+  }
+  return nullptr;
+}
+
+/// Where the critical section starts. A CAS result is the value loaded during
+/// decomposition, so the section starts at the op. A separate GM snapshot
+/// that is the returned value must be inside the same section.
+inline Operation *atomicSyncStart(Operation *atomicOp, Value gmTarget,
+                                  bool hasResult) {
+  if (!hasResult) {
+    if (Operation *snapshot = findReturnedValueSnapshotOp(atomicOp, gmTarget))
+      if (atomicSnapshotHasReturnedUsers(snapshot))
+        return snapshot;
+  }
+  return atomicOp;
+}
+
+inline bool atomicNeedsNewLock(Operation *atomicOp) {
+  return !atomicOp->hasAttr(kAtomicAlreadySync) &&
+         !isInsideSyncBlockCriticalRegion(atomicOp);
+}
 
 /// Static backing allocation for a GM destination that may be a dynamic
 /// subview or expand_shape.
@@ -353,7 +435,6 @@ struct NormalizeAtomicStoreElemwise : public OpRewritePattern<StoreOpTy> {
       return failure();
 
     Location loc = op->getLoc();
-    rewriter.setInsertionPointAfter(op);
 
     if (op.getDpsInputs().empty() || op.getDpsInits().empty())
       return rewriter.notifyMatchFailure(op, "expected store input and output");
@@ -364,6 +445,17 @@ struct NormalizeAtomicStoreElemwise : public OpRewritePattern<StoreOpTy> {
         dyn_cast<TypedValue<MemRefType>>(op.getDpsInits().front());
     if (!gmMemref)
       return rewriter.notifyMatchFailure(op, "expected memref store output");
+
+    Operation *syncStart = atomicSyncStart(op, gmMemref, /*hasResult=*/false);
+    const bool needLock = atomicNeedsNewLock(op);
+    std::optional<SyncBlockLockGuard> lock;
+    // A returned GM snapshot must sit inside the critical section. Staging
+    // buffers stay outside unless that snapshot forces the lock to open first.
+    if (needLock && syncStart != op.getOperation()) {
+      rewriter.setInsertionPoint(syncStart);
+      lock.emplace(rewriter, loc);
+    }
+    rewriter.setInsertionPointAfter(op);
 
     StaticSizedBuffer rhsBuffer(rewriter, loc, gmMemref);
     if (!rhsBuffer.isValid())
@@ -402,15 +494,11 @@ struct NormalizeAtomicStoreElemwise : public OpRewritePattern<StoreOpTy> {
       return success();
     };
 
-    static constexpr llvm::StringLiteral kAlreadySync = "already_sync";
-    if (op->hasAttr(kAlreadySync)) {
-      if (failed(readModifyWrite()))
-        return failure();
-    } else {
-      SyncBlockLockGuard lock(rewriter, loc);
-      if (failed(readModifyWrite()))
-        return failure();
+    if (needLock && !lock) {
+      lock.emplace(rewriter, loc);
     }
+    if (failed(readModifyWrite()))
+      return failure();
     rewriter.eraseOp(op);
     eraseToMemrefIfUnused(ubInput, rewriter);
     return success();
@@ -418,16 +506,17 @@ struct NormalizeAtomicStoreElemwise : public OpRewritePattern<StoreOpTy> {
 };
 
 /// Rewrites compare-and-swap:
-///   GM = (GM == compare) ? store : GM
+///   old = GM
+///   GM = (old == compare) ? store : old
 ///
-/// FP8 equality is evaluated after widening both sides to FP32.
+/// When the op has a result, that result is the loaded `old` value. FP8
+/// equality is evaluated after widening both sides to FP32.
 template <typename AtomicCasOpTy, typename Traits>
 struct NormalizeAtomicCASTemplate : public OpRewritePattern<AtomicCasOpTy> {
   using OpRewritePattern<AtomicCasOpTy>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(AtomicCasOpTy op,
                                 PatternRewriter &rewriter) const override {
-    rewriter.setInsertionPointAfter(op);
     Location loc = op->getLoc();
     auto srcOperands = op.getODSOperands(0);
     auto dstOperands = op.getODSOperands(1);
@@ -438,6 +527,16 @@ struct NormalizeAtomicCASTemplate : public OpRewritePattern<AtomicCasOpTy> {
         dyn_cast<TypedValue<MemRefType>>(dstOperands.front());
     if (!gmMemref)
       return rewriter.notifyMatchFailure(op, "expected memref CAS output");
+
+    const bool hasReturn = !op->getResults().empty();
+    Operation *syncStart = atomicSyncStart(op, gmMemref, hasReturn);
+    const bool needLock = atomicNeedsNewLock(op);
+    std::optional<SyncBlockLockGuard> lock;
+    if (needLock && syncStart != op.getOperation()) {
+      rewriter.setInsertionPoint(syncStart);
+      lock.emplace(rewriter, loc);
+    }
+    rewriter.setInsertionPointAfter(op);
 
     StaticSizedBuffer comparingBuffer(rewriter, loc, gmMemref);
     StaticSizedBuffer storingBuffer(rewriter, loc, gmMemref);
@@ -455,9 +554,22 @@ struct NormalizeAtomicCASTemplate : public OpRewritePattern<AtomicCasOpTy> {
       return rewriter.notifyMatchFailure(
           op, "expected memref or tensor CAS inputs");
 
-    auto compareAndSwap = [&]() {
+    Value loadedValue;
+    auto compareAndSwap = [&]() -> LogicalResult {
       rewriter.create<memref::CopyOp>(loc, gmMemref, gmValBuffer.dBuffer);
       const TypedValue<TensorType> gmValTensor = gmValBuffer.toStaticTensor();
+      if (hasReturn) {
+        Type resultType = op->getResult(0).getType();
+        Value candidate = gmValTensor;
+        // Dynamic GM is staged in a static buffer. The returned old value
+        // follows the logical destination shape, not the padded staging tile.
+        if (candidate.getType() != resultType)
+          candidate = gmValBuffer.toLogicalTensor();
+        if (candidate.getType() != resultType)
+          return rewriter.notifyMatchFailure(
+              op, "loaded GM value type does not match CAS result");
+        loadedValue = candidate;
+      }
 
       Value cmpResult = Traits::createCmpOp(
           rewriter, loc,
@@ -479,16 +591,14 @@ struct NormalizeAtomicCASTemplate : public OpRewritePattern<AtomicCasOpTy> {
       return success();
     };
 
-    static constexpr llvm::StringLiteral kAlreadySync = "already_sync";
-    if (op->hasAttr(kAlreadySync)) {
-      if (failed(compareAndSwap()))
-        return failure();
-    } else {
-      SyncBlockLockGuard lock(rewriter, loc);
-      if (failed(compareAndSwap()))
-        return failure();
-    }
-    rewriter.eraseOp(op);
+    if (needLock && !lock)
+      lock.emplace(rewriter, loc);
+    if (failed(compareAndSwap()))
+      return failure();
+    if (hasReturn)
+      rewriter.replaceOp(op, loadedValue);
+    else
+      rewriter.eraseOp(op);
     eraseToMemrefIfUnused(srcOperands[0], rewriter);
     eraseToMemrefIfUnused(srcOperands[1], rewriter);
     return success();
@@ -524,6 +634,21 @@ struct NormalizeAtomicXCHGTemplate : public OpRewritePattern<AtomicXchgOpTy> {
                                          "and memref output");
 
     const bool hasReturn = op->getNumResults() > 0;
+    // The op result is the GM value loaded inside this lowering. A separate
+    // preceding snapshot is the returned old value only when the op itself
+    // has no result, and that copy must share this critical section.
+    Operation *syncStart = atomicSyncStart(op, gmMemref, hasReturn);
+    const bool needLock = atomicNeedsNewLock(op);
+    const bool lockCoversSnapshot = needLock && syncStart != op.getOperation();
+    Value outerLockVar;
+    if (lockCoversSnapshot) {
+      rewriter.setInsertionPoint(syncStart);
+      outerLockVar = hivm::createSyncBlockLockVar(rewriter, loc).getResult();
+      hivm::createSyncBlockLock(rewriter, loc, outerLockVar,
+                                hivm::SyncBlockLockOrdering::Unordered);
+      rewriter.setInsertionPointAfter(op);
+    }
+
     scope::ScopeOp scopeOp;
     if (hasReturn)
       scopeOp = rewriter.create<scope::ScopeOp>(loc, op->getResultTypes());
@@ -546,7 +671,11 @@ struct NormalizeAtomicXCHGTemplate : public OpRewritePattern<AtomicXchgOpTy> {
           op, "expected dynamic GM memref to be a static subview");
 
     {
-      SyncBlockLockGuard lock(rewriter, loc);
+      // An existing critical section, or a lock opened around a preceding
+      // snapshot, already covers these copies.
+      std::optional<SyncBlockLockGuard> lock;
+      if (needLock && !lockCoversSnapshot)
+        lock.emplace(rewriter, loc);
       rewriter.create<memref::CopyOp>(loc, gmMemref, tmpBuffer.dBuffer);
       if (ubMemref) {
         rewriter.create<memref::CopyOp>(loc, ubMemref, gmMemref);
@@ -567,6 +696,11 @@ struct NormalizeAtomicXCHGTemplate : public OpRewritePattern<AtomicXchgOpTy> {
     else
       rewriter.eraseOp(op);
     eraseToMemrefIfUnused(srcOperands.front(), rewriter);
+    if (lockCoversSnapshot) {
+      rewriter.setInsertionPointAfter(scopeOp);
+      hivm::createSyncBlockUnlock(rewriter, loc, outerLockVar,
+                                  hivm::SyncBlockLockOrdering::Unordered);
+    }
     return success();
   }
 };

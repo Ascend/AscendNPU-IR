@@ -270,8 +270,9 @@ LogicalResult handleRegBaseSubView(memref::ExpandShapeOp expandOp,
         expandOp.getStaticOutputShape(), expandOp.getOutputShape(), rewriter);
     // Same layout rule as ExpandShapeOp::computeExpandedType: the innermost
     // dim of each group keeps the source stride, every outer dim multiplies
-    // in the sizes of the dims inside it. Static target strides are used
-    // as-is; a dynamic one stays dynamic for all outer dims of its group.
+    // in the sizes of the dims inside it. Known (static) target strides are
+    // kept as-is; a dynamic ones are recomputed by multiplying the subview
+    // stride by the inner sizes.
     SmallVector<OpFoldResult> targetStridesOfr(targetStrides.size());
     for (auto [srcDim, group] : llvm::enumerate(reassociation)) {
       OpFoldResult stride =

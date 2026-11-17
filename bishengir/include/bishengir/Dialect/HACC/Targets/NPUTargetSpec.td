@@ -590,13 +590,55 @@ def Ascend960DT_969B5_Spec : Ascend960_BaseSpec<"Ascend960DT_969B5"> {
   let VectorCoreCount = 32;
 }
 
+def Ascend960DT_969B6_Spec : Ascend960_BaseSpec<"Ascend960DT_969B6"> {
+  let AiCoreCount = 32;
+  let CubeCoreCount = 32;
+  let VectorCoreCount = 32;
+}
+
 def Ascend960DT_968B7_Spec : Ascend960_BaseSpec<"Ascend960DT_968B7"> {
   let AiCoreCount = 36;
   let CubeCoreCount = 36;
   let VectorCoreCount = 36;
 }
 
-def Ascend960DT_961BX_Spec : Ascend960_BaseSpec<"Ascend960DT_961BX"> {
+def Ascend960DT_966B7_Spec : Ascend960_BaseSpec<"Ascend960DT_966B7"> {
+  let AiCoreCount = 36;
+  let CubeCoreCount = 36;
+  let VectorCoreCount = 36;
+}
+
+def Ascend960DT_966B8_Spec : Ascend960_BaseSpec<"Ascend960DT_966B8"> {
+  let AiCoreCount = 36;
+  let CubeCoreCount = 36;
+  let VectorCoreCount = 36;
+}
+
+def Ascend960DT_961BY_Spec : Ascend960_BaseSpec<"Ascend960DT_961BY"> {
+  let AiCoreCount = 48;
+  let CubeCoreCount = 48;
+  let VectorCoreCount = 48;
+}
+
+def Ascend960DT_961BZ_Spec : Ascend960_BaseSpec<"Ascend960DT_961BZ"> {
+  let AiCoreCount = 48;
+  let CubeCoreCount = 48;
+  let VectorCoreCount = 48;
+}
+
+def Ascend960PR_969A1_Spec : Ascend960_BaseSpec<"Ascend960PR_969A1"> {
+  let AiCoreCount = 48;
+  let CubeCoreCount = 48;
+  let VectorCoreCount = 48;
+}
+
+def Ascend960PR_964A1_Spec : Ascend960_BaseSpec<"Ascend960PR_964A1"> {
+  let AiCoreCount = 48;
+  let CubeCoreCount = 48;
+  let VectorCoreCount = 48;
+}
+
+def Ascend960PR_936A1_Spec : Ascend960_BaseSpec<"Ascend960PR_936A1"> {
   let AiCoreCount = 48;
   let CubeCoreCount = 48;
   let VectorCoreCount = 48;

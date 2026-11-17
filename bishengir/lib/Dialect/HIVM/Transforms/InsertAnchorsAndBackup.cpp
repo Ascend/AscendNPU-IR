@@ -83,6 +83,8 @@ private:
                             int64_t &nextAnchorId,
                             bool onlyInsertFrontBack = false);
 
+  void createElseBranchesForPreloadSync(func::FuncOp funcOp);
+
   func::FuncOp backupFunc(func::FuncOp funcOp);
   func::FuncOp
   getOrCreateBackupFunc(func::FuncOp funcOp,
@@ -216,6 +218,18 @@ private:
     return false;
   }
 
+  bool isInCVPreloadingScope(Operation *op) const {
+    for (Operation *parentOp = op->getParentOp(); parentOp != nullptr;
+         parentOp = parentOp->getParentOp()) {
+      if (auto scopeOp = dyn_cast<scope::ScopeOp>(parentOp)) {
+        if (scopeOp->hasAttr(hivm::PreloadNumAttr::name)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   bool isSIMTScope(Operation *op) const {
     // Skip anchor-insert in simt scope
     if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
@@ -299,6 +313,26 @@ void InsertAnchorsAndBackupPass::insertAnchor(Operation *op, OpBuilder &builder,
   }
   builder.create<AnchorOp>(op->getLoc(),
                            builder.getI64IntegerAttr(nextAnchorId++), nullptr);
+}
+
+void InsertAnchorsAndBackupPass::createElseBranchesForPreloadSync(
+    func::FuncOp funcOp) {
+  SmallVector<scf::IfOp> conditions;
+  funcOp.walk([&](scf::IfOp ifOp) {
+    if (!ifOp.getElseRegion().empty() || !isInCVPreloadingScope(ifOp) ||
+        !isRegionsToBeAnchored(ifOp)) {
+      return;
+    }
+    conditions.push_back(ifOp);
+  });
+
+  OpBuilder builder(&getContext());
+  for (scf::IfOp ifOp : conditions) {
+    assert(ifOp.getNumResults() == 0);
+    Block *elseBlock = builder.createBlock(&ifOp.getElseRegion());
+    builder.setInsertionPointToEnd(elseBlock);
+    builder.create<scf::YieldOp>(ifOp.getLoc());
+  }
 }
 
 void InsertAnchorsAndBackupPass::insertAnchorsInBlock(
@@ -483,6 +517,8 @@ void InsertAnchorsAndBackupPass::runOnOperation() {
   OpBuilder builder(&getContext());
   llvm::DenseMap<Operation *, func::FuncOp> backupFuncs;
   for (func::FuncOp funcOp : mixFuncOps) {
+    createElseBranchesForPreloadSync(funcOp);
+
     // Anchor ids restart at zero per function: ids only need to be unique
     // within a single (mix, cube, vector) triplet's translator scope.
     int64_t nextAnchorId = 0;

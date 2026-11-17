@@ -10,12 +10,15 @@ include "bishengir/Target/NPU/DMA/Fixpipe/FixpipeCapabilityProfile.td"
 // CHECK: # Target capability support
 // CHECK: ## Capability `fixpipe`
 // CHECK: `src.element_type` (MLIR type)
+// CHECK: `src.address_space`
 // CHECK: `dst.element_type` (MLIR type)
+// CHECK: `dst.address_space`
 // CHECK: `dma_mode`
 // CHECK: `pre_quant_mode`
 // CHECK: `pre_relu`
 // CHECK: `channel_split`
-// CHECK: quant_scale presence are outside
+// CHECK: `quant_scale_present`
+// CHECK: Layout and shape are outside
 
 // C220 has separate NZ2ND and NZ2NZ (printed as normal) rows, and no NZ2DN.
 // CHECK: ### `dav-c220`

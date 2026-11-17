@@ -30,6 +30,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
@@ -65,6 +66,12 @@ constexpr static unsigned int INTR_BYTES_PER_BLOCK = 32;
 constexpr static unsigned int INTR_BYTES_PER_REPEAT = 256;
 constexpr static unsigned int FRACTAL_BLOCK_NUM = 16;
 
+llvm::SmallVector<size_t> getIntegersOfArrayAttr(Operation *op,
+                                                 llvm::StringLiteral attrName);
+
+void insertIntegerAttrToArrayAttr(Operation *op, llvm::StringLiteral attrName,
+                                  size_t value, Builder &builder);
+
 /// Number of elements that fit in one DMA/UB align block for type `t`.
 int64_t getNumPerBlock(Type t);
 
@@ -86,8 +93,11 @@ static constexpr llvm::StringLiteral kEnableAutoMarkBufferSize =
 /// ones.
 constexpr llvm::StringLiteral kBufferSizeInByteAttr = "buffer_size_in_byte";
 static constexpr llvm::StringLiteral kMemrefAsPtr = "memref.memref_as_ptr";
-static constexpr llvm::StringLiteral maskOpIdx = "mask_op_idx";
-static constexpr llvm::StringLiteral reachedMaskOpsIdx = "reached_mask_ops_idx";
+inline constexpr llvm::StringLiteral maskOpIdx = "mask_op_idx";
+inline constexpr llvm::StringLiteral reachedMaskOpsIdx = "reached_mask_ops_idx";
+/// Dynamic annotation key carrying the selected mask SSA value from mask
+/// analysis to Arith/Vector lowering.
+inline constexpr llvm::StringLiteral reachedMaskValue = "reached_mask_value";
 static constexpr llvm::StringLiteral maskBitWidth = "mask_bit_width";
 static const llvm::StringLiteral simtVFSuffix = "_vf_simt";
 static const llvm::StringLiteral kMapForToForallAttrName = "map_for_to_forall";
@@ -97,7 +107,6 @@ inline constexpr llvm::StringLiteral kInlinableQuantScaleAttr =
 inline constexpr llvm::StringLiteral kInlinedQuantScaleAttr =
     "inlined_fast_tf32_mul";
 
-constexpr llvm::StringLiteral KFoldOffsetMarker = "fold_offset_into_ptr";
 namespace debugger {
 
 // Type trait to check if T is an LLVM-style container

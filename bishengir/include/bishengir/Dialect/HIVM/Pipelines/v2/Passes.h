@@ -14,7 +14,6 @@
 #define BISHENGIR_DIALECT_HIVM_PIPELINES_V2_PASSES_H
 
 #include "mlir/Pass/PassOptions.h"
-#include "llvm/ADT/StringRef.h"
 
 namespace mlir {
 namespace hivm {
@@ -31,16 +30,6 @@ struct V2PipelineOptions : public mlir::PassPipelineOptions<V2PipelineOptions> {
       llvm::cl::desc("Append the target device spec from --target"),
       llvm::cl::init(true)};
 
-  PassOptions::Option<bool> enableVectorize{
-      *this, "enable-vectorize",
-      llvm::cl::desc("Run vectorization on the unsplit MIX"),
-      llvm::cl::init(true)};
-
-  PassOptions::Option<bool> enableCrossCoreGSS{
-      *this, "enable-cross-core-gss",
-      llvm::cl::desc("Solve cross-core sync once on the unsplit MIX"),
-      llvm::cl::init(true)};
-
   PassOptions::Option<bool> enablePreload{*this, "enable-preload",
                                           llvm::cl::desc("Run create-preload"),
                                           llvm::cl::init(false)};
@@ -50,24 +39,34 @@ struct V2PipelineOptions : public mlir::PassPipelineOptions<V2PipelineOptions> {
       llvm::cl::desc("Mark/enable multi-buffering on the unsplit MIX"),
       llvm::cl::init(false)};
 
-  PassOptions::Option<bool> useBlockAllSync{
-      *this, "enable-block-all-sync",
-      llvm::cl::desc("Use inject-block-sync{block-all-sync} instead of GSS"),
+  // V2 uses graph solvers except for intra-core barrier-all mode.
+  PassOptions::Option<bool> disableHIVMAutoInjectSync{
+      *this, "disable-hivm-auto-inject-sync",
+      llvm::cl::desc("Disable intra-core auto-sync"), llvm::cl::init(false)};
+
+  PassOptions::Option<bool> disableAutoInjectBlockSync{
+      *this, "disable-auto-inject-block-sync",
+      llvm::cl::desc("Disable cross-core auto-sync"), llvm::cl::init(false)};
+
+  PassOptions::Option<bool> enableHIVMInjectBarrierAllSync{
+      *this, "enable-hivm-inject-barrier-all-sync",
+      llvm::cl::desc("Use inject-sync in barrier-all mode"),
       llvm::cl::init(false)};
 
-  PassOptions::Option<bool> ghostSplitMix{
-      *this, "ghost-split-mix",
-      llvm::cl::desc("Run the split stage (ghost: keeps the kernel MIX)"),
-      llvm::cl::init(true)};
+  PassOptions::Option<bool> enableHIVMInjectBlockAllSync{
+      *this, "enable-hivm-inject-block-all-sync",
+      llvm::cl::desc("Use cross-core-gss in block-all mode"),
+      llvm::cl::init(false)};
 
-  /// Run the verifier after this phase (none, tensor, bufferized, planned,
-  /// solved, split, tail).
-  /// TODO(v2): debug-only. The stage verifier must be removed from the final
-  /// pipeline once the v2 stages are stable.
-  PassOptions::Option<std::string> verifyStage{
-      *this, "verify-stage",
-      llvm::cl::desc("Run hivm-v2-verify-stage after the named phase"),
-      llvm::cl::init("none")};
+  PassOptions::Option<bool> enableHIVMUnitFlagSync{
+      *this, "enable-hivm-unit-flag-sync",
+      llvm::cl::desc("Enable unit-flag modes for intra-core synchronization"),
+      llvm::cl::init(false)};
+
+  PassOptions::Option<std::string> hivmSyncSolverVersion{
+      *this, "hivm-sync-solver-version",
+      llvm::cl::desc("Select the auto-sync solver implementation"),
+      llvm::cl::init("v2")};
 };
 
 /// Phase builders shared by the opt pipeline and the compile driver.

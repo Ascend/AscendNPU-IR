@@ -112,6 +112,15 @@ createMarkMultiBufferPass(const MarkMultiBufferOptions &options = {});
 /// Create a pass to enable multi buffer.
 std::unique_ptr<Pass> createEnableMultiBufferPass();
 
+/// Separate Cube GM loads and assign their preload stages.
+std::unique_ptr<Pass> createSeparateLoadComputePass();
+
+/// Mark shared local buffer capacity for separated loads.
+std::unique_ptr<Pass> createMarkBufferPoolPass();
+
+/// Materialize independent load submission and explicit access slots.
+std::unique_ptr<Pass> createEnableBufferPoolPass();
+
 /// Create a pass to add FFTS (arg0) to every SyncBlockSetOp
 std::unique_ptr<Pass> createAddFFTSToSyncBlockSetOpPass();
 
@@ -121,6 +130,9 @@ std::unique_ptr<Pass> createLowerMultiBufferCounterPass();
 /// Create a pass to plan memory.
 std::unique_ptr<Pass>
 createPlanMemoryPass(const PlanMemoryOptions &planMemoryOption = {});
+
+/// Insert pool operations for a successful TCB memory-planning fallback.
+std::unique_ptr<Pass> createTcbPoolOpInsertionPass();
 
 /// Create a pass to inject sync
 std::unique_ptr<Pass>
@@ -480,6 +492,9 @@ std::unique_ptr<Pass> createCombineOptimizedConvertLayoutPass();
 /// Create a pass to normalize conv1d operation.
 std::unique_ptr<Pass> createNormalizeConvOpsPass();
 
+/// Prepare storage versions for iteration-local preload buffers.
+std::unique_ptr<Pass> createMarkPreloadBuffersPass();
+
 /// Create a pass to create preload for CV pipelining
 std::unique_ptr<Pass>
 createCreatePreloadPass(const CreatePreloadOptions &options = {});
@@ -501,10 +516,16 @@ std::unique_ptr<Pass> createFuseTransposeIntoLoadPass();
 // V2 pipeline passes (see Passes.td)
 //===----------------------------------------------------------------------===//
 
-std::unique_ptr<Pass>
-createV2SplitKernelPass(const V2SplitKernelOptions &options = {});
+std::unique_ptr<Pass> createV2SplitKernelPass();
 std::unique_ptr<Pass>
 createV2VerifyStagePass(const V2VerifyStageOptions &options = {});
+
+/// Build and preserve `ModuleTargetAnalysis` for the current pipeline anchor.
+std::unique_ptr<Pass> createCacheModuleTargetPass();
+
+/// Check registered HIVM capability patterns. Fixpipe is the first pattern.
+/// Not part of the default pipeline. `strict` accepts only native.
+std::unique_ptr<Pass> createVerifyCapabilityPass();
 
 //===----------------------------------------------------------------------===//
 // Registration

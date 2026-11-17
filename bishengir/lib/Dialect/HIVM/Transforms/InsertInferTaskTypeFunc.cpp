@@ -156,6 +156,13 @@ void InsertInferTaskTypeFuncPass::runOnOperation() {
     }
   }
 
+  // Outlined VFs may precede the entry in module order. The launcher looks up
+  // this callback by the entry kernel's name, not the first device function.
+  if (entryFunc) {
+    insertInferTaskTypeFunc(entryFunc, taskType);
+    return;
+  }
+
   module.walk([&](func::FuncOp func) {
     if (hacc::utils::isHost(func))
       return WalkResult::advance();

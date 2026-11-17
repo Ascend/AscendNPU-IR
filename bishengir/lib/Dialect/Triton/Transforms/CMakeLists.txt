@@ -4,6 +4,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     AdaptTritonIRKernel.cpp
     AdaptGPUKernel.cpp
     ConvertNonPowerTwoTensors.cpp
+    ConvertZeroDimTensors.cpp
     DecomposeReduction.cpp
     DumpFractalLayout.cpp
     ExpandGatherOpSourcesPass.cpp

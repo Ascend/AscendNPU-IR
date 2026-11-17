@@ -7,9 +7,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/DMA/CubeLoad/CubeLoadCapabilityQuery.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/DMA/Fixpipe/FixpipeCapabilityBinding.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/ConvertLayoutUtils.h"
+#include "bishengir/Dialect/HIVM/Transforms/FixpipeCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -528,9 +530,10 @@ struct FoldDirectLoadToNCHW2NC1HWC0Pattern
                                 PatternRewriter &rewriter) const override {
     if (!isNCHW2NC1HWC0Conversion(op))
       return rewriter.notifyMatchFailure(op, "not an NCHW→NC1HWC0 conversion");
-    ModuleOp module = op->getParentOfType<ModuleOp>();
-    if (!module || !hacc::utils::isAscend950(module))
-      return rewriter.notifyMatchFailure(op, "not an A5 target");
+    Type elementType = getElementTypeOrSelf(op.getSource().getType());
+    if (!isNativeNchw2Nc1hwc0(op, elementType, AddressSpace::GM,
+                              AddressSpace::L1))
+      return rewriter.notifyMatchFailure(op, "NCHW2NC1HWC0 is not Native");
     auto match = matchDirectLoadConvertLayout(op, rewriter);
     if (failed(match))
       return failure();
@@ -557,9 +560,10 @@ struct FoldDirectLoadToNCHW2C1HWNC0Pattern
                                 PatternRewriter &rewriter) const override {
     if (!isNCHW2C1HWNC0Conversion(op))
       return rewriter.notifyMatchFailure(op, "not an NCHW→C1HWNC0 conversion");
-    ModuleOp module = op->getParentOfType<ModuleOp>();
-    if (!module || !hacc::utils::isAscend950(module))
-      return rewriter.notifyMatchFailure(op, "not an A5 target");
+    Type elementType = getElementTypeOrSelf(op.getSource().getType());
+    if (!isNativeNchw2C1hwnc0(op, elementType, AddressSpace::GM,
+                              AddressSpace::L1))
+      return rewriter.notifyMatchFailure(op, "NCHW2C1HWNC0 is not Native");
     auto match = matchDirectLoadConvertLayout(op, rewriter);
     if (failed(match))
       return failure();
@@ -719,8 +723,24 @@ struct FoldConvertLayoutFixpipePattern
 
         rewriter.modifyOpInPlace(fixpipeOp, [&]() {
           if (fixpipeOp.getDmaMode() == FixpipeDMAMode::NZ2NZ &&
-              hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>()) &&
-              needChannelSplit(op, fixpipeOp)) {
+              needChannelSplit(op, fixpipeOp) && [&] {
+                using bishengir::npu::FixpipeCapabilityRequestBuilder;
+                std::optional<FixpipeCapabilityRequestBuilder> builder =
+                    FixpipeCapabilityRequestBuilder::from(fixpipeOp);
+                if (!builder)
+                  return false;
+                builder->channelSplit(true);
+                builder->srcAddressSpace(AddressSpace::L0C);
+                builder->dstAddressSpace(AddressSpace::L1);
+                std::optional<bishengir::npu::NPUArchitectureKind>
+                    architecture = lookupModuleArchitecture(fixpipeOp);
+                if (!architecture)
+                  return false;
+                auto storage = builder->build();
+                return bishengir::npu::queryNativeSupport(
+                           *architecture, storage.getRequest()) ==
+                       bishengir::npu::NativeSupport::Native;
+              }()) {
             fixpipeOp.setChannelSplit(true);
           }
           fixpipeOp.getSrcMutable().assign(op.getSource());
@@ -1310,6 +1330,29 @@ struct FoldFixpipeStoreConvertLayoutPattern
     newToTensorOp->setAttrs(match.toTensorOp->getAttrs());
 
     FixpipeOp fixpipeOp = match.fixpipeOp;
+    // channel_split=true must be Native. Plain NZ2NZ stays ungated until
+    // address-space/layout capability covers L1-only rows (W5.b).
+    if (match.channelSplit && [&] {
+          using bishengir::npu::FixpipeCapabilityRequestBuilder;
+          std::optional<FixpipeCapabilityRequestBuilder> builder =
+              FixpipeCapabilityRequestBuilder::from(fixpipeOp);
+          if (!builder)
+            return true;
+          builder->dmaMode(FixpipeDMAMode::NZ2NZ);
+          builder->channelSplit(true);
+          builder->srcAddressSpace(AddressSpace::L0C);
+          builder->dstAddressSpace(AddressSpace::L1);
+          std::optional<bishengir::npu::NPUArchitectureKind> architecture =
+              lookupModuleArchitecture(fixpipeOp);
+          if (!architecture)
+            return true;
+          auto storage = builder->build();
+          return bishengir::npu::queryNativeSupport(*architecture,
+                                                    storage.getRequest()) !=
+                 bishengir::npu::NativeSupport::Native;
+        }())
+      return rewriter.notifyMatchFailure(
+          op, "channel_split candidate is not Native on this target");
     rewriter.modifyOpInPlace(fixpipeOp, [&]() {
       fixpipeOp.getDstMutable().assign(newBuffer);
       fixpipeOp.setDmaModeAttr(FixpipeDMAModeAttr::get(rewriter.getContext(),
@@ -1597,6 +1640,8 @@ struct CombineOptimizedConvertLayoutPass
     : public impl::CombineOptimizedConvertLayoutBase<
           CombineOptimizedConvertLayoutPass> {
   void runOnOperation() override {
+    ModuleTargetAnalysis &targets = getAnalysis<ModuleTargetAnalysis>();
+    ModuleTargetAnalysisScope targetScope(targets);
     auto module = getOperation();
     MLIRContext *context = &getContext();
 
@@ -1608,6 +1653,7 @@ struct CombineOptimizedConvertLayoutPass
 
     if (failed(applyPatternsGreedily(module, std::move(patterns), config)))
       signalPassFailure();
+    markAnalysesPreserved<ModuleTargetAnalysis>();
   }
 };
 } // namespace mlir::hivm

@@ -12,6 +12,7 @@ add_bishengir_dialect_library(BiShengIRHIVMV2Pipelines
   BiShengIRMemRefExtLowering
   BiShengIRMemRefTransforms
   BiShengIRSCFTransforms
+  BiShengIRTensorViewToHIVM
   BiShengIRTransform
   MLIRBufferizationTransforms
   MLIRFuncDialect

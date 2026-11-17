@@ -33,6 +33,7 @@
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Symbol/IR/Symbol.h"
+#include "bishengir/Dialect/TensorView/IR/TensorViewDialect.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 
@@ -53,6 +54,7 @@
 #include "bishengir/Dialect/SCF/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Scope/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Tensor/Transforms/TilingInterfaceImpl.h"
+#include "bishengir/Dialect/TensorView/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Triton/Transforms/Passes.h"
 #include "bishengir/Dialect/TritonExt/IR/TritonExtAttrs.h"
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
@@ -80,6 +82,7 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
                   mlir::mathExt::MathExtDialect,
                   mlir::scope::ScopeDialect,
                   mlir::symbol::SymbolDialect,
+                  mlir::tv::TensorViewDialect,
                   bishengir::memref_ext::MemRefExtDialect>();
   // clang-format on
 
@@ -112,6 +115,7 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
 
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
   // Register all external models.
+  mlir::tv::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::hivm::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::annotation::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::hfusion::registerTilingInterfaceExternalModels(registry);

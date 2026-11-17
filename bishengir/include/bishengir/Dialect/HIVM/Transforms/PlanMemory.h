@@ -351,10 +351,12 @@ class MemLivenessAnalysis {
 public:
   MemLivenessAnalysis(func::FuncOp func, MemPlanMode planMode,
                       bool disableTightlyCoupledBufferReuse,
-                      uint32_t randomSeed = 0)
+                      uint32_t randomSeed = 0,
+                      bool enableMmadL0Planning = false)
       : func_(func), planMode(planMode),
         disableTightlyCoupledBufferReuse(disableTightlyCoupledBufferReuse),
-        randomSeed(randomSeed), randomGenerator(this->randomSeed) {}
+        enableMmadL0Planning(enableMmadL0Planning), randomSeed(randomSeed),
+        randomGenerator(this->randomSeed) {}
 
   void build();
 
@@ -395,17 +397,17 @@ public:
   bool isGlobalWorkSpaceMemPlan() const;
 
 private:
-  void RecursionIR(Region *region, Liveness live);
+  void RecursionIR(Region *region, const Liveness &live);
 
   /// Get the buffer used within the loop and defined outside the loop.
   SmallVector<Value> GetLiveBuffersInLoop(LoopLikeOpInterface loopOp,
-                                          Liveness live);
+                                          const Liveness &live);
 
   /// Update for Op tensor init args and tensor result args alias info.
   void UpdateInitAndResAlias(DestinationStyleOpInterface dstStyleOp);
 
   /// Recursive operation while.
-  void RecursiveWhileOp(scf::WhileOp whileOp, Liveness live);
+  void RecursiveWhileOp(scf::WhileOp whileOp, const Liveness &live);
 
   /// Update while Op init args region iter args alias info.
   void UpdateWhileOpInitArgsAlias(scf::WhileOp whileOp);
@@ -418,7 +420,7 @@ private:
   void UpdateConditionOpBufferAlias(scf::ConditionOp conditionOp);
 
   /// Recursive operation for.
-  void RecursiveForOp(scf::ForOp forOp, Liveness live);
+  void RecursiveForOp(scf::ForOp forOp, const Liveness &live);
 
   /// Update for Op init args region iter args alias info.
   void UpdateForOpInitArgsAlias(scf::ForOp forOp);
@@ -427,7 +429,7 @@ private:
   void UpdateForOpBufferAlias(scf::ForOp forOp);
 
   /// Recursive operation if.
-  void RecursiveIfOp(scf::IfOp ifOp, Liveness live);
+  void RecursiveIfOp(scf::IfOp ifOp, const Liveness &live);
 
   /// Update branch dest arg and operand buffer alias info.
   void UpdateBranchOpAlias(Block *brBlock, OperandRange destOperands);
@@ -436,7 +438,7 @@ private:
   void UpdateIfOpBufferAlias(scf::IfOp ifOp, scf::YieldOp yieldOp);
 
   /// Recursive operation scope.
-  void RecursiveScopeOp(scope::ScopeOp scopeOp, Liveness live);
+  void RecursiveScopeOp(scope::ScopeOp scopeOp, const Liveness &live);
 
   /// Update buffer alias information for scopeop.
   void UpdateScopeOpBufferAlias(scope::ScopeOp scopeOp,
@@ -504,16 +506,17 @@ private:
   void UpdateMultiBufferInfo(annotation::MarkOp markOp, Value memrefVal);
 
   /// Update store op information.
-  void UpdateStoreOpInfo(OpInfo *opInfo, const Value storeValue, Liveness live);
+  void UpdateStoreOpInfo(OpInfo *opInfo, const Value storeValue,
+                         const Liveness &live);
 
   /// Check if it is local buffer with memory space
   LogicalResult CheckLocalBufferAllocOp(Operation *op) const;
 
   /// kill buffer handle.
-  void OpKillHandle(OpInfo *opInfo, Liveness live, Block *block);
+  void OpKillHandle(OpInfo *opInfo, const Liveness &live, Block *block);
 
   /// Process kill buffer based on the result live of op.
-  void UpdateOpKillInfo(OpInfo *opInfo, Value operand, Liveness live);
+  void UpdateOpKillInfo(OpInfo *opInfo, Value operand, const Liveness &live);
 
   /// Whether afterBlock is after beforeBlock.
   bool IsBlockAfter(Block *afterBlock, Block *beforeBlock) const;
@@ -523,7 +526,7 @@ private:
 
   /// Have all alias buffer been killed.
   bool AllDeadAfter(Operation *op, SetVector<Value> aliasVec,
-                    Liveness live) const;
+                    const Liveness &live) const;
 
   /// Determine whether two operation are in the same block or op2 is the
   /// ancestor of op1.
@@ -553,7 +556,7 @@ private:
 
   /// Process mark op and update buffer's gen and kill.
   void ProcessMarkOp(annotation::MarkOp markOp, OpInfo *curOpInfo,
-                     Liveness live);
+                     const Liveness &live);
 
   /// Process AllocOp that don't need to plan memory and if return allocOp, we
   /// need to run UpdateOpGenInfo manually.
@@ -594,6 +597,9 @@ private:
   /// Disable tightly coupled buffer reuse. Default is false
   bool disableTightlyCoupledBufferReuse;
 
+  /// Enable explicit A5 cube planning only for functions containing MMAD L0.
+  bool enableMmadL0Planning;
+
   /// Gen-kill status corresponding to buffer.
   DenseMap<Value, BufferStatus> buffer2status;
 
@@ -619,20 +625,31 @@ using StorageEntryIdPair = std::pair<EntryMemoId, EntryMemoId>;
 /// Map from buffer value to its planned memory address(es).
 using Buffer2Offsets = DenseMap<Value, SmallVector<uint64_t>>;
 
+/// Result of planning one function: the assigned buffer offsets and the roots
+/// of preload-local buffers.
+using PlanResult = std::pair<Buffer2Offsets, DenseSet<Value>>;
+
 class MemPlan {
 public:
   MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
           bool enableMemoryDisplay, bool restrictInplaceAsISA,
           int sharedMemDynamicSize, bool disableVFReachableCheck,
-          PlanMemoryStrategy planMemoryStrategy = PlanMemoryStrategy::DEFAULT)
+          PlanMemoryStrategy planMemoryStrategy = PlanMemoryStrategy::DEFAULT,
+          bool enableMmadL0Planning = false)
       : enableMemoryDisplay(enableMemoryDisplay), planMode(planMode),
         enableGlobalReuse(enableGlobalReuse),
         restrictInplaceAsISA(restrictInplaceAsISA),
         sharedMemDynamicSize(sharedMemDynamicSize),
         disableVFReachableCheck(disableVFReachableCheck),
-        planMemoryStrategy(planMemoryStrategy), vfInplaceReuseInfo(nullptr) {}
+        planMemoryStrategy(planMemoryStrategy),
+        enableMmadL0Planning(enableMmadL0Planning),
+        vfInplaceReuseInfo(nullptr) {}
 
   LogicalResult plan(bool emitErrors = true);
+  /// Report whether allocation failed only in UB.
+  bool failedOnlyInUB() const;
+  /// Emit final allocation diagnostics and populate memory-display errors.
+  void EmitPlanMemoryFailureInfo();
 
   /// Get buffer2Offsets
   inline Buffer2Offsets GetBuffer2Offsets() { return buffer2Offsets; }
@@ -727,6 +744,9 @@ private:
   /// Strategy for reordering storage entries during plan memory.
   PlanMemoryStrategy planMemoryStrategy;
 
+  /// Per-function policy shared with liveness and DMA/scalar buffer analysis.
+  bool enableMmadL0Planning;
+
   /// inplace-reuse info for the vf call.
   VFCallInplaceReuseInfo *vfInplaceReuseInfo;
 
@@ -777,9 +797,6 @@ private:
 
   /// Obtain buffer space size and alignment information.
   std::pair<size_t, size_t> GetBufferSpaceInfo(hivm::AddressSpace &space) const;
-
-  /// Emit buffer applied failure message.
-  void EmitPlanMemoryFailureInfo();
 
   /// Multi level plan strategy.
   LogicalResult MultiSpecPlan(SpecInfo &si, MemBoundList &outline,
@@ -920,9 +937,14 @@ private:
   bool IsReuseHIVMOp(Operation *op, const Value &genBuffer,
                      const Value &killBuffer) const;
 
-  /// the vf call that can reuse dst address `gen` and src address `kill` in
-  /// limited situation
-  bool IsReuseVFCall(Value gen, Value kill);
+  /// Returns true if reusing root alloc `kill` for root alloc `gen` would stall
+  /// the mte2/mte3 pipeline, so the reuse must be rejected.
+  bool IsReuseVFStallPipeline(Value gen, Value kill);
+
+  /// Returns true if the vf call `op` allows its dst `genBuffer` to reuse its
+  /// src `killBuffer` in place: no aliased-argument risk and the vf inplace
+  /// reuse analysis permits it.
+  bool IsReuseVFCall(Operation *op, Value genBuffer, Value killBuffer);
 
   /// Determines whether the value `src` is reachable to an operand of an
   /// operation with pipe type `Pipe`.

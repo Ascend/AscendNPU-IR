@@ -77,6 +77,19 @@ bool isDevice(Operation *func);
 /// Return if the function is a device entry function.
 bool isDeviceEntry(Operation *func);
 
+/// Marks a separately compiled device function called by another device
+/// function. The caller must supply its arguments and memory region.
+/// The compiler does not allocate any memory for this function.
+/// The caller owns pipeline completion and any cross-core join at call
+/// boundaries; the export does not receive an unconditional exit barrier.
+inline constexpr llvm::StringLiteral kExportDeviceAttrName = "export_device";
+
+bool isExportedDevice(Operation *func);
+
+/// Functions requiring independent op compilation. Device entries are roots;
+/// exported device functions are non-entry roots.
+bool isCompilationRoot(Operation *func);
+
 /// Return if the function inputs/outputs are strictly not alias.
 bool hasNoIOAlias(Operation *func);
 

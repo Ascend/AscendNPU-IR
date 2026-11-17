@@ -609,10 +609,18 @@ struct HIVMCMainConfigCLOptions : public HIVMCMainConfig {
             REGISTER_TARGET(Ascend950DT_95A1),
             REGISTER_TARGET(Ascend950DT_95A2),
             REGISTER_TARGET(Ascend950DT_9572x),
-            // Ascend960DT(A6) series
+            // Ascend960DT series
             REGISTER_TARGET(Ascend960), REGISTER_TARGET(Ascend960DT_969B5),
+            REGISTER_TARGET(Ascend960DT_969B6),
             REGISTER_TARGET(Ascend960DT_968B7),
-            REGISTER_TARGET(Ascend960DT_961BX), REGISTER_TARGET(Unknown)
+            REGISTER_TARGET(Ascend960DT_966B7),
+            REGISTER_TARGET(Ascend960DT_966B8),
+            REGISTER_TARGET(Ascend960DT_961BY),
+            REGISTER_TARGET(Ascend960DT_961BZ),
+            // Ascend960PR series
+            REGISTER_TARGET(Ascend960PR_969A1),
+            REGISTER_TARGET(Ascend960PR_964A1),
+            REGISTER_TARGET(Ascend960PR_936A1), REGISTER_TARGET(Unknown)
 #undef REGISTER_TARGET
 #undef TO_STRING
                 ),
