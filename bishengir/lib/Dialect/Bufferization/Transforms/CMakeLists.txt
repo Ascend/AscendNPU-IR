@@ -1,6 +1,7 @@
 add_bishengir_dialect_library(BiShengIRBufferizationTransforms
   BufferizationTilingInterfaceImpl.cpp
   BufferizeModuleOp.cpp
+  EmptyTensorElimination.cpp
   FuncBufferizableOpInterfaceImpl.cpp
   NormalizeToTensorOp.cpp
   TensorCopyInsertion.cpp
@@ -18,5 +19,6 @@ add_bishengir_dialect_library(BiShengIRBufferizationTransforms
   MLIRBufferizationTransforms
   MLIRFuncDialect
   MLIRMemRefDialect
+  MLIRTensorDialect
   MLIRTilingInterface
 )
