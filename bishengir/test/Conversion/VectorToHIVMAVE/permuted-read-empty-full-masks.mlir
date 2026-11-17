@@ -2,8 +2,7 @@
 
 // Empty masked reads return padding without loading memory, including masks
 // behind shape_cast and runtime padding. Full masks allow ordinary loads only
-// with layout legality subsequently checked by TransferReadOpPattern,
-// including higher-rank masks.
+// when the permuted read is already legal, including higher-rank masks.
 // A full mask must not make expansion of a unit source dimension legal.
 // Full-mask cases also check that unused masks leave no AVE predicates behind.
 
@@ -70,7 +69,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %c0 = arith.constant 0 : index
     %padding = arith.constant 7 : i8
     %mask = vector.constant_mask [4, 16] : vector<4x16xi1>
-    // expected-error@+1 {{transfer_read expands a unit source dimension; cannot lower to an unmasked load}}
+    // expected-error @+1 {{non-identity permutation transfer_read must be lowered to a gather, not a plain load}}
     %read = vector.transfer_read %src[%c0, %c0], %padding, %mask {in_bounds = [true, false], permutation_map = affine_map<(d0, d1) -> (d1, d0)>} : memref<1x16xi8, #hivm.address_space<ub>>, vector<16x4xi8>
     return %read : vector<16x4xi8>
   }
@@ -78,9 +77,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
-// Remove the full higher-rank mask before predicate conversion; the read
-// pattern subsequently verifies its layout. The mask producer must not reach
-// the 1-D predicate conversion.
+// A full higher-rank mask may be removed only after proving that the read is
+// contiguous. Its producer must not fail the 1-D predicate conversion later.
 // CHECK-LABEL: func.func @full_mask_dense_block
 // CHECK-NOT: vector.constant_mask
 // CHECK-NOT: ave.hir.pge
@@ -232,7 +230,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
-// Reject unit-source expansion before removing a proven full create_mask.
+// A proven full create_mask must still pass the plain-load legality check.
+// In that case the plain-load legality check fails
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @full_create_mask_cannot_expand_unit_dim(%src: memref<1x16xi8, #hivm.address_space<ub>>) -> vector<16x4xi8> attributes {hivm.vector_function} {
     %c0 = arith.constant 0 : index
@@ -240,7 +239,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %c16 = arith.constant 16 : index
     %padding = arith.constant 7 : i8
     %mask = vector.create_mask %c4, %c16 : vector<4x16xi1>
-    // expected-error @+1 {{transfer_read expands a unit source dimension; cannot lower to an unmasked load}}
+    // expected-error @+1 {{non-identity permutation transfer_read must be lowered to a gather, not a plain load}}
     %read = vector.transfer_read %src[%c0, %c0], %padding, %mask {in_bounds = [true, false], permutation_map = affine_map<(d0, d1) -> (d1, d0)>} : memref<1x16xi8, #hivm.address_space<ub>>, vector<16x4xi8>
     return %read : vector<16x4xi8>
   }
