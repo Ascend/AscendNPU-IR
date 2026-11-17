@@ -418,8 +418,38 @@ std::unique_ptr<Pass> createAutoBlockifyParallelLoopPass();
 std::unique_ptr<Pass>
 createCVPipeliningPass(const CVPipeliningOptions &options = {});
 
+// Create Normalize Workspace Store pass for CV pipelining v2
+std::unique_ptr<Pass> createNormalizeWorkspaceStorePass();
+
 // Create Outline CV Scopes pass for CV pipelining v2
 std::unique_ptr<Pass> createOutlineCVScopesPass();
+
+// Create Merge CV Scopes pass for CV pipelining v2
+std::unique_ptr<Pass> createMergeCVScopesPass();
+
+// Create Intra Stage Scheduling pass for CV pipelining v2
+std::unique_ptr<Pass> createIntraStageSchedulingPass();
+
+// Create a CV Pipelining Staging pass
+std::unique_ptr<Pass>
+createPipelineStagingPass(const PipelineStagingOptions &options = {});
+
+/// Reload GM tensors in their consuming PipelineV2 preload stages.
+std::unique_ptr<Pass> createCVLazyLoadPass();
+
+/// Clone functions before OutlineCVScopes so preload can be rolled back.
+std::unique_ptr<Pass> createSaveCVPipelineSnapshotPass();
+
+/// Restore or inline PipelineV2 when the cross-scope UB estimate exceeds
+/// budget.
+std::unique_ptr<Pass>
+createGuardCVPipelineUBPass(const GuardCVPipelineUBOptions &options = {});
+
+/// Delete the private clones created by SaveCVPipelineSnapshot.
+std::unique_ptr<Pass> createEraseCVPipelineSnapshotsPass();
+
+/// Wrap scopes belonging to the same PipelineV2 preload stage.
+std::unique_ptr<Pass> createWrapCVPreloadScopesPass();
 
 // Create a pass to compose expands and collapses ops
 std::unique_ptr<Pass> createComposeCollapseExpandPass();

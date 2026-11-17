@@ -9,20 +9,36 @@
 #include "Util.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/IR/Dominance.h"
+#include "mlir/IR/AsmState.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Analysis/CFGPrinter.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/GraphWriter.h"
 
+#define DEBUG_TYPE "pipeline-v2-util"
+
 namespace mlir {
 namespace hivm {
+
+bool isPipelineReject(Operation *op) {
+  for (Operation *curr = op; curr; curr = curr->getParentOp())
+    if (curr->hasAttr(LegacyCVPipelineAttr::name))
+      return true;
+  return false;
+}
 
 bool isCoreOp(Operation *op) {
   if (!op || !op->getDialect())
@@ -37,6 +53,93 @@ std::optional<TCoreType> queryConcreteCoreType(Operation *op) {
   if (ct && (*ct == TCoreType::CUBE || *ct == TCoreType::VECTOR))
     return *ct;
   return std::nullopt;
+}
+
+std::optional<TCoreType> getScopeCoreType(ScopeOp scope) {
+  if (!scope)
+    return std::nullopt;
+  if (auto attr =
+          scope->getAttrOfType<TCoreTypeAttr>(kPipelinedLoopCoreTypeAttrName))
+    return attr.getTcoretype();
+  return std::nullopt;
+}
+
+Value traceValueDef(Value v) {
+  if (!v)
+    return nullptr;
+  if (auto result = dyn_cast<OpResult>(v)) {
+    Operation *defining = result.getOwner();
+    Value srcVal =
+        TypeSwitch<Operation *, Value>(defining)
+            .Case<tensor::ReshapeOp, tensor::ExtractSliceOp,
+                  tensor::CollapseShapeOp, tensor::ExpandShapeOp,
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+                  bufferization::ToTensorOp, bufferization::ToMemrefOp,
+#else
+                  bufferization::ToTensorOp, bufferization::ToBufferOp,
+#endif
+                  memref::CastOp, memref::CollapseShapeOp,
+                  memref::ExpandShapeOp, memref::MemorySpaceCastOp,
+                  memref::ReinterpretCastOp, memref::ReshapeOp, memref::ViewOp,
+                  memref::SubViewOp>([](auto op) { return op->getOperand(0); })
+            .Case([](tensor::InsertSliceOp insert) { return insert.getDest(); })
+            .Case([result](LoopLikeOpInterface loop) {
+              return loop.getTiedLoopInit(result)->get();
+            })
+            .Default([](Operation *) { return nullptr; });
+    if (srcVal)
+      return traceValueDef(srcVal);
+    return result;
+  }
+
+  auto blkArg = dyn_cast<BlockArgument>(v);
+  if (!blkArg) {
+    LLVM_DEBUG(llvm::dbgs() << "[traceValueDef] expected block argument, got: "
+                            << v << '\n');
+    return nullptr;
+  }
+  Operation *parent = blkArg.getOwner()->getParentOp();
+  auto loop = dyn_cast<LoopLikeOpInterface>(parent);
+  if (!loop)
+    return blkArg;
+  OpOperand *init = loop.getTiedLoopInit(blkArg);
+  return init ? traceValueDef(init->get()) : blkArg;
+}
+
+memref::AllocOp traceAlloc(Value v) {
+  Value maybeAlloc = traceValueDef(v);
+  return dyn_cast_if_present<memref::AllocOp>(maybeAlloc.getDefiningOp());
+}
+
+bool isCrossCoreCopy(Operation *copy) {
+  auto copyOp = dyn_cast<CopyOp>(copy);
+  if (!copyOp)
+    return false;
+  Value dst = copyOp.getDst();
+  memref::AllocOp alloc = traceAlloc(dst);
+  if (!alloc)
+    return false;
+  auto memSpaceAttr =
+      dyn_cast_or_null<AddressSpaceAttr>(alloc.getType().getMemorySpace());
+  if (!memSpaceAttr)
+    return false;
+
+  return memSpaceAttr.getAddressSpace() == AddressSpace::L1;
+}
+
+bool areCompatibleCoreTypes(TCoreType ct1, TCoreType ct2) {
+  return !((ct1 == TCoreType::CUBE && ct2 == TCoreType::VECTOR) ||
+           (ct1 == TCoreType::VECTOR && ct2 == TCoreType::CUBE));
+}
+
+FailureOr<TCoreType> resolveMergedCoreType(TCoreType ct1, TCoreType ct2) {
+  if (!areCompatibleCoreTypes(ct1, ct2))
+    return failure();
+  if (ct1 == TCoreType::CUBE || ct2 == TCoreType::CUBE)
+    return TCoreType::CUBE;
+  if (ct1 == TCoreType::VECTOR || ct2 == TCoreType::VECTOR)
+    return TCoreType::VECTOR;
+  return ct1;
 }
 
 std::pair<Value, Value> getIfYieldedValues(scf::IfOp ifOp, unsigned resIdx) {
@@ -216,32 +319,75 @@ void moveOpToScope(Operation *op, ScopeOp target, bool insertAtEnd) {
   }
 }
 
+/// Check the complete motion before changing either fragment. A matching
+/// pipeline.if.cond identifies fragments of the same original conditional, but
+/// previous scope merges may have placed other computations between them.
+static bool canFuseIfFragments(scf::IfOp firstIf, scf::IfOp secondIf) {
+  Block *firstBlock = firstIf->getBlock();
+  auto hasUnavailableOperand = [&](Operation *op, bool allowIfResults) {
+    return op
+        ->walk([&](Operation *nested) {
+          for (Value operand : nested->getOperands()) {
+            Operation *def = operand.getDefiningOp();
+            if (!def)
+              continue;
+            Operation *ancestor = firstBlock->findAncestorOpInBlock(*def);
+            if (!ancestor || ancestor->isBeforeInBlock(firstIf))
+              continue;
+            // Direct uses of the first if's results in the second fragment's
+            // branches are replaced with the corresponding branch yields.
+            if (allowIfResults && def == firstIf.getOperation() &&
+                secondIf->isProperAncestor(nested))
+              continue;
+            return WalkResult::interrupt();
+          }
+          return WalkResult::advance();
+        })
+        .wasInterrupted();
+  };
+
+  // The second fragment will execute at firstIf's position. Do not cross
+  // intervening effects in the first scope, even without an SSA dependency.
+  for (Operation *op = firstIf->getNextNode();
+       op && !op->hasTrait<OpTrait::IsTerminator>(); op = op->getNextNode())
+    if (!isMemoryEffectFree(op))
+      return false;
+
+  bool firstIfIsPure = isMemoryEffectFree(firstIf);
+  for (Operation &op : *secondIf->getBlock()) {
+    if (&op == secondIf.getOperation())
+      break;
+    // Hoist the whole prefix in order or leave it untouched. Checking only
+    // direct operands and moving a partial prefix can strand transitive or
+    // region-captured dependencies after the fused conditional.
+    if (hasUnavailableOperand(&op, /*allowIfResults=*/false) ||
+        (!firstIfIsPure && !isMemoryEffectFree(&op)))
+      return false;
+  }
+  return !hasUnavailableOperand(secondIf, /*allowIfResults=*/true);
+}
+
 ScopeOp mergeScopes(ScopeOp scope1, ScopeOp scope2, Operation *at) {
   if (!scope1 || !scope2)
-    return scope1 ? scope1 : scope2;
+    return ScopeOp();
   if (scope1 == scope2)
     return scope1;
+  if (!scope1->getBlock() || scope1->getBlock() != scope2->getBlock())
+    return ScopeOp();
+  if (at && at->getBlock() != scope1->getBlock())
+    return ScopeOp();
 
-  auto coreAttr1 =
-      scope1->getAttrOfType<TCoreTypeAttr>(kPipelinedLoopCoreTypeAttrName);
-  auto coreAttr2 =
-      scope2->getAttrOfType<TCoreTypeAttr>(kPipelinedLoopCoreTypeAttrName);
-  assert(coreAttr1 && coreAttr2 && "expected scopes to have core type attr");
-  TCoreType ct1 = coreAttr1.getTcoretype();
-  TCoreType ct2 = coreAttr2.getTcoretype();
-  assert(!((ct1 == TCoreType::CUBE && ct2 == TCoreType::VECTOR) ||
-           (ct1 == TCoreType::VECTOR && ct2 == TCoreType::CUBE)) &&
-         "cannot merge CUBE and VECTOR scopes");
-  TCoreType mergedCoreType = ct1;
-  if (ct1 == TCoreType::CUBE || ct2 == TCoreType::CUBE)
-    mergedCoreType = TCoreType::CUBE;
-  else if (ct1 == TCoreType::VECTOR || ct2 == TCoreType::VECTOR)
-    mergedCoreType = TCoreType::VECTOR;
+  auto ct1 = getScopeCoreType(scope1);
+  auto ct2 = getScopeCoreType(scope2);
+  if (!ct1 || !ct2)
+    return ScopeOp();
+  FailureOr<TCoreType> mergedCoreType = resolveMergedCoreType(*ct1, *ct2);
+  if (failed(mergedCoreType))
+    return ScopeOp();
 
-  DominanceInfo domInfo(scope1->getParentOp());
   ScopeOp firstScope = scope1;
   ScopeOp secondScope = scope2;
-  if (domInfo.properlyDominates(scope2.getOperation(), scope1.getOperation()))
+  if (scope2->isBeforeInBlock(scope1))
     std::swap(firstScope, secondScope);
 
   Block &firstBlock = firstScope.getRegion().front();
@@ -289,22 +435,14 @@ ScopeOp mergeScopes(ScopeOp scope1, ScopeOp scope2, Operation *at) {
     if (!idAttr)
       continue;
     scf::IfOp if1 = firstIfById.lookup(idAttr.getInt());
-    if (!if1)
+    if (!if1 || !canFuseIfFragments(if1, if2))
       continue;
 
-    // Move prerequisite ops preceding if2 in secondBlock before if1 if they do
-    // not depend on if1 or later ops in firstBlock.
+    // The preflight proved that every prerequisite can move before if1.
     for (Operation &op : llvm::make_early_inc_range(secondBlock)) {
       if (&op == if2.getOperation())
         break;
-      bool dependsOnIf1OrLater =
-          llvm::any_of(op.getOperands(), [&](Value opnd) {
-            Operation *def = opnd.getDefiningOp();
-            return def && def->getBlock() == &firstBlock &&
-                   !def->isBeforeInBlock(if1);
-          });
-      if (!dependsOnIf1OrLater)
-        op.moveBefore(if1);
+      op.moveBefore(if1);
     }
 
     // Redirect uses of if1's results inside if2's branches to if1's branch
@@ -389,6 +527,7 @@ ScopeOp mergeScopes(ScopeOp scope1, ScopeOp scope2, Operation *at) {
          llvm::zip(keptIfResults, mergedIf.getResults()))
       oldRes.replaceAllUsesWith(newRes);
 
+    firstIfById[idAttr.getInt()] = mergedIf;
     if1.erase();
     if2.erase();
   }
@@ -408,7 +547,7 @@ ScopeOp mergeScopes(ScopeOp scope1, ScopeOp scope2, Operation *at) {
   auto mergedScope = recreateScope(firstScope, mergedReturnOperands, at);
   mergedScope->setAttr(
       kPipelinedLoopCoreTypeAttrName,
-      TCoreTypeAttr::get(mergedScope.getContext(), mergedCoreType));
+      TCoreTypeAttr::get(mergedScope.getContext(), *mergedCoreType));
 
   for (auto [oldRes, newRes] :
        llvm::zip(oldScopeResultsToReplace, mergedScope.getResults()))
@@ -421,18 +560,46 @@ ScopeOp mergeScopes(ScopeOp scope1, ScopeOp scope2, Operation *at) {
 
 namespace {
 
+static bool regionHasScope(Region &region) {
+  return region
+      .walk<WalkOrder::PreOrder>([](Operation *op) {
+        if (isa<scf::ForOp>(op))
+          return WalkResult::skip();
+        if (isa<ScopeOp>(op))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      })
+      .wasInterrupted();
+}
+
+static std::string getScopeKindLabel(ScopeOp scope) {
+  std::string kind;
+  if (auto ct = getScopeCoreType(scope))
+    kind = stringifyTCoreType(*ct).str();
+  else if (scope->hasAttr(kCVMergedScopeAttrName))
+    kind = kCVMergedScopeAttrName.str();
+  else
+    kind = "untyped";
+  if (auto preload = scope->getAttrOfType<IntegerAttr>(PreloadNumAttr::name))
+    kind += llvm::formatv(", preload={0}", preload.getInt()).str();
+  return kind;
+}
+
 struct ScopeDepNode;
+struct ScopeCluster;
 
 struct ScopeDepEdge {
   const ScopeDepNode *target = nullptr;
-  std::string label;
+  SmallVector<std::string, 2> labels;
   bool isLoopCarried = false;
+
+  std::string getJoinedLabel() const { return llvm::join(labels, ", "); }
 };
 
 struct ScopeDepNode {
   unsigned id = 0;
   ScopeOp scopeOp;
-  TCoreType coreType = TCoreType::CUBE_OR_VECTOR;
+  std::optional<TCoreType> coreType;
   SmallVector<const ScopeDepNode *> children;
   SmallVector<ScopeDepEdge> edges;
 
@@ -440,24 +607,55 @@ struct ScopeDepNode {
     for (ScopeDepEdge &existing : edges) {
       if (existing.target == dst && existing.isLoopCarried == loopCarried) {
         if (!edgeLabel.empty() &&
-            StringRef(existing.label).find(edgeLabel) == StringRef::npos) {
-          if (!existing.label.empty())
-            existing.label += ", ";
-          existing.label += edgeLabel.str();
-        }
+            !llvm::is_contained(existing.labels, edgeLabel))
+          existing.labels.push_back(edgeLabel.str());
         return;
       }
     }
     children.push_back(dst);
-    edges.push_back({dst, edgeLabel.str(), loopCarried});
+    ScopeDepEdge newEdge;
+    newEdge.target = dst;
+    if (!edgeLabel.empty())
+      newEdge.labels.push_back(edgeLabel.str());
+    newEdge.isLoopCarried = loopCarried;
+    edges.push_back(std::move(newEdge));
   }
+};
+
+struct ScopeClusterChild {
+  const ScopeDepNode *node = nullptr;
+  const ScopeCluster *cluster = nullptr;
+
+  static ScopeClusterChild fromNode(const ScopeDepNode *n) {
+    return {n, nullptr};
+  }
+  static ScopeClusterChild fromCluster(const ScopeCluster *c) {
+    return {nullptr, c};
+  }
+};
+
+struct ScopeCluster {
+  unsigned id = 0;
+  ScopeOp scopeOp;
+  std::optional<TCoreType> coreType;
+  SmallVector<ScopeClusterChild> children;
 };
 
 struct DOTScopeDepGraphInfo {
   scf::ForOp forOp;
   std::string funcName;
+  std::unique_ptr<AsmState> asmState;
   SmallVector<std::unique_ptr<ScopeDepNode>> nodes;
   SmallVector<const ScopeDepNode *> nodePtrs;
+  SmallVector<std::unique_ptr<ScopeCluster>> clusters;
+  SmallVector<const ScopeCluster *> topLevelClusters;
+
+  std::string formatValue(Value val) const {
+    std::string str;
+    llvm::raw_string_ostream os(str);
+    val.printAsOperand(os, *asmState);
+    return os.str();
+  }
 
   explicit DOTScopeDepGraphInfo(scf::ForOp loop) : forOp(loop) {
     if (auto func = loop->getParentOfType<func::FuncOp>())
@@ -465,53 +663,208 @@ struct DOTScopeDepGraphInfo {
     else
       funcName = "loop";
 
-    DenseMap<Operation *, ScopeDepNode *> scopeToNode;
-    for (auto [idx, scope] :
-         llvm::enumerate(loop.getBody()->getOps<ScopeOp>())) {
-      auto node = std::make_unique<ScopeDepNode>();
-      node->id = idx;
-      node->scopeOp = scope;
-      if (auto attr = scope->getAttrOfType<TCoreTypeAttr>(
-              kPipelinedLoopCoreTypeAttrName))
-        node->coreType = attr.getTcoretype();
-      scopeToNode[scope.getOperation()] = node.get();
-      nodePtrs.push_back(node.get());
-      nodes.push_back(std::move(node));
-    }
+    Operation *asmRoot = loop.getOperation();
+    while (Operation *parent = asmRoot->getParentOp())
+      asmRoot = parent;
+    asmState = std::make_unique<AsmState>(asmRoot);
 
-    auto findEnclosingScopeNode = [&](Operation *op) -> ScopeDepNode * {
+    DenseMap<Operation *, ScopeDepNode *> leafScopeToNode;
+    std::function<void(Region &, ScopeCluster *)> visitRegion =
+        [&](Region &region, ScopeCluster *parentCluster) {
+          for (Block &block : region) {
+            for (Operation &op : block) {
+              if (isa<scf::ForOp>(op))
+                continue;
+              if (auto scope = dyn_cast<ScopeOp>(op)) {
+                if (regionHasScope(scope.getRegion())) {
+                  auto cluster = std::make_unique<ScopeCluster>();
+                  cluster->id = clusters.size();
+                  cluster->scopeOp = scope;
+                  cluster->coreType = getScopeCoreType(scope);
+                  ScopeCluster *clusterPtr = cluster.get();
+                  clusters.push_back(std::move(cluster));
+                  if (parentCluster)
+                    parentCluster->children.push_back(
+                        ScopeClusterChild::fromCluster(clusterPtr));
+                  else
+                    topLevelClusters.push_back(clusterPtr);
+                  visitRegion(scope.getRegion(), clusterPtr);
+                } else {
+                  auto node = std::make_unique<ScopeDepNode>();
+                  node->id = nodes.size();
+                  node->scopeOp = scope;
+                  node->coreType = getScopeCoreType(scope);
+                  ScopeDepNode *nodePtr = node.get();
+                  leafScopeToNode[scope.getOperation()] = nodePtr;
+                  nodePtrs.push_back(nodePtr);
+                  nodes.push_back(std::move(node));
+                  if (parentCluster)
+                    parentCluster->children.push_back(
+                        ScopeClusterChild::fromNode(nodePtr));
+                }
+              } else {
+                for (Region &subRegion : op.getRegions())
+                  visitRegion(subRegion, parentCluster);
+              }
+            }
+          }
+        };
+
+    visitRegion(loop.getRegion(), /*parentCluster=*/nullptr);
+
+    auto findEnclosingLeafScopeNode = [&](Operation *op) -> ScopeDepNode * {
       while (op && op != loop.getOperation()) {
-        if (auto *n = scopeToNode.lookup(op))
+        if (auto *n = leafScopeToNode.lookup(op))
           return n;
         op = op->getParentOp();
       }
       return nullptr;
     };
 
-    // Edges:
-    // 1. `scope result` -> `user scope`
-    // 2. `scope result` -> `scf.yield` -> `corresponding iter_arg user scope`
     auto yieldOp = cast<scf::YieldOp>(loop.getBody()->getTerminator());
+
+    auto collectConsumerLeafNodes =
+        [&](Value rootVal, SmallVectorImpl<ScopeDepNode *> &consumers) {
+          SmallVector<Value, 8> worklist = {rootVal};
+          SmallPtrSet<Value, 8> visited = {rootVal};
+          SmallPtrSet<const ScopeDepNode *, 8> seenNodes;
+          auto pushVal = [&](Value v) {
+            if (v && visited.insert(v).second)
+              worklist.push_back(v);
+          };
+
+          while (!worklist.empty()) {
+            Value cur = worklist.pop_back_val();
+            for (OpOperand &use : cur.getUses()) {
+              Operation *user = use.getOwner();
+              if (user == yieldOp.getOperation())
+                continue;
+              if (ScopeDepNode *dst = findEnclosingLeafScopeNode(user)) {
+                if (seenNodes.insert(dst).second)
+                  consumers.push_back(dst);
+                continue;
+              }
+              if (!loop->isProperAncestor(user))
+                continue;
+              if (isa<scope::ReturnOp>(user)) {
+                if (auto parentScope = dyn_cast<ScopeOp>(user->getParentOp());
+                    parentScope && loop->isProperAncestor(parentScope)) {
+                  unsigned idx = use.getOperandNumber();
+                  if (idx < parentScope.getNumResults())
+                    pushVal(parentScope.getResult(idx));
+                }
+              } else if (isa<scf::YieldOp>(user)) {
+                if (auto ifOp = dyn_cast<scf::IfOp>(user->getParentOp());
+                    ifOp && loop->isProperAncestor(ifOp)) {
+                  unsigned idx = use.getOperandNumber();
+                  if (idx < ifOp.getNumResults())
+                    pushVal(ifOp.getResult(idx));
+                }
+              } else if (auto ifOp = dyn_cast<scf::IfOp>(user)) {
+                bool hasNestedScope = false;
+                for (const auto &cand : nodes) {
+                  if (ifOp->isProperAncestor(cand->scopeOp)) {
+                    hasNestedScope = true;
+                    if (seenNodes.insert(cand.get()).second)
+                      consumers.push_back(cand.get());
+                  }
+                }
+                if (!hasNestedScope) {
+                  for (Value r : ifOp.getResults())
+                    pushVal(r);
+                }
+              } else if (!isa<ScopeOp, scf::ForOp>(user)) {
+                for (Value r : user->getResults())
+                  pushVal(r);
+              }
+            }
+          }
+        };
+
+    // Precompute consumer leaf scopes for each loop iter_arg.
+    SmallVector<SmallVector<ScopeDepNode *>> iterArgConsumers(
+        loop.getNumRegionIterArgs());
+    for (unsigned argIdx = 0; argIdx < loop.getNumRegionIterArgs(); ++argIdx)
+      collectConsumerLeafNodes(loop.getRegionIterArg(argIdx),
+                               iterArgConsumers[argIdx]);
+
+    // Trace SSA values produced by each leaf scope across nested wrapper
+    // scopes, scf.if regions, and intervening non-scope operations:
+    // 1. `scope result` -> ... -> `user leaf scope`
+    // 2. `scope result` -> ... -> `scf.yield` -> `iter_arg` -> `user leaf
+    // scope`
     for (const auto &srcNode : nodes) {
-      for (auto [resIdx, res] :
-           llvm::enumerate(srcNode->scopeOp.getResults())) {
-        for (OpOperand &use : res.getUses()) {
+      SmallVector<Value, 8> worklist(srcNode->scopeOp.result_begin(),
+                                     srcNode->scopeOp.result_end());
+      SmallPtrSet<Value, 8> visited(worklist.begin(), worklist.end());
+      auto pushVal = [&](Value v) {
+        if (v && visited.insert(v).second)
+          worklist.push_back(v);
+      };
+
+      while (!worklist.empty()) {
+        Value curVal = worklist.pop_back_val();
+        std::string curValName;
+        auto getCurValName = [&]() -> const std::string & {
+          if (curValName.empty())
+            curValName = formatValue(curVal);
+          return curValName;
+        };
+
+        for (OpOperand &use : curVal.getUses()) {
           Operation *user = use.getOwner();
           if (user == yieldOp.getOperation()) {
             unsigned argIdx = use.getOperandNumber();
             if (argIdx >= loop.getNumRegionIterArgs())
               continue;
             std::string label =
-                llvm::formatv("LCD(res#{0}->arg#{1})", resIdx, argIdx).str();
-            for (OpOperand &argUse : loop.getRegionIterArg(argIdx).getUses()) {
-              if (ScopeDepNode *dstNode =
-                      findEnclosingScopeNode(argUse.getOwner()))
-                srcNode->addEdge(dstNode, label, /*loopCarried=*/true);
+                llvm::formatv("LCD({0}->{1})", getCurValName(),
+                              formatValue(loop.getRegionIterArg(argIdx)));
+            for (ScopeDepNode *dstNode : iterArgConsumers[argIdx])
+              srcNode->addEdge(dstNode, label, /*loopCarried=*/true);
+            continue;
+          }
+
+          if (ScopeDepNode *dstNode = findEnclosingLeafScopeNode(user)) {
+            if (dstNode != srcNode.get())
+              srcNode->addEdge(dstNode, getCurValName(), /*loopCarried=*/false);
+            continue;
+          }
+
+          if (!loop->isProperAncestor(user))
+            continue;
+
+          if (isa<scope::ReturnOp>(user)) {
+            if (auto parentScope = dyn_cast<ScopeOp>(user->getParentOp());
+                parentScope && loop->isProperAncestor(parentScope)) {
+              unsigned idx = use.getOperandNumber();
+              if (idx < parentScope.getNumResults())
+                pushVal(parentScope.getResult(idx));
             }
-          } else if (ScopeDepNode *dstNode = findEnclosingScopeNode(user);
-                     dstNode && dstNode != srcNode.get()) {
-            srcNode->addEdge(dstNode, llvm::formatv("res#{0}", resIdx).str(),
-                             /*loopCarried=*/false);
+          } else if (isa<scf::YieldOp>(user)) {
+            if (auto ifOp = dyn_cast<scf::IfOp>(user->getParentOp());
+                ifOp && loop->isProperAncestor(ifOp)) {
+              unsigned idx = use.getOperandNumber();
+              if (idx < ifOp.getNumResults())
+                pushVal(ifOp.getResult(idx));
+            }
+          } else if (auto ifOp = dyn_cast<scf::IfOp>(user)) {
+            bool hasNestedScope = false;
+            for (const auto &cand : nodes) {
+              if (ifOp->isProperAncestor(cand->scopeOp)) {
+                hasNestedScope = true;
+                if (cand.get() != srcNode.get())
+                  srcNode->addEdge(cand.get(), getCurValName(),
+                                   /*loopCarried=*/false);
+              }
+            }
+            if (!hasNestedScope) {
+              for (Value r : ifOp.getResults())
+                pushVal(r);
+            }
+          } else if (!isa<ScopeOp, scf::ForOp>(user)) {
+            for (Value r : user->getResults())
+              pushVal(r);
           }
         }
       }
@@ -527,6 +880,9 @@ struct DOTScopeDepGraphInfo {
 namespace llvm {
 
 using mlir::hivm::DOTScopeDepGraphInfo;
+using mlir::hivm::getScopeKindLabel;
+using mlir::hivm::ScopeCluster;
+using mlir::hivm::ScopeClusterChild;
 using mlir::hivm::ScopeDepEdge;
 using mlir::hivm::ScopeDepNode;
 
@@ -566,17 +922,25 @@ struct DOTGraphTraits<DOTScopeDepGraphInfo *> : public DefaultDOTGraphTraits {
   static std::string getSimpleNodeLabel(const ScopeDepNode *Node,
                                         DOTScopeDepGraphInfo *) {
     return formatv("Scope {0} ({1})", Node->id,
-                   mlir::hivm::stringifyTCoreType(Node->coreType))
+                   getScopeKindLabel(Node->scopeOp))
         .str();
   }
 
-  static void printScopeBlock(raw_string_ostream &OS,
-                              const ScopeDepNode &Node) {
-    OS << formatv("Scope {0} ({1}):\n", Node.id,
-                  mlir::hivm::stringifyTCoreType(Node.coreType));
+  static void printScopeBlock(raw_string_ostream &OS, const ScopeDepNode &Node,
+                              const DOTScopeDepGraphInfo *G) {
     mlir::scope::ScopeOp scopeOp = Node.scopeOp;
-    for (mlir::Operation &op : scopeOp.getRegion().front())
-      OS << op << "\n";
+    OS << formatv("Scope {0} ({1})", Node.id, getScopeKindLabel(scopeOp));
+    if (scopeOp.getNumResults() > 0) {
+      OS << " -> ";
+      llvm::interleaveComma(scopeOp.getResults(), OS, [&](mlir::Value res) {
+        OS << G->formatValue(res);
+      });
+    }
+    OS << ":\n";
+    for (mlir::Operation &op : scopeOp.getRegion().front()) {
+      op.print(OS, *G->asmState);
+      OS << "\n";
+    }
   }
 
   static void noOpHandleComment(std::string &, unsigned &, unsigned) {}
@@ -587,7 +951,9 @@ struct DOTGraphTraits<DOTScopeDepGraphInfo *> : public DefaultDOTGraphTraits {
     return CompleteNodeLabelString(
         Node,
         function_ref<void(raw_string_ostream &, const ScopeDepNode &)>(
-            printScopeBlock),
+            [G](raw_string_ostream &OS, const ScopeDepNode &N) {
+              printScopeBlock(OS, N, G);
+            }),
         function_ref<void(std::string &, unsigned &, unsigned)>(
             noOpHandleComment));
   }
@@ -613,14 +979,62 @@ struct DOTGraphTraits<DOTScopeDepGraphInfo *> : public DefaultDOTGraphTraits {
     std::string attrs =
         formatv("tooltip=\"Scope {0} -> Scope {1}\"", Node->id, edge.target->id)
             .str();
-    if (!edge.label.empty())
-      attrs += formatv(" label=\"{0}\"", DOT::EscapeString(edge.label)).str();
+    std::string edgeLabel = edge.getJoinedLabel();
+    if (!edgeLabel.empty())
+      attrs += formatv(" label=\"{0}\"", DOT::EscapeString(edgeLabel)).str();
     if (edge.isLoopCarried) {
       attrs += " style=dashed color=red penwidth=2";
       if (Node->id >= edge.target->id)
         attrs += " constraint=false";
     }
     return attrs;
+  }
+
+  static void printCluster(const ScopeCluster &cluster,
+                           const DOTScopeDepGraphInfo *G,
+                           GraphWriter<DOTScopeDepGraphInfo *> &GW,
+                           unsigned indent = 1) {
+    raw_ostream &O = GW.getOStream();
+    mlir::scope::ScopeOp scopeOp = cluster.scopeOp;
+    O.indent(indent * 2) << "subgraph cluster_scope_" << cluster.id << " {\n";
+    std::string label =
+        formatv("Outer Scope {0} ({1})", cluster.id, getScopeKindLabel(scopeOp))
+            .str();
+    if (scopeOp.getNumResults() > 0 && !scopeOp.getRegion().empty()) {
+      if (auto retOp = dyn_cast<mlir::scope::ReturnOp>(
+              scopeOp.getRegion().front().getTerminator())) {
+        std::string bindings;
+        raw_string_ostream bOS(bindings);
+        llvm::interleaveComma(
+            llvm::zip(scopeOp.getResults(), retOp.getOperands()), bOS,
+            [&](auto pair) {
+              bOS << G->formatValue(std::get<0>(pair)) << " = "
+                  << G->formatValue(std::get<1>(pair));
+            });
+        label += "\n" + bOS.str();
+      }
+    }
+    O.indent((indent + 1) * 2)
+        << "label = \"" << DOT::EscapeString(label) << "\";\n";
+    O.indent((indent + 1) * 2) << "style = \"rounded,dashed,filled\";\n";
+    O.indent((indent + 1) * 2) << "color = \"#666666\";\n";
+    O.indent((indent + 1) * 2) << "fillcolor = \"#f8f8f8\";\n";
+    O.indent((indent + 1) * 2) << "fontname = \"Courier\";\n";
+    for (const ScopeClusterChild &child : cluster.children) {
+      if (child.cluster) {
+        printCluster(*child.cluster, G, GW, indent + 1);
+      } else if (child.node) {
+        O.indent((indent + 1) * 2)
+            << "Node" << static_cast<const void *>(child.node) << ";\n";
+      }
+    }
+    O.indent(indent * 2) << "}\n";
+  }
+
+  static void addCustomGraphFeatures(DOTScopeDepGraphInfo *const &G,
+                                     GraphWriter<DOTScopeDepGraphInfo *> &GW) {
+    for (const ScopeCluster *cluster : G->topLevelClusters)
+      printCluster(*cluster, G, GW);
   }
 };
 
@@ -629,32 +1043,37 @@ struct DOTGraphTraits<DOTScopeDepGraphInfo *> : public DefaultDOTGraphTraits {
 namespace mlir {
 namespace hivm {
 
-void writeScopeDependenceGraphToDotFile(scf::ForOp forOp, StringRef filename,
-                                        bool shortNames) {
+void writeScopeDependenceGraphToDotFile(scf::ForOp forOp, StringRef prefix,
+                                        StringRef filename, bool shortNames) {
   if (!forOp)
     return;
   DOTScopeDepGraphInfo graphInfo(forOp);
-  std::string outFilename = filename.str();
-  if (outFilename.empty()) {
+  std::string outFilename;
+  if (!filename.empty()) {
+    outFilename =
+        prefix.empty() ? filename.str() : (prefix + "." + filename).str();
+  } else {
     Operation *rootOp = forOp->getParentOfType<func::FuncOp>();
     if (!rootOp)
       rootOp = forOp->getParentOp();
     SmallVector<scf::ForOp> scopedLoops;
     if (rootOp) {
       rootOp->walk([&](scf::ForOp loop) {
-        if (!loop.getBody()->getOps<ScopeOp>().empty())
+        if (regionHasScope(loop.getRegion()))
           scopedLoops.push_back(loop);
       });
     }
+    std::string baseName = prefix.empty()
+                               ? graphInfo.funcName
+                               : (prefix + "." + graphInfo.funcName).str();
     if (scopedLoops.size() > 1) {
       auto it = llvm::find(scopedLoops, forOp);
       unsigned idx = (it != scopedLoops.end())
                          ? std::distance(scopedLoops.begin(), it)
                          : 0;
-      outFilename =
-          llvm::formatv("scope-dep.{0}.{1}.dot", graphInfo.funcName, idx).str();
+      outFilename = llvm::formatv("{0}.{1}.dot", baseName, idx).str();
     } else {
-      outFilename = "scope-dep." + graphInfo.funcName + ".dot";
+      outFilename = baseName + ".dot";
     }
   }
   llvm::errs() << "Writing '" << outFilename << "'...";

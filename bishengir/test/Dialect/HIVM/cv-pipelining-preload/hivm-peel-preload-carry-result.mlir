@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hivm-peel-preload | FileCheck %s
+// RUN: bishengir-opt %s -hivm-peel-preload -verify-each | FileCheck %s
 
 // Empty peel epilogue iterations must not replace a carried multi-buffer
 // result with a fresh unused buffer view. The value stored after the peeled
@@ -58,7 +58,12 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<AIC>} {
 // builds write/yield casts from it back to back. The post-loop store to %dst
 // must use the carried yield cast; the trailing empty epilogue may bump the
 // counter but must not insert another arith.select before that store.
+// The middle loop owns its tick even though it yields a buffer ring.
 // CHECK: scf.for
+// CHECK: %[[TICK:.*]] = memref.load %[[COUNTER:.*]][
+// CHECK: %[[NEXT_TICK:.*]] = arith.addi %[[TICK]],
+// CHECK: memref.store %[[NEXT_TICK]], %[[COUNTER]][
+// CHECK-NOT: memref.store {{.*}}, %[[COUNTER]][
 // CHECK: }
 // CHECK: %[[ADDR:.*]] = arith.select
 // CHECK-NEXT: %[[WRITE:.*]] = hivm.hir.pointer_cast(%[[ADDR]]

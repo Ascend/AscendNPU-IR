@@ -1389,7 +1389,8 @@ def DecoupledMemoryComputeScheduling : HIVMOptimizationControlOptions<
 >;
 
 def UsePipelinev2 : HIVMOptimizationControlOptions<
-  "Enable pipeline v2, bypassing cv-pipelining pass and using pipeline v2 passes (RegBase only for now).",
+  "Enable pipeline v2 for all kernels, overriding the registered-kernel "
+  "v1 default (RegBase only).",
   "bool",
   "false"
 >;
@@ -1670,6 +1671,13 @@ def UseDPX : BiShengIRCompileOpt<
 > {
   bit isSharedWithDownstreamToolchain = 1;
 }
+
+def SetMaxPipelineMultibuffer : HIVMOptimizationControlOptions<
+  "Maximum number of multibuffers for pipeline staging. ",
+  "unsigned",
+  "0"
+>;
+
 } // let optionScope = ["A5_ONLY"]
 
 #endif // BISHENGIR_TOOLS_BISHENGIR_COMPILE_OPTIONS_TD

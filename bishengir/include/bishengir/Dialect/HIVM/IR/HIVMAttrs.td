@@ -1390,6 +1390,22 @@ def HIVM_CVPipelinedLoopAttr
   }];
 }
 
+// TODO: Temporary transition measure while migrating from legacy CVPipelining
+// to PipelineV2. Remove once legacy CVPipelining and ShapeRegistry are retired.
+def HIVM_LegacyCVPipelineAttr
+    : HIVM_Attr<"LegacyCVPipeline", "legacy-cv-pipeline"> {
+  let description = [{
+    Marks a loop as pipelined by the legacy CV-pipelining pass.
+  }];
+}
+
+def HIVM_FusedLCDAttr
+    : HIVM_Attr<"FusedLCD", "fused_lcd"> {
+  let description = [{
+    Marks a scope as a fused scope of loop-carried dependent scopes.
+  }];
+}
+
 def HIVM_UnlikelyConditionAttr
     : HIVM_Attr<"UnlikelyCondition", "unlikely_condition"> {
   let description = [{
