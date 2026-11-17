@@ -395,11 +395,82 @@ func.func @scalar_truncf_f32_to_bf16_untouched(%a: f32) -> bf16 {
 // -----
 
 // Negative case: a tensor cast is already handled by the hfusion.cast path and
-// must not be wrapped again.
+// must not be wrapped again. The fp8 predicate looks through shaped types, so
+// this case is what pins the ShapedType guard.
 // CHECK-LABEL: func.func @tensor_truncf_f32_to_f8e4m3_untouched
 // CHECK-NOT: tensor.from_elements
 // CHECK: arith.truncf {{.*}} : tensor<8xf32> to tensor<8xf8E4M3FN>
 func.func @tensor_truncf_f32_to_f8e4m3_untouched(%a: tensor<8xf32>) -> tensor<8xf8E4M3FN> {
   %0 = arith.truncf %a : tensor<8xf32> to tensor<8xf8E4M3FN>
   return %0 : tensor<8xf8E4M3FN>
+}
+
+// -----
+
+// A 1-D tensor of a single fp8 element must also be left alone, so a removed
+// ShapedType guard cannot be mistaken for an already-scalar shape.
+// CHECK-LABEL: func.func @tensor1_extf_f8e4m3_untouched
+// CHECK-NOT: tensor.from_elements
+// CHECK: arith.extf {{.*}} : tensor<1xf8E4M3FN> to tensor<1xf32>
+func.func @tensor1_extf_f8e4m3_untouched(%a: tensor<1xf8E4M3FN>) -> tensor<1xf32> {
+  %0 = arith.extf %a : tensor<1xf8E4M3FN> to tensor<1xf32>
+  return %0 : tensor<1xf32>
+}
+
+// -----
+
+// fastmath must survive the rewrite. No rounding mode is requested here, so the
+// round-to-nearest-even the tensor path produces is what was asked for.
+// CHECK-LABEL: func.func @scalar_truncf_f32_to_f8e4m3_keeps_fastmath
+// CHECK: tensor.from_elements {{.*}} : tensor<1xf32>
+// CHECK: arith.truncf {{.*}} fastmath<nnan> : tensor<1xf32> to tensor<1xf8E4M3FN>
+// CHECK: tensor.extract {{.*}} : tensor<1xf8E4M3FN>
+func.func @scalar_truncf_f32_to_f8e4m3_keeps_fastmath(%a: f32) -> f8E4M3FN {
+  %0 = arith.truncf %a fastmath<nnan> : f32 to f8E4M3FN
+  return %0 : f8E4M3FN
+}
+
+// -----
+
+// An explicit to_nearest_even matches what the tensor path emits, so it is
+// accepted and forwarded without any diagnostic.
+// CHECK-LABEL: func.func @scalar_truncf_f32_to_f8e4m3_rtne_ok
+// CHECK: arith.truncf {{.*}} to_nearest_even : tensor<1xf32> to tensor<1xf8E4M3FN>
+// CHECK: tensor.extract {{.*}} : tensor<1xf8E4M3FN>
+func.func @scalar_truncf_f32_to_f8e4m3_rtne_ok(%a: f32) -> f8E4M3FN {
+  %0 = arith.truncf %a to_nearest_even : f32 to f8E4M3FN
+  return %0 : f8E4M3FN
+}
+
+// -----
+
+// Any other explicit rounding mode cannot be honored by the tensor path, so the
+// cast is rejected instead of silently producing a differently rounded value.
+func.func @scalar_truncf_f32_to_f8e4m3_rtz_rejected(%a: f32) -> f8E4M3FN {
+  // expected-error @below {{rounding mode 'toward_zero' is not supported for a scalar fp8 cast}}
+  %0 = arith.truncf %a toward_zero : f32 to f8E4M3FN
+  return %0 : f8E4M3FN
+}
+
+// -----
+
+// Boundary: f64 <-> fp8 is not among the pairs the tensor cast path supports
+// (ArithToHFusion::selectRoundMode reports a fatal error for them), so the
+// scalar cast must be left alone rather than promoted into that failure.
+// CHECK-LABEL: func.func @scalar_truncf_f64_to_f8e4m3_untouched
+// CHECK-NOT: tensor.from_elements
+// CHECK: arith.truncf {{.*}} : f64 to f8E4M3FN
+func.func @scalar_truncf_f64_to_f8e4m3_untouched(%a: f64) -> f8E4M3FN {
+  %0 = arith.truncf %a : f64 to f8E4M3FN
+  return %0 : f8E4M3FN
+}
+
+// -----
+
+// CHECK-LABEL: func.func @scalar_extf_f8e4m3_to_f64_untouched
+// CHECK-NOT: tensor.from_elements
+// CHECK: arith.extf {{.*}} : f8E4M3FN to f64
+func.func @scalar_extf_f8e4m3_to_f64_untouched(%a: f8E4M3FN) -> f64 {
+  %0 = arith.extf %a : f8E4M3FN to f64
+  return %0 : f64
 }

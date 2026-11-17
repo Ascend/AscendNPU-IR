@@ -460,6 +460,12 @@ struct LegalizeWideUIToNarrowFP : public OpRewritePattern<arith::UIToFPOp> {
 /// pattern. Route both directions through a length-1 tensor so the existing
 /// tensor cast path (ArithToHFusion -> hfusion.cast with RINT) handles them.
 ///
+/// The match is restricted to the type pairs that path actually supports,
+/// f16/bf16/f32 <-> f8E4M3FN/f8E5M2 in the matching direction. Promoting
+/// anything else, f64 <-> fp8 for instance, would only move the failure into
+/// ArithToHFusion::selectRoundMode, which reports a fatal error for those
+/// pairs.
+///
 /// Before:
 ///   %res = arith.truncf %x : f32 to f8E4M3FN
 /// After:
@@ -475,15 +481,40 @@ struct LegalizeScalarFp8Cast : public OpRewritePattern<CastOpType> {
     Type srcType = op.getIn().getType();
     Type dstType = op.getOut().getType();
 
+    // Match only the directions and type pairs the tensor cast path supports.
+    // The predicates look through shaped types, so tensor casts are rejected
+    // by the explicit guard below rather than falling out of these checks.
+    if constexpr (std::is_same_v<CastOpType, arith::TruncFOp>) {
+      if (!isWideFloatElementType(srcType) || !isFp8ElementType(dstType))
+        return failure();
+    } else {
+      if (!isFp8ElementType(srcType) || !isWideFloatElementType(dstType))
+        return failure();
+    }
     // Tensor casts already take the hfusion.cast path.
     if (isa<ShapedType>(srcType) || isa<ShapedType>(dstType))
       return failure();
     if (op->template getParentOfType<linalg::LinalgOp>())
       return failure();
 
-    // Only the fp8 endpoints need this detour.
-    if (!isFp8ScalarType(srcType) && !isFp8ScalarType(dstType))
-      return failure();
+    // The tensor cast path always rounds to nearest even (it derives the mode
+    // from the element types, see ArithToHFusion::selectRoundMode). Honoring
+    // any other explicit mode is therefore impossible here, and emitting a
+    // differently rounded result is not an acceptable substitute, so reject
+    // the cast with a diagnostic. A request for to_nearest_even matches what
+    // the path produces and is accepted silently.
+    if (auto roundingOp =
+            dyn_cast<arith::ArithRoundingModeInterface>(op.getOperation())) {
+      if (auto modeAttr = roundingOp.getRoundingModeAttr()) {
+        if (modeAttr.getValue() != arith::RoundingMode::to_nearest_even) {
+          op->emitError("[hfusion-legalize-scalar]: rounding mode '")
+              << arith::stringifyRoundingMode(modeAttr.getValue())
+              << "' is not supported for a scalar fp8 cast; the tensor "
+                 "lowering pipeline only implements round-to-nearest-even";
+          return failure();
+        }
+      }
+    }
 
     Location loc = op.getLoc();
     auto srcTensorTy = RankedTensorType::get({1}, srcType);
@@ -491,7 +522,16 @@ struct LegalizeScalarFp8Cast : public OpRewritePattern<CastOpType> {
 
     Value srcTensor =
         rewriter.create<tensor::FromElementsOp>(loc, srcTensorTy, op.getIn());
-    Value castTensor = rewriter.create<CastOpType>(loc, dstTensorTy, srcTensor);
+    // Forward the optional attributes; the default builder would drop them.
+    Value castTensor;
+    if constexpr (std::is_same_v<CastOpType, arith::TruncFOp>) {
+      castTensor = rewriter.create<arith::TruncFOp>(loc, dstTensorTy, srcTensor,
+                                                    op.getRoundingmodeAttr(),
+                                                    op.getFastmathAttr());
+    } else {
+      castTensor = rewriter.create<arith::ExtFOp>(loc, dstTensorTy, srcTensor,
+                                                  op.getFastmathAttr());
+    }
     auto c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
     Value extracted =
         rewriter.create<tensor::ExtractOp>(loc, castTensor, ValueRange{c0});
@@ -501,8 +541,16 @@ struct LegalizeScalarFp8Cast : public OpRewritePattern<CastOpType> {
   }
 
 private:
-  static bool isFp8ScalarType(Type type) {
-    return isa<Float8E4M3FNType>(type) || isa<Float8E5M2Type>(type);
+  static bool isFp8ElementType(Type type) {
+    Type elemType = getElementTypeOrSelf(type);
+    return isa<Float8E4M3FNType>(elemType) || isa<Float8E5M2Type>(elemType);
+  }
+
+  // The wider side of the pairs ArithToHFusion::selectRoundMode accepts for an
+  // fp8 cast. f64 is deliberately excluded: that pair is not supported there.
+  static bool isWideFloatElementType(Type type) {
+    Type elemType = getElementTypeOrSelf(type);
+    return elemType.isF32() || elemType.isF16() || elemType.isBF16();
   }
 };
 
