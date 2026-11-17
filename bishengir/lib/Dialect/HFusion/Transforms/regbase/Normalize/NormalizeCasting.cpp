@@ -78,7 +78,7 @@ struct HFusionNormalizeFillCastToTensorBrcTraits
 
 using HFusionNormalizeTruncfExtfTraits = hfusion::NormalizeTraitsBase;
 
-struct HFusionNormalizeTruncfBf16Traits : public hfusion::NormalizeTraitsBase {
+struct HFusionNormalizeTruncfTraits : public hfusion::NormalizeTraitsBase {
   static bool isInsideDialectCast(Operation &op) {
     return isa<hfusion::CastOp>(op.getParentOp());
   }
@@ -149,9 +149,9 @@ using NormalizefillCastToTensorBrcRegBase =
 using NormalizetruncfExtfRegBase =
     NormalizeTruncfExtfTemplate<arith::ExtFOp,
                                 HFusionNormalizeTruncfExtfTraits>;
-using NormalizetruncfBf16RegBase =
-    NormalizeTruncfBf16Template<arith::TruncFOp,
-                                HFusionNormalizeTruncfBf16Traits>;
+using NormalizetruncfToTensorRegBase =
+    NormalizeTruncfToTensorTemplate<arith::TruncFOp,
+                                    HFusionNormalizeTruncfTraits>;
 template <typename CastOp>
 using NormalizeScalarExtensionRegBase =
     NormalizeScalarExtensionTemplate<CastOp,
@@ -182,7 +182,7 @@ void populateNormalizePreScalarCastingPatterns(RewritePatternSet &patterns) {
 
 void populateNormalizeFinalCastingPatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
-  patterns.add<NormalizetruncfBf16RegBase>(ctx);
+  patterns.add<NormalizetruncfToTensorRegBase>(ctx);
   patterns.add<NormalizeScalarExtensionRegBase<arith::ExtFOp>>(ctx);
   if (archIsRegbased)
     patterns.add<NormalizeScalarCastOpRegBase>(ctx);
