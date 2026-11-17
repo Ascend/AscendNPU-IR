@@ -1320,10 +1320,9 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // -----
 
 // Mix-kernel scf.if: then/else write different C dests, so isMixKernel is
-// true, but the yielded mmad stays in L0C (hivm.remain_in_l0c).
-// getInsertPointOutOfIf must still hoist past the if (isResultInL0C), so
-// one fixpipe after the merged result serves the store. annotation.mark
-// bind_buffer keeps the L0C if-result rather than the fixpipe output.
+// true, but both yields stay in L0C and the if carries remain_in_l0c.
+// getInsertPointOutOfIf hoists past that if, so one fixpipe after the
+// merged result serves the store.
 // Distilled from a mix AIC/AIV kernel where an outer mmadL1 is yielded
 // through a may_not_exec scf.if whose then-branch writes a different L0C.
 // CHECK-LABEL: func.func @mmad_l0c_mix_if_single_fixpipe
@@ -1365,7 +1364,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       scf.yield %mmad1 : tensor<64x64xf32>
     } else {
       scf.yield %mmad0 : tensor<64x64xf32>
-    } {may_not_exec, normalized_in_L0C = [0 : i32]}
+    } {hivm.remain_in_l0c = [0 : i32], may_not_exec, normalized_in_L0C = [0 : i32]}
     hivm.hir.store ins(%if_res : tensor<64x64xf32>)
         outs(%dst : memref<64x64xf32, strided<[64, 1]>>)
     return
