@@ -588,8 +588,10 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
       // Map the vendor's recoverable VF-stack overflow code to the same
       // VFStackOverflowError the Process path raises, so the regbase retry
       // loop's isVFStackOverflowError() fires under both backends.
+#if BISHENGIR_HAVE_BISHENG_LLC
       if (res.vendorStatus == BISHENG_LLC_VF_STACK_OVERFLOW)
         return llvm::make_error<VFStackOverflowError>();
+#endif
       return llvm::make_error<DeviceCompileError>();
     }
     return outputBin;
