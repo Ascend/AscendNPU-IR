@@ -408,23 +408,135 @@ CodeGenerator::getEventIdsWithOffset(const llvm::SmallVector<int64_t> &eventIds,
   return newEventIds;
 }
 
+// Sources, in order: the place holder's own block, the block of the op it is
+// linked to, the innermost enclosing op's block.
+// A result-less `scf.if` has no else block until the flag is emitted, so such a
+// scope-end place holder has no knowable landing block yet.
+Block *CodeGenerator::getFlagLandingBlock(OperationBase *opBase) {
+  if (!opBase)
+    return nullptr;
+  if (opBase->parentOp == funcIr.get())
+    return &funcOp.getBody().front();
+  if (auto *placeHolderOp = dyn_cast<PlaceHolder>(opBase)) {
+    if (placeHolderOp->block)
+      return placeHolderOp->block;
+    OperationBase *linkedOpBase = placeHolderOp->beforeOp != nullptr
+                                      ? placeHolderOp->beforeOp
+                                      : placeHolderOp->afterOp;
+    if (linkedOpBase && linkedOpBase->op)
+      return linkedOpBase->op->getBlock();
+    return nullptr;
+  }
+  if (opBase->op)
+    return opBase->op->getBlock();
+  // A synthesized op has no MLIR op: the template performs the real one.
+  // => its landing block is the innermost enclosing op's block.
+  // Without this, the `MTE1 -> MTE2` set hidden inside `mmadL1` has no landing
+  // block => its anchor is vetoed, so that id stays on the loop counter while
+  // the slot it protects moves into the block.
+  for (OperationBase *cur = opBase->parentOp; cur != nullptr;
+       cur = cur->parentOp)
+    if (cur->op)
+      return cur->op->getBlock();
+  return nullptr;
+}
+/// Collect, per multi-buffer handshake, the block whose counter drives it.
+/// Key := `(consumer block, id set)`.
+/// The consumer block is part of it because one handshake's veto must not clear
+/// another's anchor.
+/// The rotation follows the consuming block's execution count.
+/// The trip count equals it only while that block runs every iteration.
+/// A guard is what skips an iteration => the counter belongs to that block.
+/// The block comes from the pair's consumers -- the same query EnableMultiBuffer
+/// asks -- so the slot select and the ids read one counter.
+/// Pre: the sync maps hold their final flag positions.
+/// Post: no such block, or a flag outside it, keeps the loop counter.
+void CodeGenerator::collectCounterAnchors() {
+  auto record = [&](OperationBase *opBase, SyncOp *syncOp) {
+    auto *setWaitOp = dyn_cast<SetWaitOp>(syncOp);
+    if (!setWaitOp || setWaitOp->eventIds.size() < 2)
+      return;
+    // preload pair => keyed on its cv-pipelining loop and per-end offset
+    // => never matches an id set collected from the multi-buffer scope
+    if (!setWaitOp->eventIdInfo.multiBufferInfo)
+      return;
+    auto *multibufferScope = dyn_cast<Loop>(
+        setWaitOp->eventIdInfo.multiBufferInfo->multibufferScope);
+    if (!multibufferScope || !opBase)
+      return;
+    auto multibufferLoop = dyn_cast<LoopLikeOpInterface>(multibufferScope->op);
+    if (!multibufferLoop)
+      return;
+    // The counter lives where the pair's consumers live.
+    Block *counterBlock = getMultiBufferConsumerBlock(
+        setWaitOp->eventIdInfo.multiBufferInfo->buffers);
+    if (!counterBlock)
+      return;
+    // The key's first field is the candidate this handshake resolves to:
+    // several handshakes may share one id set, and one handshake's veto must not
+    // clear another's anchor.
+    IdAnchor &entry = multiBufferIdAnchors[multibufferLoop][std::make_pair(
+        counterBlock, setWaitOp->eventIds)];
+    if (entry.vetoed)
+      return;
+    // The flag must land inside that block, or its id could not read it.
+    // A branch scope's place holder carries the then/else block, while
+    // `opBase->op` may sit in the loop body: take the place holder's block.
+    Block *landingBlock = getFlagLandingBlock(opBase);
+    if (!landingBlock || !blockEncloses(counterBlock, landingBlock)) {
+      entry.counterBlock = nullptr;
+      entry.vetoed = true;
+      return;
+    }
+    entry.counterBlock = counterBlock;
+  };
+  for (auto &[opBase, syncOps] : syncMapBefore)
+    for (auto &syncOp : syncOps)
+      record(opBase, syncOp.get());
+  for (auto &[opBase, syncOps] : syncMapAfter)
+    for (auto &syncOp : syncOps)
+      record(opBase, syncOp.get());
+}
+
+Block *CodeGenerator::getMultiBufferIdAnchor(LoopLikeOpInterface loop,
+                                             Block *candidate,
+                                             llvm::ArrayRef<int64_t> ids) {
+  // The key's first field is this handshake's consumer block.
+  // The allocator hands one id set to handshakes it never separated, and each of
+  // them rotates on its own block.
+  // One shared value => the ids depend on the wrong counter.
+  if (!candidate)
+    return nullptr;
+  auto loopIt = multiBufferIdAnchors.find(loop);
+  if (loopIt == multiBufferIdAnchors.end())
+    return nullptr;
+  auto it = loopIt->second.find(std::make_pair(
+      candidate, llvm::SmallVector<int64_t>(ids.begin(), ids.end())));
+  if (it == loopIt->second.end() || it->second.vetoed)
+    return nullptr;
+  return it->second.counterBlock;
+}
+
 // Build/select a runtime i64 value that picks which buffer/event to use for
 // multi-buffer sync.
 Value CodeGenerator::getNestedIndexModular(IRRewriter &rewriter,
                                            LoopLikeOpInterface multibufferLoop,
-                                           int64_t mod, int64_t offset) {
+                                           int64_t mod, int64_t offset,
+                                           Block *counterBlock) {
   Value modularIndex;
   PatternRewriter::InsertionGuard guard(rewriter);
   {
-    auto key = std::make_tuple(multibufferLoop, mod, /*offset=*/0);
+    auto key =
+        std::make_tuple(multibufferLoop, mod, /*offset=*/0, counterBlock);
     auto [it, isInserted] = nestedIndexModularMem.insert({key, Value{}});
     if (isInserted) {
-      it->second = createNestedIndexModular(rewriter, multibufferLoop, mod);
+      it->second = createNestedIndexModular(rewriter, multibufferLoop, mod,
+                                            counterBlock);
     }
     modularIndex = it->second;
   }
   if (offset) {
-    auto key = std::make_tuple(multibufferLoop, mod, offset);
+    auto key = std::make_tuple(multibufferLoop, mod, offset, counterBlock);
     auto [it, isInserted] = nestedIndexModularMem.insert({key, Value{}});
     if (isInserted) {
       auto loc = multibufferLoop->getLoc();
@@ -510,17 +622,24 @@ Value CodeGenerator::getMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
 
   auto multibufferLoop = dyn_cast<LoopLikeOpInterface>(multibufferLoopOp->op);
   assert(multibufferLoop != nullptr);
+  // Counter block of this id set, or null for the loop counter.
+  // The key is the same `(consumer block, id set)` record() writes.
+  Block *candidate = nullptr;
+  if (auto multiBufferInfo = syncOp->eventIdInfo.multiBufferInfo)
+    candidate = getMultiBufferConsumerBlock(multiBufferInfo->buffers);
+  Block *counterBlock =
+      getMultiBufferIdAnchor(multibufferLoop, candidate, syncOp->eventIds);
 
   auto key = std::make_tuple(multibufferLoop, preloadOffset);
-  auto [it, isInserted] =
-      bufferSelectedMem[key].insert({syncOp->eventIds, Value{}});
+  auto [it, isInserted] = bufferSelectedMem[key].insert(
+      {std::make_pair(counterBlock, syncOp->eventIds), Value{}});
   if (!isInserted) {
     return it->second;
   }
 
   int64_t eventIdNum = static_cast<int64_t>(syncOp->eventIds.size());
   Value counter = getNestedIndexModular(rewriter, multibufferLoop, eventIdNum,
-                                        preloadOffset);
+                                        preloadOffset, counterBlock);
 
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointAfter(counter.getDefiningOp());
@@ -554,18 +673,27 @@ Value CodeGenerator::getMultiBufferSelectOp(IRRewriter &rewriter,
 
   auto multibufferLoop = dyn_cast<LoopLikeOpInterface>(multibufferLoopOp->op);
   assert(multibufferLoop != nullptr);
+  // Consumers in one conditional block => that block's own counter.
+  // Anything else => the loop counter.
+  Block *candidate = nullptr;
+  if (auto multiBufferInfo = syncOp->eventIdInfo.multiBufferInfo)
+    candidate = getMultiBufferConsumerBlock(multiBufferInfo->buffers);
+  Block *counterBlock =
+      getMultiBufferIdAnchor(multibufferLoop, candidate, syncOp->eventIds);
 
   llvm::SmallVector<int64_t> eventIds =
       getEventIdsWithOffset(syncOp->eventIds, preloadOffset);
 
   auto key = std::make_tuple(multibufferLoop, 0);
-  auto [it, isInserted] = bufferSelectedMem[key].insert({eventIds, Value{}});
+  auto [it, isInserted] = bufferSelectedMem[key].insert(
+      {std::make_pair(counterBlock, eventIds), Value{}});
   if (!isInserted) {
     return it->second;
   }
 
   int64_t eventIdNum = static_cast<int64_t>(eventIds.size());
-  Value counter = getNestedIndexModular(rewriter, multibufferLoop, eventIdNum);
+  Value counter = getNestedIndexModular(rewriter, multibufferLoop, eventIdNum,
+                                        0, counterBlock);
 
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointAfter(counter.getDefiningOp());
@@ -1005,6 +1133,7 @@ void CodeGenerator::insertBarrierAllBeforeReturn(IRRewriter &rewriter) {
 // Generate MLIR ops from computed sync maps (inserting via rewriter).
 void CodeGenerator::generateResultOps() {
   IRRewriter rewriter(funcOp->getContext());
+  collectCounterAnchors();
   for (auto &[op, syncOps] : syncMapAfter) {
     if (auto *placeHolder = dyn_cast<PlaceHolder>(op)) {
       if (placeHolder->scopeBegin != nullptr ||

@@ -6,8 +6,11 @@
 // codegen has been replaced by a function-scoped memref.alloca<1xi64>
 // counter plus body-head memref.load / arith.remui / arith.select cascade
 // and body-tail arith.addi / memref.store-back. These CHECKs verify those
-// structural markers; exact SSA names are intentionally not bound (they
-// shift between unrelated runs).
+// structural markers; exact SSA names are intentionally not bound (they shift
+// between unrelated runs).
+// A counter deeper than the loop body is not created here: the sync pass owns
+// that decision, and EnableMultiBuffer only adopts the counter it left behind
+// (see enable-multi-buffer-sync-counter-block.mlir).
 
 // -----
 
@@ -58,7 +61,10 @@ module {
 
 // -----
 module {
-// Guarded consumer selection.
+// Adoption only.
+// EnableMultiBuffer never opens a block counter of its own: the sync pass owns
+// that choice. This module runs without a sync pass, so no counter exists and
+// the definition block keeps the loop counter.
 // CHECK-LABEL: func.func @single_guarded_consumer_selection(
   func.func @single_guarded_consumer_selection(
       %src: memref<16xf16, #hivm.address_space<gm>>, %cond: i1) {
@@ -70,28 +76,27 @@ module {
 
     // CHECK: scf.for
     scf.for %iv = %c0 to %c4 step %c1 {
-      // CHECK: memref.load
-      // CHECK: arith.remui
-      // CHECK-NOT: arith.select
       %buffer = hivm.hir.pointer_cast(%a0, %a1)
         : memref<16xf16, #hivm.address_space<ub>>
       annotation.mark %buffer {hivm.multi_buffer = 2 : i32}
         : memref<16xf16, #hivm.address_space<ub>>
-      "test.before_guard"() : () -> ()
+      // CHECK: memref.load
+      // CHECK: arith.select
       // CHECK: "test.before_guard"
-      // CHECK-NOT: arith.select
       // CHECK: scf.if
+      // CHECK-NOT: hivm.hir.multi_buffer_counter
+      // CHECK-NOT: arith.select
+      // CHECK: hivm.hir.load
+      "test.before_guard"() : () -> ()
       scf.if %cond {
-        // CHECK: %[[SELECTED:.*]] = arith.select
-        // CHECK: hivm.hir.load {{.*}} outs(%[[SELECTED]]
         hivm.hir.load
           ins(%src : memref<16xf16, #hivm.address_space<gm>>)
           outs(%buffer : memref<16xf16, #hivm.address_space<ub>>)
+        // The increment lands inside the block too, before its terminator.
+        // CHECK: arith.addi
+        // CHECK: memref.store
       }
       // CHECK: }
-      // Keep counter unconditional.
-      // CHECK: arith.addi
-      // CHECK: memref.store
     }
     return
   }

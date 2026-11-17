@@ -1464,13 +1464,16 @@ def CustomMacroOp : HIVM_CustomOp<"custom_macro", [MacroOpTrait, CustomLikeOpInt
 }
 
 def MultiBufferCounterOp : HIVM_Op<"multi_buffer_counter"> {
-  let summary = "Materialized multi-buffer loop counter anchor.";
+  let summary = "Materialized multi-buffer rotation counter anchor.";
   let description = [{
-    This op anchors the per-iteration multi-buffer counter for an scf.for or
-    scf.while loop. It is introduced by MultiBufferLoopAdapter and shared by
-    all consumers that need slot rotation. A later lowering pass rewrites it to
-    a function-scoped memref.alloca counter plus a body-head load and body-tail
-    increment/store.
+    This op anchors the multi-buffer rotation counter of one block inside an
+    scf.for or scf.while loop. It is introduced by MultiBufferLoopAdapter and
+    shared by every consumer of that block that needs slot rotation. The counter
+    is normally the loop body's, i.e. it advances once per iteration; a use
+    nested in a conditional block owns a counter of that block instead, because
+    such a block runs on its own cadence rather than once per iteration. A later
+    lowering pass rewrites it to a function-scoped memref.alloca counter plus a
+    block-head load and a block-tail increment/store.
   }];
   let results = (outs I64:$counter);
   let assemblyFormat = "attr-dict `->` type($counter)";

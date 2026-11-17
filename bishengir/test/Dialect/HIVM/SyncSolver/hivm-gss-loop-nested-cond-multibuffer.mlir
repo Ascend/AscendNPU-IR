@@ -22,7 +22,12 @@ module {
     // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
     // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID2>]
     // CHECK-NOT: EVENT_ID3
-    // CHECK: hivm.hir.multi_buffer_counter
+    // The guarded CV block counts its own entries: the pair's rotating id is
+    // built from that block's counter, not from the loop iteration.
+    // CHECK: scf.for
+    // CHECK-NOT: hivm.hir.multi_buffer_counter
+    // CHECK: scf.if
+    // CHECK-NEXT: hivm.hir.multi_buffer_counter
     // CHECK: arith.remui %{{.*}}, %[[MOD:.*]] : i64
     scf.for %arg0 = %c0 to %n step %c1 {
       scf.if %true {

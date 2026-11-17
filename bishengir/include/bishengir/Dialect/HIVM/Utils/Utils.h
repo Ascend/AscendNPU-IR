@@ -283,6 +283,22 @@ FailureOr<scf::ForOp> findContainingSubblockLoop(Operation *op);
 /// If val is yielded by the parent loop, need to get parent of parent loop.
 LoopLikeOpInterface getParentLoop(Value val);
 
+/// True when \p inner is \p outer, or sits in a region nested in it.
+bool blockEncloses(Block *outer, Block *inner);
+
+/// Block that may own the rotation index of a multi-buffer handshake.
+/// \p buffers := the buffers the handshake protects: the pre-expansion values,
+/// a `pointer_cast` or a workspace alloc, never one of the slots
+/// `EnableMultiBuffer` creates from them.
+/// The answer is the innermost block enclosing every non-mark user, so one
+/// counter serves all of them.
+/// A nested loop between that block and a user => null: it runs on its own trip
+/// count, which the block's counter would not reproduce.
+/// Post: null -> keep the loop counter.
+/// The sync passes and `EnableMultiBuffer` both call this, so the slot select
+/// and the flags of one pair read the same counter by construction.
+Block *getMultiBufferConsumerBlock(ArrayRef<Value> buffers);
+
 // Get tied loop block argument for opoperand
 BlockArgument getTiedBlockArgument(LoopLikeOpInterface loopOp,
                                    OpOperand &operand);
@@ -292,9 +308,26 @@ BlockArgument getTiedBlockArgument(LoopLikeOpInterface loopOp,
 /// In the position of ptrCastOp, affineApply and indexCastOp would be
 /// created.
 ///
+/// \p modular = -1 -> the iteration counter, no modulo applied.
+///
 /// \return Index value of affineApply
 Value createNestedIndexModular(OpBuilder &builder, Operation *op,
                                int modular = 2);
+
+/// \p anchorBlock selects which block owns the slot-rotation counter: pass the
+/// block that consumes the rotation so it counts its own entries, instead of
+/// reproducing the loop trip count.
+///
+/// The loop is still resolved from \p op / \p loopOp, as in the overloads
+/// above.
+///
+/// Post: a null \p anchorBlock -> the loop counter; see
+/// MultiBufferLoopAdapter::getModuloIndex for how the block is resolved.
+Value createNestedIndexModular(OpBuilder &builder, Operation *op, int modular,
+                               Block *anchorBlock);
+
+Value createNestedIndexModular(OpBuilder &builder, LoopLikeOpInterface loopOp,
+                               int modular, Block *anchorBlock);
 
 Value createNestedIndexModular(OpBuilder &builder, LoopLikeOpInterface loopOp,
                                int modular = 2);

@@ -461,10 +461,17 @@ public:
 
 struct MultiBufferInfo {
   Scope *multibufferScope{nullptr};
+  // The buffers this handshake protects, each one an original `pointer_cast`
+  // rather than one of its slots.
+  // The counter block is derived from their consumers, so the slot select and
+  // these ids share one counter; see collectCounterAnchors.
+  SmallVector<Value> buffers;
 
   MultiBufferInfo() {};
-  explicit MultiBufferInfo(Scope *multibufferScope)
-      : multibufferScope(multibufferScope) {};
+  explicit MultiBufferInfo(Scope *multibufferScope,
+                           ArrayRef<Value> buffers = {})
+      : multibufferScope(multibufferScope),
+        buffers(buffers.begin(), buffers.end()) {};
 };
 
 struct CVPipeliningInfo {

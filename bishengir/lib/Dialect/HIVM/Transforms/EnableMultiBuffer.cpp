@@ -112,16 +112,41 @@ public:
     createMarkOp(builder, newPtrCastOps);
 
     // Find guarded consumer.
-    Block *selectionBlock = getSingleConsumerBlock();
+    // The sync pass already decided whether this pair is local to a block.
+    // The slot follows that block's real execution count, not the trip count.
+    Block *selectionBlock =
+        getMultiBufferConsumerBlock({ptrCastOp_.getOperation()->getResult(0)});
+    bool ownsRotation = selectionBlock && ownsCounter(selectionBlock);
 
     Location loc = ptrCastOp_->getLoc();
     auto idxType = builder.getI64Type();
-    Value modularIndex =
-        createNestedIndexModular(builder, ptrCastOp_.getOperation(), factor);
+    // A guard between the cast and the loop makes the definition block count its
+    // own entries, while the flags keep the loop cadence.
+    // => hand over the definition block only when it is the loop body itself.
+    // Otherwise pass no block, and the pair keeps the loop counter.
+    Operation *enclosingLoop =
+        ptrCastOp_->getParentOfType<LoopLikeOpInterface>();
+    Block *definitionBlock = ptrCastOp_->getBlock();
+    bool insideGuard = false;
+    for (Operation *parent = definitionBlock->getParentOp();
+         parent && parent != enclosingLoop; parent = parent->getParentOp())
+      insideGuard |= isa<scf::IfOp>(parent);
+    Value modularIndex = createNestedIndexModular(
+        builder, ptrCastOp_.getOperation(), factor,
+        ownsRotation            ? selectionBlock
+        : insideGuard           ? nullptr
+                                : definitionBlock);
 
     // Restore selection locality.
-    if (selectionBlock)
-      builder.setInsertionPointToStart(selectionBlock);
+    if (ownsRotation) {
+      // index in `selectionBlock` => insert after it;
+      // index elsewhere => insert at the block head, because the builder must
+      // stay inside `selectionBlock`.
+      if (modularIndex.getParentBlock() == selectionBlock)
+        builder.setInsertionPointAfter(modularIndex.getDefiningOp());
+      else
+        builder.setInsertionPointToStart(selectionBlock);
+    }
     Value modularIdx =
         builder.create<arith::IndexCastOp>(loc, idxType, modularIndex);
 
@@ -150,33 +175,14 @@ public:
   }
 
 private:
-  /// Find guarded consumer.
-  Block *getSingleConsumerBlock() const {
-    Block *consumerBlock = nullptr;
-    for (Operation *user : ptrCastOp_->getUsers()) {
-      if (isa<annotation::MarkOp>(user))
-        continue;
-      if (!consumerBlock) {
-        consumerBlock = user->getBlock();
-        continue;
-      }
-      if (consumerBlock != user->getBlock())
-        return nullptr;
-    }
-
-    Block *definitionBlock = ptrCastOp_->getBlock();
-    if (!consumerBlock || consumerBlock == definitionBlock)
-      return nullptr;
-
-    Operation *ancestor = consumerBlock->getParentOp();
-    while (ancestor && ancestor->getBlock() != definitionBlock) {
-      if (!isa<scf::IfOp>(ancestor))
-        return nullptr;
-      ancestor = ancestor->getParentOp();
-    }
-    if (!isa_and_nonnull<scf::IfOp>(ancestor))
-      return nullptr;
-    return consumerBlock;
+  /// True when `block` already carries a counter op, i.e. it counts its own
+  /// entries.
+  /// Post: a null `block` (no guarded consumer) is false.
+  /// A predicate rather than the op: the only caller branches.
+  static bool ownsCounter(Block *block) {
+    return block && llvm::any_of(*block, [](Operation &op) {
+             return isa<hivm::MultiBufferCounterOp>(&op);
+           });
   }
 
   bool isPtrAddrsConstantIntOp() {

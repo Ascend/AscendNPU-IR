@@ -88,3 +88,38 @@ module {
     return
   }
 }
+
+// -----
+
+// A counter op materialized in a conditional block is lowered with its load in
+// that block and its increment before that block's own terminator, so the block
+// counts its entries instead of the loop iterations. The alloca stays
+// function-scoped.
+module {
+// LOWER-LABEL: func.func @lower_counter_in_conditional_block(
+// LOWER: %[[CTR:.*]] = memref.alloca() : memref<1xi64>
+// LOWER-NOT: memref.alloca()
+  func.func @lower_counter_in_conditional_block(%cond: i1) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c2_i64 = arith.constant 2 : i64
+    // LOWER: scf.for
+    scf.for %iv = %c0 to %c4 step %c1 {
+      // LOWER-NOT: memref.load
+      // LOWER: scf.if
+      scf.if %cond {
+        // LOWER: %[[CUR:.*]] = memref.load %[[CTR]][%{{.*}}] : memref<1xi64>
+        // LOWER-NEXT: %{{.*}} = arith.remui %[[CUR]], %{{.*}} : i64
+        %a = hivm.hir.multi_buffer_counter -> i64
+        %idx = arith.remui %a, %c2_i64 : i64
+        // LOWER: arith.addi %[[CUR]], %{{.*}} : i64
+        // LOWER: memref.store %{{.*}}, %[[CTR]][%{{.*}}] : memref<1xi64>
+        // LOWER-NEXT: }
+        scf.yield
+      }
+      scf.yield
+    }
+    return
+  }
+}

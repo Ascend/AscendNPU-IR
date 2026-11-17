@@ -318,7 +318,14 @@ static Value lowerCountersInBlock(RewriterBase &rewriter, Block *block,
 
   OpBuilder::InsertionGuard guard(rewriter);
   Location loc = counters.front().getLoc();
-  rewriter.setInsertionPoint(counters.front());
+  // The load must dominate every use in the block.
+  // A counter can sit below ops that already consume it: `replaceOpWithRegion`
+  // inlines a preload guard, which lifts a guarded counter into the loop body
+  // below the multi-buffer casts that read it.
+  // Loading it where it stands => the def lands after the use in one block.
+  // The block's value is the same wherever it is read: the only increment is at
+  // the terminator.
+  rewriter.setInsertionPointToStart(block);
   Value val = loadCounter(rewriter, loc, alloca);
   for (MultiBufferCounterOp counter : counters)
     rewriter.replaceOp(counter, val);

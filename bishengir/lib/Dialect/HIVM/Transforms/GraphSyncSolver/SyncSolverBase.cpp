@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
 
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Value.h"
@@ -1113,6 +1114,34 @@ std::optional<int64_t> SyncSolverBase::getMultiBufferEventIdNum(
   return eventIdNum;
 }
 
+/// Every pointer-like buffer of \p rwOp1 / \p rwOp2, i.e. the pair this
+/// handshake may rotate.
+///
+/// The multi-buffer mark is not consulted here.
+/// A cast without one only widens the consumer block.
+/// That vetoes the block counter, so the pair keeps the loop counter.
+/// It never rotates on the wrong cadence.
+static SmallVector<Value> collectMultiBufferBuffers(RWOperation *rwOp1,
+                                                   RWOperation *rwOp2) {
+  // `PointerLikeInfo` is set only for a `pointer_cast` or a workspace alloc
+  // (`MemInfo.cpp`), so a function argument or reinterpret cast never reaches
+  // this loop; those are shared across guards and would coarsen every block.
+  SmallVector<Value> buffers;
+  for (RWOperation *rwOp : {rwOp1, rwOp2}) {
+    for (const auto *memInfos : {&rwOp->readMemInfo, &rwOp->writeMemInfo}) {
+      for (const MemInfo &memInfo : *memInfos) {
+        if (!memInfo.pointerLikeInfo || !memInfo.pointerLikeInfo->op)
+          continue;
+        Value buffer = memInfo.pointerLikeInfo->op->getResult(0);
+        if (llvm::is_contained(buffers, buffer))
+          continue;
+        buffers.push_back(buffer);
+      }
+    }
+  }
+  return buffers;
+}
+
 std::optional<EventIdInfo> SyncSolverBase::getMultiBufferEventIdInfo(
     Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1, RWOperation *rwOp2,
     std::optional<std::pair<int64_t, int64_t>> offsetPair) {
@@ -1144,7 +1173,10 @@ std::optional<EventIdInfo> SyncSolverBase::getMultiBufferEventIdInfo(
 
   EventIdInfo eventIdInfo;
   eventIdInfo.eventIdNum = eventIdNum.value();
-  eventIdInfo.multiBufferInfo = MultiBufferInfo(multibufferScope);
+  // The pair travels with the id set: the counter block is derived from its
+  // consumers, and EnableMultiBuffer derives the slot from the same value.
+  eventIdInfo.multiBufferInfo = MultiBufferInfo(
+      multibufferScope, collectMultiBufferBuffers(rwOp1, rwOp2));
   return eventIdInfo;
 }
 
