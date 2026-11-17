@@ -1,10 +1,6 @@
 name: compile-pkg
 
 on:
-  push:
-    branches: ["ci/workflow", "master"]
-  pull_request:
-    branches: ["ci/workflow", "master"]
   pull_request_comment:
     branches:  ["ci/workflow", "master"]
     types:
@@ -16,7 +12,7 @@ on:
   workflow_dispatch:
   schedule:
     # cron 按 UTC 解析，对应北京时间 20:00 与 00:00
-    - cron: '20 22 * * *'
+    - cron: '40 22 * * *'
     - cron: '0 02 * * *'
 
 jobs:
