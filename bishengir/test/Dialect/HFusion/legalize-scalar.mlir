@@ -343,3 +343,63 @@ func.func @scalar_minmax_f16_fastmath(%a: f16, %b: f16) -> (f16, f16) {
   %max = arith.maximumf %a, %b fastmath<nsz> : f16
   return %min, %max : f16, f16
 }
+
+// -----
+
+// Scalar f32 -> fp8 must be routed through a length-1 tensor; otherwise the
+// scalar truncf reaches the backend and degrades into a low-byte truncation
+// of the f32 bit pattern.
+// CHECK-LABEL: func.func @scalar_truncf_f32_to_f8e4m3
+// CHECK: tensor.from_elements {{.*}} : tensor<1xf32>
+// CHECK: arith.truncf {{.*}} : tensor<1xf32> to tensor<1xf8E4M3FN>
+// CHECK: tensor.extract {{.*}} : tensor<1xf8E4M3FN>
+func.func @scalar_truncf_f32_to_f8e4m3(%a: f32) -> f8E4M3FN {
+  %0 = arith.truncf %a : f32 to f8E4M3FN
+  return %0 : f8E4M3FN
+}
+
+// -----
+
+// CHECK-LABEL: func.func @scalar_truncf_f32_to_f8e5m2
+// CHECK: tensor.from_elements {{.*}} : tensor<1xf32>
+// CHECK: arith.truncf {{.*}} : tensor<1xf32> to tensor<1xf8E5M2>
+// CHECK: tensor.extract {{.*}} : tensor<1xf8E5M2>
+func.func @scalar_truncf_f32_to_f8e5m2(%a: f32) -> f8E5M2 {
+  %0 = arith.truncf %a : f32 to f8E5M2
+  return %0 : f8E5M2
+}
+
+// -----
+
+// CHECK-LABEL: func.func @scalar_extf_f8e4m3_to_f32
+// CHECK: tensor.from_elements {{.*}} : tensor<1xf8E4M3FN>
+// CHECK: arith.extf {{.*}} : tensor<1xf8E4M3FN> to tensor<1xf32>
+// CHECK: tensor.extract {{.*}} : tensor<1xf32>
+func.func @scalar_extf_f8e4m3_to_f32(%a: f8E4M3FN) -> f32 {
+  %0 = arith.extf %a : f8E4M3FN to f32
+  return %0 : f32
+}
+
+// -----
+
+// Negative case: a scalar f32 -> bf16 truncf is not an fp8 cast and must be
+// left for the normalize pass.
+// CHECK-LABEL: func.func @scalar_truncf_f32_to_bf16_untouched
+// CHECK-NOT: tensor.from_elements
+// CHECK: arith.truncf {{.*}} : f32 to bf16
+func.func @scalar_truncf_f32_to_bf16_untouched(%a: f32) -> bf16 {
+  %0 = arith.truncf %a : f32 to bf16
+  return %0 : bf16
+}
+
+// -----
+
+// Negative case: a tensor cast is already handled by the hfusion.cast path and
+// must not be wrapped again.
+// CHECK-LABEL: func.func @tensor_truncf_f32_to_f8e4m3_untouched
+// CHECK-NOT: tensor.from_elements
+// CHECK: arith.truncf {{.*}} : tensor<8xf32> to tensor<8xf8E4M3FN>
+func.func @tensor_truncf_f32_to_f8e4m3_untouched(%a: tensor<8xf32>) -> tensor<8xf8E4M3FN> {
+  %0 = arith.truncf %a : tensor<8xf32> to tensor<8xf8E4M3FN>
+  return %0 : tensor<8xf8E4M3FN>
+}
