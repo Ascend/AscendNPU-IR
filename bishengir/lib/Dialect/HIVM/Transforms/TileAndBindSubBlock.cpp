@@ -416,11 +416,15 @@ public:
                             // a tiling start point.
         }
       }
-      // If the copy input is memref, we cannot tile it.
-      if (isa<mlir::MemRefType>(inputType)) {
-        Op->emitWarning(
-            "Copy input memref is not supported, skip tile and bind.");
-        return failure();
+      // Tile elementwise buffer copies along the axis selected for both sides.
+      if (auto srcType = dyn_cast<MemRefType>(inputType)) {
+        auto dstType = dyn_cast<MemRefType>(dstOpr->get().getType());
+        if (!dstType || !srcType.hasStaticShape() ||
+            srcType.getShape() != dstType.getShape() || Op.getPadMode() ||
+            Op.getPadValue() || Op.getCollapseReassociation() ||
+            !isUbToUbCopy(Op) || tilingDim == -1 ||
+            tilingDim != analyzer.getTilingDim(dstOpr->get()))
+          return failure();
       }
     }
     LLVM_DEBUG(DBGS() << "The " << Op->getName().getStringRef()
@@ -1539,10 +1543,13 @@ void TileAndBindSubBlockPass::runOnOperation() {
     return;
   }
 
-  // If there is a possibility that loadOp and storeOp accessing the same
-  // address, skip this pass
-  if (!hacc::utils::isRegBasedArch(moduleOp) &&
-      areLoadAndStoreSameAddress(aivFunctions)) {
+  // Different GM views at the same offset may choose incompatible sub-block
+  // partitions for a load and store.
+  // Intra-core synchronization cannot order those cross-sub-block accesses.
+  // Preserve the membase guard and reject these view hazards on regbase.
+  if (areLoadAndStoreSameAddress(
+          aivFunctions,
+          /*checkRegbaseHazards=*/hacc::utils::isRegBasedArch(moduleOp))) {
     (void)limitAllAivToSubBlock0();
     return;
   }

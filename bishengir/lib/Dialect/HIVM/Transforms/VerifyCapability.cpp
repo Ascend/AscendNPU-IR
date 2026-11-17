@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HIVM/IR/Capability/Cube/Mmad/MmadCapabilityBinding.h"
 #include "bishengir/Dialect/HIVM/IR/Capability/DMA/CubeLoad/CubeLoadCapabilityBinding.h"
 #include "bishengir/Dialect/HIVM/IR/Capability/DMA/Fixpipe/FixpipeCapabilityBinding.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/Sync/SyncCapabilityBinding.h"
 #include "bishengir/Dialect/HIVM/Transforms/FixpipeCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Target/NPU/NPUArchitecture.h"
@@ -211,6 +212,8 @@ void VerifyCapabilityPass::runOnOperation() {
                                                             *this);
   checkCatalogue<bishengir::npu::cubeload::CapabilityCatalogue>(root, targets,
                                                                 *this);
+  checkCatalogue<bishengir::npu::sync::CapabilityCatalogue>(root, targets,
+                                                            *this);
   markAnalysesPreserved<hivm::ModuleTargetAnalysis>();
 }
 

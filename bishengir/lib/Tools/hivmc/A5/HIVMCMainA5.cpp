@@ -184,8 +184,9 @@ computeFinalDeltaAuxA5(const SmallVector<ModuleOp, 2> &modules,
                        bool isMixKernel, bool mixKernelHasDebugOrShmem) {
   std::map<LaneKind, std::vector<std::string>> result;
   // Parse appendBishengOptions once (same scan as compileDeviceKernel's Native
-  // auxPaths construction below).  Shared via parseAppendBishengOptionsAuxFromTokens
-  // so the two lists stay byte-identical.
+  // auxPaths construction below).  Shared via
+  // parseAppendBishengOptionsAuxFromTokens so the two lists stay
+  // byte-identical.
   std::vector<std::string> tokens;
   const std::string appendOpts = config.getAppendBiShengOptions();
   if (!appendOpts.empty())
@@ -893,7 +894,7 @@ translateDeviceKernelToLLVM(const SmallVector<ModuleOp, 2> &modulesToLower,
       m->setAttr(hivm_regbaseintrins::kDavinciV2IntrinsicsModuleAttrName,
                  mlir::UnitAttr::get(m->getContext()));
     std::unique_ptr<llvm::Module> llvmModule =
-        translateModuleToLLVMIR(m, llvmContext);
+        translateModuleToLegacyLLVMIR(m, llvmContext);
     if (!llvmModule) {
       m->emitError(
           "Failed to translate module from LLVM Dialect IR to BiShengLIR\n");
@@ -1044,8 +1045,7 @@ llvm::Error runDeviceBiShengLIRCompile(
                                                          : LaneMask::AIV,
                                    /*aicBaseAux=*/{}, /*aivBaseAux=*/{});
       } else if (wst == WorkerState::Ready ||
-                 wst == WorkerState::BaseAuxReady ||
-                 wst == WorkerState::Cold ||
+                 wst == WorkerState::BaseAuxReady || wst == WorkerState::Cold ||
                  wst == WorkerState::Starting) {
         // Lane is still usable (previous attempt returned before Compile)
         // or not yet started.  ensureLaneLoadInit submits LoadInit iff the
@@ -1453,7 +1453,7 @@ LogicalResult runHostBiShengLIRCompile(
   llvm::LLVMContext llvmContext;
   LDBG("Translating host module from LLVM Dialect IR to BiShengLIR");
   std::unique_ptr<llvm::Module> llvmModule =
-      translateModuleToLLVMIR(mod, llvmContext);
+      translateModuleToLegacyLLVMIR(mod, llvmContext);
   if (!llvmModule)
     return mod->emitError(
         "Failed to translate host module from LLVM Dialect IR to BiShengLIR\n");
@@ -1576,10 +1576,10 @@ llvm::Error bishengir::runHIVMCCompileA5(ModuleOp hirCompileModule,
   // The runtime is created at CLI main() and the LoadInit command
   // (submitLoadInit) is submitted at runRegBasePipeline entry (before the
   // first RegBase Pass).  This function reads the runtime off the config:
-  // emit lir_lowering begin/end trace events for the post-RegBase HIVM lowering,
-  // then runBiShengLIRCompileA5 (which also reads config.getRuntime()) lets
-  // compileDeviceKernel drain LoadInit / PreloadBase / PreloadFinalDelta
-  // tickets and submit compile on the lane Worker.
+  // emit lir_lowering begin/end trace events for the post-RegBase HIVM
+  // lowering, then runBiShengLIRCompileA5 (which also reads
+  // config.getRuntime()) lets compileDeviceKernel drain LoadInit / PreloadBase
+  // / PreloadFinalDelta tickets and submit compile on the lane Worker.
   if (runtime && runtime->isActive())
     runtime->emitEvent("MAIN", "lir_lowering", "begin");
 

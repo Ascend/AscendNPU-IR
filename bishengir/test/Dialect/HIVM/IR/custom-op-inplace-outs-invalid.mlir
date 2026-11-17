@@ -39,7 +39,7 @@ func.func @custom_inplace_duplicate_input(%arg0: tensor<16xf32>)
 func.func @custom_inplace_type_conversion(%arg0: tensor<16xf16>,
                                           %arg1: tensor<16xf32>)
     attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
-  // expected-error @+1 {{'hivm.hir.custom' op inplace_outs requires mapped ins and outs operands to have identical ranked tensor or memref types}}
+  // expected-error @+1 {{'hivm.hir.custom' op inplace_outs output byte view exceeds the input capacity}}
   %0 = hivm.hir.custom
       {hivm.tcore_type = #hivm.tcore_type<VECTOR>,
        hivm.pipe = #hivm.pipe<PIPE_V>,

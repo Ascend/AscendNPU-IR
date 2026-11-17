@@ -906,7 +906,7 @@ translateDeviceKernelToLLVM(ArrayRef<ModuleOp> modulesToLower,
     }
     hivm::removeModuleCoreTypeAttr(m);
     std::unique_ptr<llvm::Module> llvmModule =
-        translateModuleToLLVMIR(m, llvmContext);
+        translateModuleToLegacyLLVMIR(m, llvmContext);
     if (!llvmModule) {
       m->emitError(
           "Failed to translate module from LLVM Dialect IR to BiShengLIR\n");
@@ -1218,7 +1218,7 @@ runHostBiShengLIRCompile(ModuleOp mod, const HIVMCMainConfig &config,
   llvm::LLVMContext llvmContext;
   LDBG("Translating host module from LLVM Dialect IR to BiShengLIR");
   std::unique_ptr<llvm::Module> llvmModule =
-      translateModuleToLLVMIR(mod, llvmContext);
+      translateModuleToLegacyLLVMIR(mod, llvmContext);
   if (!llvmModule)
     return mod->emitError(
         "Failed to translate host module from LLVM Dialect IR to BiShengLIR\n");

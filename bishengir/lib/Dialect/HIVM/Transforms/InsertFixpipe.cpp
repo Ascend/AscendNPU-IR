@@ -100,6 +100,14 @@ static bool shouldKeepYieldInL0C(OpOperand &use) {
       dyn_cast<RegionBranchOpInterface>(use.getOwner()->getParentOp());
   if (!parentOp)
     return false;
+  // remain_in_l0c is set on an scf.if result only when both yields stay in
+  // L0C. Without it the cube yield must be fixpiped inside the branch.
+  if (auto ifOp = dyn_cast<scf::IfOp>(parentOp.getOperation())) {
+    unsigned idx = use.getOperandNumber();
+    if (idx >= ifOp.getNumResults() ||
+        !isResultRemainInL0C(cast<OpResult>(ifOp.getResult(idx))))
+      return false;
+  }
   return isForwardedResultRequiredInL0C(
       parentOp->getOpResult(use.getOperandNumber()));
 }
@@ -199,12 +207,18 @@ static bool needYieldOut(Operation *user, Value val) {
   return false;
 }
 
-/// Push the insert point out of every scf.if that merges the result with a
-/// sibling branch writing the same destination, so that a single fixpipe after
-/// the scf.if serves the merged value. Inserting inside the branches instead
-/// would emit one fixpipe per branch and hand consumers of the merged result
+/// Push the insert point out of an scf.if only when that if result carries
+/// remain_in_l0c. The attribute is present only when both the then and else
+/// yields stay in L0C, so a single fixpipe after the if serves the merged
+/// value. A remain_in_l0c mmad paired with a vector yield leaves the if
+/// unmarked, and the fixpipe stays in the cube branch. Inserting inside both
+/// branches of a real L0C merge would hand consumers of the merged result
 /// (such as annotation.mark bind_buffer) the fixpipe output rather than the
 /// value still living in L0C.
+///
+/// Also walk scf.for and scf.while yields that must stay on the raw L0C value.
+/// The fixpipe is then emitted at the first real consumer (for example a store
+/// after the outer loop) instead of inside the loop, where it would be dead.
 Operation *getInsertPointOutOfIf(Operation *op, int &resultIndx) {
   OpResult result = op->getResult(resultIndx);
   if (!op->hasAttr(RemainInL0CAttr::name))
@@ -218,10 +232,24 @@ Operation *getInsertPointOutOfIf(Operation *op, int &resultIndx) {
     auto yieldOp = dyn_cast<scf::YieldOp>(user);
     if (!yieldOp)
       continue;
-    auto ifOp = dyn_cast<scf::IfOp>(yieldOp->getParentOp());
-    if (!ifOp || (!isResultInL0C(result) && isMixKernel(ifOp, result)))
+    Operation *parent = yieldOp->getParentOp();
+    if (auto ifOp = dyn_cast<scf::IfOp>(parent)) {
+      auto yieldIdx = findIdx(llvm::to_vector(yieldOp->getOperands()), result);
+      // remain_in_l0c on this if result means both yields stay in L0C.
+      if (!yieldIdx.has_value() ||
+          !isResultRemainInL0C(cast<OpResult>(
+              ifOp.getResult(static_cast<unsigned>(yieldIdx.value())))))
+        continue;
+      yieldOperand = yieldOp;
       continue;
-    yieldOperand = yieldOp;
+    }
+    if (!isa<scf::ForOp, scf::WhileOp>(parent))
+      continue;
+    auto yieldIdx = findIdx(llvm::to_vector(yieldOp->getOperands()), result);
+    if (!yieldIdx.has_value())
+      continue;
+    if (shouldKeepYieldInL0C(yieldOp->getOpOperand(*yieldIdx)))
+      yieldOperand = yieldOp;
   }
 
   if (count > 1 || !yieldOperand)

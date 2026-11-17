@@ -63,8 +63,9 @@ collectFallbackStoreChain(PatternRewriter &rewriter, Operation *notifyOp,
           user, "fallback_not_exec consumer chain is nested in another region");
 
     if (auto storeOp = dyn_cast<hivm::StoreOp>(user)) {
-      if (failed(matchFixpipeStoreInlinable(rewriter, fixpipe, storeOp)))
-        return failure();
+      if (!isFixpipeStoreInlinable(storeOp))
+        return rewriter.notifyMatchFailure(
+            storeOp, "fallback_not_exec store has unsupported atomic kind");
       if (isInsideVectorScope(storeOp))
         return rewriter.notifyMatchFailure(
             storeOp, "fallback_not_exec store is inside a vector scope");

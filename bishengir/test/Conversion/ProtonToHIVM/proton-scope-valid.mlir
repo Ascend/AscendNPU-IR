@@ -13,6 +13,8 @@
 // CHECK: "__builtin_proton_scope_boundary"
 // CHECK: arith.constant 3072 : i32
 // CHECK: "__builtin_proton_scope_boundary"
+// CHECK: arith.constant 4095 : i32
+// CHECK: "__builtin_proton_scope_boundary"
 
 // Logical ids continue across functions in the module.
 // An outer scope stays open across scf.if; each branch takes the next id.
@@ -28,6 +30,8 @@
 // CHECK: arith.constant 3076 : i32
 // CHECK: "__builtin_proton_scope_boundary"
 // CHECK: arith.constant 3074 : i32
+// CHECK: "__builtin_proton_scope_boundary"
+// CHECK: arith.constant 4095 : i32
 // CHECK: "__builtin_proton_scope_boundary"
 // CHECK-NOT: proton.record
 

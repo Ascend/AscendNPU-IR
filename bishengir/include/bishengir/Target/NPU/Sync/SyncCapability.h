@@ -1,4 +1,4 @@
-//===- DecomposeAtomicSync.h -----------------------------------*- C++ -*-===//
+//===- SyncCapability.h - Sync capability query ---------------*- C++ -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,15 +14,14 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
+//
+// Generated query for the Sync execution profiles. Symbols live in
+// bishengir::npu::sync so this catalogue can link beside Fixpipe.
+// The Op bindings live in SyncCapabilityBinding.h.
 
-#pragma once
+#ifndef BISHENGIR_TARGET_NPU_SYNC_SYNCCAPABILITY_H
+#define BISHENGIR_TARGET_NPU_SYNC_SYNCCAPABILITY_H
 
-#include "mlir/IR/PatternMatch.h"
+#include "bishengir/Target/NPU/Sync/SyncCapability.h.inc"
 
-namespace mlir {
-class RewritePatternSet;
-
-namespace hfusion {
-void populateHFusionDecomposeAtomicSyncPatterns(RewritePatternSet &patterns);
-} // namespace hfusion
-} // namespace mlir
+#endif // BISHENGIR_TARGET_NPU_SYNC_SYNCCAPABILITY_H

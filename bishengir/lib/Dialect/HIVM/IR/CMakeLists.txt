@@ -128,6 +128,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   MLIRSCFDialect
   MLIRTransformUtils
   MLIRTensorDialect
+  MLIRTensorUtils
   MLIRValueBoundsOpInterface
   MLIRVectorDialect
   MLIRViewLikeInterface
