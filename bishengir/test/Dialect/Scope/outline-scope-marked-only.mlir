@@ -70,13 +70,14 @@ module {
 
 // -----
 
-// A SIMT scope with sub-block tiling reverted is wrapped in an scf.if guard;
-// the recorded call-site attributes must be restored on the call inside it.
+// Outlining restores call-site attributes on a direct SIMT call, even when
+// the module carries the legacy sub-block rollback marker.
 // CHECK-LABEL: func.func @simt_named(
 // CHECK-LABEL: func.func @simt_named_caller(
-// CHECK: scf.if
+// CHECK-NOT: scf.if
 // CHECK: call @simt_named({{.*}}) {ptc_simdvf}
-// CHECK: limit_sub_block_id0
+// CHECK-NOT: limit_sub_block_id0
+// CHECK: return
 module attributes {"hivm.tile_and_bind_subblock_reverted"} {
   func.func @simt_named_caller(%arg0: memref<f32>) {
     %cst = arith.constant 1.0 : f32
