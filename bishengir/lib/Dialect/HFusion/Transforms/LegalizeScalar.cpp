@@ -454,6 +454,58 @@ struct LegalizeWideUIToNarrowFP : public OpRewritePattern<arith::UIToFPOp> {
   }
 };
 
+/// Scalar fp8 narrowing and widening casts are not lowered directly by the
+/// RegBase backend; a scalar f32 to f8E4M3FN truncf would otherwise reach the
+/// backend and degrade into a truncation of the low byte of the f32 bit
+/// pattern. Route both directions through a length-1 tensor so the existing
+/// tensor cast path (ArithToHFusion -> hfusion.cast with RINT) handles them.
+///
+/// Before:
+///   %res = arith.truncf %x : f32 to f8E4M3FN
+/// After:
+///   %t   = tensor.from_elements %x : tensor<1xf32>
+///   %c   = arith.truncf %t : tensor<1xf32> to tensor<1xf8E4M3FN>
+///   %res = tensor.extract %c[%c0] : tensor<1xf8E4M3FN>
+template <typename CastOpType>
+struct LegalizeScalarFp8Cast : public OpRewritePattern<CastOpType> {
+  using OpRewritePattern<CastOpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(CastOpType op,
+                                PatternRewriter &rewriter) const override {
+    Type srcType = op.getIn().getType();
+    Type dstType = op.getOut().getType();
+
+    // Tensor casts already take the hfusion.cast path.
+    if (isa<ShapedType>(srcType) || isa<ShapedType>(dstType))
+      return failure();
+    if (op->template getParentOfType<linalg::LinalgOp>())
+      return failure();
+
+    // Only the fp8 endpoints need this detour.
+    if (!isFp8ScalarType(srcType) && !isFp8ScalarType(dstType))
+      return failure();
+
+    Location loc = op.getLoc();
+    auto srcTensorTy = RankedTensorType::get({1}, srcType);
+    auto dstTensorTy = RankedTensorType::get({1}, dstType);
+
+    Value srcTensor =
+        rewriter.create<tensor::FromElementsOp>(loc, srcTensorTy, op.getIn());
+    Value castTensor = rewriter.create<CastOpType>(loc, dstTensorTy, srcTensor);
+    auto c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value extracted =
+        rewriter.create<tensor::ExtractOp>(loc, castTensor, ValueRange{c0});
+
+    rewriter.replaceOp(op, extracted);
+    return success();
+  }
+
+private:
+  static bool isFp8ScalarType(Type type) {
+    return isa<Float8E4M3FNType>(type) || isa<Float8E5M2Type>(type);
+  }
+};
+
 void populateLegalizeScalarConversionPatterns(RewritePatternSet &patterns) {
   patterns.add<LegalizeScalarArithOps<arith::AddFOp>>(patterns.getContext());
   patterns.add<LegalizeScalarArithOps<arith::SubFOp>>(patterns.getContext());
@@ -475,6 +527,8 @@ void populateLegalizeScalarConversionPatterns(RewritePatternSet &patterns) {
   patterns.add<LegalizeNarrowSIToBF16>(patterns.getContext());
   patterns.add<LegalizeWideSIToNarrowFP>(patterns.getContext());
   patterns.add<LegalizeWideUIToNarrowFP>(patterns.getContext());
+  patterns.add<LegalizeScalarFp8Cast<arith::TruncFOp>>(patterns.getContext());
+  patterns.add<LegalizeScalarFp8Cast<arith::ExtFOp>>(patterns.getContext());
 }
 
 namespace {
