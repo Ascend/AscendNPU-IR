@@ -1540,7 +1540,7 @@ static LogicalResult mergeCounterLoops(func::FuncOp funcOp) {
   }
 
   LLVM_DEBUG({
-    for (scf::ForOp forOp : loops) 
+    for (scf::ForOp forOp : loops)
       DBGS() << "After merge:" << forOp << "\n";
   });
   return success();
