@@ -572,6 +572,56 @@ inline bool isSimpleCastOp(CastOp op) {
   return op.getOutputs()[0].getDefiningOp<mlir::tensor::EmptyOp>();
 }
 
+// ---------------------------------------------------------------------------
+// Loop cast hoisting guard
+//
+// LoopedCastOpPattern hoists the entry cast of a loop-carried value in front
+// of the scf.for and sinks the exit cast behind it, so the carried value
+// stays in the body type across iterations. Before the rewrite every
+// iteration sends the value through `cast(carried -> body) ... cast(body ->
+// carried)`; the rewrite is unobservable only when that back-edge round trip
+// is the identity on every value the body can produce, which requires the
+// carried element type to exactly represent every value of the in-loop
+// element type. A narrower carried type rounds on every iteration: a bf16
+// accumulator updated in f32 loses one rounding per iteration and drifts
+// against the per-iteration-bf16 reference. Mantissa width alone is not
+// enough: f16 carries more mantissa but far less exponent range than bf16,
+// so neither of the two represents the other exactly.
+//
+// fastmath<contract> on the casts is not permission for this rewrite.
+// Contraction licenses fusing adjacent floating point operations (FMA
+// formation), not dropping a rounding on the loop back edge, and the body
+// operations carry no such flag anyway. Same-type casts stay inside the loop
+// as well: like the chain split in CastOpPattern, a cast with identical
+// input and output type represents an intended change in value (e.g. a rint
+// rounding).
+// ---------------------------------------------------------------------------
+
+// True when the `body -> carried -> body` round trip on the loop back edge is
+// the identity, i.e. every value of `body` is exactly representable in
+// `carried` and the two types differ (same-type casts are intentional value
+// changes, see above).
+static bool isExactLoopCastRoundTrip(Type carried, Type body) {
+  if (carried == body)
+    return false;
+  if (auto carriedFloat = dyn_cast<FloatType>(carried)) {
+    auto bodyFloat = dyn_cast<FloatType>(body);
+    if (!bodyFloat)
+      return false;
+    auto exponentWidth = [](FloatType type) {
+      return type.getIntOrFloatBitWidth() - type.getFPMantissaWidth();
+    };
+    return carriedFloat.getFPMantissaWidth() >=
+               bodyFloat.getFPMantissaWidth() &&
+           exponentWidth(carriedFloat) >= exponentWidth(bodyFloat);
+  }
+  if (auto carriedInt = dyn_cast<IntegerType>(carried)) {
+    auto bodyInt = dyn_cast<IntegerType>(body);
+    return bodyInt && carriedInt.getWidth() >= bodyInt.getWidth();
+  }
+  return false;
+}
+
 struct LoopedCastOpPattern : public OpRewritePattern<CastOp> {
 public:
   using OpRewritePattern<CastOp>::OpRewritePattern;
@@ -617,6 +667,17 @@ public:
     if (!lastCast || lastCast == castOp || !isSimpleCastOp(lastCast))
       return failure();
     if (castOp->getResultTypes() != lastCast.getInputs().getTypes())
+      return failure();
+
+    // The rewrite deletes the per-iteration rounding to the carried element
+    // type on the loop back edge. It is only unobservable when the back-edge
+    // round trip through the carried type is the identity, i.e. the carried
+    // element type exactly represents the in-loop element type; see the
+    // loop cast hoisting guard above for why fastmath<contract> does not
+    // license the lossy case.
+    if (!isExactLoopCastRoundTrip(
+            getElementTypeOrSelf(castSrc),
+            getElementTypeOrSelf(castOp.getResults().front())))
       return failure();
 
     // Check that the exit cast's result is only used by the yield op inside
