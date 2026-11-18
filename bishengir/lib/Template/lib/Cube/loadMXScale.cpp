@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-#if defined(__DAV_C310__)
+#include "ArchDefs.h"
+#if BISHENG_TPL_REGBASE
 
 #include "DMA/loadMXScale.h"
 #include "Vector/VecUtils.h"

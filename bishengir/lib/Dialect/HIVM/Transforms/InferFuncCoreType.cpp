@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Target/NPU/NPUArchitectureFeatures.h"
 
 #include "mlir/Analysis/CallGraph.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -38,6 +39,7 @@ using namespace mlir;
 #define DEBUG_TYPE "infer-core-type"
 
 namespace {
+
 /// Inference the core type of each function, based on the operations used
 /// inside the function body.
 ///
@@ -54,12 +56,12 @@ public:
 
   void runOnOperation() override {
     auto module = getOperation();
-    // For the V300 Arch, there is no need to go through mix kernel related
-    // analysis and processing.
-    // TODO: Refactor this later.
-    // Note: isAscend310B is currently stubbed false on master until Ascend310B
-    // target enums/specs are ported from f9.
-    if (hacc::utils::isAscend310B(module)) {
+    auto target = hacc::utils::getTargetDevice(module);
+    // Preserve the legacy inference path for missing or unknown targets.
+    // Coupled cores do not need MIX kernel analysis and processing.
+    if (target && *target != hacc::TargetDevice::Unknown &&
+        bishengir::npu::getCubeVectorMode(hacc::getArchitecture(*target)) ==
+            bishengir::npu::CubeVectorMode::kCoupled) {
       module->setAttr(hivm::TModuleCoreTypeAttr::name,
                       hivm::TModuleCoreTypeAttr::get(
                           module->getContext(), hivm::TModuleCoreType::AIV));
@@ -146,20 +148,25 @@ public:
         }
       }
 
-      // A declared core-ratio attr always makes this a mix kernel.
+      // A ratio describes the whole MIX task, including after SplitMixKernel
+      // has cloned it onto the individual AIC/AIV functions.
       if (auto coreRatio = hivm::getCoreRatioAttr(func)) {
-        // Preserve the core type of split MIX members.
-        if (!func->hasAttr(hivm::TPartOfMixAttr::name)) {
-          auto annotated = func->getAttrOfType<hivm::TFuncCoreTypeAttr>(
-              hivm::TFuncCoreTypeAttr::name);
-          if (annotated &&
-              annotated.getFuncCoreType() != hivm::TFuncCoreType::MIX) {
-            func->emitError()
-                << "hivm.core_ratio is only valid on a MIX "
-                   "function, but hivm.func_core_type is "
-                << stringifyTFuncCoreType(annotated.getFuncCoreType());
-            fail = true;
-          }
+        auto annotated = func->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+            hivm::TFuncCoreTypeAttr::name);
+        bool isSplitMixPart =
+            func->hasAttr(hivm::TPartOfMixAttr::name) && annotated &&
+            (annotated.getFuncCoreType() == hivm::TFuncCoreType::AIC ||
+             annotated.getFuncCoreType() == hivm::TFuncCoreType::AIV);
+        if (isSplitMixPart) {
+          e = annotated.getFuncCoreType();
+        } else if (annotated &&
+                   annotated.getFuncCoreType() != hivm::TFuncCoreType::MIX) {
+          func->emitError()
+              << "hivm.core_ratio is only valid on a MIX "
+                 "function, but hivm.func_core_type is "
+              << stringifyTFuncCoreType(annotated.getFuncCoreType());
+          fail = true;
+        } else {
           e = hivm::TFuncCoreType::MIX;
         }
         inferredModuleCoreType = hivm::TModuleCoreType::MIX;
@@ -169,6 +176,19 @@ public:
                     hivm::TFuncCoreTypeAttr::get(func->getContext(), e));
 
       auto parentModule = func->getParentOfType<ModuleOp>();
+      // Materialize the A6 default before sub-block partitioning and MIX
+      // splitting. Those passes also inspect the attribute directly, so
+      // changing only CoreRatio::getEffective would leave implicit 1:2 tiling
+      // enabled.
+      if (e == hivm::TFuncCoreType::MIX &&
+          hacc::utils::isAscend960(parentModule) &&
+          !hivm::getCoreRatioAttr(func)) {
+        if (failed(hivm::setCoreRatioAttr(func, 1, 1))) {
+          fail = true;
+          continue;
+        }
+      }
+
       if (moduleMap.find(parentModule) == moduleMap.end()) {
         moduleMap.insert({parentModule, inferredModuleCoreType});
       } else {
@@ -302,6 +322,24 @@ private:
         return WalkResult::interrupt();
       }
 
+      // LoadOp and DebugOp infer a missing core type by walking users, which
+      // calls back into this query. An explicit tcoretype is local, so count
+      // it. Otherwise skip: other operations determine the constraint.
+      if (auto debugOp = dyn_cast<hivm::DebugOp>(op)) {
+        if (std::optional<hivm::TCoreTypeAttr> attr = debugOp.getTcoretype()) {
+          if (attr->getTcoretype() != hivm::TCoreType::CUBE_OR_VECTOR)
+            refineConstraint(c, attr->getTcoretype());
+        }
+        return WalkResult::advance();
+      }
+      if (auto loadOp = dyn_cast<hivm::LoadOp>(op)) {
+        if (auto attr = loadOp.getTcoretype()) {
+          if (attr.getTcoretype() != hivm::TCoreType::CUBE_OR_VECTOR)
+            refineConstraint(c, attr.getTcoretype());
+        }
+        return WalkResult::advance();
+      }
+
       // op with 'CoretypeInterface' must succeed to inference, otherwise
       // it's an implementation error.
       if (auto infer = dyn_cast<hivm::CoreTypeInterface>(op)) {
@@ -310,24 +348,6 @@ private:
           LLVM_DEBUG(llvm::dbgs()
                      << "  -> Fail Reason: single op inference failure\n"
                      << "  -> Failed Op: " << infer << "\n");
-
-          fail = true;
-          return WalkResult::interrupt();
-        }
-
-        LLVM_DEBUG(llvm::dbgs()
-                   << "  -- " << *op << ": " << coreTypeMaybe.value() << "\n");
-
-        refineConstraint(c, coreTypeMaybe.value());
-      }
-
-      // TODO: enhance the getCoreType of the debug op
-      if (auto debugOp = dyn_cast<hivm::DebugOp>(op)) {
-        auto coreTypeMaybe = debugOp.inferCoreType();
-        if (!coreTypeMaybe) {
-          LLVM_DEBUG(llvm::dbgs()
-                     << "  -> Fail Reason: single op inference failure\n"
-                     << "  -> Failed Op: " << debugOp << "\n");
 
           fail = true;
           return WalkResult::interrupt();

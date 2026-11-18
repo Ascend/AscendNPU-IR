@@ -1,2 +1,3 @@
 compile_cpp_to_bc("aiv" "Ascend910B")
 compile_cpp_to_bc("aiv" "Ascend910D")
+compile_cpp_to_bc("aiv" "Ascend960")

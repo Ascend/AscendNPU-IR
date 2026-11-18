@@ -813,8 +813,9 @@ vector_eltwise_vs_intrin(intrin_args<1, SRC_TYPE, DST_TYPE> args) {
   } else if constexpr (OP == VectorOpTy::VSHL) {
     INTRINSIC(vshl, ELTWISE_VS_ARGS);
   } else if constexpr (OP == VectorOpTy::VSHR) {
-    // TODO support arithmetic shit right (i16/i32)
-    // set round mode as 0 by default (logic shift right)
+    // The trailing 0 only disables rounding; it does NOT select a logical
+    // shift. Per the vshr intrinsic spec, uint16/uint32 inputs shift
+    // logically while int16/int32 inputs shift arithmetically.
     INTRINSIC(vshr, ELTWISE_VS_ARGS, 0);
   } else if constexpr (OP == VectorOpTy::VCMPS_EQ) {
     INTRINSIC(vcmpvs_eq, ELTWISE_VS_ARGS);
@@ -1065,25 +1066,29 @@ __aiv__ __attribute__((always_inline)) void move_memref_to_aligned_3d(memref_t<_
 }
 
 template <typename T, size_t DIM>
-__aiv__ __attribute__((always_inline)) bool need_broadcast(
-    memref_t<__ubuf__ T, DIM> *src0, memref_t<__ubuf__ T, DIM> *src1, memref_t<__ubuf__ T, DIM> *dst) {
+__aiv__ __attribute__((always_inline)) bool
+need_broadcast(memref_t<__ubuf__ T, DIM> *src0, memref_t<__ubuf__ T, DIM> *src1,
+               memref_t<__ubuf__ T, DIM> *dst) {
   for (size_t i = 0; i < DIM; ++i) {
     int64_t src0_size = src0 == nullptr ? 0 : src0->sizes[i];
     int64_t src1_size = src1 == nullptr ? 0 : src1->sizes[i];
     if (src0_size != dst->sizes[i] && src0_size == 1 ||
-      src1_size != dst->sizes[i] && src1_size == 1) {
+        src1_size != dst->sizes[i] && src1_size == 1) {
       return true;
     }
   }
-  return  false;
+  return false;
 }
 
 // Get the number of elements that need to be processed using scalar operations.
-// When the memory alignment of input or output is not suitable for vectorization,
-// some elements must be handled using scalar operations util the rest element is aligned with 32 bytes.
+// When the memory alignment of input or output is not suitable for
+// vectorization, some elements must be handled using scalar operations util the
+// rest element is aligned with 32 bytes.
 template <typename T, size_t DIM>
-__aiv__ __attribute__((always_inline)) int64_t eltwise_get_element_nums_on_scalar(
-    memref_t<__ubuf__ T, DIM> *src0, memref_t<__ubuf__ T, DIM> *src1, memref_t<__ubuf__ T, DIM> *dst) {
+__aiv__ __attribute__((always_inline)) int64_t
+eltwise_get_element_nums_on_scalar(memref_t<__ubuf__ T, DIM> *src0,
+                                   memref_t<__ubuf__ T, DIM> *src1,
+                                   memref_t<__ubuf__ T, DIM> *dst) {
   // Check strides for the last dimension
   auto src0_last_stride = src0 == nullptr ? 1 : src0->strides[DIM - 1];
   auto src1_last_stride = src1 == nullptr ? 1 : src1->strides[DIM - 1];
@@ -1108,10 +1113,13 @@ __aiv__ __attribute__((always_inline)) int64_t eltwise_get_element_nums_on_scala
     }
   }
 
-
   // Check offset alignment
-  bool is_src0_aligned = src0 == nullptr ? true : isAddress32ByteAligned(src0->aligned + src0->offset);
-  bool is_src1_aligned = src1 == nullptr ? true : isAddress32ByteAligned(src1->aligned + src1->offset);
+  bool is_src0_aligned =
+      src0 == nullptr ? true
+                      : isAddress32ByteAligned(src0->aligned + src0->offset);
+  bool is_src1_aligned =
+      src1 == nullptr ? true
+                      : isAddress32ByteAligned(src1->aligned + src1->offset);
   bool is_dst_aligned = isAddress32ByteAligned(dst->aligned + dst->offset);
 
   if (!is_src0_aligned || !is_src1_aligned || !is_dst_aligned) {
@@ -1119,8 +1127,10 @@ __aiv__ __attribute__((always_inline)) int64_t eltwise_get_element_nums_on_scala
     auto src1_offset = src1 == nullptr ? dst->offset : src1->offset;
     auto dst_offset = dst->offset;
 
-    if ((src0_offset * sizeof(T)) % INTR_BYTES_PER_BLOCK != (dst_offset * sizeof(T)) % INTR_BYTES_PER_BLOCK ||
-        (src1_offset * sizeof(T)) % INTR_BYTES_PER_BLOCK != (dst_offset * sizeof(T)) % INTR_BYTES_PER_BLOCK) {
+    if ((src0_offset * sizeof(T)) % INTR_BYTES_PER_BLOCK !=
+            (dst_offset * sizeof(T)) % INTR_BYTES_PER_BLOCK ||
+        (src1_offset * sizeof(T)) % INTR_BYTES_PER_BLOCK !=
+            (dst_offset * sizeof(T)) % INTR_BYTES_PER_BLOCK) {
       return dst->sizes[DIM - 1];
     }
 
@@ -1134,8 +1144,28 @@ __aiv__ __attribute__((always_inline)) int64_t eltwise_get_element_nums_on_scala
 }
 
 template <VectorOpTy OP, typename T>
-__aiv__ __attribute__((always_inline)) T scalar_operation(T src0_oprand, T src1_oprand) {
-  if constexpr (OP == VectorOpTy::VADD || OP == VectorOpTy::VADDS) {
+__aiv__ __attribute__((always_inline)) T scalar_operation(T src0_oprand,
+                                                          T src1_oprand) {
+  if constexpr (std::is_same_v<T, int32_t> &&
+                (OP == VectorOpTy::VADD || OP == VectorOpTy::VADDS ||
+                 OP == VectorOpTy::VSUB || OP == VectorOpTy::VMUL ||
+                 OP == VectorOpTy::VMULS)) {
+    // Match vector low-32-bit arithmetic, including unaligned scalar prefixes.
+    // Signed overflow is undefined in C++; integer division compensation needs
+    // the wrapped product even when its exact mathematical value exceeds i32.
+    uint32_t lhs = static_cast<uint32_t>(src0_oprand);
+    uint32_t rhs = static_cast<uint32_t>(src1_oprand);
+    uint32_t bits;
+    if constexpr (OP == VectorOpTy::VADD || OP == VectorOpTy::VADDS)
+      bits = lhs + rhs;
+    else if constexpr (OP == VectorOpTy::VSUB)
+      bits = lhs - rhs;
+    else
+      bits = lhs * rhs;
+    // Convert the bit pattern without an out-of-range unsigned-to-signed cast.
+    return bits <= 0x7fffffffu ? static_cast<int32_t>(bits)
+                               : -1 - static_cast<int32_t>(~bits);
+  } else if constexpr (OP == VectorOpTy::VADD || OP == VectorOpTy::VADDS) {
     return src0_oprand + src1_oprand;
   } else if constexpr (OP == VectorOpTy::VSUB) {
     return src0_oprand - src1_oprand;

@@ -18,6 +18,7 @@
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/Utils/MultiBufferMode.h"
 #include "bishengir/Tools/Utils/Utils.h"
 #include "bishengir/Tools/bishengir-compile/Config.h"
 
@@ -27,6 +28,7 @@
 
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h" // report_fatal_error
@@ -372,6 +374,12 @@ static void
 applyArchDependentCompileDefaults(BiShengIRCompileMainConfig &config) {
   if (!mlir::hacc::utils::isRegBasedArch(config.getTarget()))
     return;
+  // The A6 memory plan validates simt-vf-dynamic-size against the
+  // platform's UB window; the frontend may forward an explicit value
+  // tuned for other platforms that the plan rejects, so force the A6
+  // default instead of trusting the CLI value.
+  if (mlir::hacc::utils::isAscend960(config.getTarget()))
+    config.setSimtVFDynamicSize(256);
   if (!hasExplicitCLOption("set-workspace-multibuffer"))
     config.setSetWorkspaceMultibuffer(2);
   if (!hasExplicitCLOption("limit-auto-multi-buffer-buffer"))
@@ -384,9 +392,82 @@ applyArchDependentCompileDefaults(BiShengIRCompileMainConfig &config) {
     config.setEnableLibCallNoInline(true);
 }
 
+/// Validate --multibuffer-mode, emit deprecation warnings for the legacy
+/// limit-* flags, and keep workspace depth in sync when gm > 1.
+static void
+applyMultiBufferModeCompatibility(BiShengIRCompileMainConfig &config) {
+  const bool explicitMode = hasExplicitCLOption("multibuffer-mode");
+  const bool explicitOnlyLocal =
+      hasExplicitCLOption("limit-auto-multi-buffer-only-for-local-buffer");
+  const bool explicitOfLocal =
+      hasExplicitCLOption("limit-auto-multi-buffer-of-local-buffer");
+  const bool explicitMixBuffer =
+      hasExplicitCLOption("limit-auto-multi-buffer-buffer");
+  const bool explicitLegacy =
+      explicitOnlyLocal || explicitOfLocal || explicitMixBuffer;
+  const bool isRegBased = mlir::hacc::utils::isRegBasedArch(config.getTarget());
+
+  if (explicitMode) {
+    mlir::hivm::MultiBufferMode mode;
+    std::string parseError;
+    if (failed(mlir::hivm::parseMultiBufferMode(config.getMultibufferMode(),
+                                                mode, parseError))) {
+      report_fatal_error(llvm::Twine("invalid --multibuffer-mode: ") +
+                             parseError + "\n",
+                         /*GenCrashDiag=*/false);
+    }
+    if (explicitLegacy) {
+      llvm::errs()
+          << "[WARNING] --limit-auto-multi-buffer-only-for-local-buffer, "
+             "--limit-auto-multi-buffer-of-local-buffer and "
+             "--limit-auto-multi-buffer-buffer are deprecated and ignored "
+             "when --multibuffer-mode is set. They will be removed in "
+             "BiShengIR 1.4.0. Keep using --multibuffer-mode=\""
+          << mlir::hivm::formatMultiBufferMode(mode) << "\".\n";
+    }
+    // Keep CV pipeline depth aligned with the GM slot count when GM is on.
+    if (mode.gm > 1)
+      config.setSetWorkspaceMultibuffer(mode.gm);
+    config.setLimitAutoMultiBufferOnlyForLocalBuffer(mode.gm <= 1);
+    config.setLimitAutoMultiBufferOfLocalBuffer(
+        mode.l0c <= 1 ? MultiBufferStrategy::CUBE_NO_L0C
+                      : MultiBufferStrategy::NO_LIMIT);
+    if (mode.ub <= 1 && mode.l1 > 1)
+      config.setLimitAutoMultiBufferBuffer(MultiBufferStrategy::ONLY_CUBE);
+    else if (mode.ub > 1 && mode.l1 <= 1)
+      config.setLimitAutoMultiBufferBuffer(MultiBufferStrategy::ONLY_VECTOR);
+    else
+      config.setLimitAutoMultiBufferBuffer(MultiBufferStrategy::NO_LIMIT);
+    return;
+  }
+
+  if (explicitLegacy) {
+    mlir::hivm::MultiBufferMode recommended = mlir::hivm::legacyMultiBufferMode(
+        isRegBased, config.getEnableAutoMultiBuffer(),
+        config.getLimitAutoMultiBufferOnlyForLocalBuffer(),
+        config.getLimitAutoMultiBufferOfLocalBuffer() ==
+            MultiBufferStrategy::CUBE_NO_L0C,
+        config.getLimitAutoMultiBufferBuffer() ==
+            MultiBufferStrategy::ONLY_CUBE,
+        config.getLimitAutoMultiBufferBuffer() ==
+            MultiBufferStrategy::ONLY_VECTOR,
+        config.getSetWorkspaceMultibuffer());
+    llvm::errs()
+        << "[WARNING] --limit-auto-multi-buffer-only-for-local-buffer, "
+           "--limit-auto-multi-buffer-of-local-buffer and "
+           "--limit-auto-multi-buffer-buffer are deprecated and will be "
+           "removed in BiShengIR 1.4.0. Equivalent setting: "
+           "--multibuffer-mode=\""
+        << mlir::hivm::formatMultiBufferMode(recommended) << "\". "
+        << "A3 default gm=4, A5 default gm=2; set a level to 1 to disable "
+           "it.\n";
+  }
+}
+
 BiShengIRCompileMainConfig BiShengIRCompileMainConfig::createFromCLOptions() {
   BiShengIRCompileMainConfig::collectHIVMCArgs();
   applyArchDependentCompileDefaults(*clOptionsConfig);
+  applyMultiBufferModeCompatibility(*clOptionsConfig);
   return *clOptionsConfig;
 }
 
@@ -404,10 +485,12 @@ BiShengIRCompileMainConfig::createFromCLOptions(bool regbase) {
                    "failed to canonicalize output file path.");
     clOptionsConfig->setOutputFile(path.str().str());
     applyArchDependentCompileDefaults(*clOptionsConfig);
+    applyMultiBufferModeCompatibility(*clOptionsConfig);
     return *clOptionsConfig;
   } else {
     BiShengIRCompileMainConfig::collectHIVMCArgs();
     applyArchDependentCompileDefaults(*clOptionsConfig);
+    applyMultiBufferModeCompatibility(*clOptionsConfig);
     return *clOptionsConfig;
   }
 }

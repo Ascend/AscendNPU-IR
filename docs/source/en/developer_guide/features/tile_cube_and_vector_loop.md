@@ -6,7 +6,7 @@ This document introduces the TileCubeVectorLoop Pass in HIVM. This pass optimize
 
 Contemporary Ascend AI accelerator chips adopt a separated AIC/AIV mode, in which data exchange between AIC and AIV cores must go through Global Memory. When data dependencies exist between AIC and AIV cores, inter-core synchronization instructions are required to ensure data correctness. However, frequent inter-core synchronization leads to performance degradation. To improve operator execution performance, the synchronization frequency between AIC and AIV cores should be reduced as much as possible.
 
-## Function Description
+## Feature Description
 
 ![Effect of using Tile Cube and Vector Loop](../../../images/developer_guide/TileCubeAndVectorLoop.png)
 
@@ -17,7 +17,7 @@ For the Cube loop and Vector loop in a MIX operator that have already completed 
     - Cube side: The result of matrix multiplication is stored in the L0C Buffer. If the total data size of a single iteration exceeds the L0C capacity, it cannot be placed into L0C at once.
     - Vector side: If a single iteration is too large, it may cause UB (Unified Buffer) buffer overflow.
 
-## Algorithm Principle
+## Algorithm Principles
 
 By traversing the IR, the `CopyOut` operations corresponding to the Cube and Vector loops are located and split. Using them as anchors, the data producers are split accordingly and fused into the loops.
 
@@ -51,10 +51,10 @@ scf.for {
 
 | Option | Default Value | Meaning |
 |------|--------|------|
-| `tile-mix-cube-loop` | 1 | Target trip count of the Cube loop; no tiling is performed when it is 1. |
-| `tile-mix-vector-loop` | 1 | Target trip count of the Vector loop; no tiling is performed when it is 1. |
+| `tile-mix-cube-loop` | 1 | Target trip count of the Cube loop; no tiling when set to 1 |
+| `tile-mix-vector-loop` | 1 | Target trip count of the Vector loop; no tiling when set to 1 |
 
-## Constraints
+## Usage Constraints
 
 - Only `scf.for` loops carrying the `hivm.loop_core_type` attribute are processed, and the value of this attribute must be:
     - `#hivm.tcore_type<CUBE>`: Cube loop

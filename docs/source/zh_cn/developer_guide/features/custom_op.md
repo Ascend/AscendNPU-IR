@@ -25,21 +25,23 @@ AscendNPU IR已为上游模型支持丰富的算子集合。但部分业务场�
 | 属性名 | 说明 | 备注/示例 |
 |--------|------|----------|
 | `CoreType` | 在哪种核类型上执行 | 参见`TCoreTypeAttr` |
-| `Pipe` | 在哪个Pipe上执行（用于`hivm.hir.custom`） | 参见`PipeAttr` |
-| `InPipe` | Macro自定义算子的输入Pipe | 参见`PipeAttr`（`hivm.pipe_in`） |
-| `OutPipe` | Macro自定义算子的输出Pipe | 参见`PipeAttr`（`hivm.pipe_out`） |
+| `Pipe` | 在哪个Pipe上执行（用于`hivm.hir.custom`） | 单个`al.PIPE`取值。见[支持的 PIPE、数据布局与地址空间](#支持的-pipe数据布局与地址空间) |
+| `InPipe` | Macro自定义算子的输入Pipe | `al.PIPE`（`hivm.pipe_in`）。`pipe`为两个取值时降级为`InPipe`与`OutPipe` |
+| `OutPipe` | Macro自定义算子的输出Pipe | `al.PIPE`（`hivm.pipe_out`） |
 | `VFMode` | 在向量单元上的运行模式 | 参见`VFModeAttr`。当核类型为Cube时此属性被忽略。注意：内置算子可指定或不指定，编译器会检查正确性并规范化 |
 | `Symbol` | 实现函数的名称 | - |
 | `sync_event_slots` | Macro自定义算子的同步槽位元信息。`GraphSyncSolver`会据此填充`sync_related_args`，并在macro前后注入`set/wait flag`。 | 列表长度必须与macro实现体内、同一Pipe对上的`set_flag`/`wait_flag`对数一致。详见[Macro sync_event_slots](#macro算子同步槽位sync_event_slots) |
-| `iterator_types` | 逐操作数的迭代器语义，供结构化降级与flatten类Pass使用（`HIVM_IteratorTypeAttr`） | 可选；设置时长度应覆盖参与tiling的输入与输出 |
+| `iterator_types` | 各迭代维的迭代器类型，供结构化降级、切分与flatten类Pass使用（`HIVM_IteratorTypeAttr`） | 可选；数组长度为迭代空间的维数，参与子块切分时需与各索引映射的输入维数一致 |
 | `indexing_map` | 逐操作数的仿射索引映射（与Linalg的`indexing_maps`作用相同） | 可选，类型为`ArrayAttr<AffineMapAttr>` |
 | `max_rank` | flatten/布局类Pass支持的最大张量秩 | 可选`i64`属性，默认值5 |
 | `align_dim` | 逐操作数的维度对齐提示 | 通过`arg_attrs`挂在对应操作数上 |
-| `arg_attrs` | 逐操作数的字典属性数组 | 类型为`ArrayAttr`（例如操作数2上的`{align_dim = 1 : i64}`）。Triton前端根据注册类上的`align_dim`自动生成 |
+| `arg_attrs` | 逐操作数的字典属性数组 | 类型为`ArrayAttr`（例如操作数2上的`{align_dim = 1 : i64}`）。Triton前端根据`align_dim`生成；Cube算子还会写入`data_layout`与`address_space` |
+| `data_layout` | Cube自定义算子逐操作数的数据布局 | 以操作数名或下标为键、`al.DataLayout`为值的字典。仅当`core`为`CUBE`时发出。支持`ND`与`Fractal` |
+| `address_space` | Cube自定义算子逐操作数的地址空间 | 以操作数名或下标为键、`al.AddressSpace`为值的字典。仅当`core`为`CUBE`时发出，形式为`#hivm.address_space<...>` |
 | `extra_buffers_types` | 临时buffer的元素类型 | 由`hivm-alloc-extra-buffer` Pass分配`memref`并追加到`temp_buffers`（汇编中为`tmps`） |
 | `extra_buffers_sizes` | 临时buffer的一维大小（元素个数） | 同上 |
 | `temp_buffers` | 传给设备实现的临时`memref`（`tmps`操作数段） | 通常由`extra_buffers_*`属性自动填充，无需手动设置 |
-| `no_side_effect` | 表示算子无副作用 | - |
+| `no_side_effect` | 表示算子除读取声明的输入、写入声明的输出外，没有其他副作用 | 设置后仍保留对声明输出的写入语义 |
 | `bitcode` / `source` / `compile` | 实现产物路径及可选编译命令 | 通常由Triton前端设置 |
 
 ## 降级流程
@@ -70,18 +72,69 @@ AscendNPU IR已为上游模型支持丰富的算子集合。但部分业务场�
 | 特性 | 说明 |
 | ------------------------------- | ------------------------------------------------------------ |
 | CoreType | 自定义算子执行核 |
-| Pipe | 自定义算子执行pipe（`hivm.hir.custom`） |
-| InPipe / OutPipe | Macro自定义算子的输入/输出pipe（`hivm.hir.custom_macro`） |
+| Pipe | 自定义算子执行pipe（`hivm.hir.custom`）。Triton前端接受`PIPE_S`、`PIPE_V`、`PIPE_M`、`PIPE_MTE1`、`PIPE_MTE2`、`PIPE_MTE3`、`PIPE_ALL` |
+| InPipe / OutPipe | Macro自定义算子的输入/输出pipe（`hivm.hir.custom_macro`）。两侧使用同一`PIPE`集合 |
+| DataLayout | Cube自定义算子的逐操作数布局：`ND`、`Fractal` |
+| AddressSpace | Cube自定义算子的逐操作数地址空间：`Zero`、`GM`、`L1`、`L0A`、`L0B`、`L0C`、`UB`、`SSBUF`、`FixBUF`、`BiasBUF` |
 | VFMode | 自定义算子在向量核上的运行模式：SIMT/SIMD/MIX |
 | Symbol | 使用者提供的函数名称 |
 | sync_event_slots | Macro同步槽位声明，用于GraphSyncSolver集成 |
-| iterator_types | Tiling / flatten的逐操作数迭代器语义 |
+| iterator_types | 切分与flatten所需的各迭代维类型 |
 | indexing_map | 结构化降级的逐操作数仿射映射 |
 | max_rank | 布局Pass支持的最大张量秩（默认5） |
 | align_dim / arg_attrs | 对齐调整Pass的逐操作数对齐提示 |
 | extra_buffers_* / tmps | 临时buffer声明与分配 |
-| no_side_effect | 纯算子标记，便于优化 |
+| no_side_effect | 无额外副作用标记，便于优化，仍允许写入声明的输出 |
 | 内置算子 | 一组内置算子（名称预留） |
+
+## 支持的 PIPE、数据布局与地址空间
+
+Triton自定义算子前端（`triton.language.extra.cann.extension`）接受下列取值。每个注册算子都必须设置`pipe`。`data_layout`与`address_space`仅在`core`为`al.CORE.CUBE`时写入操作数的`arg_attrs`。
+
+### PIPE
+
+`pipe`取一个`al.PIPE`，或恰好两个`al.PIPE`组成的序列。
+
+| Python | MLIR | 作用 |
+| --- | --- | --- |
+| `al.PIPE.PIPE_S` | `#hivm.pipe<PIPE_S>` | 标量Pipe |
+| `al.PIPE.PIPE_V` | `#hivm.pipe<PIPE_V>` | 向量Pipe |
+| `al.PIPE.PIPE_M` | `#hivm.pipe<PIPE_M>` | Cube（矩阵）Pipe |
+| `al.PIPE.PIPE_MTE1` | `#hivm.pipe<PIPE_MTE1>` | MTE1，L1到L0A/L0B |
+| `al.PIPE.PIPE_MTE2` | `#hivm.pipe<PIPE_MTE2>` | MTE2，GM到UB/L1 |
+| `al.PIPE.PIPE_MTE3` | `#hivm.pipe<PIPE_MTE3>` | MTE3，UB/L1到GM |
+| `al.PIPE.PIPE_ALL` | `#hivm.pipe<PIPE_ALL>` | 全部Pipe |
+
+- 单个取值降级为`hivm.hir.custom`，写入`hivm.pipe`。
+- 两个取值降级为`hivm.hir.custom_macro`。第一个是`hivm.pipe_in`，第二个是`hivm.pipe_out`。
+
+### 数据布局
+
+`data_layout`是字典。键为`__init__`参数名或位置下标，值为`al.DataLayout`。
+
+| Python | MLIR | 含义 |
+| --- | --- | --- |
+| `al.DataLayout.ND` | `#hivm.data_layout<ND>` | 连续ND布局 |
+| `al.DataLayout.Fractal` | `#hivm.data_layout<Fractal>` | Fractal布局 |
+
+### 地址空间
+
+`address_space`使用同样的字典形式。MLIR拼写是HIVM地址空间助记符；片上Cube buffer的助记符与Python名称不同。
+
+| Python | MLIR | 存储 |
+| --- | --- | --- |
+| `al.AddressSpace.Zero` | `#hivm.address_space<zero>` | 默认，无地址空间 |
+| `al.AddressSpace.GM` | `#hivm.address_space<gm>` | Global Memory |
+| `al.AddressSpace.L1` | `#hivm.address_space<cbuf>` | L1（cbuf） |
+| `al.AddressSpace.L0A` | `#hivm.address_space<ca>` | L0A |
+| `al.AddressSpace.L0B` | `#hivm.address_space<cb>` | L0B |
+| `al.AddressSpace.L0C` | `#hivm.address_space<cc>` | L0C |
+| `al.AddressSpace.UB` | `#hivm.address_space<ub>` | Unified Buffer |
+| `al.AddressSpace.SSBUF` | `#hivm.address_space<ssbuf>` | Shared Scalar Buffer |
+| `al.AddressSpace.FixBUF` | `#hivm.address_space<fixbuf>` | Fix buffer |
+| `al.AddressSpace.BiasBUF` | `#hivm.address_space<biasbuf>` | Bias buffer |
+
+`FixBUF`与`BiasBUF`仅作标注，不参与内存规划与作用域推导。
 
 ## 限制约束
 
@@ -298,18 +351,39 @@ class my_custom_op_extra_buf:
 
 #### no_side_effect
 
-该属性用于标记仅读取输入、仅写入声明输出的纯算子，示例如下：
+该属性表示算子仅读取声明的输入、仅写入声明的输出，不产生其他副作用。完成缓冲化后，算子仍会写入输出缓冲区，编译器会保留读写副作用信息，避免算子被错误删除，并维持其与下游算子的执行顺序。示例如下：
 
 ```mlir
 %0 = hivm.hir.custom {no_side_effect, symbol = "pure_kernel", ...}
     "pure_op" ins(...) outs(...) -> ...
 ```
 
+### Sub-Block 切分
+
+在混合核（MIX）场景下，对于标记为`hivm.part_of_mix`的AIV函数，`hivm-bind-sub-block` Pass可根据自定义算子的`iterator_types`和`indexing_map`沿`parallel`迭代维对计算进行切分，并将不同的数据分片分配到两个Sub-Block上执行。
+
+普通自定义算子和Macro自定义算子均可参与Sub-Block切分。各操作数是否随计算一起切分由对应的`indexing_map`决定，广播维、归约维以及其他未参与切分的维度保持原有范围。
+
+使用该能力时，自定义算子需满足以下条件：
+
+- 必须同时提供非空的`iterator_types`和`indexing_map`。`indexing_map`需为每个输入和输出操作数提供对应的索引映射，各映射的输入维数需等于`iterator_types`的长度，张量索引映射的结果数需等于对应张量的秩。
+- 被切分的结果维必须映射到`parallel`类型的迭代维。当前索引映射仅支持按原顺序排列且不重复的迭代维，以及表示广播维的常量`0`。
+- 算子需设置`no_side_effect`属性，且当前不支持使用`temp_buffers`或`extra_buffers_*`的自定义算子参与切分。普通自定义算子还需为非内置算子。
+- Macro自定义算子的同步槽位`sync_event_slots`和同步参数`sync_related_args`均需为空。
+- 张量输入、用于初始化输出的操作数和计算结果均需为`RankedTensorType`类型。切片各维的大小以及输入中保留完整范围的维度大小需在编译时确定，切片步长需为`1`。标量输入会原样传递，当前不支持`memref`类型的输入。
+- 用于初始化输出的操作数需与计算结果一一对应，并具有相同的形状和索引映射。对于多结果算子，所有结果及对应输出的形状和索引映射均需一致，各结果切分后的张量类型也需相同。
+- 各计算结果均需进入受支持的下游切分路径，例如由`StoreOp`、`CopyOp`使用。暂不支持未使用的结果，以及同一结果仍被未参与切分的路径使用或需要生成多个独立切片的情况。
+
+除上述算子级条件外，函数整体还需满足`hivm-bind-sub-block` Pass的切分要求，例如存在满足切分条件的并行维。条件不满足时，自定义算子保持未切分状态。
+
+切分后，两个Sub-Block仍调用同一个设备内核实现函数，分别处理各自的数据分片，无需修改自定义算子的调用接口。
+
+<!-- npu="A3,910b" id1 -->
 ### Triton自定义算子示例
 
 **说明**：
 
-本节内容仅适用于 Atlas A3系列产品、Atlas A2系列产品。
+本节内容仅适用于 <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>。
 
 #### 标准自定义算子示例
 
@@ -618,3 +692,4 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
   }
 }
 ```
+<!-- end id1 -->

@@ -15,7 +15,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/HFusion/Transforms/DecomposeAtomicSync.h"
 #include "bishengir/Dialect/HFusion/Transforms/regbase/NormalizePatterns.h"
 #include "bishengir/Dialect/HFusion/Transforms/regbase/NormalizeTraitsBase.h"
 #include "bishengir/Dialect/HFusion/Transforms/regbase/NormalizeUtils.h"
@@ -70,15 +69,89 @@ using CAS =
     NormalizeAtomicCASTemplate<hfusion::AtomicCasOp, HFusionAtomicTraits>;
 using XCHG =
     NormalizeAtomicXCHGTemplate<hfusion::AtomicXchgOp, HFusionAtomicTraits>;
+
+/// Hardware ADD/MAX/MIN stores stay as `hfusion.store`. A preceding GM
+/// snapshot used as the returned old value still has to share their critical
+/// section. Software kinds are decomposed by `Elemwise` instead.
+struct HardwareAtomicStoreSnapshotSync : OpRewritePattern<hfusion::StoreOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::StoreOp op,
+                                PatternRewriter &rewriter) const override {
+    if (HFusionAtomicTraits::shouldDecomposeStore(op))
+      return failure();
+
+    AtomicKind kind = op.getAtomicKind();
+    if (kind != AtomicKind::ADD && kind != AtomicKind::MAX &&
+        kind != AtomicKind::MIN)
+      return failure();
+    if (op->hasAttr(kAtomicAlreadySync) || op.getDpsInits().empty())
+      return failure();
+
+    auto gmMemref = dyn_cast<TypedValue<MemRefType>>(op.getDpsInits().front());
+    if (!gmMemref)
+      return failure();
+    Operation *snapshot = findReturnedValueSnapshotOp(op, gmMemref);
+    if (!snapshot || !atomicSnapshotHasReturnedUsers(snapshot))
+      return failure();
+
+    if (isInsideSyncBlockCriticalRegion(op)) {
+      rewriter.modifyOpInPlace(op, [&]() {
+        op->setAttr(kAtomicAlreadySync, rewriter.getUnitAttr());
+      });
+      return success();
+    }
+
+    Location loc = op.getLoc();
+    rewriter.setInsertionPoint(snapshot);
+    Value lockVar = hivm::createSyncBlockLockVar(rewriter, loc).getResult();
+    hivm::createSyncBlockLock(rewriter, loc, lockVar,
+                              hivm::SyncBlockLockOrdering::Unordered);
+    rewriter.setInsertionPointAfter(op);
+    hivm::createSyncBlockUnlock(rewriter, loc, lockVar,
+                                hivm::SyncBlockLockOrdering::Unordered);
+    rewriter.modifyOpInPlace(
+        op, [&]() { op->setAttr(kAtomicAlreadySync, rewriter.getUnitAttr()); });
+    return success();
+  }
+};
+
 } // namespace NormalizeAtomicOps
 
-void populateNormalizeAtomicPatterns(RewritePatternSet &patterns) {
+void populateNormalizeAtomicPatterns(RewritePatternSet &patterns,
+                                     bool supportsRegBaseAtomic) {
   MLIRContext *ctx = patterns.getContext();
-  if (archisAscend950) {
-    populateHFusionDecomposeAtomicSyncPatterns(patterns);
+  if (supportsRegBaseAtomic) {
     patterns.add<NormalizeAtomicOps::Elemwise>(ctx);
     patterns.add<NormalizeAtomicOps::CAS>(ctx);
     patterns.add<NormalizeAtomicOps::XCHG>(ctx);
+    patterns.add<NormalizeAtomicOps::HardwareAtomicStoreSnapshotSync>(ctx);
   }
+}
+
+/// Check if a hfusion software-atomic op is legal - aborts if it is rejected by
+/// hfusion-normalize-ops pass.
+LogicalResult checkIsLegalAtomicOp(Operation *op) {
+  WalkResult result = op->walk([&](Operation *walkedOp) {
+    if (auto storeOp = dyn_cast<hfusion::StoreOp>(walkedOp)) {
+      if (NormalizeAtomicOps::HFusionAtomicTraits::shouldDecomposeStore(
+              storeOp)) {
+        storeOp->emitError("software-atomic store (kind=")
+            << stringifyAtomicKind(storeOp.getAtomicKind())
+            << ") survived hfusion-normalize-ops; it must be decomposed here "
+               "before conversion to HIVM (unsupported GM destination chain "
+               "or missing pattern)";
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    }
+    if (isa<hfusion::AtomicCasOp, hfusion::AtomicXchgOp>(walkedOp)) {
+      walkedOp->emitError("atomic op survived hfusion-normalize-ops; it must "
+                          "be decomposed here before conversion to HIVM");
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return failure(result.wasInterrupted());
 }
 } // namespace mlir::hfusion

@@ -206,7 +206,27 @@ std::optional<TCoreType> WaitFlagOp::inferCoreType() {
   return inferCoreTypeBasedOnPipes({p1, p2});
 }
 
+std::optional<TCoreType> TryWaitOp::inferCoreType() {
+  return inferCoreTypeBasedOnPipes({hivm::PIPE::PIPE_S});
+}
+
+std::optional<TCoreType> GetBufOp::inferCoreType() {
+  return TCoreType::CUBE_OR_VECTOR;
+}
+
+std::optional<TCoreType> RlsBufOp::inferCoreType() {
+  return TCoreType::CUBE_OR_VECTOR;
+}
+
 std::optional<TCoreType> SyncBlockSetOp::inferCoreType() {
+  return getTcoreTypeAttr().getTcoretype();
+}
+
+std::optional<TCoreType> SyncIntraBlockSetOp::inferCoreType() {
+  return getTcoreTypeAttr().getTcoretype();
+}
+
+std::optional<TCoreType> SyncIntraBlockWaitOp::inferCoreType() {
   return getTcoreTypeAttr().getTcoretype();
 }
 

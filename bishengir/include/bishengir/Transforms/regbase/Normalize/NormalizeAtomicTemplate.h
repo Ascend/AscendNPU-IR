@@ -24,10 +24,12 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/Support/LogicalResult.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
 #include <optional>
 
@@ -52,8 +54,89 @@ struct SyncBlockLockGuard {
   }
 };
 
+inline constexpr llvm::StringLiteral kAtomicAlreadySync = "already_sync";
+
+/// Unmatched `sync_block_lock` in this block, or in a block that contains an
+/// ancestor of `anchor`.
+inline bool isInsideSyncBlockCriticalRegion(Operation *anchor) {
+  for (Operation *current = anchor; current;) {
+    Block *block = current->getBlock();
+    if (!block)
+      return false;
+
+    int openLocks = 0;
+    bool found = false;
+    for (Operation &iter : *block) {
+      if (&iter == current) {
+        found = true;
+        break;
+      }
+      if (isa<hivm::SyncBlockLockOp>(iter))
+        ++openLocks;
+      else if (isa<hivm::SyncBlockUnlockOp>(iter) && openLocks > 0)
+        --openLocks;
+    }
+    if (!found)
+      return false;
+    if (openLocks > 0)
+      return true;
+    current = block->getParentOp();
+  }
+  return false;
+}
+
+inline Value getAtomicSnapshotBuffer(Operation *snapshotOp) {
+  if (auto copyOp = dyn_cast<memref::CopyOp>(snapshotOp))
+    return copyOp.getTarget();
+  if (auto loadOp = dyn_cast<hivm::LoadOp>(snapshotOp))
+    return loadOp.getDst();
+  return nullptr;
+}
+
+inline bool atomicSnapshotHasReturnedUsers(Operation *snapshotOp) {
+  Value buffer = getAtomicSnapshotBuffer(snapshotOp);
+  if (!buffer)
+    return false;
+  return llvm::range_size(buffer.getUsers()) > 1;
+}
+
+/// Preceding `memref.copy` or `hivm.load` of `gmTarget` whose destination is
+/// still used as the returned old GM value.
+inline Operation *findReturnedValueSnapshotOp(Operation *atomicOp,
+                                              Value gmTarget) {
+  for (Operation *op = atomicOp->getPrevNode(); op; op = op->getPrevNode()) {
+    if (auto copyOp = dyn_cast<memref::CopyOp>(op)) {
+      if (copyOp.getSource() == gmTarget)
+        return copyOp;
+    }
+    if (auto loadOp = dyn_cast<hivm::LoadOp>(op)) {
+      if (loadOp.getSrc() == gmTarget)
+        return loadOp;
+    }
+  }
+  return nullptr;
+}
+
+/// Where the critical section starts. A CAS result is the value loaded during
+/// decomposition, so the section starts at the op. A separate GM snapshot
+/// that is the returned value must be inside the same section.
+inline Operation *atomicSyncStart(Operation *atomicOp, Value gmTarget,
+                                  bool hasResult) {
+  if (!hasResult) {
+    if (Operation *snapshot = findReturnedValueSnapshotOp(atomicOp, gmTarget))
+      if (atomicSnapshotHasReturnedUsers(snapshot))
+        return snapshot;
+  }
+  return atomicOp;
+}
+
+inline bool atomicNeedsNewLock(Operation *atomicOp) {
+  return !atomicOp->hasAttr(kAtomicAlreadySync) &&
+         !isInsideSyncBlockCriticalRegion(atomicOp);
+}
+
 /// Static backing allocation for a GM destination that may be a dynamic
-/// subview.
+/// subview or expand_shape.
 ///
 /// `sBuffer` is used for tensor conversion, while `dBuffer` has the same
 /// logical shape as the original GM memref:
@@ -67,25 +150,27 @@ struct StaticSizedBuffer {
                     TypedValue<MemRefType> gmMemrefSource)
       : builder(builder), loc(loc), gmMemrefSource(gmMemrefSource) {
     const Type elemType = gmMemrefSource.getType().getElementType();
-    const MemRefType rawMemref =
-        MemRefType::get(gmMemrefSource.getType().getShape(), elemType);
+
     if (gmMemrefSource.getType().hasStaticShape()) {
+      const MemRefType rawMemref =
+          MemRefType::get(gmMemrefSource.getType().getShape(), elemType);
       dBuffer = sBuffer = builder.create<memref::AllocOp>(loc, rawMemref);
       return;
     }
 
-    definingOp = gmMemrefSource.getDefiningOp<memref::SubViewOp>();
-    if (!definingOp || !definingOp.getSourceType().hasStaticShape()) {
+    MemRefType baseType;
+    if (!resolveStaticBase(baseType)) {
       valid = false;
       return;
     }
     sBuffer = builder.create<memref::AllocOp>(
-        loc, rawMemref.clone(definingOp.getSourceType().getShape()));
-    SmallVector<OpFoldResult> zeroOffsets(gmMemrefSource.getType().getRank(),
-                                          builder.getI64IntegerAttr(0));
-    dBuffer = builder.create<memref::SubViewOp>(loc, sBuffer, zeroOffsets,
-                                                definingOp.getMixedSizes(),
-                                                definingOp.getMixedStrides());
+        loc, MemRefType::get(baseType.getShape(), elemType));
+    FailureOr<TypedValue<MemRefType>> maybeDBuffer = buildMemrefView(sBuffer);
+    if (failed(maybeDBuffer)) {
+      valid = false;
+      return;
+    }
+    dBuffer = *maybeDBuffer;
   }
 
   bool isValid() const { return valid; }
@@ -130,28 +215,137 @@ struct StaticSizedBuffer {
   }
 
   void storeBack(TypedValue<TensorType> tensorSrc) {
-    if (dBuffer.getType().hasStaticShape()) {
+    if (memrefViewChain.empty()) {
       builder.create<bufferization::MaterializeInDestinationOp>(
           loc, Type(), tensorSrc, gmMemrefSource, /*restrict=*/false,
           /*writable=*/true);
       return;
     }
-    SmallVector<OpFoldResult> zeroOffsets(gmMemrefSource.getType().getRank(),
-                                          builder.getI64IntegerAttr(0));
-    Value dtensor = builder.create<tensor::ExtractSliceOp>(
-        loc, tensorSrc, zeroOffsets, definingOp.getMixedSizes(),
-        definingOp.getMixedStrides());
+    FailureOr<TypedValue<TensorType>> maybeView = buildTensorView(tensorSrc);
+    if (failed(maybeView))
+      return;
     builder.create<bufferization::MaterializeInDestinationOp>(
-        loc, Type(), dtensor, gmMemrefSource, /*restrict=*/false,
+        loc, Type(), *maybeView, gmMemrefSource, /*restrict=*/false,
         /*writable=*/true);
   }
 
 private:
+  /// Walks up static base -> GM destination chain of memref.subview,
+  /// memref.expand_shape, memref.collapse_shape (whether static or dynamic),
+  /// until it reaches a static memref, recording in memrefViewChain for later
+  /// replay.
+  bool resolveStaticBase(MemRefType &baseType) {
+    Value current = gmMemrefSource;
+    SmallVector<Operation *, 4> topDown;
+    while (true) {
+      Operation *defOp = current.getDefiningOp();
+      if (auto mt = dyn_cast<MemRefType>(current.getType()))
+        if (mt.hasStaticShape()) {
+          baseType = mt;
+          break;
+        }
+      if (defOp && isa<memref::SubViewOp, memref::ExpandShapeOp,
+                       memref::CollapseShapeOp>(defOp)) {
+        topDown.push_back(defOp);
+        current = defOp->getOperand(0);
+        continue;
+      }
+      return false;
+    }
+    memrefViewChain.assign(topDown.rbegin(), topDown.rend());
+    return true;
+  }
+
+  /// Replays the recorded memrefViewChain on a given memref source -
+  /// re-creating each step as a memref op, using recorded size/stride with rezo
+  /// offset for subview, and reassociation indices for expand shape.
+  ///
+  /// It returns dBuffer, a view of sBuffer with the same logical shape of GM
+  /// destination.
+  FailureOr<TypedValue<MemRefType>> buildMemrefView(Value source) {
+    Value current = source;
+    for (Operation *step : memrefViewChain) {
+      if (auto subview = dyn_cast<memref::SubViewOp>(step)) {
+        SmallVector<OpFoldResult> zeroOffsets(
+            current.getType().cast<MemRefType>().getRank(),
+            builder.getI64IntegerAttr(0));
+        current = builder.create<memref::SubViewOp>(
+            loc, cast<TypedValue<MemRefType>>(current), zeroOffsets,
+            subview.getMixedSizes(), subview.getMixedStrides());
+        continue;
+      }
+      if (auto expand = dyn_cast<memref::ExpandShapeOp>(step)) {
+        auto outputShape = getMixedValues(expand.getStaticOutputShape(),
+                                          expand.getOutputShape(), builder);
+        auto maybeType = memref::ExpandShapeOp::computeExpandedType(
+            current.getType().cast<MemRefType>(),
+            expand.getResultType().getShape(),
+            expand.getReassociationIndices());
+        if (failed(maybeType))
+          return failure();
+        current = builder.create<memref::ExpandShapeOp>(
+            loc, *maybeType, cast<TypedValue<MemRefType>>(current),
+            expand.getReassociationIndices(), outputShape);
+        continue;
+      }
+      if (auto collapse = dyn_cast<memref::CollapseShapeOp>(step)) {
+        current = builder.create<memref::CollapseShapeOp>(
+            loc, cast<TypedValue<MemRefType>>(current),
+            collapse.getReassociationIndices());
+        continue;
+      }
+      return failure();
+    }
+    return cast<TypedValue<MemRefType>>(current);
+  }
+
+  /// Replays the recorded memrefViewChain on a given tensor source - mapping
+  /// each memref step to its tensor uquivalent, using the memref's result
+  /// shapes at each step.
+  ///
+  /// It returns tensor view with the same logical shape of GM destination.
+  FailureOr<TypedValue<TensorType>> buildTensorView(Value source) {
+    Value current = source;
+    for (Operation *step : memrefViewChain) {
+      if (auto subview = dyn_cast<memref::SubViewOp>(step)) {
+        SmallVector<OpFoldResult> zeroOffsets(
+            current.getType().cast<RankedTensorType>().getRank(),
+            builder.getI64IntegerAttr(0));
+        current = builder.create<tensor::ExtractSliceOp>(
+            loc, cast<TypedValue<TensorType>>(current), zeroOffsets,
+            subview.getMixedSizes(), subview.getMixedStrides());
+        continue;
+      }
+      if (auto expand = dyn_cast<memref::ExpandShapeOp>(step)) {
+        auto outputShape = getMixedValues(expand.getStaticOutputShape(),
+                                          expand.getOutputShape(), builder);
+        auto resultType =
+            RankedTensorType::get(expand.getResultType().getShape(),
+                                  expand.getResultType().getElementType());
+        current = builder.create<tensor::ExpandShapeOp>(
+            loc, resultType, cast<TypedValue<TensorType>>(current),
+            expand.getReassociationIndices(), outputShape);
+        continue;
+      }
+      if (auto collapse = dyn_cast<memref::CollapseShapeOp>(step)) {
+        auto resultType =
+            RankedTensorType::get(collapse.getResultType().getShape(),
+                                  collapse.getResultType().getElementType());
+        current = builder.create<tensor::CollapseShapeOp>(
+            loc, resultType, cast<TypedValue<TensorType>>(current),
+            collapse.getReassociationIndices());
+        continue;
+      }
+      return failure();
+    }
+    return cast<TypedValue<TensorType>>(current);
+  }
+
   OpBuilder &builder;
   const Location loc;
 
   const TypedValue<MemRefType> gmMemrefSource;
-  memref::SubViewOp definingOp;
+  SmallVector<Operation *, 4> memrefViewChain;
   bool valid = true;
 };
 
@@ -241,7 +435,6 @@ struct NormalizeAtomicStoreElemwise : public OpRewritePattern<StoreOpTy> {
       return failure();
 
     Location loc = op->getLoc();
-    rewriter.setInsertionPointAfter(op);
 
     if (op.getDpsInputs().empty() || op.getDpsInits().empty())
       return rewriter.notifyMatchFailure(op, "expected store input and output");
@@ -252,6 +445,17 @@ struct NormalizeAtomicStoreElemwise : public OpRewritePattern<StoreOpTy> {
         dyn_cast<TypedValue<MemRefType>>(op.getDpsInits().front());
     if (!gmMemref)
       return rewriter.notifyMatchFailure(op, "expected memref store output");
+
+    Operation *syncStart = atomicSyncStart(op, gmMemref, /*hasResult=*/false);
+    const bool needLock = atomicNeedsNewLock(op);
+    std::optional<SyncBlockLockGuard> lock;
+    // A returned GM snapshot must sit inside the critical section. Staging
+    // buffers stay outside unless that snapshot forces the lock to open first.
+    if (needLock && syncStart != op.getOperation()) {
+      rewriter.setInsertionPoint(syncStart);
+      lock.emplace(rewriter, loc);
+    }
+    rewriter.setInsertionPointAfter(op);
 
     StaticSizedBuffer rhsBuffer(rewriter, loc, gmMemref);
     if (!rhsBuffer.isValid())
@@ -290,15 +494,11 @@ struct NormalizeAtomicStoreElemwise : public OpRewritePattern<StoreOpTy> {
       return success();
     };
 
-    static constexpr llvm::StringLiteral kAlreadySync = "already_sync";
-    if (op->hasAttr(kAlreadySync)) {
-      if (failed(readModifyWrite()))
-        return failure();
-    } else {
-      SyncBlockLockGuard lock(rewriter, loc);
-      if (failed(readModifyWrite()))
-        return failure();
+    if (needLock && !lock) {
+      lock.emplace(rewriter, loc);
     }
+    if (failed(readModifyWrite()))
+      return failure();
     rewriter.eraseOp(op);
     eraseToMemrefIfUnused(ubInput, rewriter);
     return success();
@@ -306,16 +506,17 @@ struct NormalizeAtomicStoreElemwise : public OpRewritePattern<StoreOpTy> {
 };
 
 /// Rewrites compare-and-swap:
-///   GM = (GM == compare) ? store : GM
+///   old = GM
+///   GM = (old == compare) ? store : old
 ///
-/// FP8 equality is evaluated after widening both sides to FP32.
+/// When the op has a result, that result is the loaded `old` value. FP8
+/// equality is evaluated after widening both sides to FP32.
 template <typename AtomicCasOpTy, typename Traits>
 struct NormalizeAtomicCASTemplate : public OpRewritePattern<AtomicCasOpTy> {
   using OpRewritePattern<AtomicCasOpTy>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(AtomicCasOpTy op,
                                 PatternRewriter &rewriter) const override {
-    rewriter.setInsertionPointAfter(op);
     Location loc = op->getLoc();
     auto srcOperands = op.getODSOperands(0);
     auto dstOperands = op.getODSOperands(1);
@@ -326,6 +527,16 @@ struct NormalizeAtomicCASTemplate : public OpRewritePattern<AtomicCasOpTy> {
         dyn_cast<TypedValue<MemRefType>>(dstOperands.front());
     if (!gmMemref)
       return rewriter.notifyMatchFailure(op, "expected memref CAS output");
+
+    const bool hasReturn = !op->getResults().empty();
+    Operation *syncStart = atomicSyncStart(op, gmMemref, hasReturn);
+    const bool needLock = atomicNeedsNewLock(op);
+    std::optional<SyncBlockLockGuard> lock;
+    if (needLock && syncStart != op.getOperation()) {
+      rewriter.setInsertionPoint(syncStart);
+      lock.emplace(rewriter, loc);
+    }
+    rewriter.setInsertionPointAfter(op);
 
     StaticSizedBuffer comparingBuffer(rewriter, loc, gmMemref);
     StaticSizedBuffer storingBuffer(rewriter, loc, gmMemref);
@@ -343,9 +554,22 @@ struct NormalizeAtomicCASTemplate : public OpRewritePattern<AtomicCasOpTy> {
       return rewriter.notifyMatchFailure(
           op, "expected memref or tensor CAS inputs");
 
-    auto compareAndSwap = [&]() {
+    Value loadedValue;
+    auto compareAndSwap = [&]() -> LogicalResult {
       rewriter.create<memref::CopyOp>(loc, gmMemref, gmValBuffer.dBuffer);
       const TypedValue<TensorType> gmValTensor = gmValBuffer.toStaticTensor();
+      if (hasReturn) {
+        Type resultType = op->getResult(0).getType();
+        Value candidate = gmValTensor;
+        // Dynamic GM is staged in a static buffer. The returned old value
+        // follows the logical destination shape, not the padded staging tile.
+        if (candidate.getType() != resultType)
+          candidate = gmValBuffer.toLogicalTensor();
+        if (candidate.getType() != resultType)
+          return rewriter.notifyMatchFailure(
+              op, "loaded GM value type does not match CAS result");
+        loadedValue = candidate;
+      }
 
       Value cmpResult = Traits::createCmpOp(
           rewriter, loc,
@@ -367,16 +591,14 @@ struct NormalizeAtomicCASTemplate : public OpRewritePattern<AtomicCasOpTy> {
       return success();
     };
 
-    static constexpr llvm::StringLiteral kAlreadySync = "already_sync";
-    if (op->hasAttr(kAlreadySync)) {
-      if (failed(compareAndSwap()))
-        return failure();
-    } else {
-      SyncBlockLockGuard lock(rewriter, loc);
-      if (failed(compareAndSwap()))
-        return failure();
-    }
-    rewriter.eraseOp(op);
+    if (needLock && !lock)
+      lock.emplace(rewriter, loc);
+    if (failed(compareAndSwap()))
+      return failure();
+    if (hasReturn)
+      rewriter.replaceOp(op, loadedValue);
+    else
+      rewriter.eraseOp(op);
     eraseToMemrefIfUnused(srcOperands[0], rewriter);
     eraseToMemrefIfUnused(srcOperands[1], rewriter);
     return success();
@@ -412,6 +634,21 @@ struct NormalizeAtomicXCHGTemplate : public OpRewritePattern<AtomicXchgOpTy> {
                                          "and memref output");
 
     const bool hasReturn = op->getNumResults() > 0;
+    // The op result is the GM value loaded inside this lowering. A separate
+    // preceding snapshot is the returned old value only when the op itself
+    // has no result, and that copy must share this critical section.
+    Operation *syncStart = atomicSyncStart(op, gmMemref, hasReturn);
+    const bool needLock = atomicNeedsNewLock(op);
+    const bool lockCoversSnapshot = needLock && syncStart != op.getOperation();
+    Value outerLockVar;
+    if (lockCoversSnapshot) {
+      rewriter.setInsertionPoint(syncStart);
+      outerLockVar = hivm::createSyncBlockLockVar(rewriter, loc).getResult();
+      hivm::createSyncBlockLock(rewriter, loc, outerLockVar,
+                                hivm::SyncBlockLockOrdering::Unordered);
+      rewriter.setInsertionPointAfter(op);
+    }
+
     scope::ScopeOp scopeOp;
     if (hasReturn)
       scopeOp = rewriter.create<scope::ScopeOp>(loc, op->getResultTypes());
@@ -434,13 +671,19 @@ struct NormalizeAtomicXCHGTemplate : public OpRewritePattern<AtomicXchgOpTy> {
           op, "expected dynamic GM memref to be a static subview");
 
     {
-      SyncBlockLockGuard lock(rewriter, loc);
+      // An existing critical section, or a lock opened around a preceding
+      // snapshot, already covers these copies.
+      std::optional<SyncBlockLockGuard> lock;
+      if (needLock && !lockCoversSnapshot)
+        lock.emplace(rewriter, loc);
       rewriter.create<memref::CopyOp>(loc, gmMemref, tmpBuffer.dBuffer);
       if (ubMemref) {
         rewriter.create<memref::CopyOp>(loc, ubMemref, gmMemref);
         rewriter.create<memref::CopyOp>(loc, tmpBuffer.dBuffer, ubMemref);
       } else {
-        gmBuffer.storeBack(ubTensor);
+        rewriter.create<bufferization::MaterializeInDestinationOp>(
+            loc, Type(), ubTensor, gmMemref, /*restrict=*/false,
+            /*writable=*/true);
       }
     }
     if (hasReturn)
@@ -453,6 +696,11 @@ struct NormalizeAtomicXCHGTemplate : public OpRewritePattern<AtomicXchgOpTy> {
     else
       rewriter.eraseOp(op);
     eraseToMemrefIfUnused(srcOperands.front(), rewriter);
+    if (lockCoversSnapshot) {
+      rewriter.setInsertionPointAfter(scopeOp);
+      hivm::createSyncBlockUnlock(rewriter, loc, outerLockVar,
+                                  hivm::SyncBlockLockOrdering::Unordered);
+    }
     return success();
   }
 };

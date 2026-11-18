@@ -283,30 +283,26 @@ def BatchMmadL1Op : HIVM_L1MmadOp<"batchMmadL1", [
 // HIVM L0 MMAD op definitions.
 //===----------------------------------------------------------------------===//
 
-def MmadL0Op : HIVM_StructuredOp<"mmadL0", [
-  CubeCoreTypeTrait,
-  SinglePipeOpTrait,
-  HIVMLocalMatmulL0OpInterface,
-  HIVMUnitFlagEnabledInterface,
-  OpPipeTrait<"PIPE::PIPE_M">,
-  DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
-    ["getIteratorTypesArray"]>,
+def MmadL0Op
+    : HIVM_StructuredOp<
+          "mmadL0", [AttrSizedOperandSegments, CubeCoreTypeTrait,
+                     SinglePipeOpTrait, HIVMLocalMatmulL0OpInterface,
+                     HIVMUnitFlagEnabledInterface, OpPipeTrait<"PIPE::PIPE_M">,
+                     DeclareOpInterfaceMethods<
+                         HIVMStructuredOpInterface, ["getIteratorTypesArray"]>,
 ]> {
-  let arguments = !con(
-    HIVM_LocalMmadLikeOperands.mmadCommonAB,
-    HIVM_LocalMmadLikeOperands.mmadCommonMKN,
-    HIVM_LocalMmadLikeOperands.mmadCommonC,
-    (ins
-      Arg<I1, [{}]>:$k_direction_align,
-      Arg<I1, [{
+  let arguments = !con(HIVM_LocalMmadLikeOperands.mmadCommonAB,
+                       HIVM_LocalMmadLikeOperands.mmadCommonMKN,
+                       HIVM_LocalMmadLikeOperands.mmadCommonC,
+                       (ins Arg<I1, [{}]>:$k_direction_align, Arg<I1, [{
         If true, data in L0C is initialized from the bias source.
-      }]>:$is_with_bias
-    ),
-    HIVM_LocalMmadLikeOperands.mmadCommonInit,
-    HIVM_LocalMmadLikeOperands.mmadCommonUnitFlagCond,
-    HIVM_LocalMmadLikeOperands.mmadCommonEnableAttrs,
-    HIVM_LocalMmadLikeOperands.mmadCommonUnitFlagAttrs
-  );
+      }]>:$is_with_bias),
+                       HIVM_LocalMmadLikeOperands.mmadCommonInit,
+                       (ins Optional<TensorOrMemref>:$bias),
+                       HIVM_LocalMmadLikeOperands.mmadCommonUnitFlagCond,
+                       HIVM_LocalMmadLikeOperands.mmadCommonEnableAttrs,
+                       HIVM_LocalMmadLikeOperands.mmadCommonUnitFlagAttrs,
+                       (ins DefaultValuedAttr<BoolAttr, "true">:$disable_gemv));
   let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
 
   let summary = [{
@@ -316,8 +312,13 @@ def MmadL0Op : HIVM_StructuredOp<"mmadL0", [
     The computation logic is:
 
     ```
-    C = C + A x B + (optional) bias
+    C = A x B + (bias ? broadcast(bias) : (init_condition ? 0 : C))
     ```
+
+    The optional bias is an explicit BT input, not an implicit address-zero
+    source. is_with_bias must be a constant matching its presence. With bias,
+    init_condition must be false: the bias replaces the old accumulator.
+    A5 consumes physical L0A zN, L0B nZ and L0C layouts and disables GEMV.
   }];
   let assemblyFormat = [{
     attr-dict `ins` `(`
@@ -339,25 +340,18 @@ def MmadL0Op : HIVM_StructuredOp<"mmadL0", [
     `,` type($is_with_bias)
     `,` type($init_condition) `)`
     `outs` `(` $c `:` type($c) `)`
+    (`bias` `(` $bias^ `:` type($bias) `)`)?
     (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
     (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?
     (`->` type($result_tensors)^)?
   }];
 
-  let builders = [
-    OpBuilder<(ins "TypeRange":$result_tensors,
-                   "Value":$a,
-                   "Value":$b,
-                   "Value":$real_m,
-                   "Value":$real_k,
-                   "Value":$real_n,
-                   "Value":$c,
-                   "Value":$k_direction_align,
-                   "Value":$is_with_bias,
-                   "Value":$init_condition,
-                   CArg<"UnitAttr", "{}">:$enable_HF32,
-                   CArg<"UnitAttr", "{}">:$enable_I4)>
-  ];
+  let builders = [OpBuilder<(ins "TypeRange":$result_tensors, "Value":$a,
+      "Value":$b, "Value":$real_m, "Value":$real_k, "Value":$real_n, "Value":$c,
+      "Value":$k_direction_align, "Value":$is_with_bias,
+      "Value":$init_condition, CArg<"UnitAttr", "{}">:$enable_HF32,
+      CArg<"UnitAttr", "{}">:$enable_I4, CArg<"Value", "{}">:$bias,
+      CArg<"BoolAttr", "{}">:$disable_gemv)>];
 
   let extraClassDeclaration = [{
     // Required by DestinationStyleOpInterface
@@ -365,13 +359,15 @@ def MmadL0Op : HIVM_StructuredOp<"mmadL0", [
       return getCMutable();
     }
 
-    ArrayAttr getIndexingMaps() {
-      return ::mlir::hivm::detail::getIndexingMapsImpl(*this);
-    }
+    ArrayAttr getIndexingMaps();
+
+    // True unless this invocation is known to initialize C from zero or BT.
+    bool readsAccumulator();
 
     // LocalMatmulBaseOpInterface methods
     ::mlir::hivm::MatmulBiasMode getMatmulBiasMode() {
-      return ::mlir::hivm::MatmulBiasMode::NoBias;
+      return getBias() ? ::mlir::hivm::MatmulBiasMode::PerChannelAdd
+                       : ::mlir::hivm::MatmulBiasMode::NoBias;
     }
 
     bool supportsScaleOperands() {

@@ -153,9 +153,25 @@ public:
       }
 
     } else {
-      if constexpr (std::is_base_of_v<
-                        mlir::hivm::detail::ExtraBufferOpInterfaceTrait<opType>,
-                        opType>) {
+      if constexpr (std::is_same_v<opType, VShROp>) {
+        // Propagate the logical/arithmetic right-shift semantics of hfusion
+        // shrui/shrsi through VShROp::is_signed; the template name and the
+        // scalar-loop lowering are selected from this attribute.
+        bool isSigned = true;
+        if (isa<hfusion::ElemwiseBinaryOp>(op)) {
+          isSigned = cast<hfusion::ElemwiseBinaryOp>(op).getFun() !=
+                     hfusion::BinaryFn::shrui;
+        }
+        hivmOp = b.create<opType>(loc, resultTypes, inputs, inits,
+                                  /*temp_buffer=*/Value(), isSigned);
+        // HFusion shrui/shrsi do not round. Although A3 templates already
+        // disable rounding, explicitly override HIVM's default true value
+        // so the IR preserves the source operation's semantics.
+        hivmOp->setAttr("round", b.getBoolAttr(false));
+      } else if constexpr (std::is_base_of_v<
+                               mlir::hivm::detail::ExtraBufferOpInterfaceTrait<
+                                   opType>,
+                               opType>) {
         // don't need temp buffer, but need to pass extra operand to create op
         hivmOp = b.create<opType>(loc, resultTypes, inputs, inits,
                                   /*temp_buffer=*/Value());
@@ -1210,6 +1226,19 @@ struct HFusionToHIVMFlipOp : public OpRewritePattern<hfusion::FlipOp> {
 //===----------------------------------------------------------------------===//
 // HFusionToHIVMCumOp
 //===----------------------------------------------------------------------===//
+
+static bool mayUseSimtCumsumTemplate(hfusion::CumsumOp op) {
+  auto srcType = cast<ShapedType>(op.getInput().getType());
+  auto cumDims = op.getCumDims();
+  if (cumDims.size() != 1)
+    return false;
+  for (auto [dim, size] : llvm::enumerate(srcType.getShape())) {
+    if (static_cast<int64_t>(dim) != cumDims[0] && size != 1)
+      return false;
+  }
+  return true;
+}
+
 template <typename HFUSIONOP, typename HIVMOP>
 struct HFusionToHIVMCumOp : public OpRewritePattern<HFUSIONOP> {
   using OpRewritePattern<HFUSIONOP>::OpRewritePattern;
@@ -1225,6 +1254,11 @@ struct HFusionToHIVMCumOp : public OpRewritePattern<HFUSIONOP> {
       auto newOp = rewriter.create<HIVMOP>(op.getLoc(), op->getResultTypes(),
                                            op.getInput(), dsts[0],
                                            op.getCumDims(), op.getReverse());
+      if constexpr (std::is_same_v<HFUSIONOP, hfusion::CumsumOp>) {
+        if (mayUseSimtCumsumTemplate(op))
+          newOp->setAttr(VFModeAttr::name,
+                         VFModeAttr::get(op->getContext(), VFMode::SIMT));
+      }
       // cummax/cummin carry a NaN-propagation flag (max/minimum vs max/minnum).
       // Forward it; cumsum/cumprod have no such attribute.
       if constexpr (std::is_same_v<HFUSIONOP, hfusion::CummaxOp> ||

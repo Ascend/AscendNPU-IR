@@ -42,6 +42,10 @@ using namespace bishengir;
 
 namespace {
 thread_local CompileTiming *currentCompileTiming = nullptr;
+
+// When true, `execute` echoes each external command line it runs (e.g. the
+// bisheng/ccec invocations) to stderr.
+bool EchoCommandLines = false;
 } // namespace
 
 mlir::TimingScope *bishengir::getCurrentCompileTimingScope() {
@@ -201,6 +205,14 @@ static LogicalResult runResolvedBinary(StringRef binPath,
                                        std::optional<StringRef> outputFile) {
   arguments[0] = binPath;
 
+  if (EchoCommandLines) {
+    llvm::errs() << "[save-temps] Executing: ";
+    llvm::interleave(
+        arguments, llvm::errs(),
+        [](const StringRef &arg) { llvm::errs() << arg; }, " ");
+    llvm::errs() << "\n";
+  }
+
   LLVM_DEBUG({
     llvm::dbgs() << "[DEBUG] Executing: ";
     llvm::interleave(
@@ -227,6 +239,8 @@ static LogicalResult runResolvedBinary(StringRef binPath,
   }
   return success();
 }
+
+void bishengir::setEchoCommandLines(bool echo) { EchoCommandLines = echo; }
 
 LogicalResult bishengir::execute(StringRef binName, StringRef installPath,
                                  SmallVectorImpl<StringRef> &arguments,
@@ -355,6 +369,34 @@ std::string bishengir::getBiShengInstallPath() {
     llvm::report_fatal_error("Failed to get absolute path for " + path +
                              " please verify its validity");
   return path.str().str();
+}
+
+std::string bishengir::getBiShengCompilerInstallPath() {
+  // 1. find bisheng from BISHENG_INSTALL_PATH (already the install root).
+  std::string maybeBiShengInstallPath = getBiShengInstallPath();
+  if (!maybeBiShengInstallPath.empty())
+    return maybeBiShengInstallPath;
+
+  // 2. find bisheng from PATH: parent dir of the resolved binary is its `bin`.
+  if (llvm::ErrorOr<std::string> P = llvm::sys::findProgramByName("bisheng")) {
+    llvm::StringRef bishengFullPath = llvm::StringRef(P.get());
+    if (!bishengFullPath.empty())
+      return llvm::sys::path::parent_path(bishengFullPath).str();
+  }
+
+  // 3. find bisheng from ASCEND_HOME_PATH.
+  const char *kAscendHomePathEnv = "ASCEND_HOME_PATH";
+  if (const char *ascendHomePath = getenv(kAscendHomePathEnv)) {
+    llvm::SmallString<128> bishengInstallPathStr(ascendHomePath);
+    llvm::sys::path::append(bishengInstallPathStr, "bin");
+    llvm::SmallString<128> bishengPathStr(bishengInstallPathStr);
+    llvm::sys::path::append(bishengPathStr, "bisheng");
+    if (llvm::sys::fs::exists(bishengPathStr))
+      return std::string(bishengInstallPathStr);
+  }
+
+  llvm::errs() << "[ERROR] Cannot find the binary path of the BiSheng compiler.\n";
+  return "";
 }
 
 std::string bishengir::getExecutablePath(const char *argv0, void *mainAddr) {

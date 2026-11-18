@@ -1,4 +1,4 @@
-// RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true" %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true enable-fma=true" %s -split-input-file -verify-diagnostics | FileCheck %s
 
 // CHECK-LABEL: func.func @test_NormalizeAnyToF32UnaryRec_normalize_rec_i16_to_f32(
 // CHECK: hfusion.cast {{.*}} ins({{.*}} : tensor<1x2xi16>) outs({{.*}} : tensor<1x2xf32>)
@@ -630,6 +630,104 @@ func.func @test_NormalizeMod_hfusion_mod_f32(%src0: tensor<2048xf32>, %src1: ten
     return %4 : tensor<2048xf32>
 }
 
+// -----
+
+// Ascend950 f32 uses an FMA residual plus bounded quotient correction so that
+// Ascend950 f32 uses an FMA residual when the truncated quotient is within
+// FP32's exact-integer range.  Cheaper range/sign selects repair the at-most
+// one-ulp quotient error at integer boundaries; larger quotients keep the
+// legacy mul/sub result instead of paying fixed correction divisions.
+// CHECK-LABEL: func.func @test_NormalizeMod_hfusion_mod_f32_fma
+// CHECK-SAME: (%[[x:.*]]: tensor<2048xf32>, %[[y:.*]]: tensor<2048xf32>)
+// CHECK: %[[div:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<divfhp>} ins(%[[x]], %[[y]] : tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[div_trunc:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<trunc>} ins(%[[div]] : tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[legacy_mul:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[div_trunc]], %[[y]] : tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[legacy:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[x]], %[[legacy_mul]] : tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[fma:.*]] = hfusion.elemwise_ternary {fun = #hfusion.ternary_fn<fma>} ins({{.*}}, %[[y]], %[[x]] : tensor<2048xf32>, tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK-NOT: hfusion.elemwise_binary {fun = #hfusion.binary_fn<divfhp>}
+// CHECK: %[[abs_y:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<abs>} ins(%[[y]] : tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[abs_r:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<abs>} ins(%[[fma]] : tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[too_large:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vge>} ins(%[[abs_r]], %[[abs_y]] : tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xi1>) -> tensor<2048xi1>
+// CHECK: %[[range_rem:.*]] = hfusion.select ins(%[[too_large]], {{.*}} : tensor<2048xi1>, tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[sign_diff:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vxor>} ins({{.*}}, {{.*}} : tensor<2048xi1>, tensor<2048xi1>) outs({{.*}} : tensor<2048xi1>) -> tensor<2048xi1>
+// CHECK: %[[need_fix:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins({{.*}}, %[[sign_diff]] : tensor<2048xi1>, tensor<2048xi1>) outs({{.*}} : tensor<2048xi1>) -> tensor<2048xi1>
+// CHECK: %[[sign_rem:.*]] = hfusion.select ins(%[[need_fix]], {{.*}} : tensor<2048xi1>, tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[abs_q:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<abs>} ins(%[[div_trunc]] : tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[use_fma:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%[[abs_q]], {{.*}} : tensor<2048xf32>, f32) outs({{.*}} : tensor<2048xi1>) -> tensor<2048xi1>
+// CHECK: %[[gated:.*]] = hfusion.select ins(%[[use_fma]], %[[sign_rem]], %[[legacy]] : tensor<2048xi1>, tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[output:.*]] = hfusion.select ins({{.*}}, {{.*}}, %[[gated]] : tensor<2048xi1>, f32, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: return %[[output]] : tensor<2048xf32>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_NormalizeMod_hfusion_mod_f32_fma(%src0: tensor<2048xf32>, %src1: tensor<2048xf32>) -> tensor<2048xf32> {
+    %3 = tensor.empty() : tensor<2048xf32>
+    %4 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<mod>} ins(%src0, %src1 : tensor<2048xf32>, tensor<2048xf32>) outs(%3 : tensor<2048xf32>) -> tensor<2048xf32>
+    return %4 : tensor<2048xf32>
+  }
+}
+
+// -----
+
+// Triton lowers f16/bf16 `%` to `extf -> arith.remf (f32) -> truncf`, so the
+// mod is an f32 op whose operands are widened 16-bit values.  Keep the legacy
+// mul/sub residual for this case: the 16-bit reference/consumer expects the
+// rounded-product result, while the FMA path intentionally removes that
+// rounding (up to half an ulp of the product).
+// CHECK-LABEL: func.func @test_NormalizeMod_hfusion_mod_f32_from_f16
+// CHECK-SAME: (%[[x:.*]]: tensor<2048xf16>, %[[y:.*]]: tensor<2048xf16>)
+// CHECK: %[[x_cast:.*]] = hfusion.cast {{.*}} ins(%[[x]] : tensor<2048xf16>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[y_cast:.*]] = hfusion.cast {{.*}} ins(%[[y]] : tensor<2048xf16>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[div:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<divfhp>} ins(%[[x_cast]], %[[y_cast]] : tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[div_trunc:.*]] = hfusion.cast {{.*}}round_mode = #hfusion.round_mode<trunc>{{.*}} ins(%[[div]] : tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK-NOT: hfusion.elemwise_ternary {fun = #hfusion.ternary_fn<fma>}
+// CHECK: %[[mul:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[div_trunc]], %[[y_cast]] : tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[rem:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[x_cast]], %[[mul]] : tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_NormalizeMod_hfusion_mod_f32_from_f16(%src0: tensor<2048xf16>, %src1: tensor<2048xf16>) -> tensor<2048xf16> {
+    %0 = tensor.empty() : tensor<2048xf32>
+    %1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<round>} ins(%src0 : tensor<2048xf16>) outs(%0 : tensor<2048xf32>) -> tensor<2048xf32>
+    %2 = tensor.empty() : tensor<2048xf32>
+    %3 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<round>} ins(%src1 : tensor<2048xf16>) outs(%2 : tensor<2048xf32>) -> tensor<2048xf32>
+    %4 = tensor.empty() : tensor<2048xf32>
+    %5 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<mod>} ins(%1, %3 : tensor<2048xf32>, tensor<2048xf32>) outs(%4 : tensor<2048xf32>) -> tensor<2048xf32>
+    %6 = tensor.empty() : tensor<2048xf16>
+    %7 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%5 : tensor<2048xf32>) outs(%6 : tensor<2048xf16>) -> tensor<2048xf16>
+    return %7 : tensor<2048xf16>
+  }
+}
+
+// -----
+
+// Even when a shape op sits between the widened cast and the mod, the f16
+// consumer must keep the legacy mul/sub path.
+// CHECK-LABEL: func.func @test_NormalizeMod_hfusion_mod_f32_from_f16_slice
+// CHECK-SAME: (%[[x:.*]]: tensor<2048xf16>, %[[y:.*]]: tensor<2048xf16>)
+// CHECK: %[[x_cast:.*]] = hfusion.cast {{.*}} ins(%[[x]] : tensor<2048xf16>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[y_cast:.*]] = hfusion.cast {{.*}} ins(%[[y]] : tensor<2048xf16>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[x_slice:.*]] = tensor.extract_slice %[[x_cast]]
+// CHECK: %[[y_slice:.*]] = tensor.extract_slice %[[y_cast]]
+// CHECK: %[[div:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<divfhp>} ins(%[[x_slice]], %[[y_slice]] : tensor<1024xf32>, tensor<1024xf32>) outs({{.*}} : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[div_trunc:.*]] = hfusion.cast {{.*}}round_mode = #hfusion.round_mode<trunc>{{.*}} ins(%[[div]] : tensor<1024xf32>) outs({{.*}} : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK-NOT: hfusion.elemwise_ternary {fun = #hfusion.ternary_fn<fma>}
+// CHECK: %[[mul:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[div_trunc]], %[[y_slice]] : tensor<1024xf32>, tensor<1024xf32>) outs({{.*}} : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[rem:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[x_slice]], %[[mul]] : tensor<1024xf32>, tensor<1024xf32>) outs({{.*}} : tensor<1024xf32>) -> tensor<1024xf32>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_NormalizeMod_hfusion_mod_f32_from_f16_slice(%src0: tensor<2048xf16>, %src1: tensor<2048xf16>) -> tensor<1024xf16> {
+    %0 = tensor.empty() : tensor<2048xf32>
+    %1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<round>} ins(%src0 : tensor<2048xf16>) outs(%0 : tensor<2048xf32>) -> tensor<2048xf32>
+    %2 = tensor.empty() : tensor<2048xf32>
+    %3 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<round>} ins(%src1 : tensor<2048xf16>) outs(%2 : tensor<2048xf32>) -> tensor<2048xf32>
+    %4 = tensor.extract_slice %1[0] [1024] [1] : tensor<2048xf32> to tensor<1024xf32>
+    %5 = tensor.extract_slice %3[0] [1024] [1] : tensor<2048xf32> to tensor<1024xf32>
+    %6 = tensor.empty() : tensor<1024xf32>
+    %7 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<mod>} ins(%4, %5 : tensor<1024xf32>, tensor<1024xf32>) outs(%6 : tensor<1024xf32>) -> tensor<1024xf32>
+    %8 = tensor.empty() : tensor<1024xf16>
+    %9 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%7 : tensor<1024xf32>) outs(%8 : tensor<1024xf16>) -> tensor<1024xf16>
+    return %9 : tensor<1024xf16>
+  }
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_NormalizeMod_hfusion_mod_bool
 // CHECK: %[[false_const:.*]] = arith.constant false
 // CHECK: %[[fill:.*]] = linalg.fill
@@ -1037,9 +1135,7 @@ func.func @test_NormalizeElemwiseMinMaxNumF_maxf(%arg0: tensor<512xf32>, %arg1: 
 // CHECK: %[[ABS_EXP:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<abs>} ins(%arg1 : tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
 // CHECK: %[[DIV:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<divfhp>} ins(%[[ABS_EXP]], %[[POS_TWO]] : tensor<16xf32>, f32) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
 // CHECK: %[[TRUNC:.*]] = hfusion.cast {{.*}} ins(%[[DIV]] : tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
-// CHECK: %[[MUL_MOD:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[TRUNC]], %[[POS_TWO]] : tensor<16xf32>, f32) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
-// CHECK: %[[MOD:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[ABS_EXP]], %[[MUL_MOD]] : tensor<16xf32>, tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
-// CHECK: %[[MOD_SEL:.*]] = hfusion.select ins({{.*}}, {{.*}}, %[[MOD]] : tensor<16xi1>, f32, tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[MOD_SEL:.*]] = hfusion.select ins({{.*}}, {{.*}}, {{.*}} : tensor<16xi1>, f32, tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
 // CHECK: %[[FMA:.*]] = hfusion.elemwise_ternary {fun = #hfusion.ternary_fn<fma>} ins(%[[MOD_SEL]], %[[NEG_TWO]], %[[POS_ONE]] : tensor<16xf32>, f32, f32) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
 // CHECK: %[[ABS_BASE0:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<abs>} ins(%arg0 : tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
 // CHECK: %[[LN0:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<log>} ins(%[[ABS_BASE0]] : tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>

@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
+#include "ArchDefs.h"
 #include "RegBase/ReductionUtils.h"
 #include "RegBase/VecUtils.h"
 #include "Utils.h"
 #include "Vector/VecUtils.h"
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 
 // The software implementation interface vdiv of CCEC supports division
 // operations on uint16, uint32, int16, and int32 types with no precision error.

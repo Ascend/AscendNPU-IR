@@ -4,6 +4,9 @@ add_bishengir_dialect_library(BiShengIRHACCUtils
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/mlir/Dialect/HACC
 
+  DEPENDS
+  BiShengIRNPUArchitectureFeaturesIncGen
+
   LINK_LIBS PUBLIC
   BiShengIRHACCDialect
   BiShengIRHACCTransforms

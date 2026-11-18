@@ -51,9 +51,9 @@ Run the installation script:
 cd tilelang-ascend
 # Build AscendNPU IR in 3rdparty.
 bash install_npuir.sh
-# Alternatively, use an alternative build method with the local AscendNPU IR.
+# Alternatively, use a local AscendNPU IR build.
 bash install_npuir.sh --bishengir-path=/path/to/AscendNPU-IR/build/install
-# Assume the current directory is tilelang-ascend. The option can be: --bishengir-path=./3rdparty/AscendNPU-IR/build/install
+# Assuming the current directory is tilelang-ascend, the option can be: --bishengir-path=./3rdparty/AscendNPU-IR/build/install
 ```
 
 > **Note**:
@@ -143,7 +143,7 @@ def vec_add(N, block_N, dtype="float32"):
             T.copy(A[start_idx], A_VEC[:tail_size])
             T.copy(B[start_idx], B_VEC[:tail_size])
 
-            # Perform vector addition on the NPU using low-level NPU IR instruction
+            # Perform vector addition on the NPU using low-level AscendNPU IR instruction
             T.npuir_add(A_VEC, B_VEC, C_VEC)
 
             # Write the result back from on-chip buffer (C_VEC) to global memory (C)
@@ -162,7 +162,7 @@ def test_vec_add():
     # Instantiate the vector addition kernel for the full sequence length (single block)
     func = vec_add(seq_len, seq_len)
 
-    # Compile the TileLang function to NPU IR for execution on the NPU
+    # Compile the TileLang function to AscendNPU IR for execution on the NPU
     compiled_kernel = tilelang.compile(func, target="npuir")
 
     # Create random input tensors on the NPU
@@ -195,7 +195,7 @@ TileLang kernel result:
 tensor([-0.9222,  1.9638,  0.6157,  ...,  0.4924,  0.3776, -0.2921])
 ```
 
-### AscendNPU IR (vector addition)
+### AscendNPU IR (Vector Addition)
 
 When the print option `export TILELANG_DUMP_IR=1` is enabled, both the TVM IR and the AscendNPU IR are printed, with the AscendNPU IR portion shown as follows:
 

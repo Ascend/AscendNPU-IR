@@ -685,9 +685,11 @@ hivm.hir.fixpipe ins(%src : memref<16x16xf16, #hivm.address_space<l0c>>) outs(%d
 
 HIVM从L0C到目标的数据搬移模式，有三个取值：NZ2DN、NZ2ND和NZ2NZ（normal）。
 
+<!-- npu="950" id1 -->
 #### dual_dst_mode
 
 HIVM双目标模式控制。仅当启用nz2nd或normal数据搬移模式、且正在执行从L0C到UB的数据搬移时，才能启用双目标模式。仅支持Ascend 950PR&950DT系列产品。
+<!-- end id1 -->
 
 #### c0_pad_en
 

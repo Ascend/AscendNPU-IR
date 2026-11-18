@@ -2,7 +2,7 @@
 
 set -eu
 
-allowed_modules='Analysis|Annotation|Arith|AscendDPX|Bufferization|Config|Conversion|ExecutionEngine|HACC|HFusion|HIVM|HIVMAVE|HIVMRegbaseIntrins|Interfaces|LLVMIR|Linalg|MathExt|MemRef|MemRefExt|Pass|SCF|Scope|Symbol|Template|Tensor|Tools|Torch|Transform|Transforms|Triton|TritonExt|Utils|Vector|Version'
+allowed_modules='Analysis|Annotation|Arith|AscendDPX|Bufferization|Config|Conversion|ExecutionEngine|HACC|HFusion|HIVM|HIVMAVE|HIVMRegbaseIntrins|Interfaces|LLVMIR|Linalg|MathExt|MemRef|MemRefExt|Pass|SCF|Scope|Symbol|Template|Target|Tensor|Tools|Torch|Transform|Transforms|Triton|TritonExt|Utils|Vector|Version'
 subject_regex="^\[(${allowed_modules})\](\[[[:alnum:]_][[:alnum:]_-]*\])? (feat|fix|doc|refactor|chore): [^[:space:]].*$"
 zero_oid=0000000000000000000000000000000000000000
 failed=0
@@ -30,6 +30,13 @@ while read -r local_ref local_oid remote_ref remote_oid; do
   fi
 
   for commit in $commits; do
+    # Skip merge commits. GitCode creates them with a fixed subject such as
+    # "!1234 merge <branch> into master", so they cannot follow the subject
+    # convention above, and they enter the pushed range after a rebase.
+    case "$(git log -1 --format=%p "$commit")" in
+      *" "*) continue ;;
+    esac
+
     subject=$(git log -1 --format=%s "$commit")
     if ! check_subject "$subject"; then
       printf '%s\n' "pre-push: invalid commit subject in $commit:" >&2

@@ -25,5 +25,3 @@ mlir_tablegen(AVETypes.h.inc -gen-typedef-decls -typedefs-dialect=ave)
 mlir_tablegen(AVETypes.cpp.inc -gen-typedef-defs -typedefs-dialect=ave)
 add_public_tablegen_target(MLIRAVETypesIncGen)
 add_dependencies(mlir-headers MLIRAVETypesIncGen)
-
-add_mlir_doc(AVEDoc AVEDialect Dialects/ -gen-dialect-doc -dialect=ave)

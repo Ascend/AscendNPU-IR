@@ -17,8 +17,9 @@
 #ifndef HIVM_MLIR_TEMPLATE_SIMT_GATHER_OUT_TO_UB_H
 #define HIVM_MLIR_TEMPLATE_SIMT_GATHER_OUT_TO_UB_H
 
+#include "ArchDefs.h"
 #include "Utils.h"
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 
 #define DECLARE_GATHER_OUT_TO_UB(dim, dtype, itype, ...)                       \
   __aiv__ __attribute__((always_inline)) void                                  \

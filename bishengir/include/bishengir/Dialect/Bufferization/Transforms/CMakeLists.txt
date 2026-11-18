@@ -1,0 +1,4 @@
+set(LLVM_TARGET_DEFINITIONS Passes.td)
+mlir_tablegen(Passes.h.inc -gen-pass-decls -name BiShengIRBufferization)
+add_public_tablegen_target(BiShengIRBufferizationTransformsIncGen)
+add_dependencies(mlir-headers BiShengIRBufferizationTransformsIncGen)

@@ -81,7 +81,7 @@ module{
 
 // CHECK-LABEL: func.func @test_mixed_inputs_scope_0(
 // CHECK-SAME: %[[REINTERPRET1:.*]]: memref<8xf32, strided<[1], offset: ?>>,
-// CHECK-SAME: %[[REINTERPRET2:.*]]: memref<8xf32, strided<[1], offset: 2>>) attributes {outline = true}
+// CHECK-SAME: %[[REINTERPRET2:.*]]: memref<8xf32, strided<[1], offset: 2>>) {
 // CHECK: %[[CST:.*]] = arith.constant 1.000000e+00 : f32
 // CHECK: %[[C0:.*]] = arith.constant 0 : index
 // CHECK: memref.store %[[CST]], %[[REINTERPRET1]][%[[C0]]] : memref<8xf32, strided<[1], offset: ?>>
@@ -104,7 +104,7 @@ module {
       memref.store %cst, %reinterpret1[%c0] : memref<8xf32, strided<[1], offset: ?>>
       memref.store %cst, %reinterpret2[%c0] : memref<8xf32, strided<[1], offset: 2>>
       scope.return
-    } {outline = true}
+    } {outline}
     return
   }
 }

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "ArchDefs.h"
 #include "Fixpipe/FixpipeUtils.h"
 #include "Synchronization/SyncUtils.h"
 #include "Vector/VecUtils.h"
@@ -50,6 +51,17 @@ set_fpc(uint64_t relu_pre_addr, uint64_t quant_pre_addr,
 __aicore__ __attribute__((always_inline)) void
 set_nd_para(uint64_t nd_num, uint64_t src_nd_stride, uint64_t dst_nd_stride) {
 #ifdef ENABLE_CPU_TRACE_INTRINSIC
+#elif BISHENG_TPL_920R1
+  // dav-920r1: set_nd_para is not exposed by the 920r1 ccec toolchain; its
+  // semantics live in the LOOP3_PARA register (set_loop3_para, intrinsics
+  // table #4158) with the same bit layout:
+  //   nd_num | src_nd_stride << 16 | dst_nd_stride << 32.
+  // The esl model hard-checks LOOP3_PARA.loop3_size > 0 for NZ2ND/NZ2DN
+  // fixpipe (fixp_nop_cfg exception otherwise), so the register must be
+  // written before every NZ2ND fixpipe on 920r1.
+  INTRINSIC(set_loop3_para,
+            (uint64_t)(nd_num | (src_nd_stride << 16) | (dst_nd_stride << 32)));
+#elif !BISHENG_TPL_HAS_FIXPIPE_ND_PARA
 #else
   INTRINSIC(set_nd_para,
             (uint64_t)(nd_num | (src_nd_stride << 16) | (dst_nd_stride << 32)));
@@ -469,10 +481,15 @@ copy_matrix_cc_to_gm_nz2nd_5d_to_3d_core(
   int64_t dst_batch_stride = gm->strides[0];
   int64_t src_nd_stride = src_batch_stride / l0c->strides[3];
 
+  // dav-920r1 has no fixpipe ND_PARA; drain one row at a time.
+#if !BISHENG_TPL_HAS_FIXPIPE_ND_PARA
+  const bool nd_fits = false;
+#else
   constexpr int64_t ND_PARA_FIELD_MAX = 0xffff;
   bool nd_fits = batch <= ND_PARA_FIELD_MAX &&
                  src_nd_stride <= ND_PARA_FIELD_MAX &&
                  dst_batch_stride <= ND_PARA_FIELD_MAX;
+#endif
   if (nd_fits) {
     set_nd_para(batch, src_nd_stride, dst_batch_stride);
   } else {
@@ -488,8 +505,8 @@ copy_matrix_cc_to_gm_nz2nd_5d_to_3d_core(
     // The unit flag is a one-shot "cube has drained" barrier. Once the first
     // fixpipe has waited on it the whole L0C range is stable, so the remaining
     // fixpipes of this group must not wait again or they would deadlock.
-    uint8_t unit_flag = static_cast<uint8_t>(i == 0 ? unit_flag_mode
-                                                    : UNIT_FLAG::DISABLED);
+    uint8_t unit_flag =
+        static_cast<uint8_t>(i == 0 ? unit_flag_mode : UNIT_FLAG::DISABLED);
     copy_matrix_cc_to_gm_intrin(
         copy_matrix_cc_to_gm_intrin_args<SRC_TYPE, DST_TYPE>{
             gm_ptr + i * dst_batch_stride, l0c_ptr + i * src_batch_stride,
@@ -632,6 +649,29 @@ copy_matrix_cc_to_ubuf_nz2nd_5d_to_3d_core(
     return;
   }
 
+// dav-920r1 has no fixpipe ND_PARA; drain one row at a time.
+#if !BISHENG_TPL_HAS_FIXPIPE_ND_PARA
+  for (int64_t i = 0; i < batch; ++i) {
+    uint8_t loop_unit_flag =
+        static_cast<uint8_t>(i == 0 ? unit_flag_mode : UNIT_FLAG::DISABLED);
+    copy_matrix_cc_to_ubuf_intrin(
+        copy_matrix_cc_to_ubuf_intrin_args<SRC_TYPE, DST_TYPE>{
+            ubuf_ptr + i * dst_batch_stride, l0c_ptr + i * src_batch_stride,
+            0, // sid
+            n_size, m_size,
+            dst_D,       // dstStride_dst_D
+            m_tile_ceil, // srcStride
+            FIXPIPE_ARGS_XT1_VALUES_TO_UB(static_cast<uint8_t>(DualDst),
+                                          /*sub_blockid=*/sub_blockid)
+                loop_unit_flag, // UnitFlagMode
+            quant_mode,
+            static_cast<uint8_t>(pre_relu), // ReLUPRE
+            channel_split,
+            true                           // NZ2ND_EN
+            FIXPIPE_ARGS_XT2_VALUES(false) // with NZ2DN_EN control
+        });
+  }
+#else
   set_nd_para(batch, src_nd_stride, dst_batch_stride);
   uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
 
@@ -654,6 +694,7 @@ copy_matrix_cc_to_ubuf_nz2nd_5d_to_3d_core(
 
   // ND_PARA is sticky state; restore the scalar default for later fixpipes.
   set_nd_para(1, 1, 1);
+#endif
 }
 
 template <typename SRC_TYPE, typename DST_TYPE>
@@ -1101,7 +1142,7 @@ REGISTE_FIXPIPE(cc, gm, 5, 3, float, bfloat16_t, nz2nd, TransformMode::NZ_2_ND)
 REGISTE_FIXPIPE(cc, gm, 5, 3, float, float, nz2nd, TransformMode::NZ_2_ND)
 REGISTE_FIXPIPE(cc, gm, 5, 3, int32_t, int32_t, nz2nd, TransformMode::NZ_2_ND)
 
-#if !defined(__DAV_M300__)
+#if !BISHENG_TPL_M300
 REGISTE_FIXPIPE(cc, gm, 4, 2, int32_t, int8_t, nz2nd, TransformMode::NZ_2_ND)
 REGISTE_FIXPIPE(cc, gm, 4, 2, int32_t, half, nz2nd, TransformMode::NZ_2_ND)
 
@@ -1110,10 +1151,10 @@ REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int8_t, nz2nd,
 REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, half, nz2nd,
                          TransformMode::NZ_2_ND)
 
-#if !defined(__DAV_C310__)
+#if !BISHENG_TPL_REGBASE
 REGISTE_FIXPIPE(cc, gm, 4, 2, int32_t, int16_t, nz2nd, TransformMode::NZ_2_ND)
 REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int16_t, nz2nd,
                          TransformMode::NZ_2_ND)
-#endif // !defined(__DAV_C310__)
-#endif // !defined(__DAV_M300__)
+#endif // !BISHENG_TPL_REGBASE
+#endif // !BISHENG_TPL_M300
 }

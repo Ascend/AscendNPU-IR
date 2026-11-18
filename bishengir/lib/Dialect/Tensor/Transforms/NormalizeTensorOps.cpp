@@ -15,8 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements a pass to canonicalize pad operation sourced from
-// Insert_slice operation
+// This pass normalizes tensor padding, reshapes and loop-carried shapes.
 //
 //===----------------------------------------------------------------------===//
 
@@ -28,6 +27,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
@@ -50,6 +50,77 @@ using namespace mlir;
 using namespace mlir::tensor;
 
 namespace {
+/// Trace shape-preserving updates back to the corresponding loop iter_arg.
+static bool preservesTensorShape(Value value, Value source) {
+  while (value != source) {
+    if (auto insert = value.getDefiningOp<tensor::InsertSliceOp>()) {
+      value = insert.getDest();
+    } else if (auto insert = value.getDefiningOp<tensor::InsertOp>()) {
+      value = insert.getDest();
+    } else if (auto castOp = value.getDefiningOp<tensor::CastOp>()) {
+      value = castOp.getSource();
+    } else if (auto loop = value.getDefiningOp<scf::ForOp>()) {
+      unsigned index = cast<OpResult>(value).getResultNumber();
+      if (!preservesTensorShape(loop.getYieldedValues()[index],
+                                loop.getRegionIterArgs()[index]))
+        return false;
+      value = loop.getInitArgs()[index];
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+/// Refine shape-preserving loops even when their results have multiple users.
+/// Casts at the body and result boundaries keep existing users well-typed while
+/// tensor canonicalizations propagate the refined shape through those users.
+struct RefineLoopCarriedTensorShape : OpRewritePattern<scf::ForOp> {
+  using OpRewritePattern<scf::ForOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(scf::ForOp loop,
+                                PatternRewriter &rewriter) const override {
+    for (unsigned index = 0; index < loop.getNumRegionIterArgs(); ++index) {
+      Value init = loop.getInitArgs()[index];
+      auto castOp = init.getDefiningOp<tensor::CastOp>();
+      if (!castOp || !tensor::canFoldIntoConsumerOp(castOp) ||
+          castOp.getSource().getType() == init.getType() ||
+          !preservesTensorShape(loop.getYieldedValues()[index],
+                                loop.getRegionIterArgs()[index]))
+        continue;
+
+      Location loc = loop.getLoc();
+      Type oldType = init.getType();
+      Type newType = castOp.getSource().getType();
+      BlockArgument iterArg = loop.getRegionIterArgs()[index];
+      auto yieldOp = cast<scf::YieldOp>(loop.getBody()->getTerminator());
+      Value result = loop.getResult(index);
+
+      rewriter.setInsertionPointToStart(loop.getBody());
+      auto bodyCast = rewriter.create<tensor::CastOp>(loc, oldType, iterArg);
+      rewriter.replaceAllUsesExcept(iterArg, bodyCast.getResult(), bodyCast);
+
+      rewriter.setInsertionPoint(yieldOp);
+      auto yieldCast = rewriter.create<tensor::CastOp>(
+          loc, newType, yieldOp.getOperand(index));
+
+      rewriter.setInsertionPointAfter(loop);
+      auto resultCast = rewriter.create<tensor::CastOp>(loc, oldType, result);
+      rewriter.replaceAllUsesExcept(result, resultCast.getResult(), resultCast);
+
+      rewriter.modifyOpInPlace(loop, [&] {
+        loop.getInitArgsMutable()[index].assign(castOp.getSource());
+        iterArg.setType(newType);
+        result.setType(newType);
+      });
+      rewriter.modifyOpInPlace(
+          yieldOp, [&] { yieldOp.setOperand(index, yieldCast.getResult()); });
+      return success();
+    }
+    return failure();
+  }
+};
+
 struct NormalizeTensorOps
     : public impl::NormalizeTensorOpsBase<NormalizeTensorOps> {
   using NormalizeTensorOpsBase::NormalizeTensorOpsBase;
@@ -594,7 +665,17 @@ void NormalizeTensorOps::runOnOperation() {
   patterns.insert<NormalizeLastDimConcatToInterleave>(patterns.getContext());
   patterns.insert<FoldStaticNegativeHighPad>(patterns.getContext());
   patterns.insert<NormalizeInterleaveExpandReshape>(patterns.getContext());
-  if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
+  patterns.add<RefineLoopCarriedTensorShape>(context);
+  tensor::CastOp::getCanonicalizationPatterns(patterns, context);
+  tensor::DimOp::getCanonicalizationPatterns(patterns, context);
+  tensor::ExtractSliceOp::getCanonicalizationPatterns(patterns, context);
+  tensor::InsertSliceOp::getCanonicalizationPatterns(patterns, context);
+  tensor::ExpandShapeOp::getCanonicalizationPatterns(patterns, context);
+  GreedyRewriteConfig config;
+  // Keep vector constants inside the loops that will be outlined into VFs.
+  config.cseConstants = false;
+  if (failed(
+          applyPatternsGreedily(getOperation(), std::move(patterns), config)))
     return signalPassFailure();
 }
 

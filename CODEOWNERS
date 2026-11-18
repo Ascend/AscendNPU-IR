@@ -4,21 +4,29 @@
 # Dashboard grouping: module section headings must end in "."
 
 # Documentation.
-/docs/ @wuying211 @hid90099092 @tanshengshun
+/docs/ @wuying123wy @hid90099092 @tanshengshun
 
 # Coding agent guidelines.
 /AGENTS.md @huangyujun123 @hid90099092 @tanshengshun @cxtjjcz
 /CLAUDE.md @huangyujun123 @hid90099092 @tanshengshun @cxtjjcz
 
+# Pass pipeline V2.
+/bishengir/**/PassPipelineV2.* @cxtjjcz @liupengcheng2012 @Zackc @kang-ingu @hocky @hid90099092 @tanshengshun
+
 # Memory management.
-/bishengir/**/AllocToPointerCast.* @SL25 @ssy_5825 @hid90099092 @tanshengshun
-/bishengir/**/PlanMemory.* @SL25 @ssy_5825 @hid90099092 @tanshengshun
-/bishengir/**/*InplaceReuse* @SL25 @ssy_5825 @hid90099092 @tanshengshun
-/bishengir/**/BufferizableOpInterfaceImpl.* @SL25 @ssy_5825 @hid90099092 @tanshengshun
-/bishengir/**/OptMemPlanForPipeline.* @SL25 @ssy_5825 @hid90099092 @tanshengshun
-/bishengir/test/**/*plan-memory* @SL25 @ssy_5825 @hid90099092 @tanshengshun
-/docs/**/*PlanMemory* @wuying211 @SL25 @ssy_5825 @hid90099092 @tanshengshun
-/docs/**/*plan_memory* @wuying211 @SL25 @ssy_5825 @hid90099092 @tanshengshun
+/bishengir/**/AllocToPointerCast.* @SL25 @ssy_5825 @ykyyky @zhufang_hw @hid90099092 @tanshengshun
+/bishengir/**/PlanMemory.* @SL25 @ssy_5825 @ykyyky @zhufang_hw @hid90099092 @tanshengshun
+/bishengir/**/*InplaceReuse* @SL25 @ssy_5825 @ykyyky @zhufang_hw @hid90099092 @tanshengshun
+/bishengir/**/OptMemPlanForPipeline.* @SL25 @ssy_5825 @ykyyky @zhufang_hw @hid90099092 @tanshengshun
+/bishengir/test/**/*plan-memory* @SL25 @ssy_5825 @ykyyky @zhufang_hw @hid90099092 @tanshengshun
+/docs/**/*PlanMemory* @wuying123wy @SL25 @ssy_5825 @ykyyky @zhufang_hw @hid90099092 @tanshengshun
+/docs/**/*plan_memory* @wuying123wy @SL25 @ssy_5825 @ykyyky @zhufang_hw @hid90099092 @tanshengshun
+
+# Bufferization.
+/bishengir/**/Dialect/Bufferization/ @SL25 @ssy_5825 @ykyyky @zhufang_hw @hid90099092 @tanshengshun
+/bishengir/**/BufferizableOpInterfaceImpl.* @SL25 @ssy_5825 @ykyyky @zhufang_hw @hid90099092 @tanshengshun
+/bishengir/**/HIVMBufferizationPipeline.* @SL25 @ssy_5825 @ykyyky @zhufang_hw @hid90099092 @tanshengshun
+/bishengir/**/DecomposeAllocTensorCopy.* @SL25 @ssy_5825 @ykyyky @zhufang_hw @hid90099092 @tanshengshun
 
 # Multi-buffering.
 /bishengir/**/*MultiBuffer* @huangyujun123 @hid90099092 @tanshengshun @renxingdong
@@ -29,10 +37,12 @@
 /bishengir/**/GraphSyncSolver/* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
 /bishengir/**/InjectSync/* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
 /bishengir/**/InjectBlockSync.* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
+/bishengir/**/UnitFlagInfoBase.* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
+/bishengir/test/**/*unit-flag* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
 
 # AutoBlockify.
-/bishengir/**/Autoblockify.* @Alae-eddine @jy834507063 @hid90099092 @tanshengshun
-/bishengir/test/**/*auto-blockify-parallel-loop* @Alae-eddine @jy834507063 @hid90099092 @tanshengshun
+/bishengir/**/AutoBlockify* @Alae-eddine @jy834507063 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/**/*auto-blockify-* @Alae-eddine @jy834507063 @hid90099092 @tanshengshun
 
 # Cube Op Template.
 /bishengir/**/Template/**/Cube/ @Alae-eddine @ZhaoWentengZWT @zhufang_hw @jqran @hid90099092 @tanshengshun
@@ -42,8 +52,8 @@
 /bishengir/**/Template/**/DMA/Cbuf/ @Alae-eddine @ZhaoWentengZWT @zhufang_hw @jqran @hid90099092 @tanshengshun
 
 # Inline Fixpipe.
-/bishengir/**/InlineFixpipe.* @Alae-eddine @jin-qian7 @jqran @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
-/bishengir/test/**/*inline-fixpipe* @Alae-eddine @jin-qian7 @jqran @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/**/InlineFixpipe/ @Alae-eddine @jin-qian7 @jqran @hid90099092 @tanshengshun
+/bishengir/test/**/*inline-fixpipe* @Alae-eddine @jin-qian7 @jqran @hid90099092 @tanshengshun
 /bishengir/test/**/*insert-fixpipe* @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
 /bishengir/test/**/*move-fixpipe* @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
 
@@ -75,9 +85,12 @@
 /bishengir/test/Dialect/HIVM/hivm-create-preload.mlir @gaofangfrank @li-yangguang525 @huangyujun123 @wangtao489 @hid90099092 @tanshengshun
 /bishengir/test/Dialect/HIVM/RegBase/CVPipelining/ @gaofangfrank @li-yangguang525 @huangyujun123 @wangtao489 @hid90099092 @tanshengshun
 /bishengir/test/bishengir-compile/hivm/compile-cv-pipeline-lazy-loading.mlir @gaofangfrank @li-yangguang525 @huangyujun123 @wangtao489 @hid90099092 @tanshengshun
+/bishengir/lib/Dialect/HIVM/Transforms/PipelineV2/ @gaofangfrank @li-yangguang525 @huangyujun123 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/PipelineV2/ @gaofangfrank @li-yangguang525 @huangyujun123 @hid90099092 @tanshengshun
 
 # Split mix kernel.
 /bishengir/**/SplitMixKernel.* @danielcm585 @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/**/SplitKernelUtils.* @hocky @danielcm585 @devoperator @cathychan0027 @hid90099092 @tanshengshun
 /bishengir/test/**/split-mix-kernel* @danielcm585 @devoperator @cathychan0027 @hid90099092 @tanshengshun
 
 # CV Data Movement.
@@ -191,7 +204,7 @@
 
 # vf simplification.
 /bishengir/**/RemoveMaskFromUnalignedReductionLoop.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
-/bishengir/**/PullSliceIntoVectorFunction.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/PullFillIntoVectorFunction.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
 /bishengir/**/SimplifyVFArgs.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
 /bishengir/**/LoopInvariantPromotion.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
 /bishengir/**/UnrollAndForward.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
@@ -245,3 +258,15 @@
 /bishengir/**/HFusion/Transforms/regbase/Normalize/ @ciggaco @xiechenye @lingfei_wu @hid90099092 @tanshengshun
 /bishengir/**/HFusion/Transforms/regbase/Normalize*.h @ciggaco @xiechenye @lingfei_wu @hid90099092 @tanshengshun
 /bishengir/**/HFusion/regbase/Normalize/ @ciggaco @xiechenye @lingfei_wu @hid90099092 @tanshengshun
+# Shared regbase normalize templates (not under a dialect dir):
+/bishengir/include/bishengir/Transforms/regbase/Normalize/ @ciggaco @xiechenye @lingfei_wu @hid90099092 @tanshengshun
+
+# Custom op.
+/bishengir/**/CustomOp/ @danielcm585 @Zackc @hid90099092 @tanshengshun
+/bishengir/test/**/custom-op/* @danielcm585 @Zackc @hid90099092 @tanshengshun
+/bishengir/test/**/custom-op* @danielcm585 @Zackc @hid90099092 @tanshengshun
+/docs/**/*custom_op* @wuying123wy @hid90099092 @tanshengshun @danielcm585 @Zackc
+
+# TensorView.
+/bishengir/**/TensorView/ @wcleungaj @hid90099092 @tanshengshun
+/bishengir/**/Conversion/TensorViewToHIVM/ @wcleungaj @hid90099092 @tanshengshun

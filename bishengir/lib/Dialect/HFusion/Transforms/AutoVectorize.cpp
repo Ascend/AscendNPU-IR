@@ -85,6 +85,8 @@ void applyCleanUp(OpBuilder &builder, func::FuncOp func,
 
 // vectorizableOp centralizes which ops the pass treats as "vectorizable".
 bool vectorizableOp(Operation *op) {
+  if (op->hasAttr("hivm.defer_vectorize"))
+    return false;
   return isa<linalg::LinalgOp>(op) || isa<hfusion::InterleaveOp>(op) ||
          isa<hfusion::DeinterleaveOp>(op);
 }
@@ -1080,13 +1082,6 @@ AutoVectorize::computeTileSize(Operation *op, unsigned elemWidthInBits,
   return tileSizes;
 }
 
-bool isCubeFunc(func::FuncOp func) {
-  auto fusionKind = mlir::hfusion::tryGetFusionKind(func);
-  return fusionKind.has_value() &&
-         (fusionKind.value() == mlir::hfusion::FusionKind::ShallowCV ||
-          fusionKind.value() == mlir::hfusion::FusionKind::SingleCube);
-}
-
 SmallVector<func::FuncOp>
 collectVectorizableFunc(ModuleOp module,
                         ArrayRef<std::string> restrictToFuncNames = {}) {
@@ -1103,7 +1098,7 @@ collectVectorizableFunc(ModuleOp module,
       LDBG("skip manual vec scope func: " << func.getName());
       return WalkResult::skip();
     }
-    if (isCubeFunc(func)) {
+    if (hfusion::isAICFunc(func)) {
       // Skip vectorization for cube func
       LDBG("skip cube func: " << func.getName());
       return WalkResult::skip();

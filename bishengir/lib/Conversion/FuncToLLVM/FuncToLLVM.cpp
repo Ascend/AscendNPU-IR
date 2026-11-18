@@ -16,6 +16,7 @@
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
 #include "mlir/Conversion/LLVMCommon/Pattern.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/FunctionCallUtils.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -135,6 +136,84 @@ static void modifyFuncOpToUseBarePtrCallingConv(
 
 namespace {
 
+static bool isSupportedFP8Type(Type type) {
+  return type.isFloat8E4M3FN() || type.isFloat8E5M2();
+}
+
+/// Pass scalar FP8 arguments as raw i8 payloads across internal vector
+/// function call boundaries. This prevents constant folding from exposing typed
+/// FP8 literals that CCEC cannot parse at call boundaries.
+struct LegalizeFP8ScalarCallABI : public OpRewritePattern<func::FuncOp> {
+  explicit LegalizeFP8ScalarCallABI(MLIRContext *context)
+      : OpRewritePattern(context, /*benefit=*/20) {}
+
+  LogicalResult matchAndRewrite(func::FuncOp funcOp,
+                                PatternRewriter &rewriter) const override {
+    if (!funcOp->hasAttr("hivm.vector_function") || funcOp.getBody().empty())
+      return failure();
+
+    auto funcType = funcOp.getFunctionType();
+    SmallVector<Type> inputTypes(funcType.getInputs());
+    SmallVector<std::pair<unsigned, Type>> fp8Arguments;
+    for (auto [index, type] : llvm::enumerate(inputTypes)) {
+      if (isSupportedFP8Type(type))
+        fp8Arguments.emplace_back(index, type);
+    }
+    if (fp8Arguments.empty())
+      return failure();
+
+    ModuleOp module = funcOp->getParentOfType<ModuleOp>();
+    auto symbolUses = funcOp.getSymbolUses(module);
+    if (!symbolUses)
+      return failure();
+
+    SmallVector<func::CallOp> callSites;
+    for (SymbolTable::SymbolUse symbolUse : *symbolUses) {
+      auto callOp = dyn_cast<func::CallOp>(symbolUse.getUser());
+      if (!callOp || callOp.getNumOperands() != inputTypes.size())
+        return failure();
+      for (auto [index, fp8Type] : fp8Arguments) {
+        if (callOp.getOperand(index).getType() != fp8Type)
+          return failure();
+      }
+      callSites.push_back(callOp);
+    }
+    if (callSites.empty())
+      return failure();
+
+    Type i8Type = rewriter.getI8Type();
+    for (func::CallOp callOp : callSites) {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPoint(callOp);
+      for (const auto &fp8Argument : fp8Arguments) {
+        unsigned index = fp8Argument.first;
+        Value payload = rewriter.create<arith::BitcastOp>(
+            callOp.getLoc(), i8Type, callOp.getOperand(index));
+        rewriter.modifyOpInPlace(callOp,
+                                 [&] { callOp->setOperand(index, payload); });
+      }
+    }
+
+    for (auto [index, fp8Type] : fp8Arguments)
+      inputTypes[index] = i8Type;
+    rewriter.modifyOpInPlace(funcOp, [&] {
+      funcOp.setFunctionType(FunctionType::get(funcOp.getContext(), inputTypes,
+                                               funcType.getResults()));
+    });
+
+    Block &entryBlock = funcOp.getBody().front();
+    rewriter.setInsertionPointToStart(&entryBlock);
+    for (auto [index, fp8Type] : fp8Arguments) {
+      BlockArgument payload = entryBlock.getArgument(index);
+      payload.setType(i8Type);
+      Value fp8Value =
+          rewriter.create<arith::BitcastOp>(payload.getLoc(), fp8Type, payload);
+      payload.replaceAllUsesExcept(fp8Value, fp8Value.getDefiningOp());
+    }
+    return success();
+  }
+};
+
 /// FuncOp legalization pattern that converts MemRef arguments to pointers to
 /// MemRef descriptors (LLVM struct data types) containing all the MemRef type
 /// information.
@@ -198,6 +277,11 @@ struct FuncOpWithOnDemandBarePtrConversion
 };
 
 } // namespace
+
+void bishengir::populateLegalizeFP8ScalarCallABIPatterns(
+    RewritePatternSet &patterns) {
+  patterns.add<LegalizeFP8ScalarCallABI>(patterns.getContext());
+}
 
 void bishengir::populateFuncToLLVMFuncOpConversionPattern(
     LLVMTypeConverter &converter, RewritePatternSet &patterns) {

@@ -433,7 +433,9 @@ void SyncSolverV2::processOrder(Occurrence *occ1, Occurrence *occ2,
   });
   if (checkImpossibleOccPair(occ1, occ2) || checkAlreadySynced(occ1, occ2) ||
       skipMMad1DecomposedLoopOpt(occ1, occ2) ||
-      checkSkipParallelLoop(occ1, occ2) || checkSkipCrossCorePair(occ1, occ2)) {
+      checkSkipParallelLoop(occ1, occ2) || checkSkipCrossCorePair(occ1, occ2) ||
+      checkSkipAutoBlockifyDMAPair(occ1, occ2) ||
+      checkSkipPoolManagedFixPair(occ1, occ2)) {
     this->perfInfo.failedInitialChecksNum += 1;
     return;
   }
@@ -476,7 +478,9 @@ bool SyncSolverV2::processOrder(ProcessingOrderV2 processingOrder) {
   });
   if (checkImpossibleOccPair(occ1, occ2) || checkAlreadySynced(occ1, occ2) ||
       skipMMad1DecomposedLoopOpt(occ1, occ2) ||
-      checkSkipParallelLoop(occ1, occ2)) {
+      checkSkipParallelLoop(occ1, occ2) ||
+      checkSkipAutoBlockifyDMAPair(occ1, occ2) ||
+      checkSkipPoolManagedFixPair(occ1, occ2)) {
     this->perfInfo.failedInitialChecksNum += 1;
     return false;
   }
@@ -765,7 +769,7 @@ void SyncSolverV2::generateProcessingOrders(Occurrence *occ1, Occurrence *occ2,
   }
 
   ArrayRef<Occurrence *> occs1;
-  if (isa<Loop>(occ1->op)) {
+  if (isa<Loop>(occ1->op) && occ1->loopSplitIndex != -1) {
     occs1 = occ1->getLoopSecondIterOccs();
   } else if (isa<Scope>(occ1->op)) {
     occs1 = ArrayRef(occ1->childOccs);
@@ -774,7 +778,7 @@ void SyncSolverV2::generateProcessingOrders(Occurrence *occ1, Occurrence *occ2,
   }
 
   ArrayRef<Occurrence *> occs2;
-  if (isa<Loop>(occ2->op)) {
+  if (isa<Loop>(occ2->op) && occ2->loopSplitIndex != -1) {
     occs2 = occ2->getLoopFirstIterOccs();
   } else if (isa<Scope>(occ2->op)) {
     occs2 = ArrayRef(occ2->childOccs);
@@ -855,14 +859,20 @@ void SyncSolverV2::generateProcessingOrders(Loop *loopOp, Occurrence *occ,
 void SyncSolverV2::collectProcessingOrders(Occurrence *occ, bool isUseless) {
   assert(occ != nullptr);
   if (auto *loopOp = dyn_cast<Loop>(occ->op)) {
-    for (auto *scopeOcc : occ->getLoopFirstIterOccs()) {
-      collectProcessingOrders(scopeOcc, isUseless);
+    if (occ->loopSplitIndex != -1) {
+      for (auto *scopeOcc : occ->getLoopFirstIterOccs()) {
+        collectProcessingOrders(scopeOcc, isUseless);
+      }
+      for (auto *scopeOcc : occ->getLoopSecondIterOccs()) {
+        collectProcessingOrders(scopeOcc, true);
+      }
+      generateProcessingOrders(loopOp, occ, isUseless);
+      return;
     }
-    for (auto *scopeOcc : occ->getLoopSecondIterOccs()) {
-      collectProcessingOrders(scopeOcc, true);
-    }
-    generateProcessingOrders(loopOp, occ, isUseless);
-  } else if (auto *scopeOp = dyn_cast<Scope>(occ->op)) {
+    // A linearized loop has no second copy; Loop is a Scope, so fall through.
+  }
+
+  if (auto *scopeOp = dyn_cast<Scope>(occ->op)) {
     for (auto *childOcc : occ->childOccs) {
       collectProcessingOrders(childOcc, isUseless);
     }

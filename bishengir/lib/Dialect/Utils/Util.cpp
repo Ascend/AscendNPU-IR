@@ -19,6 +19,7 @@
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRef/IR/MemRefImpl.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
@@ -27,7 +28,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/DLTI/DLTI.h"
-#include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
@@ -123,6 +124,8 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
   // ViewLikeOpInterface, plus generic ViewLikeOpInterface ops.
   if (auto op = dyn_cast<memref::TransposeOp>(def)) {
     result.emplace_back(op.getIn());
+  } else if (auto op = dyn_cast<hivm::BitcastOp>(def)) {
+    result.emplace_back(op.getSrc());
   } else if (auto op = dyn_cast<UnrealizedConversionCastOp>(def)) {
     result.emplace_back(
         op.getOperand(cast<OpResult>(memrefVal).getResultNumber()));
@@ -180,6 +183,57 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
 } // namespace
 
 namespace utils {
+
+llvm::SmallVector<size_t> getIntegersOfArrayAttr(Operation *op,
+                                                 llvm::StringLiteral attrName) {
+  ArrayAttr arr = op->getAttrOfType<ArrayAttr>(attrName);
+  llvm::SmallVector<size_t> result;
+  if (!arr)
+    return result;
+  result.reserve(arr.size());
+  for (Attribute attr : arr) {
+    auto intAttr = dyn_cast<IntegerAttr>(attr);
+    // In production you may want to assert or handle errors.
+    assert(intAttr && "ArrayAttr element is not an IntegerAttr");
+    // Use getValue().getZExtValue() to interpret as unsigned.
+    result.push_back(intAttr.getValue().getZExtValue());
+  }
+  return result;
+}
+
+void insertIntegerAttrToArrayAttr(Operation *op, llvm::StringLiteral attrName,
+                                  size_t value, Builder &builder) {
+  auto arr = getIntegersOfArrayAttr(op, attrName);
+  if (std::find(arr.begin(), arr.end(), value) != arr.end())
+    return;
+  arr.push_back(value);
+  std::sort(arr.begin(), arr.end());
+
+  SmallVector<Attribute> newAttrs;
+  for (auto idx : arr) {
+    newAttrs.push_back(builder.getI32IntegerAttr(idx));
+  }
+  op->setAttr(attrName, builder.getArrayAttr(newAttrs));
+}
+
+LogicalResult getStridesAndOffsetCompat(MemRefType type,
+                                        SmallVectorImpl<int64_t> &strides,
+                                        int64_t &offset) {
+#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
+  return mlir::getStridesAndOffset(type, strides, offset);
+#else
+  return type.getStridesAndOffset(strides, offset);
+#endif
+}
+
+std::pair<SmallVector<int64_t>, int64_t>
+getStridesAndOffsetCompat(MemRefType type) {
+#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
+  return mlir::getStridesAndOffset(type);
+#else
+  return type.getStridesAndOffset();
+#endif
+}
 
 namespace debugger {
 std::string getPrettyOpName(Operation *op) {
@@ -345,8 +399,8 @@ Value createEmptyOp(OpBuilder &builder, Location loc, Value source) {
   return memref::createMemRefAllocOp(builder, loc, source);
 }
 
-Value createAllocTensorOp(OpBuilder &builder, Location loc, Value source,
-                          bool copy) {
+bufferization::AllocTensorOp
+createAllocTensorOp(OpBuilder &builder, Location loc, Value source, bool copy) {
   if (!llvm::isa<RankedTensorType>(source.getType())) {
     llvm::report_fatal_error("not support unranked tensor type");
   }
@@ -354,9 +408,8 @@ Value createAllocTensorOp(OpBuilder &builder, Location loc, Value source,
   llvm::SmallVector<Value, 2> dynamicSizes;
   if (copy) {
     // Create AllocTensorOp.
-    auto allocTensorOp = builder.create<bufferization::AllocTensorOp>(
+    return builder.create<bufferization::AllocTensorOp>(
         loc, tensorType, dynamicSizes, /*copy=*/source);
-    return allocTensorOp.getResult();
   }
   auto targetElemType = getElementTypeOrSelf(source);
   ArrayRef<int64_t> staticShapes = tensorType.getShape();
@@ -366,9 +419,8 @@ Value createAllocTensorOp(OpBuilder &builder, Location loc, Value source,
       dynamicSizes.push_back(dynDimOp->getResults()[0]);
     }
   }
-  auto allocTensorOp = builder.create<bufferization::AllocTensorOp>(
+  return builder.create<bufferization::AllocTensorOp>(
       loc, RankedTensorType::get(staticShapes, targetElemType), dynamicSizes);
-  return allocTensorOp.getResult();
 }
 
 tensor::EmptyOp createStaticShapeEmptyOp(OpBuilder &builder, Location loc,
@@ -409,9 +461,22 @@ SmallVector<Value> getAliasValues(Operation *op, OpOperand &operand) {
         values.push_back(forOp.getRegionIterArg(resNum));
       })
       .Case<scf::WhileOp>([&](scf::WhileOp whileOp) {
-        values.push_back(whileOp.getResult(resNum));
-        values.push_back(whileOp.getBefore().front().getArgument(resNum));
-        values.push_back(whileOp.getAfter().front().getArgument(resNum));
+        if (isa<scf::ConditionOp>(operand.getOwner())) {
+          // Operand 0 is the continuation predicate and has no alias; the
+          // remaining operands map to result/after-argument `resNum - 1`.
+          if (resNum == 0)
+            return;
+          unsigned argNum = resNum - 1;
+          if (argNum < whileOp.getNumResults())
+            values.push_back(whileOp.getResult(argNum));
+          if (argNum < whileOp.getAfterArguments().size())
+            values.push_back(whileOp.getAfterArguments()[argNum]);
+          return;
+        }
+        // `scf.yield` operand `resNum` becomes before-region argument `resNum`
+        // on the next iteration.
+        if (resNum < whileOp.getBeforeArguments().size())
+          values.push_back(whileOp.getBeforeArguments()[resNum]);
       })
       .Default([&](Operation *otherOp) {
         llvm::report_fatal_error("unsupported loop like op!");
@@ -669,7 +734,7 @@ inline void markDynShapeAlloc(OpBuilder &builder, Value source,
   // for dynamic case, set buffer size by annotation.mark op
   auto tmpMarkOp = builder.create<annotation::MarkOp>(tmpAllocOp->getLoc(),
                                                       tmpAllocOp->getResult(0));
-  tmpMarkOp->setAttr(hivm::kBufferSizeInByteAttr,
+  tmpMarkOp->setAttr(utils::kBufferSizeInByteAttr,
                      builder.getI64IntegerAttr(allocSize));
 }
 
@@ -1280,6 +1345,24 @@ SmallVector<Operation *> utils::getAnnotateOpUsers(Value v) {
       annotateOps.push_back(user);
   }
   return annotateOps;
+}
+
+bool utils::cloneAnnotateOpWithAttr(RewriterBase &rewriter, Value src,
+                                    Value dst, StringRef name) {
+  bool modified = false;
+  for (Operation *op : utils::getAnnotateOpUsers(src)) {
+    auto markOp = cast<annotation::MarkOp>(op);
+    if (!markOp->hasAttr(name))
+      continue;
+    auto clonedMarkOp = rewriter.create<annotation::MarkOp>(
+        markOp.getLoc(), dst, markOp.getValues(), markOp.getKeysAttr());
+    // TODO: Cloning all attrs may be dangerous; need to define a canonical attr
+    // set for mark ops and clone only those attrs in the future.
+    for (NamedAttribute attr : markOp->getAttrs())
+      clonedMarkOp->setAttr(attr.getName(), attr.getValue());
+    modified = true;
+  }
+  return modified;
 }
 
 SmallVector<std::optional<Operation *>>

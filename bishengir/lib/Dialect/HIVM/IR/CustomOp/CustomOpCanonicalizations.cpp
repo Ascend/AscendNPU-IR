@@ -44,6 +44,10 @@ struct CustomOpCanonicalizer : public OpRewritePattern<CustomOpT> {
         customOp.setPipe(builtinInfo.pipe);
         return success();
       }
+      if (!customOp.getInlineMode() && builtinInfo.inlineMode) {
+        customOp.setInlineMode(*builtinInfo.inlineMode);
+        return success();
+      }
     } else if constexpr (std::is_same_v<CustomOpT, CustomMacroOp>) {
       if (customOp.getInPipe() != builtinInfo.inPipe) {
         customOp.setInPipe(builtinInfo.inPipe);
@@ -55,10 +59,13 @@ struct CustomOpCanonicalizer : public OpRewritePattern<CustomOpT> {
       }
     }
 
-    const auto &vfMode = customOp.getVFMode();
-    if (!vfMode || *vfMode != builtinInfo.vfMode) {
-      customOp.setVFMode(builtinInfo.vfMode);
-      return success();
+    // Cube-core builtins have no VF mode (builtinInfo.vfMode is nullopt).
+    if (builtinInfo.vfMode) {
+      const auto &vfMode = customOp.getVFMode();
+      if (!vfMode || *vfMode != *builtinInfo.vfMode) {
+        customOp.setVFMode(*builtinInfo.vfMode);
+        return success();
+      }
     }
 
     const auto &gmAddrArgsIndices = customOp.getGMAddrArgsIndices();

@@ -2,9 +2,15 @@
 
 **适用产品**
 
-- Ascend 950PR&950DT系列产品
-- Atlas A3系列产品
-- Atlas A2系列产品
+<!-- npu="950" id1 -->
+- <term>Ascend 950PR&950DT系列产品</term>
+<!-- end id1 -->
+<!-- npu="A3" id2 -->
+- <term>Atlas A3系列产品</term>
+<!-- end id2 -->
+<!-- npu="910b" id3 -->
+- <term>Atlas A2系列产品</term>
+<!-- end id3 -->
 
 ## 背景
 
@@ -192,13 +198,15 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 
 - **使用场景**​：若逻辑块数量非常小，则此Pass不会带来任何优势。
 
+<!-- npu="950" id4 -->
 ## SIMT 模式
 
 > **说明**
 >
-> 本节内容仅适用于Ascend 950PR&950DT系列产品。
+> 本节内容仅适用于<term>Ascend 950PR&950DT系列产品</term>。
 
 SIMT模式下的自动块化与SIMD模式的功能与用法基本相同，本文主要介绍SIMT路径上特有的功能。
+<!-- end id4 -->
 
 ### 算法原理
 

@@ -1,6 +1,7 @@
 // RUN: bishengir-opt %s --analyze-vector-layout -split-input-file | FileCheck %s
 
-// A B8 dual gather: each native gather returns its bytes in 16-bit slots
+// Legacy AVE input with a shared 256-bit predicate (the current Vector
+// lowering produces separate 128-lane predicates). Each gather returns bytes in 16-bit slots
 // (vector<128xi16>), each half is packed dense with vpack, and the two halves
 // are interleaved. The mask is shared between the gathers and the store, so
 // the B8 gathers must accept a b8 mask for the store to stay a plain dense
@@ -41,5 +42,35 @@ func.func @vpack_b32_to_b16(%src: memref<64xi32, #hivm.address_space<ub>>, %dst:
   %p = ave.hir.vpack %v, 0 : vector<64xi32> -> vector<128xi16>
   %mask = ave.hir.pge <ALL> : vector<128xi1>
   ave.hir.masked_store <NORM_B16> %dst[%c0], %mask, %p : memref<128xi16, #hivm.address_space<ub>>, vector<128xi1>, vector<128xi16>
+  return
+}
+
+// -----
+// Split gather predicates use B16 slots, while the final byte store retains
+// its independent B8 logical-result predicate.
+// CHECK-LABEL: func.func @dual_gather_vpack_split_masks
+// CHECK: ave.hir.plt {{.*}} {functionType = #ave.func_dist_type<pb8>}
+// CHECK-COUNT-2: ave.hir.plt {{.*}} {functionType = #ave.func_dist_type<pb16>}
+// CHECK-COUNT-2: ave.hir.vgather
+// CHECK-COUNT-2: ave.hir.vpack
+// CHECK: ave.hir.masked_store <NORM_B8>
+func.func @dual_gather_vpack_split_masks(%src: memref<256xi8, #hivm.address_space<ub>>, %dst: memref<200xi8, #hivm.address_space<ub>>) {
+  %c0 = arith.constant 0 : index
+  %c199 = arith.constant 199 : index
+  %c0_i16 = arith.constant 0 : i16
+  %c1_i16 = arith.constant 1 : i16
+  %mask, %n = ave.hir.plt %c199 : vector<256xi1>, index
+  %c100 = arith.constant 100 : index
+  %c99 = arith.constant 99 : index
+  %even, %ne = ave.hir.plt %c100 : vector<128xi1>, index
+  %odd, %no = ave.hir.plt %c99 : vector<128xi1>, index
+  %idx0 = ave.hir.vci %c0_i16, <INCREASE> : i16, vector<128xi16>
+  %idx1 = ave.hir.vci %c1_i16, <INCREASE> : i16, vector<128xi16>
+  %g0 = ave.hir.vgather %src[%c0] [%idx0], %even : memref<256xi8, #hivm.address_space<ub>>, vector<128xi16>, vector<128xi1> into vector<128xi16>
+  %g1 = ave.hir.vgather %src[%c0] [%idx1], %odd : memref<256xi8, #hivm.address_space<ub>>, vector<128xi16>, vector<128xi1> into vector<128xi16>
+  %p0 = ave.hir.vpack %g0, 0 : vector<128xi16> -> vector<256xi8>
+  %p1 = ave.hir.vpack %g1, 0 : vector<128xi16> -> vector<256xi8>
+  %r1, %r2 = ave.hir.vintlv %p0, %p1 : vector<256xi8>, vector<256xi8>
+  ave.hir.masked_store <NORM_B8> %dst[%c0], %mask, %r1 : memref<200xi8, #hivm.address_space<ub>>, vector<256xi1>, vector<256xi8>
   return
 }

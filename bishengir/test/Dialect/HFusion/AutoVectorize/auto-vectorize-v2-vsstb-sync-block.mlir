@@ -42,3 +42,29 @@ module {
         : bf16, tensor<4x64x16xbf16>, bf16, tensor<4x64x16xbf16>
   }
 }
+
+// -----
+
+// A buffer token between two vsstb-pattern transposes must block the expand
+// from being fused into either transpose.
+
+// CHECK-LABEL: func.func @expand_shape_not_fused_when_later_vsstb_user_blocked_by_get_buf(
+// CHECK: %[[EXPANDED:.*]] = tensor.expand_shape %arg0
+// CHECK: hivm.hir.get_buf
+// CHECK: func.call @{{.*}}(%[[EXPANDED]],
+module {
+  func.func @expand_shape_not_fused_when_later_vsstb_user_blocked_by_get_buf(
+      %arg0: tensor<64x64xbf16>)
+      -> (tensor<4x64x16xbf16>, tensor<4x64x16xbf16>)
+  attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PBR>} {
+    %empty0 = tensor.empty() : tensor<4x64x16xbf16>
+    %empty1 = tensor.empty() : tensor<4x64x16xbf16>
+
+    %expanded = tensor.expand_shape %arg0 [[0], [1, 2]] output_shape [64, 4, 16] : tensor<64x64xbf16> into tensor<64x4x16xbf16>
+    %first = linalg.transpose ins(%expanded : tensor<64x4x16xbf16>) outs(%empty0 : tensor<4x64x16xbf16>) permutation = [1, 0, 2]
+    hivm.hir.get_buf[<PIPE_V>, 0, false]
+    %second = linalg.transpose ins(%expanded : tensor<64x4x16xbf16>) outs(%empty1 : tensor<4x64x16xbf16>) permutation = [1, 0, 2]
+
+    return %first, %second : tensor<4x64x16xbf16>, tensor<4x64x16xbf16>
+  }
+}

@@ -4,8 +4,8 @@
 // each returning its bytes in 16-bit slots, packed dense and interleaved. The
 // interleave produces the gather's own type directly, so consumers keep operating on the logical width.
 // CHECK-LABEL: func.func @dual_gather_200xi8
-// CHECK: %[[G0:.*]] = ave.hir.vgather {{.*}} : memref<200x1xi8, {{.*}}>, vector<128xi16>, vector<200xi1> into vector<128xi16>
-// CHECK: %[[G1:.*]] = ave.hir.vgather {{.*}} : memref<200x1xi8, {{.*}}>, vector<128xi16>, vector<200xi1> into vector<128xi16>
+// CHECK: %[[G0:.*]] = ave.hir.vgather {{.*}} : memref<200x1xi8, {{.*}}>, vector<128xi16>, vector<128xi1> into vector<128xi16>
+// CHECK: %[[G1:.*]] = ave.hir.vgather {{.*}} : memref<200x1xi8, {{.*}}>, vector<128xi16>, vector<128xi1> into vector<128xi16>
 // CHECK: %[[P0:.*]] = ave.hir.vpack %[[G0]], 0 : vector<128xi16> -> vector<256xi8>
 // CHECK: %[[P1:.*]] = ave.hir.vpack %[[G1]], 0 : vector<128xi16> -> vector<256xi8>
 // CHECK: %[[RES:.*]], %{{.*}} = ave.hir.vintlv %[[P0]], %[[P1]] : vector<256xi8>, vector<200xi8>
@@ -27,8 +27,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // The full-width case the vectorizer produces for an i8-only chain: the
 // interleave result is the whole 256-lane register.
 // CHECK-LABEL: func.func @dual_gather_256xi8
-// CHECK: %[[G0:.*]] = ave.hir.vgather {{.*}} : memref<256x1xi8, {{.*}}>, vector<128xi16>, vector<256xi1> into vector<128xi16>
-// CHECK: %[[G1:.*]] = ave.hir.vgather {{.*}} : memref<256x1xi8, {{.*}}>, vector<128xi16>, vector<256xi1> into vector<128xi16>
+// CHECK: %[[G0:.*]] = ave.hir.vgather {{.*}} : memref<256x1xi8, {{.*}}>, vector<128xi16>, vector<128xi1> into vector<128xi16>
+// CHECK: %[[G1:.*]] = ave.hir.vgather {{.*}} : memref<256x1xi8, {{.*}}>, vector<128xi16>, vector<128xi1> into vector<128xi16>
 // CHECK: %[[P0:.*]] = ave.hir.vpack %[[G0]], 0 : vector<128xi16> -> vector<256xi8>
 // CHECK: %[[P1:.*]] = ave.hir.vpack %[[G1]], 0 : vector<128xi16> -> vector<256xi8>
 // CHECK: %[[RES:.*]], %{{.*}} = ave.hir.vintlv %[[P0]], %[[P1]] : vector<256xi8>, vector<256xi8>

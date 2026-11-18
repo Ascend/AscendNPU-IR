@@ -17,6 +17,7 @@
 #ifndef HIVM_MLIR_TEMPLATE_MMA_TILE_UTILS_H
 #define HIVM_MLIR_TEMPLATE_MMA_TILE_UTILS_H
 #include "../Utils.h"
+#include "ArchDefs.h"
 
 constexpr uint32_t HF32_CTRL_REGISTER_BIT = 49;
 
@@ -901,7 +902,7 @@ DECLARE_MMA_TILE_I4(cbuf, cc, 4, int8_t, int32_t, float);
 DECLARE_MMA_TILE_TB_I4(cbuf, cc, 4, int8_t, int32_t, float);
 DECLARE_MMA_TILE_HF32_I4(cbuf, cc, 4, int8_t, int32_t, float);
 DECLARE_MMA_TILE_TB_HF32_I4(cbuf, cc, 4, int8_t, int32_t, float);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_MMA_MX(float8_e5m2_t, float8_e5m2_t, float, float);
 DECLARE_MMA_MX(float8_e4m3_t, float8_e4m3_t, float, float);
 DECLARE_MMA_MX(float8_e4m3_t, float8_e5m2_t, float, float);

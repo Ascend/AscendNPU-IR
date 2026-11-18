@@ -151,3 +151,42 @@ module {
     return %result : tensor<4xi32>
   }
 }
+
+// -----
+// MTE quiet and its following signal must stay on the preceding work's core.
+// Duplicating either signal onto the other core can publish readiness early.
+module {
+  // CHECK-LABEL: mte_quiet_and_signal_mix_aic
+  // CHECK: hivm.hir.matmul
+  // CHECK: hivm.tcore_type = #hivm.tcore_type<CUBE>, symbol = "aclshmemx_mte_quiet"
+  // CHECK: hivm.tcore_type = #hivm.tcore_type<CUBE>, symbol = "aclshmemx_signal_op"
+  // CHECK-NOT: symbol = "aclshmemx_mte_quiet"
+  // CHECK-NOT: symbol = "aclshmemx_signal_op"
+  // CHECK: return
+  // CHECK-LABEL: mte_quiet_and_signal_mix_aiv
+  // CHECK-NOT: symbol = "aclshmemx_mte_quiet"
+  // CHECK-NOT: symbol = "aclshmemx_signal_op"
+  // CHECK: hivm.hir.vadd
+  // CHECK: hivm.tcore_type = #hivm.tcore_type<VECTOR>, symbol = "aclshmemx_mte_quiet"
+  // CHECK: hivm.tcore_type = #hivm.tcore_type<VECTOR>, symbol = "aclshmemx_signal_op"
+  // CHECK-NOT: symbol = "aclshmemx_mte_quiet"
+  // CHECK-NOT: symbol = "aclshmemx_signal_op"
+  // CHECK: return
+  func.func @mte_quiet_and_signal(%a: memref<64x64xf16>,
+                                %b: memref<64x64xf16>,
+                                %c: memref<64x64xf16>,
+                                %v: memref<64x64xf16>,
+                                %out: memref<64x64xf16>,
+                                %signal: memref<1xi32>)
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    hivm.hir.matmul ins(%a, %b : memref<64x64xf16>, memref<64x64xf16>) outs(%c : memref<64x64xf16>)
+    hivm.hir.custom {hivm.is_distributed, hivm.pipe = #hivm.pipe<PIPE_S>, hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>, symbol = "aclshmemx_mte_quiet"} "dist.aclshmemx_mte_quiet"
+    hivm.hir.custom {hivm.is_distributed, hivm.pipe = #hivm.pipe<PIPE_S>, hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>, symbol = "aclshmemx_signal_op"} "dist.aclshmemx_signal_op" ins(%signal, %c1, %c0, %c0 : memref<1xi32>, i32, i32, i32)
+    hivm.hir.vadd ins(%v, %v : memref<64x64xf16>, memref<64x64xf16>) outs(%out : memref<64x64xf16>)
+    hivm.hir.custom {hivm.is_distributed, hivm.pipe = #hivm.pipe<PIPE_S>, hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>, symbol = "aclshmemx_mte_quiet"} "dist.aclshmemx_mte_quiet"
+    hivm.hir.custom {hivm.is_distributed, hivm.pipe = #hivm.pipe<PIPE_S>, hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>, symbol = "aclshmemx_signal_op"} "dist.aclshmemx_signal_op" ins(%signal, %c1, %c0, %c0 : memref<1xi32>, i32, i32, i32)
+    return
+  }
+}

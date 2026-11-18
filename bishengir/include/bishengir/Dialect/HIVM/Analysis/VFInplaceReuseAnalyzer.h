@@ -43,6 +43,10 @@ public:
   /// reuse information for all associated vf functions and vf calls.
   explicit VFInplaceReuseAnalysis(ModuleOp moduleOp);
 
+  /// Default constructs an empty analysis over a null module; assign a
+  /// module-scoped analysis before using it.
+  VFInplaceReuseAnalysis() = default;
+
   /// Gets inplace-reuse info (if any) for the vf call inside given funcOp.
   VFCallInplaceReuseInfo *getVFCallInplaceReuseInfo(func::FuncOp funcOp);
 

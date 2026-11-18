@@ -39,6 +39,7 @@
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
@@ -62,6 +63,21 @@ using namespace mlir;
 using namespace mlir::hfusion;
 
 static constexpr llvm::StringLiteral kAlreadyInitalizeInit = "already_denaned";
+
+/// Set the sign of `magnitude` to the sign of `sign`, preserving the magnitude
+/// bits (including the sign of zero).
+static Value buildCopysign(OpBuilder &builder, Location loc, Value magnitude,
+                           Value sign) {
+  auto empty = utils::createEmptyOp(builder, loc, magnitude);
+  return builder
+      .create<hfusion::ElemwiseBinaryOp>(
+          loc, TypeRange{empty.getType()}, ValueRange{magnitude, sign},
+          ValueRange{empty},
+          ArrayRef<NamedAttribute>{builder.getNamedAttr(
+              "fun", hfusion::BinaryFnAttr::get(builder.getContext(),
+                                                hfusion::BinaryFn::copysign))})
+      ->getResult(0);
+}
 
 // norm(x,x_round,offset) = x-x_round*(pi1+pi2+pi3+pi4+pi5)+offset
 // (pi1+pi2+pi3+pi4+pi5) approximates pi
@@ -2642,20 +2658,6 @@ public:
     rewriter.replaceOp(op, result);
     return success();
   }
-
-private:
-  Value buildCopysign(OpBuilder &builder, Location loc, Value magnitude,
-                      Value sign) const {
-    auto empty = utils::createEmptyOp(builder, loc, magnitude);
-    return builder
-        .create<hfusion::ElemwiseBinaryOp>(
-            loc, TypeRange{empty.getType()}, ValueRange{magnitude, sign},
-            ValueRange{empty},
-            ArrayRef<NamedAttribute>{builder.getNamedAttr(
-                "fun", hfusion::BinaryFnAttr::get(
-                           builder.getContext(), hfusion::BinaryFn::copysign))})
-        ->getResult(0);
-  }
 };
 
 /// normalize 2^x to exp{ln(2)*x}
@@ -3575,14 +3577,286 @@ public:
   }
 };
 
-/// normalize integer divsi and divui by float div
-/// supports i8/i16/i32/i64 type
-/// c = a / b
-/// is normalized to
-/// fa = castTo<f32>(a)
-/// fb = castTo<f32>(b)
-/// fc = fa / fb
-/// c = castTo<integer>(fc, mode = TRUNC)
+namespace {
+
+/// Membase integer division using signed estimates and modulo-i32 residuals.
+/// For |b| >= 2 the initial quotient fits i32. Under the f32 error bound,
+/// a - trunc(f32(a)/f32(b))*b also fits i32, even if the product does not.
+/// Rounding the residual quotient to nearest makes the second residual smaller
+/// than |b|; a final sign correction then gives the exact truncating quotient.
+/// Do not attach signed/unsigned no-wrap flags to any of these integer ops.
+class A3IntegerDivisionBuilder {
+public:
+  A3IntegerDivisionBuilder(PatternRewriter &rewriter, Location loc,
+                           Value output)
+      : rewriter(rewriter), loc(loc), output(output) {}
+
+  Value build(Value a, Value b, RoundMode mode) {
+    if (!isa<ShapedType>(a.getType()))
+      a = materializeResult(a);
+    if (Value result = buildConstantDivisor(a, b, mode))
+      return result;
+
+    Value one = intConstant(1);
+    Value minusOne = intConstant(-1);
+    Value isOne = compare(CompareFn::veq, b, one);
+    Value isMinusOne = compare(CompareFn::veq, b, minusOne);
+    Value special = bitwise(BinaryFn::vor, isOne, isMinusOne);
+
+    // A final select alone is insufficient: INT_MAX/1 rounds to 2^31 in
+    // f32, outside the range of fptosi. Replacing b by 2 keeps the estimate
+    // safely in i32 even without clearing a. The final modulo-i32 multiply
+    // also preserves INT_MIN / -1 as INT_MIN.
+    // Zero divisors must be sanitized before either floating division.
+    // Use 2 rather than 1 to keep INT_MAX's f32 estimate inside i32.
+    Value isZero = compare(CompareFn::veq, b, intConstant(0));
+    Value needsSafeDivisor = bitwise(BinaryFn::vor, special, isZero);
+    Value safeB = select(needsSafeDivisor, intConstant(2), b);
+    Value floatA = castTo(rewriter, a, rewriter.getF32Type());
+    Value floatB = castTo(rewriter, safeB, rewriter.getF32Type());
+    // Compute signs while the floating inputs are live. Conversion preserves
+    // signs, even for i32 values that are not exactly representable in f32.
+    Value negativeA = isNegative(floatA);
+    Value negativeB = isNegative(floatB);
+    Value estimate = binary(linalg::BinaryFn::div, floatA, floatB);
+    Value m0 =
+        castTo(rewriter, estimate, rewriter.getI32Type(), RoundMode::TRUNC);
+    Value r0 = binary(linalg::BinaryFn::sub, a,
+                      binary(linalg::BinaryFn::mul, m0, safeB));
+
+    Value floatR0 = castTo(rewriter, r0, rewriter.getF32Type());
+    Value correction =
+        castTo(rewriter, binary(linalg::BinaryFn::div, floatR0, floatB),
+               rewriter.getI32Type(), RoundMode::RINT);
+    Value m1 = binary(linalg::BinaryFn::add, m0, correction);
+    Value r1 = binary(linalg::BinaryFn::sub, a,
+                      binary(linalg::BinaryFn::mul, m1, safeB));
+
+    Value q = roundQuotient(m1, r1, mode, negativeA, negativeB);
+    // Restore +/-1 after rounding: the surrogate a/2 can have a remainder.
+    Value nonzeroQuotient =
+        select(special, binary(linalg::BinaryFn::mul, a, b), q);
+    return select(isZero, buildZeroDivisor(a), nonzeroQuotient);
+  }
+
+private:
+  /// Given a = m*b + r and |r| < |b|, select the requested integer quotient.
+  /// Floor/ceil do not need to first construct the truncating quotient.
+  Value roundQuotient(Value m, Value r, RoundMode mode, Value negativeA,
+                      Value negativeB) {
+    Value zero = intConstant(0);
+    Value one = intConstant(1);
+    Value negativeR = isNegative(castTo(rewriter, r, rewriter.getF32Type()));
+    Value nonzeroR = compare(CompareFn::vne, r, zero);
+    if (mode != RoundMode::TRUNC) {
+      Value condition =
+          compare(mode == RoundMode::FLOOR ? CompareFn::vne : CompareFn::veq,
+                  negativeR, negativeB);
+      Value delta =
+          select(bitwise(BinaryFn::vand, nonzeroR, condition), one, zero);
+      return binary(mode == RoundMode::FLOOR ? linalg::BinaryFn::sub
+                                             : linalg::BinaryFn::add,
+                    m, delta);
+    }
+    Value negativeQ = compare(CompareFn::vne, negativeA, negativeB);
+    Value wrongSign = compare(CompareFn::vne, negativeR, negativeA);
+    Value adjust = bitwise(BinaryFn::vand, nonzeroR, wrongSign);
+    Value step = select(negativeQ, one, intConstant(-1));
+    return binary(linalg::BinaryFn::add, m, select(adjust, step, zero));
+  }
+
+  /// Recognize scalar/splat constants through explicit fills and broadcasts.
+  /// A runtime scalar (even a loop invariant) is not a constant divisor.
+  static std::optional<APInt> getConstantDivisor(Value value) {
+    while (true) {
+      if (auto constant = value.getDefiningOp<arith::ConstantOp>()) {
+        Attribute attr = constant.getValue();
+        if (auto integer = dyn_cast<IntegerAttr>(attr))
+          return integer.getValue();
+        if (auto dense = dyn_cast<DenseIntElementsAttr>(attr))
+          if (dense.isSplat())
+            return dense.getSplatValue<APInt>();
+        return std::nullopt;
+      }
+      if (auto fill = value.getDefiningOp<linalg::FillOp>()) {
+        value = fill.getInputs()[0];
+        continue;
+      }
+      if (auto broadcast = value.getDefiningOp<linalg::BroadcastOp>()) {
+        value = broadcast.getInput();
+        continue;
+      }
+      return std::nullopt;
+    }
+  }
+
+  Value materializeResult(Value value) {
+    if (value.getType() == output.getType())
+      return value;
+    if (isa<ShapedType>(value.getType()))
+      return binary(linalg::BinaryFn::add, value, intConstant(0));
+    return rewriter
+        .create<linalg::FillOp>(loc, value, empty(rewriter.getI32Type()))
+        .getResult(0);
+  }
+
+  // Match the A5 signed i32 result for all rounding modes: positive/0
+  // saturates to INT_MAX, negative/0 to INT_MIN, and 0/0 is zero.
+  Value buildZeroDivisor(Value a) {
+    Value zero = intConstant(0);
+    Value positive = compare(CompareFn::vgt, a, zero);
+    Value negative = compare(CompareFn::vlt, a, zero);
+    Value nonpositive = select(
+        negative, intConstant(std::numeric_limits<int32_t>::min()), zero);
+    return select(positive, intConstant(std::numeric_limits<int32_t>::max()),
+                  nonpositive);
+  }
+
+  Value buildConstantDivisor(Value a, Value b, RoundMode mode) {
+    auto divisor = getConstantDivisor(b);
+    if (!divisor || divisor->getBitWidth() != 32)
+      return {};
+    if (divisor->isZero())
+      return buildZeroDivisor(a);
+    bool negativeDivisor = divisor->isNegative();
+    APInt magnitude = negativeDivisor ? -*divisor : *divisor;
+    if (!magnitude.isPowerOf2())
+      return {};
+
+    if (divisor->isOne())
+      return materializeResult(a);
+    Value zero = intConstant(0);
+    if (divisor->isAllOnes())
+      return binary(linalg::BinaryFn::sub, zero, a);
+
+    Value one = intConstant(1);
+    Value negativeA = compare(CompareFn::vlt, a, zero);
+    if (divisor->isMinSignedValue()) {
+      if (mode == RoundMode::CEIL)
+        return select(negativeA, one, zero);
+      Value isMin = compare(CompareFn::veq, a,
+                            intConstant(std::numeric_limits<int32_t>::min()));
+      Value other = zero;
+      if (mode == RoundMode::FLOOR)
+        other = select(compare(CompareFn::vgt, a, zero), intConstant(-1), zero);
+      return select(isMin, one, other);
+    }
+
+    // INT_MIN's magnitude is the i32 bit pattern 0x80000000. A logical
+    // shift by 1..30 yields a representable positive quotient magnitude.
+    Value magnitudeBits =
+        select(negativeA, binary(linalg::BinaryFn::sub, zero, a), a);
+    Value quotientMagnitude = bitwise(BinaryFn::shrui, magnitudeBits,
+                                      intConstant(magnitude.logBase2()));
+    Value negativeQ = negativeA;
+    if (negativeDivisor)
+      negativeQ = compare(CompareFn::veq, negativeA, boolConstant(false));
+    Value q = select(negativeQ,
+                     binary(linalg::BinaryFn::sub, zero, quotientMagnitude),
+                     quotientMagnitude);
+    if (mode == RoundMode::TRUNC)
+      return q;
+
+    Value lowBits = bitwise(
+        BinaryFn::vand, magnitudeBits,
+        intConstant(static_cast<int32_t>(magnitude.getZExtValue() - 1)));
+    Value nonzeroR = compare(CompareFn::vne, lowBits, zero);
+    Value condition = negativeQ;
+    if (mode == RoundMode::CEIL)
+      condition = compare(CompareFn::veq, negativeQ, boolConstant(false));
+    Value delta =
+        select(bitwise(BinaryFn::vand, condition, nonzeroR), one, zero);
+    return binary(mode == RoundMode::FLOOR ? linalg::BinaryFn::sub
+                                           : linalg::BinaryFn::add,
+                  q, delta);
+  }
+
+  Value empty(Type elemType) {
+    return utils::createEmptyOpWithTargetElemType(rewriter, loc, output,
+                                                  elemType);
+  }
+
+  Value intConstant(int32_t value) {
+    return rewriter.create<arith::ConstantIntOp>(loc, value, 32);
+  }
+
+  Value boolConstant(bool value) {
+    return rewriter.create<arith::ConstantIntOp>(loc, value, 1);
+  }
+
+  Value isNegative(Value value) {
+    Value zero =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(0.0));
+    return compare(CompareFn::vlt, value, zero);
+  }
+
+  Value binary(linalg::BinaryFn fn, Value lhs, Value rhs) {
+    Value init = empty(getElementTypeOrSelf(lhs));
+    return createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                          linalg::BinaryFnAttr>(rewriter, loc, fn,
+                                                ValueRange{lhs, rhs}, init)
+        ->getResult(0);
+  }
+
+  Value bitwise(BinaryFn fn, Value lhs, Value rhs) {
+    if (!isa<ShapedType>(lhs.getType()) && !isa<ShapedType>(rhs.getType())) {
+      if (fn == BinaryFn::vor)
+        return rewriter.create<arith::OrIOp>(loc, lhs, rhs);
+      if (fn == BinaryFn::vand)
+        return rewriter.create<arith::AndIOp>(loc, lhs, rhs);
+    }
+    Value init = empty(getElementTypeOrSelf(lhs));
+    return createBinaryOp<ElemwiseBinaryOp, BinaryFn, BinaryFnAttr>(
+               rewriter, loc, fn, ValueRange{lhs, rhs}, init)
+        ->getResult(0);
+  }
+
+  Value compare(CompareFn fn, Value lhs, Value rhs) {
+    if (!isa<ShapedType>(lhs.getType()) && !isa<ShapedType>(rhs.getType())) {
+      if (lhs.getType().isF32()) {
+        assert(fn == CompareFn::vlt && "expected a scalar sign comparison");
+        return rewriter.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OLT,
+                                              lhs, rhs);
+      }
+      assert((fn == CompareFn::veq || fn == CompareFn::vne) &&
+             "expected a scalar equality comparison");
+      return rewriter.create<arith::CmpIOp>(loc,
+                                            fn == CompareFn::veq
+                                                ? arith::CmpIPredicate::eq
+                                                : arith::CmpIPredicate::ne,
+                                            lhs, rhs);
+    }
+    Value init = empty(rewriter.getI1Type());
+    auto attr = rewriter.getNamedAttr("compare_fn",
+                                      rewriter.getAttr<CompareFnAttr>(fn));
+    return rewriter
+        .create<CompareOp>(loc, TypeRange{init}, ValueRange{lhs, rhs},
+                           ValueRange{init}, ArrayRef{attr})
+        ->getResult(0);
+  }
+
+  Value select(Value condition, Value trueValue, Value falseValue) {
+    if (!isa<ShapedType>(condition.getType()) &&
+        !isa<ShapedType>(trueValue.getType()) &&
+        !isa<ShapedType>(falseValue.getType()))
+      return rewriter.create<arith::SelectOp>(loc, condition, trueValue,
+                                              falseValue);
+    Value init = empty(getElementTypeOrSelf(trueValue));
+    return rewriter
+        .create<SelectOp>(loc, TypeRange{init},
+                          ValueRange{condition, trueValue, falseValue},
+                          ValueRange{init})
+        ->getResult(0);
+  }
+
+  PatternRewriter &rewriter;
+  Location loc;
+  Value output;
+};
+
+} // namespace
+
+/// Compensate signed i32 division; preserve the legacy path for other types.
 struct NormalizeDivSIandDivUIOp
     : public OpRewritePattern<linalg::ElemwiseBinaryOp> {
 public:
@@ -3616,6 +3890,13 @@ public:
     // step1. res = divWithRoundMode(x, y, TRUNC)
     rewriter.setInsertionPoint(op);
     auto inputs = op.getDpsInputs();
+    if (!shouldCastToUnsigned && elemTySrc.isInteger(32)) {
+      Value result =
+          A3IntegerDivisionBuilder(rewriter, loc, op.getDpsInits()[0])
+              .build(inputs[0], inputs[1], RoundMode::TRUNC);
+      rewriter.replaceOp(op, result);
+      return success();
+    }
     auto res = hfusion::divWithRoundModeAndCastType(
         rewriter, loc, elemTySrc, inputs[0], inputs[1], resTensor,
         hfusion::RoundMode::TRUNC,
@@ -4103,7 +4384,8 @@ static bool allI16ElemType(const SmallVector<Value> &values) {
 struct NormalizeBrcCast : public OpRewritePattern<hfusion::CastOp> {
   std::optional<Value> getCastedValue(PatternRewriter &rewriter, Location loc,
                                       Value cst, Type srcType, Type dstType,
-                                      hfusion::RoundMode roundMode) const {
+                                      hfusion::RoundMode roundMode,
+                                      hfusion::TypeFn castType) const {
     auto srcElmTy = getElementTypeOrSelf(srcType);
     auto dstElmTy = getElementTypeOrSelf(dstType);
 
@@ -4115,7 +4397,7 @@ struct NormalizeBrcCast : public OpRewritePattern<hfusion::CastOp> {
     if (!(defaultRounding == roundMode) && scalarSrc)
       return std::nullopt;
 
-    return hfusion::castTo(rewriter, cst, dstElmTy, roundMode);
+    return hfusion::castTo(rewriter, cst, dstElmTy, roundMode, castType);
   }
 
 public:
@@ -4150,8 +4432,8 @@ public:
                     ? dyn_cast<linalg::FillOp>(defOp).getInputs()[0]
                     : dyn_cast<linalg::BroadcastOp>(defOp).getInput();
 
-    auto castedVal =
-        getCastedValue(rewriter, loc, cst, srcTy, dstTy, roundMode);
+    auto castedVal = getCastedValue(rewriter, loc, cst, srcTy, dstTy, roundMode,
+                                    castOp.getCast());
     if (!castedVal.has_value())
       return rewriter.notifyMatchFailure(
           castOp, "either round mode or datatype is not supported!");
@@ -5655,8 +5937,13 @@ public:
     Block &body = op.getCombiner().front();
     auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
     Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
-    if (isa<arith::AddIOp, arith::MaxUIOp, arith::MaxSIOp>(bodyOp)) {
-      // As it is a bool, `add` and `max` can be converted into `or`.
+    if (isa<arith::AddIOp>(bodyOp)) {
+      // i1 addition wraps modulo 2, which is equivalent to xor.
+      replaceBinary<arith::XOrIOp>(bodyOp, rewriter);
+      return success();
+    }
+    if (isa<arith::MaxUIOp, arith::MaxSIOp>(bodyOp)) {
+      // Boolean max is equivalent to or.
       replaceBinary<arith::OrIOp>(bodyOp, rewriter);
       return success();
     }
@@ -5679,6 +5966,69 @@ private:
     auto targetOp = rewriter.create<targetType>(op->getLoc(), op->getOperand(0),
                                                 op->getOperand(1));
     rewriter.modifyOpInPlace(op, [&]() { op->replaceAllUsesWith(targetOp); });
+  }
+};
+
+/// Normalize an i1 XOR reduction to i16 because A3 reduction templates do not
+/// provide bool specializations.
+struct NormalizeReduceXorI1ToI16 : public OpRewritePattern<linalg::ReduceOp> {
+public:
+  using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(linalg::ReduceOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics() || op.getInputs().size() != 1 ||
+        op.getInits().size() != 1 || op->getNumResults() != 1)
+      return failure();
+
+    auto inputType = dyn_cast<RankedTensorType>(op.getInputs()[0].getType());
+    auto initType = dyn_cast<RankedTensorType>(op.getInits()[0].getType());
+    if (!inputType || !initType ||
+        !inputType.getElementType().isInteger(1) ||
+        !initType.getElementType().isInteger(1))
+      return failure();
+
+    Block &body = op.getCombiner().front();
+    auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
+    if (!yieldOp || yieldOp.getValues().size() != 1 ||
+        body.getNumArguments() != 2 ||
+        std::distance(body.begin(), body.end()) != 2)
+      return failure();
+
+    auto xorOp = dyn_cast_or_null<arith::XOrIOp>(
+        yieldOp.getValues()[0].getDefiningOp());
+    if (!xorOp)
+      return failure();
+
+    Value arg0 = body.getArgument(0);
+    Value arg1 = body.getArgument(1);
+    if (!((xorOp.getLhs() == arg0 && xorOp.getRhs() == arg1) ||
+          (xorOp.getLhs() == arg1 && xorOp.getRhs() == arg0)))
+      return failure();
+
+    Location loc = op.getLoc();
+    Type i16Type = rewriter.getI16Type();
+    Value inputI16 = castTo(rewriter, op.getInputs()[0], i16Type);
+    Value initI16 = castTo(rewriter, op.getInits()[0], i16Type);
+
+    IRMapping mapper;
+    mapper.map(op.getInputs()[0], inputI16);
+    mapper.map(op.getInits()[0], initI16);
+    Operation *newOp = rewriter.cloneWithoutRegions(*op, mapper);
+    newOp->getResult(0).setType(initType.clone(i16Type));
+
+    Region &newRegion = newOp->getRegion(0);
+    Block *newBody = rewriter.createBlock(&newRegion);
+    BlockArgument lhs = newBody->addArgument(i16Type, loc);
+    BlockArgument rhs = newBody->addArgument(i16Type, loc);
+    rewriter.setInsertionPointToStart(newBody);
+    Value xorResult = rewriter.create<arith::XOrIOp>(loc, lhs, rhs);
+    rewriter.create<linalg::YieldOp>(loc, xorResult);
+
+    rewriter.setInsertionPointAfter(newOp);
+    Value castBack = castTo(rewriter, newOp->getResult(0), rewriter.getI1Type());
+    rewriter.replaceOp(op, castBack);
+    return success();
   }
 };
 
@@ -7619,7 +7969,8 @@ public:
   }
 };
 
-/// normalize ceildivsi or floordivsi i8/i16/i32/i64 as bellow
+/// Compensate signed i32 floor/ceil and preserve the legacy path otherwise.
+/// The legacy floating-point normalization is as follows:
 /// eg.
 ///   %res = ceildivsi/floordivsi %lhs, %rhs : i8
 /// is normalized to
@@ -7661,6 +8012,13 @@ public:
                                     fun == hfusion::BinaryFn::ceildivui)
                                        ? hfusion::RoundMode::CEIL
                                        : hfusion::RoundMode::FLOOR;
+    if (fun != hfusion::BinaryFn::ceildivui && elemTySrc.isInteger(32)) {
+      Value result =
+          A3IntegerDivisionBuilder(rewriter, loc, op.getDpsInits()[0])
+              .build(inputs[0], inputs[1], roundMode);
+      rewriter.replaceOp(op, result);
+      return success();
+    }
     if (fun == hfusion::BinaryFn::ceildivui) {
       assert(elemTySrc.isInteger(8));
       inputs[0] = hfusion::castTo(rewriter, inputs[0], rewriter.getF32Type(),
@@ -9969,6 +10327,7 @@ void populateNormalizeI1ToTargetPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeToTargetType<bool, hfusion::InterleaveOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, linalg::BroadcastOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, linalg::ReduceOp>>(ctx);
+  patterns.add<NormalizeReduceXorI1ToI16>(ctx);
   patterns.add<NormalizeToTargetType<bool, CompareOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, SelectOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, linalg::TransposeOp>>(ctx);
@@ -10091,7 +10450,8 @@ public:
     ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
     if (hacc::utils::isRegBasedArch(moduleOp) || useRegBase) {
       if (failed(runNormalizeRegBase(getOperation(), enableHighPrecision,
-                                     enableFastDiv)))
+                                     enableFastDiv, enableDivRemPow2,
+                                     enableFma)))
         signalPassFailure();
       return;
     }

@@ -20,6 +20,7 @@
 
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -29,6 +30,22 @@
 #include <optional>
 
 namespace mlir {
+namespace utils {
+
+/// Selects allowed predicates. If predicate is not supported by current
+/// lowering pipeline, then returns failure.
+FailureOr<hfusion::CompareFn> selectPredicate(arith::CmpFOp op);
+
+/// Selects allowed predicates. If predicate is not supported by current
+/// lowering pipeline, then returns failure.
+FailureOr<hfusion::CompareFn> selectPredicate(arith::CmpIOp op);
+
+/// Selects allowed predicates. If predicate is not supported by current
+/// lowering pipeline, then returns failure.
+FailureOr<hfusion::CompareFn> selectI1Predicate(arith::CmpIOp op);
+
+} // namespace utils
+
 namespace hfusion {
 
 /// Create arith index cast op to cast value `v` to index type.
@@ -205,6 +222,10 @@ template <typename SrcOp> bool isSVOp(SrcOp op) {
 
 void trySetFusionKind(func::FuncOp func, const FusionKind &fusionKind);
 std::optional<FusionKind> tryGetFusionKind(func::FuncOp func);
+
+bool isAICFunc(func::FuncOp func);
+bool isVF(func::FuncOp func);
+bool isAIVFunc(func::FuncOp func);
 
 namespace reshape_utils {
 
@@ -401,6 +422,8 @@ bool hasUnpropagateableCase(Operation *op, bool skipScope);
 bool shouldApplyFlattenOpsPass(func::FuncOp);
 
 bool isFromFunctionArg(mlir::Value v);
+
+bool isSIMDVectorFunction(Operation *op);
 
 } // namespace util
 

@@ -72,8 +72,7 @@ void genConfigsAndOptionsConversionForGroups(
 /// options.
 bool emitConfigsAndOptionsConversion(const RecordKeeper &records,
                                      raw_ostream &OS) {
-  std::vector<Record *> specs =
-      records.getAllDerivedDefinitions(kOptionClassName);
+  auto specs = records.getAllDerivedDefinitions(kOptionClassName);
   StringMap<SmallVector<ConfigOption>> passGroup2Options;
   for (const Record *R : specs) {
     ConfigOption cfgOpt(R);

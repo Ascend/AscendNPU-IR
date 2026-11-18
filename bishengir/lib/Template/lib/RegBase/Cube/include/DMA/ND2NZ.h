@@ -16,6 +16,7 @@
 
 #ifndef HIVM_MLIR_TEMPLATE_ND2NZ_UTILS_H
 #define HIVM_MLIR_TEMPLATE_ND2NZ_UTILS_H
+#include "ArchDefs.h"
 #include "Utils.h"
 
 constexpr int32_t MAX_LEN_UNIT16 = 65535;
@@ -40,7 +41,7 @@ template <typename T> struct nd2nz_intrin_args {
   uint8_t l2CacheCtrlMode;
 };
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_HAS_MTE2_NZ_PARA_MULTI_ND2NZ
 template <typename T>
 __aicore__ __attribute__((always_inline)) void
 copy_gm_to_cbuf_intrin_core(nd2nz_intrin_args<T> args) {
@@ -49,21 +50,25 @@ copy_gm_to_cbuf_intrin_core(nd2nz_intrin_args<T> args) {
   // fields use that same convention. Both matrix strides only reach the
   // hardware when ndNum > 1, so a wrong scale here stays invisible until a
   // batched load asks for the second matrix.
-  uint64_t config =
-      ((uint64_t)args.ndNum) | ((uint64_t)args.dstNzNStride) << 16 |
-      ((uint64_t)args.dstNzC0Stride) << 32 |
-      ((uint64_t)(args.dstNzMatrixStride / args.c0Size)) << 48;
+  uint64_t config = ((uint64_t)args.ndNum) |
+                    ((uint64_t)args.dstNzNStride) << 16 |
+                    ((uint64_t)args.dstNzC0Stride) << 32 |
+                    ((uint64_t)(args.dstNzMatrixStride / args.c0Size)) << 48;
   INTRINSIC(set_mte2_nz_para, config);
   INTRINSIC(copy_gm_to_cbuf_multi_nd2nz, args.dst_ptr, args.src_ptr,
             /*uint8_t sid*/ args.sid,
             /*uint64_t loop1_src_stride*/ args.srcDValue * sizeof(T),
-            /*uint8_t l2_cache_ctrl_mode*/ args.l2CacheCtrlMode,
-            args.nValue, args.dValue,
+            /*uint8_t l2_cache_ctrl_mode*/ args.l2CacheCtrlMode, args.nValue,
+            args.dValue,
             // Bytes, like loop1_src_stride above.
             args.srcNdMatrixStride * sizeof(T),
             /*bool smallc0_en*/ false
-            /* args.srcDValue, args.dstNzC0Stride,
-              args.dstNzNStride, args.dstNzMatrixStride*/);
+#if BISHENG_TPL_HAS_DMA_PRE_ALLOCATION
+            ,
+            // The 920r1 overload adds a trailing pre_allocation selector.
+            /*bool pre_allocation*/ false
+#endif
+  );
 }
 #else
 template <typename T>
@@ -98,33 +103,31 @@ copy_gm_to_cbuf_intrin_core(nd2nz_intrin_args<T> args) {
 #define REGISTE_ND2NZ(src_scope, dst_scope, src_dim, dst_dim, type)            \
   DECLARE_ND2NZ(src_scope, dst_scope, src_dim, dst_dim, type) {                \
     copy_##src_scope##_to_##dst_scope##_multi_nd2nz_core<type, false>(         \
-        src, dst, l2_cache_mode);                                            \
+        src, dst, l2_cache_mode);                                              \
   }
 
 #define DECLARE_ND2NZ_BATCH(src_scope, dst_scope, src_dim, dst_dim, type)      \
-  __aicore__                                                                   \
-      __attribute__((always_inline)) void _mlir_ciface_nd2nz_batch_##type(     \
-          memref_t<__##src_scope##__ type, src_dim> *src,                      \
-          memref_t<__##dst_scope##__ type, dst_dim> *dst,                       \
-          int32_t l2_cache_mode)
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_nd2nz_batch_##type(                                             \
+      memref_t<__##src_scope##__ type, src_dim> *src,                          \
+      memref_t<__##dst_scope##__ type, dst_dim> *dst, int32_t l2_cache_mode)
 
 #define REGISTE_ND2NZ_BATCH(src_scope, dst_scope, src_dim, dst_dim, type)      \
   DECLARE_ND2NZ_BATCH(src_scope, dst_scope, src_dim, dst_dim, type) {          \
-    copy_##src_scope##_to_##dst_scope##_batch_nd2nz_core<type>(                \
-        src, dst, l2_cache_mode);                                            \
+    copy_##src_scope##_to_##dst_scope##_batch_nd2nz_core<type>(src, dst,       \
+                                                               l2_cache_mode); \
   }
 
 #define DECLARE_ND2NZ_FORBIAS(src_scope, dst_scope, src_dim, dst_dim, type)    \
-  __aicore__                                                                   \
-      __attribute__((always_inline)) void _mlir_ciface_nd2nz_forbias_##type(   \
-          memref_t<__##src_scope##__ type, src_dim> *src,                      \
-          memref_t<__##dst_scope##__ type, dst_dim> *dst,                       \
-          int32_t l2_cache_mode)
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_nd2nz_forbias_##type(                                           \
+      memref_t<__##src_scope##__ type, src_dim> *src,                          \
+      memref_t<__##dst_scope##__ type, dst_dim> *dst, int32_t l2_cache_mode)
 
 #define REGISTE_ND2NZ_FORBIAS(src_scope, dst_scope, src_dim, dst_dim, type)    \
   DECLARE_ND2NZ_FORBIAS(src_scope, dst_scope, src_dim, dst_dim, type) {        \
     copy_##src_scope##_to_##dst_scope##_multi_nd2nz_core<type, true>(          \
-        src, dst, l2_cache_mode);                                            \
+        src, dst, l2_cache_mode);                                              \
   }
 
 extern "C" {

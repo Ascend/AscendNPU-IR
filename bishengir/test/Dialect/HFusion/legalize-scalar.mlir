@@ -320,3 +320,26 @@ func.func @test_scalar_cmpf_bf16_two_args(%arg0: bf16, %arg1: bf16) -> i1 {
   %0 = arith.cmpf oeq, %arg0, %arg1 : bf16
   return %0 : i1
 }
+// -----
+
+// CHECK-LABEL: func.func @scalar_minmax_f16(
+// CHECK: arith.minimumf {{.*}} : tensor<1xf16>
+// CHECK: tensor.extract {{.*}} : tensor<1xf16>
+// CHECK: arith.maximumf {{.*}} : tensor<1xf16>
+// CHECK: tensor.extract {{.*}} : tensor<1xf16>
+func.func @scalar_minmax_f16(%a: f16, %b: f16) -> (f16, f16) {
+  %min = arith.minimumf %a, %b : f16
+  %max = arith.maximumf %a, %b : f16
+  return %min, %max : f16, f16
+}
+
+// -----
+
+// CHECK-LABEL: func.func @scalar_minmax_f16_fastmath(
+// CHECK: arith.minimumf {{.*}} fastmath<nsz> : tensor<1xf16>
+// CHECK: arith.maximumf {{.*}} fastmath<nsz> : tensor<1xf16>
+func.func @scalar_minmax_f16_fastmath(%a: f16, %b: f16) -> (f16, f16) {
+  %min = arith.minimumf %a, %b fastmath<nsz> : f16
+  %max = arith.maximumf %a, %b fastmath<nsz> : f16
+  return %min, %max : f16, f16
+}

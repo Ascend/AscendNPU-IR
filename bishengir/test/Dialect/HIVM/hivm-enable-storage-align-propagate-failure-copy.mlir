@@ -83,13 +83,15 @@ func.func @propagate_failure_vexp_write() {
   %c0 = arith.constant 0 : index
   %1 = memref.reinterpret_cast %0 to offset: [%c0], sizes: [169], strides: [13] : memref<13x13x13xf32, #hivm.address_space<ub>> to memref<169xf32, strided<[13], offset: ?>, #hivm.address_space<ub>>
 
-  // vexp reads AND writes to reinterpret_cast (new buffer)
-  // Multiple sync CopyOps should be inserted after vexp to sync back to src
+  // vexp reads AND writes to reinterpret_cast (new buffer), so one sync CopyOp
+  // has to follow it to carry the write back to src. The op is reached once per
+  // use of the value and `ins`/`outs` name the same value here, so it used to
+  // be recorded twice and emit two identical copies; it is recorded once now.
   // CHECK: hivm.hir.copy
   // CHECK: memref.reinterpret_cast
   // CHECK: hivm.hir.vexp
   // CHECK: hivm.hir.copy
-  // CHECK: hivm.hir.copy
+  // CHECK-NOT: hivm.hir.copy
   // CHECK: return
 
   hivm.hir.vexp ins(%1 : memref<169xf32, strided<[13], offset: ?>, #hivm.address_space<ub>>) outs(%1 : memref<169xf32, strided<[13], offset: ?>, #hivm.address_space<ub>>)
@@ -273,17 +275,20 @@ module attributes {
     // CHECK: %[[ALIGNED:.*]] = memref.subview %[[PHYSICAL]]
     // CHECK-SAME: to memref<1x16xf32, strided<[32, 1]>, #hivm.address_space<ub>>
 
-    // CHECK-NOT: hivm.hir.copy ins(%[[ALIGNED]]
+    // One buffer serves every failing use, so it and its seed copy sit above
+    // the branch that used to hold them. The copy therefore runs
+    // unconditionally now; it has to, because a buffer created inside one
+    // region cannot serve a failing use in another.
+    // CHECK: %[[SHARED:.*]] = memref.alloc() : memref<1x16xf32, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.copy ins(%[[ALIGNED]]{{.*}}) outs(%[[SHARED]]
 
     // CHECK: %[[RET:.*]] = scf.if %{{.*}} ->
     // CHECK-SAME: memref<1x16xf32, #hivm.address_space<ub>>
     %ret = scf.if %cond
         -> (memref<1x16xf32, #hivm.address_space<ub>>) {
-      // CHECK: %[[DENSE:.*]] = memref.alloc()
-      // CHECK-SAME: memref<1x16xf32, #hivm.address_space<ub>>
-      // CHECK-NEXT: hivm.hir.copy ins(%[[ALIGNED]]
-      // CHECK-SAME: outs(%[[DENSE]]
-      // CHECK-NEXT: scf.yield %[[DENSE]]
+      // The buffer and its seed copy now live above the branch, so this region
+      // only yields them.
+      // CHECK-NEXT: scf.yield %[[SHARED]]
       scf.yield %tcb
         : memref<1x16xf32, #hivm.address_space<ub>>
     } else {

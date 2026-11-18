@@ -17,9 +17,11 @@
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMProtonOps.h"
 
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/Support/LogicalResult.h"
 
@@ -56,12 +58,30 @@ const DenseMap<StringRef, CustomOp::BuiltinInfo> CustomOp::kBuiltins{
      BuiltinInfo{TCoreType::VECTOR, PIPE::PIPE_V, VFMode::SIMT, {0}}},
     {kBuiltinIndirectAtomicName,
      BuiltinInfo{TCoreType::VECTOR, PIPE::PIPE_V, VFMode::SIMT, {0}}},
+    {kBuiltinOnlineSoftmaxNZName, BuiltinInfo{TCoreType::VECTOR,
+                                              PIPE::PIPE_V,
+                                              VFMode::SIMD,
+                                              {},
+                                              InlineMode::AlwaysInline}},
     {kBuiltinHistogramName,
      BuiltinInfo{TCoreType::VECTOR, PIPE::PIPE_V, VFMode::SIMT, {}}},
+    // Cube-core MTE2 path with no VF mode ({}); operands 0 and 1 (gathered
+    // tensor and region metadata) are GM addresses. Must be inlined: across a
+    // call the cube caller keeps the destination L1 address live in X0-X4,
+    // which the template overwrites, so the following L1 -> L0A load would read
+    // a corrupted address.
+    {kBuiltinSparseGatherLoadToL1BufferName,
+     BuiltinInfo{TCoreType::CUBE,
+                 PIPE::PIPE_MTE2,
+                 {},
+                 {0, 1},
+                 InlineMode::AlwaysInline}},
     {kBuiltinProtonGetSysCntName,
      BuiltinInfo{TCoreType::VECTOR, PIPE::PIPE_S, VFMode::SIMD, {}}},
     {kBuiltinProtonCircularStoreName,
      BuiltinInfo{TCoreType::VECTOR, PIPE::PIPE_S, VFMode::SIMD, {0}}},
+    {kBuiltinProtonScopeBoundaryName,
+     BuiltinInfo{TCoreType::CUBE_OR_VECTOR, PIPE::PIPE_S, VFMode::SIMD, {}}},
 };
 
 void CustomMacroOp::setInPipe(PIPE pipe) {
@@ -422,6 +442,46 @@ static LogicalResult verifyCustomOpExtraBufferAttrs(CustomOpT op) {
 }
 
 template <typename CustomOpT>
+static IntegerAttr getInplaceOutputIndexAttr(Attribute binding) {
+  if constexpr (std::is_same_v<CustomOpT, CustomOp>) {
+    if (auto view = dyn_cast_or_null<ArrayAttr>(binding)) {
+      if (view.size() != 2 || !isa<AffineMapAttr>(view[1]))
+        return {};
+      binding = view[0];
+    }
+  }
+  return dyn_cast_or_null<IntegerAttr>(binding);
+}
+
+template <typename CustomOpT>
+static std::optional<int32_t> getInplaceInputIndexForOutput(CustomOpT op,
+                                                            int64_t outputIdx) {
+  auto argAttrs =
+      op->template getAttrOfType<ArrayAttr>(CustomOpT::kArgAttrsName);
+  if (!argAttrs)
+    return std::nullopt;
+
+  for (auto [inputIdx, inputAttr] : llvm::enumerate(argAttrs)) {
+    if (inputIdx >= op.getInputs().size())
+      break;
+
+    auto dict = dyn_cast<DictionaryAttr>(inputAttr);
+    if (!dict)
+      continue;
+
+    auto inplaceOutAttr = getInplaceOutputIndexAttr<CustomOpT>(
+        dict.get(CustomOpT::kInplaceOutsAttrName));
+    if (!inplaceOutAttr)
+      continue;
+
+    if (inplaceOutAttr.getInt() == outputIdx)
+      return static_cast<int32_t>(inputIdx);
+  }
+
+  return std::nullopt;
+}
+
+template <typename CustomOpT>
 static LogicalResult verifyCustomOpInplaceOperandsAttr(CustomOpT op) {
   auto argAttrs =
       op->template getAttrOfType<ArrayAttr>(CustomOpT::kArgAttrsName);
@@ -431,6 +491,7 @@ static LogicalResult verifyCustomOpInplaceOperandsAttr(CustomOpT op) {
   llvm::DenseSet<int32_t> usedOutputs;
   const int64_t numInputs = op.getInputs().size();
   const int64_t numOutputs = op.getOutputs().size();
+  bool hasByteAlias = false;
   for (auto [inputIdx, inputAttr] : llvm::enumerate(argAttrs)) {
     if (static_cast<int64_t>(inputIdx) >= numInputs)
       break;
@@ -439,12 +500,15 @@ static LogicalResult verifyCustomOpInplaceOperandsAttr(CustomOpT op) {
     if (!dict)
       continue;
 
-    auto inplaceOutAttr = dyn_cast_or_null<IntegerAttr>(
-        dict.get(CustomOpT::kInplaceOutsAttrName));
+    Attribute binding = dict.get(CustomOpT::kInplaceOutsAttrName);
+    auto inplaceOutAttr = getInplaceOutputIndexAttr<CustomOpT>(binding);
     if (!inplaceOutAttr) {
-      if (dict.contains(CustomOpT::kInplaceOutsAttrName))
+      if (binding)
         return op.emitOpError() << CustomOpT::kInplaceOutsAttrName
-                                << " must be an integer attribute";
+                                << (std::is_same_v<CustomOpT, CustomOp>
+                                        ? " must be an output index or [output "
+                                          "index, affine map]"
+                                        : " must be an integer attribute");
       continue;
     }
 
@@ -467,6 +531,31 @@ static LogicalResult verifyCustomOpInplaceOperandsAttr(CustomOpT op) {
              << CustomOpT::kInplaceOutsAttrName
              << " requires mapped ins and outs operands to be ranked tensors "
                 "or memrefs";
+    }
+    if constexpr (std::is_same_v<CustomOpT, CustomOp>) {
+      if (inputType != outputType) {
+        auto input = dyn_cast<RankedTensorType>(inputType);
+        auto output = dyn_cast<RankedTensorType>(outputType);
+        if (!input || !output || !input.hasStaticShape() ||
+            !output.hasStaticShape() || input.getNumElements() == 0 ||
+            output.getNumElements() == 0 ||
+            !isa<IntegerType, FloatType>(input.getElementType()) ||
+            !isa<IntegerType, FloatType>(output.getElementType()) ||
+            input.getElementTypeBitWidth() % 8 ||
+            output.getElementTypeBitWidth() % 8 || hasByteAlias)
+          return op.emitOpError(
+              "inplace_outs supports one static byte-view tensor pair");
+        if (!isa<ArrayAttr>(binding) &&
+            output.getNumElements() * output.getElementTypeBitWidth() >
+                input.getNumElements() * input.getElementTypeBitWidth())
+          return op.emitOpError(
+              "inplace_outs output byte view exceeds the input capacity");
+        hasByteAlias = true;
+        continue;
+      }
+      if (isa<ArrayAttr>(binding))
+        return op.emitOpError("inplace_outs affine map requires different "
+                              "input and output types");
     }
     if (inputType != outputType) {
       return op.emitOpError()
@@ -494,7 +583,7 @@ template <typename CustomOpT> LogicalResult verifyBuiltins(CustomOpT op) {
                             << op.getName() << "'s core type.";
 
   const auto &vfMode = op.getVFMode();
-  if (vfMode && *vfMode != builtinInfo.vfMode)
+  if (vfMode && builtinInfo.vfMode && *vfMode != *builtinInfo.vfMode)
     return op.emitOpError() << "Specified vf mode conflict with "
                             << op.getName() << "'s vf mode.";
 
@@ -650,17 +739,33 @@ getCustomOpExtraBuffersInfo(CustomOpT op) {
   return res;
 }
 
-template <typename CustomOpT>
 void getEffectsForCustomOps(
-    CustomOpT op,
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-  if (!op.getNoSideEffect()) {
-    effects.emplace_back(MemoryEffects::Write::get(),
-                         SideEffects::DefaultResource::get());
-    effects.emplace_back(MemoryEffects::Read::get(),
-                         SideEffects::DefaultResource::get());
-  }
+  // `no_side_effect` means that the op only reads its declared inputs and
+  // writes its declared outputs. Keep the same conservative resource-level
+  // effects for both forms: downstream scheduling still relies on them, and a
+  // bufferized CustomOp must remain ordered before consumers of its DPS output.
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       SideEffects::DefaultResource::get());
+}
+
+LogicalResult verifyProtonScopeBoundary(CustomOp op) {
+  auto inputs = op.getInputs();
+  if (inputs.size() != 1 || !inputs.front().getType().isInteger(32) ||
+      !op.getOutputs().empty())
+    return op.emitOpError("expects one i32 region_id operand and no results");
+
+  IntegerAttr regionIdAttr;
+  if (!matchPattern(inputs.front(), m_Constant(&regionIdAttr)))
+    return op.emitOpError("region_id must be a constant");
+
+  int64_t regionId = regionIdAttr.getValue().getSExtValue();
+  if (regionId < 0 || regionId > static_cast<int64_t>(proton::kMaxRegionId))
+    return op.emitOpError("region_id must fit in 12 bits");
+  return success();
 }
 } // namespace
 
@@ -683,7 +788,13 @@ void CustomMacroOp::print(OpAsmPrinter &p) {
       << ")";
 }
 
-LogicalResult CustomOp::verify() { return verifyCustomOp(*this); }
+LogicalResult CustomOp::verify() {
+  if (failed(verifyCustomOp(*this)))
+    return failure();
+  if (getName() == kBuiltinProtonScopeBoundaryName)
+    return verifyProtonScopeBoundary(*this);
+  return success();
+}
 
 LogicalResult CustomMacroOp::verify() {
   if (failed(verifyCustomOp(*this)))
@@ -700,14 +811,24 @@ CustomMacroOp::getExtraBuffersInfo() const {
   return getCustomOpExtraBuffersInfo(*this);
 }
 
+std::optional<int32_t>
+CustomOp::getInplaceInputIndexForOutput(int64_t outputIndex) {
+  return ::getInplaceInputIndexForOutput(*this, outputIndex);
+}
+
+std::optional<int32_t>
+CustomMacroOp::getInplaceInputIndexForOutput(int64_t outputIndex) {
+  return ::getInplaceInputIndexForOutput(*this, outputIndex);
+}
+
 void CustomOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-  getEffectsForCustomOps(*this, effects);
+  getEffectsForCustomOps(effects);
 }
 
 void CustomMacroOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-  getEffectsForCustomOps(*this, effects);
+  getEffectsForCustomOps(effects);
 }

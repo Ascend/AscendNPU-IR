@@ -84,6 +84,8 @@ void populateNormalizeArithmeticPatterns(RewritePatternSet &patterns, bool enabl
 void populateNormalizePreFinalArithmeticPatterns(RewritePatternSet &patterns);
 void populateNormalizeFinalArithmeticPatterns(RewritePatternSet &patterns);
 void populateNormalizeModPatterns(RewritePatternSet &patterns);
+void populateNormalizeConstDivRemPatterns(RewritePatternSet &patterns,
+                                          bool enableDivRemPow2);
 void populateNormalizePrimaryMathPatterns(RewritePatternSet &patterns);
 void populateNormalizeLateMathPatterns(RewritePatternSet &patterns);
 void populateNormalizeCastingPatterns(RewritePatternSet &patterns);
@@ -101,7 +103,9 @@ void populateNormalizePreReductionPatterns(RewritePatternSet &patterns);
 void populateNormalizeReductionPatterns(RewritePatternSet &patterns);
 void populateNormalizeShiftI8ToI16(RewritePatternSet &patterns);
 void populateNormalizeFinalReductionPatterns(RewritePatternSet &patterns);
-void populateNormalizeAtomicPatterns(RewritePatternSet &patterns);
+void populateNormalizeAtomicPatterns(RewritePatternSet &patterns,
+                                     bool supportsRegBaseAtomic);
+LogicalResult checkIsLegalAtomicOp(Operation *op);
 void populateNormalizeSortPatterns(RewritePatternSet &patterns);
 
 } // namespace mlir::hfusion

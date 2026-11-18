@@ -29,21 +29,35 @@ namespace hivm {
 /// An empty registry never matches.
 bool isLoopShapeRegistered(llvm::StringRef name);
 
+/// True when `name` or any substring fingerprints to the temporary
+/// bind-sub-block skip-list (currently paged-decode kernels). Matching
+/// kernels stay on CV1:1 (`limit_sub_block_id0`) instead of CV1:2 mix AIV.
+/// This list is independent of `isLoopShapeRegistered` so skip names do not
+/// enable preload / TCB heuristics.
+bool shouldSkipBindSubBlock(llvm::StringRef name);
+
 /// Shared gate for registered-kernel CV / preload heuristics.
 /// LIT may pass `--bypass-shape-registry` to force the heuristic on.
 /// Otherwise `--enable-preload`, a non-zero `--set-workspace-multibuffer`,
 /// and a registered kernel name are all required.
 /// Covers LCD backup extraction (intra-WI and cross-WI), dest-sink / delay /
-/// merge-same-preload heuristics, and the 3530 same-stage cross-WI carry
+/// merge-same-preload heuristics, the 3530 same-stage cross-WI carry
 /// exception (collect LCD ops on the standard path; pin both ends to
-/// preload 0 only when an independent stage remains).
+/// preload 0 when an independent stage remains). Otherwise registered skew
+/// loops can retain all scopes at stage zero without overlapping iterations.
+/// Also covers the 3160 sign-extended while-bound normalize, byte-vs-byte
+/// buffer-size compare, dynamic-TCB view rematerialization, and pre-CVP
+/// buffer-size prep.
+/// Also covers the post-CVP independent-preload hoist and shared-A matmul
+/// clustering. Duplicate inserted L1 copies use the registry alone.
+/// Also covers the early-CBUF nested vf-scope. Off-registry kernels keep
+/// that copy in the outer preload scope.
 inline bool allowLoopShapeHeuristics(bool bypassShapeRegistry,
                                      llvm::StringRef funcName,
                                      bool enablePreload,
                                      int64_t workspaceMultiBuffer) {
-  return bypassShapeRegistry ||
-         (enablePreload && workspaceMultiBuffer != 0 &&
-          isLoopShapeRegistered(funcName));
+  return bypassShapeRegistry || (enablePreload && workspaceMultiBuffer != 0 &&
+                                 isLoopShapeRegistered(funcName));
 }
 
 } // namespace hivm

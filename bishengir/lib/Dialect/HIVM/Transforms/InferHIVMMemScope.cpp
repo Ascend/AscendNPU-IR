@@ -36,6 +36,7 @@
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Pass/Pass.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/LogicalResult.h"
@@ -54,6 +55,124 @@ using namespace mlir;
 using namespace hivm;
 
 namespace {
+
+// Forward declaration
+bool isSingleResultPropagatableMemrefOp(Operation *op);
+
+/// Get the arg_attrs dictionary for the operand at the given position.
+/// Positions are laid out as [inputs..., outputs...].
+DictionaryAttr getArgAttrDict(hivm::CustomOp customOp, unsigned operandIdx) {
+  auto argAttrs =
+      customOp->getAttrOfType<ArrayAttr>(CustomLikeOpInterface::kArgAttrsName);
+  if (!argAttrs || operandIdx >= argAttrs.size())
+    return nullptr;
+  return dyn_cast_or_null<DictionaryAttr>(argAttrs[operandIdx]);
+}
+
+/// Get the address space from arg_attrs for the operand at the given position.
+/// Returns std::nullopt if no address_space attribute is found.
+std::optional<hivm::AddressSpace>
+getAddressSpaceFromArgAttrs(hivm::CustomOp customOp, unsigned operandIdx) {
+  DictionaryAttr dict = getArgAttrDict(customOp, operandIdx);
+  if (!dict)
+    return std::nullopt;
+
+  if (auto addrSpaceAttr = dyn_cast_or_null<AddressSpaceAttr>(
+          dict.get(CustomLikeOpInterface::kAddressSpaceName)))
+    return addrSpaceAttr.getAddressSpace();
+
+  return std::nullopt;
+}
+
+/// Get the address space from arg_attrs for a given operand value.
+/// Returns std::nullopt if the operand is unknown or has no address_space.
+std::optional<hivm::AddressSpace>
+getAddressSpaceFromArgAttrs(hivm::CustomOp customOp, Value operand) {
+  auto inputs = customOp.getInputs();
+  auto outputs = customOp.getOutputs();
+  std::optional<unsigned> operandIdx;
+
+  for (auto [idx, input] : llvm::enumerate(inputs)) {
+    if (input == operand) {
+      operandIdx = idx;
+      break;
+    }
+  }
+
+  if (!operandIdx.has_value()) {
+    for (auto [idx, output] : llvm::enumerate(outputs)) {
+      if (output == operand) {
+        operandIdx = inputs.size() + idx;
+        break;
+      }
+    }
+  }
+
+  if (!operandIdx.has_value())
+    return std::nullopt;
+
+  return getAddressSpaceFromArgAttrs(customOp, operandIdx.value());
+}
+
+/// Information about a CustomOp that consumes/produces a traced value.
+struct CustomOpUser {
+  hivm::CustomOp customOp;
+  /// The operand value (input or output) of the CustomOp that the traced value
+  /// flows into.
+  Value operand;
+};
+
+/// Check if a value is used by a CustomOp, potentially through intermediate
+/// operations. This recursively traces through view-like ops and single-result
+/// propagatable ops. Returns the first CustomOp found along with the operand
+/// value that directly feeds it, or std::nullopt if none exists.
+std::optional<CustomOpUser> findCustomOpUser(Value val) {
+  SmallPtrSet<Operation *, 16> visited;
+  SmallVector<Value, 8> worklist;
+  worklist.push_back(val);
+
+  while (!worklist.empty()) {
+    Value current = worklist.pop_back_val();
+
+    for (Operation *user : current.getUsers()) {
+      // Already visited this operation
+      if (!visited.insert(user).second)
+        continue;
+
+      // Found a CustomOp user; record the operand value so the caller can
+      // look up the address_space from arg_attrs by position.
+      if (auto customOp = dyn_cast<hivm::CustomOp>(user))
+        return CustomOpUser{customOp, current};
+
+      // Trace through single-result propagatable operations
+      if (user->getNumResults() == 1 &&
+          isSingleResultPropagatableMemrefOp(user)) {
+        worklist.push_back(user->getResult(0));
+      }
+    }
+  }
+
+  return std::nullopt;
+}
+
+/// Handle memory scope inference for function arguments used by CustomOp.
+/// Reads the address_space from the CustomOp's arg_attrs for the given operand.
+/// Falls back to GM if no attribute is present.
+LogicalResult handleCustomOpArg(BlockArgument arg, hivm::CustomOp customOp,
+                                Value operand) {
+  MemScopeInferAndPropagateHelper helper;
+
+  hivm::AddressSpace memSpace = hivm::AddressSpace::GM;
+  if (auto addrSpace = getAddressSpaceFromArgAttrs(customOp, operand))
+    memSpace = *addrSpace;
+
+  LDBG("Inferred memory scope " << stringifyAddressSpace(memSpace)
+                                << " for argument used by CustomOp with pipe "
+                                << stringifyPIPE(customOp.getPipe()));
+  auto memSpaceAttr = AddressSpaceAttr::get(arg.getContext(), memSpace);
+  return helper.Run(arg, memSpaceAttr);
+}
+
 bool isSingleResultPropagatableMemrefOp(Operation *op) {
   if (!op)
     return false;
@@ -234,13 +353,36 @@ MemScopeInferAndPropagateHelper::propagateMemScopeToUsers(Value val) {
 
           return success();
         })
-        .Case<hivm::CustomOp>([&](hivm::CustomOp op) {
-          // Only handle distributed custom ops, otherwise fall through to
-          // default.
-          if (!isDistributedTypeCustomOp(op)) {
-            return defaultPropagateFn(op);
+        .Case<hivm::CustomOp>([&](hivm::CustomOp op) -> LogicalResult {
+          // Distributed CustomOp is just a func Call.
+          if (isDistributedTypeCustomOp(op))
+            return success();
+
+          // For non-distributed CustomOps, infer each output's memory scope
+          // from arg_attrs. Outputs occupy positions [inputs.size(), ...).
+          unsigned numInputs = op.getInputs().size();
+          bool inferredAny = false;
+          for (auto result : op->getResults()) {
+            auto memrefType = dyn_cast<BaseMemRefType>(result.getType());
+            if (!memrefType || memrefType.getMemorySpace())
+              continue;
+
+            auto addrSpace = getAddressSpaceFromArgAttrs(
+                op, numInputs + result.getResultNumber());
+            if (!addrSpace)
+              continue;
+
+            inferredAny = true;
+            auto addrSpaceAttr =
+                AddressSpaceAttr::get(op->getContext(), *addrSpace);
+            if (failed(Run(result, addrSpaceAttr))) {
+              return op->emitOpError()
+                     << "Failed to infer memory scope for output #"
+                     << result.getResultNumber() << " from arg_attrs";
+            }
           }
-          // Distributed CustomOp is just a func Call
+          // For non-distributed custom ops with arg_attrs, the scopes are
+          // fully specified - no need to propagate through the op.
           return success();
         })
         .Case<hivm::FixpipeOp>([&](hivm::FixpipeOp op) {
@@ -492,7 +634,7 @@ LogicalResult inferAndPropagateMemScopeForExternFunc(func::FuncOp op) {
 
   auto gmSpaceAttr =
       AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::GM);
-  LDBG("Begin infer and propagate memory scope for extern func"
+  LDBG("Begin infer and propagate memory scope for extern func "
        << op.getSymName());
   auto newArgTypes = SmallVector<Type>(op.getArgumentTypes());
   for (auto &argType : newArgTypes) {
@@ -523,7 +665,7 @@ LogicalResult hivm::inferAndPropagateMemScopeForFunc(func::FuncOp op) {
   if (op.isExternal())
     return inferAndPropagateMemScopeForExternFunc(op);
 
-  LDBG("Begin infer and propagate memory scope for func" << op.getSymName());
+  LDBG("Begin infer and propagate memory scope for func " << op.getSymName());
   MemScopeInferAndPropagateHelper helper;
   auto gmSpaceAttr =
       AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::GM);
@@ -540,6 +682,12 @@ LogicalResult hivm::inferAndPropagateMemScopeForFunc(func::FuncOp op) {
         return op->emitOpError()
                << "Failed to propagate UB memory scope for argument # in VF"
                << arg.getArgNumber();
+    } else if (auto customOpUser = findCustomOpUser(arg)) {
+      if (failed(handleCustomOpArg(arg, customOpUser->customOp,
+                                   customOpUser->operand)))
+        return op->emitOpError() << "Failed to propagate memory scope for "
+                                    "argument # used by CustomOp"
+                                 << arg.getArgNumber();
     } else if (failed(helper.Run(arg, gmSpaceAttr))) {
       return op->emitOpError()
              << "Failed to propagate memory scope for argument #"
@@ -561,7 +709,7 @@ LogicalResult hivm::inferAndPropagateMemScopeForFunc(func::FuncOp op) {
 LogicalResult hivm::inferAndPropagateMemScopeForDistributed(hivm::CustomOp op) {
   auto gmSpaceAttr =
       AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::GM);
-  LDBG("Begin infer and propagate memory scope for distributed func"
+  LDBG("Begin infer and propagate memory scope for distributed func "
        << op.getSymbol());
   // For operands (actual SSA values) propagate GM scope to their root.
   MemScopeInferAndPropagateHelper helper;
@@ -620,7 +768,7 @@ LogicalResult hivm::inferAndPropagateMemScopeForDistributed(hivm::CustomOp op) {
 
 LogicalResult
 hivm::inferAndPropagateMemScopeForPointerCast(hivm::PointerCastOp op) {
-  LDBG("Begin infer and propagate memory scope for:" << op);
+  LDBG("Begin infer and propagate memory scope for: " << op);
 
   auto gmSpaceAttr =
       AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::GM);

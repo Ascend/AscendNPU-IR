@@ -26,6 +26,7 @@ include "bishengir/Dialect/HIVM/IR/HIVMAttrs.td"
 include "bishengir/Dialect/HIVM/IR/HIVMBase.td"
 include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.td"
 include "bishengir/Dialect/HIVM/IR/HIVMTraits.td"
+include "bishengir/Dialect/HIVM/Interfaces/OpLayoutInterface.td"
 
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/ViewLikeInterface.td"
@@ -73,6 +74,33 @@ def GetSubBlockNumOp : HIVM_Op<"get_sub_block_num", [Pure, CubeVectorCoreTypeTra
   }];
   let results = (outs I64:$result);
   let assemblyFormat = "attr-dict `->` type($result)";
+}
+
+def GetCoreIdOp
+    : HIVM_Op<"get_coreid", [Pure, CubeVectorCoreTypeTrait, OpPipeInterface,
+                             SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_S">,
+]> {
+  let summary = "Returns the physical core ID.";
+  let description = [{
+    This operation gets the core id of the current device thread.
+    This op will be lowered to a cce intrinsic call.
+  }];
+  let results = (outs I64:$result);
+  let assemblyFormat = "attr-dict `->` type($result)";
+}
+
+def SetCondOp
+    : HIVM_Op<"set_cond", [CubeVectorCoreTypeTrait, OpPipeInterface,
+                           SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_S">,
+]> {
+  let summary = "Set condition register.";
+  let description = [{
+    This operation stores its argument of type int64
+    into a fixed 'condition' register via a cce intrinsic call.
+  }];
+  let arguments = (ins I64:$cond);
+  let results = (outs);
+  let assemblyFormat = "$cond attr-dict `:` type($cond)";
 }
 
 def GetSysCntOp : HIVM_Op<"get_sys_cnt", [Pure, CubeVectorCoreTypeTrait]> {
@@ -225,6 +253,26 @@ def ConvertLayoutOp : HIVM_Op<"convert_layout",
 
   let hasVerifier = 1;
   let hasCanonicalizer = 1;
+}
+
+def PoolSlotOp : HIVM_Op<"experimental.pool_slot", [
+    Pure, CubeVectorCoreTypeTrait, ViewLikeOpInterface,
+    AllTypesMatch<["source", "result"]>]> {
+  let summary = "Select a physical slot for one independent buffer access";
+  let description = [{
+    Binds an access to one slot of a planned multi-address pointer_cast.
+    The result aliases the source; this operation allocates no memory and
+    performs no synchronization. The index must be in [0, address count).
+    Load and Compute may bind different slots of the same source.
+    EnableMultiBuffer lowers the binding after synchronization insertion.
+  }];
+  let arguments = (ins AnyMemRef:$source, Index:$slot);
+  let results = (outs AnyMemRef:$result);
+  let assemblyFormat = "$source `[` $slot `]` attr-dict `:` type($source)";
+  let extraClassDeclaration = [{
+    Value getViewSource() { return getSource(); }
+  }];
+  let hasVerifier = 1;
 }
 
 def PointerCastOp : HIVM_Op<"pointer_cast",
@@ -779,7 +827,8 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
                            HIVMStructuredOpInterface, ["getIteratorTypesArray",
                                                        "getIndexingMaps"]>,
                        DeclareOpInterfaceMethods<
-                           HIVMInferCoreTypeInterface, ["inferCoreType"]>],
+                           HIVMInferCoreTypeInterface, ["inferCoreType"]>,
+                       CustomLikeOpInterface],
                       traits)> {
 
   string customOpSummary = [{
@@ -812,6 +861,23 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       - CoreType : which core type to execute on, refer to TCoreTypeAttr.
       - VFMode   : which mode to run on vector units, refer to VFModeAttr.
                    Required when requiresVFMode() is true.
+      - arg_attrs: optional per-operand attributes array. Each element is a dictionary
+                   corresponding to one input or output operand. The `data_layout` key specifies
+                   the memory layout of the buffer as a `#hivm.data_layout` attribute.
+
+                   Example for a matrix multiplication (L1Mmad) with 5 inputs (A, B, C, transposeA, transposeB):
+                   ```mlir
+                   arg_attrs = [
+                     {data_layout = #hivm.data_layout<Fractal>},   // Matrix A buffer
+                     {data_layout = #hivm.data_layout<Fractal>},   // Matrix B buffer
+                     {data_layout = #hivm.data_layout<dotC_ND>},   // Matrix C (accumulator) buffer
+                     {},  // transposeA flag (no layout)
+                     {}   // transposeB flag (no layout)
+                   ]
+                   ```
+
+                   The data_layout describes the buffer's memory layout. Layout conversions
+                   are inserted automatically by the compiler when needed.
   }];
 
   dag args = (ins StrAttr:$name, Variadic<AnyType>:$inputs,
@@ -895,11 +961,16 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       static constexpr StringLiteral kBuiltinGatherLoadName = "__builtin_gather_load";
       static constexpr StringLiteral kBuiltinIndexSelectName = "__builtin_index_select";
       static constexpr StringLiteral kBuiltinIndirectAtomicName = "__builtin_indirect_atomic";
+      static constexpr StringLiteral kBuiltinOnlineSoftmaxNZName = "__builtin_online_softmax_nz";
       static constexpr StringLiteral kBuiltinHistogramName = "__builtin_histogram";
+      static constexpr StringLiteral kBuiltinSparseGatherLoadToL1BufferName =
+          "__builtin_sparse_gather_load_to_L1buffer";
       static constexpr StringLiteral kBuiltinProtonGetSysCntName =
           "__builtin_proton_get_sys_cnt";
       static constexpr StringLiteral kBuiltinProtonCircularStoreName =
           "__builtin_proton_circular_store";
+      static constexpr StringLiteral kBuiltinProtonScopeBoundaryName =
+          "__builtin_proton_scope_boundary";
 
       static constexpr StringLiteral kExtraAttrName = "extra_attr";
 
@@ -921,6 +992,9 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       static constexpr StringLiteral kMaxRankAttrName = "max_rank";
       static constexpr StringLiteral kInplaceOutsAttrName = "inplace_outs";
       static constexpr StringLiteral kInlineModeAttrName = "hivm.inline_mode";
+
+      std::optional<int32_t>
+      getInplaceInputIndexForOutput(int64_t outputIndex);
 
       int getMaxRank() {
         if (auto maxRankAttr =
@@ -945,11 +1019,14 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
   }];
 }
 
-def CustomOp : HIVM_CustomOp<"custom", [SinglePipeOpTrait]> {
+def CustomOp : HIVM_CustomOp<"custom", [
+    SinglePipeOpTrait, CustomLikeOpInterface,
+]> {
   let summary = customOpSummary;
 
   let description = customOpDescription#customOpAttrsDescription#[{
       - Pipe     : which pipe to execute on, refer to PipeAttr.
+      - inplace_outs : input-to-output storage binding.
   }];
 
   let arguments = args;
@@ -963,8 +1040,10 @@ def CustomOp : HIVM_CustomOp<"custom", [SinglePipeOpTrait]> {
     struct BuiltinInfo {
       TCoreType coreType;
       PIPE pipe;
-      VFMode vfMode;
+      // std::nullopt for cube-core builtins, which have no VF mode.
+      std::optional<VFMode> vfMode;
       const SmallVector<size_t> gmAddrArgsIndices;
+      std::optional<InlineMode> inlineMode = std::nullopt;
     };
 
     // Map <builtin in name> <-> {CORE_TYPE, PIPE, VF_MODE, gmAddrArgsIndices}
@@ -1295,7 +1374,7 @@ def ScatterTOp : HIVM_Op<"scatterT",[
   let hasVerifier = 1;
 }
 
-def CustomMacroOp : HIVM_CustomOp<"custom_macro", [MacroOpTrait]> {
+def CustomMacroOp : HIVM_CustomOp<"custom_macro", [MacroOpTrait, CustomLikeOpInterface]> {
   let summary = customOpSummary;
 
   let description = customOpDescription#customOpAttrsDescription#[{
@@ -1348,7 +1427,8 @@ def CustomMacroOp : HIVM_CustomOp<"custom_macro", [MacroOpTrait]> {
       TCoreType coreType;
       PIPE inPipe;
       PIPE outPipe;
-      VFMode vfMode;
+      // std::nullopt for cube-core builtins, which have no VF mode.
+      std::optional<VFMode> vfMode;
       const SmallVector<size_t> gmAddrArgsIndices;
     };
 
@@ -1382,6 +1462,106 @@ def MultiBufferCounterOp : HIVM_Op<"multi_buffer_counter"> {
   }];
   let results = (outs I64:$counter);
   let assemblyFormat = "attr-dict `->` type($counter)";
+}
+
+// Shared Scalar state is externally updated. Conservatively model read/write
+// effects even on get so CSE/LICM cannot merge or speculate volatile queries.
+class TcbPoolOp<string mnemonic, list<Trait> traits = []>
+    : HIVM_Op<mnemonic, !listconcat([
+        MemoryEffects<[MemRead, MemWrite]>, HIVMCoreTypeInterface,
+        OpPipeInterface, SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_S">
+      ], traits)> {
+  let hasVerifier = 1;
+}
+
+def TcbPoolInitOp : TcbPoolOp<"tcb_pool_init", [CubeCoreTypeTrait]> {
+  let summary = "Initialize the shared TCB pool and reserved synchronization IDs";
+  let description = [{
+    Initialize the shared pool metadata in SSBUF. slot_bytes specifies the
+    size of each UB slot in bytes, and slot_count specifies the number of slots.
+    slots_per_buffer contains the number of contiguous slots required by each
+    of the two queues. search_begin and search_end specify each queue's
+    half-open search range in slot indices. Full-pool ranges provide shared
+    allocation; disjoint ranges provide partitioned allocation.
+
+    Each set bit in flag_mask reserves the corresponding ID in [0,15]. The
+    release queue depth is popcount(flag_mask), and each address queue has
+    depth three. Initialization marks all slots and reserved IDs free and
+    resets the release counters and the address indices for Cube and both AIVs.
+    The caller completes previous pool users before initialization and makes
+    the initialized metadata visible to both AIVs before use.
+  }];
+  let arguments = (ins MemRefRankOf<[I32], [1]>:$metadata,
+                       I32Attr:$slot_bytes, I32Attr:$slot_count,
+                       DenseI32ArrayAttr:$slots_per_buffer,
+                       DenseI32ArrayAttr:$search_begin,
+                       DenseI32ArrayAttr:$search_end,
+                       I32Attr:$flag_mask);
+  let assemblyFormat = "$metadata attr-dict `:` type($metadata)";
+
+}
+
+def TcbPoolAllocOp : TcbPoolOp<"tcb_pool_alloc", [CubeCoreTypeTrait]> {
+  let summary = "Allocate contiguous UB slots and a synchronization ID";
+  let description = [{
+    Allocate contiguous slots within the search range of segment 0 or 1 and
+    reserve a free synchronization ID. Reclaim allocations in AIV0 feedback
+    order as needed. Return the absolute UB byte address and ID, write
+    {startSlot, id} to the segment's address queue, and advance Cube's index.
+
+    pool is a planned contiguous i8 UB pointer_cast. Its slot geometry and
+    queue search ranges are configured by tcb_pool_init. The caller protects
+    each address entry until both AIVs have read it and publishes allocation
+    progress after issuing FIX and the FIX-to-Vector notification with the
+    returned ID.
+  }];
+  let arguments = (ins MemRefRankOf<[I32], [1]>:$metadata,
+                       MemRefRankOf<[I8], [1]>:$pool,
+                       I32Attr:$segment);
+  let results = (outs I64:$address, I32:$id);
+  let assemblyFormat = [{
+    $metadata `,` $pool attr-dict `:` type($metadata) `,` type($pool) `->` `(` type($address) `,` type($id) `)`
+  }];
+}
+
+def TcbPoolGetOp : TcbPoolOp<"tcb_pool_get", [VectorCoreTypeTrait]> {
+  let summary = "Read a TCB descriptor and publish AIV0 issue feedback";
+  let description = [{
+    Read the next address entry for segment 0 or 1 and return the absolute UB
+    byte address and synchronization ID. Each AIV advances its own index for
+    the segment. AIV0 also appends {segment, startSlot, id} to the release queue
+    and advances its tail; AIV1 updates only its address index.
+
+    The caller invokes get after Cube publishes the corresponding allocation.
+    Each AIV uses the returned ID for the FIX-to-Vector data synchronization
+    and the Vector-to-FIX completion notification. Release feedback records
+    descriptor consumption; completion is tracked by these notifications.
+  }];
+  let arguments = (ins MemRefRankOf<[I32], [1]>:$metadata,
+                       MemRefRankOf<[I8], [1]>:$pool,
+                       I32Attr:$segment);
+  let results = (outs I64:$address, I32:$id);
+  let assemblyFormat = [{
+    $metadata `,` $pool attr-dict `:` type($metadata) `,` type($pool) `->` `(` type($address) `,` type($id) `)`
+  }];
+}
+
+def TcbPoolReleaseOp : TcbPoolOp<"tcb_pool_release", [CubeCoreTypeTrait]> {
+  let summary = "Release all remaining TCB allocations";
+  let description = [{
+    Reclaim all remaining allocations in AIV0 feedback order, including
+    feedback published by subsequent gets. For each allocation, enqueue FIX
+    synchronization for both AIV completion notifications, mark its slots
+    free, and return its ID to the free bitmap. Finish when all reserved IDs
+    have been returned.
+
+    The caller stops allocation before release and keeps the remaining gets
+    eligible to execute. Release enqueues completion synchronization on FIX;
+    the caller completes the pipeline before resetting the pool metadata.
+    Release counters remain within their range for one pool lifetime.
+  }];
+  let arguments = (ins MemRefRankOf<[I32], [1]>:$metadata);
+  let assemblyFormat = "$metadata attr-dict `:` type($metadata)";
 }
 
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMOPS_TD

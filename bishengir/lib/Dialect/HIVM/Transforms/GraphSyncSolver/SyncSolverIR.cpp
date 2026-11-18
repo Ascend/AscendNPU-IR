@@ -34,7 +34,7 @@ using namespace hivm::syncsolver;
 
 namespace mlir::hivm::syncsolver {
 
-int OperationBase::globalIndex = 0;
+std::atomic<int> OperationBase::globalIndex{0};
 
 namespace {
 
@@ -202,6 +202,10 @@ std::string MemInfo::str() {
     ret += comma.get();
     ret += this->allocLikeInfo->str();
   }
+  if (this->poolInfo) {
+    ret += comma.get();
+    ret += "pool-address: " + op2str(this->poolInfo->address);
+  }
   if (this->subviewInfo) {
     ret += comma.get();
     ret += this->subviewInfo->str();
@@ -258,6 +262,9 @@ std::string Loop::str(int indent, bool recursive) const {
       getDebugOpIdSuffix(this->id);
   if (isParallel) {
     ret += " parallel-loop";
+  }
+  if (isAutoBlockifyLoop) {
+    ret += " auto-blockify-loop";
   }
   if (multibufferUnrollNum.has_value()) {
     ret += " multibuffer-unroll-num=" +
@@ -318,7 +325,8 @@ std::string RWOperation::str(int indent, bool recursive) const {
     pipesStr = "[<" + stringifyPIPE(this->pipeRead).str() + ">]";
   }
   ret += std::string(indent, ' ') + opStr + " " + coreTypeStr + " " + pipesStr +
-         " " + mergedUnitFlagInfo.str() + "\n";
+         " " + mergedUnitFlagInfo.str() +
+         (isAutoBlockifyDMA ? " auto-blockify-dma" : "") + "\n";
   if (indent) {
     for (auto memInfo : this->readMemInfo) {
       ret += std::string(indent + 2, ' ') + "read: " + memInfo.str() + "\n";

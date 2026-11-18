@@ -25,7 +25,7 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 
-#include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Pass/Pass.h"
 
 #include <memory>
@@ -66,10 +66,6 @@ namespace hivm {
 /// Create a pass to infer the core type of each function.
 std::unique_ptr<Pass> createInferFuncCoreTypePass();
 
-/// Create a pass to normalize bufferization.to_tensor ops: isolate the hivm
-/// memory-space info and expose memref-level writes to tensor-level analysis.
-std::unique_ptr<Pass> createNormalizeToTensorOpPass();
-
 /// Create a pass to convert ops from other dialects to HIVM Ops.
 std::unique_ptr<Pass> createConvertToHIVMOpPass();
 
@@ -100,21 +96,30 @@ std::unique_ptr<Pass> createAllocToAllocaPass();
 std::unique_ptr<Pass> createCloneTensorEmptyPass();
 
 /// Create a pass to infer data layout information for HIVM Ops.
-std::unique_ptr<Pass> createInferHIVMDataLayoutPass(
-    const InferHIVMDataLayoutOptions &options = {});
+std::unique_ptr<Pass>
+createInferHIVMDataLayoutPass(const InferHIVMDataLayoutOptions &options = {});
 
 /// Create a pass to infer vf mode for HIVM Ops.
 std::unique_ptr<Pass> createInferVFModePass();
 
 /// Create a pass to mark multi buffer for HIVM Ops.
 /// If options is {}, enableAuto is false as default.
-/// And this pass contains method for marking workspace multiple buffer, which
-/// could be turned off by option 'limitAutoMultiBufferOnlyForLocalBuffer'
+/// Workspace marking is disabled when gm count is 1 (legacy:
+/// 'limitAutoMultiBufferOnlyForLocalBuffer', or --multibuffer-mode gm=1).
 std::unique_ptr<Pass>
 createMarkMultiBufferPass(const MarkMultiBufferOptions &options = {});
 
 /// Create a pass to enable multi buffer.
 std::unique_ptr<Pass> createEnableMultiBufferPass();
+
+/// Separate Cube GM loads and assign their preload stages.
+std::unique_ptr<Pass> createSeparateLoadComputePass();
+
+/// Mark shared local buffer capacity for separated loads.
+std::unique_ptr<Pass> createMarkBufferPoolPass();
+
+/// Materialize independent load submission and explicit access slots.
+std::unique_ptr<Pass> createEnableBufferPoolPass();
 
 /// Create a pass to add FFTS (arg0) to every SyncBlockSetOp
 std::unique_ptr<Pass> createAddFFTSToSyncBlockSetOpPass();
@@ -126,9 +131,8 @@ std::unique_ptr<Pass> createLowerMultiBufferCounterPass();
 std::unique_ptr<Pass>
 createPlanMemoryPass(const PlanMemoryOptions &planMemoryOption = {});
 
-/// Create a pass to plan memory on regbase targets.
-std::unique_ptr<Pass>
-createPlanMemoryRegBasePass(const PlanMemoryRegBaseOptions &options = {});
+/// Insert pool operations for a successful TCB memory-planning fallback.
+std::unique_ptr<Pass> createTcbPoolOpInsertionPass();
 
 /// Create a pass to inject sync
 std::unique_ptr<Pass>
@@ -174,7 +178,8 @@ std::unique_ptr<Pass> createHIVMRecognizeDisContinuousStorePass();
 std::unique_ptr<Pass> createHIVMOptSinglePointPass();
 
 /// Create a pass to constantize buffers with dynamic sizes.
-std::unique_ptr<Pass> createConstantizeBufferSizePass();
+std::unique_ptr<Pass> createConstantizeBufferSizePass(
+    const ConstantizeBufferSizeOptions &options = {});
 
 /// Create a pass to allocate extra buffer
 std::unique_ptr<Pass> createAllocExtraBufferPass();
@@ -184,6 +189,14 @@ std::unique_ptr<Pass> createOutlineAllocInVFPass();
 
 /// Create a pass to outline hivm.load in VF by rewriting it to hivm.copy.
 std::unique_ptr<Pass> createOutlineCopyInVFPass();
+
+/// Create a pass that promotes temporary tensor buffers inside vector
+/// functions into enclosing loop iter_args.
+std::unique_ptr<Pass> createNormalizeTmpBufferInVfPass();
+
+/// Create a pass to rewrite bufferization.alloc_tensor(copy...) into a
+/// bufferization.alloc_tensor + hivm.hir.copy pair.
+std::unique_ptr<Pass> createDecomposeAllocTensorCopyPass();
 
 /// Create a pass to remove unnecessary buffer address return
 std::unique_ptr<Pass> createHIVMOptFuncOutputPass();
@@ -206,6 +219,12 @@ std::unique_ptr<Pass> createMergeSamePreloadScopesPass(
 std::unique_ptr<Pass> createSinkExclusivePreloadWorkPass(
     const SinkExclusivePreloadWorkOptions &options = {});
 
+// After CVPipelining and before MarkMultiBuffer: reposition ops between
+// preload scopes and inside a scope. Does not sink mb=1 allocs. Registered
+// kernels only unless bypassed.
+std::unique_ptr<Pass> createRepositionPreloadWorkPass(
+    const RepositionPreloadWorkOptions &options = {});
+
 // Create a pass to split mixed-core scf.if ops into per-core if chains
 // (Ascend950 / RegBase). Intended to run before SplitMixKernel.
 std::unique_ptr<Pass> createSplitMixedIfConditionalsPass();
@@ -213,6 +232,8 @@ std::unique_ptr<Pass> createSplitMixedIfConditionalsPass();
 // Create a pass to mark L1/UB allocs with the tightly-coupled-buffer attribute
 // before SplitMixKernel clones the MIX function.
 std::unique_ptr<Pass> createMarkTightlyCoupledBufferPass();
+std::unique_ptr<Pass> createMarkTightlyCoupledBufferPass(
+    const MarkTightlyCoupledBufferOptions &options);
 
 // Create a pass to hoist yielded tightly-coupled allocs out of inner regions so
 // the AIC/AIV multi-buffer anchor stays consistent after SplitMixKernel.
@@ -222,8 +243,18 @@ std::unique_ptr<Pass> createHoistTightlyCoupledAllocPass();
 std::unique_ptr<Pass>
 createMarkRealCoreTypePass(const MarkRealCoreTypeOptions &options = {});
 
+// Aiv substitute for hivm-mark-real-core-type. The mix path clones the
+// module and splits it to learn CUBE vs VECTOR. Pure AIV has no cube side,
+// so this stamps VECTOR on the same scalar-pipe ops, or removes those attrs
+// when the skipped pass is the cleanup invocation.
+LogicalResult substituteMarkRealCoreType(Operation *op, const Pass &pass);
+
 // Create a pass to run the HIVM canonicalization pass pipeline on a function.
 std::unique_ptr<Pass> createHIVMCanonicalizationPipelinePass();
+
+// Create a pass to infer buffer size upper bounds from slice chains. Must
+// run before createSetBufferSizePass, which consumes the inserted marks.
+std::unique_ptr<Pass> createInferBufferSizeFromSlicePass();
 
 // Create a pass to set buffer size
 std::unique_ptr<Pass> createSetBufferSizePass();
@@ -268,13 +299,16 @@ std::unique_ptr<Pass> createInitEntryKernelPass();
 // Create a pass to insert fixpipe ops.
 std::unique_ptr<Pass> createInsertFixpipePass();
 
+// Create a pass to sink a vtranspose onto an absorbable fixpipe.
+std::unique_ptr<Pass> createOptimizeTransposePlacementPass();
+
 // Create a pass to inline ops into fixpipe.
 std::unique_ptr<Pass>
 createInlineFixpipePass(const InlineFixpipeOptions &options = {});
 
 // Create a pass to tile batch matmul into loop
-std::unique_ptr<Pass> createTileBatchMMIntoLoopPass(
-    const TileBatchMMIntoLoopOptions &options = {});
+std::unique_ptr<Pass>
+createTileBatchMMIntoLoopPass(const TileBatchMMIntoLoopOptions &options = {});
 
 // Create a pass to lift zero rank
 std::unique_ptr<Pass> createLiftZeroRankPass();
@@ -282,6 +316,12 @@ std::unique_ptr<Pass> createLiftZeroRankPass();
 // Create a pass to insert load/store op for mix cv function.
 std::unique_ptr<Pass> createInsertLoadStoreForMixCVPass(
     const InsertLoadStoreForMixCVOptions &options = {});
+
+// Aiv substitute for hivm-insert-load-store-for-mix-cv. The mix path
+// inserts cube/vector boundary copies. Pure AIV still needs the VECTOR
+// core type that pass would have written, without those copies.
+LogicalResult substituteInsertLoadStoreForMixCV(Operation *op,
+                                                const Pass &pass);
 
 std::unique_ptr<Pass> createInsertLoadStoreForScalarPass();
 
@@ -349,13 +389,14 @@ std::unique_ptr<Pass> createSubBlockGuardCleanupPass();
 std::unique_ptr<Pass> createHIVMBubbleUpExtractSlicePass(
     const HIVMBubbleUpExtractSliceOptions &options = {});
 
-/// Create a pass to vectorize hivm ops.
-std::unique_ptr<Pass> createHIVMVectorizeOpsPass();
+/// Create the tensor-level HIVM vectorization pass.
+std::unique_ptr<Pass> createHIVMVectorizePass();
 
 // Create a pass to insert init and finish for debug.
 std::unique_ptr<Pass> createInsertInitAndFinishForDebugPass();
 
-// Create a pass to mark memref.loads that need to disable dcache.
+// Create a pass to mark scalar and structured loads that need to disable
+// dcache.
 std::unique_ptr<Pass> createMarkDisableLoadPass();
 
 /// Create a pass to mark sync_block_lock/sync_block_unlock with
@@ -376,6 +417,9 @@ std::unique_ptr<Pass> createAutoBlockifyParallelLoopPass();
 // Create CV pipelining pass
 std::unique_ptr<Pass>
 createCVPipeliningPass(const CVPipeliningOptions &options = {});
+
+// Create Outline CV Scopes pass for CV pipelining v2
+std::unique_ptr<Pass> createOutlineCVScopesPass();
 
 // Create a pass to compose expands and collapses ops
 std::unique_ptr<Pass> createComposeCollapseExpandPass();
@@ -399,6 +443,9 @@ std::unique_ptr<Pass> createSplitSimtModulePass();
 
 // Mark SIMT scopes no_inline so inline-scope keeps them outlined
 std::unique_ptr<Pass> createMarkSimtScopeNoInlinePass();
+
+// Inline vf-scope regions nested within preload scopes
+std::unique_ptr<Pass> createInlineVFScopePass();
 
 // Create scope for gather_load and scatter_store
 std::unique_ptr<Pass> createAutoScopePass();
@@ -438,9 +485,15 @@ std::unique_ptr<Pass> createCombineOptimizedConvertLayoutPass();
 /// Create a pass to normalize conv1d operation.
 std::unique_ptr<Pass> createNormalizeConvOpsPass();
 
+/// Prepare storage versions for iteration-local preload buffers.
+std::unique_ptr<Pass> createMarkPreloadBuffersPass();
+
 /// Create a pass to create preload for CV pipelining
 std::unique_ptr<Pass>
 createCreatePreloadPass(const CreatePreloadOptions &options = {});
+
+/// Peel preload prologue/epilogue after GraphSyncSolver.
+std::unique_ptr<Pass> createPeelPreloadPass();
 
 /// Create a pass to remove HIVM data layout annotation.
 std::unique_ptr<Pass> createRemoveHIVMDataLayoutAnnotationPass();
@@ -452,11 +505,20 @@ std::unique_ptr<Pass> createRemoveCopyOpsPass();
 /// on-the-fly transpose.
 std::unique_ptr<Pass> createFuseTransposeIntoLoadPass();
 
-/// Create a pass that runs One-Shot analysis and inserts tensor copies to
-/// resolve bufferization conflicts, without performing the bufferization.
-std::unique_ptr<Pass> createTensorCopyInsertionPass();
-std::unique_ptr<Pass> createTensorCopyInsertionPass(
-    const bufferization::OneShotBufferizationOptions &options);
+//===----------------------------------------------------------------------===//
+// V2 pipeline passes (see Passes.td)
+//===----------------------------------------------------------------------===//
+
+std::unique_ptr<Pass> createV2SplitKernelPass();
+std::unique_ptr<Pass>
+createV2VerifyStagePass(const V2VerifyStageOptions &options = {});
+
+/// Build and preserve `ModuleTargetAnalysis` for the current pipeline anchor.
+std::unique_ptr<Pass> createCacheModuleTargetPass();
+
+/// Check registered HIVM capability patterns. Fixpipe is the first pattern.
+/// Not part of the default pipeline. `strict` accepts only native.
+std::unique_ptr<Pass> createVerifyCapabilityPass();
 
 //===----------------------------------------------------------------------===//
 // Registration

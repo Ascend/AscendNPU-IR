@@ -282,7 +282,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %res:2 = scf.for %i = %c0 to %c2 step %c1
         iter_args(%acc = %C_init, %vec = %vec_init)
         -> (tensor<64x64xf32>, tensor<64x64xf32>) {
-      %mmad = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c}
+      %mmad = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32]}
           ins(%A, %B, %true, %c64, %c64, %c64
               : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index)
           outs(%acc : tensor<64x64xf32>) -> tensor<64x64xf32>
@@ -323,7 +323,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %res:4 = scf.for %i = %c0 to %c2 step %c1
         iter_args(%acc0 = %C0, %acc1 = %C1, %v0 = %vec0, %v1 = %vec1)
         -> (tensor<64x64xf32>, tensor<64x64xf32>, tensor<64x64xf32>, tensor<64x64xf32>) {
-      %m0 = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c}
+      %m0 = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32]}
           ins(%A, %B, %true, %c64, %c64, %c64
               : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index)
           outs(%acc0 : tensor<64x64xf32>) -> tensor<64x64xf32>
@@ -373,7 +373,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %inner:2 = scf.for %j = %c0 to %c2 step %c1
           iter_args(%innerAcc = %acc1, %innerVec = %vec)
           -> (tensor<64x64xf32>, tensor<64x64xf32>) {
-        %mmad = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c}
+        %mmad = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32]}
             ins(%A, %B, %true, %c64, %c64, %c64
                 : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index)
             outs(%innerAcc : tensor<64x64xf32>) -> tensor<64x64xf32>

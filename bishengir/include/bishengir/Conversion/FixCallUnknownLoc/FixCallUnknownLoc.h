@@ -19,6 +19,8 @@ namespace mlir {
 /// Create a pass to fix UnknownLoc on call ops by inheriting location from
 /// users or parent ops.
 std::unique_ptr<Pass> createFixCallUnknownLocPass();
+std::unique_ptr<Pass>
+createFixCallUnknownLocPass(const FixCallUnknownLocOptions &options);
 
 } // namespace mlir
 

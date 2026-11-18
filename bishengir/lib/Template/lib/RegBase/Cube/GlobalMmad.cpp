@@ -16,7 +16,8 @@
 
 #ifdef ENABLE_CPU_TRACE_INTRINSIC
 #else
-#if defined(__DAV_M300__) || defined(__DAV_C310__)
+#include "ArchDefs.h"
+#if BISHENG_TPL_REGBASE_OR_M300
 #include "Macro/MacroUtils.h"
 #include "Macro/common.h"
 #include "Macro/core/gemm_core.h"
@@ -75,7 +76,9 @@ template <uint16_t M, uint16_t N, uint16_t K>
   nd_para = nd_para | (ndNum & 0xffff);
   nd_para = nd_para | ((src_nd_stride & 0xffff) << 16);
   nd_para = nd_para | ((dst_nd_stride & 0xffff) << 32);
+#if BISHENG_TPL_HAS_FIXPIPE_ND_PARA
   set_nd_para(nd_para);
+#endif
 
   // Parameters for mad
   config |= (TILE_SIZE_A & 0x0fff) << 0;
@@ -95,15 +98,21 @@ template <uint16_t M, uint16_t N, uint16_t K>
 
       // Only load A tile once per outer loop iteration
       if (!b_col) {
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
         uint64_t config =
             ((uint64_t)(TILE_SIZE_A / 16)) | ((uint64_t)1) << 16 |
             ((uint64_t)((K == 1024) ? DST_L1A_C0_STRIDE : K_F)) << 32 |
             ((uint64_t)((K == 1024) ? K_F : DST_L1A_C0_STRIDE)) << 48;
         set_mte2_nz_para(config);
+#if BISHENG_TPL_HAS_DMA_PRE_ALLOCATION
+        copy_gm_to_cbuf_multi_nd2nz(l1_a, a + a_row * K * TILE_SIZE_A, 0,
+                                    K * sizeof(half), 0, 16, K,
+                                    K * 16 * sizeof(half), false, false);
+#else
         copy_gm_to_cbuf_multi_nd2nz(l1_a, a + a_row * K * TILE_SIZE_A, 0,
                                     K * sizeof(half), 0, 16, K,
                                     K * 16 * sizeof(half), false);
+#endif
 #else
         copy_gm_to_cbuf_multi_nd2nz_b16(l1_a, a + a_row * K * TILE_SIZE_A, 0,
                                         TILE_SIZE_A / 16, 16, K, K * 16, K,
@@ -112,15 +121,21 @@ template <uint16_t M, uint16_t N, uint16_t K>
       }
 
 // Copy tile for B to L1, K_F by TILE_SIZE_B
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
       uint64_t config =
           ((uint64_t)(K_F / 16)) | ((uint64_t)1) << 16 |
           ((uint64_t)((K == 1024) ? DST_L1B_C0_STRIDE : TILE_SIZE_B)) << 32 |
           ((uint64_t)((K == 1024) ? TILE_SIZE_B : DST_L1B_C0_STRIDE)) << 48;
       set_mte2_nz_para(config);
+#if BISHENG_TPL_HAS_DMA_PRE_ALLOCATION
+      copy_gm_to_cbuf_multi_nd2nz(l1_b, b + b_col * TILE_SIZE_B, 0,
+                                  N * sizeof(half), 0, 16, TILE_SIZE_B,
+                                  N * 16 * sizeof(half), false, false);
+#else
       copy_gm_to_cbuf_multi_nd2nz(l1_b, b + b_col * TILE_SIZE_B, 0,
                                   N * sizeof(half), 0, 16, TILE_SIZE_B,
                                   N * 16 * sizeof(half), false);
+#endif
 #else
       copy_gm_to_cbuf_multi_nd2nz_b16(l1_b, b + b_col * TILE_SIZE_B, 0,
                                       K_F / 16, 16, TILE_SIZE_B, N * 16, N,
@@ -132,7 +147,7 @@ template <uint16_t M, uint16_t N, uint16_t K>
       wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID0); // backward 2
 
       if (!b_col) {
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
         load_cbuf_to_ca(l0a_a, l1_a, 0, 0, 1, TILE_SIZE_A * K_F / (16 * 16), 1,
                         1, false);
 #else
@@ -140,7 +155,7 @@ template <uint16_t M, uint16_t N, uint16_t K>
                         false, addr_cal_mode_t::inc);
 #endif
       }
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
       load_cbuf_to_cb(l0b_b, l1_b, 0, 0, K_F / 16, TILE_SIZE_B / 16, K_F / 16,
                       TILE_SIZE_B / 16, true);
 #else
@@ -154,7 +169,7 @@ template <uint16_t M, uint16_t N, uint16_t K>
       wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
 
       wait_flag(PIPE_FIX, PIPE_M, EVENT_ID0); // backward 3
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
       mad(l0c_o_float, l0a_a, l0b_b, TILE_SIZE_A, K, TILE_SIZE_B, 0, false,
           false, true);
 #else
@@ -166,18 +181,30 @@ template <uint16_t M, uint16_t N, uint16_t K>
 
       set_flag(PIPE_M, PIPE_MTE1, EVENT_ID0); // backward 2
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
       uint64_t nd_para = 0;
       nd_para = nd_para | (1 & 0xffff);
       nd_para = nd_para | ((((uint64_t)(1)) & 0xffff) << 16);
       nd_para = nd_para | ((((uint64_t)(1)) & 0xffff) << 32);
+#if BISHENG_TPL_HAS_FIXPIPE_ND_PARA
       set_nd_para(nd_para);
+#endif
+#if BISHENG_TPL_HAS_FIXPIPE_EXPANDED_OVERLOAD
+      copy_matrix_cc_to_gm((__gm__ half *)(result + a_row * N * TILE_SIZE_A +
+                                           b_col * TILE_SIZE_B),
+                           (__cc__ float *)l0c_o_float, /*sid*/ 0, NSize, MSize,
+                           (uint32_t)N_F, (uint16_t)MSize,
+                           /*l2_cache_ctl*/ 0, /*quant_pre_rnd*/ false, 0, 0,
+                           QuantMode_t::F322F16, 0, false, true, 0, 0, false,
+                           false, 0, false, false, true, false, false, false);
+#else
       copy_matrix_cc_to_gm((__gm__ half *)(result + a_row * N * TILE_SIZE_A +
                                            b_col * TILE_SIZE_B),
                            (__cc__ float *)l0c_o_float, 0, NSize, MSize,
                            (uint32_t)N_F, (uint16_t)MSize, 0, 0, 0,
                            QuantMode_t::F322F16, 0, false, true, 0, 0, false,
                            false, 0, false, false, true, false, false, false);
+#endif
 #else
       copy_matrix_cc_to_gm((__gm__ half *)(result + a_row * N * TILE_SIZE_A +
                                            b_col * TILE_SIZE_B),

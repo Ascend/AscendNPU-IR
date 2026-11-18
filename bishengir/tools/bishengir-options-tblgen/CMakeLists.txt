@@ -11,6 +11,7 @@ add_tablegen(bishengir-options-tblgen BISHENGIR_OPTIONS
   CompileConfigGen.cpp
   ConfigsToOptionsConversionGen.cpp
   PassOptionsGen.cpp
+  PassMetadataGen.cpp
 )
 
 target_link_libraries(bishengir-options-tblgen

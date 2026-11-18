@@ -1,6 +1,4 @@
-// REQUIRES: regbase
-// TODO: enable after migrating regbase pipeline dependencies
-// RUN: bishengir-opt -convert-math-to-hfusion %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt -hacc-append-device-spec=target=Ascend950PR_9579 -convert-math-to-hfusion %s -split-input-file -verify-diagnostics | FileCheck %s
 
 // === math.exp ===
 
@@ -163,7 +161,7 @@ func.func @test_scalar_floor_bf16(%arg0 : bf16) -> bf16 {
 // CHECK-LABEL: func.func @test_scalar_sin_f32
 func.func @test_scalar_sin_f32(%arg0 : f32) -> f32 {
   // CHECK:       tensor.from_elements
-  // CHECK:       hfusion.elemwise_unary {fun = #hfusion.unary_fn<sin>}
+  // CHECK:       hivm.hir.custom {{.*}} symbol = "sin_fp32_simt_1d"
   // CHECK:       tensor.extract
   %ret = math.sin %arg0 : f32
   return %ret : f32
@@ -175,7 +173,7 @@ func.func @test_scalar_sin_f32(%arg0 : f32) -> f32 {
 func.func @test_scalar_sin_bf16(%arg0 : bf16) -> bf16 {
   // CHECK:       arith.extf {{.*}} : bf16 to f32
   // CHECK:       tensor.from_elements
-  // CHECK:       hfusion.elemwise_unary {fun = #hfusion.unary_fn<sin>}
+  // CHECK:       hivm.hir.custom {{.*}} symbol = "sin_fp32_simt_1d"
   // CHECK:       tensor.extract
   // CHECK:       arith.truncf {{.*}} : f32 to bf16
   %ret = math.sin %arg0 : bf16
@@ -189,7 +187,7 @@ func.func @test_scalar_sin_bf16(%arg0 : bf16) -> bf16 {
 // CHECK-LABEL: func.func @test_scalar_cos_f32
 func.func @test_scalar_cos_f32(%arg0 : f32) -> f32 {
   // CHECK:       tensor.from_elements
-  // CHECK:       hfusion.elemwise_unary {fun = #hfusion.unary_fn<cos>}
+  // CHECK:       hivm.hir.custom {{.*}} symbol = "cos_fp32_simt_1d"
   // CHECK:       tensor.extract
   %ret = math.cos %arg0 : f32
   return %ret : f32
@@ -201,7 +199,7 @@ func.func @test_scalar_cos_f32(%arg0 : f32) -> f32 {
 func.func @test_scalar_cos_bf16(%arg0 : bf16) -> bf16 {
   // CHECK:       arith.extf {{.*}} : bf16 to f32
   // CHECK:       tensor.from_elements
-  // CHECK:       hfusion.elemwise_unary {fun = #hfusion.unary_fn<cos>}
+  // CHECK:       hivm.hir.custom {{.*}} symbol = "cos_fp32_simt_1d"
   // CHECK:       tensor.extract
   // CHECK:       arith.truncf {{.*}} : f32 to bf16
   %ret = math.cos %arg0 : bf16

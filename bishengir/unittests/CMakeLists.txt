@@ -24,6 +24,10 @@ endfunction()
 
 add_subdirectory(Dialect)
 add_subdirectory(Pass)
+add_subdirectory(Target)
+if(BISHENGIR_BUILD_HIVMC)
+  add_subdirectory(Tools)
+endif()
 
 get_property(bishengir_unittest_run_targets GLOBAL PROPERTY BISHENGIR_UNITTEST_RUN_TARGETS)
 list(SORT bishengir_unittest_run_targets)

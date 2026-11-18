@@ -20,6 +20,7 @@
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
+#include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/Builders.h"
 #include <optional>
@@ -38,43 +39,15 @@ Operation *createCmpOp(OpBuilder &b, Location loc, Value lhs, Value rhs,
 
 template <typename T> T selectRoundMode(Type inType, Type outType) {
   if (isa<Float8E5M2Type>(inType) || isa<Float8E4M3FNType>(inType) ||
-    isa<Float8E5M2Type>(outType) || isa<Float8E4M3FNType>(outType))
+      isa<Float8E5M2Type>(outType) || isa<Float8E4M3FNType>(outType))
     return T::RINT;
-  if (inType.isF32()) {
-    if (outType.isF16() || outType.isBF16() || outType.isF32() ||
-        isa<Float8E4M3FNType>(outType) || isa<Float8E5M2Type>(outType)) {
-      return T::RINT;
-        }
-  }
-
-  if (outType.isF32()) {
-    if (inType.isF16() || inType.isBF16() || isa<Float8E4M3FNType>(inType) ||
-        isa<Float8E5M2Type>(inType)) {
-      return T::RINT;
-        }
-  }
-
-  if (inType.isInteger(8) &&
-      outType.isF16()) {
-    return T::RINT;
-  }
-
   if (inType.isInteger(16) && outType.isInteger(8)) {
     return T::TRUNCWITHOVERFLOW;
   }
-
-  if (isa<mlir::FloatType>(inType) && outType.isInteger()) {
-    return T::TRUNC;
-  }
-
-  if (inType.isInteger() && isa<mlir::FloatType>(outType)) {
-    return T::TRUNC;
-  }
-
-  if (inType.isInteger() && outType.isInteger()) {
-    return T::RINT;
-  }
-  llvm::report_fatal_error("unsupported type cast.");
+  // The documented dtype cast rules ("int -> float = RINT", "float -> int =
+  // TRUNC", ...) live in mlir::utils::selectRoundMode, the single source of
+  // truth for cast round-mode selection.
+  return mlir::utils::selectRoundMode<T>(inType, outType);
 }
 
 } // namespace mlir::hfusion

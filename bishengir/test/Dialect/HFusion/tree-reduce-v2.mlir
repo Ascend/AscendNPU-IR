@@ -1,5 +1,5 @@
-// RUN: bishengir-opt --tree-reduce-v2="enable-ar enable-ra" %s | FileCheck %s
-// RUN: bishengir-opt --tree-reduce-v2="enable-ar enable-ra" --one-shot-bufferize="bufferize-function-boundaries allow-return-allocs-from-loops allow-unknown-ops" %s | FileCheck %s --check-prefix=BUFFERIZE
+// RUN: bishengir-opt --tree-reduce-v2="enable-ar enable-ra ascend-style-ra=true" %s | FileCheck %s
+// RUN: bishengir-opt --tree-reduce-v2="enable-ar enable-ra ascend-style-ra=true" --one-shot-bufferize="bufferize-function-boundaries allow-return-allocs-from-loops allow-unknown-ops" %s | FileCheck %s --check-prefix=BUFFERIZE
 
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>, #dlti.dl_entry<"UB_SIZE", 2031616 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"MINIMAL_D_CACHE_SIZE", 262144 : i32>, #dlti.dl_entry<"MAXIMUM_D_CACHE_SIZE", 983040 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.target = #hacc.target<"Ascend910_9579">} {
 
@@ -25,23 +25,16 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
   // CHECK-LABEL: func.func @triton_sum_2D_dim0_outlined_vf_1
   // CHECK-NOT: linalg.copy
   // CHECK-NOT: vector.multi_reduction <add>
-  // CHECK: scf.for
-  // CHECK:   scf.for
-  // CHECK:     arith.divui
-  // CHECK:     scf.for
-  // CHECK:       vector.create_mask
-  // CHECK:       scf.for
-  // CHECK:         vector.mask {{.*}} { vector.transfer_read {{.*}} : tensor<1x?xf32>, vector<1x64xf32> }
-  // CHECK:         arith.addf {{.*}} : vector<1x64xf32>
-  // CHECK:         vector.mask {{.*}} { vector.transfer_write {{.*}} : vector<1x64xf32>, tensor<1x?xf32> }
-  // CHECK:     scf.for
-  // CHECK:       vector.create_mask
-  // CHECK:       vector.mask {{.*}} { vector.transfer_read {{.*}} : tensor<1x?xf32>, vector<1x64xf32> }
-  // CHECK:       arith.addf {{.*}} : vector<1x64xf32>
-  // CHECK:       vector.shape_cast {{.*}} : vector<1x64xf32> to vector<64xf32>
-  // CHECK:       vector.mask {{.*}} { vector.transfer_read {{.*}} : tensor<?xf32>, vector<64xf32> }
+  // CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<384xf32>, tensor<128x384xf32>)
+  // CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<384xf32>, tensor<128x384xf32>)
+  // CHECK: vector.create_mask {{.*}} : vector<64xi1>
+  // CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<128x384xf32>)
+  // CHECK: vector.mask {{.*}} { vector.transfer_read {{.*}} : tensor<128x384xf32>, vector<64xf32> }
   // CHECK:       arith.addf {{.*}} : vector<64xf32>
-  // CHECK:       vector.mask {{.*}} { vector.transfer_write {{.*}} : vector<64xf32>, tensor<?xf32> }
+  // CHECK: vector.mask {{.*}} { vector.transfer_write {{.*}} : vector<64xf32>, tensor<128x384xf32> }
+  // CHECK: vector.mask {{.*}} { vector.transfer_read {{.*}} : tensor<384xf32>, vector<64xf32> }
+  // CHECK: arith.addf {{.*}} : vector<64xf32>
+  // CHECK: vector.mask {{.*}} { vector.transfer_write {{.*}} : vector<64xf32>, tensor<384xf32> }
   // CHECK: return
 
   func.func @triton_sum_2D_dim0_outlined_vf_1(%arg0: tensor<128x384xf32>, %arg1: index, %arg2: index, %arg3: index, %arg4: index, %arg5: index, %arg6: tensor<384xf32>) -> tensor<384xf32> attributes {hivm.vector_function, no_inline} {
@@ -97,37 +90,95 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     return %0 : tensor<384xf16>
   }
 
+  // Trace through the padded scratch buffer and the masked conversion to the
+  // real input. The scratch value is deliberately the lhs of the add to verify
+  // that inference does not depend on the operand order of a commutative op.
+  // CHECK-LABEL: func.func @tree_reduce_scratch_buffer
+  // CHECK: %[[C8192:c8192_[0-9]+]] = arith.constant 8192 : index
+  // CHECK: scf.for {{.*}} to %[[C8192]] step %{{.*}} iter_args
+  // CHECK: tensor.extract_slice %arg1
+  // CHECK: vector<1x16xf16>
+  // CHECK-NOT: vector<1x64xf32>
+  // CHECK: return
+  func.func @tree_reduce_scratch_buffer(
+      %arg0: tensor<1x64xf32>, %arg1: tensor<8192x6xf16>,
+      %arg2: tensor<8192x6xf32>, %arg3: tensor<8192xf32>)
+      -> tensor<8192xf32> attributes {hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c6 = arith.constant 6 : index
+    %c8192 = arith.constant 8192 : index
+    %zero_f16 = arith.constant 0.000000e+00 : f16
+    %zero_f32 = arith.constant 0.000000e+00 : f32
+    %zero = arith.constant dense<0.000000e+00> : vector<1x64xf32>
+    %0 = scf.for %arg4 = %c0 to %c8192 step %c1
+        iter_args(%arg5 = %arg3) -> tensor<8192xf32> {
+      %cleared = vector.transfer_write %zero, %arg0[%c0, %c0]
+          : vector<1x64xf32>, tensor<1x64xf32>
+      %scratch_slice = tensor.extract_slice %cleared[0, 0] [1, 6] [1, 1]
+          : tensor<1x64xf32> to tensor<1x6xf32>
+      %input_slice = tensor.extract_slice %arg1[%arg4, 0] [1, 6] [1, 1]
+          : tensor<8192x6xf16> to tensor<1x6xf16>
+      %convert_slice = tensor.extract_slice %arg2[%arg4, 0] [1, 6] [1, 1]
+          : tensor<8192x6xf32> to tensor<1x6xf32>
+      %mask = vector.create_mask %c1, %c6 : vector<1x64xi1>
+      %input = vector.mask %mask { vector.transfer_read %input_slice[%c0, %c0], %zero_f16 {in_bounds = [true, true]} : tensor<1x6xf16>, vector<1x64xf16> } : vector<1x64xi1> -> vector<1x64xf16>
+      %extended = arith.extf %input : vector<1x64xf16> to vector<1x64xf32>
+      %converted = vector.mask %mask { vector.transfer_write %extended, %convert_slice[%c0, %c0] {in_bounds = [true, true]} : vector<1x64xf32>, tensor<1x6xf32> } : vector<1x64xi1> -> tensor<1x6xf32>
+      %converted_read = vector.mask %mask { vector.transfer_read %converted[%c0, %c0], %zero_f32 {in_bounds = [true, true]} : tensor<1x6xf32>, vector<1x64xf32> } : vector<1x64xi1> -> vector<1x64xf32>
+      %scratch_read = vector.mask %mask { vector.transfer_read %scratch_slice[%c0, %c0], %zero_f32 {in_bounds = [true, true]} : tensor<1x6xf32>, vector<1x64xf32> } : vector<1x64xi1> -> vector<1x64xf32>
+      %combined = arith.addf %scratch_read, %converted_read {reductionOp}
+          : vector<1x64xf32>
+      %updated_scratch = vector.mask %mask { vector.transfer_write %combined, %scratch_slice[%c0, %c0] {in_bounds = [true, true]} : vector<1x64xf32>, tensor<1x6xf32> } : vector<1x64xi1> -> tensor<1x6xf32>
+      %padded = tensor.insert_slice %updated_scratch into %cleared[0, 0]
+          [1, 6] [1, 1] : tensor<1x6xf32> into tensor<1x64xf32>
+      %source = vector.transfer_read %padded[%c0, %c0], %zero_f32
+          : tensor<1x64xf32>, vector<1x64xf32>
+      %acc_slice = tensor.extract_slice %arg5[%arg4] [1] [1]
+          : tensor<8192xf32> to tensor<1xf32>
+      %acc = vector.transfer_read %acc_slice[%c0], %zero_f32
+          : tensor<1xf32>, vector<1xf32>
+      %sum = vector.multi_reduction <add>, %source, %acc
+          {withoutInitMergeOp} [1] : vector<1x64xf32> to vector<1xf32>
+      %written = vector.transfer_write %sum, %acc_slice[%c0]
+          : vector<1xf32>, tensor<1xf32>
+      %inserted = tensor.insert_slice %written into %arg5[%arg4] [1] [1]
+          : tensor<1xf32> into tensor<8192xf32>
+      scf.yield %inserted : tensor<8192xf32>
+    }
+    return %0 : tensor<8192xf32>
+  }
+
   // The reduction input is also returned and remains live after the
   // reduction. TreeReduceV2 must use a separate tensor for partial sums so
   // that one-shot bufferization cannot overwrite %arg0 in place.
   // CHECK-LABEL: func.func @tree_reduce_preserve_live_input
-  // CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<3x768xf32>
+  // CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<2x768xf32>
   // CHECK-NOT: linalg.copy
-  // CHECK: %[[TAIL:.*]] = scf.for {{.*}} iter_args({{.*}} = %[[EMPTY]])
-  // CHECK: tensor.extract_slice %arg0[
-  // CHECK: vector.transfer_read
-  // CHECK: tensor.extract_slice %arg0[
-  // CHECK: vector.transfer_read
+  // CHECK: scf.for {{.*}} iter_args({{.*}} = %[[EMPTY]])
+  // CHECK: vector.transfer_read {{.*}} : tensor<3x768xf32>, vector<64xf32>
+  // CHECK: vector.transfer_read {{.*}} : tensor<3x768xf32>, vector<64xf32>
   // CHECK: arith.addf
-  // CHECK: vector.transfer_write
-  // CHECK: tensor.insert_slice
-  // CHECK: scf.for
-  // CHECK: tensor.extract_slice %[[TAIL]][
-  // CHECK: vector.transfer_read
-  // CHECK: tensor.extract_slice %arg0[
-  // CHECK: vector.transfer_read
+  // CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<2x768xf32>
+  // CHECK: vector.transfer_read {{.*}} : tensor<2x768xf32>, vector<64xf32>
+  // CHECK: vector.transfer_read {{.*}} : tensor<3x768xf32>, vector<64xf32>
   // CHECK: arith.addf
+  // CHECK: vector.transfer_read {{.*}} : tensor<768xf32>, vector<64xf32>
+  // CHECK: arith.addf
+  // CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<768xf32>
   // CHECK: return %arg0, {{.*}} : tensor<3x768xf32>, tensor<768xf32>
   // BUFFERIZE-LABEL: func.func @tree_reduce_preserve_live_input
-  // BUFFERIZE: %[[ALLOC:.*]] = memref.alloc
+  // BUFFERIZE: %[[ALLOC:.*]] = memref.alloc() {{.*}} : memref<2x768xf32>
   // BUFFERIZE-NOT: memref.copy %arg0, %[[ALLOC]]
   // BUFFERIZE: scf.for {{.*}} iter_args({{.*}} = %[[ALLOC]])
-  // BUFFERIZE: memref.subview %arg0[
-  // BUFFERIZE: vector.transfer_read
-  // BUFFERIZE: memref.subview %arg0[
-  // BUFFERIZE: vector.transfer_read
+  // BUFFERIZE: vector.transfer_read {{.*}} : memref<3x768xf32, {{.*}}>, vector<64xf32>
+  // BUFFERIZE: vector.transfer_read {{.*}} : memref<3x768xf32, {{.*}}>, vector<64xf32>
   // BUFFERIZE: arith.addf
-  // BUFFERIZE: vector.transfer_write
+  // BUFFERIZE: vector.transfer_write {{.*}} : vector<64xf32>, memref<2x768xf32>
+  // BUFFERIZE: vector.transfer_read {{.*}} : memref<2x768xf32>, vector<64xf32>
+  // BUFFERIZE: vector.transfer_read {{.*}} : memref<3x768xf32, {{.*}}>, vector<64xf32>
+  // BUFFERIZE: arith.addf
+  // BUFFERIZE: vector.transfer_write {{.*}} : vector<64xf32>, memref<768xf32, {{.*}}>
   // BUFFERIZE: return %arg0, {{.*}} : memref<3x768xf32, {{.*}}>, memref<768xf32, {{.*}}>
   func.func @tree_reduce_preserve_live_input(
       %arg0: tensor<3x768xf32>, %arg1: tensor<768xf32>)
@@ -169,26 +220,35 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
   // This gives later tree stages a fully initialized working frontier without
   // copying the whole input tensor.
   // CHECK-LABEL: func.func @tree_reduce_preserve_live_input_large
-  // CHECK: %[[LARGE_EMPTY:.*]] = tensor.empty() : tensor<23x768xf32>
+  // CHECK: %[[LARGE_EMPTY:.*]] = tensor.empty() : tensor<16x768xf32>
   // CHECK-NOT: linalg.copy
   // CHECK: scf.for {{.*}} iter_args({{.*}} = %[[LARGE_EMPTY]])
-  // CHECK: tensor.extract_slice %arg0[
-  // CHECK: tensor.extract_slice %arg0[
+  // CHECK: vector.transfer_read {{.*}} : tensor<23x768xf32>, vector<64xf32>
+  // CHECK: vector.transfer_read {{.*}} : tensor<23x768xf32>, vector<64xf32>
   // CHECK: arith.addf
-  // CHECK: vector.transfer_write
+  // CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<16x768xf32>
   // CHECK: scf.for
+  // CHECK: vector.transfer_read {{.*}} : tensor<23x768xf32>, vector<64xf32>
+  // CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<16x768xf32>
   // CHECK: scf.for
-  // CHECK: tensor.extract_slice %arg0[
-  // CHECK: vector.transfer_read
-  // CHECK: vector.transfer_write
-  // CHECK: scf.for
+  // CHECK: vector.transfer_read {{.*}} : tensor<16x768xf32>, vector<64xf32>
+  // CHECK: arith.addf {{.*}} : vector<64xf32>
+  // CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<16x768xf32>
+  // CHECK: vector.transfer_read {{.*}} : tensor<16x768xf32>, vector<64xf32>
+  // CHECK: vector.transfer_read {{.*}} : tensor<768xf32>, vector<64xf32>
+  // CHECK: arith.addf
+  // CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<768xf32>
   // CHECK: return %arg0, {{.*}} : tensor<23x768xf32>, tensor<768xf32>
   // BUFFERIZE-LABEL: func.func @tree_reduce_preserve_live_input_large
-  // BUFFERIZE: %[[LARGE_ALLOC:.*]] = memref.alloc
+  // BUFFERIZE: %[[LARGE_ALLOC:.*]] = memref.alloc() {{.*}} : memref<16x768xf32>
   // BUFFERIZE-NOT: memref.copy %arg0, %[[LARGE_ALLOC]]
-  // BUFFERIZE: memref.subview %arg0[
-  // BUFFERIZE: vector.transfer_read
-  // BUFFERIZE: vector.transfer_write
+  // BUFFERIZE: scf.for {{.*}} iter_args({{.*}} = %[[LARGE_ALLOC]])
+  // BUFFERIZE: vector.transfer_read {{.*}} : memref<23x768xf32, {{.*}}>, vector<64xf32>
+  // BUFFERIZE: vector.transfer_write {{.*}} : vector<64xf32>, memref<16x768xf32>
+  // BUFFERIZE: vector.transfer_read {{.*}} : memref<16x768xf32>, vector<64xf32>
+  // BUFFERIZE: vector.transfer_read {{.*}} : memref<768xf32, {{.*}}>, vector<64xf32>
+  // BUFFERIZE: arith.addf
+  // BUFFERIZE: vector.transfer_write {{.*}} : vector<64xf32>, memref<768xf32, {{.*}}>
   // BUFFERIZE: return %arg0, {{.*}} : memref<23x768xf32, {{.*}}>, memref<768xf32, {{.*}}>
   func.func @tree_reduce_preserve_live_input_large(
       %arg0: tensor<23x768xf32>, %arg1: tensor<768xf32>)
@@ -257,6 +317,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 }
 
 #map = affine_map<(d0) -> (-d0 + 16, 64)>
+#map_dim2_31 = affine_map<(d0) -> (-d0 + 31, 64)>
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>, #dlti.dl_entry<"UB_SIZE", 2031616 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"MINIMAL_D_CACHE_SIZE", 262144 : i32>, #dlti.dl_entry<"MAXIMUM_D_CACHE_SIZE", 983040 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.target = #hacc.target<"Ascend910_9579">} {
   // CHECK-LABEL: func.func @triton_sum_4D_dimm1_outlined_vf_0
   // CHECK: scf.for
@@ -345,5 +406,80 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     %collapse_shape_1 = memref.collapse_shape %reinterpret_cast_0 [[0, 1, 2]] : memref<16x16x6xf32, strided<[96, 6, 1]>> into memref<1536xf32, strided<[1]>>
     bufferization.materialize_in_destination %3 in writable %collapse_shape_1 : (tensor<1536xf32>, memref<1536xf32, strided<[1]>>) -> ()
     return
+  }
+
+  // CHECK-LABEL: func.func @triton_sum_3D_dim2_outlined_vf_0
+  // CHECK: scf.for
+  // CHECK-NOT: scf.for {reductionLoop}
+  // CHECK: %[[MASK1:.*]] = vector.create_mask {{.*}} : vector<1x8xi1>
+  // CHECK: %[[READ1:.*]] = vector.mask %[[MASK1]] { vector.transfer_read {{.*}} : tensor<1x?xf32>, vector<1x8xf32> } : vector<1x8xi1> -> vector<1x8xf32>
+  // CHECK: %[[BCAST1:.*]] = vector.broadcast {{.*}} : f32 to vector<1x8xf32>
+  // CHECK: %[[SEL1:.*]] = arith.select %[[MASK1]], %[[READ1]], %[[BCAST1]] : vector<1x8xi1>, vector<1x8xf32>
+  // CHECK: %[[MASK2:.*]] = vector.create_mask {{.*}} : vector<1x8xi1>
+  // CHECK: %[[READ2:.*]] = vector.mask %[[MASK2]] { vector.transfer_read {{.*}} : tensor<1x?xf32>, vector<1x8xf32> } : vector<1x8xi1> -> vector<1x8xf32>
+  // CHECK: %[[BCAST2:.*]] = vector.broadcast {{.*}} : f32 to vector<1x8xf32>
+  // CHECK: %[[SEL2:.*]] = arith.select %[[MASK2]], %[[READ2]], %[[BCAST2]] : vector<1x8xi1>, vector<1x8xf32>
+  // CHECK: %[[MASK3:.*]] = vector.create_mask {{.*}} : vector<1x8xi1>
+  // CHECK: %[[READ3:.*]] = vector.mask %[[MASK3]] { vector.transfer_read {{.*}} : tensor<1x?xf32>, vector<1x8xf32> } : vector<1x8xi1> -> vector<1x8xf32>
+  // CHECK: %[[BCAST3:.*]] = vector.broadcast {{.*}} : f32 to vector<1x8xf32>
+  // CHECK: %[[SEL3:.*]] = arith.select %[[MASK3]], %[[READ3]], %[[BCAST3]] : vector<1x8xi1>, vector<1x8xf32>
+  // CHECK: %[[MASK4:.*]] = vector.create_mask {{.*}} : vector<1x8xi1>
+  // CHECK: %[[READ4:.*]] = vector.mask %[[MASK4]] { vector.transfer_read {{.*}} : tensor<1x?xf32>, vector<1x8xf32> } : vector<1x8xi1> -> vector<1x8xf32>
+  // CHECK: %[[BCAST4:.*]] = vector.broadcast {{.*}} : f32 to vector<1x8xf32>
+  // CHECK: %[[SEL4:.*]] = arith.select %[[MASK4]], %[[READ4]], %[[BCAST4]] : vector<1x8xi1>, vector<1x8xf32>
+  // CHECK: %[[ADDF_L:.*]] = arith.addf %[[SEL1]], %[[SEL3]] : vector<1x8xf32>
+  // CHECK: %[[ADDF_R:.*]] = arith.addf %[[SEL2]], %[[SEL4]] : vector<1x8xf32>
+  // CHECK: %[[ADDF_T:.*]] = arith.addf %[[ADDF_L]], %[[ADDF_R]] : vector<1x8xf32>
+  // CHECK: %[[MREDUCE:.*]] = vector.multi_reduction <add>, %[[ADDF_T]], {{.*}} {withoutInitMergeOp} [1] : vector<1x8xf32> to vector<1xf32>
+  // CHECK: vector.transfer_write %[[MREDUCE]], {{.*}} : vector<1xf32>, tensor<1xf32>
+  func.func @triton_sum_3D_dim2_outlined_vf_0(%arg0: tensor<1x64xf32>, %arg1: tensor<1536x31xf32>, %arg2: index, %arg3: index, %arg4: index, %arg5: index, %arg6: index, %arg7: tensor<1536xf32>) -> tensor<1536xf32> attributes {hivm.vector_function, no_inline} {
+    %c1 = arith.constant 1 : index
+    %c1536 = arith.constant 1536 : index
+    %c64 = arith.constant 64 : index
+    %c31 = arith.constant 31 : index
+    %c0 = arith.constant 0 : index
+    %0 = scf.for %arg8 = %c0 to %c1536 step %c1 iter_args(%arg9 = %arg7) -> (tensor<1536xf32>) {
+      %extracted_slice = tensor.extract_slice %arg9[%arg8] [1] [1] : tensor<1536xf32> to tensor<1xf32>
+      %c1_0 = arith.constant 1 : index
+      %c64_1 = arith.constant 64 : index
+      %c0_2 = arith.constant 0 : index
+      %cst = arith.constant 0.000000e+00 : f32
+      %1 = vector.transfer_read %arg0[%c0_2, %c0_2], %cst : tensor<1x64xf32>, vector<1x64xf32>
+      %c0_3 = arith.constant 0 : index
+      %cst_4 = arith.constant dense<0.000000e+00> : vector<1x64xf32>
+      %2 = vector.transfer_write %cst_4, %arg0[%c0_3, %c0_3] : vector<1x64xf32>, tensor<1x64xf32>
+      %3 = scf.for %arg10 = %c0 to %c31 step %c64 iter_args(%arg11 = %2) -> (tensor<1x64xf32>) {
+        %8 = affine.min #map_dim2_31(%arg10)
+        %extracted_slice_11 = tensor.extract_slice %arg1[%arg8, %arg10] [1, %8] [1, 1] : tensor<1536x31xf32> to tensor<1x?xf32>
+        %extracted_slice_12 = tensor.extract_slice %arg11[0, 0] [1, %8] [1, 1] : tensor<1x64xf32> to tensor<1x?xf32>
+        %c1_13 = arith.constant 1 : index
+        %c1_14 = arith.constant 1 : index
+        %dim = tensor.dim %extracted_slice_11, %c1_14 : tensor<1x?xf32>
+        %c0_15 = arith.constant 0 : index
+        %cst_16 = arith.constant 0.000000e+00 : f32
+        %9 = vector.create_mask %c1_13, %dim : vector<1x64xi1>
+        %10 = vector.mask %9 { vector.transfer_read %extracted_slice_11[%c0_15, %c0_15], %cst_16 {in_bounds = [true, true]} : tensor<1x?xf32>, vector<1x64xf32> } : vector<1x64xi1> -> vector<1x64xf32>
+        %cst_17 = arith.constant 0.000000e+00 : f32
+        %11 = vector.mask %9 { vector.transfer_read %extracted_slice_12[%c0_15, %c0_15], %cst_17 {in_bounds = [true, true]} : tensor<1x?xf32>, vector<1x64xf32> } : vector<1x64xi1> -> vector<1x64xf32>
+        %12 = arith.addf %10, %11 {reductionOp} : vector<1x64xf32>
+        %c0_18 = arith.constant 0 : index
+        %13 = vector.mask %9 { vector.transfer_write %12, %extracted_slice_12[%c0_18, %c0_18] {in_bounds = [true, true]} : vector<1x64xf32>, tensor<1x?xf32> } : vector<1x64xi1> -> tensor<1x?xf32>
+        %inserted_slice_19 = tensor.insert_slice %13 into %arg11[0, 0] [1, %8] [1, 1] : tensor<1x?xf32> into tensor<1x64xf32>
+        scf.yield %inserted_slice_19 : tensor<1x64xf32>
+      } {reductionLoop}
+      %c1_5 = arith.constant 1 : index
+      %c64_6 = arith.constant 64 : index
+      %c0_7 = arith.constant 0 : index
+      %cst_8 = arith.constant 0.000000e+00 : f32
+      %4 = vector.transfer_read %3[%c0_7, %c0_7], %cst_8 : tensor<1x64xf32>, vector<1x64xf32>
+      %cst_9 = arith.constant 0.000000e+00 : f32
+      %5 = vector.transfer_read %extracted_slice[%c0_7], %cst_9 : tensor<1xf32>, vector<1xf32>
+      %6 = vector.multi_reduction <add>, %4, %5 {withoutInitMergeOp} [1] : vector<1x64xf32> to vector<1xf32>
+      %c0_10 = arith.constant 0 : index
+      %7 = vector.transfer_write %6, %extracted_slice[%c0_10] : vector<1xf32>, tensor<1xf32>
+      %inserted_slice = tensor.insert_slice %7 into %arg9[%arg8] [1] [1] : tensor<1xf32> into tensor<1536xf32>
+      scf.yield %inserted_slice : tensor<1536xf32>
+    }
+    return %0 : tensor<1536xf32>
   }
 }

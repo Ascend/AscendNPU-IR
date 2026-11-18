@@ -104,6 +104,7 @@ typedef enum {
   REQ8 = 9,
   QF322F32_PRE = 15,
   F322BF16 = 16,
+  QF322F16_PRE = 32,
 } QuantMode_t;
 
 typedef enum {

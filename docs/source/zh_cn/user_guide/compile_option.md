@@ -6,9 +6,15 @@ BiShengIR编译器通过一系列命令行编译选项控制编译流程、功�
 
 **适用产品**：
 
-- Ascend 950PR&950DT系列产品
-- Atlas A2系列产品
-- Atlas A3系列产品
+<!-- npu="950" id1 -->
+- <term>Ascend 950PR&950DT系列产品</term>
+<!-- end id1 -->
+<!-- npu="910b" id2 -->
+- <term>Atlas A2系列产品</term>
+<!-- end id2 -->
+<!-- npu="A3" id3 -->
+- <term>Atlas A3系列产品</term>
+<!-- end id3 -->
 
 | 选项名 | 描述 | 类型 | 默认值 |
 |--------|------|------|--------|
@@ -29,9 +35,15 @@ BiShengIR编译器通过一系列命令行编译选项控制编译流程、功�
 
 **适用产品**：
 
-- Ascend 950PR&950DT系列产品
-- Atlas A2系列产品
-- Atlas A3系列产品
+<!-- npu="950" id4 -->
+- <term>Ascend 950PR&950DT系列产品</term>
+<!-- end id4 -->
+<!-- npu="910b" id5 -->
+- <term>Atlas A2系列产品</term>
+<!-- end id5 -->
+<!-- npu="A3" id6 -->
+- <term>Atlas A3系列产品</term>
+<!-- end id6 -->
 
 | 选项名 | 描述 | 类型 | 默认值 |
 |--------|------|------|--------|
@@ -44,9 +56,15 @@ BiShengIR编译器通过一系列命令行编译选项控制编译流程、功�
 
 **适用产品**：
 
-- Ascend 950PR&950DT系列产品
-- Atlas A2系列产品
-- Atlas A3系列产品
+<!-- npu="950" id7 -->
+- <term>Ascend 950PR&950DT系列产品</term>
+<!-- end id7 -->
+<!-- npu="910b" id8 -->
+- <term>Atlas A2系列产品</term>
+<!-- end id8 -->
+<!-- npu="A3" id9 -->
+- <term>Atlas A3系列产品</term>
+<!-- end id9 -->
 
 | 选项名 | 描述 | 类型 | 默认值 |
 |--------|------|------|--------|
@@ -61,9 +79,15 @@ BiShengIR编译器通过一系列命令行编译选项控制编译流程、功�
 
 **适用产品**：
 
-- Ascend 950PR&950DT系列产品
-- Atlas A2系列产品
-- Atlas A3系列产品
+<!-- npu="950" id10 -->
+- <term>Ascend 950PR&950DT系列产品</term>
+<!-- end id10 -->
+<!-- npu="910b" id11 -->
+- <term>Atlas A2系列产品</term>
+<!-- end id11 -->
+<!-- npu="A3" id12 -->
+- <term>Atlas A3系列产品</term>
+<!-- end id12 -->
 
 | 选项名 | 描述 | 类型 | 默认值 |
 |--------|------|------|--------|
@@ -77,13 +101,14 @@ BiShengIR编译器通过一系列命令行编译选项控制编译流程、功�
 
 AI处理器型号及对应查询方式如下：
 
+<!-- npu="950,A3,910b" id13 -->
 **方式一：通过`npu-smi info -t board -i <id> -c <chip_id>`命令查询**
 
 **适用产品**：
 
-- Ascend 950PR&950DT系列产品
-- Atlas A2系列产品
-- Atlas A3系列产品
+- <term>Ascend 950PR&950DT系列产品</term>
+- <term>Atlas A2系列产品</term>
+- <term>Atlas A3系列产品</term>
 
 在安装AI处理器的服务器上执行该命令，获取**Chip Name**和**NPU Name**信息，实际配置值为`<Chip Name>_<NPU Name>`。示例：若Chip Name为`Ascendxxx`、NPU Name为`yyy`，则配置值为`Ascendxxx_yyy`。
 
@@ -91,11 +116,14 @@ AI处理器型号及对应查询方式如下：
 
 - `id`：设备ID，通过`npu-smi info -l`命令查询得到的NPU ID即为设备ID。
 - `chip_id`：芯片ID，通过`npu-smi info -m`命令查询得到的Chip ID即为芯片ID。
+<!-- end id13 -->
 
+<!-- npu="910b" id14 -->
 **方式二：通过`npu-smi info`命令查询**
 
 **适用产品**：
 
-- Atlas A2系列产品
+- <term>Atlas A2系列产品</term>
 
 在安装AI处理器的服务器上执行该命令，查询得到`<Name>`的对应取值，完整配置值为`Ascend<Name>`。示例：若`<Name>`取值为`xxx`，则配置值为`Ascendxxx`。
+<!-- end id14 -->

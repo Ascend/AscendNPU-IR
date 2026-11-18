@@ -333,3 +333,36 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     return
   }
 }
+
+// -----
+
+// =============================================================================
+// Group 3: regression — memref.cast stripped on one side only
+// =============================================================================
+
+// 3.1: canonicalize-ext (SimplifyAllocConst) rewrites a dynamic-shaped alloc
+//      into a static one and replaces its uses with a memref.cast view.
+//      FixpipeOp::fold then strips that cast on fixpipe while MmadL1Op keeps
+//      it, so fixpipe.src (%buf_cc) and mmadL1.c (%cast_cc) are different SSA
+//      values that still refer to the same CC buffer. The unit-flag match
+//      must see through the cast views instead of comparing raw SSA values.
+// CHECK-LABEL: @uf_cast_stripped_on_fixpipe
+// CHECK-NOT: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: hivm.hir.fixpipe {{.*}} unit_flag_mode
+func.func @uf_cast_stripped_on_fixpipe(%arg0: memref<16xf32, #hivm.address_space<gm>>, %arg1: memref<16xf32, #hivm.address_space<gm>>, %arg2: memref<256xf32, #hivm.address_space<gm>>) {
+  %c0_i64 = arith.constant 0 : i64
+  %c64_i64 = arith.constant 64 : i64
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  %c256 = arith.constant 256 : index
+  %buf_a = hivm.hir.pointer_cast(%c0_i64) : memref<16xf32, #hivm.address_space<cbuf>>
+  hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<16xf32, #hivm.address_space<gm>>) outs(%buf_a : memref<16xf32, #hivm.address_space<cbuf>>)
+  %buf_b = hivm.hir.pointer_cast(%c64_i64) : memref<16xf32, #hivm.address_space<cbuf>>
+  hivm.hir.nd2nz {dst_continuous} ins(%arg1 : memref<16xf32, #hivm.address_space<gm>>) outs(%buf_b : memref<16xf32, #hivm.address_space<cbuf>>)
+  %buf_cc = hivm.hir.pointer_cast(%c0_i64) : memref<256xf32, #hivm.address_space<cc>>
+  %cast_cc = memref.cast %buf_cc : memref<256xf32, #hivm.address_space<cc>> to memref<?xf32, #hivm.address_space<cc>>
+  hivm.hir.mmadL1 ins(%buf_a, %buf_b, %true, %c16, %c256, %c16 : memref<16xf32, #hivm.address_space<cbuf>>, memref<16xf32, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%cast_cc : memref<?xf32, #hivm.address_space<cc>>)
+  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%buf_cc : memref<256xf32, #hivm.address_space<cc>>) outs(%arg2 : memref<256xf32, #hivm.address_space<gm>>)
+  return
+}

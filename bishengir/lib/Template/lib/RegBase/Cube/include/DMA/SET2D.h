@@ -16,6 +16,7 @@
 
 #ifndef HIVM_MLIR_TEMPLATE_SET2D_UTILS_H
 #define HIVM_MLIR_TEMPLATE_SET2D_UTILS_H
+#include "ArchDefs.h"
 #include "Utils.h"
 
 constexpr uint64_t SET_2D_BLOCK_NUM_PER_REPEAT = 16;
@@ -70,7 +71,7 @@ set_cbuf_to_2d_intrin_core(set2d_intrin_args<T> args) {
     set_##dst_scope##_to_2d_core<type>(scalar, dst);                      \
   }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 #define DECLARE_SET2D_FP8(dst_scope, dst_dim, type)                            \
   __aicore__                                                                   \
       __attribute__((always_inline)) void _mlir_ciface_set_l1_2d_##type(       \
@@ -82,7 +83,7 @@ set_cbuf_to_2d_intrin_core(set2d_intrin_args<T> args) {
 #endif
 
 extern "C" {
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_SET2D_FP8(cbuf, 1, float8_e4m3_t);
 DECLARE_SET2D_FP8(cbuf, 1, float8_e5m2_t);
 #endif

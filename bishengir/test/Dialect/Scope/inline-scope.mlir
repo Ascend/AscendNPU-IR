@@ -1,5 +1,16 @@
-// RUN: bishengir-opt --inline-scope --split-input-file %s | FileCheck %s
+// RUN: bishengir-opt --inline-scope --inline --split-input-file %s | FileCheck %s
+// RUN: bishengir-opt --inline-scope --split-input-file %s | FileCheck --check-prefix=CHECK-SCOPE-ONLY %s
 // RUN: bishengir-opt --inline-scope="force-inline=true" --split-input-file %s | FileCheck --check-prefix=CHECK-FORCE %s
+
+// CHECK-SCOPE-ONLY-LABEL: func.func @inline_func(
+// CHECK-SCOPE-ONLY: func.call @inline_func_a
+// CHECK-SCOPE-ONLY: func.call @inline_func_b
+// CHECK-SCOPE-ONLY-LABEL: func.func private @inline_func_a(
+// CHECK-SCOPE-ONLY-NOT: scope.scope
+// CHECK-SCOPE-ONLY: hivm.hir.sync_block_set
+// CHECK-SCOPE-ONLY: hivm.hir.sync_block_wait
+// CHECK-SCOPE-ONLY-LABEL: func.func private @inline_func_b(
+// CHECK-SCOPE-ONLY: scope.scope
 
 // CHECK:   func.func @inline_func(%[[ARG_0:.*]]: tensor<64x128xf32>)
 // CHECK-DAG:           %[[END_2:.*]] = arith.constant {debug = 12 : index} 4096 : index

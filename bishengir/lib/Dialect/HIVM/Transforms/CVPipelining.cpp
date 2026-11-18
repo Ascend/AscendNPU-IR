@@ -19,7 +19,9 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/TightlyCoupledBufferUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
+#include "bishengir/Dialect/HIVM/Utils/HIVMAliasAnalysis.h"
 #include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
@@ -29,6 +31,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
+#include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -37,10 +40,14 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Support/MathExtras.h"
+
+#include <functional>
 
 #define DEBUG_TYPE "cv-pipelining"
 
@@ -183,6 +190,8 @@ private:
   Value createSubview(OpBuilder &builder, Location loc, Value from, Type to,
                       Value iv);
   Value createToTensor(OpBuilder &builder, Location loc, Value src);
+  FailureOr<Value> rematerializeTCBOutputView(Value output, Value storage,
+                                              IRMapping &scopeMap);
   // Returns failure() on malformed input. On success, the returned Value may
   // still be nullptr when there is no masking subview to update.
   FailureOr<Value> updateMaskingSubview(OpBuilder &builder, Location loc,
@@ -210,6 +219,9 @@ private:
   // True when the parent function is registered, preload is on, and
   // workspace multibuffer is non-zero, or LIT bypass is on.
   bool allowShapeHeuristics = false;
+
+  // Preserve same-iteration scope scheduling when a tensor carry cannot skew.
+  bool pinAllPreloadNumToZero = false;
 
   // Worklist builder — owns dep-tracking machinery, separator/dependence
   // discovery, lazy-load hint surface, and outputMemrefMap. Held as a member
@@ -239,6 +251,11 @@ private:
 
   // Corresponding expanded tensors for each output of work items
   DenseMap<Value, Value> expandedTensorMap;
+
+  // TCB outputs whose logical tensor type is recovered through a view of the
+  // physical backing allocation. Rebuild the view in each consumer scope so
+  // its dynamic sizes remain local to that scope.
+  DenseMap<Value, Value> viewedTCBOutputStorage;
 
   // Mapping from each op under atomic effect to its atomic kind and data type
   DenseMap<Operation *, AtomicEffect> atomicEffectMap;
@@ -633,11 +650,7 @@ processWorkspaceOutputs(OpBuilder &builder, WorkItem *item,
     if (auto storeOp = dyn_cast<StoreOp>(store))
       builder.create<StoreOp>(loc, TypeRange{}, storeOp.getSrc(), newDst);
     else if (auto fixpipe = dyn_cast<FixpipeOp>(store))
-      builder.create<FixpipeOp>(
-          loc, TypeRange{}, fixpipe.getSrc(), newDst, fixpipe.getDmaModeAttr(),
-          fixpipe.getDualDstModeAttr(), fixpipe.getSubBlockIdxAttr(),
-          fixpipe.getPreQuantAttr(), fixpipe.getPreReluAttr(),
-          fixpipe.getChannelSplitAttr());
+      FixpipeOp::clone(builder, fixpipe, fixpipe.getSrc(), newDst);
 
     // Before forOp so to_tensor dominates in-loop and later consumers.
     builder.setInsertionPoint(forOp);
@@ -739,6 +752,8 @@ static void processWorkspaceOutputUsers(
 
 static Operation *cloneStoreLikeToWorkspace(OpBuilder &builder, Operation *op,
                                             Value newDst) {
+  if (auto fixpipe = dyn_cast<FixpipeOp>(op))
+    return FixpipeOp::clone(builder, fixpipe, fixpipe.getSrc(), newDst);
   OperationState state(op->getLoc(), op->getName().getStringRef());
   state.addOperands(op->getOperands());
   state.operands[1] = newDst;
@@ -1043,6 +1058,73 @@ void CVPipelineImpl::expandWorkspace(OpBuilder &builder) {
   }
 }
 
+/// Clone an address slice, keeping values outside the loop unchanged. Only
+/// view operations and side-effect-free scalar calculations can be cloned.
+static Value cloneGMAccess(Value value, scf::ForOp loop, OpBuilder &builder,
+                           IRMapping &mapping, unsigned &remaining,
+                           unsigned depth = 0) {
+  if (Value mapped = mapping.lookupOrNull(value))
+    return mapped;
+  if (loop.isDefinedOutsideOfLoop(value))
+    return value;
+  Operation *op = value.getDefiningOp();
+  if (!op || depth > 32 || !remaining || op->getNumRegions() ||
+      !isMemoryEffectFree(op))
+    return {};
+  if (!value.getType().isIntOrIndex() &&
+      !isa<memref::ReinterpretCastOp, memref::SubViewOp, memref::CastOp,
+           memref::MemorySpaceCastOp>(op))
+    return {};
+  --remaining;
+  for (Value operand : op->getOperands()) {
+    Value cloned =
+        cloneGMAccess(operand, loop, builder, mapping, remaining, depth + 1);
+    if (!cloned)
+      return {};
+    mapping.map(operand, cloned);
+  }
+  builder.clone(*op, mapping);
+  return mapping.lookup(value);
+}
+
+/// Check the GM pairs that may cross during skewing. Build future views in a
+/// private block and let the alias utility compare the actual memref values.
+static bool areGMAccessesIndependent(Value lhs, Value rhs, scf::ForOp loop,
+                                     int64_t maxDistance,
+                                     utils::HIVMAliasAnalysis &aliasAnalysis) {
+  auto step = getConstantIntValue(loop.getStep());
+  if (!step || *step <= 0 || loop->hasAttr("unsignedCmp"))
+    return false;
+  Value iv = loop.getInductionVar();
+  // CV pipelining assumes signed GM address arithmetic never overflows,
+  // including intermediate i32 offset calculations before casts to index.
+  for (int64_t distance = 1; distance <= maxDistance; ++distance) {
+    int64_t displacement;
+    if (llvm::MulOverflow(*step, distance, displacement))
+      return false;
+    if (auto type = dyn_cast<IntegerType>(iv.getType());
+        type && !llvm::isIntN(type.getWidth(), displacement))
+      return false;
+    Region scratch;
+    OpBuilder builder(loop.getContext());
+    builder.setInsertionPointToEnd(&scratch.emplaceBlock());
+    auto shift = builder.create<arith::ConstantOp>(
+        loop.getLoc(), builder.getIntegerAttr(iv.getType(), displacement));
+    Value nextIV = builder.create<arith::AddIOp>(loop.getLoc(), iv, shift);
+    IRMapping mapping;
+    mapping.map(iv, nextIV);
+    unsigned remaining = 256;
+    Value futureA = cloneGMAccess(lhs, loop, builder, mapping, remaining);
+    Value futureB = cloneGMAccess(rhs, loop, builder, mapping, remaining);
+    // Only assumptions established before the loop can justify preloading.
+    if (!futureA || !futureB ||
+        !aliasAnalysis.alias(lhs, futureB, loop).isNo() ||
+        !aliasAnalysis.alias(rhs, futureA, loop).isNo())
+      return false;
+  }
+  return true;
+}
+
 LogicalResult CVPipelineImpl::markOutputs() {
   for (const auto &item : worklist) {
     for (Operation *op : item->ops) {
@@ -1105,55 +1187,93 @@ LogicalResult CVPipelineImpl::markOutputs() {
     }
   }
 
-  // Detect cross-workitem aliasing on function arguments: if a Fixpipe/Store
-  // writes to a func arg that another workitem loads from, pipelining would
-  // reorder the store past the load and break correctness. Walk into nested
-  // regions since item->ops may contain whole region ops (scf.if / inner
-  // scf.for) whose nested Fixpipe/Store/Load would otherwise be missed.
-  DenseMap<BlockArgument, WorkItem *> storedFuncArgs;
+  // Preserve the existing function-argument alias groups, but retain every
+  // access: remembering only the last writer can hide a conflicting store.
+  // Iterate in work-item order so the same-iteration ordering check below
+  // compares the original program order with the proposed stage order.
+  struct GMAccess {
+    Operation *op;
+    Value view;
+    WorkItem *item;
+    bool writes;
+  };
+  llvm::MapVector<BlockArgument, SmallVector<GMAccess>> accesses;
   for (const auto &item : worklist) {
     for (Operation *op : item->ops) {
       op->walk([&](Operation *nested) {
-        Value dst;
-        // TODO: Use StoreLikeOpInterface when available
-        if (auto fixpipe = dyn_cast<FixpipeOp>(nested))
-          dst = fixpipe.getDst();
-        else if (auto store = dyn_cast<StoreOp>(nested))
-          dst = store.getDst();
-        else
+        Value view;
+        bool writes = false;
+        if (auto load = dyn_cast<LoadOp>(nested))
+          view = load.getSrc();
+        else if (auto nd2nz = dyn_cast<ND2NZOp>(nested))
+          view = nd2nz.getSrc();
+        else if (auto store = dyn_cast<StoreOp>(nested)) {
+          view = store.getDst();
+          writes = true;
+        } else if (auto fixpipe = dyn_cast<FixpipeOp>(nested)) {
+          view = fixpipe.getDst();
+          writes = true;
+        } else {
           return;
-        BlockArgument funcArg = traceToFuncArg(dst);
-        if (!funcArg)
-          return;
-        storedFuncArgs[funcArg] = item.get();
+        }
+        if (BlockArgument arg = traceToFuncArg(view))
+          accesses[arg].push_back({nested, view, item.get(), writes});
       });
     }
   }
-  for (const auto &item : worklist) {
-    for (Operation *op : item->ops) {
-      WalkResult result = op->walk([&](Operation *nested) {
-        // TODO: replace this with a LoadLikeOpInterface
-        if (!isa<LoadOp, ND2NZOp>(nested))
-          return WalkResult::advance();
-        BlockArgument funcArg;
-        if (auto load = dyn_cast<LoadOp>(nested))
-          funcArg = traceToFuncArg(load.getSrc());
-        else if (auto nd2nz = dyn_cast<ND2NZOp>(nested))
-          funcArg = traceToFuncArg(nd2nz.getSrc());
-        else
-          llvm_unreachable("Replace with LoadLikeOpInterface.getSrc()");
-        if (!funcArg)
-          return WalkResult::advance();
-        auto it = storedFuncArgs.find(funcArg);
-        if (it != storedFuncArgs.end() && it->second != item.get()) {
-          nested->emitWarning(
-              "[cv-pipelining] using GM as intermediate buffer is unsupported");
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      });
-      if (result.wasInterrupted())
+  utils::HIVMAliasAnalysis aliasAnalysis(
+      pipelineLoop->getParentOfType<func::FuncOp>());
+  for (auto &entry : accesses) {
+    const auto &group = entry.second;
+    // Only analyze buffers read and written by different work items.
+    bool hasCrossItemReadWrite = false;
+    for (const GMAccess &writer : group) {
+      if (!writer.writes)
+        continue;
+      for (const GMAccess &reader : group) {
+        if (reader.writes || reader.item == writer.item)
+          continue;
+        hasCrossItemReadWrite = true;
+        break;
+      }
+      if (hasCrossItemReadWrite)
+        break;
+    }
+    if (!hasCrossItemReadWrite)
+      continue;
+    for (unsigned i = 0; i < group.size(); ++i) {
+      for (unsigned j = i + 1; j < group.size(); ++j) {
+        const GMAccess &a = group[i], &b = group[j];
+        if (a.item == b.item || (!a.writes && !b.writes))
+          continue;
+        if (pipelineMode != CVPipelineMode::Skew && a.writes && b.writes)
+          continue;
+        Operation *aTop = getContainedParent(pipelineLoop, a.op);
+        Operation *bTop = getContainedParent(pipelineLoop, b.op);
+        // Cross-iteration independence alone cannot justify reversing a RAW,
+        // WAR or WAW dependence within an iteration. Region-internal ordering
+        // and repeated copies of the same access remain conservative.
+        // A loop-carried stage is pinned to preload 0; a later independent
+        // stage would execute the same iteration before it.
+        bool preservesOrder =
+            aTop != bTop && aTop->isBeforeInBlock(bTop) &&
+            (!a.item->hasLoopCarriedDep || b.item->hasLoopCarriedDep);
+        // The largest preload depth assigned by
+        // createNewLoopsForPreloadWithScopes is at most worklist.size().
+        // Checking both directions through that distance conservatively
+        // covers every access pair whose relative order can change.
+        if (pipelineMode == CVPipelineMode::Skew && preservesOrder &&
+            areGMAccessesIndependent(a.view, b.view, pipelineLoop,
+                                     worklist.size(), aliasAnalysis))
+          continue;
+        // Keep the existing diagnostic anchored at the read when possible.
+        LLVM_DEBUG(dbgs() << "[cv-pipelining] cannot prove GM independence: "
+                          << *a.op << "\n  versus " << *b.op << '\n');
+        Operation *diagnosticOp = a.writes ? b.op : a.op;
+        diagnosticOp->emitWarning(
+            "[cv-pipelining] using GM as intermediate buffer is unsupported");
         return failure();
+      }
     }
   }
   return success();
@@ -1259,18 +1379,11 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
 
     for (auto [consumerItem, consumerOp] : consumerUses(iterArg)) {
       if (consumerItem != producerItem) {
-        // In skew mode a loop-carried iter_arg is only honored when the
-        // producing and the consuming work items run at the same preload
-        // stage: stage k executes original iteration i-(maxPreload-1-k) of
-        // the rewritten loop, so a producer/consumer preload mismatch skews
-        // the carried value by the difference of the two stages. Work items
-        // with hasLoopCarriedDep are pinned to preload 0, so a cross-item
-        // carry is legal only when BOTH items carry the flag. At least one
-        // independent item must remain as well; with none, maxPreloadNum
-        // degenerates to 1 and the rewrite adds no pipelining at all.
-        // Off-registry kernels keep the pre-3530 contract: any cross-WI
-        // tensor carry is rejected. The same-stage exception is a registered
-        // (or LIT `--bypass-shape-registry`) heuristic.
+        // A cross-work-item carry can overlap iterations only when its
+        // producer and consumer share stage zero and an independent stage
+        // remains. Otherwise registered skew loops retain their scopes with
+        // every item at stage zero. Unroll and off-registry behavior stay
+        // unchanged.
         bool sameStage =
             consumerItem->hasLoopCarriedDep && producerItem->hasLoopCarriedDep;
         bool hasAnyIndependentItem =
@@ -1279,6 +1392,10 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
             });
         if (!allowShapeHeuristics || !sameStage || !hasAnyIndependentItem ||
             pipelineMode == CVPipelineMode::Unroll) {
+          if (allowShapeHeuristics && pipelineMode == CVPipelineMode::Skew) {
+            pinAllPreloadNumToZero = true;
+            continue;
+          }
           InFlightDiagnostic diag =
               pipelineLoop->emitWarning()
               << "[cv-pipelining] cannot pipeline loop: loop-carried tensor "
@@ -1308,6 +1425,87 @@ Value CVPipelineImpl::createToTensor(OpBuilder &builder, Location loc,
   }
   return builder.create<bufferization::ToTensorOp>(loc, src, /*restrict*/ true,
                                                    /*writable*/ true);
+}
+
+FailureOr<Value>
+CVPipelineImpl::rematerializeTCBOutputView(Value output, Value storage,
+                                           IRMapping &scopeMap) {
+  auto toTensor = output.getDefiningOp<bufferization::ToTensorOp>();
+  if (!toTensor) {
+    auto dps = dyn_cast_if_present<DestinationStyleOpInterface>(
+        output.getDefiningOp());
+    if (dps && dps.getNumDpsInits() == 1) {
+      Value init = dps.getDpsInitOperand(0)->get();
+      toTensor = init.getDefiningOp<bufferization::ToTensorOp>();
+    }
+  }
+  if (!toTensor) {
+    pipelineLoop->emitWarning(
+        "[cv-pipelining] expected viewed TCB output to have a to_tensor "
+        "destination");
+    return failure();
+  }
+
+  SmallVector<Operation *> aliasOps;
+  Value current = toTensor.getMemref();
+  while (current != storage) {
+    Operation *defining = current.getDefiningOp();
+    if (!defining || defining->getNumResults() != 1 ||
+        defining->getResult(0) != current ||
+        !isa<CastOpInterface, ViewLikeOpInterface>(defining)) {
+      pipelineLoop->emitWarning(
+          "[cv-pipelining] unsupported alias chain for viewed TCB output");
+      return failure();
+    }
+    aliasOps.push_back(defining);
+    current = defining->getOperand(0);
+  }
+
+  IRMapping aliasMap(scopeMap);
+  // A producer-local offset or size may still map into the producer scope.
+  // Rebuild its scalar expression in this scope, just like the view itself.
+  std::function<LogicalResult(Value)> remapScalar = [&](Value value) {
+    if (!value.getType().isIntOrIndex())
+      return failure();
+    if (!pipelineLoop->isAncestor(value.getParentBlock()->getParentOp()))
+      return success();
+    if (isa<BlockArgument>(value))
+      return success(value.getParentBlock() == pipelineLoop.getBody());
+    Value mapped = aliasMap.lookupOrDefault(value);
+    if (mapped.getParentBlock() == builder.getInsertionBlock())
+      return success();
+    Operation *def = value.getDefiningOp();
+    if (def->getBlock() != pipelineLoop.getBody() ||
+        def->getNumRegions() != 0 || !isMemoryEffectFree(def) ||
+        !llvm::all_of(def->getResultTypes(),
+                      [](Type type) { return type.isIntOrIndex(); }))
+      return failure();
+    for (Value operand : def->getOperands())
+      if (failed(remapScalar(operand)))
+        return failure();
+    builder.clone(*def, aliasMap);
+    return success();
+  };
+  for (Operation *alias : llvm::reverse(aliasOps)) {
+    for (Value operand : alias->getOperands().drop_front()) {
+      if (failed(remapScalar(operand))) {
+        pipelineLoop->emitWarning("[cv-pipelining] unsupported scalar "
+                                  "dependency of viewed TCB output");
+        return failure();
+      }
+    }
+    builder.clone(*alias, aliasMap);
+  }
+
+  Value logicalMemref = aliasMap.lookupOrDefault(toTensor.getMemref());
+  Value rematerialized =
+      createToTensor(builder, output.getLoc(), logicalMemref);
+  if (!rematerialized || rematerialized.getType() != output.getType()) {
+    pipelineLoop->emitWarning(
+        "[cv-pipelining] failed to recover viewed TCB output type");
+    return failure();
+  }
+  return rematerialized;
 }
 
 LogicalResult CVPipelineImpl::expandOutputInits(WorkItem *item) {
@@ -2058,28 +2256,20 @@ LogicalResult CVPipelineImpl::privatizeSharedCounterIterArgs() {
   if (pending.empty())
     return success();
 
-  unsigned origNumIterArgs = pipelineLoop.getNumRegionIterArgs();
-  IRRewriter rewriter(pipelineLoop.getContext());
-  FailureOr<LoopLikeOpInterface> newLoopLike =
-      pipelineLoop.replaceWithAdditionalYields(
-          rewriter, newInits, /*replaceInitOperandUsesInLoop=*/false,
-          [](OpBuilder &, Location, ArrayRef<BlockArgument> newArgs) {
-            // Placeholder pass-through; each private counter's yield slot is
-            // rewritten to its scope result in
-            // createNewLoopsForPreloadWithScopes.
-            return SmallVector<Value>(newArgs.begin(), newArgs.end());
-          });
-  if (failed(newLoopLike))
+  // Each private counter's yield slot is a placeholder pass-through until
+  // createNewLoopsForPreloadWithScopes rewrites it to its scope result. The
+  // old loop is replaced, but its body block is moved rather than cloned, so
+  // every Operation * collected so far (worklist, toErase, atomic effects,
+  // workspace allocs) stays valid. globalIRMap is still empty at this point.
+  FailureOr<unsigned> privateBase =
+      hivm::appendPassThroughIterArgs(pipelineLoop, newInits);
+  if (failed(privateBase))
     return pipelineLoop->emitWarning(
         "[cv-pipelining] failed to append private counter iter_args");
-  // The old loop is replaced, but its body block was moved rather than cloned,
-  // so every Operation * collected so far (worklist, toErase, atomic effects,
-  // workspace allocs) stays valid. globalIRMap is still empty at this point.
-  pipelineLoop = cast<scf::ForOp>(newLoopLike->getOperation());
   builder.setInsertionPoint(pipelineLoop);
 
   for (auto [idx, p] : llvm::enumerate(pending)) {
-    unsigned privateIdx = origNumIterArgs + static_cast<unsigned>(idx);
+    unsigned privateIdx = *privateBase + static_cast<unsigned>(idx);
     p.item->privateCounters.push_back(
         {p.advanceVal, p.sharedArgIdx,
          pipelineLoop.getRegionIterArg(p.sharedArgIdx),
@@ -2100,12 +2290,12 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
       worklist, [](const auto &item) { return item->hasLoopCarriedDep; });
   unsigned numIndependent = llvm::count_if(
       worklist, [](const auto &item) { return !item->hasLoopCarriedDep; });
-  int32_t preloadNum = hasAnyLoopCarriedItem
-                           ? static_cast<int32_t>(numIndependent)
-                           : static_cast<int32_t>(worklist.size()) - 1;
   int32_t maxPreloadNum = hasAnyLoopCarriedItem
                               ? static_cast<int32_t>(numIndependent) + 1
                               : static_cast<int32_t>(worklist.size());
+  if (pinAllPreloadNumToZero)
+    maxPreloadNum = 1;
+  int32_t preloadNum = maxPreloadNum - 1;
   for (auto &item : worklist) {
     // Reset insertion point after we're done with this item
     OpBuilder::InsertionGuard g(builder);
@@ -2188,12 +2378,30 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
       if (toTensorOp)
         tcbToTensorOps.insert(toTensorOp);
     }
+    SmallVector<Value> scopeViewedTCBOutputs;
     for (Operation &op : parentFor.getBody()->getOperations()) {
       if (!item->ops.contains(&op))
         continue;
       toErase.insert(&op);
       if (tcbToTensorOps.contains(&op))
         continue;
+      WalkResult remapResult = op.walk([&](Operation *nested) {
+        for (Value operand : nested->getOperands()) {
+          auto storage = viewedTCBOutputStorage.find(operand);
+          if (storage == viewedTCBOutputStorage.end() ||
+              scopeMap.contains(operand))
+            continue;
+          FailureOr<Value> rematerialized =
+              rematerializeTCBOutputView(operand, storage->second, scopeMap);
+          if (failed(rematerialized))
+            return WalkResult::interrupt();
+          scopeMap.map(operand, *rematerialized);
+          scopeViewedTCBOutputs.push_back(operand);
+        }
+        return WalkResult::advance();
+      });
+      if (remapResult.wasInterrupted())
+        return failure();
       auto atomicIt = atomicEffectMap.find(&op);
       if (atomicIt != atomicEffectMap.end()) {
         const AtomicEffect &effect = atomicIt->getSecond();
@@ -2204,6 +2412,8 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
         builder.create<SetAtomicOp>(op.getLoc(), AtomicKind::NONE,
                                     atomicIt->getSecond().type);
     }
+    for (Value output : scopeViewedTCBOutputs)
+      scopeMap.erase(output);
     item->irMap = scopeMap;
 
     for (Operation *workspaceOutput : item->workspaceOutputs) {
@@ -2235,7 +2445,16 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
       Value toTensor = createToTensor(builder, loc, localOutput.second);
       if (!toTensor)
         return failure();
-      globalIRMap.map(localOutput.first, toTensor);
+      if (allowShapeHeuristics &&
+          toTensor.getType() != localOutput.first.getType()) {
+        // Registered / bypass kernels keep the physical TCB storage and
+        // rebuild the logical view in each consumer scope.
+        toTensor.getDefiningOp()->erase();
+        globalIRMap.erase(localOutput.first);
+        viewedTCBOutputStorage[localOutput.first] = localOutput.second;
+      } else {
+        globalIRMap.map(localOutput.first, toTensor);
+      }
     }
 
     size_t resultIdx = 0;
@@ -2270,7 +2489,7 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     }
 
     item->scopeOp = newScopeOp;
-    if (!item->hasLoopCarriedDep)
+    if (!pinAllPreloadNumToZero && !item->hasLoopCarriedDep)
       preloadNum--;
   }
 
@@ -2303,12 +2522,12 @@ static bool isStorePriorityCBuf(Value value) {
   return space && space.getAddressSpace() == AddressSpace::L1;
 }
 
-/// Prioritize the transposed CBUF copy over the GM output of the same cast.
+/// Prioritize the transposed CBUF copy over the GM output of the same tensor.
 /// Keep this local to tensor-form preload scopes, before memory planning and
 /// sync insertion account for the delayed store's buffer lifetime.
 /// Callers must first pass `allowShapeHeuristics` (registry + preload +
 /// non-zero workspace multibuffer, or LIT bypass).
-static void prioritizePreloadCrossCoreCopy(Block &body) {
+static void prioritizePreloadCrossCoreCopy(Block &body, bool sameIteration) {
   if (llvm::any_of(body, [](Operation &op) { return isa<SetAtomicOp>(op); }))
     return;
 
@@ -2336,9 +2555,14 @@ static void prioritizePreloadCrossCoreCopy(Block &body) {
       continue;
 
     Value source = stripStorePriorityTensorViews(store.getSrc());
-    auto castOp = source.getDefiningOp<VCastOp>();
-    if (!castOp || !isMemoryEffectFree(castOp) || castOp.getDst().size() != 1 ||
-        !castOp.getDst()[0].getDefiningOp<tensor::EmptyOp>())
+    Operation *producer = source.getDefiningOp();
+    if (!producer ||
+        !(isa<VCastOp>(producer) || (sameIteration && isa<VAddOp>(producer))) ||
+        !isMemoryEffectFree(producer))
+      continue;
+    auto dps = cast<DestinationStyleOpInterface>(producer);
+    if (dps.getNumDpsInits() != 1 ||
+        !dps.getDpsInitOperand(0)->get().getDefiningOp<tensor::EmptyOp>())
       continue;
 
     Operation *insertAfter = nullptr;
@@ -2364,7 +2588,7 @@ static void prioritizePreloadCrossCoreCopy(Block &body) {
           continue;
       }
       // Unknown memory effects, other GM accesses and synchronization are
-      // boundaries. Pure tensor/index operations do not overwrite the cast.
+      // boundaries. Pure tensor/index operations do not overwrite the tensor.
       if (!isMemoryEffectFree(op))
         break;
       // Keep the store after trailing pure vector work as well. Otherwise VF
@@ -2374,6 +2598,97 @@ static void prioritizePreloadCrossCoreCopy(Block &body) {
     }
     if (insertAfter)
       store->moveAfter(insertAfter);
+  }
+}
+
+// Keep an early Cube publication separate from a later consumer that needs
+// another Cube result. Only accept a contiguous pure tensor producer chain;
+// tensor.empty and the copy's TCB annotation stay outside the fusion boundary.
+static void preserveEarlyPreloadCopy(Block &body, OpBuilder &builder) {
+  // Keep cross-stage returns directly traceable by multi-buffer analysis.
+  if (body.getTerminator()->getNumOperands())
+    return;
+  auto collect = [&](Operation *root, SetVector<Operation *> &slice) {
+    DenseSet<Operation *> inputs;
+    BackwardSliceOptions options;
+    options.inclusive = true;
+    options.omitBlockArguments = true;
+    options.filter = [&](Operation *op) {
+      if (auto tensor = dyn_cast<bufferization::ToTensorOp>(op)) {
+        Value buffer = tensor.getMemref();
+        if (getOptionalHIVMAddressSpace(buffer.getType()) == AddressSpace::UB &&
+            isTightlyCoupledValue(buffer))
+          if (Operation *alloc = traceAllocLike(buffer))
+            inputs.insert(alloc);
+        return false;
+      }
+      return op->getBlock() == &body && op->getNumResults() &&
+             !op->getNumRegions() && !isa<tensor::EmptyOp>(op) &&
+             isMemoryEffectFree(op) &&
+             llvm::all_of(op->getResultTypes(),
+                          [](Type type) { return isa<TensorType>(type); });
+    };
+    if (root)
+      getBackwardSlice(root, &slice, options);
+    return inputs;
+  };
+  for (CopyOp copy : llvm::make_early_inc_range(body.getOps<CopyOp>())) {
+    if (!isa<TensorType>(copy.getSrc().getType()) ||
+        !isStorePriorityCBuf(copy.getDst()))
+      continue;
+    SetVector<Operation *> producers;
+    auto inputs = collect(copy.getSrc().getDefiningOp(), producers);
+    if (inputs.empty())
+      continue;
+    SmallVector<Operation *> ordered;
+    for (Operation *op = copy->getPrevNode(); op; op = op->getPrevNode()) {
+      if (producers.contains(op)) {
+        ordered.push_back(op);
+        continue;
+      }
+      if (isa<tensor::EmptyOp>(op))
+        continue;
+      if (auto mark = dyn_cast<annotation::MarkOp>(op);
+          mark && mark.getSrc() == copy.getDst() &&
+          mark->hasAttr(HIVMTightlyCoupledBufferAttr::name))
+        continue;
+      break;
+    }
+    if (ordered.size() != producers.size())
+      continue;
+    SetVector<Value> outputs;
+    bool needsAnotherCubeInput = false;
+    for (Operation *op : ordered)
+      for (Value result : op->getResults())
+        for (Operation *user : result.getUsers()) {
+          if (user == copy || producers.contains(user))
+            continue;
+          outputs.insert(result);
+          SetVector<Operation *> consumerSlice;
+          auto consumerInputs = collect(user, consumerSlice);
+          needsAnotherCubeInput |=
+              llvm::any_of(consumerInputs,
+                           [&](auto input) { return !inputs.contains(input); });
+        }
+    // Extra live-outs can materialize unrelated vector work across the scope.
+    if (outputs.size() != 1 || !needsAnotherCubeInput)
+      continue;
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPoint(copy);
+    auto boundary = builder.create<scope::ScopeOp>(
+        copy.getLoc(), TypeRange(ValueRange(outputs.getArrayRef())));
+    boundary.setNoInline(true);
+    boundary->setAttr("vf-scope", builder.getUnitAttr());
+    Block *inner = builder.createBlock(&boundary.getRegion());
+    for (Operation *op : llvm::reverse(ordered))
+      op->moveBefore(inner, inner->end());
+    copy->moveBefore(inner, inner->end());
+    builder.setInsertionPointToEnd(inner);
+    Value output = outputs.front();
+    builder.create<scope::ReturnOp>(copy.getLoc(), output);
+    output.replaceUsesWithIf(boundary.getResult(0), [&](OpOperand &use) {
+      return !boundary->isProperAncestor(use.getOwner());
+    });
   }
 }
 
@@ -2390,11 +2705,15 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
     return failure();
   }
 
-  // Off-registry kernels keep the original GM-store / CBUF-copy order.
+  // Off-registry kernels keep the original GM-store / CBUF-copy order and
+  // do not nest an inner vf-scope around an early CBUF publication.
   if (allowShapeHeuristics) {
     for (auto &item : worklist)
-      if (item->core == TCoreType::VECTOR && item->scopeOp)
-        prioritizePreloadCrossCoreCopy(item->scopeOp.getRegion().front());
+      if (item->core == TCoreType::VECTOR && item->scopeOp) {
+        prioritizePreloadCrossCoreCopy(item->scopeOp.getRegion().front(),
+                                       pinAllPreloadNumToZero);
+        preserveEarlyPreloadCopy(item->scopeOp.getRegion().front(), builder);
+      }
   }
 
   LLVM_DEBUG({
@@ -2454,8 +2773,9 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
     }
 
     if (!toErase.contains(usrOp)) {
-      LLVM_DEBUG(dbgs() << "func" << "\n\nDef: " << *eraseOp
-                        << "\nUser: " << *usrOp << '\n');
+      LLVM_DEBUG(dbgs() << "func"
+                        << "\n\nDef: " << *eraseOp << "\nUser: " << *usrOp
+                        << '\n');
       return usrOp->emitWarning(
           "[cv-pipelining] cannot erase user of pipelined op, aborting "
           "pipelining pass");

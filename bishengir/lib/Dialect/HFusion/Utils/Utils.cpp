@@ -22,6 +22,7 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -128,6 +129,72 @@ Value hfusion::castIndexTo(Value v, Type t, OpBuilder &opBuilder,
                           ->getResult(0)
                     : opBuilder.create<arith::IndexCastOp>(v.getLoc(), t, v)
                           ->getResult(0);
+}
+
+FailureOr<hfusion::CompareFn> utils::selectPredicate(arith::CmpFOp op) {
+  switch (op.getPredicate()) {
+  case arith::CmpFPredicate::OEQ:
+  case arith::CmpFPredicate::UEQ:
+    return hfusion::CompareFn::veq;
+  case arith::CmpFPredicate::ONE:
+  case arith::CmpFPredicate::UNE:
+    return hfusion::CompareFn::vne;
+  case arith::CmpFPredicate::OLE:
+  case arith::CmpFPredicate::ULE:
+    return hfusion::CompareFn::vle;
+  case arith::CmpFPredicate::OLT:
+  case arith::CmpFPredicate::ULT:
+    return hfusion::CompareFn::vlt;
+  case arith::CmpFPredicate::OGE:
+  case arith::CmpFPredicate::UGE:
+    return hfusion::CompareFn::vge;
+  case arith::CmpFPredicate::OGT:
+  case arith::CmpFPredicate::UGT:
+    return hfusion::CompareFn::vgt;
+  default:
+    return failure();
+  }
+}
+
+FailureOr<hfusion::CompareFn> utils::selectPredicate(arith::CmpIOp op) {
+  switch (op.getPredicate()) {
+  case arith::CmpIPredicate::eq:
+    return hfusion::CompareFn::veq;
+  case arith::CmpIPredicate::ne:
+    return hfusion::CompareFn::vne;
+  case arith::CmpIPredicate::slt:
+    return hfusion::CompareFn::vlt;
+  case arith::CmpIPredicate::sgt:
+    return hfusion::CompareFn::vgt;
+  case arith::CmpIPredicate::sle:
+    return hfusion::CompareFn::vle;
+  case arith::CmpIPredicate::sge:
+    return hfusion::CompareFn::vge;
+  case arith::CmpIPredicate::ule:
+    return hfusion::CompareFn::vule;
+  case arith::CmpIPredicate::uge:
+    return hfusion::CompareFn::vuge;
+  case arith::CmpIPredicate::ugt:
+    return hfusion::CompareFn::vugt;
+  case arith::CmpIPredicate::ult:
+    return hfusion::CompareFn::vult;
+  }
+  return failure();
+}
+
+FailureOr<hfusion::CompareFn> utils::selectI1Predicate(arith::CmpIOp op) {
+  switch (op.getPredicate()) {
+  case arith::CmpIPredicate::ult:
+    return hfusion::CompareFn::vlt;
+  case arith::CmpIPredicate::ugt:
+    return hfusion::CompareFn::vgt;
+  case arith::CmpIPredicate::ule:
+    return hfusion::CompareFn::vle;
+  case arith::CmpIPredicate::uge:
+    return hfusion::CompareFn::vge;
+  default:
+    return failure();
+  }
 }
 
 Operation *hfusion::createCmpOp(PatternRewriter &rewriter, Location loc,
@@ -576,6 +643,22 @@ std::optional<FusionKind> hfusion::tryGetFusionKind(func::FuncOp func) {
   return fusionKindAttr.getFusionKind();
 }
 
+bool hfusion::isAICFunc(func::FuncOp func) {
+  auto fusionKind = tryGetFusionKind(func);
+  if (fusionKind && (*fusionKind == FusionKind::ShallowCV ||
+                     *fusionKind == FusionKind::SingleCube))
+    return true;
+
+  auto funcCoreType = hivm::queryFuncCoreType(func);
+  return funcCoreType && *funcCoreType != hivm::TFuncCoreType::AIV;
+}
+
+bool hfusion::isVF(func::FuncOp func) { return hivm::isVF(func); }
+
+bool hfusion::isAIVFunc(func::FuncOp func) {
+  return !isAICFunc(func) && !isVF(func) && !hacc::utils::isHost(func);
+}
+
 void hfusion::trySetFusionKind(func::FuncOp func,
                                const FusionKind &fusionKind) {
   if (func->hasAttr(FusionKindAttr::name)) {
@@ -855,6 +938,13 @@ bool shouldApplyFlattenOpsPass(func::FuncOp func) {
 /// trace value and judge if it is function argument
 bool isFromFunctionArg(mlir::Value v) {
   return utils::tracebackMemRef(v).getDefiningOp() == nullptr;
+}
+
+bool isSIMDVectorFunction(Operation *op) {
+  if (!op->hasAttr(hivm::VectorFunctionAttr::name))
+    return false;
+  auto mode = op->getAttrOfType<hivm::VFModeAttr>(hivm::VFModeAttr::name);
+  return !mode || mode.getValue() == hivm::VFMode::SIMD;
 }
 
 } // namespace util
@@ -1754,6 +1844,13 @@ bool hfusion::isSupportedTreeReductionCandidate(Operation *op) {
   if (!isa<linalg::LinalgOp>(op))
     return false;
   auto linalgOp = cast<linalg::LinalgOp>(op);
+  if (auto genericOp = dyn_cast<linalg::GenericOp>(op)) {
+    // A bug in split_reduction prevents support for linalg.index payloads.
+    WalkResult result =
+        genericOp.walk([](linalg::IndexOp) { return WalkResult::interrupt(); });
+    if (result.wasInterrupted())
+      return false;
+  }
   if (!linalgOp.hasPureTensorSemantics())
     return false;
   if (linalgOp.getNumParallelLoops() == 0)
@@ -1767,6 +1864,14 @@ bool hfusion::isSupportedTreeReductionCandidate(Operation *op) {
 
   SmallVector<unsigned> reductionDims;
   linalgOp.getReductionDims(reductionDims);
+  // Generated fills and combining reductions assume that the
+  // utput preserves the parallel iterator order.
+  AffineMap outputMap =
+      linalgOp.getMatchingIndexingMap(linalgOp.getDpsInitOperand(0));
+  if (outputMap != AffineMap::getMultiDimIdentityMap(linalgOp.getNumLoops(),
+                                                     op->getContext())
+                       .dropResult(reductionDims.front()))
+    return false;
   auto initType = dyn_cast<RankedTensorType>(
       linalgOp.getDpsInitOperand(0)->get().getType());
   if (!initType || reductionDims.front() > initType.getRank())

@@ -84,6 +84,8 @@ def AppendTargetDeviceSpec : Pass<"hacc-append-device-spec", "ModuleOp"> {
             REGISTER_TARGET(Ascend910_9372),
             REGISTER_TARGET(Ascend910_9381), REGISTER_TARGET(Ascend910_9382),
             REGISTER_TARGET(Ascend910_9391), REGISTER_TARGET(Ascend910_9392),
+            // Ascend950 generic
+            REGISTER_TARGET(Ascend950),
             // Ascend910_95 series
             REGISTER_TARGET(Ascend910_950z), REGISTER_TARGET(Ascend910_9579),
             REGISTER_TARGET(Ascend910_957b), REGISTER_TARGET(Ascend910_957d),
@@ -115,6 +117,16 @@ def AppendTargetDeviceSpec : Pass<"hacc-append-device-spec", "ModuleOp"> {
             REGISTER_TARGET(Ascend950DT_9591), REGISTER_TARGET(Ascend950DT_9592),
             REGISTER_TARGET(Ascend950DT_9595), REGISTER_TARGET(Ascend950DT_9596),
             REGISTER_TARGET(Ascend950DT_95A1), REGISTER_TARGET(Ascend950DT_95A2),
+            // Ascend960 series
+            REGISTER_TARGET(Ascend960),
+            // Ascend960DT series
+            REGISTER_TARGET(Ascend960DT_969B5), REGISTER_TARGET(Ascend960DT_969B6),
+            REGISTER_TARGET(Ascend960DT_968B7), REGISTER_TARGET(Ascend960DT_966B7),
+            REGISTER_TARGET(Ascend960DT_966B8), REGISTER_TARGET(Ascend960DT_961BY),
+            REGISTER_TARGET(Ascend960DT_961BZ),
+            // Ascend960PR series
+            REGISTER_TARGET(Ascend960PR_969A1), REGISTER_TARGET(Ascend960PR_964A1),
+            REGISTER_TARGET(Ascend960PR_936A1),
             REGISTER_TARGET(Unknown)
 #undef REGISTER_TARGET
 #undef TO_STRING
@@ -123,10 +135,12 @@ def AppendTargetDeviceSpec : Pass<"hacc-append-device-spec", "ModuleOp"> {
     >,
     Option<"customAICNumber", "custom-aic-number", "int",
        /*default=*/"-1",
-       "custom aic cores number to use, default : -1 (no override)">,
+       "custom aic cores number to use, must be strictly positive, "
+       "-1 (no override) keeps the target's default">,
     Option<"customAIVNumber", "custom-aiv-number", "int",
        /*default=*/"-1",
-       "custom aiv cores number to use, default : -1 (no override)">,
+       "custom aiv cores number to use, must be strictly positive, "
+       "-1 (no override) keeps the target's default">,
     Option<"HIVMCVersion", "hivmc-version", "std::string",
                         /*default=*/"\"\"", "HIVMC Version">
   ];

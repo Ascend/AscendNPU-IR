@@ -17,8 +17,9 @@
 #ifndef HIVM_MLIR_TEMPLATE_SIMT_GATHER_UB_TO_UB_H
 #define HIVM_MLIR_TEMPLATE_SIMT_GATHER_UB_TO_UB_H
 
+#include "ArchDefs.h"
 #include "Utils.h"
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 
 // UB-to-UB SIMT gather. Differences from OutToUB:
 //   1) src is an N-dim __ubuf__ memref with its own sizes/strides;

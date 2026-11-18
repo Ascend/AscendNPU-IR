@@ -17,6 +17,7 @@
 #ifndef HIVM_MLIR_TEMPLATE_DMA_UTILS_H
 #define HIVM_MLIR_TEMPLATE_DMA_UTILS_H
 
+#include "ArchDefs.h"
 #include "RegBase/VecUtils.h"
 #include "Utils.h"
 #include "Vector/VecUtils.h"
@@ -25,7 +26,7 @@
 constexpr uint16_t INTRIN_MAX_BURST_CNT = (1 << 12) - 1;             // 4095
 constexpr uint32_t INTRIN_MAX_BURST_LEN = ((1 << 21) - 1) / 32 * 32; // 2097120
 constexpr uint32_t INTRIN_MAX_GAP = (1lu << 32) - 1; // 4294967295
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 constexpr uint64_t INTRIN_MAX_STRIDE = (1lu << 40) - 1; // 1099511627775
 #endif
 
@@ -34,6 +35,27 @@ enum class PadMode : uint32_t {
   FirstElem = 1,
   Value = 2
 };
+
+// The following padValueType is used to convert the FP8 PadValue to the float
+// type. The reason for doing so is that if the PadValue is of FP8 type, an FP8
+// constant will be automatically generated, which is not allowed in the LLVM IR
+// received by bisheng. Thus, the conversion here is only to avoid generating
+// FP8 constants.
+template <typename T> struct PadValueType {
+  using type = T;
+};
+
+#if BISHENG_TPL_REGBASE
+template <> struct PadValueType<float8_e4m3_t> {
+  using type = float;
+};
+
+template <> struct PadValueType<float8_e5m2_t> {
+  using type = float;
+};
+#endif
+
+template <typename T> using PadValueT = typename PadValueType<T>::type;
 
 enum class EvictionPolicy : uint32_t { EvictFirst = 0, EvictLast = 1 };
 
@@ -49,10 +71,9 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) int64_t calc_ub_gap(int64_t stride,
                                                            int64_t size) {
   constexpr int32_t bytes = sizeof(T);
-  int32_t factor = 1;
-  if constexpr (bytes == BYTES_B64) {
-    factor = 2;
-  }
+  // B32 elements per element of T; sub-B32 dtypes stay in their own unit.
+  constexpr int64_t factor =
+      bytes == BYTES_B64 ? sizeof(T) / sizeof(uint32_t) : 1;
 
   const int64_t n_elems_of_aligned_unit = UB_ALIGN_BYTES / bytes * factor;
   const int64_t gap = CEIL_DIV(stride * factor, n_elems_of_aligned_unit) -
@@ -68,7 +89,7 @@ __aicore__ __attribute__((always_inline)) void load_gm_to_cbuf_intrin_core(
     __gm__ T *gm_ptr, int64_t gm_offset, __cbuf__ T *cbuf_ptr,
     int64_t cbuf_offset, uint16_t burst_cnt, uint32_t burst_len,
     uint32_t src_gap, uint32_t dst_gap, pad_t pad_mode) {
-
+#if !BISHENG_TPL_REGBASE
   INTRINSIC(copy_gm_to_cbuf,
             cbuf_ptr + cbuf_offset, // dst
             gm_ptr + gm_offset,     // src
@@ -78,6 +99,36 @@ __aicore__ __attribute__((always_inline)) void load_gm_to_cbuf_intrin_core(
             src_gap,                // src_gap
             dst_gap,                // dst_gap
             pad_t::PAD_NONE);       // pad_mode
+#elif BISHENG_TPL_HAS_DMA_PRE_ALLOCATION
+  INTRINSIC(copy_gm_to_cbuf_align_v2,
+            (__cbuf__ T *)cbuf_ptr + cbuf_offset, // dst_addr
+            (__gm__ T *)gm_ptr + gm_offset,       // src_addr
+            0,                                    // sid
+            burst_cnt,                            // burst_num
+            burst_len,                            // burst_len
+            0,                                    // left_padding_count
+            0,                                    // right_padding_count
+            true,                                 // data_select_bit
+            false,                                // pre_allocation
+            0,                                    // l2_cache_ctl
+            src_gap + burst_len,                  // burst_src_stride
+            dst_gap + burst_len                   // burst_dst_stride
+  );
+#else
+  INTRINSIC(copy_gm_to_cbuf_align_v2,
+            (__cbuf__ T *)cbuf_ptr + cbuf_offset, // dst_addr
+            (__gm__ T *)gm_ptr + gm_offset,       // src_addr
+            0,                                    // sid
+            burst_cnt,                            // burst_num
+            burst_len,                            // burst_len
+            0,                                    // left_padding_count
+            0,                                    // right_padding_count
+            true,                                 // data_select_bit
+            0,                                    // l2_cache_ctl
+            src_gap + burst_len,                  // burst_src_stride
+            dst_gap + burst_len                   // burst_dst_stride
+  );
+#endif
 }
 
 template <typename T>
@@ -89,8 +140,12 @@ load_gm_to_cbuf_1d_core_with_contiguous_last_dim(memref_t<__gm__ T, 1> *gm,
   auto dst_ptr = cbuf->aligned + cbuf->offset;
   const int64_t size0 = gm->sizes[0];
   constexpr int bytes = sizeof(T);
+#if !BISHENG_TPL_REGBASE
   // burst_len of gm <-> l1 is in units of 32bytes.
   uint32_t burst_len = CEIL_DIV(size0 * bytes, L1_ALIGN_BYTES);
+#else
+  uint32_t burst_len = size0 * bytes;
+#endif
   load_gm_to_cbuf_intrin_core(src_ptr, 0, dst_ptr, 0, 1, burst_len, 0, 0,
                               pad_mode);
 }
@@ -195,7 +250,7 @@ load_gm_to_cbuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
   }
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_C310
 // Copy gm to ubuf intrin for 1d and 2d, all dtypes are supported.
 // For copy 1d, burst_cnt is 1 and gap is 0.
 // For copy 2d, burst_cnt, burst_len and gap are all needed to compute.
@@ -222,12 +277,56 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
               rightPaddingNum, data_select_bit, l2_cache_ctl, src_stride,
               dst_stride);
   } else if constexpr (bytes == BYTES_B64) {
+    // The intrinsic receives uint32_t pointers here, so its padding counts
+    // are expressed in B32 elements: one B64 element holds two B32 elements.
+    // burst_len and strides stay byte-based.
+    constexpr int64_t factor = sizeof(T) / sizeof(uint32_t);
     INTRINSIC(copy_gm_to_ubuf_align_v2,
               reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr + ub_offset -
                                                     left_padding_num),
               reinterpret_cast<__gm__ uint32_t *>(gm_ptr + gm_offset), 0,
-              burst_cnt, burst_len, left_padding_num, rightPaddingNum,
-              data_select_bit, l2_cache_ctl, src_stride, dst_stride);
+              burst_cnt, burst_len, left_padding_num * factor,
+              rightPaddingNum * factor, data_select_bit, l2_cache_ctl,
+              src_stride, dst_stride);
+  }
+}
+#elif BISHENG_TPL_920R1
+// dav-920r1: copy_gm_to_ubuf_align_v2 13-param form (#906) with
+// pre_allocation=false and non_eod_ctrl=false, equivalent to the c310
+// 11-param form.
+template <typename T>
+__aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
+    __gm__ T *gm_ptr, int64_t gm_offset, __ubuf__ T *ub_ptr, int64_t ub_offset,
+    uint16_t burst_cnt, uint32_t burst_len, int64_t left_padding_num,
+    uint64_t src_gap, uint32_t dst_gap, uint8_t l2_cache_ctl) {
+  constexpr int32_t bytes = sizeof(T);
+  auto sizeWithPad = burst_len + (left_padding_num * bytes);
+  auto rightPaddingNum =
+      (CEIL_FACTOR(sizeWithPad, UB_ALIGN_BYTES) - sizeWithPad) / bytes;
+  uint32_t dst_align_gap = dst_gap / UB_ALIGN_BYTES;
+  bool data_select_bit = true;
+  const uint64_t src_stride = src_gap + burst_len;
+  const uint32_t dst_stride = dst_gap + burst_len;
+  if (left_padding_num == 0)
+    rightPaddingNum = 0;
+  if constexpr (bytes == BYTES_B8 || bytes == BYTES_B16 || bytes == BYTES_B32) {
+    INTRINSIC(copy_gm_to_ubuf_align_v2, (ub_ptr + ub_offset - left_padding_num),
+              gm_ptr + gm_offset, 0, burst_cnt, burst_len, left_padding_num,
+              rightPaddingNum, data_select_bit, /*pre_allocation=*/false,
+              l2_cache_ctl, src_stride, dst_stride, /*non_eod_ctrl=*/false);
+  } else if constexpr (bytes == BYTES_B64) {
+    // The intrinsic receives uint32_t pointers here, so its padding counts
+    // are expressed in B32 elements: one B64 element holds two B32 elements.
+    // burst_len and strides stay byte-based.
+    constexpr int64_t factor = sizeof(T) / sizeof(uint32_t);
+    INTRINSIC(copy_gm_to_ubuf_align_v2,
+              reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr + ub_offset -
+                                                    left_padding_num),
+              reinterpret_cast<__gm__ uint32_t *>(gm_ptr + gm_offset), 0,
+              burst_cnt, burst_len, left_padding_num * factor,
+              rightPaddingNum * factor, data_select_bit,
+              /*pre_allocation=*/false, l2_cache_ctl, src_stride, dst_stride,
+              /*non_eod_ctrl=*/false);
   }
 }
 #else
@@ -255,17 +354,20 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
               gm_ptr + gm_offset, 0, burst_cnt, burst_len, left_padding_num,
               rightPaddingNum, src_gap, dst_align_gap);
   } else if constexpr (bytes == BYTES_B64) {
+    // The intrinsic receives uint32_t pointers, so its padding counts are
+    // expressed in B32 elements, cf. the C310 variant above.
+    constexpr int64_t factor = sizeof(T) / sizeof(uint32_t);
     INTRINSIC(copy_gm_to_ubuf_align,
               reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr + ub_offset -
                                                     left_padding_num),
               reinterpret_cast<__gm__ uint32_t *>(gm_ptr + gm_offset), 0,
-              burst_cnt, burst_len, left_padding_num, rightPaddingNum, src_gap,
-              dst_align_gap);
+              burst_cnt, burst_len, left_padding_num * factor,
+              rightPaddingNum * factor, src_gap, dst_align_gap);
   }
 }
 #endif
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_C310
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 store_ubuf_to_gm_intrin_core(__ubuf__ T *ub_ptr, int64_t ub_offset,
@@ -281,12 +383,44 @@ store_ubuf_to_gm_intrin_core(__ubuf__ T *ub_ptr, int64_t ub_offset,
     INTRINSIC(copy_ubuf_to_gm_align_v2, gm_ptr + gm_offset, ub_ptr + ub_offset,
               0, burst_cnt, burst_len, l2_cache_ctl, dst_stride, src_stride);
   } else if constexpr (bytes == BYTES_B64) {
-    int32_t factor = 2;
+    // The intrinsic receives uint32_t pointers, so the offsets scale to B32
+    // elements: one B64 element holds two B32 elements.
+    constexpr int64_t factor = sizeof(T) / sizeof(uint32_t);
     INTRINSIC(copy_ubuf_to_gm_align_v2,
               reinterpret_cast<__gm__ uint32_t *>(gm_ptr) + gm_offset * factor,
               reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr) +
                   ub_offset * factor,
               0, burst_cnt, burst_len, l2_cache_ctl, dst_stride, src_stride);
+  }
+}
+#elif BISHENG_TPL_920R1
+// dav-920r1: `copy_ubuf_to_gm_align(_v2)` only has the 12-param form with
+// rsw_ctrl/rsw_packet_ctrl/rsw_buffset_size/non_eod_ctrl; keep them off to
+// preserve the plain 8-param semantics.
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+store_ubuf_to_gm_intrin_core(__ubuf__ T *ub_ptr, int64_t ub_offset,
+                             __gm__ T *gm_ptr, int64_t gm_offset,
+                             uint16_t burst_cnt, uint32_t burst_len,
+                             uint32_t src_gap, uint64_t dst_gap) {
+  constexpr int32_t bytes = sizeof(T);
+  uint8_t l2_cache_ctl = 0;
+  const uint32_t src_stride = src_gap + burst_len;
+  const uint64_t dst_stride = dst_gap + burst_len;
+  if constexpr (bytes == BYTES_B8 || bytes == BYTES_B16 || bytes == BYTES_B32) {
+    INTRINSIC(copy_ubuf_to_gm_align_v2, gm_ptr + gm_offset, ub_ptr + ub_offset,
+              0, burst_cnt, burst_len, /*rsw_ctrl=*/false,
+              /*rsw_packet_ctrl=*/false, /*rsw_buffset_size=*/0, l2_cache_ctl,
+              dst_stride, src_stride, /*non_eod_ctrl=*/false);
+  } else if constexpr (bytes == BYTES_B64) {
+    int32_t factor = 2;
+    INTRINSIC(copy_ubuf_to_gm_align_v2,
+              reinterpret_cast<__gm__ uint32_t *>(gm_ptr) + gm_offset * factor,
+              reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr) +
+                  ub_offset * factor,
+              0, burst_cnt, burst_len, /*rsw_ctrl=*/false,
+              /*rsw_packet_ctrl=*/false, /*rsw_buffset_size=*/0, l2_cache_ctl,
+              dst_stride, src_stride, /*non_eod_ctrl=*/false);
   }
 }
 #else
@@ -305,7 +439,9 @@ store_ubuf_to_gm_intrin_core(__ubuf__ T *ub_ptr, int64_t ub_offset,
     INTRINSIC(copy_ubuf_to_gm_align, gm_ptr + gm_offset, ub_ptr + ub_offset, 0,
               burst_cnt, burst_len, src_align_gap, dst_gap);
   } else if constexpr (bytes == BYTES_B64) {
-    int32_t factor = 2;
+    // The intrinsic receives uint32_t pointers, so the offsets scale to B32
+    // elements, cf. the C310 variant above.
+    constexpr int64_t factor = sizeof(T) / sizeof(uint32_t);
     INTRINSIC(copy_ubuf_to_gm_align,
               reinterpret_cast<__gm__ uint32_t *>(gm_ptr) + gm_offset * factor,
               reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr) +
@@ -319,19 +455,40 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void
 copy_ubuf_to_ubuf_1d_core(memref_t<__ubuf__ T, 1> *src,
                           memref_t<__ubuf__ T, 1> *dst);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 copy_ubuf_to_cbuf_1d_core(memref_t<__ubuf__ T, 1> *src,
                           memref_t<__cbuf__ T, 1> *dst);
 #endif
 
+// A regular scalar load if DisableDCache is false,
+// otherwise uses ld.dev to bypass DCache.
+template <typename T, bool DisableDCache>
+__aiv__ __attribute__((always_inline)) T load_gm_scalar(__gm__ T *ptr) {
+#if BISHENG_TPL_REGBASE
+  if constexpr (DisableDCache) {
+    static_assert(sizeof(T) == 1 || sizeof(T) == 2 || sizeof(T) == 4 ||
+                  sizeof(T) == 8);
+    using Bits = std::conditional_t<
+        sizeof(T) == 1, uint8_t,
+        std::conditional_t<
+            sizeof(T) == 2, uint16_t,
+            std::conditional_t<sizeof(T) == 4, uint32_t, uint64_t>>>;
+    Bits bits = static_cast<Bits>(
+        INTRINSIC(ld_dev, reinterpret_cast<__gm__ Bits *>(ptr), 0));
+    return __builtin_bit_cast(T, bits);
+  }
+#endif
+  return *ptr;
+}
+
 #define REGISTE_COPY_UB_TO_UB_1D_FUNC(type)                                    \
   template __aiv__ __attribute__((always_inline)) void                         \
   copy_ubuf_to_ubuf_1d_core<type>(memref_t<__ubuf__ type, 1> * src,            \
                                   memref_t<__ubuf__ type, 1> * dst)
 
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_1d_by_scalar(memref_t<__gm__ T, 1> *src,
                              memref_t<__ubuf__ T, 1> *dst) {
@@ -340,13 +497,14 @@ load_gm_to_ubuf_1d_by_scalar(memref_t<__gm__ T, 1> *src,
   INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
   for (int i = 0; i < src->sizes[0]; i++) {
-    *(dst_ptr + i * dst->strides[0]) = *(src_ptr + i * src->strides[0]);
+    *(dst_ptr + i * dst->strides[0]) =
+        load_gm_scalar<T, DisableDCache>(src_ptr + i * src->strides[0]);
   }
   INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
 }
 
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_2d_by_scalar(memref_t<__gm__ T, 2> *src,
                              memref_t<__ubuf__ T, 2> *dst) {
@@ -357,14 +515,60 @@ load_gm_to_ubuf_2d_by_scalar(memref_t<__gm__ T, 2> *src,
   for (int i = 0; i < src->sizes[0]; ++i) {
     for (int j = 0; j < src->sizes[1]; ++j) {
       *(dst_ptr + i * dst->strides[0] + j * dst->strides[1]) =
-          *(src_ptr + i * src->strides[0] + j * src->strides[1]);
+          load_gm_scalar<T, DisableDCache>(src_ptr + i * src->strides[0] +
+                                           j * src->strides[1]);
     }
   }
   INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
 }
 
-template <typename T>
+/// Scalar fallback for the A6 broadcast and in-row padded forms:
+/// \p broadcast_axes names the unit-source axes replicated in place, and
+/// \p span writes [lp pad][row][rp pad] inside the destination row. The A3/A5
+/// forms use neither, so they keep the two-argument overload above.
+template <typename T, bool DisableDCache = false>
+__aiv__ __attribute__((always_inline)) void
+load_gm_to_ubuf_2d_by_scalar_brc_pad(memref_t<__gm__ T, 2> *src,
+                                     memref_t<__ubuf__ T, 2> *dst,
+                                     unsigned broadcast_axes = 0,
+                                     bool span = false,
+                                     int64_t lp = 0, int64_t rp = 0,
+                                     const T *pad_value = nullptr) {
+  auto src_ptr = src->aligned + src->offset;
+  auto dst_ptr = dst->aligned + dst->offset;
+  // A span fill writes pad_value at the padding positions, so a span caller
+  // must supply one.
+  if (span && pad_value == nullptr) {
+    __builtin_cce_trap_mov(1);
+    return;
+  }
+  INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+  const int64_t rows = (broadcast_axes & 1) ? dst->sizes[0] : src->sizes[0];
+  const int64_t cols =
+      span ? dst->sizes[1]
+           : ((broadcast_axes & 2) ? dst->sizes[1] : src->sizes[1]);
+  const int64_t srcStep0 = (broadcast_axes & 1) ? 0 : src->strides[0];
+  const int64_t srcStep1 = (broadcast_axes & 2) ? 0 : src->strides[1];
+  for (int64_t i = 0; i < rows; ++i) {
+    for (int64_t j = 0; j < cols; ++j) {
+      // Span padding is in the destination view, never before its origin.
+      // This branch also handles W=0 without reading the source.
+      if (span && (j < lp || j - lp >= src->sizes[1])) {
+        *(dst_ptr + i * dst->strides[0] + j * dst->strides[1]) = *pad_value;
+      } else {
+        *(dst_ptr + i * dst->strides[0] + j * dst->strides[1]) =
+            load_gm_scalar<T, DisableDCache>(src_ptr + i * srcStep0 +
+                                             (span ? j - lp : j) * srcStep1);
+      }
+    }
+  }
+  INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+}
+
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_by_scalar(memref_t<__gm__ T, 3> *src,
                              memref_t<__ubuf__ T, 3> *dst) {
@@ -382,7 +586,48 @@ load_gm_to_ubuf_3d_by_scalar(memref_t<__gm__ T, 3> *src,
                                    dst->offset + i * dst->strides[0],
                                    {dst->sizes[1], dst->sizes[2]},
                                    {dst->strides[1], dst->strides[2]}};
-    load_gm_to_ubuf_2d_by_scalar<T>(&src_2d, &dst_2d);
+    load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(&src_2d, &dst_2d);
+  }
+}
+
+/// Scalar fallback for the A6 broadcast and in-row padded forms:
+/// \p broadcast_axes names the unit-source axes replicated in place, and
+/// \p span writes [lp pad][row][rp pad] inside the destination row. The A3/A5
+/// forms use neither, so they keep the two-argument overload above.
+template <typename T, bool DisableDCache = false>
+__aiv__ __attribute__((always_inline)) void
+load_gm_to_ubuf_3d_by_scalar_brc_pad(memref_t<__gm__ T, 3> *src,
+                                     memref_t<__ubuf__ T, 3> *dst,
+                                     unsigned broadcast_axes = 0,
+                                     bool span = false,
+                                     int64_t lp = 0, int64_t rp = 0,
+                                     const T *pad_value = nullptr) {
+  auto src_ptr = src->aligned + src->offset;
+  auto dst_ptr = dst->aligned + dst->offset;
+  // A span fill writes pad_value at the padding positions, so a span caller
+  // must supply one.
+  if (span && pad_value == nullptr) {
+    __builtin_cce_trap_mov(1);
+    return;
+  }
+
+  for (int64_t i = 0;
+       i < ((broadcast_axes & 1) ? dst->sizes[0] : src->sizes[0]); ++i) {
+    memref_t<__gm__ T, 2> src_2d{src->allocated,
+                                 src->aligned,
+                                 src->offset +
+                                     ((broadcast_axes & 1)
+                                          ? 0
+                                          : i * src->strides[0]),
+                                 {src->sizes[1], src->sizes[2]},
+                                 {src->strides[1], src->strides[2]}};
+    memref_t<__ubuf__ T, 2> dst_2d{dst->allocated,
+                                   dst->aligned,
+                                   dst->offset + i * dst->strides[0],
+                                   {dst->sizes[1], dst->sizes[2]},
+                                   {dst->strides[1], dst->strides[2]}};
+    load_gm_to_ubuf_2d_by_scalar_brc_pad<T, DisableDCache>(
+        &src_2d, &dst_2d, broadcast_axes >> 1, span, lp, rp, pad_value);
   }
 }
 
@@ -404,7 +649,7 @@ store_ubuf_to_gm_1d_by_scalar(memref_t<__ubuf__ T, 1> *src,
   for (int i = 0; i < src->sizes[0]; i++) {
     __gm__ T *gm_ptr = dst_ptr + i * dst->strides[0];
     __ubuf__ T *ub_ptr = src_ptr + i * src->strides[0];
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
     if constexpr (bytes == BYTES_B32 || bytes == BYTES_B64) {
       INTRINSIC(st_dev, (T)*ub_ptr, (__gm__ T *)gm_ptr, 0);
     } else if constexpr (bytes == BYTES_B16) {
@@ -440,7 +685,7 @@ store_ubuf_to_gm_2d_by_scalar(memref_t<__ubuf__ T, 2> *src,
     for (int j = 0; j < src->sizes[1]; j++) {
       __gm__ T *gm_ptr = dst_ptr + i * dst->strides[0] + j * dst->strides[1];
       __ubuf__ T *ub_ptr = src_ptr + i * src->strides[0] + j * src->strides[1];
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
       if constexpr (bytes == BYTES_B32 || bytes == BYTES_B64) {
         INTRINSIC(st_dev, (T)*ub_ptr, (__gm__ T *)gm_ptr, 0);
       } else if constexpr (bytes == BYTES_B16) {
@@ -502,9 +747,9 @@ load_gm_to_ubuf_1d_core_with_contiguous_last_dim(memref_t<__gm__ T, 1> *gm,
                               left_padding_num, 0, 0, l2_cache_ctl);
 }
 
-/// `load_gm_to_ubuf_intrin_core` with `numBurst = size[0], burst_len =
-/// dtypeBytes` Prerequisites: `strideUB[0] == 1, strideGM[0] != 1`
-template <typename T>
+/// Compact GM -> UB load with `burst_len = dtypeBytes`.
+/// Prerequisites: `strideUB[0] == 1, strideGM[0] != 1`.
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim(
     memref_t<__gm__ T, 1> *gm, memref_t<__ubuf__ T, 1> *ub,
@@ -512,27 +757,62 @@ load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim(
   auto src_ptr = gm->aligned + gm->offset;
   auto dst_ptr = ub->aligned + ub->offset;
   const int64_t size0 = gm->sizes[0];
-  constexpr int bytes = sizeof(T);
-
   const int64_t stride0_gm = gm->strides[0];
-  const int64_t dma_copy_size = FLOOR_FACTOR(size0, (UB_ALIGN_BYTES / bytes));
-  load_gm_to_ubuf_intrin_core(src_ptr, 0, dst_ptr, 0, dma_copy_size, bytes,
-                              left_padding_num, (stride0_gm - 1) * bytes, 0,
-                              l2_cache_ctl);
-  const int64_t scalar_copy_size = size0 - dma_copy_size;
-  if (scalar_copy_size) {
-    // Use scalar loop to handle the remaining unaligned tail section.
-    memref_t<__gm__ T, 1> gm_scalar = {gm->allocated,
-                                       gm->aligned,
-                                       gm->offset + stride0_gm * dma_copy_size,
-                                       {scalar_copy_size},
-                                       {stride0_gm}};
-    memref_t<__ubuf__ T, 1> ub_scalar = {ub->allocated,
-                                         ub->aligned,
-                                         ub->offset + dma_copy_size,
-                                         {scalar_copy_size},
-                                         {1}};
-    load_gm_to_ubuf_1d_by_scalar<T>(&gm_scalar, &ub_scalar);
+  constexpr uint64_t bytes = sizeof(T);
+
+#if BISHENG_TPL_REGBASE
+  // src_stride is an unsigned forward byte step; negative or over-limit
+  // strides cannot be encoded, fall back to scalar.
+  const bool invalid_src_stride =
+      stride0_gm <= 0 ||
+      static_cast<uint64_t>(stride0_gm) > INTRIN_MAX_STRIDE / bytes;
+
+  if (invalid_src_stride) [[unlikely]] {
+    load_gm_to_ubuf_1d_by_scalar<T, DisableDCache>(gm, ub);
+    return;
+  }
+#endif
+
+  constexpr uint16_t num_per_block = INTR_BYTES_PER_BLOCK / bytes;
+  constexpr uint16_t aligned_max_burst_cnt =
+      FLOOR_FACTOR(INTRIN_MAX_BURST_CNT, num_per_block);
+  const uint64_t src_stride = static_cast<uint64_t>(stride0_gm) * bytes;
+  const uint64_t src_gap = src_stride - bytes;
+
+  if (size0 <= aligned_max_burst_cnt) [[likely]] {
+    // Fast path: a single DMA covers the whole copy. Avoids the non-pow2
+    // div/rem and the main loop of the main/tail split below, which cost
+    // extra scalar instructions on every call for the small sizes that
+    // dominate 1D strided copies.
+    load_gm_to_ubuf_intrin_core(src_ptr, 0, dst_ptr, 0,
+                                static_cast<uint16_t>(size0), bytes,
+                                left_padding_num, src_gap, 0, l2_cache_ctl);
+    return;
+  }
+  const int64_t main_count = size0 / aligned_max_burst_cnt;
+  const uint16_t tail_burst_cnt = size0 % aligned_max_burst_cnt;
+
+  for (int64_t i = 0; i < main_count; ++i) {
+    const int64_t gm_offset = i * aligned_max_burst_cnt * stride0_gm;
+    const int64_t ub_offset = i * aligned_max_burst_cnt;
+    // Only the first DMA may write the leading pad: each intrin call with
+    // lp != 0 rewrites [ub_offset - lp, ub_offset) with pad elements, which
+    // would corrupt the tail of the previous chunk for i > 0.
+    load_gm_to_ubuf_intrin_core(src_ptr, gm_offset, dst_ptr, ub_offset,
+                                aligned_max_burst_cnt, bytes,
+                                i == 0 ? left_padding_num : 0, src_gap, 0,
+                                l2_cache_ctl);
+  }
+  if (tail_burst_cnt > 0) {
+    const int64_t gm_offset = main_count * aligned_max_burst_cnt * stride0_gm;
+    const int64_t ub_offset = main_count * aligned_max_burst_cnt;
+    // Same as above: when no main chunk ran, the tail is the first DMA and
+    // owns the leading pad; otherwise pass 0 to avoid overwriting the last
+    // main chunk's tail.
+    load_gm_to_ubuf_intrin_core(src_ptr, gm_offset, dst_ptr, ub_offset,
+                                tail_burst_cnt, bytes,
+                                main_count == 0 ? left_padding_num : 0,
+                                src_gap, 0, l2_cache_ctl);
   }
 }
 
@@ -550,7 +830,7 @@ store_ubuf_to_gm_1d_core_with_contiguous_last_dim(memref_t<__ubuf__ T, 1> *ub,
   store_ubuf_to_gm_intrin_core(src_ptr, 0, dst_ptr, 0, 1, size0 * bytes, 0, 0);
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// 2D GM -> UB core func mainly using DMA
 /// Prerequisites: `strideUB[1] == strideGM[1] == 1` and startUBAddr is 32B
 /// aligned
@@ -589,7 +869,7 @@ store_ubuf_to_gm_1d_core_with_contiguous_last_dim(memref_t<__ubuf__ T, 1> *ub,
 ///     dtypeBytes
 ///                 load_gm_to_ubuf_intrin_core
 ///     ```
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
                                                  memref_t<__ubuf__ T, 2> *ub,
@@ -606,7 +886,7 @@ load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
   if (is_over_gap || 0 > ub_gap || 0 > gm_gap) [[unlikely]] {
     // special cases of stride, unlikely used
     if (stride0_ub * bytes % INTR_BYTES_PER_BLOCK != 0) {
-      load_gm_to_ubuf_2d_by_scalar<T>(gm, ub);
+      load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(gm, ub);
       return;
     }
     // then we ensure call of load_gm_to_ubuf_1d_core_with_contiguous_last_dim
@@ -668,7 +948,7 @@ load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
 /// m300 arch
 ///========================================
 // Copy 2d, where the last dimension is contiguous i.e. stride1 = 1.
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
                                                  memref_t<__ubuf__ T, 2> *ub,
@@ -738,7 +1018,7 @@ load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
 }
 #endif
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// 2D UB -> GM core func mainly using DMA
 /// Prerequisites: `strideUB[1] == strideGM[1] == 1` and startUBAddr is 32B
 /// aligned
@@ -910,7 +1190,7 @@ store_ubuf_to_gm_2d_core_with_contiguous_last_dim(memref_t<__ubuf__ T, 2> *ub,
 }
 #endif
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// 3D GM -> UB core func mainly using DMA
 /// + `UB&GM stride[1] == stride[2] * size[2]`: dimension 1 is contiguous
 ///   - Convert to 2D: `offset2D = offset3D, size2D = [size3D[0], size3D[1] *
@@ -962,7 +1242,7 @@ store_ubuf_to_gm_2d_core_with_contiguous_last_dim(memref_t<__ubuf__ T, 2> *ub,
 ///       + UB `stride3D[0] * dtypeBytes % 32B != 0`: no axis with 32B-aligned
 ///       stride
 ///         fall back to looped scalar transfer
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                                  memref_t<__ubuf__ T, 3> *ub,
@@ -988,7 +1268,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                   ub->offset,
                                   {size0, size1 * size2},
                                   {stride0_ub, 1}};
-    load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
+    load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
         &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
     return;
   }
@@ -1005,7 +1285,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                   ub->offset,
                                   {size0 * size1, size2},
                                   {stride1_ub, 1}};
-    load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
+    load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
         &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
     return;
   }
@@ -1013,7 +1293,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
   if (stride0_ub % num_per_block != 0) {
     // stride1_ub is not 32B aligned either
-    load_gm_to_ubuf_3d_by_scalar<T>(gm, ub);
+    load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(gm, ub);
     return;
   }
 
@@ -1032,7 +1312,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                       ub->offset + i * stride0_ub,
                                       {size1, size2},
                                       {stride1_ub, 1}};
-        load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
+        load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
             &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
       }
       return;
@@ -1049,7 +1329,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                     ub->offset + i * stride1_ub,
                                     {size0, size2},
                                     {stride0_ub, 1}};
-      load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
+      load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
           &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
     }
     return;
@@ -1069,7 +1349,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                   ub->offset + i * stride0_ub,
                                   {size1, size2},
                                   {stride1_ub, 1}};
-    load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
+    load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
         &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
   }
   return;
@@ -1079,7 +1359,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
 /// m300 arch
 ///========================================
 // Copy 3d, where the last dim is contiguous i.e. stride2=1
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                                  memref_t<__ubuf__ T, 3> *ub,
@@ -1144,13 +1424,13 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                      {size1, size2},
                                      {stride1_ub, 1}};
 
-    load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
+    load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
         &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
   }
 }
 #endif
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// 3D UB -> GM core func mainly using DMA
 /// + `UB&GM stride[1] == stride[2] * size[2]`: dimension 1 is contiguous
 ///   - Convert to 2D: `offset2D = offset3D, size2D = [size3D[0], size3D[1] *
@@ -1392,7 +1672,7 @@ copy_ubuf_to_ubuf_intrin_core(__ubuf__ T *dst_ptr, __ubuf__ T *src_ptr,
             burst_cnt, burst_len, MAX(src_gap, 0), MAX(dst_gap, 0));
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// Requirement: `stride[0] == 1`
 /// - `src|dst` starting address not 32B aligned:
 /// `vector_dma_unalign_offset_vv_1d_vf`
@@ -1439,6 +1719,16 @@ copy_ubuf_to_ubuf_1d_core_with_contiguous_last_dim(
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
   int burst_len = CEIL_DIV(size0, num_per_block);
 
+  if (size0 % num_per_block != 0) {
+    // In order to prevent repeated use of vmax/vor instead of copy_ub_to_ub.
+    if constexpr (std::is_same<float, T>::value ||
+                  std::is_same<half, T>::value) {
+      vector_eltwise_vv_1d<VectorOpTy::VMAX, T>(src, src, dst);
+    } else {
+      vector_eltwise_vv_1d<VectorOpTy::VOR, T>(src, src, dst);
+    }
+    return;
+  }
   copy_ubuf_to_ubuf_intrin_core(dst_ptr, src_ptr,
                                 1,         // burst_cnt
                                 burst_len, // burst_len
@@ -1514,7 +1804,33 @@ copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim(
   }
 }
 
-#if defined(__DAV_C310__)
+// Version with "per-raw dispatch" is able to employ DMA copy for
+// overlapped perfectly aligned src rows...
+// But this is abstact/potential case...
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim_double_disp(
+    memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst) {
+  const int64_t size0 = src->sizes[0];
+  const int64_t size1 = src->sizes[1];
+  int64_t src_stride0 = src->strides[0];
+  int64_t dst_stride0 = dst->strides[0];
+  for (int64_t i = 0; i < size0; i++) {
+    memref_t<__ubuf__ T, 1> src_1d = {src->allocated,
+                                      src->aligned,
+                                      src->offset + src_stride0 * i,
+                                      {size1},
+                                      {1}};
+    memref_t<__ubuf__ T, 1> dst_1d = {dst->allocated,
+                                      dst->aligned,
+                                      dst->offset + dst_stride0 * i,
+                                      {size1},
+                                      {1}};
+    copy_ubuf_to_ubuf_1d_core_with_contiguous_last_dim<T>(&src_1d, &dst_1d);
+  }
+}
+
+#if BISHENG_TPL_REGBASE
 /// Requirement: `stride[1] == 1`
 /// - `src|dst` starting address not 32B aligned:
 ///   - `copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim`
@@ -1549,6 +1865,14 @@ copy_ubuf_to_ubuf_2d_core_with_contiguous_last_dim(
   const int64_t dst_stride1 = dst->strides[1];
   constexpr int32_t bytes = sizeof(T);
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / bytes;
+  const int64_t src_gap = calc_ub_gap<T>(src_stride0, size1);
+  const int64_t dst_gap = calc_ub_gap<T>(dst_stride0, size1);
+
+  if (0 > src_gap || 0 > dst_gap) [[unlikely]] {
+    copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim_double_disp(src,
+                                                                         dst);
+    return;
+  }
   // the start addr is 32B aligned
   if (isAddress32ByteAligned(src_ptr) && isAddress32ByteAligned(dst_ptr)) {
     // axis 0 is contiguous
@@ -1593,6 +1917,14 @@ copy_ubuf_to_ubuf_2d_core_with_contiguous_last_dim(
 
   if (0 > src_gap || 0 > dst_gap) [[unlikely]] {
     copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim(src, dst);
+  } else if (size1 % num_per_block != 0) {
+    // In order to prevent repeated use of vmax/vor instead of copy_ub_to_ub.
+    if constexpr (std::is_same<float, T>::value ||
+                  std::is_same<half, T>::value) {
+      vector_eltwise_vv_2d<VectorOpTy::VMAX, T>(src, src, dst);
+    } else {
+      vector_eltwise_vv_2d<VectorOpTy::VOR, T>(src, src, dst);
+    }
   } else {
     copy_ubuf_to_ubuf_2d_intrin_core<T>(src, dst);
   }
@@ -1639,7 +1971,7 @@ copy_ubuf_to_ubuf_3d_core_with_contiguous_last_dim(
   }
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// func of copy ub -> cbuf intrin for 1d and 2d, all dtypes are supported.
 /// eg.
 ///  if copy 1d, burst_cnt is 1 and gap is 0.
@@ -1792,10 +2124,63 @@ copy_ubuf_to_cbuf_3d_core_with_contiguous_last_dim(
   }
 }
 
+#if BISHENG_TPL_920R1
+// Common <=32-bit emitter shared by the A6 forms: the ordinary load, the
+// broadcast load and the in-row padded (span) load. span changes only loop0's
+// count and DMA origin. A3/A5 build their descriptors in place below.
+template <typename T, size_t Rank>
+__aiv__ __attribute__((always_inline)) void
+load_gm_to_ubuf_by_nddma(memref_t<__gm__ T, Rank> *src,
+                         memref_t<__ubuf__ T, Rank> *dst, int64_t lp,
+                         int64_t rp, uint32_t pad_bits, uint8_t cache,
+                         unsigned axes, bool span, bool first_elem) {
+  // Descriptors count 32-bit units: a 64-bit element has to be widened at the
+  // call site (see the sizeof(T) == 8 branches), never passed in here.
+  static_assert(sizeof(T) <= 4,
+                "NDDMA descriptors are 32-bit granular; widen 64-bit types at "
+                "the call site");
+  using DmaType = std::conditional_t<std::is_same_v<T, float8_e4m3_t> ||
+                                         std::is_same_v<T, float8_e5m2_t>,
+                                     uint8_t, T>;
+  auto *sp = reinterpret_cast<__gm__ DmaType *>(src->aligned + src->offset);
+  auto *dp = reinterpret_cast<__ubuf__ DmaType *>(dst->aligned + dst->offset -
+                                                  (span ? 0 : lp));
+  nddma_desc::loop_desc loop0(
+      span ? src->sizes[Rank - 1] : dst->sizes[Rank - 1],
+      dst->strides[Rank - 1],
+      (axes & (1u << (Rank - 1))) ? 0 : src->strides[Rank - 1], lp, rp);
+  nddma_desc::loop_desc loop1(
+      dst->sizes[Rank - 2], dst->strides[Rank - 2],
+      (axes & (1u << (Rank - 2))) ? 0 : src->strides[Rank - 2]);
+  if constexpr (Rank == 2) {
+    nddma_desc desc(loop1, loop0);
+    if (first_elem) {
+      INTRINSIC(nddma_out_to_ub, dp, sp, 0, desc, 0, NEAREST_PADDING, cache);
+    } else {
+      INTRINSIC(nddma_out_to_ub, dp, sp, 0, desc, pad_bits, CONSTANT_PADDING,
+                cache);
+    }
+  } else {
+    nddma_desc::loop_desc loop2(dst->sizes[0], dst->strides[0],
+                                (axes & 1) ? 0 : src->strides[0]);
+    nddma_desc desc(loop2, loop1, loop0);
+    if (first_elem) {
+      INTRINSIC(nddma_out_to_ub, dp, sp, 0, desc, 0, NEAREST_PADDING, cache);
+    } else {
+      INTRINSIC(nddma_out_to_ub, dp, sp, 0, desc, pad_bits, CONSTANT_PADDING,
+                cache);
+    }
+  }
+}
+#endif  // BISHENG_TPL_920R1
+
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
-                            memref_t<__ubuf__ T, 2> *dst) {
+                            memref_t<__ubuf__ T, 2> *dst, PadMode pad_mode,
+                            typename PadValueType<T>::type pad_value,
+                            int64_t left_padding_num, uint8_t l2_cache_ctl,
+                            unsigned broadcast_axes = 0) {
   static_assert(
       sizeof(T) <= 8,
       "DMA only supports types up to 64-bit. "
@@ -1807,22 +2192,78 @@ load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
                                          std::is_same_v<T, float8_e5m2_t>,
                                      uint8_t, T>;
 
+  // NDDMA expresses padding natively in the descriptor: every loop_desc
+  // level carries 8-bit element-granular lp/rp counts, and the pad_val
+  // operand (written to the PAD_VAL_NDDMA SPR, a register separate from the
+  // MTE set_mov_pad_val SPR) supplies the CONSTANT_PADDING fill. Alignment
+  // padding lives on the innermost (loop0) axis: lp is the tile's left
+  // padding and rp rounds (lp + size) up to a whole 32B block, mirroring the
+  // MTE rightPaddingNum. FirstElem keeps zero counts and NEAREST_PADDING:
+  // the exact replication element of the hardware mode is not yet confirmed
+  // against the hardware spec, so padded FirstElem loads stay on the scalar
+  // path at the call site and this branch preserves the old descriptor.
+  //
+  // The per-loop placement of the fill (whole-transfer vs per-iteration) is
+  // also unconfirmed, so a padded call is sound only when each row's padded
+  // span stays inside the row itself. The caller must guarantee:
+  //   1) dst->strides[0] * sizeof(T) is 32B aligned, and
+  //   2) CEIL_FACTOR(lp + sizes[1], 32B/sizeof(T)) <= dst->strides[0].
+  // Under both, either fill placement yields identical UB contents (the
+  // per-row overlap regions are gaps written with the same pad constant);
+  // load_gm_to_ubuf_2d_core enforces exactly these gates.
+  constexpr int64_t npb = UB_ALIGN_BYTES / sizeof(T);
+  int64_t lp = 0;
+  int64_t rp = 0;
+  if (left_padding_num != 0 &&
+      (pad_mode == PadMode::Null || pad_mode == PadMode::Value)) {
+    lp = left_padding_num;
+    int64_t span = lp + dst->sizes[1];
+    rp = CEIL_FACTOR(span, npb) - span;
+  }
+  uint32_t nddma_pad_val = 0;
+  if (pad_mode == PadMode::Value) {
+    using PadValueT = typename PadValueType<T>::type;
+    if constexpr (sizeof(PadValueT) == 1) {
+      nddma_pad_val = *((uint8_t *)(&pad_value));
+    } else if constexpr (sizeof(PadValueT) == 2) {
+      nddma_pad_val = *((uint16_t *)(&pad_value));
+    } else {
+      // 32-bit element types, and the low half of a 64-bit pattern: the
+      // padded b64 transpose path is diverted to scalar at the call site,
+      // so the high half never matters here.
+      nddma_pad_val = *((uint32_t *)(&pad_value));
+    }
+  }
+  // The fill precedes the data at the DMA start, so the DMA start is the
+  // pulled-back address dst->offset - lp, the same address whose 32B
+  // alignment the caller verified (mirroring the MTE pull-back).
   __gm__ DmaType *src_ptr =
       reinterpret_cast<__gm__ DmaType *>(src->aligned + src->offset);
   __ubuf__ DmaType *dst_ptr =
-      reinterpret_cast<__ubuf__ DmaType *>(dst->aligned + dst->offset);
+      reinterpret_cast<__ubuf__ DmaType *>(dst->aligned + dst->offset - lp);
 
   if constexpr (sizeof(T) <= 4) {
-    // 32-bit and below version
-    nddma_desc::loop_desc loop0(dst->sizes[1], dst->strides[1],
-                                src->strides[1]);
+#if BISHENG_TPL_920R1
+    load_gm_to_ubuf_by_nddma<T, 2>(src, dst, lp, rp, nddma_pad_val,
+                                   l2_cache_ctl, broadcast_axes, false,
+                                   pad_mode == PadMode::FirstElem);
+#else
+    // A3/A5 keep the descriptor built in place, exactly as before the A6
+    // shared emitter existed.
+    nddma_desc::loop_desc loop0(dst->sizes[1], dst->strides[1], src->strides[1],
+                                lp, rp);
     nddma_desc::loop_desc loop1(dst->sizes[0], dst->strides[0],
                                 src->strides[0]);
     nddma_desc desc(loop1, loop0);
 
-    INTRINSIC(nddma_out_to_ub, dst_ptr, src_ptr, 0, desc, 0, NEAREST_PADDING,
-              0);
-
+    if (pad_mode == PadMode::FirstElem) {
+      INTRINSIC(nddma_out_to_ub, dst_ptr, src_ptr, 0, desc, 0, NEAREST_PADDING,
+                l2_cache_ctl);
+    } else {
+      INTRINSIC(nddma_out_to_ub, dst_ptr, src_ptr, 0, desc, nddma_pad_val,
+                CONSTANT_PADDING, l2_cache_ctl);
+    }
+#endif
   } else if constexpr (sizeof(T) == 8) {
     // 64-bit version
     using T32 = typename std::conditional<std::is_same_v<T, int64_t>, int32_t,
@@ -1832,19 +2273,27 @@ load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
     __ubuf__ T32 *dst_32 = reinterpret_cast<__ubuf__ T32 *>(dst_ptr);
 
     nddma_desc::loop_desc loop0(dst->sizes[1] * 2, dst->strides[1] * 2,
-                                src->strides[1] * 2);
+                                src->strides[1] * 2, lp * 2, rp * 2);
     nddma_desc::loop_desc loop1(dst->sizes[0] * 2, dst->strides[0] * 2,
                                 src->strides[0] * 2);
     nddma_desc desc(loop1, loop0);
 
-    INTRINSIC(nddma_out_to_ub, dst_32, src_32, 0, desc, 0, NEAREST_PADDING, 0);
+    if (pad_mode == PadMode::FirstElem) {
+      INTRINSIC(nddma_out_to_ub, dst_32, src_32, 0, desc, 0, NEAREST_PADDING,
+                l2_cache_ctl);
+    } else {
+      INTRINSIC(nddma_out_to_ub, dst_32, src_32, 0, desc, nddma_pad_val,
+                CONSTANT_PADDING, l2_cache_ctl);
+    }
   }
 }
 
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
-                            memref_t<__ubuf__ T, 3> *dst) {
+                            memref_t<__ubuf__ T, 3> *dst,
+                            uint8_t l2_cache_ctl = 0,
+                            unsigned broadcast_axes = 0) {
   static_assert(
       sizeof(T) <= 8,
       "DMA only supports types up to 64-bit. "
@@ -1860,7 +2309,12 @@ load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
       reinterpret_cast<__ubuf__ DmaType *>(dst->aligned + dst->offset);
 
   if constexpr (sizeof(T) <= 4) {
-    // 32-bit and below version
+#if BISHENG_TPL_920R1
+    load_gm_to_ubuf_by_nddma<T, 3>(src, dst, 0, 0, 0, l2_cache_ctl,
+                                   broadcast_axes, false, true);
+#else
+    // A3/A5 keep the descriptor built in place, exactly as before the A6
+    // shared emitter existed.
     nddma_desc::loop_desc loop0(dst->sizes[2], dst->strides[2],
                                 src->strides[2]);
     nddma_desc::loop_desc loop1(dst->sizes[1], dst->strides[1],
@@ -1871,7 +2325,7 @@ load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
 
     INTRINSIC(nddma_out_to_ub, dst_ptr, src_ptr, 0, desc, 0, NEAREST_PADDING,
               0);
-
+#endif
   } else if constexpr (sizeof(T) == 8) {
     // 64-bit version
     using T32 = typename std::conditional<std::is_same_v<T, int64_t>, int32_t,
@@ -1892,15 +2346,152 @@ load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
   }
 }
 
+#if BISHENG_TPL_920R1
+// Validate layout and byte-offset arithmetic before forming pointers. Like
+// ordinary loads/copies, allocation validity is the source program contract.
+// Both paths below touch only view indices: DMA uses exact W and zero source
+// steps on singleton broadcast axes; scalar padding never reads the source.
+template <typename T, size_t Rank>
+__aiv__ __attribute__((always_inline)) bool
+span_layout_valid(int64_t offset, const int64_t *sizes,
+                  const int64_t *strides) {
+  constexpr int64_t limit = INT64_MAX / sizeof(T);
+  if (offset < 0 || offset > limit || strides[Rank - 1] != 1)
+    return false;
+  bool empty = false;
+  for (unsigned i = 0; i < Rank; ++i) {
+    if (sizes[i] < 0 || strides[i] < 0)
+      return false;
+    empty |= sizes[i] == 0;
+  }
+  // Empty sources have no read interval, including natural zero row strides.
+  if (empty)
+    return true;
+  int64_t extent = 1;
+  for (int i = Rank - 1; i >= 0; --i) {
+    const int64_t n = sizes[i], step = strides[i];
+    if (n < 0 || step < 0 || (i < Rank - 1 && step < extent))
+      return false;
+    if (n > 1) {
+      if (step > (limit - extent) / (n - 1))
+        return false;
+      extent += (n - 1) * step;
+    }
+  }
+  return extent <= limit - offset;
+}
+
+template <typename T, size_t Rank, bool DisableDCache = false>
+__aiv__ __attribute__((always_inline)) void
+load_gm_to_ubuf_span_core(memref_t<__gm__ T, Rank> *src,
+                          memref_t<__ubuf__ T, Rank> *dst, PadMode mode,
+                          PadValueT<T> pad, int64_t lp, int64_t rp,
+                          EvictionPolicy eviction, unsigned axes) {
+  static_assert(Rank == 2 || Rank == 3);
+  static_assert(sizeof(T) <= 4);
+  if constexpr (std::is_same_v<T, float8_e4m3_t> ||
+                std::is_same_v<T, float8_e5m2_t>) {
+    // The existing f32 ABI carries zero-extended FP8 bits, not a numerical
+    // float. Reuse byte movement on BOTH paths: the SDK forbids FP8 scalar
+    // arithmetic/constants, and a numerical cast would change the pad value.
+    memref_t<__gm__ uint8_t, Rank> bytes_src{
+        reinterpret_cast<__gm__ uint8_t *>(src->allocated),
+        reinterpret_cast<__gm__ uint8_t *>(src->aligned), src->offset};
+    memref_t<__ubuf__ uint8_t, Rank> bytes_dst{
+        reinterpret_cast<__ubuf__ uint8_t *>(dst->allocated),
+        reinterpret_cast<__ubuf__ uint8_t *>(dst->aligned), dst->offset};
+    for (unsigned i = 0; i < Rank; ++i) {
+      bytes_src.sizes[i] = src->sizes[i];
+      bytes_src.strides[i] = src->strides[i];
+      bytes_dst.sizes[i] = dst->sizes[i];
+      bytes_dst.strides[i] = dst->strides[i];
+    }
+    uint8_t byte = static_cast<uint8_t>(*reinterpret_cast<uint32_t *>(&pad));
+    load_gm_to_ubuf_span_core<uint8_t, Rank, DisableDCache>(
+        &bytes_src, &bytes_dst, mode, byte, lp, rp, eviction, axes);
+  } else {
+    const int64_t w = src->sizes[Rank - 1], d = dst->sizes[Rank - 1];
+    bool valid = mode == PadMode::Value && lp >= 0 && rp >= 0 && w >= 0 &&
+                 d >= 0 && lp <= d && w <= d - lp && rp == d - lp - w &&
+                 !(axes >> (Rank - 1)) &&
+                 span_layout_valid<T, Rank>(src->offset, src->sizes,
+                                            src->strides) &&
+                 span_layout_valid<T, Rank>(dst->offset, dst->sizes,
+                                            dst->strides);
+    bool empty = d == 0;
+    bool fields = w > 0 && w <= 0xfffff && lp <= 255 && rp <= 255;
+    for (unsigned i = 0; i < Rank - 1; ++i) {
+      const bool broadcast = axes & (1u << i);
+      valid &= broadcast ? (src->sizes[i] == 1 && dst->sizes[i] >= 1 &&
+                            dst->sizes[i] <= 0xfffff)
+                         : src->sizes[i] == dst->sizes[i];
+      empty |= dst->sizes[i] == 0;
+      fields &= dst->sizes[i] <= 0xfffff && dst->strides[i] <= 0xfffff &&
+                (broadcast || src->strides[i] <= 0xffffffffLL);
+    }
+    if (!valid) {
+      __builtin_cce_trap_mov(1);
+      return;
+    }
+    if (empty)
+      return;
+    if (fields) {
+      uint32_t bits = 0;
+      if constexpr (sizeof(T) == 1)
+        bits = *reinterpret_cast<uint8_t *>(&pad);
+      else if constexpr (sizeof(T) == 2)
+        bits = *reinterpret_cast<uint16_t *>(&pad);
+      else
+        bits = *reinterpret_cast<uint32_t *>(&pad);
+      load_gm_to_ubuf_by_nddma<T, Rank>(src, dst, lp, rp, bits,
+                                        static_cast<uint8_t>(eviction), axes,
+                                        true, false);
+      return;
+    }
+    // Includes zero W (all pad), wide pad/count/stride fields. The existing
+    // scalar helper owns cache reads and MTE2/S event handshakes for both
+    // ranks.
+    if constexpr (Rank == 2)
+      load_gm_to_ubuf_2d_by_scalar_brc_pad<T, DisableDCache>(
+          src, dst, axes, true, lp, rp, &pad);
+    else
+      load_gm_to_ubuf_3d_by_scalar_brc_pad<T, DisableDCache>(
+          src, dst, axes, true, lp, rp, &pad);
+  }
+}
+
+#define REGISTE_DMA_SPAN_LOAD(dim, type)                                       \
+  __aiv__ __attribute__((always_inline)) void                                  \
+      _mlir_ciface_load_gm_to_ubuf_##dim##d_##type##_span(                     \
+          memref_t<__gm__ type, dim> *src, memref_t<__ubuf__ type, dim> *dst,  \
+          PadMode mode, PadValueT<type> pad, int64_t lp, int64_t rp,           \
+          EvictionPolicy eviction, uint32_t axes) {                           \
+    load_gm_to_ubuf_span_core<type, dim>(                                      \
+        src, dst, mode, pad, lp, rp, eviction, axes);                          \
+  }                                                                            \
+  __aiv__ __attribute__((always_inline)) void                                  \
+      _mlir_ciface_load_gm_to_ubuf_##dim##d_##type##_span_nocache(             \
+          memref_t<__gm__ type, dim> *src, memref_t<__ubuf__ type, dim> *dst,  \
+          PadMode mode, PadValueT<type> pad, int64_t lp, int64_t rp,           \
+          EvictionPolicy eviction, uint32_t axes) {                           \
+    load_gm_to_ubuf_span_core<type, dim, true>(                                \
+        src, dst, mode, pad, lp, rp, eviction, axes);                          \
+  }
+#endif
+
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
-                            memref_t<__ubuf__ T, 2> *dst);
+                            memref_t<__ubuf__ T, 2> *dst, PadMode pad_mode,
+                            typename PadValueType<T>::type pad_value,
+                            int64_t left_padding_num, uint8_t l2_cache_ctl,
+                            unsigned broadcast_axes);
 
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
-                            memref_t<__ubuf__ T, 3> *dst);
+                            memref_t<__ubuf__ T, 3> *dst,
+                            uint8_t l2_cache_ctl, unsigned broadcast_axes);
 
 #endif
 
@@ -1965,42 +2556,116 @@ __aiv__ __attribute__((always_inline)) T set_pad_value_null() {
   }
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
+/// Rewrite the per-row padding of a b64 UB buffer with pad_value.
+///
+/// All addressing is anchored at the aligned DMA start
+///   base = dst->aligned + dst->offset - left_padding_num,
+/// which is 32B aligned by construction of left_padding_num
+/// (= dst->offset % num_per_block, guaranteed by the IR layer), even when
+/// dst->offset itself is not aligned. In this coordinate system row i holds
+/// valid data in [lp + i*stride, lp + i*stride + size).
+///
+/// Two regions are repaired per row (the MTE writes both with the pad value
+/// truncated to the low 32 bits, sign-extended, for b64):
+/// - left pad [0, lp) of the row's first block: only the pad lanes are
+///   touched (data starts at lane lp), so a single masked store suffices;
+/// - tail block [CEIL(lp+size, npb) - npb, CEIL(lp+size, npb)): the valid
+///   data inside it is always a prefix, so the final content (data prefix
+///   + pad tail) is composed in registers and committed with one store.
+///   Never store pad over the valid lanes and restore them afterwards:
+///   this repair is not ordered against scalar (S-pipe) readers of the
+///   buffer, and they would observe the transient pad as data.
+///
+/// When the whole row span fits in one block (lp + size <= npb) the tail
+/// block is also the first block and its restore mask covers the left pad
+/// lanes too; the left-pad rewrite runs before the tail snapshot, so the
+/// restore writes back the corrected pad value, not the truncated one.
 template <typename T, int DIM,
           typename = std::enable_if_t<std::is_same_v<T, int64_t> ||
                                       std::is_same_v<T, uint64_t>>>
 __aiv__ __attribute__((always_inline)) void
-apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t offset,
-                  int64_t pad_value, int64_t repeat,
-                  int64_t padding_shift_count) {
-  const int64_t factor = sizeof(T) / sizeof(uint32_t);
+apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
+                  int64_t row_base, int64_t pad_value, int64_t repeat) {
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
   int64_t size = dst->sizes[DIM - 1];
-  int64_t size_aligned =
-      (DIM == 2) ? dst->strides[0] : CEIL_FACTOR(size, num_per_block);
-  int shift_num = size_aligned - num_per_block;
-  int64_t align_pad = size_aligned - size;
-  if (align_pad == 0) {
+  int64_t stride = dst->strides[0];
+  // Defensive guard: base below addresses base + i*stride + k*num_per_block,
+  // which stays 32B aligned only when left_padding_num stays inside one
+  // block and the row stride is a whole number of blocks (multi-row case).
+  // NOTE: the only live caller (the C310 contiguous-last-dim path in
+  // load_gm_to_ubuf_2d_core) already diverts non-block-aligned row strides
+  // to the scalar fallback before entering the vector DMA, so the stride
+  // condition here is a last-resort defense, not the primary gate. If it
+  // ever fires, skipping the repair (data lanes stay intact) is the safe
+  // behavior.
+  if (left_padding_num < 0 || left_padding_num >= num_per_block ||
+      ((repeat > 1 || row_base > 0) && stride % num_per_block != 0)) {
     return;
   }
-  __ubuf__ T *block_ptr = dst->aligned + dst->offset;
-  uint32_t vl_all = num_per_block;
-  uint32_t vl_val = num_per_block - align_pad;
+  // Per-row span in dma coordinates (relative to the aligned DMA start).
+  int64_t data_end = left_padding_num + size;
+  int64_t block_end = CEIL_FACTOR(data_end, num_per_block);
+  int64_t align_pad = block_end - data_end; // in [0, num_per_block)
+  if (align_pad == 0 && left_padding_num == 0) {
+    return;
+  }
+  // 32B aligned DMA start: the address the MTE actually begins writing at.
+  // row_base is the first row of this chunk: align_pad_for_load_b64_2d
+  // splits tiles taller than INTR_MAX_REPEAT_CNTS (255) into chunks and
+  // must repair rows [row_base, row_base + repeat), not restart at row 0
+  // (rows 255+ of >255-row tiles kept the MTE-truncated pad otherwise).
+  __ubuf__ T *block_ptr =
+      dst->aligned + dst->offset - left_padding_num + row_base * stride;
+  int shift_num = block_end - num_per_block;
   __VEC_SCOPE__ {
     for (uint16_t i = 0; i < static_cast<uint16_t>(repeat); ++i) {
-      __ubuf__ T *till_block_ptr = i * size_aligned + block_ptr + shift_num;
-      // make mask
+      // Left-pad rewrite: restore the true 64-bit pad_value in
+      // [0, left_padding_num) of the row's first block. Data begins at lane
+      // left_padding_num, so the masked store cannot touch it.
+      // This MUST run before the tail-block snapshot below: when the whole
+      // row span fits in one block (lp + size <= num_per_block) the tail
+      // block IS this block and the tail overlay's mask covers [0, lp) as
+      // well, so the snapshot must capture the corrected pad for the
+      // overlay to write it back instead of the MTE-truncated value.
+      if (left_padding_num > 0) {
+        __ubuf__ T *first_block_ptr = i * stride + block_ptr;
+        uint32_t vl_lp = left_padding_num; // re-init per row (plt consumes)
+        vector_bool mask_lpad = plt_2xvl_b64(vl_lp, POST_UPDATE);
+        VectorReg<T> v_lpad;
+        vdup(v_lpad, pad_value, mask_lpad, MODE_ZEROING);
+        vsts(v_lpad, first_block_ptr, 0, mask_lpad);
+      }
+      if (align_pad == 0) {
+        continue; // data fills the tail block completely; nothing to repair
+      }
+      __ubuf__ T *till_block_ptr =
+          i * stride + block_ptr + shift_num; // 32B aligned per guard
+      // make mask. The counters MUST be re-initialized per row:
+      // plt_2xvl_b64(..., POST_UPDATE) consumes/advances its counter (the
+      // chaining convention, cf. ReductionWithIndex), so hoisting these
+      // declarations out of the loop leaves rows 1..N with exhausted
+      // counters and silently skips their repair.
+      uint32_t vl_all = num_per_block;
+      uint32_t vl_val = num_per_block - align_pad; // >= 1, no underflow
       vector_bool mask_all = plt_2xvl_b64(vl_all, POST_UPDATE);
       vector_bool mask_val = plt_2xvl_b64(vl_val, POST_UPDATE);
       VectorReg<T> v_src;
       VectorReg<T> v_dst;
       vlds(v_src, till_block_ptr, 0);
-      // store
       vdup(v_dst, pad_value, mask_all, MODE_ZEROING);
-      // store padvalue
+      // Overlay the valid prefix onto the pad vector in registers, then
+      // commit the final content with a single store. Storing pad on all
+      // lanes first and restoring the valid prefix afterwards (the previous
+      // sequence) left a window where the valid lanes hold the pad value.
+      // This repair runs on the V pipe while a scalar (S-pipe) consumer of
+      // the buffer is not ordered against it: the caller-side event
+      // handshake on (V, S) is released by earlier V work, so it cannot
+      // cover these stores, and the consumer could read the transient pad
+      // value as data. Writing each valid lane with its own snapshot value
+      // is idempotent, which closes that window without any fence.
+      vmov(v_dst, v_src, mask_val, MODE_MERGING);
       vsts(v_dst, till_block_ptr, 0, mask_all);
-      // store valid data
-      vsts(v_src, till_block_ptr, 0, mask_val);
     }
   }
 }
@@ -2012,37 +2677,26 @@ template <typename T, int DIM,
           typename = std::enable_if_t<std::is_same_v<T, int64_t> ||
                                       std::is_same_v<T, uint64_t>>>
 __aiv__ __attribute__((always_inline)) void
-apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t offset,
-                  int64_t pad_value, int64_t repeat,
-                  int64_t padding_shift_count) {
-  const int64_t factor = sizeof(T) / sizeof(uint32_t);
-  constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
-  int64_t size = dst->sizes[DIM - 1];
-  int64_t size_aligned =
-      (DIM == 2) ? dst->strides[0] : CEIL_FACTOR(size, num_per_block);
+apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
+                  int64_t row_base, int64_t pad_value, int64_t repeat) {
+  // m300: b64 tail padding repair is not implemented; keep the signature in
+  // sync with the C310 variant so shared callers compile on both arches.
 }
 #endif
 
-// The following padValueType is used to convert the FP8 PadValue to the float
-// type. The reason for doing so is that if the PadValue is of FP8 type, an FP8
-// constant will be automatically generated, which is not allowed in the LLVM IR
-// received by bisheng. Thus, the conversion here is only to avoid generating
-// FP8 constants.
-template <typename T> struct PadValueType {
-  using type = T;
-};
-
-#if defined(__DAV_C310__)
-template <> struct PadValueType<float8_e4m3_t> {
-  using type = float;
-};
-
-template <> struct PadValueType<float8_e5m2_t> {
-  using type = float;
-};
+#if BISHENG_TPL_REGBASE
+#define REGISTE_DMA_LOAD_NOCACHE(dim, type)                                    \
+  __aiv__ __attribute__((always_inline)) void                                  \
+      _mlir_ciface_load_gm_to_ubuf_##dim##d_##type##_nocache(                  \
+          memref_t<__gm__ type, dim> *src, memref_t<__ubuf__ type, dim> *dst,  \
+          PadMode pad_mode, PadValueT<type> pad_value,                         \
+          int64_t left_padding_num, EvictionPolicy eviction_policy) {          \
+    load_gm_to_ubuf_##dim##d_core<type, true>(                                 \
+        src, dst, pad_mode, pad_value, left_padding_num, eviction_policy);     \
+  }
+#else
+#define REGISTE_DMA_LOAD_NOCACHE(dim, type)
 #endif
-
-template <typename T> using PadValueT = typename PadValueType<T>::type;
 
 #define DECLARE_DMA_LOAD(dim, type)                                            \
   __aiv__ __attribute__((always_inline)) void                                  \
@@ -2055,9 +2709,10 @@ template <typename T> using PadValueT = typename PadValueType<T>::type;
   DECLARE_DMA_LOAD(dim, type) {                                                \
     load_gm_to_ubuf_##dim##d_core<type>(src, dst, pad_mode, pad_value,         \
                                         left_padding_num, eviction_policy);    \
-  }
+  }                                                                            \
+  REGISTE_DMA_LOAD_NOCACHE(dim, type)
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 
 #define DECLARE_DMA_LOAD_FP8(dim, type)                                        \
   __aiv__ __attribute__((always_inline)) void                                  \
@@ -2070,7 +2725,8 @@ template <typename T> using PadValueT = typename PadValueType<T>::type;
   DECLARE_DMA_LOAD_FP8(dim, type) {                                            \
     load_gm_to_ubuf_##dim##d_core<type>(src, dst, pad_mode, pad_value,         \
                                         left_padding_num, eviction_policy);    \
-  }
+  }                                                                            \
+  REGISTE_DMA_LOAD_NOCACHE(dim, type)
 
 #endif
 
@@ -2128,7 +2784,7 @@ DECLARE_DMA_LOAD(1, uint64_t);
 DECLARE_DMA_LOAD(1, half);
 DECLARE_DMA_LOAD(1, float);
 DECLARE_DMA_LOAD(1, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_LOAD_FP8(1, float8_e4m3_t);
 DECLARE_DMA_LOAD_FP8(1, float8_e5m2_t);
 #endif
@@ -2147,7 +2803,7 @@ DECLARE_DMA_LOAD(2, uint64_t);
 DECLARE_DMA_LOAD(2, half);
 DECLARE_DMA_LOAD(2, float);
 DECLARE_DMA_LOAD(2, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_LOAD_FP8(2, float8_e4m3_t);
 DECLARE_DMA_LOAD_FP8(2, float8_e5m2_t);
 #endif
@@ -2168,7 +2824,7 @@ DECLARE_DMA_LOAD(3, float);
 DECLARE_DMA_LOAD(3, bfloat16_t);
 DECLARE_DMA_LOAD(3, int8_t);
 DECLARE_DMA_LOAD(3, uint8_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_LOAD_FP8(3, float8_e4m3_t);
 DECLARE_DMA_LOAD_FP8(3, float8_e5m2_t);
 #endif
@@ -2225,7 +2881,7 @@ DECLARE_DMA_STORE(1, uint64_t);
 DECLARE_DMA_STORE(1, half);
 DECLARE_DMA_STORE(1, float);
 DECLARE_DMA_STORE(1, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_STORE(1, float8_e4m3_t);
 DECLARE_DMA_STORE(1, float8_e5m2_t);
 #endif
@@ -2244,7 +2900,7 @@ DECLARE_DMA_STORE(2, uint64_t);
 DECLARE_DMA_STORE(2, half);
 DECLARE_DMA_STORE(2, float);
 DECLARE_DMA_STORE(2, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_STORE(2, float8_e4m3_t);
 DECLARE_DMA_STORE(2, float8_e5m2_t);
 #endif
@@ -2262,7 +2918,7 @@ DECLARE_DMA_STORE(3, uint64_t);
 DECLARE_DMA_STORE(3, half);
 DECLARE_DMA_STORE(3, float);
 DECLARE_DMA_STORE(3, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_STORE(3, float8_e4m3_t);
 DECLARE_DMA_STORE(3, float8_e5m2_t);
 #endif
@@ -2281,7 +2937,7 @@ DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, uint64_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, half);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, float);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, float8_e4m3_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, float8_e5m2_t);
 #endif
@@ -2301,7 +2957,7 @@ DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, uint64_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, half);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, float);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, float8_e4m3_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, float8_e5m2_t);
 #endif
@@ -2321,12 +2977,12 @@ DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, uint64_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, half);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, float);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, float8_e4m3_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, float8_e5m2_t);
 #endif
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 //===-------------------------------------------------------------------===//
 // ub to cbuf, 1 dim
 //===-------------------------------------------------------------------===//

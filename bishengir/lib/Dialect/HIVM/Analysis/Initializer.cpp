@@ -20,6 +20,8 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/SetVector.h"
 
 using namespace mlir;
 using namespace mlir::hivm;
@@ -36,6 +38,7 @@ namespace detail {
 
 DimensionAnalyzer::DimensionAnalyzer(Operation *op, int64_t tilingSize)
     : DimensionAnalyzerBase(op), tilingSize(tilingSize) {
+  options.registerBased = true;
   assert(tilingSize > 0 && "Tiling Size must be positive integer");
 }
 
@@ -47,14 +50,19 @@ LogicalResult DimensionAnalyzer::initialize() {
   spreadConnection();
   markDimensions();
   transferDimMark();
+  // find() collapses distinct indices onto one parent, and the same
+  // representative can be recorded more than once. Union those lists in
+  // first-seen order so each parent appears once.
+  llvm::MapVector<int, llvm::SetVector<int64_t>> uniqueUpdates;
   for (auto &[rep, indices] : invalidUpdates) {
-    rep = structuralDsu_->find(rep);
-    for (auto &idx : indices)
-      idx = structuralDsu_->find(idx);
-    llvm::sort(indices);
+    auto &uniqueIndices = uniqueUpdates[structuralDsu_->find(rep)];
+    for (auto idx : indices)
+      uniqueIndices.insert(structuralDsu_->find(idx));
   }
-  llvm::sort(invalidUpdates);
-  invalidUpdates.erase(llvm::unique(invalidUpdates), invalidUpdates.end());
+  invalidUpdates.clear();
+  for (auto &[rep, uniqueIndices] : uniqueUpdates)
+    invalidUpdates.emplace_back(
+        rep, DimensionIndex(uniqueIndices.begin(), uniqueIndices.end()));
   LDBG("InvalidUpdates: ");
   for ([[maybe_unused]] auto &[rep, indices] : invalidUpdates) {
     LLVM_DEBUG({

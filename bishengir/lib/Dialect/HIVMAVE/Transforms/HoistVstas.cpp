@@ -58,6 +58,16 @@ struct HoistVstasPattern : public OpRewritePattern<hivm_regbaseintrins::VstasIns
     auto forOp = dyn_cast<scf::ForOp>(vstasOp->getParentOp());
     if (!forOp) return failure();
 
+    // Reject loops nested inside another loop: the hoisted vstas would
+    // commit once per outer-loop iteration at the outer back edge, while
+    // the outer loop's next iteration may re-read the committed buffer
+    // before the store queue drains. That loop-carried memory dependence
+    // is invisible in SSA form, and sync ops cannot be lowered inside
+    // vector functions on regbase targets, so keep the per-iteration
+    // commit instead.
+    if (forOp->getParentOfType<scf::ForOp>())
+      return failure();
+
     // 2. Validate Operands
     if (vstasOp.getNumOperands() != 4) return failure();
 

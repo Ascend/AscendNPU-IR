@@ -26,15 +26,19 @@ thread_local bool archIsRegbased{false};
 thread_local bool archisAscend950{false};
 thread_local bool archisAscend310B{false};
 thread_local bool archisMembased{false};
+thread_local bool archisModFma{false};
 
 void populateNormalizeHFusionRegBasePatterns(RewritePatternSet &patterns,
-                                         bool enableHighPrecision,
-                                         bool enableFastDiv) {
+                                             bool enableHighPrecision,
+                                             bool enableFastDiv,
+                                             bool enableDivRemPow2,
+                                             bool supportsRegBaseAtomic) {
   populateNormalizeF16ToF32Patterns(patterns);
   populateNormalizeTrigPatterns(patterns, enableHighPrecision);
   populateNormalizeI8I32CmpPatterns(patterns);
   populateNormalizeMulRecPatterns(patterns);
   populateNormalizeModPatterns(patterns);
+  populateNormalizeConstDivRemPatterns(patterns, enableDivRemPow2);
   populateNormalizeCmpToCastPatterns(patterns);
   populateNormalizeArithmeticPatterns(patterns, enableFastDiv);
   populateNormalizePrimaryMathPatterns(patterns);
@@ -57,21 +61,30 @@ void populateNormalizeHFusionRegBasePatterns(RewritePatternSet &patterns,
   populateNormalizeNonDenseScalarLikeBroadcastPatterns(patterns);
   populateNormalizeFinalArithmeticPatterns(patterns);
   populateNormalizeCmpVnePatterns(patterns);
-  populateNormalizeAtomicPatterns(patterns);
+  populateNormalizeAtomicPatterns(patterns, supportsRegBaseAtomic);
   populateNormalizeSortPatterns(patterns);
 }
 
 LogicalResult runNormalizeRegBase(Operation *op, bool enableHighPrecision,
-                                   bool enableFastDiv) {
+                                  bool enableFastDiv, bool enableDivRemPow2,
+                                  bool enableFma) {
   ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
   archIsRegbased = hacc::utils::isRegBasedArch(moduleOp);
   archisAscend950 = hacc::utils::isAscend950(moduleOp);
   archisAscend310B = hacc::utils::isAscend310B(moduleOp);
   archisMembased = hacc::utils::isMemBasedArch(moduleOp);
+  archisModFma = enableFma;
   RewritePatternSet patterns(op->getContext());
-  populateNormalizeHFusionRegBasePatterns(patterns, enableHighPrecision,
-                                          enableFastDiv);
-  return applyPatternsGreedily(op, std::move(patterns));
+  populateNormalizeHFusionRegBasePatterns(
+      patterns, enableHighPrecision, enableFastDiv, enableDivRemPow2,
+      hacc::utils::supportsRegBaseVectorLowering(moduleOp));
+  if (failed(applyPatternsGreedily(op, std::move(patterns))))
+    return failure();
+  // Software-atomic ops must be fully decomposed here; anything that survives
+  // would fall into the late HIVM path and fail far from the root cause.
+  if (archisAscend950 && failed(checkIsLegalAtomicOp(op)))
+    return failure();
+  return success();
 }
 
 } // namespace mlir::hfusion

@@ -328,7 +328,8 @@ EventIdSolver::getRoundRobinEventIds(EventIdNode *node, int64_t &nextEventId) {
 
   int64_t curEventId = nextEventId;
   auto *it = usedEventIds.begin();
-  while (curEventId <= this->eventIdsNumMax && static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum) {
+  while (curEventId < this->eventIdsNumMax &&
+         static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum) {
     while ((it != usedEventIds.end()) && ((*it) < curEventId)) {
       it++;
     }
@@ -344,8 +345,7 @@ EventIdSolver::getRoundRobinEventIds(EventIdNode *node, int64_t &nextEventId) {
     chosenEventIds.clear();
     it = usedEventIds.begin();
     curEventId = 0;
-    while (curEventId <= this->eventIdsNumMax &&
-            static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum) {
+    while (static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum) {
       while ((it != usedEventIds.end()) && ((*it) < curEventId)) {
         it++;
       }

@@ -20,14 +20,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
-#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
-#include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/Debug.h"
 
 namespace mlir {
@@ -121,7 +118,7 @@ public:
     /// To specify Buffer Size, with this optimization we do not need that
     /// anymore, removing them will also let the vconcat op to be erased
     for (Operation *user : llvm::make_early_inc_range(concatOp->getUsers())) {
-      if (utils::isAnnotationWithAttr(user, kBufferSizeInByteAttr)) {
+      if (utils::isAnnotationWithAttr(user, utils::kBufferSizeInByteAttr)) {
         rewriter.eraseOp(user);
       }
     }

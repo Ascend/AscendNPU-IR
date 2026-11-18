@@ -321,6 +321,20 @@ A5InsertionPattern::matchAndRewrite(Operation *op,
                                               rewriter);
         return success();
       })
+      .Case<hivm::ScatterTOp>([&](auto op) {
+        // dst is the GM base pointer; value and index_tile come from UB.
+        PropagatorUtil::createPropagatorUp(&op.getIndexTileMutable(),
+                                           TCoreType::VECTOR,
+                                           hivm::AddressSpace::UB, rewriter);
+        PropagatorUtil::createPropagatorUp(&op.getValueMutable(),
+                                           TCoreType::VECTOR,
+                                           hivm::AddressSpace::UB, rewriter);
+        PropagatorUtil::createPropagatorUp(&op.getDstMutable(),
+                                           hivm::AddressSpace::GM, rewriter);
+        PropagatorUtil::createPropagatorsDown(op, hivm::AddressSpace::GM,
+                                              rewriter);
+        return success();
+      })
       .Case<hivm::IndirectLoadOp>([&](auto op) {
         if (op->use_empty())
           return failure();

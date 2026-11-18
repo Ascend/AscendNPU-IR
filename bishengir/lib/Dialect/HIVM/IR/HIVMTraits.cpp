@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/TypeUtilities.h"
@@ -43,13 +44,8 @@ inline int64_t getRank(const Type &type) {
 
 // Returns stride of shaped memref type.
 inline SmallVector<int64_t> getStride(const Type &type) {
-// TODO : release different version of ascendnpu ir and remove the macro
-#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
-  auto [strides, offset] = getStridesAndOffset(cast<MemRefType>(type));
-#else
   auto memrefType = cast<MemRefType>(type);
-  auto [strides, offset] = memrefType.getStridesAndOffset();
-#endif
+  auto [strides, offset] = utils::getStridesAndOffsetCompat(memrefType);
   return strides;
 }
 

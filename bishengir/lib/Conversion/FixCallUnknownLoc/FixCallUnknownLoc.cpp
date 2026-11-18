@@ -21,12 +21,22 @@
 // The strategy:
 //   1. Fix the FuncOp's own location first (from callers / body / module).
 //   2. Check if the function has any non-unknown-loc op. If not, skip (no
-//      debug info in this function, so no error will occur).
+//      debug info in this function, so no error will occur). This check is
+//      skipped when `assume-debug-info` is set, because then a DISubprogram
+//      is attached unconditionally and the error does occur.
 //   3. For each call op with an effectively-unknown location:
 //      a. Try to find a non-unknown loc from the call's result users.
 //      b. If not found, traverse up parent ops until a non-unknown loc is
 //         found.
 //      c. If a valid location is found, set it and emit a warning.
+//
+// With `assume-debug-info` set, steps 1 and 3 fall back to a synthetic
+// location when nothing can be inherited. This covers any configuration that
+// runs DIScopeForLLVMFuncOpPass (sanitizer, debug info or debug variables)
+// over IR with no locations at all -- for example line info disabled while
+// variable debug info is requested, which leaves every op in the module with
+// an UnknownLoc while that pass still attaches a DISubprogram to every
+// function.
 //
 //===----------------------------------------------------------------------===//
 
@@ -65,6 +75,14 @@ static bool isLocUnknown(Location loc) {
     return true;
   }
   return false;
+}
+
+/// Build the synthetic fallback location used when nothing in the module
+/// carries a location. The file name mirrors the DIFileAttr("<unknown>", "")
+/// fallback in DIScopeForLLVMFuncOpPass, so a reader sees the same marker on
+/// both the subprogram and the instructions attached to it.
+static Location getSyntheticLoc(MLIRContext *context) {
+  return FileLineColLoc::get(context, "<unknown>", /*line=*/0, /*column=*/0);
 }
 
 /// Find a non-unknown-loc location for the given operation.
@@ -137,6 +155,11 @@ static Location findNonUnknownLocForFunc(func::FuncOp funcOp) {
 
 struct FixCallUnknownLocPass
     : public impl::FixCallUnknownLocBase<FixCallUnknownLocPass> {
+  FixCallUnknownLocPass() = default;
+
+  explicit FixCallUnknownLocPass(const FixCallUnknownLocOptions &options)
+      : FixCallUnknownLocBase(options) {}
+
   void runOnOperation() override {
     func::FuncOp funcOp = getOperation();
 
@@ -147,6 +170,11 @@ struct FixCallUnknownLocPass
     // that triggers the LLVM IR verifier error.
     if (isLocUnknown(funcOp.getLoc())) {
       Location newLoc = findNonUnknownLocForFunc(funcOp);
+      // With debug info enabled nothing in the module may carry a location,
+      // so fall back to a synthetic one; otherwise the calls fixed in step 3
+      // would have nothing to inherit from.
+      if (isLocUnknown(newLoc) && assumeDebugInfo)
+        newLoc = getSyntheticLoc(funcOp->getContext());
       if (!isLocUnknown(newLoc)) {
         funcOp->setLoc(newLoc);
       }
@@ -155,18 +183,26 @@ struct FixCallUnknownLocPass
     // Step 2: Check if the function has any non-unknown-loc op (excluding
     // call ops). If all ops are unknown-loc, the function won't have a
     // DISubprogram in LLVM IR, so no verifier error will occur.
-    bool hasNonUnknownLoc = false;
-    funcOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
-      if (isa<func::CallOp, LLVM::CallOp>(op))
+    //
+    // This shortcut is invalid once debug info is enabled:
+    // DIScopeForLLVMFuncOpPass attaches a DISubprogram to every LLVMFuncOp
+    // unconditionally (falling back to DIFileAttr("<unknown>", "") when it
+    // cannot extract a FileLineColLoc), so an all-unknown-loc function does
+    // get a subprogram and its calls do hit the verifier error.
+    if (!assumeDebugInfo) {
+      bool hasNonUnknownLoc = false;
+      funcOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
+        if (isa<func::CallOp, LLVM::CallOp>(op))
+          return WalkResult::advance();
+        if (!isLocUnknown(op->getLoc())) {
+          hasNonUnknownLoc = true;
+          return WalkResult::interrupt();
+        }
         return WalkResult::advance();
-      if (!isLocUnknown(op->getLoc())) {
-        hasNonUnknownLoc = true;
-        return WalkResult::interrupt();
-      }
-      return WalkResult::advance();
-    });
-    if (!hasNonUnknownLoc)
-      return;
+      });
+      if (!hasNonUnknownLoc)
+        return;
+    }
 
     // Step 3: Fix all call ops with an effectively-unknown location.
     funcOp->walk([&](Operation *op) {
@@ -176,6 +212,8 @@ struct FixCallUnknownLocPass
         return;
 
       Location loc = findNonUnknownLoc(op);
+      if (isLocUnknown(loc) && assumeDebugInfo)
+        loc = getSyntheticLoc(op->getContext());
       if (isLocUnknown(loc))
         return;
 
@@ -190,4 +228,9 @@ struct FixCallUnknownLocPass
 
 std::unique_ptr<Pass> mlir::createFixCallUnknownLocPass() {
   return std::make_unique<FixCallUnknownLocPass>();
+}
+
+std::unique_ptr<Pass>
+mlir::createFixCallUnknownLocPass(const FixCallUnknownLocOptions &options) {
+  return std::make_unique<FixCallUnknownLocPass>(options);
 }

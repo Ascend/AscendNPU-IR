@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/SCF/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
@@ -171,7 +172,8 @@ llvm::SmallVector<Value> IRTranslator::tracebackMemVals(Value val) {
     if (options.enableSubviewConflictRefinement && options.isIntraCoreMode() &&
         curVal == val) {
       if (auto subviewOp = curVal.getDefiningOp<memref::SubViewOp>()) {
-        if (subviewOp.getViewSource().getDefiningOp<hivm::PointerCastOp>()) {
+        if (subviewOp.getViewSource().getDefiningOp<hivm::PointerCastOp>() &&
+            !getTcbPoolAddressSource(subviewOp.getViewSource())) {
           collectedValsSet.insert(curVal);
           continue;
         }
@@ -205,7 +207,7 @@ llvm::SmallVector<Value> IRTranslator::tracebackMemVals(Value val) {
 
     if (options.isIntraCoreMode()) {
       if (isa<hivm::PointerCastOp, bishengir::memref_ext::AllocWorkspaceOp,
-              tensor::EmptyOp, memref::AllocOp>(defOp)) {
+              tensor::EmptyOp, memref::AllocOp, PoolSlotOp>(defOp)) {
         collectedValsSet.insert(resultVal);
         continue;
       }
@@ -283,6 +285,15 @@ IRTranslator::getReadWriteMemoryOps(Operation *op) {
       }
       writeMemVals = extendedWriteMemVals.takeVector();
     }
+  }
+  // DPS inits are normally modeled as writes. Standalone MMAD also reads C
+  // when accumulating (including a dynamic clear condition). Keep this in
+  // sync with MmadL0Op's memory effects; zero/BT initialization does not read
+  // C.
+  if (auto matmul = dyn_cast<hivm::MmadL0Op>(op);
+      matmul && matmul.readsAccumulator()) {
+    auto accumulators = getMemoryOps({matmul.getC()});
+    llvm::append_range(readMemVals, accumulators);
   }
   return std::make_pair(readMemVals, writeMemVals);
 }
@@ -681,11 +692,17 @@ IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
          pipeWrite != hivm::PIPE::PIPE_UNASSIGNED);
   auto rwOp = std::make_unique<RWOperation>(op, parentOp, coreTypeVal, pipeRead,
                                             pipeWrite, readMemOps, writeMemOps);
+  rwOp->isAutoBlockifyDMA =
+      op->hasAttrOfType<UnitAttr>(hivm::AutoBlockifyDMAAttr::name);
   if (isa<UnitFlagEnabledInterface>(op)) {
+    bool skipUnitFlag = false;
+    // Standalone MMAD lowering currently accepts DISABLED only. Use ordinary
+    // pipe events even when the solver's UnitFlag optimization is enabled.
+    if (isa<hivm::MmadL0Op>(op))
+      skipUnitFlag = true;
     // A dual-dst fixpipe may fall back to a software split (two
     // copy_matrix_cc_to_ubuf intrinsics) in the template library; the
     // unit-flag feature does not apply on that path.
-    bool skipUnitFlag = false;
     if (auto fixpipeOp = dyn_cast<hivm::FixpipeOp>(op))
       skipUnitFlag = isSoftwareSplitFixpipe(fixpipeOp);
     if (!skipUnitFlag) {
@@ -698,6 +715,11 @@ IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
 
 std::unique_ptr<OperationBase>
 IRTranslator::translateRWLikeOp(Operation *op, OperationBase *parentOp) {
+  if (auto customOp = dyn_cast<hivm::CustomOp>(op);
+      customOp &&
+      customOp.getName() == hivm::CustomOp::kBuiltinProtonScopeBoundaryName)
+    return nullptr;
+
   Operation *dstStyleOp = nullptr;
   if (options.isRegBasedArch) {
     if (auto dsiOp = dyn_cast<DestinationStyleOpInterface>(op)) {
@@ -837,6 +859,20 @@ IRTranslator::getCallOp(func::CallOp callOp, OperationBase *parentOp) {
 #endif
     } else if (auto gatherOp = dyn_cast<vector::GatherOp>(op)) {
       handleRWValue(gatherOp.getBase(), MemoryEffect::READ);
+    } else if (auto loadOp = dyn_cast<hivmave::VFLoadOp>(op)) {
+      handleRWValue(loadOp.getBase(), MemoryEffect::READ);
+    } else if (auto gatherOp = dyn_cast<hivmave::VFGatherOp>(op)) {
+      handleRWValue(gatherOp.getBase(), MemoryEffect::READ);
+    } else if (auto gatherOp = dyn_cast<hivmave::VFBlockGatherOp>(op)) {
+      handleRWValue(gatherOp.getBase(), MemoryEffect::READ);
+    } else if (auto storeOp = dyn_cast<hivmave::VFMaskedStoreOp>(op)) {
+      handleRWValue(storeOp.getBase(), MemoryEffect::WRITE);
+    } else if (auto storeOp = dyn_cast<hivmave::VFUnalignedMaskedStoreOp>(op)) {
+      handleRWValue(storeOp.getBase(), MemoryEffect::WRITE);
+    } else if (auto storeOp = dyn_cast<hivmave::VFStoreWithStrideOp>(op)) {
+      handleRWValue(storeOp.getBase(), MemoryEffect::WRITE);
+    } else if (auto scatterOp = dyn_cast<hivmave::VFScatterOp>(op)) {
+      handleRWValue(scatterOp.getBase(), MemoryEffect::WRITE);
     }
   });
 
@@ -864,6 +900,15 @@ bool IRTranslator::isParallelLoop(Loop *loopOp) {
   assert(loopOp != nullptr);
   if (loopOp->op != nullptr) {
     return loopOp->op->hasAttrOfType<UnitAttr>(hivm::ParallelLoopAttr::name);
+  }
+  return false;
+}
+
+bool IRTranslator::isAutoBlockifyLoop(Loop *loopOp) {
+  assert(loopOp != nullptr);
+  if (loopOp->op != nullptr) {
+    return loopOp->op->hasAttrOfType<UnitAttr>(
+        hivm::AutoBlockifySubloopAttr::name);
   }
   return false;
 }
@@ -987,6 +1032,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
         auto conditionOp = std::make_unique<Condition>(
             &op, parScope, std::move(trueScope), std::move(falseScope));
         conditionOp->isUnlikely = isUnlikelyCondition(conditionOp.get());
+        conditionOp->isFalseScopeSynthetic = ifOp.getElseRegion().empty();
         if (!skipEmptyScopes || !isEmptyScope(conditionOp.get())) {
           parScope->body.push_back(std::move(conditionOp));
         }
@@ -995,6 +1041,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
       if (auto loopLikeOp = dyn_cast<LoopLikeOpInterface>(op)) {
         auto loopOp = std::make_unique<Loop>(&op, parScope);
         loopOp->isParallel = isParallelLoop(loopOp.get());
+        loopOp->isAutoBlockifyLoop = isAutoBlockifyLoop(loopOp.get());
         loopOp->isCVUnrolledLoop = isCVUnrolledLoop(loopOp.get());
         loopOp->multibufferUnrollNum =
             getLoopMultibufferUnrollNum(loopOp.get());
@@ -1076,7 +1123,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
 // Build the linearized sync IR (syncIr) and record occurrence ranges for
 // analysis.
 void IRTranslator::syncIrBuilder(OperationBase *op, Occurrence *parentOcc,
-                                 bool isUseless) {
+                                 bool isUseless, bool unrollLoops) {
   assert(op != nullptr);
   if (op->preOrderIndex == -1) {
     op->preOrderIndex = globalPreOrderTraversalIndex++;
@@ -1104,15 +1151,18 @@ void IRTranslator::syncIrBuilder(OperationBase *op, Occurrence *parentOcc,
 
   if (auto *loopOp = dyn_cast<Loop>(op)) {
     for (auto &op : loopOp->body) {
-      syncIrBuilder(op.get(), occPtr, isUseless);
+      syncIrBuilder(op.get(), occPtr, isUseless, unrollLoops);
     }
-    occPtr->loopSplitIndex = static_cast<int>(syncIr.size());
-    for (auto &op : loopOp->body) {
-      syncIrBuilder(op.get(), occPtr, true);
+    if (unrollLoops) {
+      occPtr->loopSplitIndex = static_cast<int>(syncIr.size());
+      for (auto &op : loopOp->body) {
+        syncIrBuilder(op.get(), occPtr, true,
+                      !options.enableNonRecursiveLoopUnrolling);
+      }
     }
   } else if (auto *scopeOp = dyn_cast<Scope>(op)) {
     for (auto &op : scopeOp->body) {
-      syncIrBuilder(op.get(), occPtr, isUseless);
+      syncIrBuilder(op.get(), occPtr, isUseless, unrollLoops);
     }
   }
 
@@ -1120,4 +1170,32 @@ void IRTranslator::syncIrBuilder(OperationBase *op, Occurrence *parentOcc,
   occPtr->endIndex = endIndex;
   occPtr->syncIrEndIndex = static_cast<int>(syncIr.size());
   occPtr->initMemInfoTree();
+}
+
+// Non-recursive unrolling leaves a loop nested in the second body copy of an
+// unrolled one linearized, so a loop has one split occurrence and one
+// linearized copy per enclosing unroll site. Hand the split one all of them.
+// Unrolling recursively instead splits every copy and leaves none to record.
+void IRTranslator::recordLinearizedLoopOccs() {
+  if (!options.enableNonRecursiveLoopUnrolling) {
+    return;
+  }
+  for (auto &[op, occs] : opAllOccurrences) {
+    if (!isa<Loop>(op)) {
+      continue;
+    }
+    Occurrence *splitLoopOcc = nullptr;
+    llvm::SmallVector<Occurrence *> linearLoopOccs;
+    for (auto *occ : occs) {
+      if (occ->loopSplitIndex == -1) {
+        linearLoopOccs.push_back(occ);
+      } else {
+        assert(splitLoopOcc == nullptr && "expected one split occurrence");
+        splitLoopOcc = occ;
+      }
+    }
+    if (splitLoopOcc != nullptr) {
+      splitLoopOcc->linearizedLoopOccs = std::move(linearLoopOccs);
+    }
+  }
 }

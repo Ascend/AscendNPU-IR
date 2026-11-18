@@ -30,7 +30,7 @@ def AVE_Dialect : Dialect {
   let cppNamespace = "::mlir::hivmave";
   let dependentDialects = [
     "arith::ArithDialect", "math::MathDialect", "memref::MemRefDialect",
-    "vector::VectorDialect"
+    "vector::VectorDialect", "hivm::HIVMDialect"
   ];
   let useDefaultAttributePrinterParser = 1;
 }

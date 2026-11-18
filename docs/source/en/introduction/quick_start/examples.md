@@ -9,16 +9,17 @@ This example demonstrates how to use `bishengir-compile` to compile IR into a de
 Prepare a piece of `VecAdd` MLIR (which can be converted from other IR):
 
 ```mlir
-// add.mlir
+// test_cumsum.mlir
 module {
-  func.func @add(%arg0: memref<16xi16, #hivm.address_space<gm>>, %arg1: memref<16xi16, #hivm.address_space<gm>>, %arg2: memref<16xi16, #hivm.address_space<gm>>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
-    %alloc = memref.alloc() : memref<16xi16, #hivm.address_space<ub>>
-    hivm.hir.load ins(%arg0 : memref<16xi16, #hivm.address_space<gm>>) outs(%alloc : memref<16xi16, #hivm.address_space<ub>>)
-    %alloc_0 = memref.alloc() : memref<16xi16, #hivm.address_space<ub>>
-    hivm.hir.load ins(%arg1 : memref<16xi16, #hivm.address_space<gm>>) outs(%alloc_0 : memref<16xi16, #hivm.address_space<ub>>)
-    %alloc_1 = memref.alloc() : memref<16xi16, #hivm.address_space<ub>>
-    hivm.hir.vadd ins(%alloc, %alloc_0 : memref<16xi16, #hivm.address_space<ub>>, memref<16xi16, #hivm.address_space<ub>>) outs(%alloc_1 : memref<16xi16, #hivm.address_space<ub>>)
-    hivm.hir.store ins(%alloc_1 : memref<16xi16, #hivm.address_space<ub>>) outs(%arg2 : memref<16xi16, #hivm.address_space<gm>>)
+  func.func @test_vcumsum(
+    %arg0: memref<8xf32, #hivm.address_space<gm>>, 
+    %arg1: memref<8xf32, #hivm.address_space<gm>>
+  ) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %alloc = memref.alloc() : memref<8xf32, #hivm.address_space<ub>>
+    hivm.hir.load ins(%arg0 : memref<8xf32, #hivm.address_space<gm>>) outs(%alloc : memref<8xf32, #hivm.address_space<ub>>)
+    %alloc_1 = memref.alloc() : memref<8xf32, #hivm.address_space<ub>>
+    hivm.hir.vcumsum ins(%alloc : memref<8xf32, #hivm.address_space<ub>>) outs(%alloc_1 : memref<8xf32, #hivm.address_space<ub>>) cum_dims = [0] reverse = false
+    hivm.hir.store ins(%alloc_1 : memref<8xf32, #hivm.address_space<ub>>) outs(%arg1 : memref<8xf32, #hivm.address_space<gm>>)
     return
   }
 }
@@ -27,8 +28,11 @@ module {
 Use `bishengir-compile` to generate the device-side binary:
 
 ```bash
-# Compilation command.
-bishengir-compile add.mlir -enable-hivm-compile -o kernel.o
+# Ensure that the bishengir-compile used is obtained from the CANN installation package. If the tool is built from source, add the -t (--build-bishengir-template) parameter to build the template library, which is required for end-to-end compilation.
+# --target=${soc_version} specifies the target hardware model, which defaults to Ascend910B1.
+
+# Compilation command
+bishengir-compile test_cumsum.mlir --enable-hivm-compile --target=${soc_version} -o kernel.o
 ```
 
 The generated `kernel.o` is the operator binary that can be executed on the NPU.
@@ -129,7 +133,7 @@ int main() {
 
   // Register the kernel
   char *buffer;
-  const char *stubFunc = "add";
+  const char *stubFunc = "test_vcumsum";
   void *binHandle =
       registerBinaryKernel("./kernel.o", &buffer, stubFunc, stubFunc);
   if (!binHandle)
@@ -137,15 +141,13 @@ int main() {
   printf("[success] register kernel success\n");
 
   // Prepare data
-  int16_t expectedValue[] = {1, 2,  3,  4,  5,  6,  7,  8,
-                             9, 10, 11, 12, 13, 14, 15, 16};
+  float expectedValue[] = {0., 1.,  3.,  6.,  10.,  15.,  21.,  28.,};
   void *outputDevice = nullptr;
   error = aclrtMalloc((void **)&outputDevice, sizeof(expectedValue),
                       ACL_MEM_MALLOC_HUGE_FIRST);
   EXPECT_EQ(error, ACL_RT_SUCCESS, "alloc output on device failed");
 
-  int16_t input0Value[] = {0, 1, 2,  3,  4,  5,  6,  7,
-                           8, 9, 10, 11, 12, 13, 14, 15};
+  float input0Value[] = {0., 1., 2.,  3.,  4.,  5.,  6.,  7.};
   void *input0Device = nullptr;
   error = aclrtMalloc((void **)&input0Device, sizeof(input0Value),
                       ACL_MEM_MALLOC_HUGE_FIRST);
@@ -154,18 +156,10 @@ int main() {
                       sizeof(input0Value), ACL_MEMCPY_HOST_TO_DEVICE);
   EXPECT_EQ(error, ACL_RT_SUCCESS, "memcopy input0 to device failed");
 
-  int16_t input1Value[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
-  void *input1Device = nullptr;
-  error = aclrtMalloc((void **)&input1Device, sizeof(input1Value),
-                      ACL_MEM_MALLOC_HUGE_FIRST);
-  EXPECT_EQ(error, ACL_RT_SUCCESS, "alloc input1 on device failed");
-  error = aclrtMemcpy((void *)input1Device, sizeof(input1Value), input1Value,
-                      sizeof(input1Value), ACL_MEMCPY_HOST_TO_DEVICE);
-  EXPECT_EQ(error, ACL_RT_SUCCESS, "memcopy input1 to device failed");
   printf("[success] memcpy host to device success\n");
 
   // Invoke the kernel
-  void *args[] = {input0Device, input1Device, outputDevice};
+  void *args[] = {input0Device, outputDevice};
   rtKernelLaunch(stubFunc, 1, static_cast<void *>(&args), sizeof(args), nullptr,
                  stream);
   error = aclrtSynchronizeStream(stream);
@@ -173,7 +167,7 @@ int main() {
   printf("[success] stream synchronize success\n");
 
   // Get the result
-  int16_t *outHost = nullptr;
+  float *outHost = nullptr;
   error = aclrtMallocHost((void **)&outHost, sizeof(expectedValue));
   EXPECT_EQ(error, ACL_RT_SUCCESS, "alloc output on host failed");
   error = aclrtMemcpy(outHost, sizeof(expectedValue), outputDevice,
@@ -181,8 +175,8 @@ int main() {
   EXPECT_EQ(error, ACL_RT_SUCCESS, "memcpy output to host failed");
   printf("[success] memcpy device to host success\n");
 
-  for (int i = 0; i < sizeof(expectedValue) / sizeof(int16_t); i++) {
-    printf("i%d\t Expect: %d\t\t\t\tResult: %d\n", i, expectedValue[i],
+  for (int i = 0; i < sizeof(expectedValue) / sizeof(float); i++) {
+    printf("i%d\t Expect: %f\t\t\t\tResult: %f\n", i, expectedValue[i],
            outHost[i]);
   }
   printf("[success] compare output success\n");
@@ -191,7 +185,6 @@ int main() {
   aclrtFreeHost(outHost);
   aclrtFree(outputDevice);
   aclrtFree(input0Device);
-  aclrtFree(input1Device);
 
   aclrtDestroyStream(stream);
   aclrtResetDevice(0);
@@ -211,21 +204,25 @@ PROF_INC=${ASCEND_HOME_PATH}/include/experiment/msprof
 PKG_INC=${ASCEND_HOME_PATH}/pkg_inc
 RT_LIB=${ASCEND_HOME_PATH}/lib64
 
-g++ main.cpp -I${RT_INC} -I${PROF_INC} -I${PKG_INC} -L ${RT_LIB} -l runtime -l ascendcl -o vec-add
+g++ main.cpp -I${RT_INC} -I${PROF_INC} -I${PKG_INC} -L ${RT_LIB} -l runtime -l ascendcl -o vec_vcumsum
 ```
 
 Run the example:
 
 ```bash
-./vec-add
+./vec_vcumsum
 ```
 
 Expected output (excerpt):
 
 ```text
-    i0       Expect: 1                         Result: 1
-    i1       Expect: 2                         Result: 2
-    i2       Expect: 3                         Result: 3
-    i3       Expect: 4                         Result: 4
+    i0       Expect: 0.000000                         Result: 0.000000
+    i1       Expect: 1.000000                         Result: 1.000000
+    i2       Expect: 3.000000                         Result: 3.000000
+    i3       Expect: 6.000000                         Result: 6.000000
+    i4       Expect: 10.000000                        Result: 10.000000
+    i5       Expect: 15.000000                        Result: 15.000000
+    i6       Expect: 21.000000                        Result: 21.000000
+    i7       Expect: 28.000000                        Result: 28.000000
     ...
 ```
