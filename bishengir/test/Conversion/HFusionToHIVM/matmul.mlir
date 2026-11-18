@@ -1,5 +1,6 @@
 // RUN: bishengir-opt -convert-hfusion-to-hivm="mm-map-mode=macro_instr" -canonicalize-ext %s -split-input-file -verify-diagnostics | FileCheck %s --check-prefixes=CHECK,HFUSION
 // RUN: bishengir-opt -convert-to-hivm-pipeline="enable-triton-kernel-compile=true" -canonicalize-ext %s -split-input-file -verify-diagnostics | FileCheck %s --check-prefixes=CHECK,PIPELINE
+// RUN: bishengir-opt --pass-pipeline="builtin.module(convert-to-hivm-pipeline{enable-triton-kernel-compile=true},canonicalize-ext)" %s -split-input-file -verify-diagnostics | FileCheck %s --check-prefixes=CHECK,PIPELINE
 // -----
 // CHECK-LABEL: test_mmadL1_no_loop
 // CHECK-DAG: %[[STUB_0:.*]] = arith.constant 0 : index

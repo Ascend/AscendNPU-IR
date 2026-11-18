@@ -13,19 +13,19 @@ Triton-Ascend requires Python 3.9 to 3.11 (inclusive). Its runtime depends on th
     Download the Toolkit package and the ops package corresponding to your hardware from the [Ascend Community CANN download page](https://www.hiascend.com/cann/download).
 
     ```bash
-    # Take the CANN installation for Atlas A3 series products in an x86 environment as an example, where {version} is replaced with the actual CANN version number, such as 9.0.0.
+    # Take the CANN installation for Atlas A3 products in the x86 environment as an example, where {version} is replaced with the actual CANN version number, such as 9.0.0
     chmod +x Ascend-cann_{version}_linux-x86_64.run
     chmod +x Ascend-cann-A3-ops_{version}_linux-x86_64.run
     ./Ascend-cann_{version}_linux-x86_64.run --full [--install-path=${PATH-TO-CANN}]
     ./Ascend-cann-A3-ops_{version}_linux-x86_64.run --install [--install-path=${PATH-TO-CANN}]
-    # Install the Python dependencies of CANN.
+    # Install the Python dependencies of CANN
     pip install attrs==24.2.0 numpy==1.26.4 scipy==1.13.1 decorator==5.1.1 psutil==6.0.0 pyyaml
     ```
 
-2. Set environment variables:
+2. Set the environment variables:
 
     ```bash
-    # For version 8.5.0 and earlier, the path is ${PATH-TO-CANN}/ascend-toolkit/set_env.sh.
+    # For version 8.5.0 and earlier, the path is ${PATH-TO-CANN}/ascend-toolkit/set_env.sh
     source ${PATH-TO-CANN}/cann/set_env.sh
     ```
 
@@ -121,12 +121,12 @@ def test_lt(param_list):
     dtype, shape, ncore, xblock, xblock_sub = param_list
     x0 = generate_tensor(shape, dtype).npu()
     x1 = generate_tensor(shape, dtype).npu()
-    # torch result.
+    # torch result
     torch_res = torch_lt(x0, x1).to(eval('torch.' + dtype))
-    # triton result.
+    # triton result
     triton_res = torch.zeros(shape, dtype=eval('torch.' + dtype)).npu()
     triton_lt[ncore, 1, 1](x0, x1, triton_res, xblock, xblock_sub)
-    # Compare the results.
+    # Compare results
     validate_cmp(dtype, triton_res, torch_res)
 ```
 
@@ -134,74 +134,74 @@ def test_lt(param_list):
 
 **Dynamic shape support**: The kernel automatically adapts to 1D tensors of any length. Users only need to pass in data with the actual shape.
 
-## Conversion from Triton Ops to Ascend NPU IR Ops
+## Conversion from Triton Ops to AscendNPU IR Ops
 
 Triton Ascend progressively lowers the high-level GPU abstraction operations of the Triton dialect into target dialects such as Linalg, HFusion, and HIVM, ultimately generating an optimized intermediate representation that can be executed efficiently on the Ascend NPU. The following table lists in detail the various Triton operations and their corresponding Ascend NPU IR operations during the lowering process.
 
 **Memory access Ops**:
 
-| Triton Op             | Target Ascend NPU IR Op                                      | Description                     |
-| :-------------------- | :----------------------------------------------------------- | :------------------------------ |
-| `triton::StoreOp`     | `memref::copy`                                               | Stores data to memory.          |
-| `triton::LoadOp`      | `memref::copy` + `bufferization::ToTensorOp`                 | Loads data from memory.         |
-| `triton::AtomicRMWOp` | `hivm::StoreOp` or `hfusion::AtomicXchgOp`                   | Performs an atomic read-modify-write operation. |
-| `triton::AtomicCASOp` | `linalg::GenericOp`                                          | Performs an atomic compare-and-swap operation. |
-| `triton::GatherOp`    | First converted to `func::CallOp` (calling `triton_gather`)<br>then converted to `hfusion::GatherOp` | Collects data by index.         |
+| Triton Op             | Target AscendNPU IR Op                                         | Description                     |
+| :-------------------- | :----------------------------------------------------------- | :----------------------- |
+| `triton::StoreOp`     | `memref::copy`                                               | Stores data to memory         |
+| `triton::LoadOp`      | `memref::copy` + `bufferization::ToTensorOp`                 | Loads data from memory           |
+| `triton::AtomicRMWOp` | `hivm::StoreOp` or `hfusion::AtomicXchgOp`                     | Performs an atomic read-modify-write operation |
+| `triton::AtomicCASOp` | `linalg::GenericOp`                                          | Performs an atomic compare-and-swap operation |
+| `triton::GatherOp`    | First converted to `func::CallOp` (calling `triton_gather`)<br>then converted to `hfusion::GatherOp` | Gathers data by index         |
 
 **Pointer arithmetic Ops**:
 
-| Triton Op            | Target Ascend NPU IR Op        | Description               |
-| :------------------- | :---------------------------- | :------------------------ |
-| `triton::AddPtrOp`   | `memref::ReinterpretCast`     | Performs offset arithmetic on a pointer. |
-| `triton::PtrToIntOp` | `arith::IndexCastOp`          | Converts a pointer to an integer. |
-| `triton::IntToPtrOp` | `hivm::PointerCastOp`         | Converts an integer to a pointer. |
-| `triton::AdvanceOp`  | `memref::ReinterpretCastOp`   | Advances the pointer position. |
+| Triton Op            | Target AscendNPU IR Op        | Description               |
+| :------------------- | :-------------------------- | :----------------- |
+| `triton::AddPtrOp`   | `memref::ReinterpretCast`   | Performs offset arithmetic on a pointer |
+| `triton::PtrToIntOp` | `arith::IndexCastOp`        | Converts a pointer to an integer   |
+| `triton::IntToPtrOp` | `hivm::PointerCastOp`       | Converts an integer to a pointer   |
+| `triton::AdvanceOp`  | `memref::ReinterpretCastOp` | Advances the pointer position       |
 
 **Program information Ops**:
 
-| Triton Op                  | Target Ascend NPU IR Op                                       | Description             |
-| :------------------------- | :------------------------------------------------------------ | :---------------------- |
-| `triton::GetProgramIdOp`   | Parameter of `functionOp`                                     | Obtains the ID of the current program. |
-| `triton::GetNumProgramsOp` | Parameter of `functionOp`                                     | Obtains the total number of programs. |
-| `triton::AssertOp`         | First converted to `func::CallOp` (calling `triton_assert`)<br>then converted to `hfusion::AssertOp` | Assertion operation. |
-| `triton::PrintOp`          | First converted to `func::CallOp` (calling `triton_print`)<br>then converted to `hfusion::PrintOp` | Print operation. |
+| Triton Op                  | Target AscendNPU IR Op                                         | Description             |
+| :------------------------- | :----------------------------------------------------------- | :--------------- |
+| `triton::GetProgramIdOp`   | Parameter of `functionOp`                                           | Gets the ID of the current program |
+| `triton::GetNumProgramsOp` | Parameter of `functionOp`                                           | Gets the total number of programs   |
+| `triton::AssertOp`         | First converted to `func::CallOp` (calling `triton_assert`)<br>then converted to `hfusion::AssertOp` | Assertion operation         |
+| `triton::PrintOp`          | First converted to `func::CallOp` (calling `triton_print`)<br>then converted to `hfusion::PrintOp` | Print operation         |
 
 **Tensor operation Ops**:
 
-| Triton Op              | Target Ascend NPU IR Op                                       | Description                       |
-| :--------------------- | :------------------------------------------------------------ | :-------------------------------- |
-| `triton::ReshapeOp`    | `tensor::ReshapeOp`                                           | Changes the tensor shape.         |
-| `triton::ExpandDimsOp` | `tensor::ExpandShapeOp`                                       | Expands the tensor dimensions.    |
-| `triton::BroadcastOp`  | `linalg::BroadcastOp`                                         | Broadcasts the tensor.            |
-| `triton::TransOp`      | `linalg::TransposeOp`                                         | Transposes the tensor.            |
-| `triton::SplitOp`      | `tensor::ExtractSliceOp`                                      | Splits the tensor.                |
-| `triton::JoinOp`       | `tensor::InsertSliceOp`                                       | Joins the tensor.                 |
-| `triton::CatOp`        | `tensor::InsertSliceOp`                                       | Concatenates the tensor.          |
-| `triton::MakeRangeOp`  | `linalg::GenericOp`                                           | Creates a tensor containing consecutive integers. |
-| `triton::SplatOp`      | `linalg::FillOp`                                              | Fills the tensor with a scalar value. |
-| `triton::SortOp`       | First converted to `func::CallOp` (calling `triton_sort`)<br>then converted to `hfusion::SortOp` | Sorts the tensor.                 |
+| Triton Op              | Target AscendNPU IR Op                                         | Description                       |
+| :--------------------- | :----------------------------------------------------------- | :------------------------- |
+| `triton::ReshapeOp`    | `tensor::ReshapeOp`                                          | Changes the tensor shape               |
+| `triton::ExpandDimsOp` | `tensor::ExpandShapeOp`                                      | Expands the tensor dimensions               |
+| `triton::BroadcastOp`  | `linalg::BroadcastOp`                                        | Broadcasts the tensor                   |
+| `triton::TransOp`      | `linalg::TransposeOp`                                        | Transposes the tensor                   |
+| `triton::SplitOp`      | `tensor::ExtractSliceOp`                                     | Splits the tensor                   |
+| `triton::JoinOp`       | `tensor::InsertSliceOp`                                      | Joins the tensor                   |
+| `triton::CatOp`        | `tensor::InsertSliceOp`                                      | Concatenates the tensor                   |
+| `triton::MakeRangeOp`  | `linalg::GenericOp`                                          | Creates a tensor containing consecutive integers |
+| `triton::SplatOp`      | `linalg::FillOp`                                             | Fills the tensor with a scalar value           |
+| `triton::SortOp`       | First converted to `func::CallOp` (calling `triton_sort`)<br>then converted to `hfusion::SortOp` | Sorts the tensor             |
 
 **Numerical computation Ops**:
 
-| Triton Op                | Target Ascend NPU IR Op                                         | Description                         |
+| Triton Op                | Target AscendNPU IR Op                                         | Description                         |
 | :----------------------- | :----------------------------------------------------------- | :--------------------------- |
-| `triton::MulhiUIOp`      | `arith::MulSIExtendedOp`                                     | Unsigned integer multiplication, returning the high-order result. |
-| `triton::PreciseDivFOp`  | `arith::DivFOp`                                              | Performs high-precision floating-point division.           |
-| `triton::PreciseSqrtOp`  | `math::SqrtOp`                                               | Performs high-precision floating-point square root.         |
-| `triton::BitcastOp`      | `arith::BitcastOp`                                           | Reinterprets bits between different types. |
-| `triton::ClampFOp`       | `tensor::EmptyOp` + `linalg::FillOp`                         | Clamps a floating-point number to a specified range.     |
-| `triton::DotOp`          | `linalg::MatmulOp`                                           | Performs general matrix multiplication.             |
-| `triton::DotScaledOp`    | `linalg::MatmulOp`                                           | Performs matrix multiplication with a scaling factor.     |
-| `triton::ascend::FlipOp` | First converted to `func::CallOp` (calling `triton_flip`)<br>then converted to `hfusion::FlipOp` | Flips a tensor along a specified dimension.     |
+| `triton::MulhiUIOp`      | `arith::MulSIExtendedOp`                                     | Unsigned integer multiplication, returning the high-order result |
+| `triton::PreciseDivFOp`  | `arith::DivFOp`                                              | Performs high-precision floating-point division           |
+| `triton::PreciseSqrtOp`  | `math::SqrtOp`                                               | Performs high-precision floating-point square root         |
+| `triton::BitcastOp`      | `arith::BitcastOp`                                           | Reinterprets bits between different types |
+| `triton::ClampFOp`       | `tensor::EmptyOp` + `linalg::FillOp`                         | Clamps a floating-point number to a specified range     |
+| `triton::DotOp`          | `linalg::MatmulOp`                                           | Performs general matrix multiplication             |
+| `triton::DotScaledOp`    | `linalg::MatmulOp`                                           | Performs matrix multiplication with a scaling factor     |
+| `triton::ascend::FlipOp` | First converted to `func::CallOp` (calling `triton_flip`)<br>then converted to `hfusion::FlipOp` | Performs matrix multiplication with a scaling factor     |
 
 **Reduction Ops**:
 
-| Triton Op | Target Ascend NPU IR Op | Description |
+| Triton Op | Target AscendNPU IR Op | Description |
 | :--- | :--- | :--- |
-| `triton::ArgMinOp` | `linalg::ReduceOp` | Returns the index of the minimum value in the tensor. |
-| `triton::ArgMaxOp` | `linalg::ReduceOp` | Returns the index of the maximum value in the tensor. |
-| `triton::ReduceOp` | `linalg::ReduceOp` | General reduction operation. |
-| `triton::ScanOp` | First converted to `func::CallOp` (calling `triton_cumsum` or `triton_cumprod`)<br>then converted to `hfusion::CumsumOp` and `hfusion::CumprodOp` | Performs a scan operation (such as cumulative sum and cumulative product). |
+| `triton::ArgMinOp` | `linalg::ReduceOp` | Returns the index of the minimum value in a tensor |
+| `triton::ArgMaxOp` | `linalg::ReduceOp` | Returns the index of the maximum value in a tensor |
+| `triton::ReduceOp` | `linalg::ReduceOp` | General reduction operation |
+| `triton::ScanOp` | First converted to `func::CallOp` (calling `triton_cumsum` or `triton_cumprod`)<br>then converted to `hfusion::CumsumOp` and `hfusion::CumprodOp` | Performs a scan operation (such as cumulative sum or cumulative product) |
 
 ## Triton Extension Operations
 
@@ -248,11 +248,11 @@ def kernel_debug_barrier():
 
 | Parameter | Type | Description |
 |--------|------|------|
-| `sender` | str | Sender unit type. |
-| `receiver` | str | Receiver unit type. |
-| `event_id` | int | Event identifier. |
-| `sender_pipe_value` | [PIPE enum value](#pipe) | Sender pipe value. |
-| `receiver_pipe_value` | [PIPE enum value](#pipe) | Receiver pipe value. |
+| `sender` | str | Sender unit type |
+| `receiver` | str | Receiver unit type |
+| `event_id` | int | Event identifier |
+| `sender_pipe_value` | [PIPE enum value](#pipe) | Sender pipe value |
+| `receiver_pipe_value` | [PIPE enum value](#pipe) | Receiver pipe value |
 
 **Code example**:
 
@@ -279,19 +279,19 @@ def triton_matmul_exp():
 
 **Parameters**:
 
-| Parameter | Type | Description | Valid Values |
+| Parameter | Type | Description | Valid Value |
 |--------|------|------|--------|
-| `mode` | str | Synchronization mode, specifying the type of cores to synchronize. | "all_cube", "all_vector", "all", "all_sub_vector" |
-| `event_id` | int | Synchronization event identifier. | 0 ~ 15 |
+| `mode` | str | Synchronization mode, specifying the core type to synchronize | "all_cube", "all_vector", "all", "all_sub_vector" |
+| `event_id` | int | Synchronization event identifier | 0 ~ 15 |
 
 **Synchronization Mode Details**:
 
 | Mode | Description | Synchronization Scope |
 |------|------|----------|
-| "all_cube" | Synchronizes all Cube cores. | All Cube cores on the current AI Core |
-| "all_vector" | Synchronizes all Vector cores. | All Vector cores on the current AI Core |
-| "all" | Synchronizes all cores. | All compute cores (Cube+Vector) on the current AI Core |
-| "all_sub_vector" | Synchronizes all sub-Vector cores. | All sub-Vector cores on the current AI Core |
+| "all_cube" | Synchronizes all Cube cores | All Cube cores on the current AI Core |
+| "all_vector" | Synchronizes all Vector cores | All Vector cores on the current AI Core |
+| "all" | Synchronizes all cores | All compute cores (Cube+Vector) on the current AI Core |
+| "all_sub_vector" | Synchronizes all sub-Vector cores | All sub-Vector cores on the current AI Core |
 
 **Code example**:
 
@@ -331,15 +331,17 @@ def triton_matmul_exp():
 
 | Parameter | Type | Description | Example |
 |------|------|------|------|
-| `arg1` | int | Start value or stop value. | `parallel(10)` |
-| `arg2` | int | Stop value (optional). | `parallel(0, 10)` |
-| `step` | int | Step (optional). | `parallel(0, 10, 2)` |
-| `num_stages` | int | Number of pipeline stages (optional). | `parallel(0, 10, num_stages=3)` |
-| `loop_unroll_factor` | int | Loop unrolling factor (optional). | `parallel(0, 10, loop_unroll_factor=4)` |
+| `arg1` | int | Starting value or ending value | `parallel(10)` |
+| `arg2` | int | Ending value (optional) | `parallel(0, 10)` |
+| `step` | int | Step size (optional) | `parallel(0, 10, 2)` |
+| `num_stages` | int | Number of pipeline stages (optional) | `parallel(0, 10, num_stages=3)` |
+| `loop_unroll_factor` | int | Loop unroll factor (optional) | `parallel(0, 10, loop_unroll_factor=4)` |
 
+<!-- npu="910b" id1 -->
 **Constraints**:
 
-Currently, Atlas A2 training products/Atlas A2 inference products support a maximum of two Vector cores.
+Currently, Atlas A2 products support a maximum of 2 Vector cores.
+<!-- end id1 -->
 
 **Code example**:
 
@@ -355,7 +357,7 @@ def triton_add():
     # ...
 ```
 
-### Compile Optimization Hints
+### Compilation Optimization Hints
 
 #### compile_hint
 
@@ -365,9 +367,9 @@ def triton_add():
 
 | Parameter | Type | Description |
 |--------|------|------|
-| `ptr` | tensor | Pointer to the target tensor. |
-| `hint_name` | str | Hint name. |
-| `hint_val` | Multiple types | Hint value (optional). |
+| `ptr` | tensor | Target tensor pointer |
+| `hint_name` | str | Hint name |
+| `hint_val` | multiple types | Hint value (optional) |
 
 **Code example**:
 
@@ -388,8 +390,8 @@ def triton_where_lt_case1():
 
 | Parameter | Type | Description |
 |------|------|------|
-| `src` | tensor | Tensor to be multi-buffered. |
-| `size` | int | Number of buffer copies. |
+| `src` | tensor | The tensor to be multi-buffered |
+| `size` | int | The number of buffer copies |
 
 **Code example**:
 
@@ -444,11 +446,11 @@ def kernel_debug_barrier():
 
 | Parameter | Type | Description |
 |--------|------|------|
-| `ful` | Tensor | Target tensor that receives the insertion. |
-| `sub` | Tensor | Source tensor to be inserted. |
-| `offsets` | integer tuple | Starting offset of the insertion operation. |
-| `sizes` | integer tuple | Size range of the insertion operation. |
-| `strides` | integer tuple | Stride parameter of the insertion operation. |
+| `ful` | Tensor | Target tensor that receives the insertion |
+| `sub` | Tensor | Source tensor to be inserted |
+| `offsets` | integer tuple | Starting offset of the insertion operation |
+| `sizes` | integer tuple | Size range of the insertion operation |
+| `strides` | integer tuple | Stride parameter of the insertion operation |
 
 **Code example**:
 
@@ -473,8 +475,8 @@ def triton_kernel():
 
 | Parameter | Type | Description |
 |--------|------|------|
-| `src` | tensor | Source tensor to be accessed. |
-| `indice` | integer tuple | Index position of the element to be obtained. |
+| `src` | tensor | Source tensor to be accessed |
+| `indice` | int tuple | Index position of the element to be obtained |
 
 **Code example**:
 
@@ -487,7 +489,7 @@ def index_select_manual_kernel():
     # ...
 ```
 
-### Tensor Computation Operation
+### Tensor Computation Operations
 
 #### sort
 
@@ -497,9 +499,9 @@ def index_select_manual_kernel():
 
 | Parameter | Type | Description | Default Value |
 |--------|------|------|--------|
-| `ptr` | `tensor` | Input tensor. | - |
-| `dim` | `int` or `tl.constexpr[int]` | Dimension to sort. | -1 |
-| `descending` | `bool` or `tl.constexpr[bool]` | Sort direction, where `True` indicates descending order and `False` indicates ascending order. | `False` |
+| `ptr` | `tensor` | Input tensor | - |
+| `dim` | `int` or `tl.constexpr[int]` | Dimension to sort | -1 |
+| `descending` | `bool` or `tl.constexpr[bool]` | Sorting direction, where `True` indicates descending order and `False` indicates ascending order | `False` |
 
 **Code example**:
 
@@ -521,8 +523,8 @@ def sort_kernel_2d():
 
 | Parameter | Type | Description |
 |--------|------|------|
-| `ptr` | tensor | Input tensor. |
-| `dim` | int or tl.constexpr[int] | Dimension to flip. |
+| `ptr` | tensor | Input tensor |
+| `dim` | int or tl.constexpr[int] | Dimension to flip |
 
 **Code example**:
 
@@ -543,11 +545,11 @@ def flip_kernel_2d():
 
 | Parameter | Type | Description | Default Value |
 |--------|------|------|--------|
-| `input` | tensor | Input tensor. | - |
-| `dtype` | dtype | Target data type. | - |
-| `fp_downcast_rounding` | str, optional | Rounding mode for floating-point downcast. | `None` |
-| `bitcast` | bool, optional | Whether to perform bitcast (instead of numeric conversion). | `False` |
-| `overflow_mode` | str, optional | Overflow handling mode. | `None` |
+| `input` | tensor | Input tensor | - |
+| `dtype` | dtype | Target data type | - |
+| `fp_downcast_rounding` | str, optional | Rounding mode for floating-point downcast | `None` |
+| `bitcast` | bool, optional | Whether to perform bitcast (rather than numeric conversion) | `False` |
+| `overflow_mode` | str, optional | Overflow handling mode | `None` |
 
 **Code example**:
 
@@ -568,19 +570,19 @@ def cast_to_bool():
 
 **Function**: Ascend supports collecting data from a source GM tensor into an output UB tensor along a specified dimension based on an index UB tensor, using the SIMT template. This operation supports 2D–5D tensors.
 
-**parameters**:
+**Parameters**:
 
 | Parameter | Type | Description |
 |--------|------|------|
-| `src` | pointer type | Source tensor pointer (in GM). |
-| `index` | tensor | Index tensor used for collection (in UB). |
-| `dim` | int | Dimension along which collection is performed. |
-| `bound` | int | Upper bound of index values. |
-| `end_offset` | integer tuple | Ending offset of each dimension of the index tensor. |
-| `start_offset` | integer tuple | Starting offset of each dimension of the source tensor. |
-| `src_stride` | integer tuple | Stride of each dimension of the source tensor. |
-| `other` (optional) | scalar value | Default value when the index is out of bounds (in UB). |
-| `out` | tensor | Output tensor (in UB). |
+| `src` | pointer type | Source tensor pointer (in GM) |
+| `index` | tensor | Index tensor used for collection (in UB) |
+| `dim` | int | Dimension along which collection is performed |
+| `bound` | int | Upper bound of index values |
+| `end_offset` | integer tuple | Ending offset of each dimension of the index tensor |
+| `start_offset` | integer tuple | Starting offset of each dimension of the source tensor |
+| `src_stride` | integer tuple | Stride of each dimension of the source tensor |
+| `other` (optional) | scalar value | Default value when the index is out of bounds (in UB) |
+| `out` | tensor | Output tensor (in UB) |
 
 **Code example**:
 
@@ -609,22 +611,22 @@ def select_index():
 
 | Parameter | Type | Description |
 |--------|------|------|
-| `ptr` | tensor (pointer type) | Target tensor pointer (in GM). |
-| `index` | tensor | Index used for placement (in UB). |
-| `value` | tensor | Value to be stored (in UB). |
-| `dim` | int32 | Dimension along which index placement is performed. |
-| `index_boundary` | int64 | Upper bound of index values. |
-| `end_offset` | int tuple | Ending offset of the placement region in each dimension. |
-| `start_offset` | int tuple | Starting offset of the placement region in each dimension. |
-| `dst_stride` | int tuple | Stride of each dimension of the target tensor. |
+| `ptr` | tensor (pointer type) | Target tensor pointer (located in GM) |
+| `index` | tensor | Index used for placement (located in UB) |
+| `value` | tensor | Value to be stored (located in UB) |
+| `dim` | int32 | Dimension along which indexed placement is performed |
+| `index_boundary` | int64 | Upper bound of index values |
+| `end_offset` | int tuple | Ending offset of the placement region in each dimension |
+| `start_offset` | int tuple | Starting offset of the placement region in each dimension |
+| `dst_stride` | int tuple | Stride of each dimension of the target tensor |
 
 **Index placement rules**:
 
-- Two-dimensional index placement
+- Two-dimensional indexed placement
 
     `dim = 0: out[index[i]][start_offset[1]:end_offset[1]] = value[i][0:end_offset[1]-start_offset[1]]`
 
-- Three-dimensional index placement
+- Three-dimensional indexed placement
 
     `dim = 0: out[index[i]][start_offset[1]:end_offset[1]][start_offset[2]:end_offset[2]]  = value[i][0:end_offset[1]-start_offset[1]][0:end_offset[2]-start_offset[2]]`
 
@@ -636,7 +638,7 @@ def select_index():
 - `ptr.dtype` currently supports only `float16`, `bfloat16`, and `float32`.
 - `index` must be an integer tensor. If `index.rank` != 1, it is reshaped to 1D.
 - `index.numel` must be equal to `value.shape[dim]`.
-- `value` supports 2- to 5-dimensional tensors.
+- `value` supports 2 to 5 dimensional tensors.
 - `dim` must be valid (`0 ≤ dim < rank(value) - 1`).
 
 **Code example**:
@@ -666,14 +668,14 @@ def put_index():
 
 | Parameter | Type | Description |
 |--------|------|------|
-| `src` | tensor (pointer type) | Source tensor pointer (located in GM). |
-| `index` | tensor | Index tensor used for collection (located in UB). |
-| `index_boundary` | int64 | Upper bound of index values. |
-| `dim` | int32 | Dimension along which collection is performed. |
-| `src_stride` | int64 tuple | Stride of each dimension of the source tensor. |
-| `end_offset` | int32 tuple | Ending offset of each dimension of the index tensor. |
-| `start_offset` | int32 tuple | Starting offset of each dimension of the index tensor. |
-| `other` | Scalar value (optional) | Default value used when the index is out of bounds (located in UB). |
+| `src` | tensor (pointer type) | Source tensor pointer (located in GM) |
+| `index` | tensor | Index tensor used for collection (located in UB) |
+| `index_boundary` | int64 | Upper bound of index values |
+| `dim` | int32 | Dimension along which collection is performed |
+| `src_stride` | int64 tuple | Stride of each dimension of the source tensor |
+| `end_offset` | int32 tuple | Ending offset of each dimension of the index tensor |
+| `start_offset` | int32 tuple | Starting offset of each dimension of the index tensor |
+| `other` | scalar value (optional) | Default value used when the index is out of bounds (located in UB) |
 
 **Return Value**:
 
@@ -736,14 +738,14 @@ def gather():
 
 | Parameter | Type | Description |
 |--------|------|------|
-| `ptr` | tensor (pointer type) | Target tensor pointer (located in GM). |
-| `value` | tensor | Tile value to be stored (located in UB). |
-| `index` | tensor | Index used for scatter storage (located in UB). |
-| `index_boundary` | int64 | Upper bound of index values. |
-| `dim` | int32 | Dimension along which scatter storage is performed. |
-| `dst_stride` | int64 tuple | Stride of each dimension of the target tensor. |
-| `end_offset` | int32 tuple | Ending offset of each dimension of the index tensor. |
-| `start_offset` | int32 tuple | Starting offset of each dimension of the index tensor. |
+| `ptr` | tensor (pointer type) | Target tensor pointer (located in GM) |
+| `value` | tensor | Tile value to be stored (located in UB) |
+| `index` | tensor | Index used for scatter storage (located in UB) |
+| `index_boundary` | int64 | Upper bound of index values |
+| `dim` | int32 | Dimension along which scatter storage is performed |
+| `dst_stride` | int64 tuple | Stride of each dimension of the target tensor |
+| `end_offset` | int32 tuple | Ending offset of each dimension of the index tensor |
+| `start_offset` | int32 tuple | Starting offset of each dimension of the index tensor |
 
 **Scatter storage rules**:
 
@@ -757,7 +759,7 @@ def gather():
 
     `dim = 1: out[start_offset[0] + i][start_offset[1] + index[i][j]] = value[i][j]`
 
-- Three-dimensional index scatter.
+- Three-dimensional index scatter
 
     `dim = 0: out[start_offset[0] + index[i][j][k]][start_offset[1] + j][start_offset[2] + k] = value[i][j][k]`
 
@@ -801,12 +803,12 @@ def scatter():
 
 | Parameter | Type | Description |
 |--------|------|------|
-| `src` | tensor (pointer type) | Source tensor pointer (located in GM). |
-| `dim` | int or constexpr | Dimension along which indices are selected. |
-| `index` | tensor | One-dimensional tensor of indices to be selected (located in UB). |
-| `src_shape` | List[Union[int, tensor]] | Complete shape of the source tensor (can be integers or tensors). |
-| `src_offset` | List[Union[int, tensor]] | Starting offset for reading (can be integers or tensors). |
-| `read_shape` | List[Union[int, tensor]] | Size to be read (tile shape, can be integers or tensors). |
+| `src` | tensor (pointer type) | Source tensor pointer (located in GM) |
+| `dim` | int or constexpr | Dimension along which indices are selected |
+| `index` | tensor | One-dimensional tensor of indices to be selected (located in UB) |
+| `src_shape` | List[Union[int, tensor]] | Complete shape of the source tensor (can be an integer or a tensor) |
+| `src_offset` | List[Union[int, tensor]] | Starting offset for reading (can be an integer or a tensor) |
+| `read_shape` | List[Union[int, tensor]] | Size to be read (tile shape, can be an integer or a tensor) |
 
 **Constraints**:
 
@@ -837,6 +839,7 @@ def index_select_simd():
     # ...
 ```
 
+<!-- npu="950" id2 -->
 ## Triton-Exclusive Custom Operations
 
 On the Ascend 950PR/Ascend 950DT architecture, the Custom Op of Triton-Ascend allows users to customize operations and use them. At runtime, a custom operation is converted into a call to a device-side implementation function, which can call existing library functions or implementation functions generated by compiling source code or bytecode provided by the user.
@@ -953,7 +956,7 @@ If the provided arguments are incorrect, a compilation error is reported. For ex
 AssertionError('dim must be an integer')
 ```
 
-### Output Parameters and Return Value
+### Output Parameters and Return Values
 
 `al.custom` returns the output parameters specified by the out parameter, for example:
 
@@ -1171,6 +1174,7 @@ def my_kernel(...):
     x = my_custom_op(src, index)
     ...
 ```
+<!-- end id2 -->
 
 ## Triton Exclusive Extension Enums
 
@@ -1178,28 +1182,28 @@ def my_kernel(...):
 
 | Enumeration Value | Description |
 |--------|----------|
-| `VV_ALL` | Blocks the execution of vector load/store instructions until all vector load/store instructions complete. |
-| `VST_VLD` | Blocks the execution of vector load instructions until all vector store instructions complete. |
-| `VLD_VST` | Blocks the execution of vector store instructions until all vector load instructions complete. |
-| `VST_VST` | Blocks the execution of vector store instructions until all vector store instructions complete. |
-| `VS_ALL` | Blocks the execution of scalar load/store instructions until all vector load/store instructions complete. |
-| `VST_LD` | Blocks the execution of scalar load instructions until all vector store instructions complete. |
-| `VLD_ST` | Blocks the execution of scalar store instructions until all vector load instructions complete. |
-| `VST_ST` | Blocks the execution of scalar store instructions until all vector store instructions complete. |
-| `SV_ALL` | Blocks the execution of vector load/store instructions until all scalar load/store instructions complete. |
-| `ST_VLD` | Blocks the execution of vector load instructions until all scalar store instructions complete. |
-| `LD_VST` | Blocks the execution of vector store instructions until all scalar load instructions complete. |
-| `ST_VST` | Blocks the execution of vector store instructions until all scalar store instructions complete. |
+| `VV_ALL` | Blocks the execution of vector load/store instructions until all vector load/store instructions are complete |
+| `VST_VLD` | Blocks the execution of vector load instructions until all vector store instructions are complete |
+| `VLD_VST` | Blocks the execution of vector store instructions until all vector load instructions are complete |
+| `VST_VST` | Blocks the execution of vector store instructions until all vector store instructions are complete |
+| `VS_ALL` | Blocks the execution of scalar load/store instructions until all vector load/store instructions are complete |
+| `VST_LD` | Blocks the execution of scalar load instructions until all vector store instructions are complete |
+| `VLD_ST` | Blocks the execution of scalar store instructions until all vector load instructions are complete |
+| `VST_ST` | Blocks the execution of scalar store instructions until all vector store instructions are complete |
+| `SV_ALL` | Blocks the execution of vector load/store instructions until all scalar load/store instructions are complete |
+| `ST_VLD` | Blocks the execution of vector load instructions until all scalar store instructions are complete |
+| `LD_VST` | Blocks the execution of vector store instructions until all scalar load instructions are complete |
+| `ST_VST` | Blocks the execution of vector store instructions until all scalar store instructions are complete |
 
 ### PIPE
 
-| Enumeration Value | Description |
+| Enum Value | Description |
 |--------|------|
-| `PIPE_S` | Scalar computation pipeline. |
-| `PIPE_V` | Vector computation pipeline. |
-| `PIPE_M` | Memory operation pipeline. |
-| `PIPE_MTE1` | Memory transfer engine 1 pipeline. |
-| `PIPE_MTE2` | Memory transfer engine 2 pipeline. |
-| `PIPE_MTE3` | Memory transfer engine 3 pipeline. |
-| `PIPE_ALL` | All pipelines. |
-| `PIPE_FIX` | Fixed-function pipeline. |
+| `PIPE_S` | Scalar computation pipeline |
+| `PIPE_V` | Vector computation pipeline |
+| `PIPE_M` | Memory operation pipeline |
+| `PIPE_MTE1` | Memory transfer engine 1 pipeline |
+| `PIPE_MTE2` | Memory transfer engine 2 pipeline |
+| `PIPE_MTE3` | Memory transfer engine 3 pipeline |
+| `PIPE_ALL` | All pipelines |
+| `PIPE_FIX` | Fixed-function pipeline |

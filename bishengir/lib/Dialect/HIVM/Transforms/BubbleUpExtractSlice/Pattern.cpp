@@ -15,14 +15,16 @@
 //
 //============================================================================//
 
-#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/BubbleUpUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
+#include "bishengir/Dialect/HIVM/IR/CustomOp/CustomOpUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/BubbleUpUtils.h"
+#include "bishengir/Dialect/HIVM/Transforms/HIVMTilingInterfaceImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
@@ -33,19 +35,29 @@
 #include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/AffineExprVisitor.h"
+#include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SetOperations.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 #include <utility>
 
 #define DEBUG_TYPE "common-pattern-bubble-up-extract-slice"
@@ -645,6 +657,10 @@ handleExtractRankReducedCase(tensor::ExtractSliceOp sliceOp,
                              PatternRewriter &rewriter) {
   auto parentSliceOp =
       cast<tensor::ExtractSliceOp>(sliceOp.getSource().getDefiningOp());
+  // Dynamic parent sizes are not supported: the re-application of parent
+  // offsets/sizes below assumes static extents.
+  if (isDynamicSlice(parentSliceOp))
+    return failure();
   auto parentSizes = parentSliceOp.getStaticSizes();
   // Currently we only try to handle the following ranked-reduced case,
   // which is safe to bubble up. other scenarios might not be safe to bubble up.
@@ -731,7 +747,16 @@ handleExtractOfExtractDifferentDimCase(tensor::ExtractSliceOp sliceOp,
   auto strides = sliceOp.getMixedStrides();
   for (auto dim : getExtractOrInsertDim(parentSliceOp)) {
     std::swap(parentOffsets[dim], offsets[dim]);
-    parentSizes[dim] = rewriter.getIndexAttr(srcType.getDimSize(dim));
+    if (srcType.isDynamicDim(dim)) {
+      // The full size of a dynamic dimension must be materialized as a value;
+      // embedding ShapedType::kDynamic into an index attribute would produce
+      // an extract_slice whose static_sizes claim a dynamic size without a
+      // matching dynamic size operand.
+      parentSizes[dim] = rewriter.createOrFold<tensor::DimOp>(
+          sliceOp->getLoc(), parentSliceOp.getSource(), dim);
+    } else {
+      parentSizes[dim] = rewriter.getIndexAttr(srcType.getDimSize(dim));
+    }
   }
   for (auto dim : getExtractOrInsertDim(sliceOp)) {
     std::swap(parentOffsets[dim], offsets[dim]);
@@ -937,12 +962,35 @@ handleSliceInsertDimOnly(tensor::ExtractSliceOp sliceOp,
       sliceOp.getLoc(), parentInsertOp.getDest(), sliceOp.getMixedOffsets(),
       sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
   markCreatedExtractSliceOp(rewriter, newDst);
-  auto newOffsets = newDst.getMixedOffsets();
-  auto newSizes = newDst.getMixedSizes();
-  newOffsets[tilingDim] = parentInsertOp.getMixedOffsets()[tilingDim];
-  newSizes[tilingDim] = parentInsertOp.getMixedSizes()[tilingDim];
+
+  // Rewrite the insert into the tiled coordinate space. Copying the original
+  // (global) offset onto the already-sliced dest is OOB when the insert is
+  // indexed by a sequential loop IV and the dest has been split by
+  // TileAndBindSubBlock, e.g. insert at iv in [0, 64) into a dest of size 32.
+  SmallVector<OpFoldResult> newOffsets = parentInsertOp.getMixedOffsets();
+  SmallVector<OpFoldResult> newSizes = parentInsertOp.getMixedSizes();
+  Location loc = sliceOp.getLoc();
+  handleExtractOfExtract(newOffsets[tilingDim], newSizes[tilingDim],
+                         sliceOp.getMixedOffsets()[tilingDim],
+                         sliceOp.getMixedSizes()[tilingDim], loc, rewriter);
+  // A disjoint insert remaps to size 0 while keeping a still-global offset.
+  // Clamp that offset into the tiled dest so the no-op insert is well-formed.
+  Value offsetVal =
+      getValueOrCreateConstantIndexOp(rewriter, loc, newOffsets[tilingDim]);
+  Value destSizeVal = getValueOrCreateConstantIndexOp(
+      rewriter, loc, newDst.getMixedSizes()[tilingDim]);
+  newOffsets[tilingDim] =
+      rewriter.createOrFold<arith::MinSIOp>(loc, offsetVal, destSizeVal);
+
+  SmallVector<OpFoldResult> srcOffsets(parentInsertOp.getSourceType().getRank(),
+                                       rewriter.getIndexAttr(0));
+  auto newSrc = rewriter.create<tensor::ExtractSliceOp>(
+      sliceOp.getLoc(), parentInsertOp.getSource(), srcOffsets, newSizes,
+      parentInsertOp.getMixedStrides());
+  markCreatedExtractSliceOp(rewriter, newSrc);
+
   rewriter.replaceOpWithNewOp<tensor::InsertSliceOp>(
-      sliceOp, parentInsertOp.getSource(), newDst, newOffsets, newSizes,
+      sliceOp, newSrc, newDst, newOffsets, newSizes,
       parentInsertOp.getMixedStrides());
   return success();
 }
@@ -1039,27 +1087,21 @@ handleExtractInsertExtractCase(tensor::ExtractSliceOp sliceOp,
       sliceOp.getMixedStrides());
   markCreatedExtractSliceOp(rewriter, newSrcSrc);
 
+  // Rewrite the inner extract/insert into the tiled coordinate space.
+  // Clipping only the size while keeping the original (global) offsets
+  // produces out-of-bounds slices on the tiled tensor.
+  auto offsets = srcExtractOp.getMixedOffsets();
   auto sizes = srcExtractOp.getMixedSizes();
-  auto offsetVal = getValueOrCreateConstantIndexOp(
-      rewriter, sliceOp.getLoc(), sliceOp.getMixedOffsets()[tilingDim]);
-  auto sizeVal = getValueOrCreateConstantIndexOp(rewriter, sliceOp.getLoc(),
-                                                 sizes[tilingDim]);
-  auto tilingSize = getValueOrCreateConstantIndexOp(
-      rewriter, sliceOp.getLoc(), sliceOp.getMixedSizes()[tilingDim]);
-  offsetVal =
-      rewriter.create<arith::MinSIOp>(offsetVal.getLoc(), offsetVal, sizeVal);
-  sizeVal =
-      rewriter.create<arith::SubIOp>(sizeVal.getLoc(), sizeVal, offsetVal);
-  sizeVal =
-      rewriter.create<arith::MinSIOp>(sizeVal.getLoc(), sizeVal, tilingSize);
-  sizes[tilingDim] = sizeVal;
+  handleExtractOfExtract(offsets[tilingDim], sizes[tilingDim],
+                         sliceOp.getMixedOffsets()[tilingDim],
+                         sliceOp.getMixedSizes()[tilingDim], sliceOp.getLoc(),
+                         rewriter);
 
   srcExtractOp = rewriter.replaceOpWithNewOp<tensor::ExtractSliceOp>(
-      srcExtractOp, newSrcSrc, srcExtractOp.getMixedOffsets(), sizes,
-      srcExtractOp.getMixedStrides());
+      srcExtractOp, newSrcSrc, offsets, sizes, srcExtractOp.getMixedStrides());
   rewriter.setInsertionPoint(parentInsertOp);
   rewriter.replaceOpWithNewOp<tensor::InsertSliceOp>(
-      sliceOp, srcExtractOp, newDst, parentInsertOp.getMixedOffsets(), sizes,
+      sliceOp, srcExtractOp, newDst, offsets, sizes,
       parentInsertOp.getMixedStrides());
   rewriter.eraseOp(parentInsertOp);
   return success();
@@ -1377,63 +1419,11 @@ CollapseBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   return tryCollapseBubbleUpGeneral(sliceOp, collapseOp, rewriter);
 }
 
-/// Check whether the trailing axis is aligned to one 32-byte block.
-static bool isTrailingAxisBlockAligned(ShapedType shapedType) {
-  if (!shapedType.hasRank() || shapedType.getRank() == 0)
-    return true;
-
-  int64_t trailingSize = shapedType.getShape().back();
-  if (ShapedType::isDynamic(trailingSize))
-    return true;
-
-  Type elementType = shapedType.getElementType();
-  if (!elementType.isIntOrFloat())
-    return true;
-  unsigned elementBitWidth = elementType.getIntOrFloatBitWidth();
-  if (elementBitWidth % util::BITS_PER_BYTE != 0)
-    return false;
-
-  int64_t trailingBytes =
-      trailingSize * static_cast<int64_t>(elementBitWidth / util::BITS_PER_BYTE);
-  return trailingBytes % util::INTR_BYTES_PER_BLOCK == 0;
-}
-
-/// Guard a known failing case: a 3-D while result split 1:2 on its middle axis
-/// with an unaligned trailing axis.
-/// TODO: Prove and fix the underlying issue, then remove this workaround.
-static bool isUnsafeThreeDimensionalMiddleAxisSplit(
-    tensor::ExtractSliceOp sliceOp) {
-  RankedTensorType sourceType = sliceOp.getSourceType();
-  RankedTensorType resultType = sliceOp.getResultType();
-  if (sourceType.getRank() != 3 || resultType.getRank() != 3)
-    return false;
-
-  auto extractDims = getExtractOrInsertDim(sliceOp);
-  if (extractDims.size() != 1 || !extractDims.contains(1))
-    return false;
-
-  int64_t sourceMiddleDim = sourceType.getDimSize(1);
-  int64_t resultMiddleDim = resultType.getDimSize(1);
-  if (ShapedType::isDynamic(sourceMiddleDim) ||
-      ShapedType::isDynamic(resultMiddleDim) ||
-      sourceMiddleDim != resultMiddleDim * kSubBlockDim)
-    return false;
-
-  return !isTrailingAxisBlockAligned(resultType);
-}
-
 bool LoopBubbleUpStrategy::isSupportedOperation(
     tensor::ExtractSliceOp sliceOp) const {
   auto *sourceOp = sliceOp.getSource().getDefiningOp();
-  if (!isa_and_nonnull<scf::ForOp, scf::WhileOp>(sourceOp) ||
-      isDynamicSlice(sliceOp) || sourceOp->hasAttr("ExtractedLoadOrStore"))
-    return false;
-
-  if (isa<scf::WhileOp>(sourceOp) &&
-      isUnsafeThreeDimensionalMiddleAxisSplit(sliceOp))
-    return false;
-
-  return true;
+  return isa_and_nonnull<scf::ForOp, scf::WhileOp>(sourceOp) &&
+         !isDynamicSlice(sliceOp) && !sourceOp->hasAttr("ExtractedLoadOrStore");
 }
 
 static void sliceRegionIterArg(BlockArgument regionIterArg,
@@ -1660,11 +1650,10 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     return failure();
   auto tilingDim = *extractDims.begin();
 
-  UnrealizedConversionCastOp upAtToTensor =
-      createBubblePropagatorUpLinkBefore(
-          toTensorOp, oldMemrefAtToTensor, slicedMemrefAtToTensor,
-          sliceOp.getMixedOffsets()[tilingDim],
-          sliceOp.getMixedSizes()[tilingDim], tilingDim, rewriter);
+  UnrealizedConversionCastOp upAtToTensor = createBubblePropagatorUpLinkBefore(
+      toTensorOp, oldMemrefAtToTensor, slicedMemrefAtToTensor,
+      sliceOp.getMixedOffsets()[tilingDim], sliceOp.getMixedSizes()[tilingDim],
+      tilingDim, rewriter);
 
   rewriter.setInsertionPointAfter(toTensorOp);
   auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
@@ -1702,13 +1691,12 @@ LocalLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   if (extractDims.size() != 1)
     return failure();
   auto tilingDim = *extractDims.begin();
-  auto slicedMemrefType =
-      getSlicedMemRefType(oldMemrefType, slicedTensorType);
+  auto slicedMemrefType = getSlicedMemRefType(oldMemrefType, slicedTensorType);
 
   auto upAtLocalLoad = createBubblePropagatorUpLinkBefore(
       localLoad, localLoad.getAddr(), slicedMemrefType,
-      sliceOp.getMixedOffsets()[tilingDim],
-      sliceOp.getMixedSizes()[tilingDim], tilingDim, rewriter);
+      sliceOp.getMixedOffsets()[tilingDim], sliceOp.getMixedSizes()[tilingDim],
+      tilingDim, rewriter);
 
   rewriter.setInsertionPointAfter(localLoad);
   auto newLocalLoad = rewriter.create<hivm::LocalLoadOp>(
@@ -2118,19 +2106,524 @@ FixpipeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
 
   auto dualAttr =
       hivm::FixpipeDualDstModeAttr::get(rewriter.getContext(), splitMode);
-  NamedAttrList attrs(fixpipeOp->getAttrs());
-  attrs.set(fixpipeOp.getDualDstModeAttrName(), dualAttr);
+  auto newFixpipeOp = FixpipeOp::clone(
+      rewriter, fixpipeOp, fixpipeOp.getSrc(), newSliceOp.getResult(),
+      {rewriter.getNamedAttr(fixpipeOp.getDualDstModeAttrName(), dualAttr)});
   if (!hacc::utils::isRegBasedArch(fixpipeOp->getParentOfType<ModuleOp>()))
-    attrs.erase(fixpipeOp.getSubBlockIdxAttrName());
-  auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
-      sliceOp.getLoc(), TypeRange{sliceOp.getType()},
-      ValueRange{fixpipeOp.getSrc(), newSliceOp.getResult()}, attrs.getAttrs());
+    newFixpipeOp.removeSubBlockIdxAttr();
 
   rewriter.replaceOp(sliceOp, newFixpipeOp);
   if (fixpipeOp->use_empty())
     rewriter.eraseOp(fixpipeOp);
 
   return success();
+}
+
+//===----------------------------------------------------------------------===//
+// CustomOpBubbleUpStrategy
+//===----------------------------------------------------------------------===//
+//
+// Handles both hivm.hir.custom and hivm.hir.custom_macro (shared via the
+// Custom-like templates below). Both `iterator_types` and `indexing_map` must
+// be present so the slice can be projected from the consumed result back to
+// each shaped operand via the affine maps.
+// Recover one iteration window across all results, then project it to operands.
+// Direct axes and contiguous linearized axes use the same slice/rebuild flow.
+
+namespace {
+
+// Recognize a contiguous linearization with all inner dimensions kept whole.
+static std::optional<int64_t> getPartitionScale(AffineExpr expr,
+                                                unsigned parallel,
+                                                ArrayRef<int64_t> bounds,
+                                                bool requireContiguous = true) {
+  SimpleAffineExprFlattener flattener(bounds.size(), 0);
+  if (failed(flattener.walkPostOrder(expr)))
+    return std::nullopt;
+  ArrayRef<int64_t> coefficients = flattener.operandExprStack.back();
+  if (llvm::any_of(coefficients.drop_front(bounds.size()),
+                   [](int64_t value) { return value != 0; }))
+    return std::nullopt;
+  int64_t scale = coefficients[parallel];
+  SmallVector<std::pair<int64_t, int64_t>> inner;
+  for (unsigned i = 0; i < bounds.size(); ++i) {
+    int64_t value = coefficients[i];
+    if (value < 0)
+      return std::nullopt;
+    if (i != parallel && value)
+      inner.emplace_back(value, bounds[i]);
+  }
+  if (!requireContiguous)
+    return scale;
+  llvm::sort(inner);
+  int64_t extent = 1;
+  for (auto [coefficient, bound] : inner) {
+    if (bound <= 0 || coefficient != extent)
+      return std::nullopt;
+    extent *= bound;
+  }
+  return scale == extent ? std::optional<int64_t>(scale) : std::nullopt;
+}
+
+static AffineExpr getPartitionOffsetDifference(OpFoldResult lhs,
+                                               int64_t lhsScale,
+                                               OpFoldResult rhs,
+                                               int64_t rhsScale,
+                                               MLIRContext *context) {
+  SmallVector<Value> operands;
+  auto expr = [&](OpFoldResult value) -> AffineExpr {
+    if (auto constant = getConstantIntValue(value))
+      return getAffineConstantExpr(*constant, context);
+    operands.push_back(cast<Value>(value));
+    return getAffineSymbolExpr(operands.size() - 1, context);
+  };
+  auto left = expr(lhs), right = expr(rhs);
+  auto map =
+      AffineMap::get(0, operands.size(), left * lhsScale - right * rhsScale);
+  affine::fullyComposeAffineMapAndOperands(&map, &operands);
+  affine::canonicalizeMapAndOperands(&map, &operands);
+  return simplifyAffineMap(map).getResult(0);
+}
+
+struct IterationSlice {
+  SmallVector<std::optional<OpFoldResult>> iterOff, iterSz, iterSt;
+  SmallVector<int64_t> divisors;
+  SmallVector<int64_t> bounds;
+
+  explicit IterationSlice(unsigned rank)
+      : iterOff(rank), iterSz(rank), iterSt(rank), divisors(rank, 1),
+        bounds(rank, ShapedType::kDynamic) {}
+};
+
+static bool equalSliceOffset(OpFoldResult lhs, int64_t lhsDivisor,
+                             OpFoldResult rhs, int64_t rhsDivisor,
+                             MLIRContext *context) {
+  auto difference = dyn_cast<AffineConstantExpr>(
+      getPartitionOffsetDifference(lhs, rhsDivisor, rhs, lhsDivisor, context));
+  return difference && difference.getValue() == 0;
+}
+
+static LogicalResult bindIterationSlice(IterationSlice &window, unsigned loop,
+                                        OpFoldResult offset, OpFoldResult size,
+                                        OpFoldResult stride, int64_t divisor,
+                                        Builder &builder) {
+  if (window.iterOff[loop])
+    return success(equalSliceOffset(*window.iterOff[loop],
+                                    window.divisors[loop], offset, divisor,
+                                    builder.getContext()) &&
+                   isEqualConstantIntOrValue(*window.iterSz[loop], size) &&
+                   equalSliceOffset(*window.iterSt[loop], 1, stride, 1,
+                                    builder.getContext()));
+  window.iterOff[loop] = offset;
+  window.iterSz[loop] = size;
+  window.iterSt[loop] = stride;
+  window.divisors[loop] = divisor;
+  return success();
+}
+
+static bool isFullSlice(OpFoldResult offset, OpFoldResult size,
+                        OpFoldResult stride, int64_t extent, Builder &builder) {
+  return extent >= 0 && getConstantIntValue(size) == extent &&
+         getConstantIntValue(stride) == 1 &&
+         equalSliceOffset(offset, 1, builder.getIndexAttr(0), 1,
+                          builder.getContext());
+}
+
+// Direct dimensions retain their window; a contiguous linearization binds its
+// outer dimension and keeps the inner dimensions whole.
+static LogicalResult
+recoverIterSpaceFromResultSlice(tensor::ExtractSliceOp sliceOp, AffineMap map,
+                                ArrayRef<IteratorType> iterTypes,
+                                IterationSlice &window, Builder &builder) {
+  auto shape = sliceOp.getSourceType().getShape();
+  auto offsets = sliceOp.getMixedOffsets();
+  auto sizes = sliceOp.getMixedSizes();
+  auto strides = sliceOp.getMixedStrides();
+  auto zero = builder.getIndexAttr(0), one = builder.getIndexAttr(1);
+  for (auto [dim, expr] : llvm::enumerate(map.getResults())) {
+    bool full = isFullSlice(offsets[dim], sizes[dim], strides[dim], shape[dim],
+                            builder);
+    if (auto direct = dyn_cast<AffineDimExpr>(expr)) {
+      unsigned loop = direct.getPosition();
+      if ((getConstantIntValue(sizes[dim]) != shape[dim] &&
+           iterTypes[loop] != IteratorType::kParallel) ||
+          failed(bindIterationSlice(window, loop, offsets[dim], sizes[dim],
+                                    strides[dim], 1, builder)))
+        return failure();
+      continue;
+    }
+    std::optional<unsigned> outer;
+    if (!full) {
+      if (getConstantIntValue(strides[dim]) != 1)
+        return failure();
+      for (auto [loop, type] : llvm::enumerate(iterTypes)) {
+        if (type != IteratorType::kParallel)
+          continue;
+        auto scale = getPartitionScale(expr, loop, window.bounds);
+        auto size = getConstantIntValue(sizes[dim]);
+        if (!scale || !size || *size <= 0 || *size % *scale ||
+            !getPartitionOffsetDifference(offsets[dim], 1, zero, 1,
+                                          builder.getContext())
+                 .isMultipleOf(*scale))
+          continue;
+        if (failed(bindIterationSlice(window, loop, offsets[dim],
+                                      builder.getIndexAttr(*size / *scale), one,
+                                      *scale, builder)))
+          return failure();
+        outer = loop;
+        break;
+      }
+      if (!outer)
+        return failure();
+    }
+    for (unsigned loop = 0; loop < window.bounds.size(); ++loop) {
+      if (outer == loop || !expr.isFunctionOfDim(loop))
+        continue;
+      if (window.bounds[loop] < 0 ||
+          failed(bindIterationSlice(window, loop, zero,
+                                    builder.getIndexAttr(window.bounds[loop]),
+                                    one, 1, builder)))
+        return failure();
+    }
+  }
+  return success();
+}
+
+} // namespace
+
+namespace {
+using InputSliceParams = llvm::DenseMap<OpOperand *, linalg::SliceParameters>;
+
+template <typename OpT> static bool hasSliceableCustomInputs(OpT op) {
+  return llvm::none_of(op.getInputs(), [](Value input) {
+    auto type = input.getType();
+    auto shaped = dyn_cast<ShapedType>(type);
+    return isa<BaseMemRefType>(type) || (shaped && !shaped.hasRank());
+  });
+}
+
+// Resource and synchronization admission is independent of slice geometry.
+template <typename OpT>
+static bool isSupportedCustomLike(tensor::ExtractSliceOp sliceOp, OpT op) {
+  if (!customOpHasExplicitSemantics(op) || isDynamicSlice(sliceOp) ||
+      !hasSliceableCustomInputs(op) || !op.getTempBuffers().empty() ||
+      !op.getExtraBuffersInfo().empty() ||
+      op.getNumResults() != op.getOutputs().size() ||
+      !llvm::all_of(op.getOutputs(), [](Value value) {
+        return isa<RankedTensorType>(value.getType());
+      }))
+    return false;
+  if constexpr (std::is_same_v<OpT, CustomOp>) {
+    auto gmArgs = op.getGMAddrArgsIndices();
+    if ((!op.isBuiltin() && !op.getNoSideEffect()) ||
+        (op.isBuiltin() && gmArgs && !gmArgs->empty()))
+      return false;
+  } else if (!op.getNoSideEffect() || !op.getSyncEventSlots().empty() ||
+             !op.getSyncRelatedArgs().empty()) {
+    return false;
+  }
+  auto iterTypes = op.getIteratorTypesArray();
+  auto maps = op.getIndexingMapsArray();
+  if (maps.size() != op->getNumOperands())
+    return false;
+  for (auto [operand, map] : llvm::zip(op->getOperands(), maps)) {
+    auto type = dyn_cast<RankedTensorType>(operand.getType());
+    if (map.getNumDims() != iterTypes.size() ||
+        compressUnusedSymbols(map).getNumSymbols() ||
+        map.getNumResults() != (type ? type.getRank() : 0))
+      return false;
+  }
+  return true;
+}
+
+template <typename OpT>
+static FailureOr<InputSliceParams>
+computeCustomSliceParams(OpT op, PatternRewriter &rewriter) {
+  auto structured = cast<HIVMStructuredOp>(op.getOperation());
+  auto iterTypes = op.getIteratorTypesArray();
+  IterationSlice window(iterTypes.size());
+  for (OpOperand &operand : op->getOpOperands()) {
+    auto type = dyn_cast<RankedTensorType>(operand.get().getType());
+    if (!type)
+      continue;
+    auto map = op.getMatchingIndexingMap(&operand);
+    for (auto [dim, expr] : llvm::enumerate(map.getResults()))
+      if (auto direct = dyn_cast<AffineDimExpr>(expr);
+          direct && !type.isDynamicDim(dim))
+        window.bounds[direct.getPosition()] = type.getDimSize(dim);
+  }
+
+  SmallVector<tensor::ExtractSliceOp> requests;
+  for (Value result : op.getResults()) {
+    auto type = cast<RankedTensorType>(result.getType());
+    auto map = op.getIndexingMapMatchingResult(cast<OpResult>(result));
+    for (Operation *user : result.getUsers()) {
+      if (std::is_same_v<OpT, CustomOp> && isa<annotation::MarkOp>(user))
+        continue;
+      auto slice = dyn_cast<tensor::ExtractSliceOp>(user);
+      if (!slice || isDynamicSlice(slice) ||
+          slice.getType().getRank() != type.getRank() ||
+          failed(recoverIterSpaceFromResultSlice(slice, map, iterTypes, window,
+                                                 rewriter)))
+        return failure();
+      requests.push_back(slice);
+    }
+  }
+
+  SmallVector<bool> tiled(iterTypes.size(), false);
+  for (unsigned loop = 0; loop < tiled.size(); ++loop)
+    tiled[loop] =
+        window.iterOff[loop] &&
+        !isFullSlice(*window.iterOff[loop], *window.iterSz[loop],
+                     *window.iterSt[loop], window.bounds[loop], rewriter);
+  for (AffineMap map : op.getIndexingMapsArray()) {
+    for (AffineExpr expr : map.getResults()) {
+      bool supported = true;
+      expr.walk([&](AffineExpr nested) {
+        if (auto binary = dyn_cast<AffineBinaryOpExpr>(nested);
+            binary && binary.getKind() == AffineExprKind::Mul) {
+          auto coefficient = dyn_cast<AffineConstantExpr>(binary.getRHS());
+          supported &= coefficient && coefficient.getValue() > 0;
+        }
+      });
+      for (unsigned loop = 0; loop < tiled.size(); ++loop) {
+        if (!tiled[loop] || !expr.isFunctionOfDim(loop) ||
+            isa<AffineDimExpr>(expr))
+          continue;
+        supported &=
+            getConstantIntValue(*window.iterSt[loop]) == 1 &&
+            getPartitionScale(expr, loop, window.bounds, false).has_value();
+        for (unsigned inner = 0; inner < tiled.size(); ++inner)
+          if (!tiled[inner] && expr.isFunctionOfDim(inner))
+            supported &= window.bounds[inner] >= 0;
+      }
+      if (!supported)
+        return failure();
+    }
+  }
+
+  SmallVector<AffineMap> offsetMaps(tiled.size());
+  DominanceInfo dominance;
+  for (unsigned loop = 0; loop < tiled.size(); ++loop) {
+    if (!tiled[loop])
+      continue;
+    offsetMaps[loop] = AffineMap::get(
+        1, 0, rewriter.getAffineDimExpr(0).floorDiv(window.divisors[loop]));
+    for (auto [value, map] :
+         {std::pair{*window.iterOff[loop], offsetMaps[loop]},
+          std::pair{*window.iterSt[loop], rewriter.getDimIdentityMap()}}) {
+      SmallVector<Value> operands;
+      if (auto dynamic = dyn_cast<Value>(value))
+        operands.push_back(dynamic);
+      else
+        continue;
+      affine::fullyComposeAffineMapAndOperands(&map, &operands);
+      if (llvm::any_of(operands, [&](Value operand) {
+            return !dominance.properlyDominates(operand, op);
+          }))
+        return failure();
+    }
+  }
+
+  rewriter.setInsertionPoint(op);
+  Operation *previous = op->getPrevNode();
+  auto rollback = llvm::make_scope_exit([&] {
+    while (op->getPrevNode() != previous)
+      rewriter.eraseOp(op->getPrevNode());
+  });
+  SmallVector<OpFoldResult> offsets(tiled.size(), rewriter.getIndexAttr(0));
+  SmallVector<OpFoldResult> sizes(tiled.size(), rewriter.getIndexAttr(0));
+  SmallVector<OpFoldResult> strides(tiled.size(), rewriter.getIndexAttr(1));
+  SmallVector<OpFoldResult> bounds;
+  SmallVector<OpFoldResult> ivs;
+  for (unsigned loop = 0; loop < tiled.size(); ++loop) {
+    bounds.push_back(
+        rewriter.getIndexAttr(std::max<int64_t>(window.bounds[loop], 0)));
+    if (!tiled[loop])
+      continue;
+    offsets[loop] = affine::makeComposedFoldedAffineApply(
+        rewriter, op.getLoc(), offsetMaps[loop], *window.iterOff[loop]);
+    strides[loop] = affine::makeComposedFoldedAffineApply(
+        rewriter, op.getLoc(), rewriter.getDimIdentityMap(),
+        *window.iterSt[loop]);
+    sizes[loop] = rewriter.getIndexAttr(
+        std::max<int64_t>(*getConstantIntValue(*window.iterSz[loop]), 1));
+    ivs.push_back(offsets[loop]);
+  }
+  SmallVector<Value> operands(op->getOperands());
+  auto projected = tiling_helper::computeAllSliceParameters(
+      rewriter, op.getLoc(), structured, operands, ivs, sizes, bounds,
+      /*omitPartialTileCheck=*/true);
+  InputSliceParams params;
+  for (auto [operand, slice] : llvm::zip(op->getOpOperands(), projected)) {
+    if (!slice)
+      continue;
+    auto map = op.getMatchingIndexingMap(&operand);
+    for (auto [dim, expr] : llvm::enumerate(map.getResults())) {
+      if (auto direct = dyn_cast<AffineDimExpr>(expr);
+          direct && tiled[direct.getPosition()]) {
+        unsigned loop = direct.getPosition();
+        slice->offsets[dim] = offsets[loop];
+        slice->sizes[dim] = *window.iterSz[loop];
+        slice->strides[dim] = strides[loop];
+      }
+    }
+    params[&operand] = std::move(*slice);
+  }
+  for (auto request : requests) {
+    auto requestOffsets = request.getMixedOffsets();
+    auto requestSizes = request.getMixedSizes();
+    auto requestStrides = request.getMixedStrides();
+    auto result = cast<OpResult>(request.getSource());
+    auto &slice = params[op.getDpsInitOperand(result.getResultNumber())];
+    for (unsigned dim = 0; dim < slice.offsets.size(); ++dim)
+      if (!equalSliceOffset(slice.offsets[dim], 1, requestOffsets[dim], 1,
+                            rewriter.getContext()) ||
+          !isEqualConstantIntOrValue(slice.sizes[dim], requestSizes[dim]) ||
+          !equalSliceOffset(slice.strides[dim], 1, requestStrides[dim], 1,
+                            rewriter.getContext()))
+        return failure();
+  }
+  rollback.release();
+  return params;
+}
+
+static SmallVector<Value>
+createCustomSlices(MutableOperandRange operands, const InputSliceParams &params,
+                   PatternRewriter &rewriter,
+                   std::optional<Location> loc = std::nullopt) {
+  SmallVector<Value> values;
+  values.reserve(operands.size());
+  for (OpOperand &operand : operands) {
+    auto it = params.find(&operand);
+    if (it == params.end()) {
+      values.push_back(operand.get());
+      continue;
+    }
+    const linalg::SliceParameters &p = it->second;
+    auto slice = rewriter.create<tensor::ExtractSliceOp>(
+        loc.value_or(operand.get().getLoc()), operand.get(), p.offsets, p.sizes,
+        p.strides);
+    markCreatedExtractSliceOp(rewriter, slice);
+    values.push_back(slice.getResult());
+  }
+  return values;
+}
+
+/// Rebuilds a CustomOp or CustomMacroOp with tile-local operands and results.
+template <typename OpT>
+static Operation *createTiledCustomLike(OpT customOp, ValueRange newInputs,
+                                        ValueRange newOutputs,
+                                        PatternRewriter &rewriter) {
+  SmallVector<Type> newResultTypes;
+  for (Value output : newOutputs)
+    newResultTypes.push_back(output.getType());
+
+  SmallVector<Value> newOperands;
+  newOperands.append(newInputs.begin(), newInputs.end());
+  newOperands.append(newOutputs.begin(), newOutputs.end());
+  // Temp and macro sync operands are not tiled; preserve them in physical
+  // segment order and rebuild operandSegmentSizes for the new operation.
+  unsigned nTmp = 0;
+  for (Value v : customOp.getTempBuffers()) {
+    newOperands.push_back(v);
+    ++nTmp;
+  }
+  SmallVector<int32_t> segmentSizes = {static_cast<int32_t>(newInputs.size()),
+                                       static_cast<int32_t>(newOutputs.size()),
+                                       static_cast<int32_t>(nTmp)};
+  if constexpr (std::is_same_v<OpT, hivm::CustomMacroOp>) {
+    // sync_related_args is empty at this stage (GraphSyncSolver runs later),
+    // but append whatever is present to stay correct regardless of ordering.
+    unsigned nSync = 0;
+    for (Value v : customOp.getSyncRelatedArgs()) {
+      newOperands.push_back(v);
+      ++nSync;
+    }
+    segmentSizes.push_back(static_cast<int32_t>(nSync));
+  }
+
+  NamedAttrList attrs(customOp->getAttrs());
+  attrs.set("operandSegmentSizes", rewriter.getDenseI32ArrayAttr(segmentSizes));
+  attrs.set(tiledOp, rewriter.getUnitAttr());
+
+  OperationState state(customOp.getLoc(), customOp->getName());
+  state.addTypes(newResultTypes);
+  state.addOperands(newOperands);
+  state.addAttributes(attrs);
+  return rewriter.create(state);
+}
+
+// Shared rebuild body for CustomOp and CustomMacroOp.
+template <typename OpT>
+static LogicalResult executeCustomLike(tensor::ExtractSliceOp sliceOp,
+                                       OpT customOp,
+                                       PatternRewriter &rewriter) {
+  auto resultVal = dyn_cast<OpResult>(sliceOp.getSource());
+  if (!resultVal)
+    return failure();
+
+  auto maps = customOp.getIndexingMapsArray();
+  auto normalized = llvm::map_to_vector(
+      maps, [](AffineMap map) { return compressUnusedSymbols(map); });
+  if (maps != normalized) {
+    rewriter.modifyOpInPlace(customOp, [&] {
+      customOp->setAttr("indexing_map",
+                        rewriter.getAffineMapArrayAttr(normalized));
+    });
+    return success();
+  }
+
+  auto params = computeCustomSliceParams(customOp, rewriter);
+  if (failed(params))
+    return failure();
+
+  rewriter.setInsertionPoint(customOp);
+  SmallVector<Value> newInputs =
+      createCustomSlices(customOp.getInputsMutable(), *params, rewriter);
+  SmallVector<Value> newOutputs = createCustomSlices(
+      customOp.getOutputsMutable(), *params, rewriter, customOp.getLoc());
+  Operation *newOp =
+      createTiledCustomLike(customOp, newInputs, newOutputs, rewriter);
+
+  for (auto [i, result] : llvm::enumerate(customOp.getResults())) {
+    Value replacement = newOp->getResult(i);
+    for (OpOperand &use : llvm::make_early_inc_range(result.getUses())) {
+      Operation *user = use.getOwner();
+      if (auto slice = dyn_cast<tensor::ExtractSliceOp>(user))
+        rewriter.replaceOp(slice, replacement);
+      else
+        rewriter.modifyOpInPlace(user, [&] { use.set(replacement); });
+    }
+  }
+
+  if (customOp->use_empty())
+    rewriter.eraseOp(customOp);
+
+  return success();
+}
+
+} // namespace
+
+bool CustomOpBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  Operation *src = sliceOp.getSource().getDefiningOp();
+  if (auto op = dyn_cast_or_null<hivm::CustomOp>(src))
+    return isSupportedCustomLike(sliceOp, op);
+  if (auto op = dyn_cast_or_null<hivm::CustomMacroOp>(src))
+    return isSupportedCustomLike(sliceOp, op);
+  return false;
+}
+
+LogicalResult
+CustomOpBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                  PatternRewriter &rewriter) const {
+  Operation *src = sliceOp.getSource().getDefiningOp();
+  if (auto op = dyn_cast_or_null<hivm::CustomOp>(src))
+    return executeCustomLike(sliceOp, op, rewriter);
+  if (auto op = dyn_cast_or_null<hivm::CustomMacroOp>(src))
+    return executeCustomLike(sliceOp, op, rewriter);
+  return failure();
 }
 
 LogicalResult
@@ -2163,7 +2656,8 @@ MarkEmptySliceBufferSize::matchAndRewrite(tensor::ExtractSliceOp sliceOp,
                                        "expected exactly 1 extract dim");
 
   // 4) No existing buffer_size annotation.
-  if (utils::getAnnotateOpWithAttr(sliceOp.getResult(), kBufferSizeInByteAttr))
+  if (utils::getAnnotateOpWithAttr(sliceOp.getResult(),
+                                   utils::kBufferSizeInByteAttr))
     return rewriter.notifyMatchFailure(sliceOp, "already has buffer_size mark");
 
   auto tilingDim = *extractDims.begin();
@@ -2174,7 +2668,7 @@ MarkEmptySliceBufferSize::matchAndRewrite(tensor::ExtractSliceOp sliceOp,
   rewriter.setInsertionPointAfter(sliceOp);
   auto newMarkOp = rewriter.create<annotation::MarkOp>(sliceOp->getLoc(),
                                                        sliceOp.getResult());
-  newMarkOp->setAttr(kBufferSizeInByteAttr,
+  newMarkOp->setAttr(utils::kBufferSizeInByteAttr,
                      rewriter.getI64IntegerAttr(bufferSize));
   return success();
 }
@@ -2210,8 +2704,7 @@ IndirectLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   markCreatedExtractSliceOp(rewriter, newDst);
   Value newMask = nullptr;
   if (auto mask = indirectLoadOp.getMask()) {
-    newMask = rewriter.create<tensor::ExtractSliceOp>(loc, mask, offsets,
-    sizes,
+    newMask = rewriter.create<tensor::ExtractSliceOp>(loc, mask, offsets, sizes,
                                                       strides);
     markCreatedExtractSliceOp(rewriter, newMask.getDefiningOp());
   }
@@ -2303,18 +2796,16 @@ GatherLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
 
 bool StrideLoadBubbleUpStrategy::isSupportedOperation(
     tensor::ExtractSliceOp sliceOp) const {
-  auto strideLoadOp =
-  sliceOp.getSource().getDefiningOp<hivm::StrideLoadOp>(); int64_t rank =
-  sliceOp.getType().getRank(); return strideLoadOp && rank >= 1 && rank <= 3
-  &&
-         !isDynamicSlice(sliceOp);
+  auto strideLoadOp = sliceOp.getSource().getDefiningOp<hivm::StrideLoadOp>();
+  int64_t rank = sliceOp.getType().getRank();
+  return strideLoadOp && rank >= 1 && rank <= 3 && !isDynamicSlice(sliceOp);
 }
 
 LogicalResult
 StrideLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
                                     PatternRewriter &rewriter) const {
-  auto strideLoadOp =
-  sliceOp.getSource().getDefiningOp<hivm::StrideLoadOp>(); if (!strideLoadOp)
+  auto strideLoadOp = sliceOp.getSource().getDefiningOp<hivm::StrideLoadOp>();
+  if (!strideLoadOp)
     return failure();
 
   auto loc = sliceOp.getLoc();
@@ -2322,8 +2813,7 @@ StrideLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   auto sizes = sliceOp.getMixedSizes();
   auto strides = sliceOp.getMixedStrides();
   int64_t rank = sliceOp.getType().getRank();
-  if (rank < 1 || rank > 3 ||
-      offsets.size() != static_cast<size_t>(rank) ||
+  if (rank < 1 || rank > 3 || offsets.size() != static_cast<size_t>(rank) ||
       sizes.size() != static_cast<size_t>(rank) ||
       strides.size() != static_cast<size_t>(rank) ||
       strideLoadOp.getStride().size() != static_cast<size_t>(rank) ||
@@ -2344,11 +2834,9 @@ StrideLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   Value newOffset = strideLoadOp.getOffset();
   Type indexType = newOffset.getType();
   Value zero =
-      rewriter.create<arith::ConstantOp>(loc, IntegerAttr::get(indexType,
-      0));
+      rewriter.create<arith::ConstantOp>(loc, IntegerAttr::get(indexType, 0));
   Value one =
-      rewriter.create<arith::ConstantOp>(loc, IntegerAttr::get(indexType,
-      1));
+      rewriter.create<arith::ConstantOp>(loc, IntegerAttr::get(indexType, 1));
   for (int64_t i = 0; i < rank; ++i) {
     Value oldStride = strideLoadOp.getStride()[i];
     Value oldNumel = strideLoadOp.getNumel()[i];
@@ -2381,8 +2869,7 @@ StrideLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     Value strideMinusOne =
         rewriter.create<arith::SubIOp>(loc, sliceStride, one);
     Value ceilNumerator =
-        rewriter.create<arith::AddIOp>(loc, positiveRemaining,
-        strideMinusOne);
+        rewriter.create<arith::AddIOp>(loc, positiveRemaining, strideMinusOne);
     Value validInSlice =
         rewriter.create<arith::DivSIOp>(loc, ceilNumerator, sliceStride);
     newNumels.push_back(
@@ -2390,8 +2877,8 @@ StrideLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   }
 
   auto newOp = rewriter.create<hivm::StrideLoadOp>(
-      strideLoadOp.getLoc(), sliceOp.getType(), strideLoadOp.getSrc(),
-      newDst, newOffset, strideLoadOp.getOther(), newStrides, newNumels);
+      strideLoadOp.getLoc(), sliceOp.getType(), strideLoadOp.getSrc(), newDst,
+      newOffset, strideLoadOp.getOther(), newStrides, newNumels);
 
   for (auto attr : strideLoadOp->getAttrs()) {
     if (!newOp->hasAttr(attr.getName()))

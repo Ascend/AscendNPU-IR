@@ -14,6 +14,8 @@ config.llvm_tools_dir = "@LLVM_TOOLS_DIR@"
 config.mlir_tools_dir = "@MLIR_TOOLS_DIR@"
 config.bishengir_tools_dir = "@BISHENGIR_TOOLS_DIR@"
 config.bishengir_src_root = "@BISHENGIR_SRC_DIR@"
+config.llvm_src_root = path(r"@LLVM_SOURCE_DIR@")
+config.mlir_src_root = path(r"@MLIR_MAIN_SRC_DIR@")
 config.bishengir_obj_root = "@BISHENGIR_BINARY_DIR@"
 config.enable_assertions = @ENABLE_ASSERTIONS@
 config.enable_bindings_python = @MLIR_ENABLE_BINDINGS_PYTHON@
@@ -23,6 +25,8 @@ config.bishengir_include_integration_tests = @MLIR_INCLUDE_INTEGRATION_TESTS@
 config.bishengir_enable_triton_compile = @BISHENGIR_ENABLE_TRITON_COMPILE@
 config.bishengir_published = @BISHENGIR_PUBLISH@
 config.shmem_build_template = @SHMEM_BUILD_TEMPLATE@
+config.shmem_rdma_backend = "@BISHENGIR_SHMEM_RDMA_BACKEND@"
+config.shmem_relay_support = "@BISHENGIR_SHMEM_RELAY_SUPPORT@"
 
 if 'bisheng' not in config.bisheng_compiler_executable:
     config.bisheng_compiler_executable = os.path.join("@BISHENG_COMPILER_PATH@", 'bisheng')

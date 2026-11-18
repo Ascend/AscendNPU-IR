@@ -66,7 +66,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
       %cst = arith.constant 1.0 : f32
       memref.store %cst, %arg0[] : memref<f32>
       scope.return
-    } {hivm.vf_mode = #hivm.vf_mode<SIMT>, outline = true}
+    } {hivm.vf_mode = #hivm.vf_mode<SIMT>, outline}
     return
   }
 }

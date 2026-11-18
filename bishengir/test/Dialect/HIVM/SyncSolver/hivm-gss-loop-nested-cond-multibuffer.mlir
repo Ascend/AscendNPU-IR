@@ -1,20 +1,10 @@
 // RUN: bishengir-opt "-hivm-graph-sync-solver=solver-version=v1" -split-input-file %s | FileCheck %s
 // RUN: bishengir-opt "-hivm-graph-sync-solver=solver-version=v2" -split-input-file %s | FileCheck %s
 
-// Regression for getMultiBufferEventIdInfo: a pair with eventIdNum > 2 must
-// not get a multi-buffer event-id set when an scf.if sits on the path to the
-// parent backward (multi-buffer) loop.
-//
-// The first load uses a 3-slot pointer_cast ([0, 3, 1]), so a candidate
-// backward pair can report eventIdNum > 2. Those ops live under `scf.if`
-// inside the loop, so a Condition is a proper ancestor of both RW ops but
-// not of the multi-buffer loop scope. The solver then returns no
-// EventIdInfo for that pair (SyncSolverBase.cpp: if eventIdNum > 2, walk
-// parent Conditions of rwOp1 and bail out when the Condition also
-// ancestors rwOp2 but does not ancestor the multi-buffer scope).
-//
-// Depth-2 rotating waits around the loop are still allowed; the 3-slot
-// pair under the if is not.
+// A backward pair with eventIdNum > 2 under scf.if inside a multi-buffer loop
+// still uses the multi-buffer event ids of that loop. The first load uses a
+// 3-slot pointer_cast ([0, 3, 1]), so the pair reports eventIdNum > 2, and the
+// depth-2 rotating MTE3 -> MTE2 waits around the loop already cover it.
 
 module {
   // CHECK: test_sync_solver_loop_nested_cond_multibuffer
@@ -28,16 +18,19 @@ module {
     %c3_i64 = arith.constant 3 : i64
     %c4_i64 = arith.constant 4 : i64
 
+    // The rotating depth stays 2, so the pair gets no event id of its own.
     // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
     // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID2>]
-    // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID3>]
+    // CHECK-NOT: EVENT_ID3
+    // CHECK: hivm.hir.multi_buffer_counter
+    // CHECK: arith.remui %{{.*}}, %[[MOD:.*]] : i64
     scf.for %arg0 = %c0 to %n step %c1 {
       scf.if %true {
         // RWOperation [PIPE_MTE2] read:[0, 3, 1] write:[1, 0]
         %rd0 = hivm.hir.pointer_cast(%c0_i64, %c3_i64, %c1_i64) : memref<1xi1, #hivm.address_space<gm>>
         %wr0 = hivm.hir.pointer_cast(%c1_i64, %c0_i64) : memref<1xi1, #hivm.address_space<ub>>
-        // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID3>]
-        // CHECK-NEXT: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, %{{.*}}]
+        // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, %[[ROT:[0-9]+]]]
+        // CHECK-NEXT: hivm.hir.pipe_barrier[<PIPE_MTE2>]
         // CHECK-NEXT: hivm.hir.load
         hivm.hir.load ins(%rd0 : memref<1xi1, #hivm.address_space<gm>>) outs(%wr0 : memref<1xi1, #hivm.address_space<ub>>)
         // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
@@ -117,7 +110,6 @@ module {
         // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
         // CHECK-NEXT: hivm.hir.store
         hivm.hir.store ins(%rd10 : memref<1xi1, #hivm.address_space<ub>>) outs(%wr10 : memref<1xi1, #hivm.address_space<gm>>)
-        // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID3>]
 
         scf.if %true {
           // RWOperation [PIPE_MTE3] read:[1, 2] write:[2]
@@ -127,12 +119,12 @@ module {
           // CHECK-NEXT: hivm.hir.store
           hivm.hir.store ins(%rd11 : memref<1xi1, #hivm.address_space<ub>>) outs(%wr11 : memref<1xi1, #hivm.address_space<gm>>)
         }
-        // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, %{{.*}}]
+        // Same rotating id as the wait above.
+        // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, %[[ROT]]]
       }
     }
     // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
     // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID2>]
-    // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID3>]
     // CHECK-NEXT: return
     return
   }

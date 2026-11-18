@@ -22,6 +22,9 @@
 #include "mlir/Dialect/Linalg/TransformOps/Syntax.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/Transform/IR/TransformOps.h"
+#include "mlir/IR/Dominance.h"
+#include "mlir/Interfaces/ValueBoundsOpInterface.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -310,6 +313,44 @@ sliceFromUnion(RewriterBase &rewriter, tensor::ExtractSliceOp unionSlice,
   return newSlice;
 }
 
+/// Return whether every valid `tensor::ExtractSliceOp` user of
+/// `produceResult` inside `containingOp` is dominated by `firstSliceOp` and
+/// provably extracts the same window (same result type, offsets, sizes and
+/// strides). In that case the union of the slice users degenerates to
+/// `firstSliceOp` itself and unioning can be skipped.
+static bool allValidSlicesEquivalentTo(tensor::ExtractSliceOp firstSliceOp,
+                                       Value produceResult,
+                                       Operation *containingOp,
+                                       DominanceInfo &domInfo) {
+  MLIRContext *ctx = firstSliceOp.getContext();
+  for (auto *user : produceResult.getUsers()) {
+    auto sliceOp = dyn_cast<tensor::ExtractSliceOp>(user);
+    if (!isValidSliceOpInContainingOp(sliceOp, containingOp) ||
+        sliceOp == firstSliceOp) {
+      continue;
+    }
+    // Rank-reducing slices of an equivalent window may still have a different
+    // result type; only exact type matches can be replaced directly.
+    if (sliceOp.getType() != firstSliceOp.getType()) {
+      return false;
+    }
+    if (!domInfo.properlyDominates(firstSliceOp.getOperation(),
+                                   sliceOp.getOperation())) {
+      return false;
+    }
+    FailureOr<bool> equivalent = ValueBoundsConstraintSet::areEquivalentSlices(
+        ctx,
+        HyperrectangularSlice(
+            cast<OffsetSizeAndStrideOpInterface>(firstSliceOp.getOperation())),
+        HyperrectangularSlice(
+            cast<OffsetSizeAndStrideOpInterface>(sliceOp.getOperation())));
+    if (failed(equivalent) || !*equivalent) {
+      return false;
+    }
+  }
+  return true;
+}
+
 void bishengir::unionProducerUsers(RewriterBase &rewriter, Diagnostic &diag,
                                    Operation *producerOp,
                                    Operation *containingOp) {
@@ -318,6 +359,7 @@ void bishengir::unionProducerUsers(RewriterBase &rewriter, Diagnostic &diag,
   getFirstSliceUserInContainingOp(producerOp, containingOp,
                                   &result2FirstSliceOp, &result2ValidNum);
 
+  DominanceInfo domInfo(containingOp);
   for (auto produceResult : producerOp->getResults()) {
     int validSliceOpNum = result2ValidNum[produceResult];
     LDBG("produce res : " << produceResult
@@ -328,6 +370,27 @@ void bishengir::unionProducerUsers(RewriterBase &rewriter, Diagnostic &diag,
     assert(result2FirstSliceOp.find(produceResult) !=
            result2FirstSliceOp.end());
     auto firstSliceOp = result2FirstSliceOp[produceResult];
+
+    // If all valid slice users are provably equivalent to the first slice,
+    // the union degenerates to that slice: replace the other users with the
+    // first slice's result and skip building the union bounds. This avoids
+    // introducing dynamic slice sizes from affine min/max bound chains when
+    // the union window is provably equal to the user slices, e.g. offsets
+    // that only differ syntactically (like `iv` vs. `iv mod tile`) under the
+    // containing loop's constant trip count.
+    if (allValidSlicesEquivalentTo(firstSliceOp, produceResult, containingOp,
+                                   domInfo)) {
+      LDBG("all slice users are equivalent, skip unioning");
+      for (auto *user : llvm::make_early_inc_range(produceResult.getUsers())) {
+        auto sliceOp = dyn_cast<tensor::ExtractSliceOp>(user);
+        if (!isValidSliceOpInContainingOp(sliceOp, containingOp) ||
+            sliceOp == firstSliceOp) {
+          continue;
+        }
+        rewriter.replaceOp(sliceOp, firstSliceOp.getResult());
+      }
+      continue;
+    }
 
     // init unionOffsets and unionMaxes based on the first producer slice user
     SmallVector<Value> unionOffsets;

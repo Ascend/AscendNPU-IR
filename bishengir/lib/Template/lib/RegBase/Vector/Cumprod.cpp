@@ -14,13 +14,14 @@
  * limitations under the License.
  */
 
+#include "ArchDefs.h"
 #include "RegBase/Cumulative/Cumulative.h"
 #include "RegBase/VecUtils.h"
 #include "Utils.h"
 #include "Vector/Transpose/TransposeUtils.h"
 #include "Vector/VecUtils.h"
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 
 template <typename T>
 __aiv__ __attribute__((always_inline)) static void
@@ -600,4 +601,4 @@ REGISTER_CUMPROD_WITH_TEMP(3, float,      1);
 REGISTER_CUMPROD_WITH_TEMP(3, bfloat16_t, 1);
 }
 
-#endif  /* __DAV_C310__ */
+#endif /* BISHENG_TPL_REGBASE */

@@ -1,5 +1,4 @@
 /**
-  copy_ubuf_to_ubuf_1d_core(src, dst_value);
  * Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +14,8 @@
  * limitations under the License.
  */
 
-#include "DMA/DMAUtils.h"
+#include "ArchDefs.h"
+#include "RegBase/DMAUtils.h"
 #include "RegBase/ReductionUtils.h"
 #include "RegBase/VecUtils.h"
 #include "Utils.h"
@@ -23,7 +23,7 @@
 #include "Vector/Sort/SortUtils.h"
 #include "Vector/VecUtils.h"
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 lower_sort_for_last_axis_is_one(memref_t<__ubuf__ T, 1> *src,

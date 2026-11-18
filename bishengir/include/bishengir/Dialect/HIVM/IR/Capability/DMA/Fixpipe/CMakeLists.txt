@@ -1,0 +1,7 @@
+set(LLVM_TARGET_DEFINITIONS FixpipeCapabilityBinding.td)
+bishengir_target_tablegen(FixpipeCapabilityBinding.h.inc
+  -gen-target-capability-binding)
+add_public_tablegen_target(BiShengIRFixpipeCapabilityBindingIncGen)
+add_dependencies(BiShengIRFixpipeCapabilityBindingIncGen
+  BiShengIRFixpipeCapabilityIncGen)
+add_dependencies(mlir-headers BiShengIRFixpipeCapabilityBindingIncGen)

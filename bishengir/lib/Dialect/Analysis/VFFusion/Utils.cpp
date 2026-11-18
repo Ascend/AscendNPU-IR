@@ -53,19 +53,6 @@ bool isSafeToExcludeOps(Operation *const op) {
   return isInitialOp(op) && op->getNumOperands() == 0;
 }
 
-bool isCubeFunc(func::FuncOp funcOp) {
-  auto fusionKind = mlir::hfusion::tryGetFusionKind(funcOp);
-  if (fusionKind.has_value() &&
-      (fusionKind.value() == mlir::hfusion::FusionKind::ShallowCV ||
-       fusionKind.value() == mlir::hfusion::FusionKind::SingleCube)) {
-    return true;
-  }
-  std::optional<mlir::hivm::TFuncCoreType> funcCoreType =
-      mlir::hivm::queryFuncCoreType(funcOp);
-  return (funcCoreType.has_value() &&
-          funcCoreType.value() != hivm::TFuncCoreType::AIV);
-}
-
 bool isVsstbPatternTransposeOp(Operation *op) {
   auto transpose = dyn_cast<linalg::TransposeOp>(op);
   if (!transpose) {
@@ -104,9 +91,8 @@ bool isVsstbPatternTransposeOp(Operation *op) {
 }
 
 static bool isSyncBarrierOp(Operation *op) {
-  return isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
-             hivm::CreateSyncBlockLockOp, hivm::SyncBlockLockOp,
-             hivm::SyncBlockUnlockOp>(op);
+  return op->hasTrait<OpTrait::HIVMSyncOpTrait>() ||
+         isa<hivm::CreateSyncBlockLockOp>(op);
 }
 
 static bool hasSyncBetween(Block::iterator from, Block::iterator to) {

@@ -32,12 +32,10 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Tensor/Utils/Utils.h"
-#include "mlir/Dialect/Transform/IR/TransformTypes.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Block.h"
@@ -54,20 +52,15 @@
 #include "mlir/Support/LLVM.h"
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/BitmaskEnum.h"
-#include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cassert>
 #include <cstdint>
-#include <sys/param.h>
 
 #define DEBUG_TYPE "hivm-utils"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -237,6 +230,11 @@ bool isRemainInL0c(OpOperand &use) {
   auto *defOp = result.getDefiningOp();
   if (!defOp)
     return false;
+  // scf.if is remain only for a result propagateRemainInL0C marked. Walking
+  // the then yield would treat a mixed if as L0C when only that branch's
+  // mmad stays in L0C.
+  if (isa<scf::IfOp>(defOp))
+    return isResultRemainInL0C(result);
   if (defOp->hasAttr(RemainInL0CAttr::name)) {
     return true;
   }
@@ -252,31 +250,35 @@ bool isRemainInL0c(OpOperand &use) {
   return isRemainInL0c(terminator->getOpOperand(result.getResultNumber()));
 }
 
-bool isResultInL0C(OpResult result) {
+static bool findValueInArrayAttr(ArrayAttr arrayAttr, uint64_t idx) {
+  return llvm::any_of(arrayAttr.getValue(), [idx](Attribute element) {
+    auto intAttr = dyn_cast<IntegerAttr>(element);
+    return intAttr && intAttr.getValue().getZExtValue() == idx;
+  });
+}
+
+static bool isInL0CBasedOnAttr(OpResult &result, StringRef attrName) {
   Operation *op = result.getOwner();
+  if (auto attr = op->getAttrOfType<UnitAttr>(attrName))
+    return true;
+  if (auto arrayAttr = op->getAttrOfType<ArrayAttr>(attrName))
+    return findValueInArrayAttr(arrayAttr, result.getResultNumber());
+  return false;
+}
 
-  auto findValueInArrayAttr = [](ArrayAttr arrayAttr, uint64_t idx) {
-    return llvm::any_of(arrayAttr.getValue(), [idx](Attribute element) {
-      auto intAttr = dyn_cast<IntegerAttr>(element);
-      return intAttr && intAttr.getValue().getZExtValue() == idx;
-    });
-  };
-
-  auto isInL0CBasedOnAttr = [&result, &op,
-                             findValueInArrayAttr](StringRef attrName) {
-    if (auto attr = op->getAttrOfType<UnitAttr>(attrName))
-      return true;
-    if (auto arrayAttr = op->getAttrOfType<ArrayAttr>(attrName))
-      return findValueInArrayAttr(arrayAttr, result.getResultNumber());
-    return false;
-  };
-
-  if (isInL0CBasedOnAttr(RemainInL0CAttr::name))
+bool isResultInL0C(OpResult result) {
+  if (isInL0CBasedOnAttr(result, RemainInL0CAttr::name))
     return true;
 
-  if (isInL0CBasedOnAttr(kNormalizedInL0C))
+  if (isInL0CBasedOnAttr(result, kNormalizedInL0C))
     return true;
 
+  return false;
+}
+
+bool isResultRemainInL0C(OpResult result) {
+  if (isInL0CBasedOnAttr(result, RemainInL0CAttr::name))
+    return true;
   return false;
 }
 
@@ -496,7 +498,7 @@ bool isLocalBuffer(std::optional<AddressSpaceAttr> memorySpaceAttr) {
   if (LocalBufferSpace.count(memorySpaceAttr.value().getAddressSpace())) {
     return true;
   }
-  llvm::report_fatal_error("Currently only support (UB | L1 | L0C) allocation");
+  llvm::report_fatal_error("Unsupported local buffer address space");
 }
 
 bool isSsbuffer(std::optional<AddressSpaceAttr> memorySpaceAttr) {
@@ -944,13 +946,20 @@ FailureOr<CoreRatio> CoreRatio::getEffective(func::FuncOp func) {
   if (auto attr = getCoreRatioAttr(func))
     return CoreRatio{attr.getCube(), attr.getVector()};
 
-  // No declared ratio, so the default is the target's.
+  // No declared ratio, so the default is the target spec's
+  // CubeCoreCount : VectorCoreCount. No target in the IR means the 910B
+  // compatibility default, matching isAscend910B(ModuleOp).
   auto moduleOp = func->getParentOfType<ModuleOp>();
-  if (moduleOp && (hacc::utils::isAscend910B(moduleOp) ||
-                   hacc::utils::isAscend910_93(moduleOp) ||
-                   hacc::utils::isAscend910_95(moduleOp) ||
-                   hacc::utils::isAscend950(moduleOp)))
-    return CoreRatio{1, 2};
+  if (moduleOp) {
+    auto targetDevice = hacc::utils::getTargetDevice(moduleOp);
+    if (!targetDevice)
+      targetDevice = hacc::TargetDevice::Ascend910B1;
+    if (auto ratio = hacc::utils::getDefaultCoreRatio(*targetDevice)) {
+      CoreRatio effective{ratio->first, ratio->second};
+      if (isValid(effective))
+        return effective;
+    }
+  }
 
   func->emitError() << "no default hivm.core_ratio for this target; set "
                        "hivm.core_ratio on the function explicitly";
@@ -1054,90 +1063,6 @@ SmallVector<Value> getTensorDynamicValues(OpBuilder &builder, Location loc,
   return dynamicSizes;
 }
 
-Value createAllocWithMark(PatternRewriter &rewriter, Location loc,
-                          MemRefType memrefType, ValueRange dynamicDims,
-                          ArrayRef<int64_t> staticAllocSize, Type elemType) {
-  Value alloc = rewriter.create<memref::AllocOp>(loc, memrefType, dynamicDims);
-  auto maybeStaticTotalSize =
-      utils::getStaticTotalSizeInBits(staticAllocSize, elemType);
-  if (maybeStaticTotalSize.has_value()) {
-    int64_t allocSizeInByte = maybeStaticTotalSize.value() / utils::kBitsToByte;
-    auto markOp = rewriter.create<annotation::MarkOp>(loc, alloc);
-    markOp->setAttr(hivm::kBufferSizeInByteAttr,
-                    rewriter.getI64IntegerAttr(allocSizeInByte));
-  } else {
-    llvm::report_fatal_error(
-        "Warning: Cannot calculate static size from mmadL1 shape\n");
-  }
-  return alloc;
-}
-
-namespace {
-/// Trace `value`'s defining chain up to a statically-shaped ancestor and
-/// return its size in bytes as a sound upper bound of `value`'s byte size.
-/// Returns std::nullopt when no static ancestor can be reached.
-// TODO: Get rid of this ad-hoc tracing. Bind values to the dynamic dims of
-// extract_slice via the symbol dialect so sizes can be reused globally.
-std::optional<int64_t> getBufferSizeInBytesUpperBound(Value value) {
-  auto shapedType = dyn_cast<ShapedType>(value.getType());
-  if (shapedType && shapedType.hasStaticShape()) {
-    auto numElems = utils::getStaticTotalSize(shapedType.getShape());
-    if (!numElems) {
-      return std::nullopt;
-    }
-    int64_t elemBits = getElementTypeOrSelf(value).getIntOrFloatBitWidth();
-    return llvm::divideCeil(*numElems * elemBits, utils::kBitsToByte);
-  }
-
-  Operation *defOp = value.getDefiningOp();
-  if (isa_and_nonnull<FixpipeOp, StoreOp>(defOp)) {
-    // fixpipe / store preserve the element count.
-    return getBufferSizeInBytesUpperBound(defOp->getOperand(0));
-  }
-  if (auto sliceOp = dyn_cast_if_present<tensor::ExtractSliceOp>(defOp)) {
-    // A slice never holds more elements than its source.
-    return getBufferSizeInBytesUpperBound(sliceOp.getSource());
-  }
-  if (auto castOp = dyn_cast_if_present<UnrealizedConversionCastOp>(defOp);
-      castOp && castOp->getNumOperands() == 1) {
-    // The propagator forwards the wrapped value unchanged.
-    return getBufferSizeInBytesUpperBound(castOp->getOperand(0));
-  }
-  return std::nullopt;
-}
-} // namespace
-
-/// Clone all annotation marks from `src` onto `dst`.
-void cloneAnnotationMarks(PatternRewriter &rewriter, Location loc, Value src,
-                          Value dst) {
-  for (Operation *op : utils::getAnnotateOpUsers(src)) {
-    auto markOp = cast<annotation::MarkOp>(op);
-    auto clonedMarkOp = rewriter.create<annotation::MarkOp>(
-        loc, dst, markOp.getValues(), markOp.getKeysAttr());
-    for (NamedAttribute attr : markOp->getAttrs())
-      clonedMarkOp->setAttr(attr.getName(), attr.getValue());
-  }
-}
-
-/// Mark dynamically shaped `dst` with a static buffer_size_in_byte upper
-/// bound derived from `src`'s defining chain. The bound is computed purely
-/// from `src` (`dst`'s shape and element type are not consulted), so callers
-/// must guarantee `src` and `dst` describe the same buffer. No-op when `dst`
-/// is statically shaped or already carries a buffer_size_in_byte mark.
-void markBufferSizeUpperBound(PatternRewriter &rewriter, Location loc,
-                              Value src, Value dst) {
-  auto shapedType = dyn_cast<ShapedType>(dst.getType());
-  if (!shapedType || shapedType.hasStaticShape())
-    return;
-  if (utils::getAnnotateOpWithAttr(dst, hivm::kBufferSizeInByteAttr))
-    return;
-  if (auto sizeInBytes = getBufferSizeInBytesUpperBound(src)) {
-    auto markOp = rewriter.create<annotation::MarkOp>(loc, dst);
-    markOp->setAttr(hivm::kBufferSizeInByteAttr,
-                    rewriter.getI64IntegerAttr(*sizeInBytes));
-  }
-}
-
 Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
                                 ArrayRef<int64_t> shape, Type elementType) {
   assert(!ShapedType::isDynamicShape(shape) &&
@@ -1155,29 +1080,11 @@ Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
 Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
                               ArrayRef<int64_t> targetShapes,
                               Type elementType) {
-#ifndef NDEBUG
-  std::optional<int64_t> totalStaticSize =
-      utils::getStaticTotalSize(targetShapes);
-  // TODO：support dynamic shape.
-  assert(totalStaticSize.has_value() && "Can only handle static shape");
-#endif
-
-  // 1. Get AllocWorkspaceOp of current block
-  Value localWorkSpace =
-      createAllocLocalWorkSpace(rewriter, loc, targetShapes, elementType);
-
-  // 2. Use bufferization::ToTensorOp to convert current workspace to tensor
-#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
-  auto toTensor = rewriter.create<bufferization::ToTensorOp>(
-      loc, localWorkSpace, true, true);
-#else
-  auto tensorType = RankedTensorType::get(targetShapes, elementType);
-  auto toTensor = rewriter.create<bufferization::ToTensorOp>(
-      loc, tensorType, localWorkSpace,
-      /*restrict=*/mlir::UnitAttr::get(rewriter.getContext()),
-      /*writable=*/mlir::UnitAttr::get(rewriter.getContext()));
-#endif
-  return toTensor;
+  assert(!ShapedType::isDynamicShape(targetShapes) &&
+         "Can only handle static shape");
+  return getLocalWorkSpaceTensor(rewriter, loc, targetShapes,
+                                 /*dynamicShape=*/ArrayRef<Value>(),
+                                 elementType);
 }
 
 Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
@@ -1194,35 +1101,15 @@ Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
   return allocWorkspaceOp.getMemref();
 }
 
-Value getLocalWorkSpaceTensor(
-    PatternRewriter &rewriter, Location loc, ArrayRef<int64_t> targetShape,
-    ArrayRef<Value> dynamicShape, Type elementType,
-    std::optional<ArrayRef<int64_t>> staticAllocShape) {
+Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
+                              ArrayRef<int64_t> targetShape,
+                              ArrayRef<Value> dynamicShape, Type elementType) {
   // 1. Get AllocWorkspaceOp of current block
   Value localWorkSpace = createAllocLocalWorkSpace(
       rewriter, loc, SmallVector<int64_t>(targetShape),
       SmallVector<Value>(dynamicShape), elementType);
 
-  // 2. When staticAllocShape is provided, mark static alloc size for dynamic
-  // tensor case
-  if (staticAllocShape.has_value()) {
-    auto localWorkSpaceOp =
-        localWorkSpace.getDefiningOp<bishengir::memref_ext::AllocWorkspaceOp>();
-    auto maybeStaticTotalSize =
-        utils::getStaticTotalSizeInBits(*staticAllocShape, elementType);
-    if (!maybeStaticTotalSize.has_value()) {
-      emitError(localWorkSpaceOp->getLoc(), "shape has dynamic dimension");
-      llvm::report_fatal_error("shape has dynamic dimension");
-      return nullptr;
-    }
-    int64_t allocSizeInByte = maybeStaticTotalSize.value() / utils::kBitsToByte;
-    auto tmpMarkOp = rewriter.create<annotation::MarkOp>(
-        localWorkSpaceOp->getLoc(), localWorkSpaceOp->getResult(0));
-    tmpMarkOp->setAttr(hivm::kBufferSizeInByteAttr,
-                       rewriter.getI64IntegerAttr(allocSizeInByte));
-  }
-
-  // 3. Use bufferization::ToTensorOp to convert current workspace to tensor
+  // 2. Use bufferization::ToTensorOp to convert current workspace to tensor
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   auto toTensor = rewriter.create<bufferization::ToTensorOp>(
       loc, localWorkSpace, true, true);
@@ -1302,8 +1189,7 @@ hivm::SyncBlockLockOrdering getSyncBlockLockOrdering(Value lockVar) {
     if (auto orderingFromUsers = getOrderingFromLockUsers(current))
       return *orderingFromUsers;
 
-    if (auto createOp =
-            current.getDefiningOp<hivm::CreateSyncBlockLockOp>()) {
+    if (auto createOp = current.getDefiningOp<hivm::CreateSyncBlockLockOp>()) {
       // Legacy: unordered marker on create_sync_block_lock itself.
       return getSyncBlockLockOpOrdering(createOp);
     }
@@ -1604,6 +1490,23 @@ std::optional<uint32_t> getHWAlignBytes(Type t) {
   return hwAlignBytes;
 }
 
+FailureOr<unsigned> appendPassThroughIterArgs(scf::ForOp &loop,
+                                              ValueRange inits) {
+  unsigned base = loop.getNumRegionIterArgs();
+  if (inits.empty())
+    return base;
+  IRRewriter rewriter(loop.getContext());
+  FailureOr<LoopLikeOpInterface> replaced = loop.replaceWithAdditionalYields(
+      rewriter, inits, /*replaceInitOperandUsesInLoop=*/false,
+      [](OpBuilder &, Location, ArrayRef<BlockArgument> newArgs) {
+        return SmallVector<Value>(newArgs.begin(), newArgs.end());
+      });
+  if (failed(replaced))
+    return failure();
+  loop = cast<scf::ForOp>(*replaced);
+  return base;
+}
+
 namespace util {
 //===----------------------------------------------------------------------===//
 // This file contains code from the LLVM Project.
@@ -1624,11 +1527,7 @@ computeCollapsedLayoutMap(MemRefType srcType,
   int64_t srcOffset;
   SmallVector<int64_t> srcStrides;
   auto srcShape = srcType.getShape();
-#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
-  if (failed(getStridesAndOffset(srcType, srcStrides, srcOffset)))
-#else
-  if (failed(srcType.getStridesAndOffset(srcStrides, srcOffset)))
-#endif
+  if (failed(utils::getStridesAndOffsetCompat(srcType, srcStrides, srcOffset)))
     return failure();
 
   // The result stride of a reassociation group is the stride of the last
@@ -1754,11 +1653,7 @@ bool isLastDimContiguous(Value operand) {
 
   auto mem = cast<MemRefType>(operType);
   auto shape = mem.getShape();
-#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
-  auto [strides, offset] = getStridesAndOffset(mem);
-#else
-  auto [strides, offset] = mem.getStridesAndOffset();
-#endif
+  auto [strides, offset] = utils::getStridesAndOffsetCompat(mem);
   assert(!strides.empty() && "strides should not be empty.");
 
   return *shape.rbegin() == 1 || *strides.rbegin() == 1;
@@ -1832,6 +1727,26 @@ bool isOneDimLikeVecType(VectorType vecType) {
       return false;
   }
   return true;
+}
+
+bool isBeforeInMemoryView(Operation *before, Operation *after) {
+  auto moduleOp = utils::getTopLevelModuleOp(before);
+  // Cache before's parentOps and blocks.
+  DenseMap<Block *, Operation *> block2Op;
+  for (Operation *beforeParentOp = before; beforeParentOp != moduleOp;
+       beforeParentOp = beforeParentOp->getParentOp()) {
+    block2Op.try_emplace(beforeParentOp->getBlock(), beforeParentOp);
+  }
+  for (Operation *afterParentOp = after; afterParentOp != moduleOp;
+       afterParentOp = afterParentOp->getParentOp()) {
+    auto it = block2Op.find(afterParentOp->getBlock());
+    // Check if after and before has same min ParentBlock.
+    if (it != block2Op.end()) {
+      auto *beforeParentOp = it->second;
+      return beforeParentOp->isBeforeInBlock(afterParentOp);
+    }
+  }
+  return false;
 }
 
 static bool canCombineOneSide(const SmallVectorImpl<MemRefType> &memrefTypes,

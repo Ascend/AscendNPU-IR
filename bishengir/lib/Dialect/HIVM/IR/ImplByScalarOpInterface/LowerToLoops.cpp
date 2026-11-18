@@ -149,8 +149,12 @@ createScalarComputeOp(RewriterBase &rewriter, HIVMOP op,
         rewriter, op.getLoc(), scalarInputs);
     resTensors.push_back(resTensor);
   } else if constexpr (std::is_same<hivm::VShROp, HIVMOP>::value) {
-    resTensor = getScalarResult<hivm::VShROp, arith::ShRSIOp>(
-        rewriter, op.getLoc(), scalarInputs);
+    if (op.getIsSigned())
+      resTensor = getScalarResult<hivm::VShROp, arith::ShRSIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else
+      resTensor = getScalarResult<hivm::VShROp, arith::ShRUIOp>(
+          rewriter, op.getLoc(), scalarInputs);
     resTensors.push_back(resTensor);
   } else {
     llvm::report_fatal_error("Unsupport op type.");

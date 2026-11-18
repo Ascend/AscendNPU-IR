@@ -20,6 +20,9 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 
+#include "mlir/IR/AffineMap.h"
+#include "mlir/IR/ValueRange.h"
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -30,6 +33,19 @@ namespace hivm {
 inline bool isCustomLikeOp(Operation *op) {
   return llvm::isa<CustomOp>(op) || llvm::isa<CustomMacroOp>(op);
 }
+
+/// Returns true if any operand or result of a custom-like op is unranked.
+bool hasUnrankedCustomLikeOperandsOrResults(Operation *op);
+
+/// Returns true if a custom-like op has nonempty iterator types and indexing
+/// maps. Returns false for other operations.
+bool customOpHasExplicitSemantics(Operation *op);
+
+/// Checks identity maps for shaped inputs/outputs and empty-result maps for
+/// scalars. Each map must have `numLoops` dimensions. `operands` must contain
+/// only inputs and outputs, excluding temp buffers.
+bool hasStrictIdentityMaps(ValueRange operands, ArrayRef<AffineMap> maps,
+                           unsigned numLoops);
 
 /// Collect execution pipe(s) for a custom-like op.
 SmallVector<PIPE> getCustomLikePipes(Operation *op);

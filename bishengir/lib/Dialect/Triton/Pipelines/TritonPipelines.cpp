@@ -102,6 +102,9 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   bishengir::SetBishengirSimtOptAttrOptions optionsSimtOpt;
   optionsSimtOpt.simtOptimizationMode =
       options.simtOptimizationMode;
+  
+  pm.addPass(bishengir::triton::createConvertZeroDimTensorsPass());
+  
   if (!options.disableSliceOptimizations) {
     pm.addPass(bishengir::triton::createRewriteSliceOpToMemoryOpsPass());
   }
@@ -121,6 +124,8 @@ void buildLowerTritonPipeline(OpPassManager &pm,
     pm.addNestedPass<mlir::triton::FuncOp>(
         bishengir::triton::createSIMTAutoBlockifyPass(
             options.superBlockFactor));
+  pm.addNestedPass<mlir::triton::FuncOp>(
+      bishengir::triton::createOptimizeSIMTExpressionsPass());
   pm.addPass(bishengir::triton::createOptimizeLoadsPass());
   pm.addPass(bishengir::triton::createLoopRestructureArangeOptimizationPass());
   if (options.enableCGroupingDotTileLowering)
@@ -164,6 +169,9 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   }
   pm.addPass(bishengir::triton::createRemoveAnnotationMarkPass());
   pm.addPass(bishengir::triton::createLowerRemainingTensorDialectPass());
+  if (options.enableOptimizeAtomicReduction)
+    pm.addNestedPass<mlir::triton::FuncOp>(
+        bishengir::triton::createOptimizeAtomicReductionPass());
   // Convert TTIR to TTGIR
   // TODO: Adapt target for NPU
   mlir::triton::ConvertTritonToTritonGPUOptions convertTritonToTritonGPUOpt;

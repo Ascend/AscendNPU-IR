@@ -17,6 +17,7 @@
 
 #include "bishengir/Dialect/HFusion/Transforms/Flattener/Flattener.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/TensorView/IR/TensorViewDialect.h"
 
 using namespace mlir;
 using namespace mlir::hfusion;
@@ -88,6 +89,21 @@ LogicalResult Flattener::flatten(bool multiDynamicShape) {
   auto result = initialize();
   if (failed(result))
     return success();
+  // TensorView tile axes retain their logical ranks.
+  op_->walk([&](Operation *op) {
+    if (!isa<tv::ViewLoadOp, tv::ViewStoreOp>(op))
+      return;
+    for (Value value :
+         llvm::concat<Value>(op->getOperands(), op->getResults())) {
+      if (!isa<ShapedType>(value.getType()))
+        continue;
+      createDummyRefIfNotExist({value});
+      updatePreviousType(value);
+      auto dimensions = getValueDimIndices(value);
+      for (size_t i = 1; i < dimensions.size(); ++i)
+        disconnect(dimensions[i - 1], dimensions[i]);
+    }
+  });
   for (const auto &ref : dimIndices_) {
     markBroken(ref);
   }
@@ -260,8 +276,26 @@ void Flattener::breakDynamicShapes() {
     // Trying to flatten more than one dynamic dimension
     if (dynamicPosition.size() > 1) {
       LDBG("Trying to flatten more than one dynamic dimension");
+      auto groupHasUnitDim = [this](int idx) -> bool {
+        int root = structuralDsu_->find(idx);
+        for (int j = 0; j < argumentTotalLength_; ++j) {
+          if (structuralDsu_->find(j) != root)
+            continue;
+          auto [_, shape] = equivalentDsu_->getMinParentAndShapePair(j);
+          if (shape == 1)
+            return true;
+        }
+        return false;
+      };
       for (size_t i = 1; i < dynamicPosition.size(); ++i) {
-        disconnect(dynamicPosition[i] - 1, dynamicPosition[i]);
+        int boundaryLeft = dynamicPosition[i] - 1;
+        int boundaryRight = dynamicPosition[i];
+        if (groupHasUnitDim(boundaryLeft) || groupHasUnitDim(boundaryRight)) {
+          LDBG("Keep dynamic collapse between "
+               << boundaryLeft << " and " << boundaryRight << " (unit bridge)");
+          continue;
+        }
+        disconnect(boundaryLeft, boundaryRight);
       }
     }
   }

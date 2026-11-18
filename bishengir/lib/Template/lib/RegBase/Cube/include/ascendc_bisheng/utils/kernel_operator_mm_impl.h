@@ -480,7 +480,7 @@ __aicore__ inline void MmadCal(
 #endif
     }
 }
-#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201)
 template <typename DstT, typename Src0T, typename Src1T>
 __aicore__ inline void MmadCal(__cc__ DstT* c, __ca__ Src0T* a, __cb__ Src1T* b, const MmadParams& mmadParams)
 {

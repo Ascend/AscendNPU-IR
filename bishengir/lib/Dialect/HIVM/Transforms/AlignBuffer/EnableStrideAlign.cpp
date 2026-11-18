@@ -336,16 +336,16 @@ static void scaleBufferSizeMarks(PatternRewriter &rewriter, Value bufferValue,
   // The dynamic dims are identical on both types (padding only grows static
   // dims), so the byte size scales by the static-volume ratio.
   auto sizeMarks = utils::getAllAnnotateOpsWithAttr(
-      bufferValue, hivm::kBufferSizeInByteAttr);
+      bufferValue, utils::kBufferSizeInByteAttr);
   for (auto *markOp : sizeMarks) {
     int64_t oldSize =
-        markOp->getAttrOfType<IntegerAttr>(hivm::kBufferSizeInByteAttr)
+        markOp->getAttrOfType<IntegerAttr>(utils::kBufferSizeInByteAttr)
             .getInt();
     // ceil-divide so the buffer is never under-allocated.
     assert(unalignedVol != 0);
     int64_t newSize = (oldSize * alignedVol + unalignedVol - 1) / unalignedVol;
     rewriter.modifyOpInPlace(markOp, [&]() {
-      markOp->setAttr(hivm::kBufferSizeInByteAttr,
+      markOp->setAttr(utils::kBufferSizeInByteAttr,
                       rewriter.getI64IntegerAttr(newSize));
     });
   }
@@ -495,7 +495,8 @@ bool isSame(std::map<Operation *, std::unique_ptr<util::AlignInfo>> *lhs,
   return true;
 }
 
-void dump(std::map<Operation *, std::unique_ptr<util::AlignInfo>> *alignInfoMap) {
+void dump(
+    std::map<Operation *, std::unique_ptr<util::AlignInfo>> *alignInfoMap) {
 #ifndef NDEBUG
   LDBG("dump align info map");
   for (auto &it : *alignInfoMap) {
@@ -787,6 +788,12 @@ void EnableStrideAlignPass::runOnOperation() {
     }
 
     IRRewriter rewriter(context);
+    // Every allocation has now been widened, so the type-equality joins that
+    // were visited too early - while a sibling operand was still a plain
+    // buffer - can be retried with all the casts in place. Must run before
+    // handlePropagateFailure, whose fallback would otherwise hand each
+    // remaining failing use a private buffer.
+    retryDeferredPropagation(rewriter, funcOp);
     handlePropagateFailure(rewriter, funcOp);
     if (archIsRegbased)
       materializeRemainingStaticUBLayoutCasts(rewriter, funcOp);

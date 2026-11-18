@@ -193,6 +193,12 @@ UnitFlagInfoBase::getUnitFlagArgs(Operation *op, IRRewriter &rewriter) {
 namespace mlir {
 namespace hivm {
 
+static Value stripMemRefCast(Value value) {
+  while (auto castOp = value.getDefiningOp<memref::CastOp>())
+    value = castOp.getViewSource();
+  return value;
+}
+
 std::optional<UnitFlagInfoBase> checkUnitFlagSameBlockPattern(
     Operation *op1, Operation *op2, UnitFlagInfoBase unitFlagInfo1,
     UnitFlagInfoBase unitFlagInfo2, scf::ForOp backwardSyncLoop) {
@@ -216,7 +222,7 @@ std::optional<UnitFlagInfoBase> checkUnitFlagSameBlockPattern(
   if (fixpipeOpIsFrontOp && unitFlagInfo1.linkedLoopAsWait != nullptr) {
     return {};
   }
-  if (fixpipeOp.getSrc() != mmadL1Op.getC()) {
+  if (stripMemRefCast(fixpipeOp.getSrc()) != stripMemRefCast(mmadL1Op.getC())) {
     return {};
   }
   if (fixpipeOp->getBlock() != mmadL1Op->getBlock()) {
@@ -258,7 +264,7 @@ std::optional<UnitFlagInfoBase> checkUnitFlagOpLoopOpPattern(
   if (fixpipeOpIsFrontOp && unitFlagInfo1.linkedLoopAsWait != nullptr) {
     return {};
   }
-  if (fixpipeOp.getSrc() != mmadL1Op.getC()) {
+  if (stripMemRefCast(fixpipeOp.getSrc()) != stripMemRefCast(mmadL1Op.getC())) {
     return {};
   }
   auto forOp1 = dyn_cast<scf::ForOp>(op1->getParentOp());

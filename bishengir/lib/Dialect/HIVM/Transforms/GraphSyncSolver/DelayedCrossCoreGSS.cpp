@@ -779,6 +779,8 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
   if (this->enableCVPatterns) {
     options.enableCVPatterns = true;
   }
+  options.enableNonRecursiveLoopUnrolling =
+      this->enableNonRecursiveLoopUnrolling;
   if (this->blockAllSync) {
     options.enableBlockAllMode = true;
   }

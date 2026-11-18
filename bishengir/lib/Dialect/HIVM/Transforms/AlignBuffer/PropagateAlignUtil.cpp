@@ -22,6 +22,7 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -751,6 +752,57 @@ mlir::LogicalResult propagateAlignUp(
   return propagateAlign ? success() : failure();
 }
 
+/// Propagate an align request up through an `arith.select` that forwards
+/// memrefs.
+///
+/// `arith.select` carries `AllTypesMatch<["true_value", "false_value",
+/// "result"]>`, so an align request that arrives on the result can only ever
+/// be satisfied if *both* candidates end up widened to the very same type.
+/// Seeding only one of them leaves the join with two different layouts, which
+/// the type system rejects; the request then dies at the join and the fallback
+/// hands every failing use a private buffer, splitting one logical storage
+/// into several. Mirror the `scf::IfOp` overload above and seed both
+/// candidates instead. The join itself is resolved on the way down by
+/// `propagateSelectOp`.
+mlir::LogicalResult propagateAlignUp(
+    mlir::PatternRewriter &rewriter, arith::SelectOp selectOp,
+    ArrayRef<int32_t> alignDims, ArrayRef<int32_t> alignBytes,
+    std::string alignDimAttrName = hivm::StrideAlignDimsAttr::name.str(),
+    std::string alignBytesAttrName =
+        hivm::StrideAlignValueInByteAttr::name.str()) {
+  // Only memref-forwarding selects take part. A scalar or vector select does
+  // not name storage, so marking its operands would be meaningless.
+  if (!isa<MemRefType>(selectOp.getResult().getType()))
+    return failure();
+
+  // A candidate that cannot be widened at all makes the join unsatisfiable:
+  // PropagateAlignUpToRootAllocationPattern rejects marks on block arguments
+  // outside an scf.for, so such a candidate keeps its original layout no
+  // matter what. Seeding only the other side would produce exactly the
+  // mismatched join this overload exists to avoid, so decline the whole join.
+  auto isWidenable = [](Value v) {
+    auto blockArg = dyn_cast<BlockArgument>(v);
+    if (!blockArg)
+      return true;
+    return isa<scf::ForOp>(blockArg.getOwner()->getParentOp());
+  };
+  if (!isWidenable(selectOp.getTrueValue()) ||
+      !isWidenable(selectOp.getFalseValue()))
+    return failure();
+
+  bool propagateAlign = false;
+  for (Value candidate : {selectOp.getTrueValue(), selectOp.getFalseValue()}) {
+    auto [adjustAlignDims, adjustAlignBytes] = adjustAlignInfo(
+        selectOp.getOperation(), candidate, alignDims, alignBytes);
+    if (adjustAlignDims.empty())
+      continue;
+    propagateAlign = true;
+    createAlignMarkOp(rewriter, selectOp.getLoc(), candidate, adjustAlignDims,
+                      adjustAlignBytes, alignDimAttrName, alignBytesAttrName);
+  }
+  return propagateAlign ? success() : failure();
+}
+
 mlir::LogicalResult processYieldOp(mlir::PatternRewriter &rewriter,
                                    Operation *markedOp,
                                    ArrayRef<int32_t> alignDims,
@@ -1023,6 +1075,54 @@ FailureOrCastVec propagateScfForOp(RewriterBase &rewriter,
   op.getInitArgsMutable()[initIndx].assign(conversionOp.getOperand(0));
   auto origType = conversionOp.getResult(0).getType();
   auto newType = conversionOp.getOperand(0).getType();
+
+  // Reclaim the yield side's legacy: the plain-init fallback of
+  // propagateScfForYieldOp may have installed a dense buffer (a
+  // content-preserving copy of an aligned value) as the yielded value.
+  // Now that this unification switches the loop types to \p newType, that
+  // copy is vestigial when its source already has exactly \p newType:
+  // forward the yield to the copy's source and drop the copy and the
+  // buffer, so the two boundary unifications do not leave a redundant
+  // strided->dense->strided copy round trip (plus an unpadded strided
+  // allocation from the residual yield bridge) behind.
+  Value yielded = op.getYieldedValues()[initIndx];
+  // The yielded value may be a block argument (e.g. the loop's own iter
+  // arg), whose getDefiningOp() is null; getDefiningOp<OpTy>() handles
+  // that case safely.
+  if (auto yieldedAlloc = yielded.getDefiningOp<memref::AllocOp>()) {
+    hivm::CopyOp writer = nullptr;
+    auto yieldOp = dyn_cast<scf::YieldOp>(op.getBody()->getTerminator());
+    bool foreign = false;
+    for (Operation *user : yielded.getUsers()) {
+      if (auto copyOp = dyn_cast<hivm::CopyOp>(user)) {
+        if (copyOp.getDst() == yielded && !writer) {
+          writer = copyOp;
+          continue;
+        }
+      }
+      if (user == yieldOp)
+        continue;
+      foreign = true;
+    }
+    // The fallback installs the copy in the loop body's top-level block,
+    // right before the yield. Require the same structure so the forwarding
+    // cannot reach into a nested region (where the copy's source might not
+    // dominate the yield, or a conditional copy would change semantics).
+    if (writer && yieldOp && !foreign &&
+        writer->getBlock() == yieldOp->getBlock() &&
+        writer.getSrc().getType() == newType && !writer->hasAttr("pad_mode") &&
+        !writer->hasAttr("collapse_reassociation") &&
+        llvm::all_of(writer.getSrc().getUsers(),
+                     [&](Operation *u) { return u == writer; })) {
+      LDBG("reclaim yield-side legacy: forward " << writer.getSrc() << " past "
+                                                 << yielded);
+      rewriter.modifyOpInPlace(
+          yieldOp, [&] { yieldOp.setOperand(initIndx, writer.getSrc()); });
+      rewriter.eraseOp(writer);
+      rewriter.eraseOp(yieldedAlloc);
+    }
+  }
+
   op.getRegionIterArg(initIndx).setType(newType);
   op.getResult(initIndx).setType(newType);
 
@@ -1048,12 +1148,14 @@ FailureOrCastVec propagateScfForOp(RewriterBase &rewriter,
   // insert unrealized conversion cast before yield op
   rewriter.setInsertionPoint(op.getBody()->getTerminator());
   auto yieldValues = op.getYieldedValues();
-  auto yieldValueConversionOp = rewriter.create<UnrealizedConversionCastOp>(
-      op.getLoc(), newType, yieldValues[initIndx]);
-  auto mutableYieldValues = op.getYieldedValuesMutable();
-  assert(mutableYieldValues.has_value());
-  mutableYieldValues.value()[initIndx].assign(
-      yieldValueConversionOp.getResult(0));
+  if (yieldValues[initIndx].getType() != newType) {
+    auto yieldValueConversionOp = rewriter.create<UnrealizedConversionCastOp>(
+        op.getLoc(), newType, yieldValues[initIndx]);
+    auto mutableYieldValues = op.getYieldedValuesMutable();
+    assert(mutableYieldValues.has_value());
+    mutableYieldValues.value()[initIndx].assign(
+        yieldValueConversionOp.getResult(0));
+  }
 
   return newConversionOps;
 }
@@ -1193,6 +1295,56 @@ FailureOrCastVec propagateScfIfOp(RewriterBase &rewriter, scf::IfOp op,
   auto resultConversionOp = rewriter.create<UnrealizedConversionCastOp>(
       op.getLoc(), ifResultOrigType, ifResult);
   rewriter.replaceAllUsesExcept(ifResult, resultConversionOp.getResult(0),
+                                resultConversionOp);
+  return UnrealizedCastOpVec{resultConversionOp};
+}
+
+/// Push down an UnrealizedConversionCastOp past an `arith.select` that
+/// forwards memrefs.
+///
+/// A select is a type-equality join: `AllTypesMatch<["true_value",
+/// "false_value", "result"]>`. It can therefore adopt the widened type only
+/// when *every* candidate already carries a conversion cast back from the very
+/// same widened type. When that holds, unwrap all candidates, retype the
+/// result, and re-wrap the result so propagation continues past the select.
+///
+/// Returning failure is the expected transient state while sibling candidates
+/// are still being rewritten: allocations are widened one at a time, so the
+/// first candidate reaches this join while the second is still a plain buffer.
+/// `retryDeferredPropagation` re-attempts the join after every allocation has
+/// had its turn, which is what turns that transient mismatch into a success
+/// instead of a permanent give-up.
+FailureOrCastVec propagateSelectOp(RewriterBase &rewriter, arith::SelectOp op) {
+  auto origType = op.getResult().getType();
+  if (!isa<MemRefType>(origType))
+    return failure();
+
+  SmallVector<Value, 2> widenedCandidates;
+  Type widenedType;
+  for (Value candidate : {op.getTrueValue(), op.getFalseValue()}) {
+    std::optional<Value> widened = getConversionSrc(candidate);
+    if (!widened.has_value())
+      return failure();
+    if (widenedType && widened->getType() != widenedType)
+      return failure();
+    widenedType = widened->getType();
+    widenedCandidates.push_back(*widened);
+  }
+  assert(widenedCandidates.size() == 2 && widenedType &&
+         "both select candidates must resolve to the same widened type");
+
+  rewriter.modifyOpInPlace(op, [&]() {
+    op.getTrueValueMutable().assign(widenedCandidates[0]);
+    op.getFalseValueMutable().assign(widenedCandidates[1]);
+    op.getResult().setType(widenedType);
+  });
+
+  // Insert a conversion of the select result back to the original type and
+  // replace the original uses, so the cast keeps travelling downstream.
+  rewriter.setInsertionPointAfter(op);
+  auto resultConversionOp = rewriter.create<UnrealizedConversionCastOp>(
+      op.getLoc(), origType, op.getResult());
+  rewriter.replaceAllUsesExcept(op.getResult(), resultConversionOp.getResult(0),
                                 resultConversionOp);
   return UnrealizedCastOpVec{resultConversionOp};
 }
@@ -1440,6 +1592,10 @@ mlir::LogicalResult propagateAlignUpFromResult(
                                 alignBytes, alignDimAttrName,
                                 alignBytesAttrName);
       })
+      .Case([&](arith::SelectOp selectOp) {
+        return propagateAlignUp(rewriter, selectOp, alignDims, alignBytes,
+                                alignDimAttrName, alignBytesAttrName);
+      })
       .Default([&](Operation *markedOp) {
         return propagateAlignUp(rewriter, markedOp, alignDims, alignBytes,
                                 alignDimAttrName, alignBytesAttrName);
@@ -1547,11 +1703,58 @@ static bool callOperandMayBeWritten(func::CallOp callOp,
   return mayWriteThroughFuncArg(callee.getArgument(operandNumber), visited);
 }
 
+/// Collect the values through which `use` forwards the storage it names.
+///
+/// Some ops hand a memref on without touching it: `arith.select` picks one of
+/// its operands, and a region op carries a value in through an init operand
+/// and out through the matching result. A write through what comes out is a
+/// write through what went in, but these ops are neither view-like nor do they
+/// report a memory effect on the operand, so findWriteOp would otherwise stop
+/// here and the write would stay invisible.
+///
+/// A select only *may* forward this particular operand, so the writes found
+/// past it are may-writes. That is the safe direction for the fallback: the
+/// copy it inserts is a value no-op when the write went to the other operand,
+/// because the shared buffer still holds what the seed copy put there.
+static void collectForwardedStorage(OpOperand &use,
+                                    SmallVectorImpl<Value> &forwarded) {
+  Operation *user = use.getOwner();
+  if (isa<arith::SelectOp>(user)) {
+    forwarded.append(user->getResults().begin(), user->getResults().end());
+    return;
+  }
+  if (auto forOp = dyn_cast<scf::ForOp>(user)) {
+    OpResult tied = forOp.getTiedLoopResult(&use);
+    if (!tied)
+      return;
+    forwarded.push_back(tied);
+    forwarded.push_back(forOp.getRegionIterArg(tied.getResultNumber()));
+    return;
+  }
+  if (isa<scf::YieldOp, scope::ReturnOp>(user)) {
+    Operation *parent = user->getParentOp();
+    if (parent && use.getOperandNumber() < parent->getNumResults())
+      forwarded.push_back(parent->getResult(use.getOperandNumber()));
+    return;
+  }
+}
+
 static void findWriteOp(Value mem, SmallVector<Operation *> &writeOps) {
   SmallVector<Value, 8> worklist;
+  // Forwarding through scf.for is cyclic (init -> iter arg -> yield -> result),
+  // so the walk needs a visited set to terminate.
+  DenseSet<Value> visited;
+  // One copy per write, not one per path that reaches it.
+  DenseSet<Operation *> recorded;
+  auto record = [&recorded, &writeOps](Operation *op) {
+    if (recorded.insert(op).second)
+      writeOps.push_back(op);
+  };
   worklist.push_back(mem);
   while (!worklist.empty()) {
     Value v = worklist.pop_back_val();
+    if (!visited.insert(v).second)
+      continue;
     for (OpOperand &use : v.getUses()) {
       Operation *user = use.getOwner();
       if (isa<ViewLikeOpInterface>(user)) {
@@ -1559,9 +1762,15 @@ static void findWriteOp(Value mem, SmallVector<Operation *> &writeOps) {
           worklist.push_back(r);
         continue;
       }
+      SmallVector<Value, 2> forwarded;
+      collectForwardedStorage(use, forwarded);
+      if (!forwarded.empty()) {
+        worklist.append(forwarded.begin(), forwarded.end());
+        continue;
+      }
       if (auto callOp = dyn_cast<func::CallOp>(user)) {
         if (callOperandMayBeWritten(callOp, use.getOperandNumber()))
-          writeOps.push_back(user);
+          record(user);
         continue;
       }
       if (auto memOp = dyn_cast<MemoryEffectOpInterface>(user)) {
@@ -1571,7 +1780,7 @@ static void findWriteOp(Value mem, SmallVector<Operation *> &writeOps) {
         memOp.getEffectsOnValue(v, effects);
         for (auto &e : effects) {
           if (isa<MemoryEffects::Write>(e.getEffect()))
-            writeOps.push_back(user);
+            record(user);
         }
       }
     }
@@ -1613,13 +1822,13 @@ static void findWriteOp(Value mem, SmallVector<Operation *> &writeOps) {
                      setOp.getDynamicFlagId() == waitOp.getDynamicFlagId();
             });
         if (matchingWait) {
-          writeOps.push_back(op);
+          record(op);
           break;
         }
       }
 
       if (op->hasTrait<OpTrait::IsTerminator>() ||
-          isa<hivm::SyncBlockSetOp>(op))
+          isa<hivm::SyncBlockSetOp, hivm::SyncIntraBlockSetOp>(op))
         break;
     }
   }
@@ -1631,38 +1840,48 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
     if (!conversion->hasAttr(propagateFailureName))
       return WalkResult::skip();
 
-    auto src = conversion.getInputs()[0];
+    // The cast result is one buffer. Its users are views (collapse, subview),
+    // not independent snapshots. A private alloc per user copies the aligned
+    // source at each view, so a later write through one view never reaches the
+    // readers of another view.
+    SmallVector<OpOperand *> failedUses;
+    for (OpOperand &use : conversion->getUses()) {
+      if (use.getOwner()->hasAttr(propagateFailureName))
+        failedUses.push_back(&use);
+    }
+    if (failedUses.empty())
+      return WalkResult::advance();
+
+    Location loc = conversion.getLoc();
+    Value src = conversion.getInputs()[0];
+    Value dst = conversion.getOutputs()[0];
+    // The cast dominates every user, so one buffer inserted here does too.
+    rewriter.setInsertionPoint(conversion);
+    Value shared = utils::createEmptyOp(rewriter, loc, dst);
+    Operation *seedCopy =
+        rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, shared);
+    for (OpOperand *use : failedUses)
+      rewriter.modifyOpInPlace(use->getOwner(),
+                               [use, shared] { use->set(shared); });
+
+    // Find writes after retargeting. findWriteOp does not look through the
+    // cast, so a load or fill is visible only once it uses `shared`.
+    SmallVector<Operation *> writeShared;
+    findWriteOp(shared, writeShared);
     SmallVector<Operation *> writeSrc;
     findWriteOp(src, writeSrc);
-    for (OpOperand &use : make_early_inc_range(conversion->getUses())) {
-      Operation *user = use.getOwner();
-      if (!user->hasAttr(propagateFailureName))
+    DominanceInfo domInfo(seedCopy);
+    for (Operation *writeOp : writeShared) {
+      if (writeOp == seedCopy || !domInfo.dominates(seedCopy, writeOp))
         continue;
-      auto loc = conversion.getLoc();
-      auto dst = conversion.getOutputs()[0];
-      rewriter.setInsertionPoint(user);
-      auto newDst = utils::createEmptyOp(rewriter, loc, dst);
-      Operation *newCopy =
-          rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, newDst);
-      rewriter.modifyOpInPlace(user, [&] { use.set(newDst); });
-
-      SmallVector<Operation *> writeNewDst;
-      findWriteOp(newDst, writeNewDst);
-      DominanceInfo domInfo(newCopy);
-      for (Operation *writeOp : writeNewDst) {
-        if (writeOp == newCopy)
-          continue;
-        if (domInfo.dominates(newCopy, writeOp)) {
-          rewriter.setInsertionPointAfter(writeOp);
-          rewriter.create<hivm::CopyOp>(loc, TypeRange{}, newDst, src);
-        }
-      }
-      for (Operation *writeOp : writeSrc) {
-        if (domInfo.dominates(newCopy, writeOp)) {
-          rewriter.setInsertionPointAfter(writeOp);
-          rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, newDst);
-        }
-      }
+      rewriter.setInsertionPointAfter(writeOp);
+      rewriter.create<hivm::CopyOp>(loc, TypeRange{}, shared, src);
+    }
+    for (Operation *writeOp : writeSrc) {
+      if (!domInfo.dominates(seedCopy, writeOp))
+        continue;
+      rewriter.setInsertionPointAfter(writeOp);
+      rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, shared);
     }
     if (conversion->use_empty())
       rewriter.eraseOp(conversion);
@@ -1843,6 +2062,99 @@ mlir::hivm::calculateAlignedShape(OpBuilder &b, const Location loc,
 ///
 /// Handled memref ops: cast/subview/collapse_shape/expand_shape/reshape.
 /// Note: memref.view cannot be aligned, because it assumes empty layout
+/// Dispatch a single (conversion, use) pair through the push-down rules.
+///
+/// Extracted from `replaceAndPropagateMemRefType` so that
+/// `retryDeferredPropagation` can re-run the exact same dispatch on a deferred
+/// use instead of duplicating the rule table.
+static FailureOrCastVec
+pushDownConversionCastThroughUse(RewriterBase &rewriter,
+                                 UnrealizedConversionCastOp conversion,
+                                 OpOperand *use) {
+  Operation *user = use->getOwner();
+  // Handle common memref dialect ops that produce new memrefs and must
+  // be recreated with the new result type.
+  return TypeSwitch<Operation *, FailureOrCastVec>(user)
+      .Case([&rewriter, &conversion](memref::SubViewOp subviewOp) {
+        auto res = propagateSubViewOp(rewriter, conversion, subviewOp);
+        return UnrealizedCastOpVec{res};
+      })
+      .Case([&rewriter, &conversion](memref::CollapseShapeOp collapseOp) {
+        return propagateCollapseShapeOp(rewriter, conversion, collapseOp);
+      })
+      .Case([&rewriter, &conversion](memref::ExpandShapeOp expandOp) {
+        auto res = propagateExpandShapeOp(rewriter, conversion, expandOp);
+        return UnrealizedCastOpVec{res};
+      })
+      .Case([&rewriter, &conversion](memref::ReshapeOp reshapeOp) {
+        return propagateReshapeOp(rewriter, conversion, reshapeOp);
+      })
+      .Case([&rewriter, &conversion](memref::CastOp castOp) {
+        return propagateCastOp(rewriter, conversion, castOp);
+      })
+      .Case([&rewriter, &conversion](hivm::BitcastOp bitcastOp) {
+        return propagateBitcastOp(rewriter, conversion, bitcastOp);
+      })
+      .Case([&rewriter, &conversion, &use](scf::ForOp forOp) {
+        unsigned int initIndx = forOp.getTiedLoopResult(use).getResultNumber();
+        return propagateScfForOp(rewriter, conversion, forOp, initIndx);
+      })
+      .Case([&rewriter, &conversion, &use](scf::YieldOp yieldOp) {
+        return propagateYieldOp(rewriter, conversion, yieldOp,
+                                use->getOperandNumber());
+      })
+      .Case([&rewriter, &conversion, &use](scope::ReturnOp returnOp) {
+        return propagateScopeReturnOp(rewriter, conversion, returnOp,
+                                      use->getOperandNumber());
+      })
+      .Case([&rewriter](arith::SelectOp selectOp) {
+        return propagateSelectOp(rewriter, selectOp);
+      })
+      .Case([&rewriter, &conversion](UnrealizedConversionCastOp conversionOp) {
+        return propagateUnrealizedConversionCastOp(rewriter, conversion,
+                                                   conversionOp);
+      })
+      .Case([&](func::CallOp callOp) {
+        return propagateFuncCallOp(rewriter, conversion, callOp);
+      })
+      .Default([&rewriter, &conversion, &user](Operation *op) {
+        return propagateDefaultOp(rewriter, conversion, op, user);
+      });
+}
+
+/// Push the casts in `worklist` as far down the IR as the rules allow, growing
+/// the worklist with every cast the rules create. Uses that cannot be pushed
+/// are tagged with `propagateFailureName` on both the cast and the user, which
+/// is how `handlePropagateFailure` and `retryDeferredPropagation` find them
+/// later. Does not erase anything; the caller owns cleanup.
+static void driveConversionCastPushDown(RewriterBase &rewriter,
+                                        UnrealizedCastOpVec &worklist) {
+  for (size_t i = 0; i < worklist.size(); ++i) {
+    UnrealizedConversionCastOp conversion = worklist[i];
+    // Warning: must store users in a vector because rewriting modifies
+    // def-use chain
+    SmallVector<OpOperand *> uses = llvm::map_to_vector(
+        conversion->getUses(), [](OpOperand &operand) { return &operand; });
+    for (OpOperand *use : uses) {
+      Operation *user = use->getOwner();
+      auto res = pushDownConversionCastThroughUse(rewriter, conversion, use);
+      // Defer CopyOp sync until after all allocations are rewritten
+      // (EnableStrideAlign calls hivm::handlePropagateFailure).
+      if (failed(res)) {
+        conversion->setAttr(propagateFailureName, rewriter.getUnitAttr());
+        user->setAttr(propagateFailureName, rewriter.getUnitAttr());
+        continue;
+      }
+
+      for (auto newOp : res.value()) {
+        if (newOp != conversion) {
+          worklist.push_back(newOp);
+        }
+      }
+    }
+  }
+}
+
 LogicalResult mlir::hivm::replaceAndPropagateMemRefType(RewriterBase &rewriter,
                                                         const Location loc,
                                                         Value from, Value to) {
@@ -1859,80 +2171,7 @@ LogicalResult mlir::hivm::replaceAndPropagateMemRefType(RewriterBase &rewriter,
 
   // Push unrealized_conversion_cast ops further down in the IR. I.e., try to
   // wrap results instead of operands in a cast.
-  for (size_t i = 0; i < unrealizedConversions.size(); ++i) {
-    UnrealizedConversionCastOp conversion = unrealizedConversions[i];
-    // Warning: must store users in a vector because rewriting modifies
-    // def-use chain
-    SmallVector<OpOperand *> uses = llvm::map_to_vector(
-        conversion->getUses(), [](OpOperand &operand) { return &operand; });
-    for (OpOperand *use : uses) {
-      Operation *user = use->getOwner();
-      // Handle common memref dialect ops that produce new memrefs and must
-      // be recreated with the new result type.
-      auto res =
-          TypeSwitch<Operation *, FailureOrCastVec>(user)
-              .Case([&rewriter, &conversion](memref::SubViewOp subviewOp) {
-                auto res = propagateSubViewOp(rewriter, conversion, subviewOp);
-                return UnrealizedCastOpVec{res};
-              })
-              .Case(
-                  [&rewriter, &conversion](memref::CollapseShapeOp collapseOp) {
-                    return propagateCollapseShapeOp(rewriter, conversion,
-                                                    collapseOp);
-                  })
-              .Case([&rewriter, &conversion](memref::ExpandShapeOp expandOp) {
-                auto res =
-                    propagateExpandShapeOp(rewriter, conversion, expandOp);
-                return UnrealizedCastOpVec{res};
-              })
-              .Case([&rewriter, &conversion](memref::ReshapeOp reshapeOp) {
-                return propagateReshapeOp(rewriter, conversion, reshapeOp);
-              })
-              .Case([&rewriter, &conversion](memref::CastOp castOp) {
-                return propagateCastOp(rewriter, conversion, castOp);
-              })
-              .Case([&rewriter, &conversion](hivm::BitcastOp bitcastOp) {
-                return propagateBitcastOp(rewriter, conversion, bitcastOp);
-              })
-              .Case([&rewriter, &conversion, &use](scf::ForOp forOp) {
-                unsigned int initIndx =
-                    forOp.getTiedLoopResult(use).getResultNumber();
-                return propagateScfForOp(rewriter, conversion, forOp, initIndx);
-              })
-              .Case([&rewriter, &conversion, &use](scf::YieldOp yieldOp) {
-                return propagateYieldOp(rewriter, conversion, yieldOp,
-                                        use->getOperandNumber());
-              })
-              .Case([&rewriter, &conversion, &use](scope::ReturnOp returnOp) {
-                return propagateScopeReturnOp(rewriter, conversion, returnOp,
-                                              use->getOperandNumber());
-              })
-              .Case([&rewriter,
-                     &conversion](UnrealizedConversionCastOp conversionOp) {
-                return propagateUnrealizedConversionCastOp(rewriter, conversion,
-                                                           conversionOp);
-              })
-              .Case([&](func::CallOp callOp) {
-                return propagateFuncCallOp(rewriter, conversion, callOp);
-              })
-              .Default([&rewriter, &conversion, &user](Operation *op) {
-                return propagateDefaultOp(rewriter, conversion, op, user);
-              });
-      // Defer CopyOp sync until after all allocations are rewritten
-      // (EnableStrideAlign calls hivm::handlePropagateFailure).
-      if (failed(res)) {
-        conversion->setAttr(propagateFailureName, rewriter.getUnitAttr());
-        user->setAttr(propagateFailureName, rewriter.getUnitAttr());
-        continue;
-      }
-
-      for (auto newOp : res.value()) {
-        if (newOp != conversion) {
-          unrealizedConversions.push_back(newOp);
-        }
-      }
-    }
-  }
+  driveConversionCastPushDown(rewriter, unrealizedConversions);
 
   // Erase all unrealized_conversion_cast ops without uses.
   for (auto op : unrealizedConversions)
@@ -1940,6 +2179,77 @@ LogicalResult mlir::hivm::replaceAndPropagateMemRefType(RewriterBase &rewriter,
       rewriter.eraseOp(op);
 
   return success();
+}
+
+unsigned mlir::hivm::retryDeferredPropagation(RewriterBase &rewriter,
+                                              func::FuncOp funcOp) {
+  // Allocations are widened one at a time, so a type-equality join such as
+  // `arith.select` or a two-sided `scf.yield` is first visited while only one
+  // of its operands carries a cast. That visit legitimately fails. By the time
+  // every allocation has had its turn the remaining casts are all in place, so
+  // the same dispatch can succeed - but nothing re-attempts it, and the
+  // fallback would hand each failing use a private buffer, splitting one
+  // logical storage into several.
+  //
+  // Re-attempt every deferred use until a round makes no progress. Clearing
+  // the markers before re-dispatching lets `driveConversionCastPushDown` set
+  // them again for whatever still fails, so the markers stay accurate for
+  // `handlePropagateFailure` either way.
+  constexpr unsigned kMaxRounds = 8;
+  unsigned totalResolved = 0;
+
+  UnrealizedCastOpVec touched;
+  for (unsigned round = 0; round < kMaxRounds; ++round) {
+    SmallVector<UnrealizedConversionCastOp> deferred;
+    funcOp.walk([&deferred](UnrealizedConversionCastOp conversion) {
+      if (conversion->hasAttr(propagateFailureName))
+        deferred.push_back(conversion);
+    });
+    if (deferred.empty())
+      break;
+
+    // Nothing is erased inside a round, so the cast handles above stay valid.
+    // User handles do not: a successful push-down calls `replaceOp` on the
+    // user. Progress is therefore measured on the casts, which survive.
+    unsigned resolvedThisRound = 0;
+    for (UnrealizedConversionCastOp conversion : deferred) {
+      conversion->removeAttr(propagateFailureName);
+      bool hasPendingUse = false;
+      for (OpOperand &use : conversion->getUses()) {
+        if (!use.getOwner()->hasAttr(propagateFailureName))
+          continue;
+        use.getOwner()->removeAttr(propagateFailureName);
+        hasPendingUse = true;
+      }
+      if (!hasPendingUse)
+        continue;
+
+      UnrealizedCastOpVec worklist{conversion};
+      driveConversionCastPushDown(rewriter, worklist);
+      touched.append(worklist.begin(), worklist.end());
+
+      // The marker is back only if some use still refuses the widened type.
+      if (!conversion->hasAttr(propagateFailureName))
+        ++resolvedThisRound;
+    }
+
+    LDBG("retryDeferredPropagation round "
+         << round << " resolved " << resolvedThisRound << " deferred cast(s)");
+    totalResolved += resolvedThisRound;
+    // Progress is measured in resolved casts, not in the number of remaining
+    // markers: a successful push-down can create fresh casts whose own users
+    // fail, so the marker count may rise while real progress is being made.
+    if (resolvedThisRound == 0)
+      break;
+  }
+
+  // `touched` can list the same cast once per round, so erase at most once.
+  DenseSet<Operation *> erased;
+  for (UnrealizedConversionCastOp conversion : touched)
+    if (erased.insert(conversion).second && conversion->getUses().empty())
+      rewriter.eraseOp(conversion);
+
+  return totalResolved;
 }
 
 mlir::LogicalResult PropagateAlignUpToRootAllocationPattern::matchAndRewrite(

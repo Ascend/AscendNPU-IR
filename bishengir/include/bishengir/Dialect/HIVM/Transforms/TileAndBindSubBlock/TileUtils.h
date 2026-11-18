@@ -87,7 +87,11 @@ bool hasBatchMatmulLoopInAicFuncs(ArrayRef<func::FuncOp> aicFunctions);
 bool hasImplicitTransposeWithLastAxisInAiv(
     ArrayRef<func::FuncOp> aivFunctions);
 
-bool areLoadAndStoreSameAddress(ArrayRef<func::FuncOp> aivFunctions);
+// On regbase, only guard load/store pairs whose reinterpret casts have
+// the same source and offset but different sizes or strides. Otherwise retain
+// the conservative shared-source check used on membase.
+bool areLoadAndStoreSameAddress(ArrayRef<func::FuncOp> aivFunctions,
+                                bool checkRegbaseHazards = false);
 
 LogicalResult pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
     func::FuncOp newFunc,

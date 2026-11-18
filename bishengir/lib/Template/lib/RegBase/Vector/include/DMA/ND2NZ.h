@@ -16,6 +16,7 @@
 
 #ifndef HIVM_MLIR_TEMPLATE_ND2NZ_UTILS_H
 #define HIVM_MLIR_TEMPLATE_ND2NZ_UTILS_H
+#include "ArchDefs.h"
 #include "Utils.h"
 
 constexpr int32_t MAX_LEN_UNIT16 = 65535;
@@ -35,7 +36,7 @@ template <typename T> struct nd2nz_intrin_args {
   uint16_t c0Size;
 };
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 template <typename T>
 __aicore__ __attribute__((always_inline)) void
 copy_gm_to_cbuf_intrin_core(nd2nz_intrin_args<T> args) {

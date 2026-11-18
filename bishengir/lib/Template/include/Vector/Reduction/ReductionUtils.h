@@ -678,36 +678,16 @@ reduceRToR0(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst,
   if constexpr (NEED_MASK) {
     SetMaskValueByCount(num_per_repeat);
   }
-  for (int64_t i = 0; i < main_size / INTR_MAX_REPEAT_CNTS; ++i) {
+  for (int64_t i = 0; i < main_size; ++i) {
     INTRINSIC(pipe_barrier, PIPE_V);
-    intrin_args<2, T> args{
-        dst_ptr,
-        {src_ptr + i * INTR_MAX_REPEAT_CNTS * num_per_repeat, dst_ptr},
-        0,                            // scalar, not work
-        INTR_MAX_REPEAT_CNTS,         // repeat
-        1,                            // dst block stride
-        {1, 1},                       // src block stride
-        0,                            // dst repeat stride
-        {INTR_BLOCKS_PER_REPEAT, 0}}; // src repeat stride
-    if constexpr (OP == VectorOpTy::VXOR) {
-      vector_eltwise_xor_intrin<T>(args, tmp_buf);
-    } else {
-      vector_eltwise_vv_intrin<OP, T>(args);
-    }
-  }
-  if (main_size % INTR_MAX_REPEAT_CNTS != 0) {
-    INTRINSIC(pipe_barrier, PIPE_V);
-    intrin_args<2, T> args{
-        dst_ptr,
-        {src_ptr +
-             FLOOR_FACTOR(main_size, INTR_MAX_REPEAT_CNTS) * num_per_repeat,
-         dst_ptr},
-        0, // scalar, not work
-        static_cast<uint64_t>(main_size % INTR_MAX_REPEAT_CNTS), // repeat
-        1,                            // dst block stride
-        {1, 1},                       // src block stride
-        0,                            // dst repeat stride
-        {INTR_BLOCKS_PER_REPEAT, 0}}; // src repeat stride
+    intrin_args<2, T> args{dst_ptr,
+                           {src_ptr + i * num_per_repeat, dst_ptr},
+                           0,                            // scalar, not work
+                           1,                            // repeat
+                           1,                            // dst block stride
+                           {1, 1},                       // src block stride
+                           0,                            // dst repeat stride
+                           {INTR_BLOCKS_PER_REPEAT, 0}}; // src repeat stride
     if constexpr (OP == VectorOpTy::VXOR) {
       vector_eltwise_xor_intrin<T>(args, tmp_buf);
     } else {

@@ -136,6 +136,9 @@ init_variables() {
   INSTALL_PREFIX=""
   COVERAGE="OFF"
   SHMEM_BUILD_TEMPLATE="OFF"
+  BISHENGIR_SHMEM_RELAY_SUPPORT="OFF"
+  BISHENGIR_SHMEM_RDMA_BACKEND="IN_DIE"
+  SHMEM_CMAKE_OPTIONS=()
   COLLECT_BINARY="OFF"
   ENABLE_BSPUB="ON"
 
@@ -169,6 +172,8 @@ usage() {
                 [-o | --build PATH]
                 [-t | --build-bishengir-template]
                 [--build-shmem-template]
+                [--shmem-relay-support ON|OFF]
+                [--shmem-rdma-backend IN_DIE|XSCALE|HNS_1825]
                 [--build-bishengir-doc]
                 [--build-test]
                 [--build-type BUILD_TYPE]
@@ -200,6 +205,9 @@ usage() {
       --build-bishengir-doc                Whether to build BiShengIR documentation. (Default: disabled)
       -t, --build-bishengir-template       Whether to build BiShengIR template. (Default: disabled)
       --build-shmem-template               Whether to build shmem template. (Default: disabled)
+      --shmem-relay-support ON|OFF         Enable C310 relay wrappers; must match the SHMEM runtime. (Default: OFF)
+      --shmem-rdma-backend BACKEND         SHMEM RoCE backend: IN_DIE, XSCALE, or HNS_1825; must match the runtime.
+                                           QP APIs require XSCALE or HNS_1825. (Default: IN_DIE)
       -build-test                          Whether to build bishengir-test (Default: disabled)
       --build-type BUILD_TYPE              Specifies the build type. (Default: Release)
       --build-torch-mlir                   Whether to build torch-mlir. (Default: disabled)
@@ -300,6 +308,44 @@ parse_arguments() {
             --build-shmem-template)
                 SHMEM_BUILD_TEMPLATE="ON"
                 shift
+                ;;
+            --shmem-relay-support|--shmem-relay-support=*)
+                if [[ "$1" == *=* ]]; then
+                    BISHENGIR_SHMEM_RELAY_SUPPORT="${1#*=}"
+                    shift
+                else
+                    if [[ -z "$2" || "$2" == -* ]]; then
+                        echo "Error: --shmem-relay-support requires ON or OFF" >&2
+                        exit 1
+                    fi
+                    BISHENGIR_SHMEM_RELAY_SUPPORT="$2"
+                    shift 2
+                fi
+                BISHENGIR_SHMEM_RELAY_SUPPORT="${BISHENGIR_SHMEM_RELAY_SUPPORT^^}"
+                case "$BISHENGIR_SHMEM_RELAY_SUPPORT" in
+                    ON|OFF) ;;
+                    *) echo "Error: --shmem-relay-support requires ON or OFF" >&2; exit 1 ;;
+                esac
+                SHMEM_CMAKE_OPTIONS+=("-DBISHENGIR_SHMEM_RELAY_SUPPORT=${BISHENGIR_SHMEM_RELAY_SUPPORT}")
+                ;;
+            --shmem-rdma-backend|--shmem-rdma-backend=*)
+                if [[ "$1" == *=* ]]; then
+                    BISHENGIR_SHMEM_RDMA_BACKEND="${1#*=}"
+                    shift
+                else
+                    if [[ -z "$2" || "$2" == -* ]]; then
+                        echo "Error: --shmem-rdma-backend requires IN_DIE, XSCALE, or HNS_1825" >&2
+                        exit 1
+                    fi
+                    BISHENGIR_SHMEM_RDMA_BACKEND="$2"
+                    shift 2
+                fi
+                BISHENGIR_SHMEM_RDMA_BACKEND="${BISHENGIR_SHMEM_RDMA_BACKEND^^}"
+                case "$BISHENGIR_SHMEM_RDMA_BACKEND" in
+                    IN_DIE|XSCALE|HNS_1825) ;;
+                    *) echo "Error: --shmem-rdma-backend requires IN_DIE, XSCALE, or HNS_1825" >&2; exit 1 ;;
+                esac
+                SHMEM_CMAKE_OPTIONS+=("-DBISHENGIR_SHMEM_RDMA_BACKEND=${BISHENGIR_SHMEM_RDMA_BACKEND}")
                 ;;
             --build-bishengir-doc)
                 BUILD_BISHENGIR_DOC="ON"
@@ -721,6 +767,8 @@ cmake_generate() {
     -DBISHENGIR_BUILD_TEMPLATE="${BISHENGIR_BUILD_TEMPLATE}" \
     -DBISHENGIR_OPTIMIZE_TEMPLATE_BITCODE="${BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE}" \
     -DSHMEM_BUILD_TEMPLATE="${SHMEM_BUILD_TEMPLATE}" \
+    -DBISHENGIR_SHMEM_RELAY_SUPPORT="${BISHENGIR_SHMEM_RELAY_SUPPORT}" \
+    -DBISHENGIR_SHMEM_RDMA_BACKEND="${BISHENGIR_SHMEM_RDMA_BACKEND}" \
     ${HIVMC_BUILD_OPTION} \
     ${CMAKE_OPTIONS}
 }
@@ -821,6 +869,10 @@ main() {
     echo "First build, generating CMake configuration..."
     mkdir -p "${BUILD_DIR}"
     cmake_generate
+  elif [[ ${#SHMEM_CMAKE_OPTIONS[@]} -gt 0 ]]; then
+    echo "Updating SHMEM configuration..."
+    # Preserve cached compiler/template settings and options not supplied here.
+    cmake "${BUILD_DIR}" "${SHMEM_CMAKE_OPTIONS[@]}"
   fi
 
   cmake_build

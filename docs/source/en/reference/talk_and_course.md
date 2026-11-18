@@ -12,7 +12,7 @@ This document collects the public talks related to AscendNPU IR and the course l
 
 ## Public Talks on Bilibili
 
-### AscendNPU-IR SIG biweekly meeting (BiSheng Compiler account)
+### AscendNPU-IR SIG biweekly meeting (Bisheng Compiler Account)
 
 - [2025-11-27 AscendNPU-IR SIG biweekly meeting](https://www.bilibili.com/video/BV1MZui6kEpB)
 - [2026-01-22 AscendNPU-IR SIG biweekly meeting](https://www.bilibili.com/video/BV12Auq6MEcS)

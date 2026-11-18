@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "ArchDefs.h"
 #include "RegBase/DMAUtils.h"
 
 __aiv__ __attribute__((always_inline)) void
@@ -50,21 +51,26 @@ template <typename T, typename = std::enable_if_t<std::is_same_v<T, int64_t> ||
 __aiv__ __attribute__((always_inline)) void
 align_pad_for_load_b64_1d(memref_t<__ubuf__ T, 1> *dst, int64_t pad_value,
                           int64_t left_padding_num) {
-  const int64_t factor = sizeof(T) / sizeof(uint32_t);
-  int64_t size = dst->sizes[0];
-  constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
-  int64_t size_aligned = CEIL_FACTOR(size, num_per_block);
-  constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
-  // if size and stride is too high, we cant fit the mask so we shift
-  int64_t padding_shift_count = size_aligned / num_per_repeat;
-  if (size_aligned % num_per_repeat == 0) {
-    padding_shift_count = padding_shift_count - 1;
-  }
-  apply_padding_b64<T, 1>(dst, padding_shift_count * num_per_repeat * factor,
-                          pad_value, /*repeat=*/1, padding_shift_count);
+  apply_padding_b64<T, 1>(dst, left_padding_num,
+                          /*row_base=*/0, pad_value, /*repeat=*/1);
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
+#if BISHENG_TPL_920R1
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool canUseNddmaForOrdinaryLoad1d(
+    const memref_t<__gm__ T, 1> *src, const memref_t<__ubuf__ T, 1> *dst,
+    PadMode pad_mode, int64_t left_padding_num, AtomicKind atomic_kind) {
+  const int64_t width = src->sizes[0];
+  return pad_mode == PadMode::Null && left_padding_num == 0 &&
+         atomic_kind == AtomicKind::None && width > 0 && width <= 0xfffff &&
+         width == dst->sizes[0] && width % (128 / sizeof(T)) == 0 &&
+         src->offset >= 0 && dst->offset >= 0 &&
+         src->offset <= INT64_MAX / sizeof(T) - width &&
+         dst->offset <= INT64_MAX / sizeof(T) - width;
+}
+#endif
+
 /// Core func of loading gm -> ub, 1D
 /// UB starting address must be 32B aligned; otherwise, it degrades to looped
 /// scalar transfer: `load_gm_to_ubuf_1d_by_scalar` As long as the UB starting
@@ -75,7 +81,7 @@ align_pad_for_load_b64_1d(memref_t<__ubuf__ T, 1> *dst, int64_t pad_value,
 ///   Promote to 2D for unified handling of contiguous scenarios: `offset2D =
 ///   offset1D, size2D = [size1D[0], 1], stride2D = [stride2D[0], 1]`
 ///   `load_gm_to_ubuf_2d_core_with_contiguous_last_dim`
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
     memref_t<__gm__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst, PadMode pad_mode,
     typename PadValueType<T>::type pad_value, int64_t left_padding_num,
@@ -97,7 +103,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
 
   auto dst_ptr = dst->aligned + dst->offset;
   if (!isAddress32ByteAligned(dst_ptr)) {
-    load_gm_to_ubuf_1d_by_scalar<T>(src, dst);
+    load_gm_to_ubuf_1d_by_scalar<T, DisableDCache>(src, dst);
     return;
   }
 
@@ -105,6 +111,22 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
   const int64_t stride0_gm = src->strides[0];
   const int64_t stride0_ub = dst->strides[0];
   if (stride0_gm == 1 && stride0_ub == 1) [[likely]] {
+#if BISHENG_TPL_920R1
+    if constexpr (sizeof(T) <= 4) {
+      const int64_t width = src->sizes[0];
+      if (canUseNddmaForOrdinaryLoad1d<T>(src, dst, pad_mode,
+                                          left_padding_num, atomic_kind)) {
+        // A single row uses the existing descriptor emitter and public ABI.
+        memref_t<__gm__ T, 2> gm = {
+            src->allocated, src->aligned, src->offset, {1, width}, {width, 1}};
+        memref_t<__ubuf__ T, 2> ub = {
+            dst->allocated, dst->aligned, dst->offset, {1, width}, {width, 1}};
+        load_gm_to_ubuf_2d_by_nddma<T>(&gm, &ub, pad_mode, pad_value, 0,
+                                       l2_cache_ctl);
+        return;
+      }
+    }
+#endif
     // last dimension is contiguous
     load_gm_to_ubuf_1d_core_with_contiguous_last_dim<T>(
         src, dst, left_padding_num, l2_cache_ctl);
@@ -126,7 +148,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
 
   // last dimension of UB is contiguous but GM is not
   if ((stride0_ub == 1) && (stride0_gm != 1)) {
-    load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim<T>(
+    load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim<T, DisableDCache>(
         src, dst, left_padding_num, l2_cache_ctl);
     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
       // No need to fix zero padding, it is correct by default for b64 types
@@ -146,7 +168,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
 
   // last dimension is not contiguous,
   if (stride0_ub != 1 && !isStrideAligned<T>(stride0_ub)) {
-    load_gm_to_ubuf_1d_by_scalar<T>(src, dst);
+    load_gm_to_ubuf_1d_by_scalar<T, DisableDCache>(src, dst);
     return;
   }
   // view the src (size) with stride [stride] as viewed_src (size, 1) with
@@ -157,7 +179,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
   memref_t<__ubuf__ T, 2> ub_2d = {
       dst->allocated, dst->aligned, dst->offset, {size0, 1}, {stride0_ub, 1}};
 
-  load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
+  load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
       &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
 }
 #else
@@ -165,7 +187,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
 /// m300 arch
 ///========================================
 // core func of load gm <-> ub, 1d
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
     memref_t<__gm__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst, PadMode pad_mode,
     typename PadValueType<T>::type pad_value, int64_t left_padding_num,
@@ -212,7 +234,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
   memref_t<__ubuf__ T, 2> ub_2d = {
       dst->allocated, dst->aligned, dst->offset, {size0, 1}, {stride0_ub, 1}};
 
-  load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
+  load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
       &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
 }
 #endif
@@ -231,7 +253,7 @@ check_inputs_of_store_ubuf_to_gm_1d_core(memref_t<__ubuf__ T, 1> *src,
 #endif
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// Core func of storing ub -> gm, 1D
 /// UB starting address must be 32B aligned; otherwise, it degrades to looped
 /// scalar transfer: `store_ubuf_to_gm_1d_by_scalar` As long as the UB starting
@@ -343,7 +365,6 @@ store_ubuf_to_gm_1d_core(memref_t<__ubuf__ T, 1> *src,
   // stride [stride, 1], where last dimension of viewed_src is contiguous
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
   if (src->strides[0] != 1 && src->strides[0] % num_per_block != 0) {
-    // TODO: see "DMA/DMAUtils.h" for details.
     store_ubuf_to_gm_1d_by_scalar(src, dst);
     return;
   }
@@ -415,7 +436,7 @@ copy_ubuf_to_ubuf_1d_core(memref_t<__ubuf__ bool, 1> *src,
   copy_ubuf_to_ubuf_1d_core<int8_t>(&src_as_int8, &dst_as_int8);
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 check_inputs_of_copy_ubuf_to_cbuf_1d_core(memref_t<__ubuf__ T, 1> *src,
@@ -459,8 +480,9 @@ REGISTE_DMA_LOAD(1, int64_t);
 REGISTE_DMA_LOAD(1, uint64_t);
 REGISTE_DMA_LOAD(1, half);
 REGISTE_DMA_LOAD(1, float);
+REGISTE_DMA_LOAD(1, double);
 REGISTE_DMA_LOAD(1, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 REGISTE_DMA_LOAD_FP8(1, float8_e4m3_t);
 REGISTE_DMA_LOAD_FP8(1, float8_e5m2_t);
 #endif
@@ -478,7 +500,7 @@ REGISTE_DMA_STORE(1, uint64_t);
 REGISTE_DMA_STORE(1, half);
 REGISTE_DMA_STORE(1, float);
 REGISTE_DMA_STORE(1, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 REGISTE_DMA_STORE(1, float8_e4m3_t);
 REGISTE_DMA_STORE(1, float8_e5m2_t);
 #endif
@@ -497,7 +519,7 @@ REGISTE_DMA_UB_COPY(ubuf, ubuf, 1, uint64_t)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 1, half)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 1, float)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 1, bfloat16_t)
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 1, float8_e4m3_t);
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 1, float8_e5m2_t);
 #endif
@@ -517,7 +539,7 @@ REGISTE_COPY_UB_TO_UB_1D_FUNC(half);
 REGISTE_COPY_UB_TO_UB_1D_FUNC(float);
 REGISTE_COPY_UB_TO_UB_1D_FUNC(bfloat16_t);
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 //===-------------------------------------------------------------------===//
 // ub to cbuf, 1 dim
 //===-------------------------------------------------------------------===//

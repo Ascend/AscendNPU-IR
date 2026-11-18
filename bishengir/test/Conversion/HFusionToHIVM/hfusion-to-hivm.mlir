@@ -961,6 +961,45 @@ module {
 }
 
 // -----
+// CHECK-LABEL: func.func @test_atomic_cas_bf16
+module {
+  func.func @test_atomic_cas_bf16(%arg0: memref<?xbf16>) {
+    %alloc = memref.alloc() : memref<256xbf16>
+    %alloc_2 = memref.alloc() : memref<256xbf16>
+    // CHECK: hivm.hir.atomic_cas
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg0 to offset: [0], sizes: [256], strides: [1] : memref<?xbf16> to memref<256xbf16, strided<[1]>>
+    hfusion.atomic_cas ins(%alloc_2, %alloc : memref<256xbf16>, memref<256xbf16>) outs(%reinterpret_cast_0 : memref<256xbf16, strided<[1]>>)
+    return
+  }
+}
+
+// -----
+// CHECK-LABEL: func.func @test_atomic_cas_fp8_e4m3
+module {
+  func.func @test_atomic_cas_fp8_e4m3(%arg0: memref<?xf8E4M3FN>) {
+    %alloc = memref.alloc() : memref<256xf8E4M3FN>
+    %alloc_2 = memref.alloc() : memref<256xf8E4M3FN>
+    // CHECK: hivm.hir.atomic_cas
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg0 to offset: [0], sizes: [256], strides: [1] : memref<?xf8E4M3FN> to memref<256xf8E4M3FN, strided<[1]>>
+    hfusion.atomic_cas ins(%alloc_2, %alloc : memref<256xf8E4M3FN>, memref<256xf8E4M3FN>) outs(%reinterpret_cast_0 : memref<256xf8E4M3FN, strided<[1]>>)
+    return
+  }
+}
+
+// -----
+// CHECK-LABEL: func.func @test_atomic_cas_fp8_e5m2
+module {
+  func.func @test_atomic_cas_fp8_e5m2(%arg0: memref<?xf8E5M2>) {
+    %alloc = memref.alloc() : memref<256xf8E5M2>
+    %alloc_2 = memref.alloc() : memref<256xf8E5M2>
+    // CHECK: hivm.hir.atomic_cas
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg0 to offset: [0], sizes: [256], strides: [1] : memref<?xf8E5M2> to memref<256xf8E5M2, strided<[1]>>
+    hfusion.atomic_cas ins(%alloc_2, %alloc : memref<256xf8E5M2>, memref<256xf8E5M2>) outs(%reinterpret_cast_0 : memref<256xf8E5M2, strided<[1]>>)
+    return
+  }
+}
+
+// -----
 // CHECK-LABEL: func.func @test_atomic_xchg
 module {
   func.func @test_atomic_xchg(%arg0: memref<?xi16>) {
@@ -1154,4 +1193,29 @@ func.func @bind_sub_block_ratio_1_1(%arg0: tensor<64x64xf32> {hacc.arg_type = #h
   // CHECK-NOT: #hivm.sub_block<x>
   // CHECK-NOT: hfusion.bind_sub_block
   return
+}
+
+// -----
+// The one-dimensional RegBase cumsum template contains SIMT VFs. Keep its
+// mode even for short scans, and anticipate unit-dimension folding.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  // CHECK-LABEL: func.func @cumsum_simt_short
+  // CHECK: hivm.hir.vcumsum {{.*}}hivm.vf_mode = #hivm.vf_mode<SIMT>
+  func.func @cumsum_simt_short(%src: tensor<16xf32>) -> tensor<16xf32> {
+    %0 = hfusion.cumsum %src : tensor<16xf32> cum_dims = [0] reverse = false -> tensor<16xf32>
+    return %0 : tensor<16xf32>
+  }
+  // CHECK-LABEL: func.func @cumsum_simt_unit_outer
+  // CHECK: hivm.hir.vcumsum {{.*}}hivm.vf_mode = #hivm.vf_mode<SIMT>
+  func.func @cumsum_simt_unit_outer(%src: tensor<1x16xf32>) -> tensor<1x16xf32> {
+    %0 = hfusion.cumsum %src : tensor<1x16xf32> cum_dims = [1] reverse = false -> tensor<1x16xf32>
+    return %0 : tensor<1x16xf32>
+  }
+  // CHECK-LABEL: func.func @cumsum_static_nonunit_outer
+  // CHECK-NOT: hivm.vf_mode
+  // CHECK: hivm.hir.vcumsum ins(
+  func.func @cumsum_static_nonunit_outer(%src: tensor<8x16xf32>) -> tensor<8x16xf32> {
+    %0 = hfusion.cumsum %src : tensor<8x16xf32> cum_dims = [1] reverse = false -> tensor<8x16xf32>
+    return %0 : tensor<8x16xf32>
+  }
 }

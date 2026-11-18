@@ -469,12 +469,12 @@ bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
   auto &producerGroup = AllFusedGroupBlocks[producerGroupId];
   auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
 
-  // SyncBlockSet remains a hard boundary except for the stage-0 predicate
+  // Sync set ops remain a hard boundary except for the stage-0 predicate
   // co-location pattern. That exception only sinks a pure, isolated-use
   // compare/i1 pass-through chain whose inputs remain available at the target.
   for (auto it = producerOp->getNextNode(); it != nullptr && it != consumerOp;
        it = it->getNextNode()) {
-    if (isa<hivm::SyncBlockSetOp>(it)) {
+    if (isa<hivm::SyncBlockSetOp, hivm::SyncIntraBlockSetOp>(it)) {
       if (!this->option.enablePredicateSinkAcrossSync || stage != 0 ||
           !canSinkPredicateGroupAcrossSync(producerGroupId, consumerGroupId,
                                            consumerOp))

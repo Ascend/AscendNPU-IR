@@ -100,9 +100,13 @@ private:
   /// this manager. It must not capture `this`, only `policyState`.
   ///
   /// Order of checks for a PassExecutionAction:
-  ///   1. Aiv-mode global denylist (PassExecutionPolicy::shouldSkipGlobally)
+  ///   1. Aiv-mode global denylist (PassExecutionPolicy::shouldSkipGlobally).
+  ///      A registered Aiv substitute runs instead; otherwise the pass is
+  ///      skipped.
   ///   2. Per-op annotation.filter_passes (FilterPassesAttr) whitelist
-  /// Both are bypassed for adaptor passes (empty pass argument).
+  ///   3. After a pass that ran, the classify-kernel callback when its
+  ///      argument was registered with registerClassifyKernelPasses
+  /// Both filters are bypassed for adaptor passes (empty pass argument).
   void initializeActionHandler(mlir::MLIRContext *ctx);
 };
 

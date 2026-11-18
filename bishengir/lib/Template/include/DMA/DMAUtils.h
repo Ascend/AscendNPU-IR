@@ -303,9 +303,10 @@ store_ubuf_to_gm_intrin_core(__ubuf__ T *ub_ptr, int64_t ub_offset,
               0, burst_cnt, burst_len, 0, 0, src_gap, dst_gap);
   } else if constexpr (bytes == BYTES_B64) {
     int32_t factor = 2;
-    INTRINSIC(copy_ubuf_to_gm_align_b32, gm_ptr + gm_offset * factor,
-              ub_ptr + ub_offset * factor, 0, burst_cnt, burst_len, 0, 0,
-              src_gap, dst_gap);
+    INTRINSIC(copy_ubuf_to_gm_align_b32,
+              ((__gm__ int32_t *)gm_ptr) + gm_offset * factor,
+              ((__ubuf__ int32_t *)ub_ptr) + ub_offset * factor, 0, burst_cnt,
+              burst_len, 0, 0, src_gap, dst_gap);
   }
 }
 

@@ -954,6 +954,22 @@ module {
 }
 
 // -----
+// f64 -> f32 is a software cast provided by the vector template library
+// (the device has no fp64 lanes and no __truncdfsf2).
+module {
+  // CHECK-LABEL: func.func @test_vcast_double_to_float_1d
+  func.func @test_vcast_double_to_float_1d() attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %f64 = memref.alloc() : memref<16xf64>
+    %f32 = memref.alloc() : memref<16xf32>
+
+    // CHECK: call @vcast_double_to_float_1d_with_mode
+    hivm.hir.vcast ins(%f64 : memref<16xf64>) outs(%f32 : memref<16xf32>)
+                   round_mode = #hivm.round_mode<rint>
+    return
+  }
+}
+
+// -----
 module {
   // CHECK: func.func private @vcast_bfloat16_t_to_float_2d_with_mode(memref<{{.*}}>, memref<{{.*}}>, i32)
   // CHECK: func.func private @vcast_bfloat16_t_to_int32_t_2d_with_mode(memref<{{.*}}>, memref<{{.*}}>, i32)
@@ -2789,6 +2805,42 @@ module {
     // CHECK: call @mma_tile_half_to_float_hf32
     hivm.hir.mmadL1{enable_HF32} ins(%ma, %mb, %init, %c16, %c16, %c16: memref<16x16xf16>, memref<16x16xf16>, i1, index, index, index)
                          outs(%mc : memref<16x16xf32>)
+    return
+  }
+}
+
+// -----
+// F64 indirect loads use the RegBase SIMT templates, which support ranks 1-5.
+// CHECK-LABEL: func @test_f64_indirect_load
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_f64_indirect_load(
+      %src: memref<?xf64>, %indices1: memref<16xi32>,
+      %indices2: memref<4x16xi64>, %mask1: memref<16xi1>,
+      %mask2: memref<4x16xi1>, %other1: memref<16xf32>,
+      %other2: memref<4x16xf32>) {
+    %dst1 = memref.alloc() : memref<16xf64>
+    %dst2 = memref.alloc() : memref<4x16xf64>
+    // CHECK: call @indirect_load_1d_double_int32_t_float
+    hivm.hir.indirect_load ins(%src : memref<?xf64>, %indices1 : memref<16xi32>, %mask1 : memref<16xi1>, %other1 : memref<16xf32>) outs(%dst1 : memref<16xf64>)
+    // CHECK: call @indirect_load_2d_double_int64_t_float
+    hivm.hir.indirect_load ins(%src : memref<?xf64>, %indices2 : memref<4x16xi64>, %mask2 : memref<4x16xi1>, %other2 : memref<4x16xf32>) outs(%dst2 : memref<4x16xf64>)
+    return
+  }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_f64_indirect_load_mixed_fallbacks(
+      %src: memref<?xf64>, %indices: memref<16xi32>, %mask: memref<16xi1>,
+      %other32: memref<16xf32>, %other64: memref<16xf64>,
+      %dst32: memref<16xf64>, %dst64: memref<16xf64>) {
+    // CHECK-DAG: func.func private @indirect_load_1d_double_int32_t_float(memref<?xf64{{.*}}, memref<?xi32{{.*}}, memref<?xf64{{.*}}, memref<?xi1{{.*}}, memref<?xf32
+    // CHECK-DAG: func.func private @indirect_load_1d_double_int32_t(memref<?xf64{{.*}}, memref<?xi32{{.*}}, memref<?xf64{{.*}}, memref<?xi1{{.*}}, memref<?xf64
+    // CHECK-LABEL: func @test_f64_indirect_load_mixed_fallbacks
+    // CHECK: call @indirect_load_1d_double_int32_t_float
+    hivm.hir.indirect_load ins(%src : memref<?xf64>, %indices : memref<16xi32>, %mask : memref<16xi1>, %other32 : memref<16xf32>) outs(%dst32 : memref<16xf64>)
+    // CHECK: call @indirect_load_1d_double_int32_t
+    hivm.hir.indirect_load ins(%src : memref<?xf64>, %indices : memref<16xi32>, %mask : memref<16xi1>, %other64 : memref<16xf64>) outs(%dst64 : memref<16xf64>)
     return
   }
 }

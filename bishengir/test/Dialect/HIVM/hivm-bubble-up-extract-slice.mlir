@@ -868,6 +868,22 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 }
 
 // -----
+// The sliced retarget must keep the pre-quant scale operand.
+// CHECK-LABEL: func.func @bubble_up_hivm_fixpipe_keeps_quant_scale
+// CHECK:           %[[VAL_1:.*]] = tensor.empty() : tensor<64x128xf32>
+// CHECK:           %[[VAL_2:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>} ins(%{{.*}} : tensor<128x128xf32>) outs(%[[VAL_1:.*]] : tensor<64x128xf32>) quant_scale = %{{.*}} : f32 dual_dst_mode = <ROW_SPLIT> -> tensor<64x128xf32>
+// CHECK:           return %[[VAL_2:.*]] : tensor<64x128xf32>
+// CHECK:         }
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @bubble_up_hivm_fixpipe_keeps_quant_scale(%arg0 : tensor<128x128xf32>, %scale : f32) -> tensor<64x128xf32> {
+    %0 = tensor.empty() : tensor<128x128xf32>
+    %1 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>} ins(%arg0 : tensor<128x128xf32>) outs(%0 : tensor<128x128xf32>) quant_scale = %scale : f32 -> tensor<128x128xf32>
+    %extracted_slice = tensor.extract_slice %1[0, 0] [64,128] [1,1] {to_be_bubbled_slice} : tensor<128x128xf32> to tensor<64x128xf32>
+    return %extracted_slice : tensor<64x128xf32>
+  }
+}
+
+// -----
 // CHECK-LABEL:   func.func @bubble_up_hivm_bitcast_1d_static(
 // CHECK-SAME:                                                %[[VAL_0:.*]]: tensor<64xf32>) -> tensor<32xi32> {
 // CHECK:           %[[VAL_1:.*]] = tensor.extract_slice %[[VAL_0]][0] [32] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<32xf32>
@@ -1198,6 +1214,37 @@ func.func @bubble_up_extract_of_insert_same_dim_dynamic(
 }
 
 // -----
+// Extract/insert with a non-zero offset must be rewritten into the tiled
+// coordinate space. Keeping the original offset on the tiled tensor is OOB.
+// CHECK-LABEL:   func.func @bubble_up_extract_of_insert_same_dim_dynamic_offset(
+// CHECK-SAME:           %[[SRC:.*]]: tensor<16xf32>, %[[DST:.*]]: tensor<16xf32>, %[[OFF:.*]]: index, %[[SIZE:.*]]: index, %[[TILE:.*]]: index)
+// CHECK:           %[[C8:.*]] = arith.constant 8 : index
+// CHECK:           %[[TSRC:.*]] = tensor.extract_slice %[[SRC]]{{\[}}%[[TILE]]] [8] [1] {to_be_bubbled_slice} : tensor<16xf32> to tensor<8xf32>
+// CHECK:           %[[TILE_UB:.*]] = arith.addi %[[TILE]], %[[C8]] : index
+// CHECK:           %[[CUR_UB:.*]] = arith.addi %[[OFF]], %[[SIZE]] : index
+// CHECK:           %[[LB:.*]] = arith.maxsi %[[OFF]], %[[TILE]] : index
+// CHECK:           %[[UB:.*]] = arith.minsi %[[CUR_UB]], %[[TILE_UB]] : index
+// CHECK:           %[[CLAMPED:.*]] = arith.maxsi %[[LB]], %[[UB]] : index
+// CHECK:           %[[LOCAL_SIZE:.*]] = arith.subi %[[CLAMPED]], %[[LB]] : index
+// CHECK:           %[[LOCAL_OFF:.*]] = arith.subi %[[LB]], %[[TILE]] : index
+// CHECK:           %[[EXT:.*]] = tensor.extract_slice %[[TSRC]]{{\[}}%[[LOCAL_OFF]]] {{\[}}%[[LOCAL_SIZE]]] [1] : tensor<8xf32> to tensor<?xf32>
+// CHECK:           %[[TDST:.*]] = tensor.extract_slice %[[DST]]{{\[}}%[[TILE]]] [8] [1] {to_be_bubbled_slice} : tensor<16xf32> to tensor<8xf32>
+// CHECK:           %[[INS:.*]] = tensor.insert_slice %[[EXT]] into %[[TDST]]{{\[}}%[[LOCAL_OFF]]] {{\[}}%[[LOCAL_SIZE]]] [1] : tensor<?xf32> into tensor<8xf32>
+// CHECK:           return %[[INS]] : tensor<8xf32>
+// CHECK:         }
+func.func @bubble_up_extract_of_insert_same_dim_dynamic_offset(
+    %arg0: tensor<16xf32>, %arg1: tensor<16xf32>, %off: index, %size: index,
+    %tile: index) -> tensor<8xf32> {
+  %0 = tensor.extract_slice %arg0[%off] [%size] [1]
+      : tensor<16xf32> to tensor<?xf32>
+  %1 = tensor.insert_slice %0 into %arg1[%off] [%size] [1]
+      : tensor<?xf32> into tensor<16xf32>
+  %2 = tensor.extract_slice %1[%tile] [8] [1] {to_be_bubbled_slice}
+      : tensor<16xf32> to tensor<8xf32>
+  return %2 : tensor<8xf32>
+}
+
+// -----
 // ExtractSliceBubbleUpStrategy: Extract→Extract different dim
 // Parent extracts on dim0, to_be_bubbled_slice extracts on dim1 (no overlap)
 // After bubble-up: swap extraction order, extract dim1 first then dim0
@@ -1216,6 +1263,27 @@ func.func @bubble_up_extract_of_extract_different_dim(
 }
 
 // -----
+// ExtractSliceBubbleUpStrategy: Extract→Extract different dim, dynamic source dim
+// Parent extracts dim1 with a static size from a tensor with dynamic dim1.
+// After bubble-up: the new inner slice materializes the dynamic size via
+// tensor.dim (instead of baking kDynamic into static_sizes).
+// CHECK-LABEL:   func.func @bubble_up_extract_of_extract_different_dim_dyn_src(
+// CHECK:           %[[VAL_0:.*]] = arith.constant 1 : index
+// CHECK:           %[[VAL_1:.*]] = tensor.dim %arg0, %[[VAL_0]] : tensor<4x?x16xf32>
+// CHECK:           %[[VAL_2:.*]] = tensor.extract_slice %arg0[0, 0, %arg2] [4, %[[VAL_1]], 8] [1, 1, 1] {to_be_bubbled_slice} : tensor<4x?x16xf32> to tensor<4x?x8xf32>
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_2]][0, %arg1, 0] [4, 8, 8] [1, 1, 1] : tensor<4x?x8xf32> to tensor<4x8x8xf32>
+// CHECK:           return %[[VAL_3]] : tensor<4x8x8xf32>
+// CHECK:         }
+func.func @bubble_up_extract_of_extract_different_dim_dyn_src(
+    %arg0: tensor<4x?x16xf32>, %arg1: index, %arg2: index) -> tensor<4x8x8xf32> {
+  %0 = tensor.extract_slice %arg0[0, %arg1, 0] [4, 8, 16] [1, 1, 1]
+      : tensor<4x?x16xf32> to tensor<4x8x16xf32>
+  %1 = tensor.extract_slice %0[0, 0, %arg2] [4, 8, 8] [1, 1, 1] {to_be_bubbled_slice}
+      : tensor<4x8x16xf32> to tensor<4x8x8xf32>
+  return %1 : tensor<4x8x8xf32>
+}
+
+// -----
 // ExtractSliceBubbleUpStrategy: Extract→Extract rank-reduced
 // Parent does rank-reduce (4x16x16 -> 16x16), to_be_bubbled_slice extracts from result
 // After bubble-up: extract from original tensor first, then rank-reduce
@@ -1231,6 +1299,23 @@ func.func @bubble_up_extract_of_extract_rank_reduced(
   %1 = tensor.extract_slice %0[%arg2, 0] [8, 8] [1, 1] {to_be_bubbled_slice}
       : tensor<16x16xf32> to tensor<8x8xf32>
   return %1 : tensor<8x8xf32>
+}
+
+// -----
+// ExtractSliceBubbleUpStrategy: Extract→Extract rank-reduced, dynamic parent size
+// The parent slice has a dynamic size: no bubble-up.
+// CHECK-LABEL:   func.func @no_bubble_up_extract_of_extract_rank_reduced_dyn_size(
+// CHECK:           %[[VAL_0:.*]] = tensor.extract_slice %arg0[0, %arg1, 0] [1, %arg3, 16] [1, 1, 1] : tensor<4x16x16xf32> to tensor<?x16xf32>
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice %[[VAL_0]][0, %arg2] [%arg3, 8] [1, 1] {to_be_bubbled_slice} : tensor<?x16xf32> to tensor<?x8xf32>
+// CHECK:           return %[[VAL_1]] : tensor<?x8xf32>
+// CHECK:         }
+func.func @no_bubble_up_extract_of_extract_rank_reduced_dyn_size(
+    %arg0: tensor<4x16x16xf32>, %arg1: index, %arg2: index, %arg3: index) -> tensor<?x8xf32> {
+  %0 = tensor.extract_slice %arg0[0, %arg1, 0] [1, %arg3, 16] [1, 1, 1]
+      : tensor<4x16x16xf32> to tensor<?x16xf32>
+  %1 = tensor.extract_slice %0[0, %arg2] [%arg3, 8] [1, 1] {to_be_bubbled_slice}
+      : tensor<?x16xf32> to tensor<?x8xf32>
+  return %1 : tensor<?x8xf32>
 }
 
 // -----
@@ -1254,12 +1339,22 @@ func.func @bubble_up_insert_rank_reduced(
 
 // -----
 // InsertSliceBubbleUpStrategy: Insert→Extract same dim, non-tiling, source dimSize=1
-// Insert scalar (1xf32) into tensor at offset, then extract from result
-// After bubble-up: extract from dest first, then insert scalar into extracted slice
+// Insert scalar (1xf32) into tensor at offset, then extract from result.
+// The insert offset must be rewritten into the tiled dest; keeping the
+// original offset is OOB on the extracted slice.
 // CHECK-LABEL:   func.func @bubble_up_insert_scalar_same_dim(
-// CHECK:           %[[VAL_0:.*]] = tensor.extract_slice %arg1[%arg2] [8] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<8xf32>
-// CHECK:           %[[VAL_1:.*]] = tensor.insert_slice %arg0 into %[[VAL_0]][%arg2] [1] [1] : tensor<1xf32> into tensor<8xf32>
-// CHECK:           return %[[VAL_1]] : tensor<8xf32>
+// CHECK-SAME:           %[[SRC:.*]]: tensor<1xf32>, %[[DST:.*]]: tensor<64xf32>, %[[OFF:.*]]: index)
+// CHECK:           %[[C1:.*]] = arith.constant 1 : index
+// CHECK:           %[[C8:.*]] = arith.constant 8 : index
+// CHECK:           %[[TDST:.*]] = tensor.extract_slice %[[DST]]{{\[}}%[[OFF]]] [8] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<8xf32>
+// CHECK:           %[[TILE_UB:.*]] = arith.addi %[[OFF]], %[[C8]] : index
+// CHECK:           %[[CUR_UB:.*]] = arith.addi %[[OFF]], %[[C1]] : index
+// CHECK:           %[[UB:.*]] = arith.minsi %[[CUR_UB]], %[[TILE_UB]] : index
+// CHECK:           %[[CLAMPED:.*]] = arith.maxsi %[[OFF]], %[[UB]] : index
+// CHECK:           %[[LOCAL_SIZE:.*]] = arith.subi %[[CLAMPED]], %[[OFF]] : index
+// CHECK:           %[[TSRC:.*]] = tensor.extract_slice %[[SRC]][0] {{\[}}%[[LOCAL_SIZE]]] [1] {to_be_bubbled_slice} : tensor<1xf32> to tensor<?xf32>
+// CHECK:           %[[INS:.*]] = tensor.insert_slice %[[TSRC]] into %[[TDST]][0] {{\[}}%[[LOCAL_SIZE]]] [1] : tensor<?xf32> into tensor<8xf32>
+// CHECK:           return %[[INS]] : tensor<8xf32>
 // CHECK:         }
 func.func @bubble_up_insert_scalar_same_dim(
     %arg0: tensor<1xf32>, %arg1: tensor<64xf32>, %arg2: index) -> tensor<8xf32> {
@@ -1458,6 +1553,82 @@ func.func @bubble_up_parallel_dim(%arg0 : memref<?xf32>, %offset : index) {
 
 // -----
 
+// The parallel loop walks rows. The bubbled slice cuts the trailing axis, so
+// the row trip count stays 0..16 and the GM row is sliced to the same width
+// as the destination. Applying the column offset to the row loop would make
+// the second sub-block empty and leave a 1x128 source against a 1x64 dest.
+// CHECK-LABEL:   func.func @bubble_up_parallel_loop_column_tile(
+// CHECK-DAG:       %[[C0:.*]] = arith.constant 0 : index
+// CHECK-DAG:       %[[C1:.*]] = arith.constant 1 : index
+// CHECK-DAG:       %[[C2:.*]] = arith.constant 2 : index
+// CHECK-DAG:       %[[C16:.*]] = arith.constant 16 : index
+// CHECK:           scf.for %[[SB:.*]] = %[[C0]] to %[[C2]] step %[[C1]] {
+// CHECK:             %[[COL:.*]] = affine.apply {{.*}}[%[[SB]]]
+// CHECK:             memref.alloc() : memref<16x64xf32>
+// CHECK:             scf.for %[[ROW:.*]] = %[[C0]] to %[[C16]] step %[[C1]] {
+// CHECK:               memref.subview %{{[^ ]*}}[0, %[[COL]]] [1, 64]
+// CHECK:               hivm.hir.load ins(%{{[^ ]*}} : memref<1x64xf32, strided<[128, 1], offset: ?>>) outs(%{{[^ ]*}} : memref<1x64xf32, strided<[64, 1], offset: ?>>)
+// CHECK:             } {ExtractedLoadOrStore, hivm.parallel_loop}
+func.func @bubble_up_parallel_loop_column_tile(%arg0 : memref<?xf32>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c16 = arith.constant 16 : index
+  scf.for %sb = %c0 to %c2 step %c1 {
+    %col = affine.apply affine_map<()[s0] -> (s0 * 64)>()[%sb]
+    %alloc = memref.alloc() : memref<16x128xf32>
+    scf.for %row = %c0 to %c16 step %c1 {
+      %src = memref.reinterpret_cast %arg0 to offset: [%c0], sizes: [1, 128], strides: [128, 1] : memref<?xf32> to memref<1x128xf32, strided<[128, 1], offset: ?>>
+      %dst = memref.subview %alloc[%row, 0] [1, 128] [1, 1] : memref<16x128xf32> to memref<1x128xf32, strided<[128, 1], offset: ?>>
+      hivm.hir.load ins(%src : memref<1x128xf32, strided<[128, 1], offset: ?>>) outs(%dst : memref<1x128xf32, strided<[128, 1], offset: ?>>) eviction_policy = <EvictFirst> core_type = <VECTOR>
+    } {ExtractedLoadOrStore, hivm.parallel_loop}
+    %tensor = bufferization.to_tensor %alloc restrict writable : memref<16x128xf32>
+    %slice = tensor.extract_slice %tensor[0, %col] [16, 64] [1, 1] {to_be_bubbled_slice} : tensor<16x128xf32> to tensor<16x64xf32>
+    annotation.mark %slice : tensor<16x64xf32>
+  } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+  return
+}
+
+// -----
+
+// fused_moe-style: the load dest is a nested dynamic column subview of the
+// row view. Dim 1 is dynamic so it looks like an extract of the tiled axis,
+// but the loop IV still indexes rows. Retiling the row loop from the column
+// tile empties sub-block 1 and leaves a full-width GM source.
+// CHECK-LABEL:   func.func @bubble_up_parallel_loop_nested_dynamic_column_tile(
+// CHECK-DAG:       %[[C0:.*]] = arith.constant 0 : index
+// CHECK-DAG:       %[[C1:.*]] = arith.constant 1 : index
+// CHECK-DAG:       %[[C2:.*]] = arith.constant 2 : index
+// CHECK-DAG:       %[[C16:.*]] = arith.constant 16 : index
+// CHECK:           scf.for %[[SB:.*]] = %[[C0]] to %[[C2]] step %[[C1]] {
+// CHECK:             memref.alloc() : memref<16x64xf32>
+// CHECK:             scf.for %[[ROW:.*]] = %[[C0]] to %[[C16]] step %[[C1]] {
+// CHECK:               hivm.hir.load ins(%{{[^ ]*}} : memref<1x?xf32, strided<[128, 1], offset: ?>>) outs(%{{[^ ]*}} : memref<1x?xf32, strided<[64, 1], offset: ?>>)
+// CHECK:             } {ExtractedLoadOrStore, hivm.parallel_loop}
+func.func @bubble_up_parallel_loop_nested_dynamic_column_tile(%arg0 : memref<?xf32>, %len : index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c16 = arith.constant 16 : index
+  scf.for %sb = %c0 to %c2 step %c1 {
+    %col = affine.apply affine_map<()[s0] -> (s0 * 64)>()[%sb]
+    %alloc = memref.alloc() : memref<16x128xf32>
+    scf.for %row = %c0 to %c16 step %c1 {
+      %src = memref.reinterpret_cast %arg0 to offset: [%c0], sizes: [1, 128], strides: [128, 1] : memref<?xf32> to memref<1x128xf32, strided<[128, 1], offset: ?>>
+      %dst_row = memref.subview %alloc[%row, 0] [1, 128] [1, 1] : memref<16x128xf32> to memref<1x128xf32, strided<[128, 1], offset: ?>>
+      %src_dyn = memref.subview %src[0, 0] [1, %len] [1, 1] : memref<1x128xf32, strided<[128, 1], offset: ?>> to memref<1x?xf32, strided<[128, 1], offset: ?>>
+      %dst_dyn = memref.subview %dst_row[0, 0] [1, %len] [1, 1] : memref<1x128xf32, strided<[128, 1], offset: ?>> to memref<1x?xf32, strided<[128, 1], offset: ?>>
+      hivm.hir.load ins(%src_dyn : memref<1x?xf32, strided<[128, 1], offset: ?>>) outs(%dst_dyn : memref<1x?xf32, strided<[128, 1], offset: ?>>) eviction_policy = <EvictFirst> core_type = <VECTOR>
+    } {ExtractedLoadOrStore, hivm.parallel_loop}
+    %tensor = bufferization.to_tensor %alloc restrict writable : memref<16x128xf32>
+    %slice = tensor.extract_slice %tensor[0, %col] [16, 64] [1, 1] {to_be_bubbled_slice} : tensor<16x128xf32> to tensor<16x64xf32>
+    annotation.mark %slice : tensor<16x64xf32>
+  } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+  return
+}
+
+// -----
+
 // CHECK-LABEL:   func.func @bubble_up_gather_load(
 // CHECK:           %[[NEWGATHER:.*]] = hivm.hir.gather_load
 // CHECK-SAME:        outs({{.*}} : tensor<32x16xf16>)
@@ -1515,4 +1686,35 @@ func.func @bubble_up_multi_result_not_supported(%arg0: tensor<4xi32>, %arg1: ten
   %2:2 = hivm.hir.vmulextui ins(%arg0, %arg1 : tensor<4xi32>, tensor<4xi32>) outs(%0, %1 : tensor<4xi32>, tensor<4xi32>) -> tensor<4xi32>, tensor<4xi32>
   %extracted_slice = tensor.extract_slice %2#1[1] [2] [1] {to_be_bubbled_slice} : tensor<4xi32> to tensor<2xi32>
   return %extracted_slice : tensor<2xi32>
+}
+
+// -----
+// Sequential size-1 insert_slice along the same dim that the outer extract
+// tiles. After LoopBubbleUp the dest is a half-size tile; the insert offset
+// must be rewritten from the loop IV into that tile, not kept as the global
+// IV (which is OOB for the second half of the iteration space).
+// CHECK-LABEL:   func.func @bubble_up_sequential_insert_loop_iv_offset(
+// CHECK:           %[[C32:.*]] = arith.constant 32 : index
+// CHECK:           scf.for %[[IV:.*]] = {{.*}} iter_args(%[[ACC:.*]] =
+// CHECK:             %[[LOCAL_SIZE:.*]] = arith.subi
+// CHECK:             %[[LOCAL_OFF:.*]] = arith.subi
+// CHECK:             %[[CLAMP_OFF:.*]] = arith.minsi %[[LOCAL_OFF]], %[[C32]]
+// CHECK:             %[[TSRC:.*]] = tensor.extract_slice %{{.*}}[0, 0] {{\[}}%[[LOCAL_SIZE]], 4]
+// CHECK:             tensor.insert_slice %[[TSRC]] into %[[ACC]]{{\[}}%[[CLAMP_OFF]], 0] {{\[}}%[[LOCAL_SIZE]], 4] [1, 1]
+// CHECK:             scf.yield
+func.func @bubble_up_sequential_insert_loop_iv_offset(
+    %dest: tensor<64x4xi8>, %page: tensor<1x4xi8>, %tile: index)
+    -> tensor<32x4xi8> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c64 = arith.constant 64 : index
+  %result = scf.for %iv = %c0 to %c64 step %c1
+      iter_args(%acc = %dest) -> (tensor<64x4xi8>) {
+    %ins = tensor.insert_slice %page into %acc[%iv, 0] [1, 4] [1, 1]
+        : tensor<1x4xi8> into tensor<64x4xi8>
+    scf.yield %ins : tensor<64x4xi8>
+  }
+  %slice = tensor.extract_slice %result[%tile, 0] [32, 4] [1, 1]
+      {to_be_bubbled_slice} : tensor<64x4xi8> to tensor<32x4xi8>
+  return %slice : tensor<32x4xi8>
 }

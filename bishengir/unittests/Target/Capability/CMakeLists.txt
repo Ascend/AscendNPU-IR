@@ -1,0 +1,125 @@
+# Keep this catalogue local to the unit test: no production capability or
+# dialect definitions are needed to compile the generated runtime.
+set(LLVM_TARGET_DEFINITIONS CapabilityTest.td)
+bishengir_target_tablegen(CapabilityTest.h.inc
+  -gen-target-capability-decls)
+bishengir_target_tablegen(CapabilityTest.cpp.inc
+  -gen-target-capability-defs)
+add_public_tablegen_target(BiShengIRTargetCapabilityTestIncGen)
+
+set(LLVM_LINK_COMPONENTS Support)
+add_bishengir_unittest(BiShengIRTargetCapabilityTests
+  PARTIAL_SOURCES_INTENDED
+  TargetCapabilityTest.cpp
+)
+
+target_include_directories(BiShengIRTargetCapabilityTests PRIVATE
+  ${CMAKE_CURRENT_BINARY_DIR}
+)
+add_dependencies(BiShengIRTargetCapabilityTests
+  BiShengIRNPUArchitectureIncGen
+  BiShengIRTargetCapabilityTestIncGen
+)
+target_link_libraries(BiShengIRTargetCapabilityTests PRIVATE MLIRIR)
+
+# A separate executable ensures a generic, profile-free catalogue compiles
+# without architecture headers, definitions, or generated include dependencies.
+set(LLVM_TARGET_DEFINITIONS SchemaOnlyCapabilityTest.td)
+bishengir_target_tablegen(SchemaOnlyCapabilityTest.h.inc
+  -gen-target-capability-decls)
+bishengir_target_tablegen(SchemaOnlyCapabilityTest.cpp.inc
+  -gen-target-capability-defs)
+add_public_tablegen_target(BiShengIRTargetCapabilitySchemaOnlyTestIncGen)
+
+add_bishengir_unittest(BiShengIRTargetCapabilitySchemaOnlyTests
+  PARTIAL_SOURCES_INTENDED
+  SchemaOnlyCapabilityTest.cpp
+)
+target_include_directories(BiShengIRTargetCapabilitySchemaOnlyTests PRIVATE
+  ${CMAKE_CURRENT_BINARY_DIR}
+)
+add_dependencies(BiShengIRTargetCapabilitySchemaOnlyTests
+  BiShengIRTargetCapabilitySchemaOnlyTestIncGen
+)
+target_link_libraries(BiShengIRTargetCapabilitySchemaOnlyTests PRIVATE MLIRIR)
+
+# The type-free catalogue exercises empty and parameter-only schemas without
+# type slots, type constraints, or architecture declarations.
+set(LLVM_TARGET_DEFINITIONS TypeFreeCapabilityTest.td)
+bishengir_target_tablegen(TypeFreeCapabilityTest.h.inc
+  -gen-target-capability-decls)
+bishengir_target_tablegen(TypeFreeCapabilityTest.cpp.inc
+  -gen-target-capability-defs)
+add_public_tablegen_target(BiShengIRTargetCapabilityTypeFreeTestIncGen)
+
+add_bishengir_unittest(BiShengIRTargetCapabilityTypeFreeTests
+  PARTIAL_SOURCES_INTENDED
+  TypeFreeCapabilityTest.cpp
+)
+target_include_directories(BiShengIRTargetCapabilityTypeFreeTests PRIVATE
+  ${CMAKE_CURRENT_BINARY_DIR}
+)
+add_dependencies(BiShengIRTargetCapabilityTypeFreeTests
+  BiShengIRTargetCapabilityTypeFreeTestIncGen
+)
+target_link_libraries(BiShengIRTargetCapabilityTypeFreeTests PRIVATE MLIRIR)
+
+# Production Fixpipe profiles. This target links the generated catalogue and
+# the existing pre-quant contract. It does not replace the synthetic tests.
+add_bishengir_unittest(BiShengIRFixpipeCapabilityTests
+  PARTIAL_SOURCES_INTENDED
+  FixpipeCapabilityTest.cpp
+)
+add_dependencies(BiShengIRFixpipeCapabilityTests
+  BiShengIRFixpipeCapabilityIncGen
+  BiShengIRFixpipeCapabilityBindingIncGen
+)
+target_link_libraries(BiShengIRFixpipeCapabilityTests PRIVATE
+  BiShengIRHIVMDialect
+  BiShengIRNPUFixpipeCapability
+  MLIRIR
+)
+
+add_bishengir_unittest(BiShengIRMmadCapabilityTests
+  PARTIAL_SOURCES_INTENDED
+  MmadCapabilityTest.cpp
+)
+add_dependencies(BiShengIRMmadCapabilityTests
+  BiShengIRMmadCapabilityIncGen
+  BiShengIRMmadCapabilityBindingIncGen
+)
+target_link_libraries(BiShengIRMmadCapabilityTests PRIVATE
+  BiShengIRHIVMDialect
+  BiShengIRNPUMmadCapability
+  MLIRIR
+)
+
+add_bishengir_unittest(BiShengIRCubeLoadCapabilityTests
+  PARTIAL_SOURCES_INTENDED
+  CubeLoadCapabilityTest.cpp
+)
+add_dependencies(BiShengIRCubeLoadCapabilityTests
+  BiShengIRCubeLoadCapabilityIncGen
+  BiShengIRCubeLoadCapabilityBindingIncGen
+)
+target_link_libraries(BiShengIRCubeLoadCapabilityTests PRIVATE
+  BiShengIRHIVMDialect
+  BiShengIRNPUCubeLoadCapability
+  MLIRIR
+)
+
+# Production sync profiles. The sync catalogue is its own TableGen unit
+# rooted at SyncCapabilityProfile.td and links beside the Fixpipe catalogue.
+add_bishengir_unittest(BiShengIRSyncCapabilityTests
+  PARTIAL_SOURCES_INTENDED
+  SyncCapabilityTest.cpp
+)
+add_dependencies(BiShengIRSyncCapabilityTests
+  BiShengIRSyncCapabilityIncGen
+  BiShengIRSyncCapabilityBindingIncGen
+)
+target_link_libraries(BiShengIRSyncCapabilityTests PRIVATE
+  BiShengIRHIVMDialect
+  BiShengIRNPUSyncCapability
+  MLIRIR
+)

@@ -14,7 +14,8 @@
 * limitations under the License.
 */
 
-#if defined(__DAV_C310__)
+#include "ArchDefs.h"
+#if BISHENG_TPL_REGBASE
 
 #include "__clang_cce_simt_intrinsics.h"
 #include "RegBase/VecUtils.h"
@@ -404,6 +405,30 @@ dhistv2ProcessChunkU16(DhistBins &acc, __ubuf__ uint16_t *src,
   INTRINSIC(dhistv2, acc.half[1], bytes, pred, Bin_N1);
 }
 
+// Segment-0 chunk pipeline: base 0, so the shift only adds 0, and the
+// full-chunk predicate is all-true, so the AND with it would be dead code the
+// vector unit still issues. Dropping both takes the chunk from 14 to 11 vector
+// instructions.
+__aiv__ __attribute__((always_inline)) static void
+dhistv2ProcessChunkU16Seg0(DhistBins &acc, __ubuf__ uint16_t *src) {
+  vector_bool all = pset_b8(PAT_ALL);
+  vector_u16 v0, v1;
+  vlds(v0, src, 0, NORM);       // elements 0..127
+  vlds(v1, src + 128, 0, NORM); // elements 128..255
+  // Countable iff the value fits in a byte: segment member.
+  vector_bool p0, p1, pl, ph, counted;
+  vcmps_lt(p0, v0, static_cast<uint16_t>(256), all);
+  vcmps_lt(p1, v1, static_cast<uint16_t>(256), all);
+  ppack(pl, p0, LOWER);
+  ppack(ph, p1, HIGHER);
+  psel(counted, pl, ph, pset_b8(PAT_H));
+  vector_u8 bytes;
+  vpack(bytes, v0, LOWER, MODE_ZEROING);  // segment bins of elements 0..127
+  vpack(bytes, v1, HIGHER, MODE_MERGING); // segment bins of elements 128..255
+  INTRINSIC(dhistv2, acc.half[0], bytes, counted, Bin_N0);
+  INTRINSIC(dhistv2, acc.half[1], bytes, counted, Bin_N1);
+}
+
 // Unmasked accumulation of all full 256-element chunks (512-byte stride).
 __aiv__ __attribute__((always_inline)) static void
 dhistv2AccumulateU16(DhistBins &acc, __ubuf__ uint16_t *src, int64_t fullChunks,
@@ -418,6 +443,23 @@ dhistv2AccumulateU16(DhistBins &acc, __ubuf__ uint16_t *src, int64_t fullChunks,
                                                        : left);
     for (uint16_t c = 0; c < inTile; ++c)
       dhistv2ProcessChunkU16(acc, src + (done + c) * kDhistLanes, all, negBase);
+    dhistv2Flush(acc);
+  }
+}
+
+// Segment-0 accumulation: the whole loop runs the shift-free pipeline (see
+// dhistv2ProcessChunkU16Seg0).
+__aiv__ __attribute__((always_inline)) static void
+dhistv2AccumulateU16Seg0(DhistBins &acc, __ubuf__ uint16_t *src,
+                         int64_t fullChunks) {
+  int64_t tiles = (fullChunks + kDhistFlushChunks - 1) / kDhistFlushChunks;
+  for (uint16_t t = 0; t < static_cast<uint16_t>(tiles); ++t) {
+    int64_t done = static_cast<int64_t>(t) * kDhistFlushChunks;
+    int64_t left = fullChunks - done;
+    uint16_t inTile = static_cast<uint16_t>(
+        left > kDhistFlushChunks ? kDhistFlushChunks : left);
+    for (uint16_t c = 0; c < inTile; ++c)
+      dhistv2ProcessChunkU16Seg0(acc, src + (done + c) * kDhistLanes);
     dhistv2Flush(acc);
   }
 }
@@ -629,7 +671,8 @@ dhistv2ProcessTailChunkClampMaskedU16(DhistBins &acc, __ubuf__ uint16_t *src,
 }
 
 // u16 fast path (unmasked): narrow-bins clamp when num_bins < 256, otherwise
-// segmented.
+// the segmented passes (num_bins == 256 is routed to
+// dhistv2Histogram1DU16Bins256).
 __aiv__ __attribute__((always_inline)) static void
 dhistv2Histogram1DU16(memref_t<__ubuf__ uint16_t, 1> *src,
                       memref_t<__ubuf__ int32_t, 1> *dst, int64_t num_bins) {
@@ -656,6 +699,28 @@ dhistv2Histogram1DU16(memref_t<__ubuf__ uint16_t, 1> *src,
         dhistv2Histogram1DU16Segment(acc, srcPtr, fullChunks, tail, binsPtr,
                                      num_bins, s);
     }
+  }
+}
+
+// u16 fast path for the full 256-bin range (num_bins == 256): the
+// single-segment shape of the path above, with the segment shift and the
+// full-chunk predicate AND compiled out (see dhistv2ProcessChunkU16Seg0). The
+// tail chunk keeps the general pipeline, whose count predicate is real.
+__aiv__ __attribute__((always_inline)) static void
+dhistv2Histogram1DU16Bins256(memref_t<__ubuf__ uint16_t, 1> *src,
+                             memref_t<__ubuf__ int32_t, 1> *dst) {
+  __ubuf__ uint16_t *srcPtr = src->aligned + src->offset;
+  __ubuf__ int32_t *binsPtr = dst->aligned + dst->offset;
+  int64_t fullChunks = src->sizes[0] >> 8;
+  int64_t tail = src->sizes[0] - (fullChunks << 8);
+  __VEC_SCOPE__ {
+    DhistBins acc;
+    dhistv2Init(acc);
+    dhistv2AccumulateU16Seg0(acc, srcPtr, fullChunks);
+    if (tail > 0)
+      dhistv2ProcessTailChunkU16(acc, srcPtr + fullChunks * kDhistLanes, tail,
+                                 0);
+    dhistv2StoreBins(acc, binsPtr, kDhistLanes);
   }
 }
 
@@ -718,10 +783,9 @@ dhistv2Histogram1DMaskedU16(memref_t<__ubuf__ uint16_t, 1> *src,
 // unsigned type; negative values map to >= 2^31 and are never counted for
 // the bins thresholds considered here).
 //
-// u64/s64 inputs stay on the SIMT path: ccec provides no 64-bit vector
-// types (vpack tops out at u32 -> u16), and the interleaved lo/hi u32
-// halves of in-memory u64 values cannot be de-interleaved or cross-lane
-// checked with the available predicate operations.
+// u64/s64 inputs only run dhistv2 while num_bins <= kDhistLanes, through the
+// vector_2xvl_u64 layout (see the u64 section below); wider histograms stay
+// on the SIMT path.
 
 // Count predicate keeping the first `lanes` u32 lanes of a chunk. The
 // predicate applies to the packed 256-byte vector, so plt_b8 directly
@@ -981,6 +1045,81 @@ dhistv2ProcessTailChunkClampMaskedU32(DhistBins &acc, __ubuf__ uint32_t *src,
   dhistv2ProcessChunkClampU32(acc, src, combined, sentinel);
 }
 
+// Small-bins chunk pipeline (numBins <= 256, no user mask, no tail): the
+// register-level form of "convert the input to u8 first, then run the byte
+// histogram". Out-of-range values (unsigned v >= numBins, so sign-bit values
+// wrap far above numBins and drop out) are kept out of the exported bins by
+// the cheapest mechanism the bin budget allows:
+//
+// * numBins < 256 (park): in-range values keep their low byte; out-of-range
+//   values are parked at 0xFFFFFFFF whose truncated bin is 0xFF, and both
+//   dhistv2 calls run with the all-true predicate. Parking is exact because
+//   the masked store in histogram_256_i32_dhistv2 never writes bins >=
+//   numBins, so parked elements are silently dropped.
+//
+// * numBins == 256 (predicate mask): no spare bin exists for parking, so the
+//   values pass through unmodified and the dhistv2 lane predicate excludes
+//   the out-of-range lanes from both halves.
+template <bool Mask256>
+__aiv__ __attribute__((always_inline)) static void
+dhistv2ProcessChunkU32SmallBins(DhistBins &acc, __ubuf__ uint32_t *src,
+                                uint32_t numBins) {
+  vector_bool all = pset_b8(PAT_ALL);
+  vector_u32 v0, v1, v2, v3;
+  vlds(v0, src, 0, NORM);       // elements 0..63
+  vlds(v1, src + 64, 0, NORM);  // elements 64..127
+  vlds(v2, src + 128, 0, NORM); // elements 128..191
+  vlds(v3, src + 192, 0, NORM); // elements 192..255
+  // In-range iff v < numBins (unsigned compare).
+  vector_bool q0, q1, q2, q3;
+  vcmps_lt(q0, v0, numBins, all);
+  vcmps_lt(q1, v1, numBins, all);
+  vcmps_lt(q2, v2, numBins, all);
+  vcmps_lt(q3, v3, numBins, all);
+  vector_bool pred = all; // parked lanes need no predicate of their own
+  if constexpr (Mask256) {
+    vector_bool ml, mh, m01, m23, pl, ph;
+    ppack(ml, q0, LOWER);
+    ppack(mh, q1, HIGHER);
+    psel(m01, ml, mh, pset_b8(PAT_H));
+    ppack(ml, q2, LOWER);
+    ppack(mh, q3, HIGHER);
+    psel(m23, ml, mh, pset_b8(PAT_H));
+    ppack(pl, m01, LOWER);
+    ppack(ph, m23, HIGHER);
+    psel(pred, pl, ph, pset_b8(PAT_H));
+  } else {
+    vector_u32 parked;
+    vdup(parked, 0xFFFFFFFFu, all, MODE_ZEROING);
+    vsel(v0, v0, parked, q0);
+    vsel(v1, v1, parked, q1);
+    vsel(v2, v2, parked, q2);
+    vsel(v3, v3, parked, q3);
+  }
+  // Low bytes of the (parked) values = bins of elements 0..255.
+  vector_u16 w0, w1;
+  vpack(w0, v0, LOWER, MODE_ZEROING); // elements 0..127
+  vpack(w0, v1, HIGHER, MODE_MERGING);
+  vpack(w1, v2, LOWER, MODE_ZEROING); // elements 128..255
+  vpack(w1, v3, HIGHER, MODE_MERGING);
+  vector_u8 bytes;
+  vpack(bytes, w0, LOWER, MODE_ZEROING);
+  vpack(bytes, w1, HIGHER, MODE_MERGING);
+  INTRINSIC(dhistv2, acc.half[0], bytes, pred, Bin_N0);
+  INTRINSIC(dhistv2, acc.half[1], bytes, pred, Bin_N1);
+}
+
+// Accumulate every chunk of the small-bins path. No flush is needed: the gate
+// caps the source at 65280 elements, so no u16 lane can overflow.
+template <bool Mask256>
+__aiv__ __attribute__((always_inline)) static void
+dhistv2AccumulateU32SmallBins(DhistBins &acc, __ubuf__ uint32_t *src,
+                              uint16_t chunks, uint32_t numBins) {
+  for (uint16_t chunk = 0; chunk < chunks; ++chunk)
+    dhistv2ProcessChunkU32SmallBins<Mask256>(acc, src + chunk * kDhistLanes,
+                                             numBins);
+}
+
 // u32 fast path (unmasked): narrow-bins clamp when num_bins < 256, otherwise
 // segmented.
 __aiv__ __attribute__((always_inline)) static void
@@ -1042,6 +1181,235 @@ dhistv2Histogram1DMaskedU32(memref_t<__ubuf__ uint32_t, 1> *src,
   }
 }
 
+//===-------------------------------------------------------------------===//
+// dhistv2 small-bins fast path for u64/s64 histograms (num_bins <= 256)
+//===-------------------------------------------------------------------===//
+// 64-bit inputs reach the byte pipeline through vector_2xvl_u64, whose layout
+// is `vector_u32 val[2]` with val[0] = low 32 bits and val[1] = high 32 bits
+// of every lane: the u64 -> u32 narrowing is the val[0] field, free of any
+// cast instruction. The 64-bit vlds de-interleaves the two words during the
+// load itself (DIST_DINTLV_B32), so a 256-element chunk is four vlds of 64
+// lanes, exactly like the u32 pipeline.
+//
+// A value reaches a bin below 256 only when its high word is zero AND its low
+// word is below num_bins, so one vcmps_eq ANDed with one vcmps_lt per 64-lane
+// group is the whole range test. That also covers s64: negative values have
+// bit 63 set, hence a non-zero high word, and are never counted — the same
+// contract as the SIMT path's unsigned bit-pattern cast. Out-of-range values
+// are parked or masked exactly as in the u32 small-bins pipeline: parking at
+// 0xFFFFFFFF (bin 0xFF, never exported) when num_bins < 256 leaves a spare
+// bin, otherwise the ppack/psel merge chain builds the predicate.
+
+// Range predicate of one 64-lane group: q = high word is zero AND low word <
+// numBins. `lo`/`hi` are the two words of one vector_2xvl_u64 value.
+__aiv__ __attribute__((always_inline)) static void
+dhistv2U64RangePred(vector_u32 &lo, vector_u32 &hi, vector_bool &q,
+                    uint32_t numBins, vector_bool all) {
+  vector_bool z, lt;
+  vcmps_eq(z, hi, 0u, all);
+  vcmps_lt(lt, lo, numBins, all);
+  pand(q, lt, z, all);
+}
+
+// num_bins < 256 chunk pipeline: parked lanes carry no predicate of their own,
+// so `active` (tail count / packed mask) goes straight to both dhistv2 calls.
+__aiv__ __attribute__((always_inline)) static void
+dhistv2ProcessChunkU64Park(DhistBins &acc, __ubuf__ uint64_t *src,
+                           uint32_t numBins, vector_bool active) {
+  vector_bool all = pset_b8(PAT_ALL);
+  vector_2xvl_u64 v0, v1, v2, v3;
+  vlds(v0, src, 0);       // elements 0..63
+  vlds(v1, src + 64, 0);  // elements 64..127
+  vlds(v2, src + 128, 0); // elements 128..191
+  vlds(v3, src + 192, 0); // elements 192..255
+  vector_bool q0, q1, q2, q3;
+  dhistv2U64RangePred(v0.val[0], v0.val[1], q0, numBins, all);
+  dhistv2U64RangePred(v1.val[0], v1.val[1], q1, numBins, all);
+  dhistv2U64RangePred(v2.val[0], v2.val[1], q2, numBins, all);
+  dhistv2U64RangePred(v3.val[0], v3.val[1], q3, numBins, all);
+  vector_u32 parked, p0, p1, p2, p3;
+  vdup(parked, 0xFFFFFFFFu, all, MODE_ZEROING);
+  vsel(p0, v0.val[0], parked, q0);
+  vsel(p1, v1.val[0], parked, q1);
+  vsel(p2, v2.val[0], parked, q2);
+  vsel(p3, v3.val[0], parked, q3);
+  // Low bytes of the (parked) low words = bins of elements 0..255.
+  vector_u16 w0, w1;
+  vpack(w0, p0, LOWER, MODE_ZEROING); // elements 0..127
+  vpack(w0, p1, HIGHER, MODE_MERGING);
+  vpack(w1, p2, LOWER, MODE_ZEROING); // elements 128..255
+  vpack(w1, p3, HIGHER, MODE_MERGING);
+  vector_u8 bytes;
+  vpack(bytes, w0, LOWER, MODE_ZEROING);
+  vpack(bytes, w1, HIGHER, MODE_MERGING);
+  INTRINSIC(dhistv2, acc.half[0], bytes, active, Bin_N0);
+  INTRINSIC(dhistv2, acc.half[1], bytes, active, Bin_N1);
+}
+
+// num_bins == 256 chunk pipeline: the values pass through unmodified and the
+// merge chain builds the counted predicate, which `active` then narrows.
+__aiv__ __attribute__((always_inline)) static void
+dhistv2ProcessChunkU64Mask256(DhistBins &acc, __ubuf__ uint64_t *src,
+                              vector_bool active) {
+  vector_bool all = pset_b8(PAT_ALL);
+  vector_2xvl_u64 v0, v1, v2, v3;
+  vlds(v0, src, 0);       // elements 0..63
+  vlds(v1, src + 64, 0);  // elements 64..127
+  vlds(v2, src + 128, 0); // elements 128..191
+  vlds(v3, src + 192, 0); // elements 192..255
+  vector_bool q0, q1, q2, q3;
+  dhistv2U64RangePred(v0.val[0], v0.val[1], q0, kDhistLanes, all);
+  dhistv2U64RangePred(v1.val[0], v1.val[1], q1, kDhistLanes, all);
+  dhistv2U64RangePred(v2.val[0], v2.val[1], q2, kDhistLanes, all);
+  dhistv2U64RangePred(v3.val[0], v3.val[1], q3, kDhistLanes, all);
+  vector_bool ml, mh, m01, m23, pl, ph, counted, pred;
+  ppack(ml, q0, LOWER);
+  ppack(mh, q1, HIGHER);
+  psel(m01, ml, mh, pset_b8(PAT_H));
+  ppack(ml, q2, LOWER);
+  ppack(mh, q3, HIGHER);
+  psel(m23, ml, mh, pset_b8(PAT_H));
+  ppack(pl, m01, LOWER);
+  ppack(ph, m23, HIGHER);
+  psel(counted, pl, ph, pset_b8(PAT_H));
+  pand(pred, counted, active, all);
+  // Low bytes of the low words = bins of elements 0..255.
+  vector_u16 w0, w1;
+  vpack(w0, v0.val[0], LOWER, MODE_ZEROING); // elements 0..127
+  vpack(w0, v1.val[0], HIGHER, MODE_MERGING);
+  vpack(w1, v2.val[0], LOWER, MODE_ZEROING); // elements 128..255
+  vpack(w1, v3.val[0], HIGHER, MODE_MERGING);
+  vector_u8 bytes;
+  vpack(bytes, w0, LOWER, MODE_ZEROING);
+  vpack(bytes, w1, HIGHER, MODE_MERGING);
+  INTRINSIC(dhistv2, acc.half[0], bytes, pred, Bin_N0);
+  INTRINSIC(dhistv2, acc.half[1], bytes, pred, Bin_N1);
+}
+
+// u64 tail (< kDhistLanes trailing elements): one more chunk with the count
+// predicate keeping only the first `lanes` elements.
+__aiv__ __attribute__((always_inline)) static void
+dhistv2ProcessTailChunkU64SmallBins(DhistBins &acc, __ubuf__ uint64_t *src,
+                                    int64_t lanes, uint32_t numBins) {
+  vector_bool active = dhistv2CountPredU32(static_cast<uint32_t>(lanes));
+  if (numBins == kDhistLanes)
+    dhistv2ProcessChunkU64Mask256(acc, src, active);
+  else
+    dhistv2ProcessChunkU64Park(acc, src, numBins, active);
+}
+
+// Masked variant of dhistv2ProcessTailChunkU64SmallBins.
+__aiv__ __attribute__((always_inline)) static void
+dhistv2ProcessTailChunkMaskedU64SmallBins(DhistBins &acc,
+                                          __ubuf__ uint64_t *src, int64_t lanes,
+                                          __ubuf__ uint8_t *maskBytes,
+                                          int64_t chunkIdx, uint32_t numBins) {
+  vector_bool active = dhistv2CountPredU32(static_cast<uint32_t>(lanes));
+  vector_bool data = dhistv2LoadPackedMask(maskBytes, chunkIdx * 32);
+  vector_bool all = pset_b8(PAT_ALL);
+  vector_bool combined;
+  pand(combined, active, data, all);
+  if (numBins == kDhistLanes)
+    dhistv2ProcessChunkU64Mask256(acc, src, combined);
+  else
+    dhistv2ProcessChunkU64Park(acc, src, numBins, combined);
+}
+
+// Unmasked accumulation of the u64 small-bins path: the same tile walk as the
+// u8/u16/u32 paths, flushing every kDhistFlushChunks chunks so that no u16
+// partial can overflow.
+__aiv__ __attribute__((always_inline)) static void
+dhistv2AccumulateU64SmallBins(DhistBins &acc, __ubuf__ uint64_t *src,
+                              int64_t fullChunks, uint32_t numBins) {
+  vector_bool all = pset_b8(PAT_ALL);
+  int64_t tiles = (fullChunks + kDhistFlushChunks - 1) / kDhistFlushChunks;
+  for (uint16_t t = 0; t < static_cast<uint16_t>(tiles); ++t) {
+    int64_t done = static_cast<int64_t>(t) * kDhistFlushChunks;
+    int64_t left = fullChunks - done;
+    uint16_t inTile = static_cast<uint16_t>(
+        left > kDhistFlushChunks ? kDhistFlushChunks : left);
+    for (uint16_t c = 0; c < inTile; ++c) {
+      __ubuf__ uint64_t *chunkSrc = src + (done + c) * kDhistLanes;
+      if (numBins == kDhistLanes)
+        dhistv2ProcessChunkU64Mask256(acc, chunkSrc, all);
+      else
+        dhistv2ProcessChunkU64Park(acc, chunkSrc, numBins, all);
+    }
+    dhistv2Flush(acc);
+  }
+}
+
+// Masked variant of dhistv2AccumulateU64SmallBins.
+__aiv__ __attribute__((always_inline)) static void
+dhistv2AccumulateMaskedU64SmallBins(DhistBins &acc, __ubuf__ uint64_t *src,
+                                    int64_t fullChunks,
+                                    __ubuf__ uint8_t *maskBytes,
+                                    uint32_t numBins) {
+  int64_t tiles = (fullChunks + kDhistFlushChunks - 1) / kDhistFlushChunks;
+  for (uint16_t t = 0; t < static_cast<uint16_t>(tiles); ++t) {
+    int64_t done = static_cast<int64_t>(t) * kDhistFlushChunks;
+    int64_t left = fullChunks - done;
+    uint16_t inTile = static_cast<uint16_t>(
+        left > kDhistFlushChunks ? kDhistFlushChunks : left);
+    for (uint16_t c = 0; c < inTile; ++c) {
+      __ubuf__ uint64_t *chunkSrc = src + (done + c) * kDhistLanes;
+      vector_bool active = dhistv2LoadPackedMask(maskBytes, (done + c) * 32);
+      if (numBins == kDhistLanes)
+        dhistv2ProcessChunkU64Mask256(acc, chunkSrc, active);
+      else
+        dhistv2ProcessChunkU64Park(acc, chunkSrc, numBins, active);
+    }
+    dhistv2Flush(acc);
+  }
+}
+
+// u64/s64 small-bins entry (unmasked): one pass over the source, no segment
+// loop. num_bins > 256 has no 64-bit dhistv2 route and stays on the SIMT
+// path (see histogram_1d).
+__aiv__ __attribute__((always_inline)) static void
+dhistv2Histogram1DU64(memref_t<__ubuf__ uint64_t, 1> *src,
+                      memref_t<__ubuf__ int32_t, 1> *dst, int64_t num_bins) {
+  __ubuf__ uint64_t *srcPtr = src->aligned + src->offset;
+  __ubuf__ int32_t *binsPtr = dst->aligned + dst->offset;
+  int64_t fullChunks = src->sizes[0] >> 8;
+  int64_t tail = src->sizes[0] - (fullChunks << 8);
+  uint32_t numBins = static_cast<uint32_t>(num_bins);
+  __VEC_SCOPE__ {
+    DhistBins acc;
+    dhistv2Init(acc);
+    dhistv2AccumulateU64SmallBins(acc, srcPtr, fullChunks, numBins);
+    if (tail > 0)
+      dhistv2ProcessTailChunkU64SmallBins(
+          acc, srcPtr + fullChunks * kDhistLanes, tail, numBins);
+    dhistv2StoreBins(acc, binsPtr, num_bins);
+  }
+}
+
+// u64/s64 small-bins entry (masked): same single pass, each chunk gated by
+// the packed mask bitstream.
+__aiv__ __attribute__((always_inline)) static void dhistv2Histogram1DMaskedU64(
+    memref_t<__ubuf__ uint64_t, 1> *src, memref_t<__ubuf__ int32_t, 1> *dst,
+    memref_t<__ubuf__ bool, 1> *mask, int64_t num_bins) {
+  __ubuf__ uint64_t *srcPtr = src->aligned + src->offset;
+  __ubuf__ int32_t *binsPtr = dst->aligned + dst->offset;
+  __ubuf__ uint8_t *maskBytes =
+      reinterpret_cast<__ubuf__ uint8_t *>(mask->aligned + mask->offset);
+  int64_t fullChunks = src->sizes[0] / kDhistLanes;
+  int64_t tail = src->sizes[0] - fullChunks * kDhistLanes;
+  uint32_t numBins = static_cast<uint32_t>(num_bins);
+  __VEC_SCOPE__ {
+    DhistBins acc;
+    dhistv2Init(acc);
+    dhistv2AccumulateMaskedU64SmallBins(acc, srcPtr, fullChunks, maskBytes,
+                                        numBins);
+    if (tail > 0)
+      dhistv2ProcessTailChunkMaskedU64SmallBins(
+          acc, srcPtr + fullChunks * kDhistLanes, tail, maskBytes, fullChunks,
+          numBins);
+    dhistv2StoreBins(acc, binsPtr, num_bins);
+  }
+}
+
 // The dhistv2 path needs contiguous, 32-byte aligned vector accesses on src
 // and dst (vlds/vsts NORM alignment requirement). The alignment is checked on
 // the effective address (base + offset), not just the memref offset.
@@ -1079,9 +1447,9 @@ histogram_1d(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ int32_t, 1> *dst,
   // the dtype, bounds the counted value range, so u32/s32 with few bins take
   // the same path. num_bins < 256 further selects the sentinel-clamp fast
   // path (no predicate merge chain, see the clamp section); wider histograms
-  // run the segmented passes. Every other case (strided/misaligned layout,
-  // 64-bit integers, very wide histograms) keeps the original SIMT template
-  // flow.
+  // run the segmented passes. 64-bit (u64/s64) inputs with num_bins <= 256
+  // run the dhistv2 small-bins path. Every other case (strided or misaligned
+  // layout, very wide histograms) keeps the original SIMT template flow.
   if constexpr (sizeof(T) == 1) {
     auto *srcBytes = reinterpret_cast<memref_t<__ubuf__ uint8_t, 1> *>(src);
     if (dhistv2Eligible1D(srcBytes, dst)) {
@@ -1093,7 +1461,12 @@ histogram_1d(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ int32_t, 1> *dst,
     if (dhistv2Eligible1D(srcU16, dst) &&
         dhistv2SegmentEligible(num_bins, src->sizes[0],
                                kDhistMaxSegmentsU16)) {
-      dhistv2Histogram1DU16(srcU16, dst, num_bins);
+      // num_bins == 256 is the single-segment shape, so it runs the
+      // shift-free kernel.
+      if (num_bins == kDhistLanes)
+        dhistv2Histogram1DU16Bins256(srcU16, dst);
+      else
+        dhistv2Histogram1DU16(srcU16, dst, num_bins);
       return;
     }
   } else if constexpr (sizeof(T) == 4) {
@@ -1102,6 +1475,13 @@ histogram_1d(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ int32_t, 1> *dst,
         dhistv2SegmentEligible(num_bins, src->sizes[0],
                                kDhistMaxSegmentsU32)) {
       dhistv2Histogram1DU32(srcU32, dst, num_bins);
+      return;
+    }
+  } else if constexpr (sizeof(T) == 8) {
+    auto *srcU64 = reinterpret_cast<memref_t<__ubuf__ uint64_t, 1> *>(src);
+    if (num_bins > 0 && num_bins <= kDhistLanes &&
+        dhistv2Eligible1D(srcU64, dst)) {
+      dhistv2Histogram1DU64(srcU64, dst, num_bins);
       return;
     }
   }
@@ -1138,6 +1518,13 @@ histogram_1d_masked(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ int32_t, 1> 
       dhistv2Histogram1DMaskedU32(srcU32, dst, mask, num_bins);
       return;
     }
+  } else if constexpr (sizeof(T) == 8) {
+    auto *srcU64 = reinterpret_cast<memref_t<__ubuf__ uint64_t, 1> *>(src);
+    if (num_bins > 0 && num_bins <= kDhistLanes &&
+        dhistv2Eligible1D(srcU64, dst) && dhistv2MaskEligible1D(mask)) {
+      dhistv2Histogram1DMaskedU64(srcU64, dst, mask, num_bins);
+      return;
+    }
   }
   cce::async_invoke<simt_histogram_1d_masked<T>>(
     cce::dim3{MAX_THREAD_NUM},
@@ -1156,10 +1543,11 @@ histogram_256_i32_dhistv2(__ubuf__ int32_t *src, __ubuf__ int32_t *dst,
     vector_bool all = pset_b8(PAT_ALL);
     vdup(acc.half[0], static_cast<uint16_t>(0), all, MODE_ZEROING);
     vdup(acc.half[1], static_cast<uint16_t>(0), all, MODE_ZEROING);
-    for (uint16_t chunk = 0; chunk < chunks; ++chunk)
-      dhistv2ProcessChunkU32(acc,
-          reinterpret_cast<__ubuf__ uint32_t *>(src) + chunk * 256,
-          all, 0, numBins);
+    __ubuf__ uint32_t *src32 = reinterpret_cast<__ubuf__ uint32_t *>(src);
+    if (numBins == kDhistLanes)
+      dhistv2AccumulateU32SmallBins<true>(acc, src32, chunks, numBins);
+    else
+      dhistv2AccumulateU32SmallBins<false>(acc, src32, chunks, numBins);
     vector_u32 o0, o1, o2, o3;
     vunpack(o0, acc.half[0], LOWER);
     vunpack(o1, acc.half[0], HIGHER);

@@ -34,7 +34,9 @@
     - [annotation方言Passes](developer_guide/passes/annotation_passes.md)
     - [symbol方言Passes](developer_guide/passes/symbol_passes.md)
   - [关键特性]()
+    <!-- npu="950" id1 -->
     - [Vector布局分析](developer_guide/features/analyze_vector_layout.md)
+    <!-- end id1 -->
     - [自动块化](developer_guide/features/auto_blockify.md)
     - [自动展平](developer_guide/features/auto_flatten.md)
     - [自动融合与调度](developer_guide/features/hfusion_auto_schedule.md)
@@ -48,7 +50,9 @@
     - [内存对齐](developer_guide/features/stride_align.md)
     - [内存管理](developer_guide/features/plan_memory.md)
     - [多缓冲](developer_guide/features/multi_buffer.md)
+    <!-- npu="950" id2 -->
     - [规约分解优化](developer_guide/features/layout_optimizations.md)
+    <!-- end id2 -->
 - [常见问题](faq/faq.md)
 - [贡献与支持]()
   - [贡献指南](contributing_guide/contribute.md)

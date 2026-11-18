@@ -96,7 +96,9 @@ CostInfo CostModelInfoUtils::lookupConfig(const OpConfigMap &targetMap,
 const OpConfigMap &CostModelInfoUtils::getOpConfigMap(hacc::TargetDevice dev,
                                                       bool isReduction) {
 
-  if (hacc::utils::isAscend950(dev))
+  // Ascend960 shares the regbase VF architecture (and the 950 cost
+  // table) as the baseline until a dedicated 920r1 profile exists.
+  if (hacc::utils::isAscend950(dev) || hacc::utils::isAscend960(dev))
     return CostModelInfo::getInstance().getConfigMap(isReduction);
   static OpConfigMap emptyMap;
   return emptyMap;

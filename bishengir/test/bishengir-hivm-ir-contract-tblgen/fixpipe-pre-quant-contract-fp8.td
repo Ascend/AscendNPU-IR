@@ -4,7 +4,8 @@
 // RUN:   -I %p/../../../third-party/llvm-project/llvm/include \
 // RUN:   -gen-fixpipe-pre-quant-contract-defs %s | FileCheck %s
 
-include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.td"
+include
+    "bishengir/Dialect/HIVM/IR/Contracts/DMA/Fixpipe/FixpipePreQuantContract.td"
 
 // Gate: adding a dtype that is absent from the generator's C++ is a TD-only
 // change. The FP8 types are not part of the production pre-quant cases; the

@@ -40,6 +40,27 @@ func.func @test_get_sub_block_num() {
 
 // -----
 
+// Test GetCoreIdInstrOp
+// CHECK-LABEL: get_coreid
+func.func @test_get_coreid() {
+  // CHECK: %[[IDX:.*]] = "hivm.intr.hivm.GET.COREID"() : () -> i64
+  %0 = hivm.hir.get_coreid -> i64
+  return
+}
+
+// -----
+
+// Test SetCondInstrOp
+// CHECK-LABEL: set_cond
+func.func @test_set_cond() {
+  %c64 = arith.constant 64 : i64
+  // CHECK: hivm.intr.hivm.SET.COND
+  hivm.hir.set_cond %c64 : i64
+  return
+}
+
+// -----
+
 // Test AddressSpaceAttr lowering
 func.func @test_addrspaceattr_lowering() {
   // CHECK: llvm.alloca {{.*}} x f32 {alignment = 64 : i64} : (i64) -> !llvm.ptr<6>
@@ -347,28 +368,6 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>, hacc.tar
 }
 
 // -----
-func.func private @use(memref<32x128xf32>)
-// CHECK-LABEL: llvm.func @fold_marked
-// CHECK:         llvm.getelementptr
-func.func @fold_marked(%arg0: memref<32x128xf32, strided<[128, 1], offset: ?>>) {
-  %0 = memref.cast %arg0 {fold_offset_into_ptr}
-      : memref<32x128xf32, strided<[128, 1], offset: ?>> to memref<32x128xf32>
-  func.call @use(%0) : (memref<32x128xf32>) -> ()
-  return
-}
-
-// -----
-func.func private @use(memref<32x128xf32>)
-// CHECK-LABEL: llvm.func @no_fold_unmarked
-// CHECK-NOT:     llvm.getelementptr
-func.func @no_fold_unmarked(%arg0: memref<32x128xf32, strided<[128, 1], offset: ?>>) {
-  %0 = memref.cast %arg0
-      : memref<32x128xf32, strided<[128, 1], offset: ?>> to memref<32x128xf32>
-  func.call @use(%0) : (memref<32x128xf32>) -> ()
-  return
-}
-
-// -----
 module {
   // CHECK-LABEL: llvm.func @test_ssbuf_to_llvm
   // CHECK-SAME: (%[[ARG0:.*]]: i64)
@@ -404,4 +403,34 @@ module {
   ^bb2:
     return
   }
+}
+
+// CHECK-LABEL: test_ub_poison_scalar
+// CHECK-NOT: ub.poison
+// CHECK: %[[P:.*]] = llvm.mlir.poison : i32
+// CHECK: llvm.store %[[P]]
+func.func @test_ub_poison_scalar(%arg0: !llvm.ptr) {
+  %0 = ub.poison : i32
+  llvm.store %0, %arg0 : i32, !llvm.ptr
+  return
+}
+
+// -----
+
+// CHECK-LABEL: test_ub_poison_index
+// CHECK-NOT: ub.poison
+// CHECK: llvm.mlir.poison : i{{[0-9]+}}
+func.func @test_ub_poison_index() -> index {
+  %0 = ub.poison : index
+  return %0 : index
+}
+
+// -----
+
+// CHECK-LABEL: test_ub_poison_vector
+// CHECK-NOT: ub.poison
+// CHECK: llvm.mlir.poison : vector<4xf32>
+func.func @test_ub_poison_vector() -> vector<4xf32> {
+  %0 = ub.poison : vector<4xf32>
+  return %0 : vector<4xf32>
 }

@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
+#include "ArchDefs.h"
 #include "RegBase/SimtUtils.h"
 #include "Utils.h"
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// normalize log1p(x) to ln(x + 1)
 /// eg.
 /// y = hfusion elemwise unary {log1p} (x)

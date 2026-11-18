@@ -17,7 +17,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
-#include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -262,8 +262,8 @@ std::optional<ResolvedDim> resolveDynamicDimToBoundImpl(Value dim) {
         isExact = false;
         continue;
       }
-      bound = bound.has_value() ? std::min(*bound, branch->value)
-                                : branch->value;
+      bound =
+          bound.has_value() ? std::min(*bound, branch->value) : branch->value;
       if (!branch->isExact)
         isExact = false;
     }
@@ -367,13 +367,16 @@ FailureOr<int64_t> resolveDynamicDimToBound(Value dim) {
 namespace {
 struct ConstantizeBufferPass
     : public impl::ConstantizeBufferSizeBase<ConstantizeBufferPass> {
+  using Base = impl::ConstantizeBufferSizeBase<ConstantizeBufferPass>;
+  using Base::Base;
   void runOnOperation() override;
 };
 
 template <typename AllocLikeOp>
 struct ConstantizeAllocLikeOp : public OpRewritePattern<AllocLikeOp> {
 public:
-  using OpRewritePattern<AllocLikeOp>::OpRewritePattern;
+  ConstantizeAllocLikeOp(MLIRContext *ctx, bool compareInBytes)
+      : OpRewritePattern<AllocLikeOp>(ctx), compareInBytes(compareInBytes) {}
 
   LogicalResult matchAndRewrite(AllocLikeOp op,
                                 PatternRewriter &rewriter) const override {
@@ -421,9 +424,15 @@ public:
           op, " all dynamic dimensions should be constantized");
     }
 
-    auto bufferSize = getAnnotateBufferSizeInBits(op.getResult());
-    if (bufferSize.has_value()) {
-      if (totalBits > bufferSize)
+    int64_t totalBytes = static_cast<int64_t>(
+        llvm::divideCeil(totalBits.value(), utils::kBitsToByte));
+    auto bufferSizeInBytes = getAnnotatedBufferSizeInBytes(op.getResult());
+    if (bufferSizeInBytes.has_value()) {
+      // 3160: registered / bypass kernels compare bytes vs the byte attr.
+      // Unregistered keep the historical bits-vs-byte-attr check.
+      int64_t measured =
+          compareInBytes ? totalBytes : static_cast<int64_t>(totalBits.value());
+      if (measured > bufferSizeInBytes.value())
         return rewriter.notifyMatchFailure(
             op, " constantized buffer size should not exceed set buffer size");
 
@@ -431,10 +440,8 @@ public:
       eraseAnnotateBufferSizeUsers(op.getResult(), rewriter);
     }
 
-    int64_t totalBytes = static_cast<int64_t>(
-        llvm::divideCeil(totalBits.value(), utils::kBitsToByte));
     auto newType =
-        MemRefType::get({totalBytes}, rewriter.getI8Type(), mlir::AffineMap {},
+        MemRefType::get({totalBytes}, rewriter.getI8Type(), mlir::AffineMap{},
                         currentMemRefType.getMemorySpace());
     Location loc = op->getLoc();
     auto newAlloc = rewriter.create<AllocLikeOp>(loc, newType);
@@ -447,27 +454,30 @@ public:
   }
 
 private:
-  std::optional<int64_t> getAnnotateBufferSizeInBits(Value value) const {
+  std::optional<int64_t> getAnnotatedBufferSizeInBytes(Value value) const {
     std::optional<Operation *> markMaybe =
-        utils::getAnnotateOpWithAttr(value, kBufferSizeInByteAttr);
+        utils::getAnnotateOpWithAttr(value, utils::kBufferSizeInByteAttr);
     if (!markMaybe.has_value()) {
       return std::nullopt;
     }
     auto markOp = cast<annotation::MarkOp>(markMaybe.value());
-    return markOp->getAttrOfType<IntegerAttr>(kBufferSizeInByteAttr).getInt();
+    return markOp->getAttrOfType<IntegerAttr>(utils::kBufferSizeInByteAttr)
+        .getInt();
   }
 
   void eraseAnnotateBufferSizeUsers(Value value,
                                     PatternRewriter &rewriter) const {
     SmallVector<Operation *> annotateUsers;
     llvm::for_each(value.getUsers(), [&](Operation *user) {
-      if (utils::isAnnotationWithAttr(user, kBufferSizeInByteAttr))
+      if (utils::isAnnotationWithAttr(user, utils::kBufferSizeInByteAttr))
         annotateUsers.push_back(user);
     });
 
     for (Operation *user : annotateUsers)
       rewriter.eraseOp(user);
   }
+
+  bool compareInBytes = false;
 };
 
 } // namespace
@@ -480,11 +490,16 @@ void ConstantizeBufferPass::runOnOperation() {
   RewritePatternSet patterns(&getContext());
   if (hacc::utils::isMemBasedArch(funcOp->getParentOfType<ModuleOp>()))
     patterns.add<DistributeAffineMaxOverMin>(patterns.getContext());
+  bool compareInBytes = allowLoopShapeHeuristics(
+      this->bypassShapeRegistry, funcOp.getName(), this->enablePreload,
+      this->workspaceMultiBufferNum);
   patterns.add<ConstantizeAllocLikeOp<memref::AllocOp>,
-               ConstantizeAllocLikeOp<memref::AllocaOp>>(patterns.getContext());
+               ConstantizeAllocLikeOp<memref::AllocaOp>>(patterns.getContext(),
+                                                         compareInBytes);
   (void)applyPatternsGreedily(funcOp, std::move(patterns));
 }
 
-std::unique_ptr<Pass> mlir::hivm::createConstantizeBufferSizePass() {
-  return std::make_unique<ConstantizeBufferPass>();
+std::unique_ptr<Pass> mlir::hivm::createConstantizeBufferSizePass(
+    const ConstantizeBufferSizeOptions &options) {
+  return std::make_unique<ConstantizeBufferPass>(options);
 }

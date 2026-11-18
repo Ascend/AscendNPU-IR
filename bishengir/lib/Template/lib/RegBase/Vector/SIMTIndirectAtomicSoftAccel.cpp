@@ -72,7 +72,8 @@
 // sparse offsets, prevents a single sparse lane from forcing the whole CTA back
 // to the slower GM atomic implementation, and avoids lost updates across CTAs.
 
-#if defined(__DAV_C310__)
+#include "ArchDefs.h"
+#if BISHENG_TPL_REGBASE
 
 #include "__clang_cce_simt_intrinsics.h"
 #include "RegBase/VecUtils.h"
@@ -615,4 +616,4 @@ REGISTE_INDIRECT_ATOMIC_SOFT_NO_MASK(xor, uint64_t, int64_t);
 #undef REGISTE_INDIRECT_ATOMIC_SOFT
 #undef REGISTE_INDIRECT_ATOMIC_SOFT_NO_MASK
 
-#endif // defined(__DAV_C310__)
+#endif // BISHENG_TPL_REGBASE

@@ -17,7 +17,7 @@
 #ifndef BISHENGIR_LIB_TEMPLATE_INCLUDE_CAST_UTILS_H
 #define BISHENGIR_LIB_TEMPLATE_INCLUDE_CAST_UTILS_H
 
-#include "DMA/DMAUtils.h"
+#include "RegBase/DMAUtils.h"
 #include "Utils.h"
 #include "Vector/Broadcast/BrcUtils.h"
 #include "Vector/Transpose/TransposeUtils.h"

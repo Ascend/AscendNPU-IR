@@ -2,6 +2,7 @@
 // RUN: bishengir-opt "-hivm-graph-sync-solver=solver-version=v2" -hivm-lower-multi-buffer-counter -split-input-file %s | FileCheck %s
 
 module {
+  // CHECK: func.func @test_mem_sync_solver_basic
   func.func @test_mem_sync_solver_basic(%arg0: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg1: memref<16x16x16xf16, #hivm.address_space<gm>>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
     %c16384_i64 = arith.constant 16384 : i64
     %c8192_i64 = arith.constant 8192 : i64
@@ -24,6 +25,7 @@ module {
 
 // -----
 module {
+  // CHECK: func.func @test_sync_solver_loop
   func.func @test_sync_solver_loop(%arg0: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg1: memref<16x16x16xf16, #hivm.address_space<gm>>) {
     %c16384_i64 = arith.constant 16384 : i64
     %c8192_i64 = arith.constant 8192 : i64
@@ -48,6 +50,7 @@ module {
 
 // -----
 module {
+  // CHECK: func.func @test_sync_solver_loop_nest
   func.func @test_sync_solver_loop_nest(%arg0: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg1: memref<16x16x16xf16, #hivm.address_space<gm>>) {
     %c16384_i64 = arith.constant 16384 : i64
     %c8192_i64 = arith.constant 8192 : i64
@@ -74,6 +77,7 @@ module {
 
 // -----
 module {
+  // CHECK: func.func @test_sync_solver_loop_nest_cond
   func.func @test_sync_solver_loop_nest_cond(%arg0: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg1: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg2: memref<16x16x16xf16, #hivm.address_space<gm>>) {
     %c16384_i64 = arith.constant 16384 : i64
     %c8192_i64 = arith.constant 8192 : i64
@@ -123,6 +127,7 @@ module {
 
 // -----
 module {
+  // CHECK: func.func @test_parallel_loop
   func.func @test_parallel_loop(%arg0: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg1: memref<16x16x16xf16, #hivm.address_space<gm>>) {
     %c16384_i64 = arith.constant 16384 : i64
     %c8192_i64 = arith.constant 8192 : i64
@@ -149,6 +154,7 @@ module {
 
 // -----
 module {
+  // CHECK: func.func @test_parallel_nested_loop
   func.func @test_parallel_nested_loop(%arg0: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg1: memref<16x16x16xf16, #hivm.address_space<gm>>) {
     %c16384_i64 = arith.constant 16384 : i64
     %c8192_i64 = arith.constant 8192 : i64
@@ -180,6 +186,7 @@ module {
 
 // -----
 module {
+  // CHECK: func.func @test_sync_solver_if_else
   func.func @test_sync_solver_if_else(%arg0: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg1: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg2: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg3: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg4: i1) {
     %c16384_i64 = arith.constant 16384 : i64
     %c8192_i64 = arith.constant 8192 : i64
@@ -211,6 +218,7 @@ module {
 
 // -----
 module {
+  // CHECK: func.func @test_sync_solver_if
   func.func @test_sync_solver_if(%arg0: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg1: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg2: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg3: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg4: i1) {
     %c16384_i64 = arith.constant 16384 : i64
     %c8192_i64 = arith.constant 8192 : i64
@@ -234,6 +242,7 @@ module {
 
 // -----
 module {
+  // CHECK: func.func @test_sync_solver_collapse_shape
   func.func @test_sync_solver_collapse_shape(%arg0: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg1: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg2: memref<256x16xf16, #hivm.address_space<gm>>) {
     %c8192_i64 = arith.constant 8192 : i64
     %c0_i64 = arith.constant 0 : i64
@@ -255,6 +264,7 @@ module {
 
 // -----
 module {
+  // CHECK: func.func @test_sync_solver_expand_shape
   func.func @test_sync_solver_expand_shape(%arg0: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg1: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg2: memref<2x8x16x16xf16, #hivm.address_space<gm>>) {
     %c8192_i64 = arith.constant 8192 : i64
     %c0_i64 = arith.constant 0 : i64
@@ -276,6 +286,7 @@ module {
 
 // -----
 module {
+  // CHECK: func.func @test_sync_solver_two_event_id
   func.func @test_sync_solver_two_event_id(%arg0: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg1: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg2: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg3: memref<16x16x16xf16, #hivm.address_space<gm>>) {
     %c24576_i64 = arith.constant 24576 : i64
     %c16384_i64 = arith.constant 16384 : i64
@@ -305,6 +316,7 @@ module {
 
 // -----
 module {
+  // CHECK: func.func @test_sync_solver_dyn_view_and_reinterpret_cast
   func.func @test_sync_solver_dyn_view_and_reinterpret_cast(%arg0: memref<1x?xi16, #hivm.address_space<gm>>, %arg1: memref<?x1xi16, #hivm.address_space<gm>>) {
     %c0_i64 = arith.constant 0 : i64
     %c1 = arith.constant 1 : index
@@ -327,7 +339,7 @@ module {
 // body-head load/remui/cmpi/select cascade and a body-tail addi/store
 // pair. The CHECKs below validate that new shape for scf.for parents.
 module {
-  // CHECK-LABEL: func.func @test_db_two_address(
+  // CHECK: func.func @test_db_two_address
   func.func @test_db_two_address(%arg0: memref<16xf16, #hivm.address_space<gm>>, %arg1: memref<16xf16, #hivm.address_space<gm>>) {
     %c32_i64 = arith.constant 32 : i64
     %c0_i64 = arith.constant 0 : i64
@@ -368,7 +380,7 @@ module {
 
 // -----
 module {
-  // CHECK-LABEL: func.func @test_db_two_address_two_buffer(
+  // CHECK: func.func @test_db_two_address_two_buffer
   func.func @test_db_two_address_two_buffer(%arg0: memref<16xf16, #hivm.address_space<gm>>, %arg1: memref<16xf16, #hivm.address_space<gm>>, %arg2: memref<16xf16, #hivm.address_space<gm>>, %arg3: memref<16xf16, #hivm.address_space<gm>>) {
     %c32_i64 = arith.constant 32 : i64
     %c0_i64 = arith.constant 0 : i64
@@ -425,6 +437,7 @@ module {
 
 // -----
 module {
+  // CHECK: func.func @test_mem_memref_load_store
   func.func @test_mem_memref_load_store(%arg0: memref<1024xf16, #hivm.address_space<gm>>, %arg1: memref<1024xf16, #hivm.address_space<gm>>) {
     %c2048_i64 = arith.constant 2048 : i64
     %c0 = arith.constant 0 : index
@@ -451,6 +464,7 @@ module {
 
 // -----
 module {
+  // CHECK: func.func @test_widen_sync
   func.func @test_widen_sync(%arg0: memref<1024xf16, #hivm.address_space<gm>>, %arg1: memref<1024xf16, #hivm.address_space<gm>>, %arg2: memref<1024xf16, #hivm.address_space<gm>>, %arg3: memref<1024xf16, #hivm.address_space<gm>>, %arg4: memref<1024xf16, #hivm.address_space<gm>>, %arg5: memref<1024xf16, #hivm.address_space<gm>>, %arg6: memref<1024xf16, #hivm.address_space<gm>>, %arg7: memref<1024xf16, #hivm.address_space<gm>>) {
     %c14336_i64 = arith.constant 14336 : i64
     %c12288_i64 = arith.constant 12288 : i64
@@ -537,6 +551,7 @@ module {
 
 // -----
 module {
+  // CHECK: func.func @test_sync_solver_barrier_1
   func.func @test_sync_solver_barrier_1(%arg0: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg1: memref<16x16x16xf16, #hivm.address_space<gm>>) {
     %c16384_i64 = arith.constant 16384 : i64
     %c8192_i64 = arith.constant 8192 : i64
@@ -563,6 +578,7 @@ module {
 
 // -----
 module {
+  // CHECK: func.func @test_sync_solver_barrier_2
   func.func @test_sync_solver_barrier_2(%arg0: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg1: memref<16x16x16xf16, #hivm.address_space<gm>>) {
     %c16384_i64 = arith.constant 16384 : i64
     %c8192_i64 = arith.constant 8192 : i64
@@ -583,7 +599,6 @@ module {
     hivm.hir.vadd ins(%0, %2 : memref<16x16x16xf16, #hivm.address_space<ub>>, memref<16x16x16xf16, #hivm.address_space<ub>>) outs(%0 : memref<16x16x16xf16, #hivm.address_space<ub>>)
     // CHECK-NOT: hivm.hir.pipe_barrier[<PIPE_V>]
     scf.if %true {
-      // CHECK: hivm.hir.pipe_barrier[<PIPE_V>]
       scf.for %arg3 = %c0 to %c128 step %c1 {
             scf.if %true {
                 // CHECK: hivm.hir.pipe_barrier[<PIPE_V>]
@@ -600,6 +615,7 @@ module {
 
 // -----
 module {
+  // CHECK: func.func @test_sync_for_cube
   func.func @test_sync_for_cube(%arg0: memref<16xf32, #hivm.address_space<gm>>, %arg1: memref<16xf32, #hivm.address_space<gm>>, %arg2: memref<256xf32, #hivm.address_space<gm>>) {
     %c0_i64 = arith.constant 0 : i64
     %c1_i64 = arith.constant 1 : i64
@@ -630,6 +646,7 @@ module {
 
 // -----
 module {
+  // CHECK: func.func @test_sync_for_cube_2
   func.func @test_sync_for_cube_2(%arg0: memref<16xf32, #hivm.address_space<gm>>, %arg1: memref<16xf32, #hivm.address_space<gm>>, %arg2: memref<256xf32, #hivm.address_space<gm>>) {
     %c0_i64 = arith.constant 0 : i64
     %c1_i64 = arith.constant 1 : i64
@@ -666,6 +683,7 @@ module {
 
 // -----
 module {
+  // CHECK: func.func @test_branchop_inplace
   func.func @test_branchop_inplace(%arg0: memref<16xf16, #hivm.address_space<gm>>, %arg1: memref<16xf16, #hivm.address_space<gm>>, %arg2: memref<16xf16, #hivm.address_space<gm>>, %arg3: i1) {
     %c64_i64 = arith.constant 64 : i64
     %c32_i64 = arith.constant 32 : i64
@@ -711,6 +729,7 @@ module {
 #map5 = affine_map<()[s0, s1] -> ((s0 - s1 + 15) floordiv 16)>
 #map6 = affine_map<()[s0, s1] -> (s0 + s1 + 32)>
 module {
+  // CHECK: func.func @matmul_x_w_bias_down_up_fused_layer_1_kernel_mix_aic
   func.func @matmul_x_w_bias_down_up_fused_layer_1_kernel_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16, #hivm.address_space<gm>>, %arg3: memref<?xf16, #hivm.address_space<gm>>, %arg4: memref<?xf16, #hivm.address_space<gm>>, %arg5: memref<?xf16, #hivm.address_space<gm>>, %arg6: memref<?xf16, #hivm.address_space<gm>>, %arg7: memref<?xf16, #hivm.address_space<gm>>, %arg8: i32, %arg9: i32) {
     %c2_i64 = arith.constant 2 : i64
     %c0_i64 = arith.constant 0 : i64
@@ -829,6 +848,7 @@ module {
 // -----
 #map = affine_map<(d0, d1, d2) -> (d1, d0, d2)>
 module attributes {hacc.target = #hacc.target<"Ascend910_9589"> } {
+  // CHECK: func.func @dotdot_mix_aic
   func.func @dotdot_mix_aic(%arg0: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg6: i32, %arg7: i32, %arg8: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, true, true, true, false, false, false]> : vector<9xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
     %c6336_i64 = arith.constant 6336 : i64
     %c3072_i64 = arith.constant 3072 : i64
@@ -884,6 +904,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589"> } {
 }
 
 // -----
+// CHECK: func.func @test_fix_multibuffer_case
 func.func @test_fix_multibuffer_case(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, false, false, false, false]> : vector<9xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.storage_aligned, mix_mode = "aiv", parallel_mode = "simd"} {
   %c3072_i64 = arith.constant 3072 : i64
   %c1024_i64 = arith.constant 1024 : i64

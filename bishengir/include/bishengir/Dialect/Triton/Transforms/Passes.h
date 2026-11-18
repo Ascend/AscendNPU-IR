@@ -13,6 +13,7 @@
 #define BISHENGIR_DIALECT_TRITON_TRANSFORMS_PASSES_H
 
 #include "mlir/Pass/Pass.h"
+#include <memory>
 
 namespace bishengir {
 #define GEN_PASS_DECL
@@ -24,6 +25,9 @@ namespace triton {
 /// into tensors with power of 2 dimensions
 std::unique_ptr<mlir::Pass> createConvertNonPowerTwoTensorsPass();
 
+/// Creates a pass that converts 0D tensors into 1D tensors of shape [1]
+std::unique_ptr<mlir::Pass> createConvertZeroDimTensorsPass();
+
 /// Creates wrappers and attributes for SIMT functions
 std::unique_ptr<mlir::Pass>
 createAdaptGPUKernelPass(AdaptGPUKernelOptions options = {});
@@ -31,20 +35,18 @@ createAdaptGPUKernelPass(AdaptGPUKernelOptions options = {});
 std::unique_ptr<mlir::Pass> createSIMTInsertInitAndFinishForDebugPass();
 /// Create a pass to convert llvm.frem to sub(mul(trunc(fdiv)))
 /// IR.
-std::unique_ptr<mlir::Pass>
-createDecomposeFRemPass();
+std::unique_ptr<mlir::Pass> createDecomposeFRemPass();
 /// Create a pass to add SIMT opt attribution.
 std::unique_ptr<mlir::Pass> createSetBishengirSimtOptAttrPass(
     const SetBishengirSimtOptAttrOptions &options = {});
 
-
 /// Create a pass to add SIMT opt attribution.
 std::unique_ptr<mlir::Pass> createSetAllowGlobalScratchAttrPass(
- 	const SetAllowGlobalScratchAttrOptions &options = {});
+    const SetAllowGlobalScratchAttrOptions &options = {});
 
 /// Create a pass to adapt Triton IR kernel.
-std::unique_ptr<mlir::Pass> createAdaptTritonIRKernelPass(
-    const AdaptTritonIRKernelOptions &options = {});
+std::unique_ptr<mlir::Pass>
+createAdaptTritonIRKernelPass(const AdaptTritonIRKernelOptions &options = {});
 
 /// Create a pass to batch logical Triton programs onto a limited number of
 /// physical SIMT cores.
@@ -53,7 +55,6 @@ std::unique_ptr<mlir::Pass> createSIMTAutoBlockifyPass(unsigned factor = 1);
 std::unique_ptr<mlir::Pass> createEnableAscendDPXMMAPass();
 
 std::unique_ptr<mlir::Pass> createConvertDotInputToLinearLayoutPass();
-
 
 /// Create a pass to convert f16 operations to f32 operations
 std::unique_ptr<mlir::Pass> createLegalizeF16ForTritonPass();
@@ -92,7 +93,8 @@ std::unique_ptr<mlir::Pass> createOptimizeLoadsPass();
 /// Create a pass to split loops up and tailor arange ranges
 std::unique_ptr<mlir::Pass> createLoopRestructureArangeOptimizationPass();
 
-std::unique_ptr<mlir::Pass> createGetTritonMetadataPass(const GetTritonMetadataOptions &options = {});
+std::unique_ptr<mlir::Pass>
+createGetTritonMetadataPass(const GetTritonMetadataOptions &options = {});
 
 /// Create a pass that prints the fractal zN layout mapping for a given offset.
 std::unique_ptr<mlir::Pass>
@@ -129,6 +131,15 @@ createTileDotLoadsPass(const TileDotLoadsOptions &options = {});
 /// adjacent constant-splat scale)
 std::unique_ptr<mlir::Pass> createOptimizeMathPass();
 
+/// Optimize shared expressions after SIMT auto blockification.
+std::unique_ptr<mlir::Pass> createOptimizeSIMTExpressionsPass();
+
+/// Create a pass that folds the no-op lanes of a select chain feeding a
+/// `tt.atomic_rmw` reduction (e.g. `fadd` with `0`) into the atomic's mask so
+/// those lanes are skipped. Only applies to atomic reductions with an unused
+/// result.
+std::unique_ptr<mlir::Pass> createOptimizeAtomicReductionPass();
+
 /// Run two complementary transformations on K-tile chain loops:
 ///   1. Hoist any tt.trans whose source is loop-invariant out of every
 ///      scf.for (targeted LICM specialization).
@@ -137,8 +148,8 @@ std::unique_ptr<mlir::Pass> createOptimizeMathPass();
 ///      under 70% of the kernel's SMEM budget, so the instruction
 ///      scheduler sees both chains in one body and can interleave their
 ///      issue.
-std::unique_ptr<mlir::Pass>
-createHoistAndFuseDotChainsPass(const HoistAndFuseDotChainsOptions &options = {});
+std::unique_ptr<mlir::Pass> createHoistAndFuseDotChainsPass(
+    const HoistAndFuseDotChainsOptions &options = {});
 
 #define GEN_PASS_REGISTRATION
 #include "bishengir/Dialect/Triton/Transforms/Passes.h.inc"

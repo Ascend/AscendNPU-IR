@@ -44,8 +44,8 @@ def AVE_MaskType : AVE_Type<"AVE_MaskType", "mask"> {
                         "int":$part);
   let assemblyFormat = "`<` $length `x` $mask_width `,` $layout `,` $part `>`";
 let extraClassDeclaration = [{
-    ArrayRef<int64_t> getShape() {
-      return ArrayRef { getLength() };
+    SmallVector<int64_t, 1> getShape() {
+      return {getLength()};
     }
 
     uint32_t getAveMaskWidthLength() {

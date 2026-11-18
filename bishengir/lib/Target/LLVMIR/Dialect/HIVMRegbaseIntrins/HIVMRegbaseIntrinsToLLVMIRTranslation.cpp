@@ -35,6 +35,38 @@ convertHIVMRegbaseIntrinsic(Operation &opInst, llvm::IRBuilderBase &builder,
       builder, moduleTranslation, &opInst, intrinsic, numResults,
       overloadedResults, overloadedOperands, /*immArgPositions=*/{},
       /*immArgAttrNames=*/{});
+  auto function = opInst.getParentOfType<LLVM::LLVMFuncOp>();
+  bool hasScatter =
+      function &&
+      function
+          .walk([](Operation *op) {
+            return isa<hivm_regbaseintrins::VScatterV64S32InstrOp>(op)
+                       ? WalkResult::interrupt()
+                       : WalkResult::advance();
+          })
+          .wasInterrupted();
+  if (hasScatter && inst->onlyReadsMemory()) {
+    // CANN 9.2 can reuse a pre-scatter vector load despite VST_VLD.
+    // Forget pointer invariance for reads in this VF, including loop reads
+    // and aliases. This is a compiler compatibility measure, not a fence;
+    // the AVE program must still provide the required hardware ordering.
+    llvm::IRBuilderBase::InsertPointGuard guard(builder);
+    builder.SetInsertPoint(inst);
+    for (unsigned i = 0; i < inst->arg_size(); ++i)
+      if (auto *type =
+              dyn_cast<llvm::PointerType>(inst->getArgOperand(i)->getType());
+          type && type->getAddressSpace() == 6)
+        inst->setArgOperand(
+            i, builder.CreateLaunderInvariantGroup(inst->getArgOperand(i)));
+  }
+  if (isa<hivm_regbaseintrins::VScatterV64S32InstrOp>(opInst)) {
+    // Older LLVM definitions mark the scatter destination readonly.
+    auto *callee = inst->getCalledFunction();
+    callee->removeParamAttr(1, llvm::Attribute::ReadOnly);
+    callee->addParamAttr(1, llvm::Attribute::WriteOnly);
+    inst->removeParamAttr(1, llvm::Attribute::ReadOnly);
+    inst->addParamAttr(1, llvm::Attribute::WriteOnly);
+  }
   if (numResults != 0)
     moduleTranslation.mapValue(opInst.getResult(0), inst);
 }
@@ -91,6 +123,40 @@ public:
   convertOperation(Operation *op, llvm::IRBuilderBase &builder,
                    LLVM::ModuleTranslation &moduleTranslation) const final {
     Operation &opInst = *op;
+
+    // hivm.vdintlv: the default toolchain lowers `llvm.hivm.vdintlv.<vec>`
+    // (2 results) while a toolchain that only provides the v2 form registers
+    // `llvm.hivm.vdintlvv2.<vec>(src0, src1, part) -> <vec>` where
+    // part = 0(LOWER)/1(HIGHER). When the module is flagged with the v2
+    // intrinsics attribute, split the single op into two v2 calls and
+    // reassemble the struct result; otherwise fall through to the generated
+    // conversion below to keep the original behavior.
+    if (auto vdintlvOp = dyn_cast<hivm_regbaseintrins::VDintlvInstrOp>(op)) {
+      auto moduleOp = op->getParentOfType<mlir::ModuleOp>();
+      if (moduleOp &&
+          moduleOp->hasAttr(
+              hivm_regbaseintrins::kDavinciV2IntrinsicsModuleAttrName)) {
+        auto operands = moduleTranslation.lookupValues(vdintlvOp.getOperands());
+        llvm::Value *src0 = operands[0];
+        llvm::Value *src1 = operands[1];
+        llvm::Type *vecType = src0->getType();
+        llvm::Function *fn = llvm::Intrinsic::getDeclaration(
+            builder.GetInsertBlock()->getModule(),
+            llvm::Intrinsic::HIVMIntrinsics::hivm_vdintlvv2, {vecType});
+        llvm::Value *resLo =
+            builder.CreateCall(fn, {src0, src1, builder.getInt32(0)});
+        llvm::Value *resHi =
+            builder.CreateCall(fn, {src0, src1, builder.getInt32(1)});
+        llvm::Type *structType =
+            moduleTranslation.convertType(vdintlvOp.getRes().getType());
+        llvm::Value *structVal = llvm::PoisonValue::get(structType);
+        structVal = builder.CreateInsertValue(structVal, resLo, 0);
+        structVal = builder.CreateInsertValue(structVal, resHi, 1);
+        moduleTranslation.mapValue(vdintlvOp.getRes()) = structVal;
+        return success();
+      }
+    }
+
 #include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseConversions.inc"
 
     // `hivm_regbaseintrins.launch_func` will emit two instructions:
@@ -106,9 +172,26 @@ public:
                  NamedAttribute attribute,
                  LLVM::ModuleTranslation &moduleTranslation) const final {
 
+    if (isa<LLVM::CallOp>(op) &&
+        attribute.getName() ==
+            hivm_regbaseintrins::kDavinciCallingConvAttrName &&
+        isa<hivm_regbaseintrins::SIMT_CallableAttr>(attribute.getValue())) {
+      if (instructions.size() != 1 ||
+          !llvm::isa<llvm::CallInst>(instructions.front()))
+        return op->emitError("expected a single LLVM call instruction");
+      llvm::cast<llvm::CallInst>(instructions.front())
+          ->setCallingConv(llvm::CallingConv::TPE_SIMTCallable);
+      return success();
+    }
+
     LLVM::LLVMFuncOp func = dyn_cast<LLVM::LLVMFuncOp>(op);
-    if (!func)
+    if (!func) {
+      // Module-level attributes (e.g. hivm_regbaseintrins.v2intrins) do not
+      // need per-function handling.
+      if (isa<mlir::ModuleOp>(op))
+        return success();
       return op->emitError("Attribute not applicable to non-function ops.");
+    }
 
     llvm::Function *llvmFunc = moduleTranslation.lookupFunction(func.getName());
     Attribute baseAttr = attribute.getValue();

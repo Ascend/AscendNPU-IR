@@ -1,5 +1,6 @@
 add_bishengir_dialect_library(BiShengIRHACCTransforms
   AppendDeviceSpec.cpp
+  NPUTargetSpec.cpp
   RenameFunc.cpp
 
   ADDITIONAL_HEADER_DIRS

@@ -12,6 +12,21 @@ func.func @test_get_block_idx() {
 }
 
 // -----
+// CHECK-LABEL: get_coreid
+func.func @test_get_coreid() {
+  %0 = hivm.hir.get_coreid -> i64
+  return
+}
+
+// -----
+// CHECK-LABEL: set_cond
+func.func @test_set_cond() {
+  %c64 = arith.constant 64 : i64
+  hivm.hir.set_cond %c64 : i64
+  return
+}
+
+// -----
 // CHECK-LABEL: test_mmadL0
 func.func @test_mmadL0() {
   %ma = memref.alloc() : memref<256x128xf16>

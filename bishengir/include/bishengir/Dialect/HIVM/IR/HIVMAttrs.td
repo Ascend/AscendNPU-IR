@@ -132,9 +132,21 @@ def HIVM_DataLayoutAttr : HIVM_Attr<"DataLayout", "data_layout"> {
     OptionalParameter<"DenseI64ArrayAttr">:$fractalSizes
   );
   let description = [{
-    HIVM data layout mapping attribute. Maps to DOTA_ND, DOTB_ND, DOTC_ND, zN, nZ and ND.
+    HIVM data layout mapping attribute. Specifies tensor/memref memory layout:
+      - `ND`: Natural/dense row-major layout
+      - `nZ`: Non-fractal layout optimized for matrix operands
+      - `zN`: Fractal block layout (Z-order curve)
+      - `DOTA_ND`: Matrix A layout for dot product operations
+      - `DOTB_ND`: Matrix B layout for dot product operations
+      - `DOTC_ND`: Matrix C (accumulator) layout for dot product operations
+      - `Fractal`: Generic fractal layout with configurable block sizes
+      - `NCHW`, `NC1HWC0`, `C1HWNC0`: Convolution-specific layouts
+      - `SCALEA_ND`, `SCALEB_DN`, `SCALEA_zZ`, `SCALEB_nN`: MX-format scale layouts
+
+    Parameters:
       - `transpose`: Indicates that the layout is transposed.
                      Only valid and must be present for DOTA_ND and DOTB_ND layout.
+      - `fractalSizes`: Block dimensions for fractal layouts
   }];
   let builders = [
     AttrBuilder<(ins "hivm::DataLayout":$data_layout), [{
@@ -237,8 +249,9 @@ def HIVM_AddressSpaceAttr : HIVM_Attr<"AddressSpace", "address_space",
   let assemblyFormat = "`<` params `>`";
   let description = [{
     HIVM address space mapping attribute. Maps to GM, L1, L0A, L0B, L0C, UB and SSBUF.
-    FixBUF and BiasBUF are annotation-only spaces that do not participate in
-    memory planning or scope inference.
+    FixBUF does not participate in memory planning or scope inference. BiasBUF
+    supports explicit allocation planning on A5; its scope must be specified
+    explicitly rather than inferred.
   }];
 }
 
@@ -607,6 +620,26 @@ def HIVM_EventAttr : HIVM_Attr<"Event", "event"> {
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// TRY_WAIT Synchronization Mode
+//===----------------------------------------------------------------------===//
+
+// Only the intra-block synchronization counter query is supported.
+// Other hardware modes are intentionally not exposed until validated.
+def HIVM_TRY_WAIT_INTRA_BLOCK :
+    I32EnumAttrCase<"INTRA_BLOCK", 1, "intra_block">;
+def HIVM_TryWaitSyncModeEnum : HIVM_I32Enum<
+    "TryWaitSyncMode", "Synchronization counter queried by TRY_WAIT",
+    [HIVM_TRY_WAIT_INTRA_BLOCK]>;
+def HIVM_TryWaitSyncModeAttr :
+    HIVM_I32EnumAttr<"try_wait_sync_mode", HIVM_TryWaitSyncModeEnum> {
+  let description = [{
+    `intra_block` queries the intra-block synchronization counter and lowers
+    to hardware mode 1, as documented in the Ascend950 CCE instruction
+    manual. Other query modes are not supported.
+  }];
+}
+
 def HIVM_SYNC_EVENT_SLOT_WAIT : I32EnumAttrCase<"wait", 0>;
 def HIVM_SYNC_EVENT_SLOT_SET : I32EnumAttrCase<"set", 1>;
 def HIVM_SYNC_EVENT_SLOT_INTERNAL : I32EnumAttrCase<"internal", 2>;
@@ -956,10 +989,13 @@ def HIVM_MemPlanModeEnum : HIVM_I32Enum<
 // Fixpipe
 //===----------------------------------------------------------------------===//
 
-include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.td"
+include
+    "bishengir/Dialect/HIVM/IR/Contracts/DMA/Fixpipe/FixpipePreQuantContract.td"
 
 def HIVM_FIXPIPEPREQUANT_NO_QUANT :
-    HIVM_FixpipePreQuantCase<"NO_QUANT", 0, [Sig_F32_F32, Sig_I32_I32]>;
+    HIVM_FixpipePreQuantCase<"NO_QUANT", 0,
+                             [Sig_F32_F32, Sig_I32_I32, Sig_I32_I16, Sig_I32_F16,
+                              Sig_I32_UI8, Sig_F32_I8, Sig_F32_UI8]>;
 def HIVM_FIXPIPEPREQUANT_F322F16 :
     HIVM_FixpipePreQuantCase<"F322F16", 1, [Sig_F32_F16]>;
 def HIVM_FIXPIPEPREQUANT_S322I8 :
@@ -968,13 +1004,16 @@ def HIVM_FIXPIPEPREQUANT_QF322F32_PRE :
     HIVM_FixpipePreQuantCase<"QF322F32_PRE", 15, [Sig_F32_F32]>;
 def HIVM_FIXPIPEPREQUANT_F322BF16 :
     HIVM_FixpipePreQuantCase<"F322BF16", 16, [Sig_F32_BF16]>;
+def HIVM_FIXPIPEPREQUANT_QF322F16_PRE :
+    HIVM_FixpipePreQuantCase<"QF322F16_PRE", 32, [Sig_F32_F16]>;
 
 def HIVM_FixpipePreQuantModeEnum
     : HIVM_I32Enum<"FixpipePreQuantMode", "HIVM fixpipe pre_quant mode",
                    [HIVM_FIXPIPEPREQUANT_NO_QUANT, HIVM_FIXPIPEPREQUANT_S322I8,
                     HIVM_FIXPIPEPREQUANT_F322F16,
                     HIVM_FIXPIPEPREQUANT_QF322F32_PRE,
-                    HIVM_FIXPIPEPREQUANT_F322BF16]>;
+                    HIVM_FIXPIPEPREQUANT_F322BF16,
+                    HIVM_FIXPIPEPREQUANT_QF322F16_PRE]>;
 
 def HIVM_FixpipePreQuantModeAttr : HIVM_I32EnumAttr<
   "fixpipe_pre_quant_mode", HIVM_FixpipePreQuantModeEnum> {
@@ -1116,11 +1155,13 @@ def HIVM_LocalMatmul_BiasModeEnum : HIVM_I32Enum<"MatmulBiasMode", "bias mode fo
   HIVM_LocalMatmul_ReuseL0c
 ]>;
 
+def HIVM_MatmulFormat_FP8E5M2 : I32EnumAttrCase<"FP8E5M2_T", 1, "fp8_e5m2_t">;
+def HIVM_MatmulFormat_FP8E4M3 : I32EnumAttrCase<"FP8E4M3_T", 2, "fp8_e4m3_t">;
+def HIVM_MatmulFormat_FP4E2M1 : I32EnumAttrCase<"FP4E2M1_T", 3, "fp4_e2m1_t">;
 def HIVM_LocalMatmulMx_DataFormat
     : HIVM_I32Enum<"HIVMMatmulDataformat", "",
-                   [I32EnumAttrCase<"FP8E5M2_T", 1, "fp8_e5m2_t">,
-                    I32EnumAttrCase<"FP8E4M3_T", 2, "fp8_e4m3_t">,
-                    I32EnumAttrCase<"FP4E2M1_T", 3, "fp4_e2m1_t">]>;
+                   [HIVM_MatmulFormat_FP8E5M2, HIVM_MatmulFormat_FP8E4M3,
+                    HIVM_MatmulFormat_FP4E2M1]>;
 
 //===----------------------------------------------------------------------===//
 // Metadata
@@ -1403,6 +1444,26 @@ def HIVM_SyncBlockLockOrderingAttr
   }];
 }
 
+def HIVM_AutoBlockifySubloopAttr
+    : HIVM_Attr<"AutoBlockifySubloop", "autoblockify_subloop"> {
+  // Keep the pre-existing attribute name instead of the `hivm.` prefixed one.
+  let attrName = "autoblockify.subloop";
+  let description = [{
+    Marks the loop over the logical blocks that auto-blockify created.
+  }];
+}
+
+def HIVM_AutoBlockifyDMAAttr
+    : HIVM_Attr<"AutoBlockifyDMA", "autoblockify_dma"> {
+  let attrName = "autoblockify.dma";
+  let description = [{
+    Marks a non-atomic store or fixpipe of the auto-blockify loop that writes a
+    kernel argument at a block-indexed offset. Different iterations handle
+    different logical blocks, so such an op never overlaps itself across
+    iterations.
+  }];
+}
+
 def HIVM_TileMixCubeNumAttr
     : HIVM_Attr<"TileMixCubeNum", "tile_mix_cube_num"> {
   let description = [{
@@ -1413,14 +1474,17 @@ def HIVM_TileMixCubeNumAttr
 def HIVM_PreloadNumAttr
     : HIVM_Attr<"PreloadNum", "preload_num"> {
   let description = [{
-    Specifies the preload number of scope op.
+    Specifies the preload stage index of a scope. CreatePreload records the
+    same index on `annotation.mark` of the guard condition for
+    `hivm-peel-preload`.
   }];
 }
 
 def HIVM_MaxPreloadNumAttr
     : HIVM_Attr<"MaxPreloadNum", "max_preload_num"> {
   let description = [{
-    Specifies the max preload number of scope op.
+    Specifies the max preload number of a scope op, or of a rewritten
+    preload `scf.for` for `hivm-peel-preload`.
   }];
 }
 
@@ -1435,6 +1499,64 @@ def HIVM_PreloadLocalBufferAttr
     : HIVM_Attr<"PreloadLocalBuffer", "preload_local_buffer"> {
   let description = [{
     Specifies that related op is preload local buffer.
+  }];
+}
+
+def HIVM_LoadPreloadAttr : HIVM_Attr<"LoadPreload", "load_preload"> {
+  let description = [{
+    Specifies the i32 scheduling stage of an independent Load scope.
+    SeparateLoadCompute sets this attribute; MarkBufferPool preserves it.
+    EnableBufferPool orders tasks by task index plus max(stage) minus stage,
+    breaking ties in favor of the larger stage.
+  }];
+}
+
+def HIVM_MemPoolIdAttr : HIVM_Attr<"MemPoolId", "mempool_id"> {
+  let description = [{
+    Specifies an i32 buffer pool identifier unique within a function.
+    MarkBufferPool sets the same identifier on member Load scopes and their
+    root buffer annotation.mark operations. PlanMemory shares the slot address
+    table, and EnableBufferPool and GSS group members by this identifier.
+  }];
+}
+
+def HIVM_MemPoolSizeAttr : HIVM_Attr<"MemPoolSize", "mempool_size"> {
+  let description = [{
+    Specifies the positive i32 number of physical slots in a buffer pool.
+    MarkBufferPool sets this attribute on each member's root buffer
+    annotation.mark, with the same value as multi_buffer. PlanMemory allocates
+    the slots; EnableBufferPool and GSS use this capacity for slot selection
+    and synchronization.
+  }];
+}
+
+def HIVM_ExperimentalBufferSlotsAttr
+    : HIVM_Attr<"ExperimentalBufferSlots", "experimental_buffer_slots"> {
+  let description = [{
+    Marks a planned pointer_cast with a unit attribute when its accesses use
+    explicit experimental.pool_slot bindings. EnableBufferPool sets it; GSS
+    and EnableMultiBuffer use each binding's slot for synchronization and
+    address selection. It is removed when the address bindings are lowered.
+  }];
+}
+
+def HIVM_ExperimentalPoolReadyAttr
+    : HIVM_Attr<"ExperimentalPoolReady", "experimental_pool_ready"> {
+  let description = [{
+    Marks the producer boundary of an independent buffer access with a unit
+    attribute. EnableBufferPool attaches it to annotation.mark of the
+    experimental.pool_slot result after the Load writes. GSS consumes and
+    removes the mark when generating synchronization for that slot.
+  }];
+}
+
+def HIVM_ExperimentalPoolReleaseAttr
+    : HIVM_Attr<"ExperimentalPoolRelease", "experimental_pool_release"> {
+  let description = [{
+    Marks the consumer boundary of an independent buffer access with a unit
+    attribute. EnableBufferPool attaches it to annotation.mark of the
+    experimental.pool_slot result after its consumers. GSS consumes and
+    removes the mark when generating synchronization for that slot.
   }];
 }
 

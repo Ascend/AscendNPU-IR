@@ -34,3 +34,30 @@ func.func @bare_ptr_calling_conv(%arg0: memref<?xf32> {llvm.bareptr}) -> () {
   "some_use"(%arg0) : (memref<?xf32>) -> ()
   return
 }
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // CHECK-LABEL: llvm.func @fp8_vector_function(
+  // CHECK-SAME: %[[ARG:.*]]: i8)
+  // CHECK: %[[VALUE:.*]] = llvm.bitcast %[[ARG]] : i8 to f8E4M3FN
+  func.func @fp8_vector_function(%arg0: f8E4M3FN) attributes {hivm.vector_function} {
+    "some_use"(%arg0) : (f8E4M3FN) -> ()
+    return
+  }
+
+  // CHECK-LABEL: llvm.func @external_abi(
+  // CHECK-SAME: %{{.*}}: f8E4M3FN)
+  func.func @external_abi(%arg0: f8E4M3FN) {
+    return
+  }
+
+  // CHECK-LABEL: llvm.func @fp8_caller(
+  // CHECK-SAME: %[[ARG:.*]]: f8E4M3FN)
+  // CHECK: %[[PAYLOAD:.*]] = llvm.bitcast %[[ARG]] : f8E4M3FN to i8
+  // CHECK-NEXT: llvm.call @fp8_vector_function(%[[PAYLOAD]]) : (i8) -> ()
+  func.func @fp8_caller(%arg0: f8E4M3FN) {
+    func.call @fp8_vector_function(%arg0) : (f8E4M3FN) -> ()
+    return
+  }
+}

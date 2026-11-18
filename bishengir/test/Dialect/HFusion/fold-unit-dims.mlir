@@ -311,7 +311,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %10 = scope.scope : () -> (tensor<1x64xf32>) {
         %9 = linalg.elemwise_unary {fun = #linalg.unary_fn<exp>} ins(%8 : tensor<1x64xf32>) outs(%3 : tensor<1x64xf32>) -> tensor<1x64xf32>
         scope.return %9 : tensor<1x64xf32>
-      } {noinline, outline = true, vector_mode = "simd"}
+      } {noinline, outline, vector_mode = "simd"}
       %reinterpret_cast = memref.reinterpret_cast %arg4 to offset: [0], sizes: [1, 64], strides: [64, 1] : memref<?xf32> to memref<1x64xf32, strided<[64, 1]>>
       bufferization.materialize_in_destination %10 in writable %reinterpret_cast : (tensor<1x64xf32>, memref<1x64xf32, strided<[64, 1]>>) -> ()
       scope.return

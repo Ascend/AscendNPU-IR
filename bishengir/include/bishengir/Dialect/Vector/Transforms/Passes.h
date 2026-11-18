@@ -23,6 +23,9 @@ namespace vector {
 /// Creates a pass to normalize vector ops to fit HIVM requirements.
 std::unique_ptr<Pass> createNormalizeVectorPass();
 
+/// Creates a pass to hoist constant vector masks to the function entry.
+std::unique_ptr<Pass> createHoistConstantMasksPass();
+
 /// Creates a pass to peel loops containing vector.transfer_read with
 /// transpose permutation.
 std::unique_ptr<Pass> createPeelLoopsContainingTransposePass();

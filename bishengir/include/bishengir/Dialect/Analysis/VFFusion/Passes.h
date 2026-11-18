@@ -13,7 +13,6 @@
 #ifndef BISHENGIR_DIALECT_ANALYSIS_VFFUSION_PASSES_H
 #define BISHENGIR_DIALECT_ANALYSIS_VFFUSION_PASSES_H
 
-#include "bishengir/Dialect/Analysis/Partition/HIVM/VFFusionHIVM.h"
 #include "bishengir/Dialect/Analysis/VFFusion/VFFusionInterfaces.h"
 #include "mlir/Pass/Pass.h"
 
@@ -24,9 +23,6 @@ namespace analysis {
 
 /// Creates a pass to fuse vf function.
 std::unique_ptr<Pass> createVFFusionPass(const VFFusionOptions &option = {});
-
-/// Creates a pass to outline HIVM vector ops into vector functions.
-std::unique_ptr<Pass> createVFFusionHIVMPass();
 
 //===----------------------------------------------------------------------===//
 // Registration

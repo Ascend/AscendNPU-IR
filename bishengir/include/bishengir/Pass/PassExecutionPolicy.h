@@ -20,82 +20,104 @@
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Support/LogicalResult.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/StringSet.h"
 
 namespace bishengir {
 
-/// Pipeline-wide execution mode derived from the module being compiled.
-/// Mix is the full/default mode: the complete pipeline runs unchanged. Aiv
-/// is the pure vector-kernel mode: passes in the AivDisabledPasses denylist
-/// are skipped for the whole pipeline run.
+/// Kernel kind of the module being compiled, taken from
+/// `hivm.module_core_type`. Unspecified means the attribute is missing or
+/// unrecognized: every pass runs. Mix, Aiv, and Aic match MixKernel,
+/// PureAivKernel, and PureAicKernel on HIVMPass.
 ///
 /// This is state of a single compilation/run: it lives in the
 /// BiShengIRPassManager that runs the pipeline and must never be stored in a
 /// process- or context-wide global, because one MLIRContext may run
 /// different modules (and therefore different modes) sequentially.
 enum class PipelineMode {
-  Mix, // full/default pipeline mode
-  Aiv, // pure VV (pure-AIV vector) pipeline mode
+  Unspecified, // no recognized module core type
+  Mix,         // hivm.module_core_type = MIX
+  Aiv,         // hivm.module_core_type = AIV
+  Aic,         // hivm.module_core_type = AIC
 };
 
-/// Detect the pipeline mode from the module's functions: the mode is Aiv
-/// only when at least one function carries a `mix_mode` attribute and every
-/// function carrying `mix_mode` declares `"aiv"`. Any other case — no
-/// `mix_mode` at all, a non-`"aiv"` value, or disagreeing values — keeps the
-/// default full (Mix) mode. The `mix_mode` spelling and its "aiv" value are
-/// the ones already used across the codebase (e.g. regbase::inferMixedCV,
-/// HFusion OptimizeScalarTransfers, HIVM MarkSyncBlockLockWithSubblock).
+/// Detect the pipeline mode from the module attribute `hivm.module_core_type`.
+/// `AIV`, `AIC`, and `MIX` select that kernel kind. A missing or unrecognized
+/// attribute selects Unspecified, so the pipeline does not filter. Function
+/// attributes such as `mix_mode` are not consulted: the module core type is
+/// the summary already maintained for the device functions in the module.
 PipelineMode detectPipelineMode(mlir::ModuleOp module);
 
-/// The central denylist of pass arguments (see Pass::getArgument()) that the
-/// whole pipeline skips when running in Aiv mode. It is a denylist, not an
-/// allowlist: passes that are not listed keep executing in Aiv mode.
-///
-/// The registry is a process-wide set of static pass argument strings, so
-/// unlike the per-run PipelineMode it is safe to share. It is read-only
-/// through this accessor; the only mutation point is
-/// registerAivDisabledPasses(), called while a pipeline is being built, before
-/// it runs. HIVM RegBase registers its entries that way; the registry starts
-/// empty so builds without that pipeline behave as if Aiv mode disabled
-/// nothing.
-const llvm::StringSet<> &getAivDisabledPasses();
+/// Record that `args` apply to `kind`. Idempotent. A pass may be registered
+/// for more than one kind. Passes that are never registered have no kernel
+/// kind list and are not filtered. HIVM RegBase registers the lists generated
+/// from HIVMPass `kernelKinds` before the pipeline runs.
+void registerKernelKindPasses(PipelineMode kind,
+                              std::initializer_list<llvm::StringRef> args);
 
-/// Register extra pass arguments in the Aiv denylist. Idempotent; called
-/// before the pipeline that may consult it runs.
-void registerAivDisabledPasses(std::initializer_list<llvm::StringRef> args);
+/// True when `passArg` was registered for `kind`. Unspecified, an empty
+/// argument, and a pass with no registration return false.
+bool passAppliesToKernelKind(llvm::StringRef passArg, PipelineMode kind);
+
+/// Pass arguments whose HIVMPass `classifyKernel` bit is set. After such
+/// a pass runs, BiShengIRPassManager invokes the classify-kernel callback.
+/// Idempotent. HIVM registers the passes generated from Passes.td.
+void registerClassifyKernelPasses(std::initializer_list<llvm::StringRef> args);
+
+/// True when `passArg` was registered with registerClassifyKernelPasses.
+bool passClassifiesKernel(llvm::StringRef passArg);
+
+/// Callback installed by HIVM. It re-infers function core types after a pass
+/// with `classifyKernel` set. maybeClassifyKernel only calls this when that
+/// bit is set. The Pass library does not know the inference pass. The last
+/// registration wins. Called only for passes that actually ran.
+using ClassifyKernelCallback = mlir::LogicalResult (*)(mlir::Operation *op);
+void registerClassifyKernelCallback(ClassifyKernelCallback callback);
+ClassifyKernelCallback getClassifyKernelCallback();
+
+/// Called when an Aiv-denylisted pass is skipped, in place of that pass.
+/// Keyed by the skipped pass argument. No entry means the skip does nothing.
+/// The last registration for an argument wins. The callback runs on the
+/// operation the skipped pass would have run on, and receives that pass so
+/// substitutes can honor its options (for example cleanup vs stamp).
+using AivSubstituteCallback = mlir::LogicalResult (*)(mlir::Operation *op,
+                                                      const mlir::Pass &pass);
+void registerAivSubstitute(llvm::StringRef skippedPassArg,
+                           AivSubstituteCallback callback);
+AivSubstituteCallback getAivSubstitute(llvm::StringRef skippedPassArg);
 
 /// Policy deciding, for one pipeline run, whether a pass is skipped
-/// globally (for every operation it would run on). This is the central
-/// Mix/Aiv filter consulted by the BiShengIRPassManager action handler
-/// before the per-operation annotation.filter_passes (FilterPassesAttr)
-/// filtering; it intentionally mirrors the FilterPassesAttr pass identity
+/// globally (for every operation it would run on). This is the kernel-kind
+/// filter consulted by the BiShengIRPassManager action handler before the
+/// per-operation annotation.filter_passes (FilterPassesAttr) filtering; it
+/// intentionally mirrors the FilterPassesAttr pass identity
 /// (Pass::getArgument()).
 ///
-/// The policy detects the pipeline mode lazily from the module the pass
-/// executes on, on the first action of the run, and freezes it for the rest
-/// of the run: the mode is a property of the module being compiled, and the
-/// passes that would rewrite `mix_mode` are not in the denylist. Detection is
-/// guarded by an atomic flag because MLIR may dispatch per-operation pass
-/// actions from worker threads; concurrent first detections compute the same
-/// value from the same module, so the race is benign by construction.
+/// The policy reads `hivm.module_core_type` on the module the pass executes
+/// on before every decision. A later pass may replace or delete that
+/// attribute (InferFuncCoreType, classify-kernel follow-up), and the next
+/// decision uses the new value. A missing, deleted, or unrecognized attribute
+/// selects Unspecified and runs every pass. A recognized kind skips a pass
+/// whose registered kernel-kind list does not include that kind. Concurrent
+/// actions read the same attribute; the stored mode is only the last
+/// decision and is not a frozen key.
 class PassExecutionPolicy {
 public:
   /// Returns true when the pass must be skipped for the whole pipeline run:
-  /// Aiv mode and the pass argument is in AivDisabledPasses, and the
-  /// operation the pass would run on (or, for module ops, one of the ops
-  /// visible in the module body) is not exempt from the Aiv denylist.
-  /// Adaptor passes (empty argument) are never skipped — they only
-  /// orchestrate nested pipelines.
+  /// the module core type is a recognized kernel kind, the pass was
+  /// registered with a kernel-kind list, that list does not include the
+  /// kind, and the operation the pass would run on (or, for module ops, one
+  /// of the ops visible in the module body) is not exempt. Adaptor passes
+  /// (empty argument) and passes with no kernel-kind registration are never
+  /// skipped.
   bool shouldSkipGlobally(const mlir::Pass &pass, mlir::Operation *op) const;
 
-  /// The lazily-detected mode; PipelineMode::Mix until the first
-  /// shouldSkipGlobally call of a run detects otherwise.
+  /// The mode from the most recent shouldSkipGlobally decision.
+  /// PipelineMode::Unspecified until the first call of a run.
   PipelineMode getMode() const { return mode.load(std::memory_order_acquire); }
 
 private:
-  mutable std::atomic<PipelineMode> mode{PipelineMode::Mix};
-  mutable std::atomic<bool> modeDetected{false};
+  mutable std::atomic<PipelineMode> mode{PipelineMode::Unspecified};
 };
 
 } // namespace bishengir

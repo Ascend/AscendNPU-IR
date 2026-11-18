@@ -19,6 +19,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "NPUArchitectureGen.h"
 #include "mlir/TableGen/GenInfo.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
@@ -92,8 +93,9 @@ static const char *const stringifyEnumDeclStr = R"(
 ::llvm::StringRef stringify{0}Enum({0});
 )";
 
-static const char *const getArcDeclStr = R"(
-std::string getArch({0} dev);
+static const char *const getArchitectureDeclStr = R"(
+/// Return kUnknown for TargetDevice::Unknown.
+::bishengir::npu::NPUArchitectureKind getArchitecture({0} dev);
 )";
 } // namespace
 
@@ -119,7 +121,8 @@ getSpecSuperClassEntries(const Record *derivedClassRecord) {
   // LLVM 22: return ArrayRef<std::pair<const Record *, SMRange>>
   auto superClasses = derivedClassRecord->getDirectSuperClasses();
   const Record *superClass = superClasses.front().first;
-#elif defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__)
+#elif defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__) ||                         \
+    defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__)
   // LLVM 20/21: input SmallVector<const Record *>
   SmallVector<const Record *> superClasses;
   derivedClassRecord->getDirectSuperClasses(superClasses);
@@ -133,6 +136,33 @@ getSpecSuperClassEntries(const Record *derivedClassRecord) {
   return llvm::to_vector(superClass->getValues());
 }
 
+/// Arch is optional in a generic TargetSpec schema, but when declared it must
+/// name a concrete NPUArchitecture on every device. Validate both backends so
+/// an incomplete mapping fails when building the compiler, not at first use.
+template <typename RecordRange>
+static bool validateTargetSpecs(const RecordRange &specs) {
+  bool hadError = false;
+  for (const Record *spec : specs) {
+    const RecordVal *architecture = spec->getValue(kArch);
+    if (!architecture)
+      continue;
+    if (isa<UnsetInit>(architecture->getValue())) {
+      PrintError(spec->getLoc(), Twine("TargetSpec '") + spec->getName() +
+                                     "' must define required field 'Arch'");
+      hadError = true;
+      continue;
+    }
+    const auto *reference = dyn_cast<DefInit>(architecture->getValue());
+    if (!reference || !reference->getDef()->isSubClassOf("NPUArchitecture")) {
+      PrintError(spec->getLoc(),
+                 Twine("TargetSpec '") + spec->getName() +
+                     "' field 'Arch' must reference an NPUArchitecture");
+      hadError = true;
+    }
+  }
+  return hadError;
+}
+
 /// Main entry to emit target spec decls.
 static bool emitTargetSpecDecls(const llvm::RecordKeeper &records,
                                 llvm::raw_ostream &OS) {
@@ -140,9 +170,18 @@ static bool emitTargetSpecDecls(const llvm::RecordKeeper &records,
   llvm::emitSourceFileHeader("Target Spec Declarations", OS, records);
   if (specs.empty())
     return false;
+  if (validateTargetSpecs(specs))
+    return true;
+
+  auto superClassEntry = getSpecSuperClassEntries(specs.front());
+  bool hasArchitecture =
+      llvm::any_of(superClassEntry,
+                   [](const RecordVal &val) { return val.getName() == kArch; });
 
   // Emit start of namespace and header guard.
   OS << startOfHeaderGuard;
+  if (hasArchitecture)
+    OS << "#include \"bishengir/Target/NPU/NPUArchitecture.h\"\n";
   // Required by some var decls
   OS << "#include <string>\n";
   OS << "#include <array>\n";
@@ -175,12 +214,11 @@ static bool emitTargetSpecDecls(const llvm::RecordKeeper &records,
   OS << formatv(stringifyEnumDeclStr, "TargetDevice");
   OS << "\n";
 
-  // Generate a function declaration to get the arch string by device target
-  // enum.
-  OS << formatv(getArcDeclStr, "TargetDevice");
-  OS << "\n";
+  if (hasArchitecture) {
+    OS << formatv(getArchitectureDeclStr, "TargetDevice");
+    OS << "\n";
+  }
 
-  auto superClassEntry = getSpecSuperClassEntries(specs.front());
   // Generate TargetSpec struct declaration.
   OS << "struct TargetSpec {\n";
   OS << "  "
@@ -190,6 +228,12 @@ static bool emitTargetSpecDecls(const llvm::RecordKeeper &records,
     auto printType = specRecord.getPrintType();
     if (name == kName)
       continue;
+    if (specRecord.isTemplateArg())
+      continue;
+    if (name == kArch) {
+      OS << "  ::bishengir::npu::NPUArchitectureKind Arch;\n";
+      continue;
+    }
 
     // Here, we directly use the tablegen type as the c++ type. So only
     // `int` and `string` type will be valid for now.
@@ -279,9 +323,11 @@ Attribute TargetSpec::getSpecEntry(DeviceSpec specEntry, OpBuilder& builder) con
 
 /// Emit a function to map string to \c DeviceTarget enum.
 
-#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__)
-static void emitStrToSymFnForDeviceTarget(const std::vector<const Record *> &records,
-                                          raw_ostream &OS) {
+#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) ||                           \
+    defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__)
+static void
+emitStrToSymFnForDeviceTarget(const std::vector<const Record *> &records,
+                              raw_ostream &OS) {
 #else
 static void emitStrToSymFnForDeviceTarget(const std::vector<Record *> &records,
                                           raw_ostream &OS) {
@@ -300,9 +346,11 @@ static void emitStrToSymFnForDeviceTarget(const std::vector<Record *> &records,
 }
 
 /// Emit a function to map \c DeviceTarget enum to string.
-#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__)
-static void emitSymToStrFnForDeviceTarget(const std::vector<const Record *> &records,
-                                          raw_ostream &OS) {
+#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) ||                           \
+    defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__)
+static void
+emitSymToStrFnForDeviceTarget(const std::vector<const Record *> &records,
+                              raw_ostream &OS) {
 #else
 static void emitSymToStrFnForDeviceTarget(const std::vector<Record *> &records,
                                           raw_ostream &OS) {
@@ -316,12 +364,14 @@ static void emitSymToStrFnForDeviceTarget(const std::vector<Record *> &records,
   }
   OS << formatv("    case {0}::Unknown: return \"Unknown\";\n", enumName);
   OS << "  }\n";
-  OS << formatv("  llvm::report_fatal_error(\"Unknown {0} value\");\n", enumName);
+  OS << formatv("  llvm::report_fatal_error(\"Unknown {0} value\");\n",
+                enumName);
   OS << "}\n\n";
 }
 
-/// Emit a function to map \c DeviceTarget enum to the Arch string.
-#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__)
+/// Emit the typed device-to-architecture mapping.
+#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) ||                           \
+    defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__)
 static void emitDeviceTargetToArch(const std::vector<const Record *> &records,
                                    raw_ostream &OS) {
 #else
@@ -329,21 +379,24 @@ static void emitDeviceTargetToArch(const std::vector<Record *> &records,
                                    raw_ostream &OS) {
 #endif
   const auto *enumName = "TargetDevice";
-  OS << formatv("std::string getArch({0} dev){{\n", enumName);
+  OS << formatv(
+      "::bishengir::npu::NPUArchitectureKind getArchitecture({0} dev){{\n",
+      enumName);
   OS << "  switch (dev) {\n";
   for (auto [idx, record] : llvm::enumerate(records)) {
     auto deviceName = record->getValueAsString(kName);
-    auto archString = record->getValueAsOptionalString(kArch);
-    if (!archString.has_value())
-      continue;
-    OS << formatv("    case {0}::{1}: return \"{2}\";\n", enumName, deviceName,
-                  archString.value());
+    const Record *architecture = record->getValueAsDef(kArch);
+    OS << formatv("    case {0}::{1}: return "
+                  "::bishengir::npu::NPUArchitectureKind::{2};\n",
+                  enumName, deviceName,
+                  getNPUArchitectureEnumerator(architecture));
   }
-  OS << formatv(
-      "    case {0}::Unknown: llvm::report_fatal_error(\"Unknown {0} value\");\n",
-      enumName);
+  OS << formatv("    case {0}::Unknown: return "
+                "::bishengir::npu::NPUArchitectureKind::kUnknown;\n",
+                enumName);
   OS << "  }\n";
-  OS << formatv("  llvm::report_fatal_error(\"Unknown {0} value\");\n", enumName);
+  OS << formatv("  llvm::report_fatal_error(\"Unknown {0} value\");\n",
+                enumName);
   OS << "}\n\n";
 }
 
@@ -355,6 +408,8 @@ static bool emitTargetSpecDefs(const llvm::RecordKeeper &records,
 
   if (specs.empty())
     return false;
+  if (validateTargetSpecs(specs))
+    return true;
 
   OS << "#include \"NPUTargetSpec.h.inc\" \n\n";
 
@@ -363,6 +418,9 @@ static bool emitTargetSpecDefs(const llvm::RecordKeeper &records,
 
   // Emit static const array to hold all the spec entries
   auto superClassEntry = getSpecSuperClassEntries(specs.front());
+  bool hasArchitecture =
+      llvm::any_of(superClassEntry,
+                   [](const RecordVal &val) { return val.getName() == kArch; });
   OS << "static const TargetSpec specs[] = {\n";
   for (auto *spec : specs) {
     OS << "  {\n";
@@ -375,6 +433,14 @@ static bool emitTargetSpecDefs(const llvm::RecordKeeper &records,
 
       if (specRecord.isTemplateArg())
         continue;
+
+      if (specRecord.getName() == kArch) {
+        OS << "    ::bishengir::npu::NPUArchitectureKind::"
+           << getNPUArchitectureEnumerator(
+                  spec->getValueAsDef(specRecord.getName()))
+           << ",\n";
+        continue;
+      }
 
       switch (specRecord.getType()->getRecTyKind()) {
       case RecTy::IntRecTyKind:
@@ -400,6 +466,14 @@ static bool emitTargetSpecDefs(const llvm::RecordKeeper &records,
 
   // Emit functions to convert spec to attributes.
   OS << wrapAttrDefs;
+  if (hasArchitecture) {
+    OS << R"(
+template<>
+Attribute wrap(::bishengir::npu::NPUArchitectureKind rawVal, OpBuilder& builder) {
+  return builder.getStringAttr(::bishengir::npu::stringifyNPUArchitecture(rawVal));
+}
+)";
+  }
   emitGetSpecEntryFnDef(OS, superClassEntry);
 
   // Emit a function to convert string device target to enum.
@@ -408,8 +482,8 @@ static bool emitTargetSpecDefs(const llvm::RecordKeeper &records,
   // Emit a function to convert enum device target to string.
   emitSymToStrFnForDeviceTarget(specs, OS);
 
-  // Emit a function to get the arch string by device target enum.
-  emitDeviceTargetToArch(specs, OS);
+  if (hasArchitecture)
+    emitDeviceTargetToArch(specs, OS);
 
   // Emit end of namespace.
   OS << endOfNameSpace;

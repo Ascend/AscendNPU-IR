@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
+#include "ArchDefs.h"
 #include "RegBase/VecUtils.h"
 #include "Utils.h"
 #include "Vector/VecUtils.h"
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 __aiv__ __attribute__((always_inline)) vector_f32
 ave_cast_i64_to_float(vector_2xvl_s64 *src, ave_preg preg, RoundType rnd) {
   vector_f32 ret{};

@@ -9,3 +9,4 @@
 [submodule "third-party/shmem"]
 	path = third-party/shmem
 	url = https://gitcode.com/cann/shmem.git
+	branch = release/v1.7.0

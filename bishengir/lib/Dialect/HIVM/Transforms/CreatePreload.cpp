@@ -54,6 +54,7 @@ struct PreloadInfo {
   // Preload info
   size_t preloadNum;
   size_t maxPreloadNum;
+  bool elideInactiveTail = false;
   Value maxPreloadValue;
   // Loop info
   Value indVar;
@@ -231,6 +232,8 @@ preprocessLoopArgs(scf::ForOp forOp, SmallVector<Value> &newInitArgs,
       newInitArgs.push_back(initArg);
     }
   }
+  if (info.elideInactiveTail)
+    return info.ub;
   Value extraIters = b.create<arith::MulIOp>(info.ub.getLoc(),
                                              info.maxPreloadValue, info.step);
   Value expandedUb =
@@ -244,6 +247,8 @@ preprocessLoopArgs(scf::ForOp forOp, SmallVector<Value> &newInitArgs,
 
 static Value getPreloadCondition(const PreloadInfo &info, Location loc,
                                  OpBuilder &b) {
+  if (info.elideInactiveTail)
+    return b.create<arith::ConstantIntOp>(loc, 1, 1);
   auto &mapping = info.mappings[info.preloadNum];
 
   Value indVar = mapping.lookup(info.indVar);
@@ -255,7 +260,11 @@ static Value getPreloadCondition(const PreloadInfo &info, Location loc,
   Value upperCond =
       b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, indVar, ub);
 
-  return b.create<arith::AndIOp>(loc, lowerCond, upperCond);
+  auto andOp = b.create<arith::AndIOp>(loc, lowerCond, upperCond);
+  auto markOp = b.create<annotation::MarkOp>(loc, andOp.getResult());
+  markOp->setAttr(hivm::PreloadNumAttr::name,
+                  b.getI32IntegerAttr(info.preloadNum));
+  return andOp;
 }
 
 static bool isRematerializableAliasOp(Operation *op) {
@@ -441,14 +450,34 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
 }
 
 static bool isSynchronizationOp(Operation *op) {
-  return isa<hivm::SetFlagOp, hivm::WaitFlagOp, hivm::PipeBarrierOp,
-             hivm::SyncBlockOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp>(
-      op);
+  return op->hasTrait<OpTrait::HIVMSyncOpTrait>();
+}
+
+// A single stage needs no fill/drain iteration. Retain the guarded expansion
+// if the otherwise inactive tail would execute effects outside stage scopes,
+// including synchronization. Pointer construction and marks are metadata.
+static bool
+canElideInactiveTail(scf::ForOp loop,
+                     const DenseMap<Operation *, size_t> &scopeToIdx,
+                     size_t maxPreloadNum) {
+  // An unguarded scalar counter would advance even on the inactive tick.
+  for (auto [arg, yielded] :
+       llvm::zip(loop.getRegionIterArgs(), loop.getYieldedValues()))
+    if (yielded != arg && !scopeToIdx.contains(yielded.getDefiningOp()))
+      return false;
+  return maxPreloadNum == 1 &&
+         llvm::all_of(scopeToIdx,
+                      [](const auto &entry) { return entry.second == 0; }) &&
+         llvm::all_of(loop.getBody()->without_terminator(), [&](Operation &op) {
+           return scopeToIdx.contains(&op) ||
+                  isa<hivm::PointerCastOp, annotation::MarkOp>(op) ||
+                  (op.getNumRegions() == 0 && isMemoryEffectFree(&op));
+         });
 }
 
 static void rewritePreloadLoop(scf::ForOp forOp,
                                const DenseMap<Operation *, size_t> &scopeToIdx,
-                               size_t maxPreloadNum) {
+                               size_t maxPreloadNum, bool elideInactiveTail) {
   IRRewriter rewriter(forOp.getContext());
   PreloadInfo info;
   info.funcCoreType = queryFuncCoreType(forOp->getParentOfType<func::FuncOp>())
@@ -457,6 +486,7 @@ static void rewritePreloadLoop(scf::ForOp forOp,
   info.ub = forOp.getUpperBound();
   info.step = forOp.getStep();
   info.maxPreloadNum = maxPreloadNum;
+  info.elideInactiveTail = elideInactiveTail;
   rewriter.setInsertionPoint(forOp);
   info.maxPreloadValue = rewriter.create<arith::ConstantOp>(
       info.ub.getLoc(),
@@ -614,6 +644,9 @@ static void rewritePreloadLoop(scf::ForOp forOp,
     ++newResIt;
     ++newYieldIt;
   }
+  // Mark for hivm-peel-preload (runs after GraphSyncSolver).
+  newForOp->setAttr(hivm::MaxPreloadNumAttr::name,
+                    rewriter.getI32IntegerAttr(maxPreloadNum));
   rewriter.replaceOp(forOp, newRes);
 }
 
@@ -734,7 +767,11 @@ void CreatePreloadPass::runOnOperation() {
            "MaxPreloadNumAttr must be set");
     size_t maxPreloadNum = loopToMaxPreloadNum[forOp];
     assert(maxPreloadNum > 0 && "MaxPreloadNum must be positive");
-    rewritePreloadLoop(forOp, scopeToIdx, maxPreloadNum);
+    // Loops in uniqueSlots did not pass the shared heuristic gate.
+    rewritePreloadLoop(
+        forOp, scopeToIdx, maxPreloadNum,
+        !uniqueSlots.contains(forOp) &&
+            canElideInactiveTail(forOp, scopeToIdx, maxPreloadNum));
   }
 
   cleanupPreloadWorkspaceMarks(*moduleOp);

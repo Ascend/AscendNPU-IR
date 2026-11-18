@@ -8,6 +8,7 @@
 
 #include "bishengir/Dialect/Analysis/VFFusion/VFFusionOutliner.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/IR/Value.h"
 
@@ -68,7 +69,8 @@ FailureOr<func::FuncOp> createFusedFunction(func::FuncOp funcOp,
 
   cloneFuncAttrs(
       funcOp, newFuncOp,
-      mlir::hacc::stringifyEnum(mlir::hacc::HACCToLLVMIRTranslateAttr::ENTRY));
+      {mlir::hacc::stringifyEnum(mlir::hacc::HACCToLLVMIRTranslateAttr::ENTRY),
+       mlir::hacc::utils::kExportDeviceAttrName});
 
   // set fused function to be private so that it can be inlined and removed
   // safely

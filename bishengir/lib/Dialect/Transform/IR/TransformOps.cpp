@@ -151,7 +151,70 @@ FailureOr<Value> traceReshapeOrSliceSingleProducer(Value input) {
       getReshapeOrSliceSource(definingOp));
 }
 
+bool hasAttrWithPrefix(Operation *op, StringRef prefix) {
+  return llvm::any_of(op->getAttrs(), [&](NamedAttribute attr) {
+    return attr.getName().strref().starts_with(prefix);
+  });
+}
+
+bool isTiledSliceBoundary(LoopLikeOpInterface loop) {
+  return isa<scf::ForOp>(loop.getOperation()) &&
+         hasAttrWithPrefix(loop.getOperation(), "outlined-loop-target-");
+}
+
+// Existing AV2 target labels cover both fusion and vectorization candidates.
+// Include the root operation and nested operations when checking a move.
+bool hasPendingFusionOp(Operation *op) {
+  auto walker = [](Operation *nested) {
+    return hasAttrWithPrefix(nested, "hfusion-auto-vectorize-target-")
+               ? WalkResult::interrupt()
+               : WalkResult::advance();
+  };
+  return op->walk(walker).wasInterrupted();
+}
+
+bool hasExtractSlice(Operation *op) {
+  auto walker = [](tensor::ExtractSliceOp) { return WalkResult::interrupt(); };
+  return op->walk(walker).wasInterrupted();
+}
+
+// Check region operations as well: moving an entire region can otherwise carry
+// an extract_slice across the boundary without moving the slice individually.
+void moveLoopInvariantCodeWithSliceBoundary(LoopLikeOpInterface loop) {
+  moveLoopInvariantCode(
+      loop.getLoopRegions(),
+      [&](Value value, Region *) { return loop.isDefinedOutsideOfLoop(value); },
+      [&](Operation *op, Region *) {
+        // A region is also immovable if it contains an AV2 operation that is
+        // still tracked by the fusion/vectorization plan.
+        if (hasPendingFusionOp(op))
+          return false;
+        if (isTiledSliceBoundary(loop) && hasExtractSlice(op))
+          return false;
+        return isMemoryEffectFree(op) && isSpeculatable(op);
+      },
+      [&](Operation *op, Region *) { loop.moveOutOfLoop(op); });
+}
+
 } // namespace
+
+//===----------------------------------------------------------------------===//
+// ApplyLoopInvariantCodeMotionWithSliceBoundaryOp
+//===----------------------------------------------------------------------===//
+
+DiagnosedSilenceableFailure
+ApplyLoopInvariantCodeMotionWithSliceBoundaryOp::applyToOne(
+    TransformRewriter &rewriter, LoopLikeOpInterface target,
+    ApplyToEachResultList &results, TransformState &state) {
+  moveLoopInvariantCodeWithSliceBoundary(target);
+  return DiagnosedSilenceableFailure::success();
+}
+
+void ApplyLoopInvariantCodeMotionWithSliceBoundaryOp::getEffects(
+    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  onlyReadsHandle(getTargetMutable(), effects);
+  modifiesPayload(effects);
+}
 
 //===----------------------------------------------------------------------===//
 // GetFuncArgumentOp
@@ -1000,8 +1063,28 @@ findAndMergeMultipleExtractUses(transform::TransformRewriter &rewriter,
       rewriter.replaceOp(extractUserOp, newInnerExtractSliceOp);
     }
   }
-  containingForOp->walk(
-      [&](LoopLikeOpInterface loopLike) { moveLoopInvariantCode(loopLike); });
+  // Sink loop-invariant code into the loops that use it. The containing op is
+  // treated specially: the caller is in the middle of fusing producers into
+  // it, and hoisting a producer's slice past its header would leave the
+  // producer with no use inside the container for `FuseIntoContainingOp` to
+  // find. Hold the slices back there and let everything else leave as before.
+  containingForOp->walk([&](LoopLikeOpInterface loopLike) {
+    if (loopLike == containingForOp) {
+      moveLoopInvariantCode(
+          loopLike.getLoopRegions(),
+          [&](Value value, Region *) {
+            return loopLike.isDefinedOutsideOfLoop(value);
+          },
+          [&](Operation *op, Region *) {
+            if (isa<tensor::ExtractSliceOp>(op))
+              return false;
+            return isMemoryEffectFree(op) && isSpeculatable(op);
+          },
+          [&](Operation *op, Region *) { loopLike.moveOutOfLoop(op); });
+      return;
+    }
+    moveLoopInvariantCode(loopLike);
+  });
 }
 
 //===----------------------------------------------------------------------===//
@@ -1131,8 +1214,15 @@ transform::ExtendedFuseIntoContainingOp::fuseIntoOneContaining(
     std::tie(producerOp, producerIndex) = *nextProducer;
 
     // Default diagnostic, to be complemented with more failure information.
+    // Only build the full message in debug builds: MLIR's Diagnostic formats
+    // `Operation` operands eagerly, and the tiled loop keeps growing as more
+    // producers are fused into it. Printing it once per producer makes the
+    // fusion O(producers * loop-size) and dominates the pass time, so the
+    // message is deferred to the (rare) failure path otherwise.
     Diagnostic diag(producerOp->getLoc(), DiagnosticSeverity::Remark);
-    diag << "could not fuse " << *producerOp << " into " << *containingOp;
+    LLVM_DEBUG({
+      diag << "could not fuse " << *producerOp << " into " << *containingOp;
+    });
 
     // Union the multiple consumers in containing op.
     bishengir::unionProducerUsers(rewriter, diag, producerOp, containingOp);

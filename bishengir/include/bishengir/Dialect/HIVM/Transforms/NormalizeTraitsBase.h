@@ -151,9 +151,9 @@ public:
 
   static Value createIsInfOp(PatternRewriter &rewriter, Location loc, Value y);
 
-  /// Normalize-specific selectRoundMode that maps integer→float to TRUNC
-  /// (A5 regbase semantics) instead of RINT (A3 membase default).
-  // TODO-A5: remove when bishengir/include/bishengir/Dialect/Utils/Util.h is migrated
+  /// Normalize-specific selectRoundMode. Delegates the documented dtype cast
+  /// rules to mlir::utils::selectRoundMode and only adds the regbase-specific
+  /// extensions: Float8 -> RINT and i16 -> i8 -> TRUNCWITHOVERFLOW.
   static hivm::RoundMode selectNormalizeRoundMode(Type inType, Type outType);
 };
 

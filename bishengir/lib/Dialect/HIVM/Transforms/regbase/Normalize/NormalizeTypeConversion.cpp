@@ -193,7 +193,7 @@ struct HIVMNormalizeReduceBoolToLogicalTraits : public hivm::NormalizeTraitsBase
   }
 };
 
-struct HIVMReduceI1AddToSelectMaxCompareTraits
+struct HIVMReduceI1AddToSelectXorCompareTraits
     : public hivm::NormalizeTraitsBase {
   static bool shouldNormalize(hivm::VReduceOp op) {
     if (!hacc::utils::isAscend950(op->getParentOfType<ModuleOp>()) ||
@@ -238,11 +238,13 @@ struct HIVMReduceI1AddToSelectMaxCompareTraits
     return rewriter.create<linalg::FillOp>(loc, scalar, empty).getResult(0);
   }
 
-  static Value createMaxReduce(PatternRewriter &rewriter, Location loc,
-                               hivm::VReduceOp op, Value input, Value init) {
+  static Value createWidenedReduce(PatternRewriter &rewriter, Location loc,
+                                   hivm::VReduceOp op, Value input,
+                                   Value init) {
     auto newOp = rewriter.create<hivm::VReduceOp>(
         loc, TypeRange{init.getType()}, input, ValueRange{init}, Value(),
-        hivm::ReduceOpAttr::get(rewriter.getContext(), hivm::ReduceOperation::max),
+        hivm::ReduceOpAttr::get(rewriter.getContext(),
+                                hivm::ReduceOperation::xori),
         op.getUnsignedSrcAttr(), op.getTieBreakLeftAttr(),
         op.getReduceDimsAttr(), Value());
     return newOp.getResult().front();
@@ -790,8 +792,8 @@ void addNormalizeToTargetPatterns(RewritePatternSet &patterns) {
 void mlir::hivm::populateNormalizeI1ToTargetPatterns(
     RewritePatternSet &patterns) {
   if (archisAscend950)
-    addTypeConversionPatterns<mlir::ReduceI1AddToSelectMaxCompareTemplate<
-        hivm::VReduceOp, HIVMReduceI1AddToSelectMaxCompareTraits>>(patterns);
+    addTypeConversionPatterns<mlir::ReduceI1AddToSelectCompareTemplate<
+        hivm::VReduceOp, HIVMReduceI1AddToSelectXorCompareTraits>>(patterns);
   addNormalizeToTargetPatterns<bool, hivm::VInterleaveOp,
                                hivm::VBrcOp>(patterns);
   addTypeConversionPatterns<mlir::NormalizeReduceBoolToLogicalTemplate<

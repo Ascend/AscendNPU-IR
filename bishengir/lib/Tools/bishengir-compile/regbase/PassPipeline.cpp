@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Tools/bishengir-compile/regbase/PassPipeline.h"
+#include "bishengir/Tools/bishengir-compile/regbase/PassPipelineV2.h"
 
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Conversion/FixCallUnknownLoc/FixCallUnknownLoc.h"
@@ -14,6 +15,7 @@
 #include "bishengir/Conversion/HIVMAVEToStandard/HIVMAVEToStandard.h"
 #include "bishengir/Conversion/HIVMToStandard/HIVMToStandard.h"
 #include "bishengir/Conversion/Passes.h"
+#include "bishengir/Conversion/ProtonToHIVM/ProtonToHIVM.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/AscendDPX/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
@@ -26,6 +28,7 @@
 #include "bishengir/Dialect/HIVM/Pipelines/regbase/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVMAVE/Pipelines/Passes.h"
+#include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h"
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Triton/Pipelines/Passes.h"
@@ -42,7 +45,6 @@
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
 #include "mlir/Dialect/Linalg/Passes.h"
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"
-#include "mlir/Dialect/SCF/Transforms/Passes.h"
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Target/LLVMIR/ModuleTranslation.h"
 #include "mlir/Transforms/Passes.h"
@@ -82,6 +84,7 @@ getProtonGPUCompileConfig();
 #endif
 
 namespace regbase {
+
 // Helper function to set up HFusionPipelineOptions
 void setupHFusionPipelineOptions(
     hfusion::HFusionPipelineOptions &hfusionPipelineOptions,
@@ -89,6 +92,17 @@ void setupHFusionPipelineOptions(
   auto &options = hfusionPipelineOptions;
 #define GEN_HFUSION_OPTION_SETUP
 #include "bishengir/Tools/bishengir-compile/ConfigUtils.cpp.inc"
+  hfusionPipelineOptions.useAscendStyleRA = config.getUseAscendStyleRA();
+  // The new TreeReduce lowering can overflow the stack with CANN < 9.2.0.
+  // Fall back to TreeReduceV2 before configuring VFFusion and vectorization,
+  // including the delayed vectorization pipeline. Preserve the RA/AR mode.
+  // Keep the requested settings when the toolkit version is unavailable.
+  if (auto version = detectCannVersion();
+      version && *version < std::make_tuple(9u, 2u, 0u)) {
+    hfusionPipelineOptions.enableTreeReduce = false;
+    hfusionPipelineOptions.enableTreeReduceV2 = true;
+  }
+
   hfusionPipelineOptions.insertFFTS =
       !hfusionPipelineOptions.disableFFTS &&
       hacc::utils::isFFTSSupportedArch(config.getTarget());
@@ -96,9 +110,8 @@ void setupHFusionPipelineOptions(
       hacc::stringifyTargetDeviceEnum(config.getTarget()).str();
 }
 
-void setupHIVMPipelineOptions(
-    hivm::regbase::HIVMPipelineOptions &hivmPipelineOptions,
-    const BiShengIRCompileMainConfig &config) {
+void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &hivmPipelineOptions,
+                              const BiShengIRCompileMainConfig &config) {
   auto &options = hivmPipelineOptions;
 #define GEN_HIVM_OPTION_SETUP
 #include "bishengir/Tools/bishengir-compile/ConfigUtils.cpp.inc"
@@ -145,6 +158,109 @@ void setupHIVMPipelineOptions(
            "--set-workspace-multibuffer=0.\n";
     options.setWorkspaceMultibuffer = 0;
   }
+}
+
+void buildAffinityPipeline(OpPassManager &pm,
+                           const BiShengIRCompileMainConfig &config) {
+  // Prepare and normalize the input IR for subsequent affinity passes.
+  pm.addPass(
+      hacc::createAppendDeviceSpecPass(hacc::AppendTargetDeviceSpecOptions{
+          config.getTarget(), config.getCustomAICNumber(),
+          config.getCustomAIVNumber(), config.getHIVMCVersion()}));
+  pm.addPass(hfusion::createAdaptTritonKernelPass());
+  pm.addPass(hivm::createTritonGlobalKernelArgsToHIVMOpPass());
+  pm.addPass(createCanonicalizeModulePass());
+
+  if (config.getEnableTlaCvPipelining()) {
+    // TODO: Use MarkMultiBuffer after better support for staged preload with
+    // memref alloc.
+    pm.addPass(hivm::createMarkPreloadBuffersPass());
+  }
+
+  // Outline marked VFs before SplitMix so it can classify the calls as
+  // VECTOR. The surrounding task scopes retain their preload boundaries.
+  OutlineScopeOptions outlineScopeOptions;
+  outlineScopeOptions.outlineMarkedScopesOnly = true;
+  pm.addPass(scope::createOutlineScopePass(outlineScopeOptions));
+
+  // Resolve scalar ownership before inlining erases the MIX task scopes.
+  // Kernel splitting uses these annotations with or without automatic sync.
+  MarkRealCoreTypeOptions markOptions;
+  markOptions.bypassShapeRegistry = true;
+  pm.addPass(hivm::createMarkRealCoreTypePass(markOptions));
+
+  // Inline ordinary scopes while retaining the original CV task boundaries.
+  pm.addPass(scope::createInlineScopePass());
+
+  // The input AVE specifies predicates, layouts and instruction modes.
+  // Materialize those choices before memory planning without running the
+  // shared AVE optimization pipeline or its layout solver.
+  pm.nest<func::FuncOp>().addPass(hivmave::createProcessMembarPass());
+  pm.nest<func::FuncOp>().addPass(hivmave::createAVENormalizeOpsPass());
+  pm.nest<func::FuncOp>().addPass(hivmave::createRemoveVectorLayoutAttrPass());
+
+  // Decompose explicit HIVM operations, including set_atomic into set_ctrl.
+  pm.nest<func::FuncOp>().addPass(hivm::createHIVMDecomposeOpPass());
+
+  // Frontend ttadapter codegen does not yet mark kernel memref arguments as GM.
+  // TODO: Remove scope inference once the frontend guarantees explicit address
+  // spaces for all memref values.
+  pm.addPass(hivm::createInferHIVMMemScopePass());
+
+  pm.nest<func::FuncOp>().addPass(hivm::createMarkTightlyCoupledBufferPass());
+
+  PlanMemoryOptions planMemoryOptions;
+  planMemoryOptions.enableMemoryDisplay =
+      config.getEnablePrintMemoryAllocatedSize() ||
+      config.getEnableMemoryDisplay();
+  // An explicit block protocol cannot synchronize newly introduced TCB aliases.
+  planMemoryOptions.disableTightlyCoupledBufferReuse =
+      config.getDisableTightlyCoupledBufferReuse() ||
+      config.getDisableAutoInjectBlockSync();
+  planMemoryOptions.disableVFReachableCheck =
+      config.getDisableVFReachableCheck();
+  planMemoryOptions.planMemoryStrategy = config.getPlanMemoryStrategy();
+  // TLA mode requires a deterministic local plan: disable the plan-memory
+  // retry loop (fallback stages and shuffle-seed retries).
+  planMemoryOptions.enableTLAmode = config.getEnableTlaMode();
+  pm.addPass(hivm::createPlanMemoryPass(planMemoryOptions));
+
+  if (!config.getDisableAutoInjectBlockSync()) {
+    CrossCoreGSSOptions crossCoreOptions;
+    crossCoreOptions.solverVersion = config.getHIVMSyncSolverVersion();
+    pm.nest<func::FuncOp>().addPass(
+        hivm::createCrossCoreGSSPass(crossCoreOptions));
+  }
+  pm.addPass(hivm::createV2SplitKernelPass());
+
+  if (config.getEnableTlaCvPipelining()) {
+    CreatePreloadOptions preloadOptions;
+    preloadOptions.bypassShapeRegistry = true;
+    pm.addPass(hivm::createCreatePreloadPass(preloadOptions));
+  }
+
+  // Fold addresses and views while preserving input instruction choices.
+  pm.nest<func::FuncOp>().addPass(createCSEPass());
+  pm.addPass(createCanonicalizerPass());
+
+  // Affinity auto-sync is enabled by default and always uses GraphSyncSolver.
+  // Algorithm selection and barrier-all options do not select InjectSync.
+  if (!config.getDisableHIVMAutoInjectSync()) {
+    GraphSyncSolverOptions syncOptions;
+    syncOptions.enableUnitFlag = config.getEnableHIVMUnitFlagSync();
+    syncOptions.solverVersion = config.getHIVMSyncSolverVersion();
+    pm.nest<func::FuncOp>().addPass(
+        hivm::createGraphSyncSolverPass(syncOptions));
+  }
+
+  // Lower rotating addresses and counters even with explicit synchronization.
+  pm.nest<func::FuncOp>().addPass(hivm::createEnableMultiBufferPass());
+  pm.nest<func::FuncOp>().addPass(hivm::createLowerMultiBufferCounterPass());
+  pm.addPass(createCanonicalizerPass());
+  pm.nest<func::FuncOp>().addPass(createCSEPass());
+
+  // Lower the prepared AVE directly, without the shared AVE optimizations.
+  buildLowerToLLVMPipeline(pm, config);
 }
 
 void setupHIVMAVEPipelineOptions(
@@ -259,13 +375,27 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
     hivmToStdOptions.markLibCallNoInline = false;
   }
   pm.addPass(hivm::createMarkDisableLoadPass());
-  mlir::hivm::regbase::addSyncBlockLockFinalizePasses(pm);
+  // Affinity inputs provide lock storage, views and control flow explicitly.
+  if (!config.getEnableTlaMode())
+    mlir::hivm::regbase::addSyncBlockLockFinalizePasses(pm);
   pm.addPass(createConvertHIVMToStandardPass(hivmToStdOptions));
   pm.addPass(createConvertHIVMAVEToStandardPass());
-  pm.nest<func::FuncOp>().addPass(createFixCallUnknownLocPass());
+  // DIScopeForLLVMFuncOpPass attaches a DISubprogram to every function, so
+  // calls must carry a location even when the input IR has none at all. Keep
+  // this condition in sync with the pass's enabling condition in
+  // hivmc/A5/PassPipelineA5.cpp and hivmc/A3/PassPipelineA3.cpp; sanitizer
+  // belongs here because it also turns that pass on.
+  FixCallUnknownLocOptions fixCallLocOptions;
+  fixCallLocOptions.assumeDebugInfo = config.getEnableSanitizer() ||
+                                      config.getEnableDebugInfo() ||
+                                      config.getEnableDebugVariables();
+  pm.nest<func::FuncOp>().addPass(
+      createFixCallUnknownLocPass(fixCallLocOptions));
   pm.addPass(memref::createExpandStridedMetadataPass());
   pm.addPass(createConvertHIVMAVEToAVEIntrinPass());
-  pm.addPass(hivmave::createHoistVstasPass());
+  // Store hoisting chooses a cross-iteration schedule and loop-carried state.
+  if (!config.getEnableTlaMode())
+    pm.addPass(hivmave::createHoistVstasPass());
   if (config.getPureSimt() && config.getUseDPX()) {
     auto tritonGridDim = config.getSimtTritonGrid();
     bishengir::AdaptGPUKernelOptions options;
@@ -325,14 +455,26 @@ static void buildDelayedHFusionRegBaseVectorizePipeline(
 
 void buildFinalHIVMPipelines(mlir::OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config) {
+  if (config.getUsePipelineVersion() == 2) {
+    buildV2FinalHIVMPipelines(pm, config);
+    return;
+  }
   if (config.getEnableHIVMCompile()) {
-    auto options = std::make_unique<hivm::regbase::HIVMPipelineOptions>();
+    auto options = std::make_unique<hivm::HIVMPipelineOptions>();
     setupHIVMPipelineOptions(*options, config);
     if (config.getEnableSimdSimtMixCompile()) {
       buildDelayedHFusionRegBaseVectorizePipeline(
           pm, config, /*shouldInferFuncCoreType=*/true);
     }
     hivm::regbase::buildLowerHIVMPipelines(pm, *options);
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+    if (hacc::utils::isAscend950(config.getTarget()) &&
+        config.getEnableTritonKernelCompile() &&
+        !config.getProtonMetadataOutput().empty()) {
+      pm.addPass(triton::proton::a5::createGetProtonMetadataPass(
+          {config.getProtonMetadataOutput()}));
+    }
+#endif
   }
 }
 
@@ -460,6 +602,10 @@ static void buildSimdSimtMixPassPipeline(mlir::OpPassManager &pm) {
 
 void buildBiShengHIRPipeline(OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config) {
+  if (config.getUsePipelineVersion() == 2) {
+    buildV2HIRPipeline(pm, config);
+    return;
+  }
   if (!config.getCompileHost()) {
     pm.addPass(
         hacc::createAppendDeviceSpecPass(hacc::AppendTargetDeviceSpecOptions{
@@ -491,14 +637,14 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
   if (config.getEnableHIVMCompile()) {
     // Build convert to HIVM Dialect pipeline.
     auto convertOptions =
-        std::make_unique<hivm::regbase::ConvertToHIVMPipelineOptions>();
+        std::make_unique<hivm::ConvertToHIVMPipelineOptions>();
     convertOptions->enableTritonKernelCompile =
         config.getEnableTritonKernelCompile();
     convertOptions->enableRegBaseHIVMPipe =
         hacc::utils::isRegBasedArch(config.getTarget());
-    auto options = std::make_unique<hivm::regbase::HIVMPipelineOptions>();
+    auto options = std::make_unique<hivm::HIVMPipelineOptions>();
     setupHIVMPipelineOptions(*options, config);
-    hivm::regbase::buildConvertToHIVMPipeline(pm, *convertOptions);
+    hivm::buildConvertToHIVMPipeline(pm, *convertOptions);
     hivm::regbase::buildHIVMTensorOptimizations(pm, *options);
     if (config.shouldEnableMixedCV()) {
       HIVMAggregatedDecomposeOpOptions decomposeOption;

@@ -114,7 +114,7 @@ def LegalizeOptHIVMAVE : Pass<"legalize-opt-hivmave", "func::FuncOp"> {
   let dependentDialects = ["hivmave::AVEDialect"];
 }
 
-def OptimizeReductionLoopHIVMAVE : Pass<"optimize-reduction-loop", "func::FuncOp"> {
+def OptimizeReductionLoopHIVMAVE : Pass<"optimize-reduction-loop", "ModuleOp"> {
   let summary = "Optimize reductionLoop";
   let constructor = "mlir::hivmave::createOptimizeReductionLoopHIVMAVEPass()";
   let dependentDialects = ["hivmave::AVEDialect", "scf::SCFDialect"];

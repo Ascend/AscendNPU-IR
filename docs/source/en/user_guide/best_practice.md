@@ -57,7 +57,7 @@ def gather_dim1_kernel(
 +   b_idx = pid_b * BLOCK_B + tl.arange(0, BLOCK_B)
 +   b_mask = b_idx < B
 
-+   # Loop over the K dimension.
++   # Loop over the K dimension
 +   for k_start in range(0, K, BLOCK_K):
 +       ks = tl.arange(0, BLOCK_K)
 +       k_mask = ks < K - k_start
@@ -74,7 +74,7 @@ def gather_dim1_kernel(
 +                  (k_start + ks)[None, :] * stride_ok)
 +       tl.store(out_ptr + out_off, x_val, mask=b_mask[:, None] & k_mask)
 
-# Call.
+# Invocation
 B = 128  # batch dim
 K = 64  
 
@@ -89,11 +89,11 @@ BLOCK_K = 128
 
 ### Ascend-Affinity Kernel Rewrite
 
-**Case Description**:
+**Case description**:
 
 In the original GPU computation flow, the `i64`/`i32` `cmp` operation cannot enable `vector` on NPU devices and degrades to scalar computation, reducing efficiency. By converting to `fp32`, `vec_cast` and `vec_cmp` are leveraged to implement `vector` operation acceleration. Note that when the `mask` in `tl.load` and `tl.save` uses the `cmp` function, the compiler can automatically optimize it into a `vec` operation in most cases. In this case, `tl.where` requires manual conversion. This case uses **layerNorm** as an example to illustrate the implementation of vectorized `cmp` to accelerate the NPU computation flow. The `cmp` operation is used to handle tail blocks in **layerNorm**.
 
-**Detailed Explanation of Case Differences**:
+**Detailed explanation of case differences**:
 
 ```diff
     cols = tl.arange(0, BLOCK_N)  # cols is int64
@@ -111,22 +111,22 @@ In the original GPU computation flow, the `i64`/`i32` `cmp` operation cannot ena
     var = tl.sum(xbar * xbar, axis=0) / N
 ```
 
-## Function or Precision Cases
+## Functional or Precision Cases
 
 This section introduces common function or precision cases.
 
-### Hang Issues
+### Hang-Type Problems
 
 **Symptom**:
 
-The operator option reports a timeout error. Some operator hang issues are related to hardware synchronization, which may involve intra-core/inter-core synchronization or pipeline synchronization. If an operator hang occurs, you can try passing the following input parameters when invoking the Kernel to modify the binary synchronization logic and work around the operator hang issue.
+The operator option reports a timeout error. Some operator hang issues are related to hardware synchronization, which may involve intra-core/inter-core synchronization or pipeline synchronization. If an operator hang occurs, you can try passing the following input parameters when invoking the Kernel to modify the binary synchronization logic and avoid the operator hang issue.
 
 **Code example**:
 
-| Compilation option | Value | Description |
+| Compilation Option | Value | Description |
 |--------|------|------|
-| `inject_barrier_all` | `false` (default) | The frontend attempts to enable it as `true`. If the hang issue disappears, it indicates an intra-core synchronization problem. This option applies to `mix`/`aic`/`aiv` kernels. |
-| `inject_block_all` | `false` (default) | The frontend attempts to enable it as `true`. If the hang issue disappears, it indicates an inter-core synchronization problem. This option applies to `mix` kernels. |
+| `inject_barrier_all` | `false` (default) | The frontend tries to set it to `true`. If the hang problem disappears, it proves that the intra-core synchronization has an issue. This applies to the `mix`/`aic`/`aiv` three types of kernels. |
+| `inject_block_all` | `false` (default) | The frontend tries to set it to `true`. If the hang problem disappears, it proves that the inter-core synchronization has an issue. This applies to the `mix` type of kernel. |
 
 Taking the `chunk_gated_delta_rule_fwd_kernel_h_blockdim64` operator of the GDN network as an example, the original code example is invoked as follows:
 
@@ -182,7 +182,7 @@ For `varlen`-type operators, `indice` is usually randomly sampled from `seqlen`,
 
 ### UB Overflow Issues
 
-#### Triton argmax op performs 32B alignment before merging axes, wasting a large amount of UB space
+#### Triton argmax op performs 32B alignment before fusing axes, wasting a large amount of UB space
 
 **The MLIR code is as follows**:
 
@@ -290,7 +290,7 @@ Line 4: For `int64` input, the `vreduce` operation is later lowered to a `loop s
 
 The `temp_buffer` considered during PlanMemory is not used in the final computation, which causes a false `ub overflow` report. The temporary node allocation rule needs to be modified in the step of allocating `temp_buffer` before PlanMemory.
 
-### D-cache Category
+### D-cache Issues
 
 #### Invalid Address Access
 
@@ -370,16 +370,16 @@ def transpose_kernel(
 ):
     """
     Matrix transpose kernel: Y = X^T, where X has shape (M, N) and Y has shape (N, M).
-    Each program block processes a (BLOCK_N, BLOCK_M) sub-block of Y.
-    Implement implicit transposed loading by swapping the strides of the input pointers.
+    Each program block handles one (BLOCK_N, BLOCK_M) sub-block of Y.
+    Implicit transposed loading is achieved by swapping the strides of the input pointer.
     """
-    pid_n = tl.program_id(0)  # Row block index of the output matrix (original column block).
-    pid_m = tl.program_id(1)  # Column block index of the output matrix (original row block).
+    pid_n = tl.program_id(0)  # Row block index of the output matrix (original column block)
+    pid_m = tl.program_id(1)  # Column block index of the output matrix (original row block)
 
-    bn = pid_n * BLOCK_N  # Row start of the output matrix = original column start.
-    bm = pid_m * BLOCK_M  # Column start of the output matrix = original row start.
+    bn = pid_n * BLOCK_N  # Row start of the output matrix = original column start
+    bm = pid_m * BLOCK_M  # Column start of the output matrix = original row start
 
-    # Build the input pointer: use swapped strides with shape (N, M) to match transposed access.
+    # Build the input pointer: use the swapped strides and shape (N, M) to match the transposed access
     x_ptr_t = tl.make_block_ptr(
         base=x_ptr,
         shape=(N, M),
@@ -389,7 +389,7 @@ def transpose_kernel(
         order=(1, 0)
     )
 
-    # Build the output pointer: normal row-major strides with shape (N, M).
+    # Build the output pointer: normal row-major stride, shape (N, M)
     y_ptr_b = tl.make_block_ptr(
         base=y_ptr,
         shape=(N, M),
@@ -399,10 +399,10 @@ def transpose_kernel(
         order=(1, 0)
     )
 
-    # Load the input block (implicitly transposed), with boundary checks to prevent out-of-bounds access.
+    # Load the input block (already implicitly transposed), with boundary checks to prevent out-of-bounds access
     x_tile = tl.load(x_ptr_t, boundary_check=(0, 1))
 
-    # Store to the output matrix.
+    # Store to the output matrix
     tl.store(y_ptr_b, x_tile, boundary_check=(0, 1))
 
 
@@ -411,22 +411,22 @@ def transpose(x, y=None, BLOCK_M=64, BLOCK_N=32):
     Compute the matrix transpose using a Triton kernel.
     Args:
         x: torch.Tensor of shape (M, N)
-        y: Optional output tensor of shape (N, M); created automatically if None.
-        BLOCK_M: block size (along the M dimension).
+        y: optional output tensor of shape (N, M); if None, it is created automatically
+        BLOCK_M: block size (along the M dimension)
         BLOCK_N: block size (along the N dimension)
     Returns:
-        y: transposed tensor
+        y: the transposed tensor
     """
     M, N = x.shape
     if y is None:
         y = torch.empty(N, M, dtype=x.dtype, device=x.device)
     else:
-        assert y.shape == (N, M), f"y's shape should be ({N}, {M}), but got {y.shape}"
+        assert y.shape == (N, M), f"y should have shape ({N}, {M}), but got {y.shape}"
 
-    # Compute the grid size.
+    # Calculate the grid size.
     grid = (triton.cdiv(N, BLOCK_N), triton.cdiv(M, BLOCK_M))
 
-    # Invoke the kernel.
+    # Call the kernel.
     transpose_kernel[grid](
         x, y,
         M, N,
@@ -439,13 +439,13 @@ def transpose(x, y=None, BLOCK_M=64, BLOCK_N=32):
 # Create a random matrix.
 x = torch.randn(512, 1024, device='npu')
 
-# Invoke the transpose function.
+# Call the transpose function.
 y = transpose(x)
 ```
 
-The execution completes without errors, which indicates that the run is successful.
+If the execution completes without errors, the run is considered successful.
 
-#### Using **mayDiscretememaccess** to Avoid UB Overflow
+#### Using mayDiscretememaccess to Avoid UB Overflow
 
 **Symptom**:
 
@@ -458,11 +458,11 @@ When rewriting the operator, you only need to add `compile_hint` to the data of 
 For versions earlier than `triton-ascend 3.2.0`:
 
 ```python
-# If this is a load operation, add compile_hint to the loaded value.
+# For a load operation, add compile_hint to the loaded value.
 value = tl.load(pointer)
 tl.compile_hint(value, "mayDiscretememaccess")
 
-# If this is a store operation, add compile_hint to the value being stored.
+# For a store operation, add compile_hint to the value being stored.
 tl.compile_hint(value, "mayDiscretememaccess")
 tl.store(pointer, value)
 ```
@@ -470,11 +470,11 @@ tl.store(pointer, value)
 For versions later than `triton-ascend 3.4.0`, change it to:
 
 ```python
-# If this is a load operation, add compile_hint to the loaded value.
+# For a load operation, add compile_hint to the loaded value.
 value = tl.load(pointer)
 tl.extra.cann.extension.compile_hint(value, "mayDiscretememaccess")
 
-# If this is a store operation, add the compile_hint to the value being stored.
+# For a store operation, add compile_hint to the value being stored.
 tl.extra.cann.extension.compile_hint(value, "mayDiscretememaccess")
 tl.store(pointer, value)
 ```
@@ -509,31 +509,31 @@ tl.store(pointer, value)
         pid_m = tl.program_id(0)
         pid_n = tl.program_id(1)
     
-        # Compute the block start position.
+        # Calculate the block start position.
         start_m = pid_m * BLOCK_SIZE_M
         start_n = pid_n * BLOCK_SIZE_N
     
-        # Create the block pointer of A (column-major: strides=(1, M)). The last dimension is non-contiguous, so it is automatically expanded.
+        # Create a block pointer for A (column-major: strides=(1, M)). The last dimension is non-contiguous, so it is automatically expanded.
         A_block_ptr = tl.make_block_ptr(
             base=A_ptr,
             shape=(M, N),
             strides=(1, M),
             offsets=(start_m, start_n),
             block_shape=(BLOCK_SIZE_M, BLOCK_SIZE_N),
-            order=(0, 1),  # The innermost dimension is the row (index 0) because of column-major order.
+            order=(0, 1),  # The innermost dimension is the row (index 0), because it is column-major.
         )
     
-        # Create the block pointer of B (row-major: strides=(N, 1)).
+        # Create a block pointer for B (row-major: strides=(N, 1)).
         B_block_ptr = tl.make_block_ptr(
             base=B_ptr,
             shape=(M, N),
             strides=(N, 1),
             offsets=(start_m, start_n),
             block_shape=(BLOCK_SIZE_M, BLOCK_SIZE_N),
-            order=(1, 0),  # The innermost dimension is the column (index 1) because of row-major order.
+            order=(1, 0),  # The innermost dimension is the column (index 1), because it is row-major.
         )
     
-        # Load the block of A and perform boundary check (fill 0 for out-of-range parts).
+        # Load the block of A and perform boundary check (out-of-range parts are padded with 0).
         a = tl.load(A_block_ptr, boundary_check=(0, 1))
     +   # npu
     +   extension.compile_hint(a, "mayDiscretememaccess")
@@ -689,13 +689,14 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 
 This section introduces the performance optimization guide for Triton NPU operators.
 
+<!-- npu="A3,910b" id1 -->
 ### Using bitwise_mask to Optimize Memory Access Masks
 
 **Note:**
 
 This section applies only to Atlas A3/A2 series products.
 
-**Problem description**:
+**Symptom**:
 
 On Ascend hardware, tensors of the Boolean type (`i1`) are actually stored as `i8` (one byte) in global memory (GM). When Triton Ascend processes operations that take an `i1` tensor as input, it loads the `i1` as `i8`; however, in certain cases (for example, when used as the condition mask of `tl.where`), the result must be converted back to `i1`, causing unnecessary type conversions and performance loss.
 
@@ -714,7 +715,7 @@ Note that because `mask` is expressed in the form of a `bitmask`, the correspond
 
 ![image](../../images/user_guide/best_practice2.png)
 
-> **Description**:
+> **Note**:
 >
 > When using `compile_hint`, pay attention to the local `TA` version.
 >
@@ -780,9 +781,9 @@ If the execution completes without errors, the run is considered successful.
 
 `bitmask` is bound to the tiling logic. The operator itself has different tiling logic in different scenarios, mainly covering the following scenarios:
 
-- Enabling the 1:2 performance optimization in CV scenarios
+- Enabling 1:2 performance optimization in CV scenarios
 - Axis fusion
-- The `broadcast` scenario
+- `broadcast` scenarios
 - Data types not supported by hardware
 - Triton operators with a non-1 grid tiling input
 
@@ -817,7 +818,7 @@ for sub_A in range(A):
 
 Through the best practice described above, the `bitmask` feature can be correctly implemented in a highly generalized manner.
 
-In addition, the following provides the logic for multiple tiling for reference:
+In addition, the logic for multiple tiling is provided below for reference:
 
 ```python
 # test_bitmask_tile.py
@@ -930,11 +931,12 @@ def test_where_lt_case1(param_list):
 
 > **Note**:
 >
-> Because the Triton frontend converts `i1` to `i8`, performing a `bitwise_mask` operation on other types such as `i16`/`i32` would instead incur performance loss. Therefore, this feature supports only `i8`-type `mask`.
+> Because the Triton frontend converts `i1` to `i8`, performing a `bitwise_mask` operation on other types such as `i16`/`i32` actually causes performance loss. Therefore, this feature only supports `mask` of the `i8` type.
+<!-- end id1 -->
 
 ### Using Manual Alignment to Improve Compiler Optimization Efficiency in Tail-Axis Misalignment Scenarios
 
-**Problem description**:
+**Symptom**:
 
 In Triton operator development, when the tail-axis dimension of a tensor is small (for example, 4) and is not aligned to the hardware-recommended 32 bytes (corresponding to 8 `float32` elements), the compiler backend often struggles to generate optimal contiguous memory access and vectorization instructions for such misaligned shapes, preventing full performance from being achieved. To obtain better compiler optimization results, developers are recommended to explicitly align the tail-axis dimension of the data to an appropriate width in the frontend kernel through manual padding or mask loading, thereby providing the compiler with an alignment-friendly data layout. This simplifies the backend optimization decisions and significantly improves execution efficiency.
 
@@ -942,7 +944,7 @@ In Triton operator development, when the tail-axis dimension of a tensor is smal
 
 The following shows two kernel implementations with a tail axis of 4: Version 1 directly uses 4 as the tail-axis dimension without alignment handling, resulting in poor performance; Version 2 aligns the tail-axis dimension to 8 through `mask` loading, which is the recommended optimization approach.
 
-- Version 1: Tail axis not aligned (with an optimization bottleneck)
+- Version 1: Last axis not aligned (optimization bottleneck exists)
 
     ```python
     @triton.jit
@@ -955,7 +957,7 @@ The following shows two kernel implementations with a tail axis of 4: Version 1 
         mask = pids < batch_size
         off = pids[:, None] * (D * D)
 
-        # Load the D×D matrix directly without alignment padding.
+        # Directly load the D×D matrix without alignment padding
         mat = tl.load(in_ptr + off + lin[None, :], mask=mask[:, None])
         mat = mat.reshape(group, D, D)
 
@@ -983,22 +985,22 @@ The following shows two kernel implementations with a tail axis of 4: Version 1 
         pids = pid0 + tl.arange(0, group)
         p_mask = pids < batch_size
     
-        # Load ALIGN elements at a time based on the original D×D shape.
+        # Based on the original D×D shape, load ALIGN elements each time
         off_base = pids[:, None, None] * (D * D)
         row_idx = tl.arange(0, D)[:, None]
         col_idx = tl.arange(0, ALIGN)[None, :]
         offs = row_idx * D + col_idx
         valid_cols = col_idx < D
     
-        # Fill invalid columns with -inf through the mask to implement manual alignment.
-        # Shape (group, D, ALIGN).
+        # Use a mask to fill invalid columns with -inf to achieve manual alignment
+        # Shape (group, D, ALIGN)
         mat = tl.load(
             in_ptr + off_base + offs[None, :, :],
             mask=p_mask[:, None, None] & valid_cols[None, :, :],
             other=float('-inf')
         )
     
-        # Normalization computation (invalid columns become 0 after exp, which does not affect the result).
+        # Normalization computation (invalid columns become 0 after exp, without affecting the result)
         row_max = tl.max(mat, axis=2)
         mat = tl.exp(mat - row_max[:, :, None])
         for _ in range(iters):
@@ -1007,7 +1009,7 @@ The following shows two kernel implementations with a tail axis of 4: Version 1 
             col_sum = tl.sum(mat, axis=1)
             mat = mat / (col_sum[:, None, :] + eps)
     
-        # Write back with the width aligned to ALIGN.
+        # Write back according to the ALIGN alignment width
         out_flat = tl.reshape(mat, (group, D * ALIGN))
         tl.store(out_ptr + pids[:, None] * (D * ALIGN)
                 + tl.arange(0, D * ALIGN)[None, :],
@@ -1022,13 +1024,13 @@ The following shows two kernel implementations with a tail axis of 4: Version 1 
     >
     > - The padding value (such as `-inf`) must be compatible with subsequent computations to ensure that it does not affect the final result (for example, `exp(-inf) = 0`).
 
-### CV Category
+### CV Issues
 
 #### Using hivm.tile_mix_cube_num to Avoid L1 Out-of-Bounds
 
-**Problem description**:
+**Symptom**:
 
-Because the compiler currently can only perform tiling requirement analysis on a single `matmul` and does not consider the lifecycle of other `matmul` operations, when `matmul` is triggered multiple times (for example, when the execution logic is `cube -> vector -> cube`), if the lifecycle of the previous `matmul` overlaps with that of the current `matmul`, the operator may cause L1 out-of-bounds at runtime. The compiler will enhance the lifecycle analysis of tiling in the future. Currently, the `hivm.tile_mix_cube_num` compilation hint must be added so that the compiler can perceive whether sub tiling is required for the related `matmul` operations.
+Because the compiler currently can only perform tiling requirement analysis on a single `matmul` and does not consider the lifecycle of other `matmul` operations, when `matmul` is triggered multiple times (for example, when the execution logic is `cube -> vector -> cube`), if the lifecycle of the previous `matmul` overlaps with that of the current `matmul`, the operator may cause L1 out-of-bound errors at runtime. The compiler will enhance the lifecycle analysis of tiling in the future. Currently, the `hivm.tile_mix_cube_num` compilation hint must be added so that the compiler can perceive whether sub tiling is required for the related `matmul` operations.
 
 **Operator example**:
 
@@ -1062,29 +1064,26 @@ tl.compile_hint(pv, "hivm.tile_mix_cube_num", 2)
 
 **Compilation optimization option reference**:
 
-| Compilation option | Meaning | Value range |
+| Compilation Option | Meaning | Value Range |
 | --- | --- | --- |
-| `multibuffer` | Sets whether to enable ping-pong pipelining. | `False` (default), `True` |
-| `limit_auto_multi_buffer_of_local_buffer` | Sets the scope of ping-pong pipelining within the tile (L1, L0, and UB). "no-limit" means no restriction on the ping-pong pipelining scope. "no-l0c" means ping-pong pipelining is enabled only outside the L0 cache. | "no-limit", "no-l0c" (default) |
-| `unit_flag` | Sets whether the `cube` is moved out by block, applicable only in data alignment scenarios. | `False` (default), `True` |
-| `limit_auto_multi_buffer_only_for_local_buffer` | Sets whether to enable CV pipeline parallelism in the GM workspace. `False` means enabled. The interface will be revised later to provide more readable options. | `False` (default), `True` |
-| `set_workspace_multibuffer` | Takes effect only when `limit_auto_multi_buffer_only_for_local_buffer=false`. Sets the parallelism of CV operations. When using it, ensure that the data has no dependencies. If set to `N`, `N` CV operations are executed in parallel. | 2 (default), 4 |
-| `tile_mix_vector_loop` | Takes effect only when `limit_auto_multi_buffer_only_for_local_buffer=false`. Sets the number of tiles for the current `vector`. The value can be obtained through `autotuning`; any of the listed values may be optimal. | 1 (default), 2, 4 |
-| `tile_mix_cube_loop` | Takes effect only when `limit_auto_multi_buffer_only_for_local_buffer=false`. Sets the number of tiles for the current `cube`. The value can be obtained through `autotuning`; any of the listed values may be optimal. | 1 (default), 2, 4 |
+| `limit_auto_multi_buffer_only_for_local_buffer` | Sets whether to enable CV pipeline parallelism in the GM workspace. `False` means it is enabled; the interface will be rectified later to provide a more readable option | `False`(default),`True` |
+| `set_workspace_multibuffer` | Takes effect only when `limit_auto_multi_buffer_only_for_local_buffer=false`. Sets the CV parallelism. When using it, ensure that the data has no dependencies. If set to `N`, then `N` CV operations are executed in parallel | 2(default),4 |
+| `tile_mix_vector_loop` | Takes effect only when `limit_auto_multi_buffer_only_for_local_buffer=false`. Sets the number of splits for the current `vector`. The value can be obtained by `autotuning`, and all can be optimal | 1(default),2,4 |
+| `tile_mix_cube_loop` | Takes effect only when `limit_auto_multi_buffer_only_for_local_buffer=false`. Sets the number of splits for the current `cube`. The value can be obtained by `autotuning`, and all can be optimal | 1(default),2,4 |
 
 #### Workaround for Timeout Errors via Operator Options
 
-**Problem description**:
+**Symptom**:
 
 Some causes of operator hang are related to hardware synchronization, which may involve intra-core/inter-core synchronization or pipeline synchronization. If an operator hang occurs, you can try passing the following input parameters when invoking the kernel to modify the binary synchronization logic and work around the operator hang issue.
 
 ```python
-# Core synchronization options.
+# Core synchronization options
 inject_block_all = True # Enable inter-core synchronization.
 inject_barrier_all = True # Enable intra-core synchronization.
-# Pipeline options.
-limit_auto_multi_buffer_only_for_local_buffer = True # Disable the (GM space) CV pipeline.
-multibuffer = False # Disable the ping-pong pipeline.
+# Pipeline options
+limit_auto_multi_buffer_only_for_local_buffer = True # Disable (GM space) CV pipeline.
+multibuffer = False # Disable ping-pong pipeline.
 ```
 
 **Operator example**:

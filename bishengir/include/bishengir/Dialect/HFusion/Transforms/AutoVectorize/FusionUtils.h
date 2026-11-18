@@ -13,7 +13,6 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Transform/IR/TransformOps.h"
 #include "mlir/IR/Builders.h"
-#include "llvm/ADT/DenseSet.h"
 
 namespace mlir {
 
@@ -40,18 +39,6 @@ bool isNonVectorizableOp(Operation *op);
 
 // Whether `op` is eligible for fusion (LinalgOp, interleave/deinterleave).
 bool isFusableOp(Operation *op);
-
-// Traverse downstream (user) IR graph to find fusable ops reachable from `op`.
-void findDownstreamFusableOpOf(
-    Operation *op, Block *block,
-    llvm::DenseSet<Operation *> &downstreamFusableOps,
-    llvm::DenseSet<Operation *> &visitedOps);
-
-// Traverse upstream (def-use) IR graph to find fusable ops that `op` depends
-// on.
-void findUpstreamFusableOpOf(Operation *op, Block *block,
-                             llvm::DenseSet<Operation *> &upstreamFusableOps,
-                             llvm::DenseSet<Operation *> &visitedOps);
 
 } // namespace hfusion
 } // namespace mlir

@@ -25,10 +25,13 @@
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/Debug.h"
 #include <cassert>
 #include <climits>
 #include <limits>
 #include <optional>
+
+#define DEBUG_TYPE "hivmave-utils"
 
 using namespace mlir;
 using namespace mlir::hivmave;
@@ -56,71 +59,6 @@ ValueRange hivmave::getIndices(mlir::Operation *op) {
   if (auto vectorMaskLoadOp = dyn_cast<vector::MaskedLoadOp>(op))
     return vectorMaskLoadOp.getIndices();
   llvm::report_fatal_error("unsupported op type");
-}
-
-Value hivmave::computeLinearMemRefOffset(OpBuilder &builder, Location loc,
-                                         Value memref, ValueRange indices,
-                                         Type resultType) {
-  assert((resultType.isIndex() || isa<IntegerType>(resultType)) &&
-         "result type must be index or integer");
-
-  auto memrefType = cast<MemRefType>(memref.getType());
-  int64_t rank = memrefType.getRank();
-
-  auto makeConst = [&](int64_t value) -> Value {
-    if (resultType.isIndex())
-      return builder.create<arith::ConstantIndexOp>(loc, value);
-    return builder.create<arith::ConstantOp>(
-        loc, IntegerAttr::get(resultType, value));
-  };
-  auto castToResultType = [&](Value value) -> Value {
-    if (value.getType() == resultType)
-      return value;
-    return builder.create<arith::IndexCastOp>(loc, resultType, value);
-  };
-
-  SmallVector<Value, 4> strides(rank);
-  if (auto stridedLayout =
-          dyn_cast<StridedLayoutAttr>(memrefType.getLayout())) {
-    ArrayRef<int64_t> layoutStrides = stridedLayout.getStrides();
-    std::optional<memref::ExtractStridedMetadataOp> metadata;
-    for (int64_t i = 0; i < rank; ++i) {
-      if (!ShapedType::isDynamic(layoutStrides[i])) {
-        strides[i] = makeConst(layoutStrides[i]);
-        continue;
-      }
-
-      if (!metadata)
-        metadata =
-            builder.create<memref::ExtractStridedMetadataOp>(loc, memref);
-      strides[i] = castToResultType(metadata->getStrides()[i]);
-    }
-  } else {
-    Value strideValue = makeConst(1);
-    for (int64_t i = rank - 1; i >= 0; --i) {
-      strides[i] = strideValue;
-      if (i == 0)
-        continue;
-
-      Value dimSize;
-      if (memrefType.isDynamicDim(i)) {
-        dimSize = builder.create<memref::DimOp>(loc, memref, i);
-        dimSize = castToResultType(dimSize);
-      } else {
-        dimSize = makeConst(memrefType.getDimSize(i));
-      }
-      strideValue = builder.create<arith::MulIOp>(loc, strideValue, dimSize);
-    }
-  }
-
-  Value linearOffset = makeConst(0);
-  for (auto [idx, index] : llvm::enumerate(indices)) {
-    Value indexValue = castToResultType(index);
-    Value product =
-        builder.create<arith::MulIOp>(loc, indexValue, strides[idx]);
-    linearOffset = builder.create<arith::AddIOp>(loc, linearOffset, product);
-  }
-  return linearOffset;
 }
 
 static bool isIntegerMultipleOf(int64_t value, int64_t factor) {
@@ -171,9 +109,9 @@ static bool isAffineExprKnownMultipleOf(AffineExpr expr, ValueRange operands,
     AffineExpr rhs = binaryExpr.getRHS();
     // For lhs * rhs to be a multiple, a constant factor can satisfy all or part
     // of the requested factor; the other side must satisfy the rest.
-    auto proveConstMul =
-        [operands, numDims, factor](AffineExpr maybeConst,
-                                    AffineExpr other) -> std::optional<bool> {
+    auto proveConstMul = [operands, numDims,
+                          factor](AffineExpr maybeConst,
+                                  AffineExpr other) -> std::optional<bool> {
       auto constExpr = dyn_cast<AffineConstantExpr>(maybeConst);
       if (!constExpr)
         return std::nullopt;
@@ -184,8 +122,7 @@ static bool isAffineExprKnownMultipleOf(AffineExpr expr, ValueRange operands,
           return false;
         constantFactor = -constantFactor;
       }
-      if (constantFactor == 0 ||
-          isIntegerMultipleOf(constantFactor, factor))
+      if (constantFactor == 0 || isIntegerMultipleOf(constantFactor, factor))
         return true;
       if (factor % constantFactor != 0)
         return false;
@@ -303,48 +240,6 @@ bool static isOffsetAligned(Value memrefVal,
   return true;
 }
 
-static bool hasUnalignedFoldOffsetCast(BlockArgument blockArg,
-                                       int64_t hwAlignBits, int64_t elemBits) {
-  auto funcOp = cast<func::FuncOp>(blockArg.getOwner()->getParentOp());
-  auto checkCall = [blockArg, elemBits, funcOp,
-                    hwAlignBits](func::CallOp callOp) {
-    func::FuncOp callee =
-        mlir::utils::getCalledFunction<func::FuncOp, func::CallOp>(callOp);
-    if (callee == funcOp) {
-      auto castOp = callOp.getOperand(blockArg.getArgNumber())
-                        .getDefiningOp<memref::CastOp>();
-      if (castOp && castOp->hasAttr(mlir::utils::KFoldOffsetMarker)) {
-        // The marker guarantees that the source has a dynamic offset and a
-        // valid static-stride layout.
-        auto sourceType = cast<MemRefType>(castOp.getSource().getType());
-        SmallVector<int64_t> strides;
-        int64_t offset;
-        LogicalResult layoutResult =
-            getStridesAndOffset(sourceType, strides, offset);
-        assert(succeeded(layoutResult) &&
-               offset == ShapedType::kDynamic && !strides.empty());
-        (void)layoutResult;
-
-        bool aligned;
-        if (strides.size() == 1) {
-          int64_t size = sourceType.getDimSize(0);
-          aligned = !ShapedType::isDynamic(size) &&
-                    (size * elemBits) % hwAlignBits == 0;
-        } else {
-          aligned = llvm::all_of(
-              llvm::drop_end(strides), [elemBits, hwAlignBits](int64_t stride) {
-                return (stride * elemBits) % hwAlignBits == 0;
-              });
-        }
-        if (!aligned)
-          return WalkResult::interrupt();
-      }
-    }
-    return WalkResult::advance();
-  };
-  return funcOp->getParentOfType<ModuleOp>().walk(checkCall).wasInterrupted();
-}
-
 // Analyze whether the starting address of the memref object meets the alignment
 // requirements.
 static bool isMemrefAligned(Value memrefVal, int64_t hwAlignBits,
@@ -356,11 +251,6 @@ static bool isMemrefAligned(Value memrefVal, int64_t hwAlignBits,
     defOp = memrefVal.getDefiningOp();
   }
   if (dyn_cast<func::FuncOp>(defOp)) {
-    // Check whether the memref object is a function parameter.
-    if (hasUnalignedFoldOffsetCast(cast<BlockArgument>(memrefVal), hwAlignBits,
-                                   elemBits))
-      return false;
-
     MemRefType memRefTy = cast<MemRefType>(memrefVal.getType());
     SmallVector<int64_t> strides(memRefTy.getRank());
     int64_t offset = 0;
@@ -397,9 +287,9 @@ static bool isMemrefAligned(Value memrefVal, int64_t hwAlignBits,
       isByteShiftAlign = isValueKnownMultipleOf(v, requiredByteOffsetAlignment);
     }
     return isByteShiftAlign;
-  } else if (auto collapseOp = dyn_cast<memref::CollapseShapeOp>(defOp)) {
-    auto srcValue = collapseOp.getSrc();
-    llvm::errs() << "collapseOp src: " << srcValue << "\n";
+  } else if (isa<memref::CollapseShapeOp, memref::ExpandShapeOp>(defOp)) {
+    Value srcValue = defOp->getOperand(0);
+    LLVM_DEBUG(llvm::dbgs() << "Reshape src: " << srcValue << "\n");
     return isMemrefAligned(srcValue, hwAlignBits, elemBits);
   } else if (auto getGlobal = dyn_cast<memref::GetGlobalOp>(defOp)) {
     auto global = SymbolTable::lookupNearestSymbolFrom<memref::GlobalOp>(
@@ -609,50 +499,47 @@ Value hivmave::createMaskByPGE(VectorType vecTy, PatternRewriter &rewriter,
       hivmave::PgePatternAttr::get(rewriter.getContext(), pgePattern));
   mask = maskOp->getResult(0);
   if (vecTy.getElementTypeBitWidth() == 1 && vecTy != maskType)
-    mask = rewriter
-               .create<UnrealizedConversionCastOp>(loc, vecTy, maskOp.getResult())
-               ->getResult(0);
+    mask =
+        rewriter
+            .create<UnrealizedConversionCastOp>(loc, vecTy, maskOp.getResult())
+            ->getResult(0);
   return mask;
 }
 
 Value hivmave::findReuseableMask(Operation *maskedOp,
                                  PatternRewriter &rewriter) {
-  Value mask;
-  if (utils::getAnnotateOpWithAttr(maskedOp->getResults()[0],
-                                   utils::reachedMaskOpsIdx)) {
-    annotation::MarkOp mark = dyn_cast<annotation::MarkOp>(
-        utils::getAnnotateOpWithAttr(maskedOp->getResults()[0],
-                                     utils::reachedMaskOpsIdx)
-            .value());
-    int reachedMaskOpIdx = static_cast<int>(
-        mark->template getAttrOfType<IntegerAttr>(utils::reachedMaskOpsIdx)
-            .getValue()
-            .getZExtValue());
-    auto funcOp = maskedOp->getParentOfType<func::FuncOp>();
-    funcOp->walk([&](Operation *op) {
-      if (op->getNumResults() > 0 &&
-          utils::getAnnotateOpWithAttr(op->getResults()[0], utils::maskOpIdx)) {
-        annotation::MarkOp candidateMaskOpMark = dyn_cast<annotation::MarkOp>(
-            utils::getAnnotateOpWithAttr(op->getResults()[0], utils::maskOpIdx)
-                .value());
-        int candidateMaskOpIdx =
-            candidateMaskOpMark
-                ->template getAttrOfType<IntegerAttr>(utils::maskOpIdx)
-                .getValue()
-                .getZExtValue();
-        if (reachedMaskOpIdx == candidateMaskOpIdx) {
-          DominanceInfo domInfo(op);
-          if (domInfo.dominates(op, maskedOp)) {
-            mask = op->getResults()[0];
-          } else if (op->getBlock() == maskedOp->getBlock()) {
-            Operation *cloneOp = rewriter.clone(*op);
-            mask = cloneOp->getResults()[0];
-          }
-        }
-      }
-    });
+  auto markOpt = utils::getAnnotateOpWithAttr(maskedOp->getResults()[0],
+                                              utils::reachedMaskOpsIdx);
+  if (!markOpt)
+    return {};
+  auto mark = dyn_cast<annotation::MarkOp>(markOpt.value());
+  // The dynamic reference is written by AnalyzeArithVectorMask on the keep
+  // path only, so it stays consistent with the static reached_mask_ops_idx.
+  // The isAnnotatedByDynamicAttr guard also protects against the null-keys
+  // case inside getDynamicAttrValue.
+  if (!mark || !mark.isAnnotatedByDynamicAttr(utils::reachedMaskValue))
+    return {};
+  Value mask = mark.getDynamicAttrValue(utils::reachedMaskValue);
+  if (!mask)
+    return {};
+  Operation *defOp = mask.getDefiningOp();
+  if (!defOp)
+    return {};
+  DominanceInfo domInfo(maskedOp);
+  if (domInfo.dominates(defOp, maskedOp))
+    return mask;
+  if (defOp->getBlock() == maskedOp->getBlock()) {
+    // Cloning keeps the original operands. They must be available before the
+    // insertion point even when the mask itself is defined later in the block.
+    auto insertionPoint = rewriter.getInsertionPoint();
+    if (insertionPoint == rewriter.getInsertionBlock()->end() ||
+        !llvm::all_of(defOp->getOperands(), [&](Value operand) {
+          return domInfo.properlyDominates(operand, &*insertionPoint);
+        }))
+      return {};
+    return rewriter.clone(*defOp)->getResult(0);
   }
-  return mask;
+  return {};
 }
 
 Value hivmave::findReuseableMaskOrCreateOne(Operation *maskedOp,
@@ -855,9 +742,10 @@ Value hivmave::sparseByIntlv(Value src, RewriterBase &rewriter,
 
 Value hivmave::denseByDIntlv(Value src, RewriterBase &rewriter,
                              const Location &loc) {
-  hivmave::VFDeInterleaveOp deionOp = rewriter.create<hivmave::VFDeInterleaveOp>(
-      loc, ArrayRef<Type>({src.getType(), src.getType()}),
-      ValueRange{src, src});
+  hivmave::VFDeInterleaveOp deionOp =
+      rewriter.create<hivmave::VFDeInterleaveOp>(
+          loc, ArrayRef<Type>({src.getType(), src.getType()}),
+          ValueRange{src, src});
   return deionOp.getResult(0);
 }
 

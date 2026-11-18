@@ -27,6 +27,46 @@ include "mlir/IR/OpBase.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
 //===----------------------------------------------------------------------===//
+// ApplyLoopInvariantCodeMotionWithSliceBoundaryOp
+//===----------------------------------------------------------------------===//
+
+def ApplyLoopInvariantCodeMotionWithSliceBoundaryOp :
+    TransformDialectOp<"apply_licm_with_slice_boundary",
+                       [TransformOpInterface, TransformEachOpTrait,
+                        DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+                        ReportTrackingListenerFailuresOpTrait]> {
+  let summary = "Move loop-invariant code out of a loop-like op";
+  let description = [{
+    This transform moves side-effect free, loop invariant code out of the
+    targeted loop-like op. The targeted op must implement the
+    `LoopLikeOpInterface`.
+
+    Like `apply_licm`, this operation processes each targeted loop without
+    recursively applying LICM to nested loops. At an scf.for carrying an
+    `outlined-loop-target-*` attribute, extract_slice operations cannot leave
+    the loop. This includes moving a region operation containing a slice.
+    Other invariant operations use the ordinary LICM legality checks.
+    Unmarked loops retain upstream slice-hoisting behavior. Operations carrying
+    an `hfusion-auto-vectorize-target-*` attribute cannot be hoisted from any
+    loop, including as part of a larger region operation. These existing AV2
+    plan labels conservatively identify operations still tracked for fusion
+    or vectorization; this transform does not consume or remove the labels.
+  }];
+
+  let arguments = (ins TransformHandleTypeInterface:$target);
+  let results = (outs);
+  let assemblyFormat = "`to` $target attr-dict `:` type($target)";
+
+  let extraClassDeclaration = [{
+    ::mlir::DiagnosedSilenceableFailure applyToOne(
+      ::mlir::transform::TransformRewriter &rewriter,
+      ::mlir::LoopLikeOpInterface target,
+      ::mlir::transform::ApplyToEachResultList &results,
+      ::mlir::transform::TransformState &state);
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // GetFuncArgumentOp
 //===----------------------------------------------------------------------===//
 

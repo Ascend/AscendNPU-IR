@@ -32,18 +32,23 @@ using namespace llvm;
 using namespace mlir;
 using namespace object;
 
-LogicalResult bishengir::runHIVMCCompile(mlir::ModuleOp module, HIVMCMainConfig config) {
+LogicalResult bishengir::runHIVMCCompile(mlir::ModuleOp module,
+                                         HIVMCMainConfig config) {
   if (failed(checkOptionValidity(config))) {
     return failure();
   }
   CompileTiming timing;
 
-    LogicalResult runPipelineStatus = failure();
-    if (config.shouldCompileA3()) {
-      runPipelineStatus = runHIVMCCompileA3(module, config);
-    } else if (config.shouldCompileA5()) {
-      runPipelineStatus = runHIVMCCompileA5(module, config);
-    }
+  LogicalResult runPipelineStatus = failure();
+  if (config.shouldCompileA3()) {
+    runPipelineStatus = runHIVMCCompileA3(module, config);
+  } else if (config.shouldCompileA5()) {
+    // The pipeline has already reported the failure on stderr; only its
+    // success or failure matters here.
+    llvm::Error err = runHIVMCCompileA5(module, config);
+    runPipelineStatus = success(!err);
+    llvm::consumeError(std::move(err));
+  }
 
-    return runPipelineStatus;
+  return runPipelineStatus;
 }

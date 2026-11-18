@@ -22,8 +22,8 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
-#include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Analysis/DimensionAnalyzer.h"
+#include "bishengir/Dialect/HIVM/IR/CustomOp/CustomOpUtils.h"
 #include "bishengir/Dialect/HIVM/IR/CustomOp/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
@@ -34,6 +34,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
+#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
@@ -415,11 +416,15 @@ public:
                             // a tiling start point.
         }
       }
-      // If the copy input is memref, we cannot tile it.
-      if (isa<mlir::MemRefType>(inputType)) {
-        Op->emitWarning(
-            "Copy input memref is not supported, skip tile and bind.");
-        return failure();
+      // Tile elementwise buffer copies along the axis selected for both sides.
+      if (auto srcType = dyn_cast<MemRefType>(inputType)) {
+        auto dstType = dyn_cast<MemRefType>(dstOpr->get().getType());
+        if (!dstType || !srcType.hasStaticShape() ||
+            srcType.getShape() != dstType.getShape() || Op.getPadMode() ||
+            Op.getPadValue() || Op.getCollapseReassociation() ||
+            !isUbToUbCopy(Op) || tilingDim == -1 ||
+            tilingDim != analyzer.getTilingDim(dstOpr->get()))
+          return failure();
       }
     }
     LLVM_DEBUG(DBGS() << "The " << Op->getName().getStringRef()
@@ -818,7 +823,8 @@ private:
         op.getUnsignedSrcAttr(), op.getTieBreakLeftAttr(),
         op.getReduceDimsAttr(), op.getIndices());
     newReduceOp->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
-    rewriter.replaceAllUsesExcept(op->getResult(0), newReduceOp->getResult(0), storeOp);
+    rewriter.replaceAllUsesExcept(op->getResult(0), newReduceOp->getResult(0),
+                                  storeOp);
     return success();
   }
 };
@@ -990,7 +996,11 @@ public:
       if (isDistributedTypeCustomOp(op.getOperation()) &&
           op->getNumResults() > op.getOutputs().size())
         return failure();
-      if (!op.getGMAddrArgsIndices())
+      // Builtin canonicalization materializes an empty list for UB-only
+      // customs. Presence alone does not imply a GM side effect: guarding an
+      // NZ softmax here would skip the second AIV's independent row slice.
+      auto gmArgs = op.getGMAddrArgsIndices();
+      if (!gmArgs || gmArgs->empty())
         return failure();
     }
 
@@ -1149,6 +1159,16 @@ static bool isTightlyCoupledMarkInCbufAddressSpace(annotation::MarkOp markOp) {
   return maybeSpace && *maybeSpace == AddressSpace::L1;
 }
 
+static bool hasUnrankedCustomLikeValue(func::FuncOp func) {
+  return func
+      .walk([](Operation *op) {
+        if (isCustomLikeOp(op) && hasUnrankedCustomLikeOperandsOrResults(op))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      })
+      .wasInterrupted();
+}
+
 static LogicalResult
 tileAndSliceOp(func::FuncOp func,
                DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim,
@@ -1223,6 +1243,11 @@ tileAndSliceOp(func::FuncOp func,
   }
 
   RewritePatternSet patterns(func->getContext());
+  // FIXME: Leaf-only CustomOp/CustomMacroOp tiling is intentionally not
+  // supported yet. It requires a CustomOp-owned tiling-dimension candidate
+  // when no Store/Copy anchor exists, plus a leaf-aware success criterion.
+  // CustomOp tiling in this version must be driven by a downstream Store/Copy
+  // slice and handled later by CustomOpBubbleUpStrategy.
   patterns.add<TileAndSliceStoreCopyOp<hivm::StoreOp>,
                TileAndSliceStoreCopyOp<hivm::CopyOp>,
                TileAndSliceStoreCopyOp<
@@ -1326,6 +1351,8 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
     return failure();
   }
 
+  // Keep broadcast-specific strict-mode relaxation local to this function.
+  bool effectiveStrictMode = strictMode;
   if (isBroadcastAxisCase) {
     emitRemark(newFunc.getLoc())
         << "Selected tiling dim might have broadcast two different axis. "
@@ -1338,7 +1365,7 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
                                   })
                                   .wasInterrupted();
     if (!hasRestrictiveAttr)
-      strictMode = false;
+      effectiveStrictMode = false;
   }
 
   // If all the pattern fails due to the tilingDim=-1
@@ -1382,7 +1409,7 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   LDBG("After tileAndSliceStore: " << newFunc);
 
   PassManager pm2(newFunc->getContext());
-  populateBindSubBlockBubbleUpPassManager(pm2, strictMode,
+  populateBindSubBlockBubbleUpPassManager(pm2, effectiveStrictMode,
                                           newFunc->getParentOfType<ModuleOp>());
 
   LogicalResult bubbleUpResult = pm2.run(newFunc);
@@ -1426,21 +1453,32 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   return newFunc;
 }
 
+static bool shouldSkipBindSubBlockByName(ArrayRef<func::FuncOp> functions) {
+  return llvm::any_of(functions, [](func::FuncOp func) {
+    return shouldSkipBindSubBlock(func.getName());
+  });
+}
+
 static bool shouldLimitAllAivToSubBlock0(ArrayRef<func::FuncOp> aivFunctions,
                                          ArrayRef<func::FuncOp> aicFunctions,
                                          ModuleOp moduleOp) {
+  // Temporary name-based CV1:2 skip (paged-decode kernels). Keep these on
+  // CV1:1 until DimensionAnalyzer can pick a profitable tile dim.
+  if (shouldSkipBindSubBlockByName(aivFunctions) ||
+      shouldSkipBindSubBlockByName(aicFunctions)) {
+    LDBG("shape-registry skip-list matched; limit all AIV to sub-block 0");
+    return true;
+  }
+
+  // Unranked custom operands or results cannot be tiled. Limit all AIV
+  // functions before attempting to tile any of them.
+  if (llvm::any_of(aivFunctions, hasUnrankedCustomLikeValue))
+    return true;
+
   // if core_ratio is already x:1
   if (llvm::any_of(aivFunctions, [](func::FuncOp aivFunc) {
         auto ratio = getCoreRatioAttr(aivFunc);
         return ratio && ratio.getVector() < 2;
-      }))
-    return true;
-
-  // Custom ops may have side effects and variadic outs/results, and must never
-  // be cloned into the 1:2 sub-block loop.
-  // TODO: wait for sych of
-  if (llvm::any_of(aivFunctions, [](func::FuncOp aivFunc) {
-        return hfusion::util::hasCustomOp(aivFunc);
       }))
     return true;
 
@@ -1505,10 +1543,13 @@ void TileAndBindSubBlockPass::runOnOperation() {
     return;
   }
 
-  // If there is a possibility that loadOp and storeOp accessing the same
-  // address, skip this pass
-  if (!hacc::utils::isRegBasedArch(moduleOp) &&
-      areLoadAndStoreSameAddress(aivFunctions)) {
+  // Different GM views at the same offset may choose incompatible sub-block
+  // partitions for a load and store.
+  // Intra-core synchronization cannot order those cross-sub-block accesses.
+  // Preserve the membase guard and reject these view hazards on regbase.
+  if (areLoadAndStoreSameAddress(
+          aivFunctions,
+          /*checkRegbaseHazards=*/hacc::utils::isRegBasedArch(moduleOp))) {
     (void)limitAllAivToSubBlock0();
     return;
   }

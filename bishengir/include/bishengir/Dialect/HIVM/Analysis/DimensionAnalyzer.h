@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include <utility>
 
 namespace mlir {
 namespace hivm {
@@ -36,6 +37,9 @@ public:
     Reduce,
     InvalidColumnSplit,
     NotAligned,
+    /// Non-unit axes after the first in a reshape group \c [a, b, ...] <-> \c
+    /// [c].
+    ReshapedInner,
   };
   explicit DimensionAnalyzer(Operation *op, int64_t tilingSize = 2);
   LogicalResult initialize() override;
@@ -142,6 +146,12 @@ protected:
                                         std::is_same_v<T, hivm::VCummaxOp> ||
                                         std::is_same_v<T, hivm::VCumminOp>>>
   void processVCumOp(T op);
+  // Shared by hivm::CustomOp and hivm::CustomMacroOp (same base +
+  // HIVMStructuredOpInterface, identical dimension-merge logic).
+  template <typename T,
+            typename = std::enable_if_t<std::is_same_v<T, hivm::CustomOp> ||
+                                        std::is_same_v<T, hivm::CustomMacroOp>>>
+  void processCustomOpLike(T op, Value current);
   void processYieldOp(scf::YieldOp op);
   void processForOp(scf::ForOp op);
   void processWhileOp(scf::WhileOp op);
@@ -183,6 +193,13 @@ protected:
   void markTransposedDim(hivm::VTransposeOp op);
   void markUnalignedDim(hivm::CopyOp op);
 
+  /// Mark every non-unit axis after the first in each \p reassoc group of
+  /// \p higherRank. Unit sizes are skipped, so \c [a, 1, b, d] <-> \c [c]
+  /// marks \c b and \c d. A group with fewer than two non-unit axes is left
+  /// unmarked.
+  void markReshapedInner(Value higherRank,
+                         ArrayRef<ReassociationIndices> reassoc);
+
   /// Mark \p structuralIdx / \p shapeIdx as Reduce unless already marked.
   void tryMarkReduceDim(int64_t structuralIdx, int64_t shapeIdx);
   void tryMarkReduceDimShape(int64_t shapeIdx);
@@ -203,8 +220,12 @@ protected:
   void transferDimMarkImpl(hivm::VBrcOp op);
   void transferDimMarkImpl(hivm::VTransposeOp op);
 
-  int64_t getHigherDimCounts(ArrayRef<Dimension> candidate,
-                             SmallVectorImpl<int64_t> *candidateDims = nullptr);
+  /// Returns {higher-dim count, other-way count}. The other-way count is how
+  /// many stores have a candidate dim worse than the already selected tiling
+  /// dim.
+  std::pair<int64_t, int64_t>
+  getHigherDimCounts(ArrayRef<Dimension> candidate,
+                     SmallVectorImpl<int64_t> *candidateDims = nullptr);
 
   /// Merges tiling candidate groups that were marked incompatible during
   /// dimension analysis but must be reconciled for broadcast-axis tiling.
@@ -214,6 +235,16 @@ protected:
       mlir::detail::SimpleUnionFind &candGroupDSU,
       MutableArrayRef<int64_t> candidateGroupSize,
       SmallVector<DenseSet<int64_t>> &candidateExclusiveDimIdx);
+
+  /// Join exclusive \p parallelDimMap parents in \p candGroupDSU, updating
+  /// \p candidateExclusiveDimIdx like \c processInvalidUpdates. \c
+  /// candidatesByCandGroup is built afterwards from that union-find.
+  void mergeExclusiveCandGroups(
+      const DenseMap<int64_t, SmallVector<Dimension>> &parallelDimMap,
+      MutableArrayRef<int64_t> candidateGroupSize,
+      mlir::detail::SimpleUnionFind &candGroupDSU,
+      SmallVector<DenseSet<int64_t>> &candidateExclusiveDimIdx,
+      int64_t numStoreOp);
 
   bool isValidTilingSize(int64_t dim) const;
   /// Tells us if we can still treat axis \p i as a tiling candidate for every
@@ -251,8 +282,12 @@ protected:
   /// Chosen tiling axis index per SSA \c Value; \c -1 when not chosen.
   DenseMap<Value, int64_t> tilingDim_;
 
+  /// Required UB count and structural parent indices, keyed by value group.
+  DenseMap<int64_t, int64_t> requiredUbCounts;
+  SmallVector<DenseSet<int64_t>> requiredUbBuffers;
+
   /// How each solver dimension behaves for tiling (\c Parallel, \c RankReduced,
-  /// \c Reduce). Keys follow \c markDimensionKind
+  /// \c Reduce, \c ReshapedInner). Keys follow \c markDimensions.
   DenseMap<int64_t, TilingDimensionKind> tilingDimKindMapForCollapser;
   DenseMap<int64_t, TilingDimensionKind> tilingDimKindMapForShape;
 
@@ -295,6 +330,8 @@ private:
   /// by region-aware ops (e.g. scf) to map \p use to analyzer rules.
   void handleValueGroupForUse(Operation *user, Value current, OpOperand *use,
                               unsigned operandNumber);
+  /// Join value groups of sources indexed by \p forOp's IV as an offset.
+  void joinParallelLoopOffsetValueGroups(scf::ForOp forOp);
 };
 
 } // namespace detail
