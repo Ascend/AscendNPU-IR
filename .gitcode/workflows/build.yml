@@ -75,11 +75,6 @@ on:
         required: false
         type: string
         default: '/opt/buildtools/llvm15/build/bin'
-      atomgit_sha:
-        description: '提交 SHA，用于制品名拼接'
-        required: false
-        type: string
-        default: ''
 
 jobs:
   build_binaries:
@@ -101,6 +96,11 @@ jobs:
       NINJA_PATH: ${{ inputs.ninja_path }}
       LLVM_PATH: ${{ inputs.llvm_path }}
     steps:
+      - name: Show trigger Info
+        run: |
+          echo "event_name: ${{ atomgit.event_name }}"
+          echo "commit sha: ${{ atomgit.sha }}"
+
       - name: Checkout code
         uses: checkout
 
@@ -134,19 +134,17 @@ jobs:
         uses: cache
         with:
           path: .ccache
-          key: ccache-${{ inputs.arch }}-${{ atomgit.pr_id }}
+          key: ccache-${{ inputs.arch }}-${{ atomgit.sha }}
           restore-keys: |
             ccache-${{ inputs.arch }}-
 
       - name: Build ascendnpu-ir binaries
         run: |
           set -euxo pipefail
-          echo "pr_id: ${{ atomgit.event.pull_request.number }}"
-          echo "sha: ${{ inputs.atomgit_sha }}"
           source "$CANN_PATH/cann/set_env.sh"
           export BISHENG_INSTALL_PATH="$CANN_PATH/cann/bin"
           export PATH="$NINJA_PATH:$CMAKE_PATH:$PATH"
-          export CCACHE_DIR="$PWD/.ccache"
+          export CCACHE_DIR=".ccache"
           mkdir -p "$CCACHE_DIR"
           chmod +x build-tools/build.sh
           ./build-tools/build.sh \
@@ -177,17 +175,17 @@ jobs:
 
           bash cicd/CI/make-run.sh -a "$ARCH" -v "$PACKAGE_VERSION"
 
-          # PR 构建追加 PR 号与 SHA；定时任务追加分支与日期；其他保持原名
-          PR_ID="${{ atomgit.event.pull_request.number }}"
-          SHA="$(printf '%s' "${{ inputs.atomgit_sha }}" | cut -c1-13)"
           EVENT_NAME="${{ atomgit.event_name }}"
+          SHA="$(printf '%s' "${{ atomgit.sha }}" | cut -c1-13)"
           PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}_linux-${ARCH}"
-          if [ -n "$PR_ID" ]; then
+          if [ "$EVENT_NAME" = "MR" ]; then
+            # event_name = pull_request/pull_request/pull_request_target
+            PR_ID="${{ atomgit.event.pull_request.number }}"
             PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}-pr${PR_ID}-${SHA}_linux-${ARCH}"
-          elif [ "$EVENT_NAME" = "schedule" ]; then
-            REF_NAME="$(printf '%s' "${{ atomgit.ref_name }}" | tr '/' '-')"
-            BUILD_DATE="$(date -u -d '+8 hours' +%y-%m-%d)"
-            PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}-${REF_NAME}-daily-${BUILD_DATE}_linux-${ARCH}"
+          elif [ "$EVENT_NAME" = "Scheduler" ]; then
+            # event_name =schedule
+            BUILD_TIME="$(date -u -d '+8 hours' +%Y%m%d-%H%M%S)"
+            PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}-${BUILD_TIME}-${SHA}_linux-${ARCH}"
           fi
           mv "./cicd/CI/ascendnpu-ir_${PACKAGE_VERSION}_linux-${ARCH}.run" "./${PKG_NAME}.run"
 
