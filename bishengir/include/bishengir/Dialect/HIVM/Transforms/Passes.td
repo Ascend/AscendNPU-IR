@@ -1813,6 +1813,23 @@ def FuseTransposeIntoLoad
   ];
 }
 
+def FuseOpIntoLoad : HIVMPass<"hivm-fuse-op-into-load", "ModuleOp"> {
+  let summary = "Fuse proven same-function operations into A6 loads";
+  let description = [{
+    Register the supported static broadcast patterns together.
+    The MLIR pattern driver applies them within the nearest A6 module,
+    without unrelated folding, constant CSE or region simplification. Nested
+    modules are not processed by an outer module invocation. Combined
+    pad-to-broadcast chains remain unsupported.
+  }];
+  let constructor = "mlir::hivm::createFuseOpIntoLoadPass()";
+  let dependentDialects = ["arith::ArithDialect",
+                           "bufferization::BufferizationDialect",
+                           "func::FuncDialect", "hivm::HIVMDialect",
+                           "linalg::LinalgDialect", "memref::MemRefDialect",
+                           "scf::SCFDialect", "tensor::TensorDialect"];
+}
+
 def DecomposeAllocTensorCopy
     : HIVMPass<"hivm-decompose-alloc-tensor-copy", "ModuleOp"> {
   let summary = "Rewrite bufferization.alloc_tensor(copy...) into an "

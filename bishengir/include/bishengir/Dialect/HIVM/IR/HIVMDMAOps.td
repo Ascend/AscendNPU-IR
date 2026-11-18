@@ -59,6 +59,11 @@ class HIVM_DmaOp<string mnemonic, list<Trait> traits = []> :
   }] # opNameDeclaration;
 }
 
+// Keep LoadOp verification and pre-rewrite type queries on one ODS constraint.
+def HIVM_LoadElementType : AnyTypeOf<[
+  F8E4M3FN, F8E5M2, I1, I8, UI8, I16, UI16, F16, BF16,
+  I32, UI32, F32, UI64, I64]>;
+
 def LoadOp : HIVM_DmaOp<"load", [
   AttrSizedOperandSegments,
   SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_MTE2">,
@@ -67,8 +72,7 @@ def LoadOp : HIVM_DmaOp<"load", [
   UniformReassociationFlattenTrait,
   DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
   // TODO: Use trait to avoid writing duplicate type constraints
-  OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8,
-    I16, UI16, F16, BF16, I32, UI32, F32, UI64, I64]>,
+  OperElemTypeConstraints<[0], [HIVM_LoadElementType]>,
   DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
     ["decomposeOperation", "getDecomposePhase"]>,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
@@ -110,8 +114,9 @@ def LoadOp : HIVM_DmaOp<"load", [
     In-row, A6 only: the pad elements are part of the destination row, so
     `D = lp + W + rp`. The row is written exactly as declared and its end does
     not have to fall on a 32-byte boundary. This form is selected when the
-    target is A6 and `right_padding_num` is present with a value that is not
-    zero; a left count that is omitted reads as zero.
+    target is A6 and `right_padding_num` is present, including an explicit
+    zero. Without that operand the legacy form is used. An omitted left count
+    reads as zero; canonicalization preserves the explicit right operand.
 
     ### Attributes
     #### `broadcast_axes`
@@ -220,7 +225,14 @@ def LoadOp : HIVM_DmaOp<"load", [
   let hasFolder = 1;
   let hasCanonicalizer = 1;
   let hasVerifier = 1; // verify parameter according to hardware version
+  // This LLVM version has no cppFunctionName constraint generator. All types
+  // above have leaf CPreds; emit their disjunction without a second type list.
   let extraClassDeclaration = DmaOpBaseDecl # [{
+    static bool isSupportedElementType(::mlir::Type type) {
+      return }] # !interleave(!foreach(t, HIVM_LoadElementType.allowedTypes,
+        !subst("$_self", "type", !cast<CPred>(t.predicate).predExpr)), " || ") # [{;
+    }
+
     /// True when the load pads inside the destination row, which is what the
     /// A6 templates implement. That form is selected on A6 when
     /// `right_padding_num` is present and not zero; an omitted left count
