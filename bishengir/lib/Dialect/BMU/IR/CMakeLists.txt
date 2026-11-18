@@ -11,6 +11,8 @@ add_bishengir_dialect_library(BiShengIRBMUDialect
   BiShengIRBMUIntrinOpsIncGen
 
   LINK_LIBS PUBLIC
+  BiShengIRHACCUtils
+  BiShengIRHIVMDialect
   MLIRLLVMDialect
   MLIRSideEffectInterfaces
 )
