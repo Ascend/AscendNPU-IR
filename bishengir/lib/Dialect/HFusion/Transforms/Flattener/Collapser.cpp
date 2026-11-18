@@ -1320,10 +1320,25 @@ void Flattener::adjustToTensorOp(bufferization::ToTensorOp op,
 void Flattener::adjustToMemrefOp(bufferization::ToMemrefOp op,
                                  mlir::OpBuilder &builder) {
   auto oldType = cast<MemRefType>(op.getMemref().getType());
-  // TODO: adjust the layout instead of using identity
-  MemRefType newType = MemRefType::Builder(oldType)
-                           .setShape(utils::getShape(op.getOperand().getType()))
-                           .setLayout(MemRefLayoutAttrInterface());
+  // The shape is collapsed by the flattener, so the layout has to be collapsed
+  // together with it.
+  auto collapseGroup = getCollapseGroup(op.getMemref());
+  bool guaranteedCollapsible =
+      !collapseGroup.empty() &&
+      memref::CollapseShapeOp::isGuaranteedCollapsible(oldType, collapseGroup);
+  MemRefType newType;
+  if (guaranteedCollapsible) {
+    // The shape is collapsed by the flattener, so the layout has to be
+    // collapsed together with it.
+    newType =
+        memref::CollapseShapeOp::computeCollapsedType(oldType, collapseGroup);
+  } else {
+    MemRefType::Builder typeBuilder(oldType);
+    typeBuilder.setShape(utils::getShape(op.getOperand().getType()));
+    if (!collapseGroup.empty())
+      typeBuilder.setLayout(MemRefLayoutAttrInterface());
+    newType = typeBuilder;
+  }
   LDBG("operation result " << op << " " << newType << "\n");
   op.getMemref().setType(newType);
 }
@@ -1331,10 +1346,21 @@ void Flattener::adjustToMemrefOp(bufferization::ToMemrefOp op,
 void Flattener::adjustToBufferOp(bufferization::ToBufferOp op,
                                  mlir::OpBuilder &builder) {
   auto oldType = cast<MemRefType>(op.getBuffer().getType());
-  // TODO: adjust the layout instead of using identity
-  MemRefType newType = MemRefType::Builder(oldType)
-                           .setShape(utils::getShape(op.getOperand().getType()))
-                           .setLayout(MemRefLayoutAttrInterface());
+  auto collapseGroup = getCollapseGroup(op.getBuffer());
+  bool guaranteedCollapsible =
+      !collapseGroup.empty() &&
+      memref::CollapseShapeOp::isGuaranteedCollapsible(oldType, collapseGroup);
+  MemRefType newType;
+  if (guaranteedCollapsible) {
+    newType =
+        memref::CollapseShapeOp::computeCollapsedType(oldType, collapseGroup);
+  } else {
+    MemRefType::Builder typeBuilder(oldType);
+    typeBuilder.setShape(utils::getShape(op.getOperand().getType()));
+    if (!collapseGroup.empty())
+      typeBuilder.setLayout(MemRefLayoutAttrInterface());
+    newType = typeBuilder;
+  }
   LDBG("operation result " << op << " " << newType << "\n");
   op.getBuffer().setType(newType);
 }
