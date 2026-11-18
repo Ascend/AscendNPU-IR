@@ -353,10 +353,8 @@ static void convertTensorToTightCoupledBuffer(OpPassManager &pm) {
 // v1 or v2 independently for each kernel in a module.
 static void buildCVPipelineV2(OpPassManager &pm,
                               unsigned maxPipelineMultibuffer,
-                              int simtVFDynamicSize,
-                              bool enableNormalizeWorkspaceStore) {
-  if (enableNormalizeWorkspaceStore)
-    pm.addPass(createNormalizeWorkspaceStorePass());
+                              int simtVFDynamicSize) {
+  pm.addPass(createNormalizeWorkspaceStorePass());
   pm.addPass(createSaveCVPipelineSnapshotPass());
   pm.addPass(createOutlineCVScopesPass());
   pm.addPass(createMergeCVScopesPass());
@@ -397,8 +395,7 @@ struct SelectCVPipelinePass
     nested.addPass(createCVPipeliningPass());
     nested.addPass(createSetBufferSizePass());
     nested.addPass(createMarkTightlyCoupledBufferPass());
-    buildCVPipelineV2(nested, maxPipelineMultibuffer, simtVFDynamicSize,
-                      /*enableNormalizeWorkspaceStore=*/true);
+    buildCVPipelineV2(nested, maxPipelineMultibuffer, simtVFDynamicSize);
     nested.getDependentDialects(registry);
   }
 
@@ -429,13 +426,11 @@ struct SelectCVPipelinePass
     }
     // Explicit v2 takes precedence over the registry. Otherwise registered
     // kernels keep v1 even when it declines a loop, while unregistered kernels
-    // retain the legacy-then-v2 fallback. NormalizeWorkspaceStore stays off
-    // when CVPipelining was just enabled on that fallback.
+    // retain the legacy-then-v2 fallback.
     if (usePipelineV2 || (!registered && enablePreload)) {
       if (usePipelineV2)
         nested.addPass(createSetBufferSizePass());
-      buildCVPipelineV2(nested, maxPipelineMultibuffer, simtVFDynamicSize,
-                        /*enableNormalizeWorkspaceStore=*/!useLegacy);
+      buildCVPipelineV2(nested, maxPipelineMultibuffer, simtVFDynamicSize);
       if (usePipelineV2)
         nested.addPass(createMarkTightlyCoupledBufferPass());
     }
