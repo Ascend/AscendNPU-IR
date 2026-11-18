@@ -27,9 +27,10 @@ _PAYLOAD = (
 _SKIP_BIND_PAYLOAD = "LcJwjCbUC6RX8UyyLmCTITPGew=="
 
 # DedupInsertedL1StagingPattern allow-list is the loop-shape registry minus
-# these names. chunk_kda_bwd_kernel_intra regresses when the two L1 stagings
+# these names. chunk_kda_bwd_kernel_intra and
+# chunk_kda_fwd_kernel_intra_safe_gate_fused regress when the two L1 stagings
 # of one tensor are merged.
-_DEDUP_L1_SKIP_PAYLOAD = "PstihynUBKVVwUqgFVSdNi/NcoUd4gG1Rv8i"
+_DEDUP_L1_SKIP_PAYLOAD = "PstihynUBKVVwUqgFVSdNi/NcoUd4gG1Rv8itBl+mDgCyHOIHe0YpWv1TaUfbpoMNM1jmyPUHKBS+3ewEH+TDDvWZIwmgQ=="
 
 _KEY = bytes((0x5d, 0xa3, 0x17, 0xe9, 0x42, 0x8b, 0x6f, 0xc1,
               0x34, 0x9e, 0x28, 0xd7, 0x71, 0x0b, 0xf6, 0x53))
