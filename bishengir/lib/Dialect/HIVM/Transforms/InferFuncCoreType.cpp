@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/SplitKernelUtils.h"
 #include "bishengir/Target/NPU/NPUArchitectureFeatures.h"
 
 #include "mlir/Analysis/CallGraph.h"
@@ -73,6 +74,12 @@ public:
                         hivm::TFuncCoreTypeAttr::get(func->getContext(),
                                                      hivm::TFuncCoreType::AIC));
         }
+      });
+      // Coupled targets use an implicit AIV function convention except for
+      // the AIC annotations above. Resolve placement without changing it.
+      module.walk([](func::FuncOp func) {
+        hivm::resolveFlexibleCoreTypes(func, /*specializeBoth=*/false,
+                                       hivm::TFuncCoreType::AIV);
       });
       return;
     }
@@ -174,6 +181,8 @@ public:
 
       func->setAttr(hivm::TFuncCoreTypeAttr::name,
                     hivm::TFuncCoreTypeAttr::get(func->getContext(), e));
+
+      hivm::resolveFlexibleCoreTypes(func);
 
       auto parentModule = func->getParentOfType<ModuleOp>();
       // Materialize the A6 default before sub-block partitioning and MIX
@@ -321,6 +330,10 @@ private:
         // it's impossible to refine c any more, so interrupt the walk
         return WalkResult::interrupt();
       }
+
+      for (NamedAttribute annotation : hivm::getCoreTypeAnnotations(op))
+        refineConstraint(
+            c, cast<hivm::TCoreTypeAttr>(annotation.getValue()).getTcoretype());
 
       // LoadOp and DebugOp infer a missing core type by walking users, which
       // calls back into this query. An explicit tcoretype is local, so count

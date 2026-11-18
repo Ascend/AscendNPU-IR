@@ -235,7 +235,6 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
                     SubCoreTarget coreType, const HIVMCMainConfig &config,
                     bool isMixKernel, bool mixKernelHasDebugOrShmem,
                     const std::map<SubCoreTarget, std::string> &bitcodePaths) {
-  BishengAsyncRuntime *runtime = config.getRuntime();
   bool regbaseCompile = hacc::utils::isRegBasedArch(config.getTargetBackend());
   std::string extension = config.shouldSaveLinkedIR() ? ".ll" : ".o";
   std::string outputPath = config.shouldSaveLinkedIR()
@@ -375,6 +374,8 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
 
   StringRef bishengBin = getBiShengCompilerName();
 
+#if BISHENGIR_HAVE_BISHENG_LLC
+  BishengAsyncRuntime *runtime = config.getRuntime();
   // ---- Native (libbisheng-llc.so) backend path --------------------------
   // Active iff a runtime was created (BISHENG_BACKEND=native && !CPURunner).
   // Never falls back to Process.
@@ -597,6 +598,7 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
     return outputBin;
   }
   // ---- End Native path --------------------------------------------------
+#endif
 
   // Debug: dump process-mode IR for offline replay comparison.
   if (getenv("BISHENG_NATIVE_DUMP")) {
