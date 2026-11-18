@@ -381,7 +381,9 @@ struct SelectCVPipelinePass
         pipelineMode(options.setCVPipelineMode),
         workspaceMultiBufferNum(options.setWorkspaceMultibuffer),
         maxPipelineMultibuffer(options.setMaxPipelineMultibuffer),
-        simtVFDynamicSize(options.simtVFDynamicSize) {}
+        simtVFDynamicSize(options.simtVFDynamicSize),
+        schedulerMode(options.enableSchedulerAlg),
+        smsFailOnFallback(options.smsFailOnFallback) {}
 
   StringRef getArgument() const override { return "hivm-select-cv-pipeline"; }
   StringRef getDescription() const override {
@@ -418,6 +420,8 @@ struct SelectCVPipelinePass
       options.enableLazyLoading = enableLazyLoading;
       options.pipelineMode = pipelineMode;
       options.enablePreload = enablePreload;
+      options.schedulerMode = schedulerMode;
+      options.smsFailOnFallback = smsFailOnFallback;
       nested.addPass(createCVPipeliningPass(options));
     }
     // Explicit v2 takes precedence over the registry. Otherwise registered
@@ -443,6 +447,8 @@ private:
   unsigned workspaceMultiBufferNum;
   unsigned maxPipelineMultibuffer;
   int simtVFDynamicSize;
+  CVSchedulerMode schedulerMode;
+  bool smsFailOnFallback;
 };
 
 static void hivmPreBufferizationOptimizationPipeline(
@@ -568,24 +574,6 @@ static void hivmPreBufferizationOptimizationPipeline(
       repositionOpts.enablePreload = true;
       repositionOpts.workspaceMultiBufferNum =
           hivmPipelineOptions.setWorkspaceMultibuffer;
-      // Registered kernels on the default v1 route: bridge scheduler flags and
-      // run CVPipelining before reposition so buffer-count marking sees split scopes.
-      CVPipeliningOptions pipelineOptions;
-      pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
-      pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
-      pipelineOptions.enablePreload = hivmPipelineOptions.enablePreload;
-      // Bridge the top-level --enable-scheduler-alg flag to the CVPipelining scheduler.
-      // SMS only supports Skew mode; the pass reverts to the default WorklistBuilder path otherwise.
-      pipelineOptions.schedulerMode = hivmPipelineOptions.enableSchedulerAlg;
-      pipelineOptions.smsFailOnFallback = hivmPipelineOptions.smsFailOnFallback;
-      if (hivmPipelineOptions.setCVPipelineMode == CVPipelineMode::Skew) {
-        pm.nest<func::FuncOp>().addPass(
-            std::make_unique<PrepareRegisteredSkewTCBPass>(
-                hivmPipelineOptions.enablePreload,
-                hivmPipelineOptions.setWorkspaceMultibuffer));
-      }
-      pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
-      // Before the second MarkMultiBuffer so buffer-count marking sees the split scopes.
       pm.addPass(createRepositionPreloadWorkPass(repositionOpts));
     }
     pm.addNestedPass<func::FuncOp>(
