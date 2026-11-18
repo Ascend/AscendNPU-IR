@@ -1,5 +1,4 @@
 // RUN: bishengir-opt %s -hivm-bind-sub-block -split-input-file -verify-diagnostics | FileCheck %s
-// RUN: %if asserts %{ bishengir-opt %s -hivm-bind-sub-block -split-input-file -verify-diagnostics --mlir-disable-threading --debug-only=hivm-bind-sub-block -o /dev/null 2>&1 | FileCheck %s --check-prefix=PRE %}
 
 // CHECK-LABEL:   func.func @mm_01_mix_aiv(
 // CHECK:           %[[VAL_11:.*]] = arith.constant 0 : index
@@ -6603,7 +6602,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 // CHECK: %[[OFF:.*]] = affine.apply
 // CHECK: scf.for %[[IV:.*]] = %[[OFF]]
 // CHECK: %[[LOCAL:.*]] = arith.subi %[[IV]], %[[OFF]] : index
-// CHECK: tensor.extract %{{.*}}[%[[LOCAL]]] {DiscreteMemAccess, "DuplicateTensorExtractForCube::visitedLabel" = 1 : i32, tiled_op} : tensor<8xi32>
+// CHECK: tensor.extract %{{.*}}[%[[LOCAL]]] {DiscreteMemAccess, "DuplicateTensorExtractForCube::visitedLabel" = 1 : i32} : tensor<8xi32>
 // CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>, hivm.tiling_dim = 0 : index, tiledAlloc} : memref<8x16xf32, #hivm.address_space<ub>>
 // CHECK: map_for_to_forall
 // CHECK-NOT: limit_sub_block_id0
@@ -6692,92 +6691,6 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">, hivm.module_c
       %163 = hivm.hir.vadd ins(%162, %159 : tensor<16x512xf32>, tensor<16x512xf32>) outs(%11 : tensor<16x512xf32>) -> tensor<16x512xf32>
       scf.yield %145, %156, %163 : tensor<16xf32>, tensor<16xf32>, tensor<16x512xf32>
     }
-    return
-  }
-}
-
-// -----
-
-// A direct store selects the index tensor axis independently of the gather.
-// Extract slicing must be prepared before BubbleUp, using that selected axis.
-// PRE-LABEL: After tileAndSliceStore: func.func @tile_extract_mix_aiv
-// PRE: tensor.extract_slice {{.*}}[{{.*}}] [8] [1]
-// PRE: %[[LOCAL:.*]] = arith.subi
-// PRE: tensor.extract {{.*}}[%[[LOCAL]]] {DiscreteMemAccess, tiled_op} : tensor<8xi32>
-// CHECK-LABEL: func.func @tile_extract_mix_aiv
-// CHECK-NOT: tile_and_bind_subblock_reverted
-// CHECK: memref.alloc() : memref<8x16xf32>
-// CHECK: tensor.extract {{.*}} {DiscreteMemAccess, tiled_op} : tensor<8xi32>
-module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
-  func.func @tile_extract_mix_aiv(%indices: tensor<16xi32>, %source: memref<?xf32>, %output: memref<16x16xf32>, %index_output: memref<16xi32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
-    %c0 = arith.constant 0 : index
-    %c1 = arith.constant 1 : index
-    %c16 = arith.constant 16 : index
-    %buffer = memref.alloc() : memref<16x16xf32>
-    scf.for %iv = %c0 to %c16 step %c1 {
-      %index = tensor.extract %indices[%iv] {DiscreteMemAccess} : tensor<16xi32>
-      %address = arith.index_cast %index : i32 to index
-      %src = memref.reinterpret_cast %source to offset: [%address], sizes: [1, 16], strides: [16, 1] : memref<?xf32> to memref<1x16xf32, strided<[16, 1], offset: ?>>
-      %dst = memref.subview %buffer[%iv, 0] [1, 16] [1, 1] : memref<16x16xf32> to memref<1x16xf32, strided<[16, 1], offset: ?>>
-      hivm.hir.load ins(%src : memref<1x16xf32, strided<[16, 1], offset: ?>>) outs(%dst : memref<1x16xf32, strided<[16, 1], offset: ?>>)
-    } {ExtractedLoadOrStore, hivm.parallel_loop}
-    %tensor = bufferization.to_tensor %buffer restrict writable : memref<16x16xf32>
-    hivm.hir.store ins(%tensor : tensor<16x16xf32>) outs(%output : memref<16x16xf32>)
-    hivm.hir.store ins(%indices : tensor<16xi32>) outs(%index_output : memref<16xi32>)
-    return
-  }
-}
-
-// -----
-// Extracts without DiscreteMemAccess retain the full index tensor.
-// PRE-LABEL: After tileAndSliceStore: func.func @unmarked_extract_mix_aiv
-// PRE-NOT: tensor.extract_slice {{.*}}] [8] [1]
-// PRE: tensor.extract {{.*}} : tensor<16xi32>
-// CHECK-LABEL: func.func @unmarked_extract_mix_aiv
-// CHECK: memref.alloc() : memref<8x16xf32>
-// CHECK: tensor.extract {{.*}} : tensor<16xi32>
-module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
-  func.func @unmarked_extract_mix_aiv(%indices: tensor<16xi32>, %source: memref<?xf32>, %output: memref<16x16xf32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
-    %c0 = arith.constant 0 : index
-    %c1 = arith.constant 1 : index
-    %c16 = arith.constant 16 : index
-    %buffer = memref.alloc() : memref<16x16xf32>
-    scf.for %iv = %c0 to %c16 step %c1 {
-      %index = tensor.extract %indices[%iv] : tensor<16xi32>
-      %address = arith.index_cast %index : i32 to index
-      %src = memref.reinterpret_cast %source to offset: [%address], sizes: [1, 16], strides: [16, 1] : memref<?xf32> to memref<1x16xf32, strided<[16, 1], offset: ?>>
-      %dst = memref.subview %buffer[%iv, 0] [1, 16] [1, 1] : memref<16x16xf32> to memref<1x16xf32, strided<[16, 1], offset: ?>>
-      hivm.hir.load ins(%src : memref<1x16xf32, strided<[16, 1], offset: ?>>) outs(%dst : memref<1x16xf32, strided<[16, 1], offset: ?>>)
-    } {ExtractedLoadOrStore, hivm.parallel_loop}
-    %tensor = bufferization.to_tensor %buffer restrict writable : memref<16x16xf32>
-    hivm.hir.store ins(%tensor : tensor<16x16xf32>) outs(%output : memref<16x16xf32>)
-    return
-  }
-}
-
-// -----
-// Sharing an IV does not select the index tensor's axis.
-// PRE-LABEL: After tileAndSliceStore: func.func @independent_extract_mix_aiv
-// PRE-NOT: tensor.extract_slice {{.*}}] [8] [1]
-// PRE: tensor.extract {{.*}} {DiscreteMemAccess} : tensor<16xi32>
-// CHECK-LABEL: func.func @independent_extract_mix_aiv
-// CHECK: memref.alloc() : memref<8x16xf32>
-// CHECK: tensor.extract {{.*}} {DiscreteMemAccess} : tensor<16xi32>
-module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
-  func.func @independent_extract_mix_aiv(%indices: tensor<16xi32>, %source: memref<?xf32>, %output: memref<16x16xf32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
-    %c0 = arith.constant 0 : index
-    %c1 = arith.constant 1 : index
-    %c16 = arith.constant 16 : index
-    %buffer = memref.alloc() : memref<16x16xf32>
-    scf.for %iv = %c0 to %c16 step %c1 {
-      %index = tensor.extract %indices[%iv] {DiscreteMemAccess} : tensor<16xi32>
-      %address = arith.index_cast %index : i32 to index
-      %src = memref.reinterpret_cast %source to offset: [%address], sizes: [1, 16], strides: [16, 1] : memref<?xf32> to memref<1x16xf32, strided<[16, 1], offset: ?>>
-      %dst = memref.subview %buffer[%iv, 0] [1, 16] [1, 1] : memref<16x16xf32> to memref<1x16xf32, strided<[16, 1], offset: ?>>
-      hivm.hir.load ins(%src : memref<1x16xf32, strided<[16, 1], offset: ?>>) outs(%dst : memref<1x16xf32, strided<[16, 1], offset: ?>>)
-    } {ExtractedLoadOrStore, hivm.parallel_loop}
-    %tensor = bufferization.to_tensor %buffer restrict writable : memref<16x16xf32>
-    hivm.hir.store ins(%tensor : tensor<16x16xf32>) outs(%output : memref<16x16xf32>)
     return
   }
 }

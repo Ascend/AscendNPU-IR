@@ -1033,17 +1033,6 @@ LogicalResult WorklistBuilder::populateDependencies(Operation &separator) {
   return success();
 }
 
-static TCoreType inferBitcastOpCoreType(BitcastOp op);
-
-/// Resolve the core for same-core carry deferral, including bitcast users.
-static TCoreType resolveLoopCarryCoreType(Operation *op) {
-  if (auto bitcast = dyn_cast<BitcastOp>(op))
-    return inferBitcastOpCoreType(bitcast);
-  if (isCrossCoreCopy(op))
-    return TCoreType::VECTOR;
-  return queryCoreTypeHelper(op).value_or(TCoreType::CUBE_OR_VECTOR);
-}
-
 /// Populate dependencies that are carried between loop iterations (iter args,
 /// yield operands). Only meaningful in loop mode; no-op in block mode.
 void WorklistBuilder::populateLoopCarriedDependencies() {
@@ -1055,55 +1044,28 @@ void WorklistBuilder::populateLoopCarriedDependencies() {
     for (auto [iterArg, yieldedVal] :
          llvm::zip(pipelineLoop.getRegionIterArgs(),
                    pipelineLoop.getYieldedValues())) {
-      if (!isa<TensorType>(iterArg.getType()))
-        continue;
-      Operation *yieldedOp = yieldedVal.getDefiningOp();
-      if (!yieldedOp)
-        continue;
-      TCoreType producerCore = resolveLoopCarryCoreType(yieldedOp);
-      if (producerCore != TCoreType::VECTOR && producerCore != TCoreType::CUBE)
-        continue;
-
-      // Follow views and bitcasts to the first core consumers. Defer these
-      // seeds until the yield producer is ready, without deferring an entire
-      // chain that may need to execute before an opposite-core stage.
       SmallVector<Operation *> userTraceStack;
-      DenseSet<Operation *> visited;
-      for (Operation *user : iterArg.getUsers())
-        userTraceStack.push_back(user);
-
+      for (Operation *user : iterArg.getUsers()) {
+        Operation *scopedUsr = getContainedParent(scopeOp, *user);
+        if (scopedUsr && scopedUsr->getParentOp() == scopeOp &&
+            !isa<scf::YieldOp, scf::ConditionOp>(scopedUsr))
+          userTraceStack.push_back(scopedUsr);
+      }
+      Operation *yieldedOp = yieldedVal.getDefiningOp();
       while (!userTraceStack.empty()) {
-        Operation *op =
-            getContainedParent(scopeOp, *userTraceStack.pop_back_val());
-        if (op->getParentOp() != scopeOp ||
-            isa<scf::YieldOp, scf::ConditionOp>(op) ||
-            !visited.insert(op).second)
-          continue;
-
-        // Follow glue and bitcasts, stopping at the first core consumers.
-        if (!isCoreOp(*op) || isa<BitcastOp>(op)) {
-          for (Value res : op->getResults())
-            for (Operation *user : res.getUsers())
-              userTraceStack.push_back(user);
-        }
+        Operation *op = userTraceStack.pop_back_val();
         if (!(isCoreOp(*op) || isa<BitcastOp>(op)))
           continue;
-
         auto it = dependenceMap.find(op);
-        if (it != dependenceMap.end() && it->second &&
+        if (yieldedOp && it != dependenceMap.end() && it->second &&
             it->second->contains(yieldedOp))
           continue;
-
-        // Cross-core carries cannot share a work item; leave them to the
-        // existing cross-WI check / LCD backup path.
-        TCoreType consumerCore = resolveLoopCarryCoreType(op);
-        if (consumerCore != producerCore)
-          continue;
-
-        auto &setPtr = loopCarriedDependenceMap[op];
-        if (!setPtr)
-          setPtr = std::make_unique<DenseSet<Operation *>>();
-        setPtr->insert(yieldedOp);
+        if (yieldedOp) {
+          auto &setPtr = loopCarriedDependenceMap[op];
+          if (!setPtr)
+            setPtr = std::make_unique<DenseSet<Operation *>>();
+          setPtr->insert(yieldedOp);
+        }
       }
     }
     // Off-registry kernels keep the pre-3530 standard path: only the
