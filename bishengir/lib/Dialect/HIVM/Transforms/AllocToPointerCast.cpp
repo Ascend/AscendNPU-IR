@@ -39,8 +39,7 @@ static void ensurePreloadLocalBufferMark(IRRewriter &rewriter, Value mem) {
   OpBuilder::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointAfterValue(mem);
   auto markOp = rewriter.create<annotation::MarkOp>(mem.getLoc(), mem);
-  markOp->setAttr(hivm::PreloadLocalBufferAttr::name,
-                  rewriter.getI32IntegerAttr(1));
+  markOp->setAttr(hivm::PreloadLocalBufferAttr::name, rewriter.getUnitAttr());
 }
 
 LogicalResult mlir::hivm::walkAllocToPointerCast(

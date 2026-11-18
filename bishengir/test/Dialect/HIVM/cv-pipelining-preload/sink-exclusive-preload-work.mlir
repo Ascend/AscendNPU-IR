@@ -211,7 +211,7 @@ func.func @sink_q_load_via_subview_across_unused_cube(
     %prod = scope.scope : () -> tensor<32x128xbf16> {
       %buf = memref.alloc() : memref<32x128xbf16, #hivm.address_space<ub>>
       annotation.mark %buf {hivm.multi_buffer = 2 : i32,
-                            hivm.preload_local_buffer = 1 : i32} :
+                            hivm.preload_local_buffer} :
           memref<32x128xbf16, #hivm.address_space<ub>>
       %sv = memref.subview %buf[0, 0] [32, 128] [1, 1] :
           memref<32x128xbf16, #hivm.address_space<ub>> to
@@ -268,7 +268,7 @@ func.func @sink_returned_memref_load_across_unused_cube(
     %prod = scope.scope : () -> memref<32x128xbf16, #hivm.address_space<ub>> {
       %buf = memref.alloc() : memref<32x128xbf16, #hivm.address_space<ub>>
       annotation.mark %buf {hivm.multi_buffer = 2 : i32,
-                            hivm.preload_local_buffer = 1 : i32} :
+                            hivm.preload_local_buffer} :
           memref<32x128xbf16, #hivm.address_space<ub>>
       %sv = memref.subview %buf[0, 0] [32, 128] [1, 1] :
           memref<32x128xbf16, #hivm.address_space<ub>> to
@@ -371,7 +371,7 @@ func.func @sink_single_slot_preload_alloc()
   scf.for %i = %c0 to %c4 step %c1 {
     %buf = memref.alloc() : memref<32x128xf32, #hivm.address_space<ub>>
     annotation.mark %buf {hivm.multi_buffer = 1 : i32,
-                          hivm.preload_local_buffer = 1 : i32} :
+                          hivm.preload_local_buffer} :
         memref<32x128xf32, #hivm.address_space<ub>>
     scope.scope : () -> () {
       func.call @vf_consume(%buf) {hivm.vector_function, no_inline} :
@@ -394,7 +394,7 @@ func.func @keep_rotated_preload_alloc_in_loop()
   scf.for %i = %c0 to %c4 step %c1 {
     %buf = memref.alloc() : memref<32x128xf32, #hivm.address_space<ub>>
     annotation.mark %buf {hivm.multi_buffer = 2 : i32,
-                          hivm.preload_local_buffer = 1 : i32} :
+                          hivm.preload_local_buffer} :
         memref<32x128xf32, #hivm.address_space<ub>>
     scope.scope : () -> () {
       func.call @vf_consume(%buf) {hivm.vector_function, no_inline} :
@@ -427,7 +427,7 @@ func.func @sink_tcb_single_slot_preload_alloc()
       hivm.tiling_dim = 0 : index, tiledAlloc
     } : memref<32x128xf32, #hivm.address_space<ub>>
     annotation.mark %buf {hivm.multi_buffer = 1 : i32,
-                          hivm.preload_local_buffer = 1 : i32} :
+                          hivm.preload_local_buffer} :
         memref<32x128xf32, #hivm.address_space<ub>>
     scope.scope : () -> () {
       func.call @vf_consume(%buf) {hivm.vector_function, no_inline} :
@@ -458,7 +458,7 @@ func.func @sink_preload_alloc_with_subview()
         memref<32x128xf32, #hivm.address_space<ub>> to
         memref<32x128xf32, #hivm.address_space<ub>>
     annotation.mark %buf {hivm.multi_buffer = 1 : i32,
-                          hivm.preload_local_buffer = 1 : i32} :
+                          hivm.preload_local_buffer} :
         memref<32x128xf32, #hivm.address_space<ub>>
     scope.scope : () -> () {
       func.call @vf_consume(%sv) {hivm.vector_function, no_inline} :

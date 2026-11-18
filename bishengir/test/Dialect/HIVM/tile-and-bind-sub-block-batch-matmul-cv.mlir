@@ -42,7 +42,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
       scf.for %arg14 = %c0_i32 to %c8_i32 step %c1_i32  : i32 {
         hivm.hir.anchor {id = 4 : i64}
         %alloc = memref.alloc() : memref<2x64x32xf32, #hivm.address_space<ub>>
-        annotation.mark %alloc {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32} : memref<2x64x32xf32, #hivm.address_space<ub>>
+        annotation.mark %alloc {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer} : memref<2x64x32xf32, #hivm.address_space<ub>>
         hivm.hir.anchor {id = 5 : i64}
         %6 = scope.scope : () -> tensor<2x1x32xf32> {
           hivm.hir.anchor {id = 6 : i64}
@@ -155,7 +155,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
       scf.for %arg14 = %c0_i32 to %c8_i32 step %c1_i32  : i32 {
         hivm.hir.anchor {id = 4 : i64}
         %alloc = memref.alloc() : memref<2x64x32xf32, #hivm.address_space<ub>>
-        annotation.mark %alloc {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32} : memref<2x64x32xf32, #hivm.address_space<ub>>
+        annotation.mark %alloc {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer} : memref<2x64x32xf32, #hivm.address_space<ub>>
         hivm.hir.anchor {id = 5 : i64}
         scope.scope : () -> () {
           hivm.hir.anchor {id = 6 : i64}
@@ -245,7 +245,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
       scf.for %arg14 = %c0_i32 to %c8_i32 step %c1_i32  : i32 {
         hivm.hir.anchor {id = 4 : i64}
         %alloc = memref.alloc() : memref<2x64x32xf32, #hivm.address_space<ub>>
-        annotation.mark %alloc {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32} : memref<2x64x32xf32, #hivm.address_space<ub>>
+        annotation.mark %alloc {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer} : memref<2x64x32xf32, #hivm.address_space<ub>>
         hivm.hir.anchor {id = 5 : i64}
         %6 = scope.scope : () -> tensor<2x1x32xf32> {
           hivm.hir.anchor {id = 6 : i64}

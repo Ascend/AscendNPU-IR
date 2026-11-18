@@ -363,7 +363,7 @@ static void applyPlan(FunctionPlan &plan) {
   DenseMap<Value, annotation::MarkOp> marks;
   for (LoadInfo &load : plan.loads) {
     auto mark = getOrCreateMark(load.root, builder);
-    mark->setAttr(PreloadLocalBufferAttr::name, builder.getI32IntegerAttr(1));
+    mark->setAttr(PreloadLocalBufferAttr::name, builder.getUnitAttr());
     marks[load.root] = mark;
   }
   for (Pool &pool : plan.pools) {

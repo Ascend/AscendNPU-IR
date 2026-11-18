@@ -55,7 +55,7 @@ func.func @keep_single_slot_preload_alloc_in_loop()
   scf.for %i = %c0 to %c4 step %c1 {
     %buf = memref.alloc() : memref<32x128xf32, #hivm.address_space<ub>>
     annotation.mark %buf {hivm.multi_buffer = 1 : i32,
-                          hivm.preload_local_buffer = 1 : i32} :
+                          hivm.preload_local_buffer} :
         memref<32x128xf32, #hivm.address_space<ub>>
     scope.scope : () -> () {
       func.call @vf_consume(%buf) {hivm.vector_function, no_inline} :

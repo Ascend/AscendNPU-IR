@@ -124,7 +124,7 @@ static std::optional<int64_t> getMultiBufferCount(Value v) {
 }
 
 /// Single-slot preload-local: `hivm.multi_buffer = 1` and
-/// `hivm.preload_local_buffer = 1`. These do not rotate across iterations,
+/// `hivm.preload_local_buffer`. These do not rotate across iterations,
 /// so the loop-level lifetime / mark is unnecessary once the alloc lives
 /// inside its consumer scope.
 static bool isSingleSlotPreloadLocal(Value v) {
@@ -134,7 +134,7 @@ static bool isSingleSlotPreloadLocal(Value v) {
   return mb && *mb == 1;
 }
 
-/// Drop the `multi_buffer=1` + `preload_local_buffer=1` marks. Other marks
+/// Drop the `multi_buffer=1` + `preload_local_buffer` marks. Other marks
 /// on the same value (TCB, tiling, …) are left alone.
 static void eraseSingleSlotPreloadMarks(Value v) {
   SmallVector<annotation::MarkOp> marks;
@@ -1940,7 +1940,7 @@ uniqueAllocUserScope(Value alloc, scf::ForOp forOp) {
   return std::make_pair(*scopes.begin(), std::move(views));
 }
 
-/// `multi_buffer=1` + `preload_local_buffer=1` allocs whose only non-mark
+/// `multi_buffer=1` + `preload_local_buffer` allocs whose only non-mark
 /// (and non-view) users sit in one scope become ordinary scope-private
 /// buffers: delete those two marks and, if the alloc still lives in the
 /// parent loop body, move it (and its view chain) next to the first use.
