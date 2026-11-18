@@ -1552,8 +1552,9 @@ struct DedupInsertedL1StagingPattern : public OpRewritePattern<CopyOp> {
   LogicalResult matchAndRewrite(CopyOp copyOp,
                                 PatternRewriter &rewriter) const override {
     auto parent = copyOp->getParentOfType<func::FuncOp>();
-    if (!parent || !isLoopShapeRegistered(parent.getName()))
-      return rewriter.notifyMatchFailure(copyOp, "kernel is not registered");
+    if (!parent || !shouldDedupInsertedL1Staging(parent.getName()))
+      return rewriter.notifyMatchFailure(
+          copyOp, "kernel is not on the inserted-L1 dedup allow-list");
     if (!copyOp->hasAttr(kInsertedCopyAttr::name))
       return rewriter.notifyMatchFailure(copyOp, "not an inserted staging");
     if (copyOp.getResultTensor())
