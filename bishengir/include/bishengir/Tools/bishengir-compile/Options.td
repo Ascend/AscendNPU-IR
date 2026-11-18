@@ -683,6 +683,28 @@ llvm::cl::values(
   }];
 }
 
+def EnableSchedulerAlg
+    : HIVMOptimizationControlOptions<
+          "Select the CV-pipelining scheduler algorithm (skew mode only).",
+          "CVSchedulerMode",
+          "CVSchedulerMode::Default"> {
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(CVSchedulerMode::Default, "default",
+             "Default WorklistBuilder-based partitioning"),
+  clEnumValN(CVSchedulerMode::Sms, "sms",
+             "SMS stage-level scheduling partitioning")
+)
+  }];
+}
+
+def SmsFailOnFallback
+    : HIVMOptimizationControlOptions<
+          "When true, treat SMS scheduler failure as a compilation error "
+          "instead of silently falling back to the default scheduler. "
+          "Useful for batch testing SMS enablement rates.",
+          "bool", "false">;
+
 def EnablePreload : BiShengIRCompileOpt<
   "Enable preload (skew mode) for CV-pipelining.",
   "bool",
