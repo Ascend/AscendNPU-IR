@@ -90,10 +90,11 @@ LogicalResult Flattener::flatten(bool multiDynamicShape) {
   auto result = initialize();
   if (failed(result))
     return success();
-  // TensorView tile axes and broadcast/span load axes retain their logical ranks.
-  // Disconnect both load operands before propagating collapse constraints, so
-  // producers (including memory_space_cast) cannot collapse only the source.
-  // Unrelated dimension groups remain available for flattening.
+  // TensorView tile axes and broadcast/span load axes retain their logical
+  // ranks. Disconnect both load operands before propagating collapse
+  // constraints, so producers (including memory_space_cast) cannot collapse
+  // only the source. Unrelated dimension groups remain available for
+  // flattening.
   op_->walk([&](Operation *op) {
     auto loadOp = dyn_cast<hivm::LoadOp>(op);
     bool preserveLoadRank =

@@ -52,7 +52,8 @@ struct FuseOpIntoLoadPass
     hivm::detail::populateBroadcastLoadPatterns(patterns);
 
     // Patterns check their enclosing module's target. Keep operation folding
-    // off; the region driver may still remove dead ops and simplify control flow.
+    // off; the region driver may still remove dead ops and simplify control
+    // flow.
     GreedyRewriteConfig config;
     config.fold = false;
     if (failed(applyPatternsGreedily(module, std::move(patterns), config)))

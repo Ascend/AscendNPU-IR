@@ -53,7 +53,7 @@ static bool isSupportedElementType(Type t) {
 }
 
 static bool isGMSource(Value source, func::FuncOp func,
-                          bool explicitLoad = false) {
+                       bool explicitLoad = false) {
   auto type = dyn_cast<MemRefType>(source.getType());
   if (!type || !func || func.isExternal())
     return false;
@@ -122,7 +122,8 @@ static bool hasProvenLoadSpan(MemRefType type) {
          offset <= INT64_MAX / bytes - *span;
 }
 
-// Prefer module specifications; only an absent specification uses target defaults.
+// Prefer module specifications; only an absent specification uses target
+// defaults.
 static FailureOr<int64_t> getUBCapacityBytes(ModuleOp module) {
   int64_t capacityBits, alignmentBits;
   if (module.getTargetSystemSpec()) {
@@ -262,7 +263,8 @@ static LogicalResult checkBroadcastLegality(linalg::BroadcastOp op,
   return success();
 }
 
-static FailureOr<BroadcastProducerChain> matchBroadcastProducerChain(linalg::BroadcastOp op) {
+static FailureOr<BroadcastProducerChain>
+matchBroadcastProducerChain(linalg::BroadcastOp op) {
   BroadcastProducerChain chain;
   Value input = op.getInput();
   chain.collapse = input.getDefiningOp<tensor::CollapseShapeOp>();
@@ -280,7 +282,8 @@ static FailureOr<BroadcastProducerChain> matchBroadcastProducerChain(linalg::Bro
     return failure();
 
   auto space = chain.alloc.getType().getMemorySpace();
-  auto ub = hivm::AddressSpaceAttr::get(op.getContext(), hivm::AddressSpace::UB);
+  auto ub =
+      hivm::AddressSpaceAttr::get(op.getContext(), hivm::AddressSpace::UB);
   if (space && space != ub)
     return failure();
 
@@ -341,7 +344,7 @@ static FailureOr<BroadcastProducerChain> matchBroadcastProducerChain(linalg::Bro
 
 static FailureOr<BroadcastLoadInfo>
 computeBroadcastLoadInfo(linalg::BroadcastOp op, BroadcastProducerChain chain,
-                  ArrayRef<bool> axes, PatternRewriter &rewriter) {
+                         ArrayRef<bool> axes, PatternRewriter &rewriter) {
   auto srcType = cast<RankedTensorType>(op.getInput().getType());
   auto dstType = cast<RankedTensorType>(op.getInit().getType());
   auto dstSizes = op.getInit().getDefiningOp<tensor::EmptyOp>().getMixedSizes();
@@ -427,9 +430,10 @@ computeBroadcastLoadInfo(linalg::BroadcastOp op, BroadcastProducerChain chain,
                                                              reassociation);
   if (failed(expanded) || !hasProvenLoadSpan(*expanded))
     return failure();
-  auto destinationType = MemRefType::get(
-      allocationShape, elementType, MemRefLayoutAttrInterface{},
-      hivm::AddressSpaceAttr::get(rewriter.getContext(), hivm::AddressSpace::UB));
+  auto destinationType =
+      MemRefType::get(allocationShape, elementType, MemRefLayoutAttrInterface{},
+                      hivm::AddressSpaceAttr::get(rewriter.getContext(),
+                                                  hivm::AddressSpace::UB));
   return BroadcastLoadInfo{reshapeType, *expanded, destinationType,
                            std::move(reassociation), std::move(expandedSizes)};
 }
@@ -468,7 +472,8 @@ checkBroadcastLoadOptimization(linalg::BroadcastOp op,
 
 /// Preserve the original GM read point, existing load attributes and erase
 /// order.
-static void rewriteBroadcastLoad(linalg::BroadcastOp op, BroadcastProducerChain chain,
+static void rewriteBroadcastLoad(linalg::BroadcastOp op,
+                                 BroadcastProducerChain chain,
                                  const BroadcastLoadInfo &loadInfo,
                                  PatternRewriter &rewriter) {
   ArrayRef<int64_t> broadcastDims = op.getDimensionsAttr().asArrayRef();
