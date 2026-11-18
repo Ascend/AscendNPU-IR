@@ -51,7 +51,8 @@ struct SaveCVPipelineSnapshotPass
           SaveCVPipelineSnapshotPass> {
   void runOnOperation() override {
     func::FuncOp func = getOperation();
-    if (func.isExternal() || isCVPipelineSnapshot(func) || !containsLoop(func))
+    if (func.isExternal() || isCVPipelineSnapshot(func) ||
+        hasLegacyCVPipelinedLoop(func) || !containsLoop(func))
       return;
     ModuleOp module = func->getParentOfType<ModuleOp>();
     if (!module)

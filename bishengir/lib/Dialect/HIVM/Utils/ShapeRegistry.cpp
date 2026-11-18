@@ -62,6 +62,11 @@ bool mlir::hivm::isLoopShapeRegistered(StringRef name) {
   return nameMatchesKeys(name, kSpanKeys, kSpanKeyCount);
 }
 
+bool mlir::hivm::shouldDedupInsertedL1Staging(StringRef name) {
+  return isLoopShapeRegistered(name) &&
+         !nameMatchesKeys(name, kDedupL1SkipKeys, kDedupL1SkipKeyCount);
+}
+
 bool mlir::hivm::shouldSkipBindSubBlock(StringRef name) {
   return nameMatchesKeys(name, kSkipBindKeys, kSkipBindKeyCount);
 }

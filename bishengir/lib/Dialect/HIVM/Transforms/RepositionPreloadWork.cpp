@@ -3292,24 +3292,37 @@ static LogicalResult verifyPreloadIterArgUses(func::FuncOp func) {
   return result;
 }
 
+// PipelineV2 outlines a loop and marks it `hivm.cv_pipelined_loop` without
+// `hivm.legacy-cv-pipeline`. Legacy CVPipelining sets both. Reposition is the
+// legacy placement pass, so a function that already took the v2 route skips it.
+static bool hasPreloadV2Loop(func::FuncOp funcOp) {
+  bool found = false;
+  funcOp.walk([&](scf::ForOp forOp) {
+    if (forOp->hasAttr(hivm::CVPipelinedLoopAttr::name) &&
+        !forOp->hasAttr(hivm::LegacyCVPipelineAttr::name)) {
+      found = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return found;
+}
+
 void RepositionPreloadWorkPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
   if (isSplitMixModule(moduleOp))
     return;
   for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
-    if (!this->enablePreload)
-      continue;
-    if (!this->bypassShapeRegistry &&
-        !hivm::isLoopShapeRegistered(funcOp.getName()))
+    if (!this->enablePreload || hasPreloadV2Loop(funcOp))
       continue;
     if (failed(prefetchTopLevelMmadInput(funcOp)))
       return signalPassFailure();
   }
   for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
-    // The registry gates the entire pass, including closed recurrences and
-    // the iter-arg verifier, rather than just the cross-scope heuristics.
-    if (!this->bypassShapeRegistry &&
-        !hivm::isLoopShapeRegistered(funcOp.getName()))
+    // Closed-recurrence sinking is not limited to the shape registry.
+    // Cross-scope heuristics still go through allowLoopShapeHeuristics.
+    // A preload-v2 loop keeps the placement PipelineV2 already chose.
+    if (hasPreloadV2Loop(funcOp))
       continue;
     bool sinkAcrossScopes = hivm::allowLoopShapeHeuristics(
         this->bypassShapeRegistry, funcOp.getName(), this->enablePreload,

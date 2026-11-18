@@ -28,26 +28,15 @@ using bishengir::memref_ext::AllocWorkspaceOp;
 
 namespace {
 
-static bool isInsideLegacyPipelinedLoop(Operation *op) {
-  for (Operation *curr = op->getParentOp(); curr != nullptr;
-       curr = curr->getParentOp()) {
-    if (curr->hasAttr(LegacyCVPipelineAttr::name))
-      return true;
-  }
-  return false;
-}
-
 struct NormalizeWorkspaceStorePass
     : public impl::NormalizeWorkspaceStoreBase<NormalizeWorkspaceStorePass> {
   void runOnOperation() override {
     func::FuncOp funcOp = getOperation();
-    if (isCVPipelineSnapshot(funcOp))
+    if (isCVPipelineSnapshot(funcOp) || hasLegacyCVPipelinedLoop(funcOp))
       return;
 
     SmallVector<StoreOp> candidates;
     funcOp.walk([&](StoreOp storeOp) {
-      if (isInsideLegacyPipelinedLoop(storeOp))
-        return;
       if (storeOp.getNumResults() != 1)
         return;
       auto toTensorOp =

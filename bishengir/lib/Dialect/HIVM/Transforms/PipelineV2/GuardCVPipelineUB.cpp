@@ -319,7 +319,7 @@ void dropPreload(scf::ForOp loop) {
 
 void GuardCVPipelineUBPass::runOnOperation() {
   func::FuncOp func = getOperation();
-  if (isCVPipelineSnapshot(func))
+  if (isCVPipelineSnapshot(func) || hasLegacyCVPipelinedLoop(func))
     return;
   std::optional<int64_t> available = availableUbBits(func, simtVFDynamicSize);
   if (!available)
