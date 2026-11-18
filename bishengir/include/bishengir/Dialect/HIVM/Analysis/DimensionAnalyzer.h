@@ -330,6 +330,8 @@ private:
   /// by region-aware ops (e.g. scf) to map \p use to analyzer rules.
   void handleValueGroupForUse(Operation *user, Value current, OpOperand *use,
                               unsigned operandNumber);
+  /// Join value groups of sources indexed by \p forOp's IV as an offset.
+  void joinParallelLoopOffsetValueGroups(scf::ForOp forOp);
 };
 
 } // namespace detail
