@@ -327,6 +327,21 @@ func.func @lower_fma(%a: vector<64xf32>, %b: vector<64xf32>, %c: vector<64xf32>)
 
 // -----
 
+// On dav-920r1 (Ascend960) math.fma lowers to the native vfma op.
+// CHECK-LABEL: @lower_fma_ascend960
+// CHECK-SAME: (%[[A:.*]]: vector<64xf32>, %[[B:.*]]: vector<64xf32>, %[[C:.*]]: vector<64xf32>)
+// CHECK: %[[MASK:.*]] = ave.hir.pge <ALL> : vector<64xi1>
+// CHECK: ave.hir.vfma %[[C]], %[[A]], %[[B]], %[[MASK]]
+// CHECK-SAME: vector<64xf32>
+module attributes {hacc.target = #hacc.target<"Ascend960">} {
+  func.func @lower_fma_ascend960(%a: vector<64xf32>, %b: vector<64xf32>, %c: vector<64xf32>) -> vector<64xf32> {
+    %result = math.fma %a, %b, %c : vector<64xf32>
+    return %result: vector<64xf32>
+  }
+}
+
+// -----
+
 // CHECK-LABEL: @test_create_preg_from_constant_op
 // Test for createPRegFromConstantOp function with multi-dimensional vector
 func.func @test_create_preg_from_constant_op(%arg0: memref<16x2x1xi1, strided<[65536, 256, 1]>, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {

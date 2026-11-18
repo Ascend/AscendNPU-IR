@@ -105,6 +105,13 @@ def AveMaskType :
                "i1 type, less than 256 bits">,
              AVE_MaskType]>;
 
+// An 8-bit data register (u8/s8/i8 vector) used as the byte mask of the
+// vselrv2 masked move. It is intentionally not accepted by the predicate
+// select op, so predicate selects keep their original mask type.
+def AveByteMaskVector :
+  ShapedContainerType<[AnyI8], CPred<"IsAllowedAVEBitsVector($_self)">,
+    "8-bit data vector (u8/s8/i8), total bits <= 2048">;
+
 def AveValidVector : AveVector<
   [AnyI1, AnyI8, AnyI16, AnyI32, BF16, F16, F32, F8E4M3FN, F8E5M2]>
 {

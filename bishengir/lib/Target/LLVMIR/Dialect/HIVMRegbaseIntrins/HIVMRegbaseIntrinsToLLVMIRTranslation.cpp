@@ -110,6 +110,50 @@ LogicalResult convertLaunchFunc(hivm_regbaseintrins::LaunchFuncOp launchOp,
   return success();
 }
 
+/// Rewrite a dual-output predicate interleave/de-interleave op into two v2
+/// part-select calls under the dav-920r1 (V121) toolchain, mirroring how
+/// VDintlvInstrOp is split. `isDeintlv` selects pdintlvv2 vs pintlvv2; the
+/// element bit width is taken from the op mnemonic suffix (b8/b16/b32).
+template <bool isDeintlv, typename OpTy>
+LogicalResult
+rewritePredicateInterleaveV2(OpTy op, llvm::IRBuilderBase &builder,
+                             LLVM::ModuleTranslation &moduleTranslation) {
+  auto moduleOp = op->template getParentOfType<mlir::ModuleOp>();
+  if (!moduleOp || !moduleOp->hasAttr(
+                       hivm_regbaseintrins::kDavinciV2IntrinsicsModuleAttrName))
+    return failure();
+
+  auto operands = moduleTranslation.lookupValues(op.getOperands());
+  llvm::Value *src0 = operands[0];
+  llvm::Value *src1 = operands[1];
+
+  llvm::Intrinsic::ID id;
+  if (StringRef(op.getOperationName()).contains(".b8"))
+    id = isDeintlv ? llvm::Intrinsic::HIVMIntrinsics::hivm_pdintlvv2_b8
+                   : llvm::Intrinsic::HIVMIntrinsics::hivm_pintlvv2_b8;
+  else if (StringRef(op.getOperationName()).contains(".b16"))
+    id = isDeintlv ? llvm::Intrinsic::HIVMIntrinsics::hivm_pdintlvv2_b16
+                   : llvm::Intrinsic::HIVMIntrinsics::hivm_pintlvv2_b16;
+  else
+    id = isDeintlv ? llvm::Intrinsic::HIVMIntrinsics::hivm_pdintlvv2_b32
+                   : llvm::Intrinsic::HIVMIntrinsics::hivm_pintlvv2_b32;
+
+  // The predicate interleave intrinsics use the fixed llvm.v256i1 predicate
+  // type (no overloads), so no type list may be passed to getDeclaration.
+  llvm::Function *fn = llvm::Intrinsic::getDeclaration(
+      builder.GetInsertBlock()->getModule(), id, {});
+  llvm::Value *resLo =
+      builder.CreateCall(fn, {src0, src1, builder.getInt32(0)});
+  llvm::Value *resHi =
+      builder.CreateCall(fn, {src0, src1, builder.getInt32(1)});
+  llvm::Type *structType = moduleTranslation.convertType(op.getRes().getType());
+  llvm::Value *structVal = llvm::PoisonValue::get(structType);
+  structVal = builder.CreateInsertValue(structVal, resLo, 0);
+  structVal = builder.CreateInsertValue(structVal, resHi, 1);
+  moduleTranslation.mapValue(op.getRes()) = structVal;
+  return success();
+}
+
 /// Implementation of the dialect interface that converts operations belonging
 /// to the HIVMRegbaseIntrins dialect to LLVM IR.
 class HIVMRegbaseIntrinsDialectLLVMIRTranslationInterface
@@ -156,6 +200,36 @@ public:
         return success();
       }
     }
+
+    // hivm.pintlv.b<w>/hivm.pdintlv.b<w>: like vdintlv, the v2 toolchain only
+    // provides the part-select single-output forms pintlvv2/pdintlvv2
+    // (src0, src1, part) -> pred with part = 0(LOWER)/1(HIGHER). When the
+    // module is flagged with the v2 intrinsics attribute, split the dual-output
+    // predicate interleave/de-interleave into two v2 calls.
+    if (auto pintlvOp = dyn_cast<hivm_regbaseintrins::PintlvB8InstrOp>(op))
+      if (succeeded(rewritePredicateInterleaveV2<false>(pintlvOp, builder,
+                                                        moduleTranslation)))
+        return success();
+    if (auto pintlvOp = dyn_cast<hivm_regbaseintrins::PintlvB16InstrOp>(op))
+      if (succeeded(rewritePredicateInterleaveV2<false>(pintlvOp, builder,
+                                                        moduleTranslation)))
+        return success();
+    if (auto pintlvOp = dyn_cast<hivm_regbaseintrins::PintlvB32InstrOp>(op))
+      if (succeeded(rewritePredicateInterleaveV2<false>(pintlvOp, builder,
+                                                        moduleTranslation)))
+        return success();
+    if (auto pdintlvOp = dyn_cast<hivm_regbaseintrins::PDintlvB8InstrOp>(op))
+      if (succeeded(rewritePredicateInterleaveV2<true>(pdintlvOp, builder,
+                                                       moduleTranslation)))
+        return success();
+    if (auto pdintlvOp = dyn_cast<hivm_regbaseintrins::PDintlvB16InstrOp>(op))
+      if (succeeded(rewritePredicateInterleaveV2<true>(pdintlvOp, builder,
+                                                       moduleTranslation)))
+        return success();
+    if (auto pdintlvOp = dyn_cast<hivm_regbaseintrins::PDintlvB32InstrOp>(op))
+      if (succeeded(rewritePredicateInterleaveV2<true>(pdintlvOp, builder,
+                                                       moduleTranslation)))
+        return success();
 
 #include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseConversions.inc"
 
