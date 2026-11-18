@@ -3040,9 +3040,10 @@ static void moveTCBMarksToAllocations(func::FuncOp funcOp) {
 }
 
 void OutlineCVScopesPass::runOnOperation() {
-  if (isCVPipelineSnapshot(getOperation()))
+  func::FuncOp funcOp = getOperation();
+  if (isCVPipelineSnapshot(funcOp) || hasLegacyCVPipelinedLoop(funcOp))
     return;
-  markPipelineReject(getOperation());
+  markPipelineReject(funcOp);
   SmallVector<Operation *> loopQueue;
   getOperation().walk<WalkOrder::PostOrder>([&](scf::ForOp forOp) {
     // TODO: Temporary transition measure: skip loops already pipelined by
