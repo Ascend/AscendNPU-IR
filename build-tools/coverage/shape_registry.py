@@ -25,6 +25,11 @@ _PAYLOAD = (
 # names do not also turn on preload / TCB loop-shape heuristics.
 _SKIP_BIND_PAYLOAD = "LcJwjCbUC6RX8UyyLmCTITPGew=="
 
+# DedupInsertedL1StagingPattern allow-list is the loop-shape registry minus
+# these names. chunk_kda_bwd_kernel_intra regresses when the two L1 stagings
+# of one tensor are merged.
+_DEDUP_L1_SKIP_PAYLOAD = "PstihynUBKVVwUqgFVSdNi/NcoUd4gG1Rv8i"
+
 _KEY = bytes((0x5d, 0xa3, 0x17, 0xe9, 0x42, 0x8b, 0x6f, 0xc1,
               0x34, 0x9e, 0x28, 0xd7, 0x71, 0x0b, 0xf6, 0x53))
 
@@ -78,6 +83,8 @@ def emit_cxx(path):
         _write_table(f, "kSpanKeyCount", "kSpanKeys", _keys(_PAYLOAD))
         _write_table(f, "kSkipBindKeyCount", "kSkipBindKeys",
                      _keys(_SKIP_BIND_PAYLOAD))
+        _write_table(f, "kDedupL1SkipKeyCount", "kDedupL1SkipKeys",
+                     _keys(_DEDUP_L1_SKIP_PAYLOAD))
         f.write("} // namespace\n")
     return 0
 
@@ -89,12 +96,17 @@ def main():
                     help="print decoded loop-shape names")
     ap.add_argument("--list-skip", action="store_true",
                     help="print decoded bind-sub-block skip names")
+    ap.add_argument("--list-dedup-l1-skip", action="store_true",
+                    help="print kernels excluded from inserted-L1 dedup")
     args = ap.parse_args()
     if args.list:
         print("\n".join(_decode(_PAYLOAD)))
         return 0
     if args.list_skip:
         print("\n".join(_decode(_SKIP_BIND_PAYLOAD)))
+        return 0
+    if args.list_dedup_l1_skip:
+        print("\n".join(_decode(_DEDUP_L1_SKIP_PAYLOAD)))
         return 0
     if args.emit_cxx:
         return emit_cxx(args.emit_cxx)

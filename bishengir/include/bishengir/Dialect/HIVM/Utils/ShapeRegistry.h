@@ -36,6 +36,12 @@ bool isLoopShapeRegistered(llvm::StringRef name);
 /// enable preload / TCB heuristics.
 bool shouldSkipBindSubBlock(llvm::StringRef name);
 
+/// Allow-list for DedupInsertedL1StagingPattern. It is
+/// `isLoopShapeRegistered` excluding kernels that regress when two private
+/// L1 stagings of the same tensor are merged. The exclusion is currently
+/// `chunk_kda_bwd_kernel_intra`.
+bool shouldDedupInsertedL1Staging(llvm::StringRef name);
+
 /// Shared gate for registered-kernel CV / preload heuristics.
 /// LIT may pass `--bypass-shape-registry` to force the heuristic on.
 /// Otherwise `--enable-preload`, a non-zero `--set-workspace-multibuffer`,
@@ -49,7 +55,9 @@ bool shouldSkipBindSubBlock(llvm::StringRef name);
 /// buffer-size compare, dynamic-TCB view rematerialization, and pre-CVP
 /// buffer-size prep.
 /// Also covers the post-CVP independent-preload hoist and shared-A matmul
-/// clustering. Duplicate inserted L1 copies use the registry alone.
+/// clustering. Duplicate inserted L1 copies use
+/// `shouldDedupInsertedL1Staging`, which is this registry minus
+/// `chunk_kda_bwd_kernel_intra`.
 /// Also covers the early-CBUF nested vf-scope. Off-registry kernels keep
 /// that copy in the outer preload scope.
 inline bool allowLoopShapeHeuristics(bool bypassShapeRegistry,
