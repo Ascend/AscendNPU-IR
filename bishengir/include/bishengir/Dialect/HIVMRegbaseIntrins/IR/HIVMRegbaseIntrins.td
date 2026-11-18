@@ -2506,6 +2506,127 @@ class VcvtffBF16ToF16InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
 
 def VcvtffBF162F16InstrOp: VcvtffBF16ToF16InstrOp<"hivm.vcvtff.bf162f16.x">;
 
+// 16-bit float <-> fp8 conversions.
+class Vcvtff16F2F8InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins VectorOfLengthAndType<[128, 128],
+                                            [F16, BF16]>:$src,
+                       predicateVector:$mask,
+                       I32:$round,
+                       I32:$sat,
+                       I32:$part,
+                       I32:$mode);
+  let results = (outs VectorOfLengthAndType<[256, 256],
+                                            [F8E4M3FN, F8E5M2]>:$res);
+
+}
+
+def VcvtffF162F8E4M3InstrOp: Vcvtff16F2F8InstrOp<"hivm.vcvtff.f162f8e4m3.x">;
+def VcvtffF162F8E5M2InstrOp: Vcvtff16F2F8InstrOp<"hivm.vcvtff.f162f8e5m2.x">;
+def VcvtffBF162F8E4M3InstrOp: Vcvtff16F2F8InstrOp<"hivm.vcvtff.bf162f8e4m3.x">;
+def VcvtffBF162F8E5M2InstrOp: Vcvtff16F2F8InstrOp<"hivm.vcvtff.bf162f8e5m2.x">;
+
+class VcvtffF8To16InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins VectorOfLengthAndType<[256, 256],
+                                            [F8E4M3FN, F8E5M2]>:$src,
+                       predicateVector:$mask,
+                       I32:$part);
+  let results = (outs VectorOfLengthAndType<[128, 128],
+                                            [F16, BF16]>:$res);
+
+}
+
+def VcvtffF8E4M32F16InstrOp: VcvtffF8To16InstrOp<"hivm.vcvtff.f8e4m32f16.x">;
+def VcvtffF8E4M32BF16InstrOp: VcvtffF8To16InstrOp<"hivm.vcvtff.f8e4m32bf16.x">;
+def VcvtffF8E5M22F16InstrOp: VcvtffF8To16InstrOp<"hivm.vcvtff.f8e5m22f16.x">;
+def VcvtffF8E5M22BF16InstrOp: VcvtffF8To16InstrOp<"hivm.vcvtff.f8e5m22bf16.x">;
+
+// V121 (dav-920r1) e8m0/e6m2/rcpe6m2 <-> bf16 conversions. e8m0/e6m2/rcpe6m2
+// are stored as vector_u8 (VectorOfLengthAndType<[256],[UI8]>).
+class VcvtffE8M0ToBF16InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins VectorOfLengthAndType<[256],
+                                            [UI8]>:$src,
+                       predicateVector:$mask,
+                       I32:$part,
+                       I32:$mode);
+  let results = (outs VectorOfLengthAndType<[128],
+                                            [BF16]>:$res);
+
+}
+
+def VcvtffE8M02BF16InstrOp: VcvtffE8M0ToBF16InstrOp<"hivm.vcvtff.e8m02bf16.x">;
+
+class VcvtffBF16ToE8M0InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins VectorOfLengthAndType<[128],
+                                            [BF16]>:$src,
+                       predicateVector:$mask,
+                       I32:$round,
+                       I32:$sat,
+                       I32:$part,
+                       I32:$mode);
+  let results = (outs VectorOfLengthAndType<[256],
+                                            [UI8]>:$res);
+
+}
+
+def VcvtffBF162E8M0InstrOp: VcvtffBF16ToE8M0InstrOp<"hivm.vcvtff.bf162e8m0.x">;
+
+class VcvtffE6M2ToBF16InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins VectorOfLengthAndType<[256],
+                                            [UI8]>:$src,
+                       predicateVector:$mask,
+                       I32:$part);
+  let results = (outs VectorOfLengthAndType<[128],
+                                            [BF16]>:$res);
+
+}
+
+def VcvtffE6M22BF16InstrOp: VcvtffE6M2ToBF16InstrOp<"hivm.vcvtff.e6m22bf16.x">;
+def VcvtffRcpe6M22BF16InstrOp: VcvtffE6M2ToBF16InstrOp<"hivm.vcvtff.rcpe6m22bf16.x">;
+
+class VcvtffBF16ToE6M2InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins VectorOfLengthAndType<[128],
+                                            [BF16]>:$src,
+                       predicateVector:$mask,
+                       I32:$round,
+                       I32:$part,
+                       I32:$mode);
+  let results = (outs VectorOfLengthAndType<[256],
+                                            [UI8]>:$res);
+
+}
+
+def VcvtffBF162E6M2InstrOp: VcvtffBF16ToE6M2InstrOp<"hivm.vcvtff.bf162e6m2.x">;
+
 class VtrcInstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
                                           /*string opName=*/mnemonic,
                                          /*list<int> overloadedResults=*/[],

@@ -243,17 +243,16 @@ static CompareFn mapCompareKindToCompareFn(CompareKind kind) {
 
 static std::optional<hfusion::RoundMode>
 mapCastRoundKindToRoundMode(CastRoundKind kind) {
-  static const llvm::DenseMap<CastRoundKind, hfusion::RoundMode>
-      kindToMode = {
-          {CastRoundKind::Round, hfusion::RoundMode::ROUND},
-          {CastRoundKind::Floor, hfusion::RoundMode::FLOOR},
-          {CastRoundKind::Ceil, hfusion::RoundMode::CEIL},
-          {CastRoundKind::RInt, hfusion::RoundMode::RINT},
-          {CastRoundKind::Trunc, hfusion::RoundMode::TRUNC},
-          {CastRoundKind::TruncEnableOverflow, hfusion::RoundMode::TRUNC},
-          {CastRoundKind::TruncWithOverflow,
-           hfusion::RoundMode::TRUNCWITHOVERFLOW},
-      };
+  static const llvm::DenseMap<CastRoundKind, hfusion::RoundMode> kindToMode = {
+      {CastRoundKind::Round, hfusion::RoundMode::ROUND},
+      {CastRoundKind::Floor, hfusion::RoundMode::FLOOR},
+      {CastRoundKind::Ceil, hfusion::RoundMode::CEIL},
+      {CastRoundKind::RInt, hfusion::RoundMode::RINT},
+      {CastRoundKind::Trunc, hfusion::RoundMode::TRUNC},
+      {CastRoundKind::TruncEnableOverflow, hfusion::RoundMode::TRUNC},
+      {CastRoundKind::TruncWithOverflow, hfusion::RoundMode::TRUNCWITHOVERFLOW},
+      {CastRoundKind::Odd, hfusion::RoundMode::ODD},
+  };
   return lookupMappedFn(kindToMode, kind);
 }
 
