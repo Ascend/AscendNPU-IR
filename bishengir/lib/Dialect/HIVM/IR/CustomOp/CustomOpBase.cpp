@@ -82,6 +82,10 @@ const DenseMap<StringRef, CustomOp::BuiltinInfo> CustomOp::kBuiltins{
      BuiltinInfo{TCoreType::VECTOR, PIPE::PIPE_S, VFMode::SIMD, {0}}},
     {kBuiltinProtonScopeBoundaryName,
      BuiltinInfo{TCoreType::CUBE_OR_VECTOR, PIPE::PIPE_S, VFMode::SIMD, {}}},
+    {kBuiltinProtonGetSysCntCubeName,
+     BuiltinInfo{TCoreType::CUBE, PIPE::PIPE_S, VFMode::SIMD, {}}},
+    {kBuiltinProtonCircularStoreCubeName,
+     BuiltinInfo{TCoreType::CUBE, PIPE::PIPE_S, VFMode::SIMD, {0}}},
 };
 
 void CustomMacroOp::setInPipe(PIPE pipe) {

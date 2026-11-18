@@ -52,3 +52,54 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 
 // CHECK-LABEL: func.func @stores_are_not_cse
 // CHECK-COUNT-2: "__builtin_proton_circular_store"
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func @cube_counter_reads_are_not_cse() -> (i64, i64) {
+    %clock0 = hivm.hir.custom
+        {hivm.tcore_type = #hivm.tcore_type<CUBE>,
+         hivm.pipe = #hivm.pipe<PIPE_S>}
+        "__builtin_proton_get_sys_cnt_cube" -> i64
+    %clock1 = hivm.hir.custom
+        {hivm.tcore_type = #hivm.tcore_type<CUBE>,
+         hivm.pipe = #hivm.pipe<PIPE_S>}
+        "__builtin_proton_get_sys_cnt_cube" -> i64
+    return %clock0, %clock1 : i64, i64
+  }
+}
+
+// CHECK-LABEL: func.func @cube_counter_reads_are_not_cse
+// CHECK-COUNT-2: "__builtin_proton_get_sys_cnt_cube"
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func @cube_stores_are_not_cse(
+      %buffer: memref<?xi32, #hivm.address_space<gm>>, %section_offset: index,
+      %clock: i64) {
+    %scope_id = arith.constant 7 : i32
+    %is_start = arith.constant 1 : i32
+    %data_segment_words = arith.constant 16 : i32
+    hivm.hir.custom
+        {gm_addr_args_indices = array<i32: 0>,
+         hivm.tcore_type = #hivm.tcore_type<CUBE>,
+         hivm.pipe = #hivm.pipe<PIPE_S>}
+        "__builtin_proton_circular_store_cube"
+        ins(%buffer, %section_offset, %clock, %scope_id, %is_start,
+            %data_segment_words : memref<?xi32, #hivm.address_space<gm>>,
+            index, i64, i32, i32, i32)
+    hivm.hir.custom
+        {gm_addr_args_indices = array<i32: 0>,
+         hivm.tcore_type = #hivm.tcore_type<CUBE>,
+         hivm.pipe = #hivm.pipe<PIPE_S>}
+        "__builtin_proton_circular_store_cube"
+        ins(%buffer, %section_offset, %clock, %scope_id, %is_start,
+            %data_segment_words : memref<?xi32, #hivm.address_space<gm>>,
+            index, i64, i32, i32, i32)
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @cube_stores_are_not_cse
+// CHECK-COUNT-2: "__builtin_proton_circular_store_cube"

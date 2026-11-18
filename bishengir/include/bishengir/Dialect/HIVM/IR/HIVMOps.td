@@ -971,6 +971,10 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
           "__builtin_proton_circular_store";
       static constexpr StringLiteral kBuiltinProtonScopeBoundaryName =
           "__builtin_proton_scope_boundary";
+      static constexpr StringLiteral kBuiltinProtonGetSysCntCubeName =
+          "__builtin_proton_get_sys_cnt_cube";
+      static constexpr StringLiteral kBuiltinProtonCircularStoreCubeName =
+          "__builtin_proton_circular_store_cube";
 
       static constexpr StringLiteral kExtraAttrName = "extra_attr";
 
@@ -1010,6 +1014,8 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
             if (auto attr =
                 getOperation()->template getAttrOfType<StringAttr>(kSymbolAttrName))
           return attr.str();
+        if (isBuiltin())
+          return "";
         emitOpError() << "Missing implementation function name";
         return "";
       }

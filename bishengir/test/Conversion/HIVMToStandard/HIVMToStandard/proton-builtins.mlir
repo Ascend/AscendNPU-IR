@@ -46,3 +46,50 @@ module {
 // CHECK-LABEL: func.func @lower_proton_circular_store
 // CHECK:       %[[BUFFER:.*]] = memref.cast %{{.*}} : memref<?xi32, #hivm.address_space<gm>> to memref<?xi32, strided<[?], offset: ?>, #hivm.address_space<gm>>
 // CHECK:       call @proton_circular_store(%[[BUFFER]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}) : (memref<?xi32, strided<[?], offset: ?>, #hivm.address_space<gm>>, index, i64, i32, i32, i32) -> ()
+
+// -----
+
+module {
+  func.func @lower_proton_get_sys_cnt_cube() -> i64 {
+    %clock = hivm.hir.custom
+        {hivm.tcore_type = #hivm.tcore_type<CUBE>,
+         hivm.pipe = #hivm.pipe<PIPE_S>,
+         hivm.inline_mode = #hivm.inline_mode<always_inline>}
+        "__builtin_proton_get_sys_cnt_cube" -> i64
+    return %clock : i64
+  }
+}
+
+// CHECK-LABEL: func.func private @proton_get_sys_cnt_cube
+// CHECK-SAME:  attributes {{{.*}}hacc.always_inline{{.*}}hivm.func_core_type = #hivm.func_core_type<AIC>{{.*}}}
+// CHECK-LABEL: func.func @lower_proton_get_sys_cnt_cube
+// CHECK:       %[[CLOCK:.*]] = call @proton_get_sys_cnt_cube() : () -> i64
+// CHECK:       return %[[CLOCK]] : i64
+
+// -----
+
+module {
+  func.func @lower_proton_circular_store_cube(
+      %buffer: memref<?xi32, #hivm.address_space<gm>>, %section_offset: index,
+      %clock: i64) {
+    %scope_id = arith.constant 7 : i32
+    %is_start = arith.constant 1 : i32
+    %data_segment_words = arith.constant 16 : i32
+    hivm.hir.custom
+        {gm_addr_args_indices = array<i32: 0>,
+         hivm.tcore_type = #hivm.tcore_type<CUBE>,
+         hivm.pipe = #hivm.pipe<PIPE_S>,
+         hivm.inline_mode = #hivm.inline_mode<always_inline>}
+        "__builtin_proton_circular_store_cube"
+        ins(%buffer, %section_offset, %clock, %scope_id, %is_start,
+            %data_segment_words : memref<?xi32, #hivm.address_space<gm>>,
+            index, i64, i32, i32, i32)
+    return
+  }
+}
+
+// CHECK-LABEL: func.func private @proton_circular_store_cube
+// CHECK-SAME:  attributes {{{.*}}hacc.always_inline{{.*}}hivm.func_core_type = #hivm.func_core_type<AIC>{{.*}}}
+// CHECK-LABEL: func.func @lower_proton_circular_store_cube
+// CHECK:       %[[BUFFER:.*]] = memref.cast %{{.*}} : memref<?xi32, #hivm.address_space<gm>> to memref<?xi32, strided<[?], offset: ?>, #hivm.address_space<gm>>
+// CHECK:       call @proton_circular_store_cube(%[[BUFFER]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}) : (memref<?xi32, strided<[?], offset: ?>, #hivm.address_space<gm>>, index, i64, i32, i32, i32) -> ()

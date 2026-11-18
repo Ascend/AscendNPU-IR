@@ -16,8 +16,17 @@
 
 #include "Utils.h"
 
+#if defined(PROTON_AIC)
+#define PROTON_CORE_ATTR __aicore__
+#define PROTON_FN_NAME(base) base##_cube
+#else
+#define PROTON_CORE_ATTR __aiv__
+#define PROTON_FN_NAME(base) base
+#endif
+
 extern "C" {
-__aiv__ __attribute__((always_inline)) int64_t proton_get_sys_cnt() {
+PROTON_CORE_ATTR __attribute__((always_inline)) int64_t
+PROTON_FN_NAME(proton_get_sys_cnt)() {
 #ifdef ENABLE_CPU_TRACE_INTRINSIC
   return 0;
 #else
