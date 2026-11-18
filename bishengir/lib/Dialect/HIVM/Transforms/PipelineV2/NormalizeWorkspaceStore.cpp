@@ -14,7 +14,6 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
-#include "mlir/IR/Visitors.h"
 #include "llvm/ADT/SmallVector.h"
 
 #define DEBUG_TYPE "normalize-workspace-store"
@@ -29,26 +28,11 @@ using bishengir::memref_ext::AllocWorkspaceOp;
 
 namespace {
 
-// CVPipelining sets this attribute only after it actually pipelines a loop.
-static bool cvPipeliningDidPipeline(func::FuncOp funcOp) {
-  return funcOp
-      .walk([&](Operation *op) {
-        if (op->hasAttr(LegacyCVPipelineAttr::name))
-          return WalkResult::interrupt();
-        return WalkResult::advance();
-      })
-      .wasInterrupted();
-}
-
 struct NormalizeWorkspaceStorePass
     : public impl::NormalizeWorkspaceStoreBase<NormalizeWorkspaceStorePass> {
   void runOnOperation() override {
     func::FuncOp funcOp = getOperation();
-    if (isCVPipelineSnapshot(funcOp))
-      return;
-    // Passing through CVPipelining is not enough. Skip only when that pass
-    // pipelined a loop; otherwise this rewrite still runs.
-    if (cvPipeliningDidPipeline(funcOp))
+    if (isCVPipelineSnapshot(funcOp) || hasLegacyCVPipelinedLoop(funcOp))
       return;
 
     SmallVector<StoreOp> candidates;

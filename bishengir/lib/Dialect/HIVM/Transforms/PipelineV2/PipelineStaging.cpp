@@ -62,10 +62,6 @@ struct PipelineStagingPass
 static void collectCVPipelinedLoops(func::FuncOp &funcOp,
                                     SmallVector<scf::ForOp> &loops) {
   funcOp.walk<WalkOrder::PreOrder>([&](scf::ForOp loopOp) -> WalkResult {
-    // TODO: Temporary transition measure: skip loops already pipelined by
-    // legacy CVPipelining.
-    if (loopOp->hasAttr(hivm::LegacyCVPipelineAttr::name))
-      return WalkResult::skip();
     if (loopOp->hasAttr(hivm::CVPipelinedLoopAttr::name)) {
       loops.push_back(loopOp);
       return WalkResult::skip();
@@ -677,7 +673,7 @@ static void markVectorScopeIfs(scope::ScopeOp scopeOp) {
 
 void PipelineStagingPass::runOnOperation() {
   func::FuncOp funcOp = getOperation();
-  if (isCVPipelineSnapshot(funcOp))
+  if (isCVPipelineSnapshot(funcOp) || hasLegacyCVPipelinedLoop(funcOp))
     return;
   SmallVector<scf::ForOp> cvPipelinedLoops;
   collectCVPipelinedLoops(funcOp, cvPipelinedLoops);

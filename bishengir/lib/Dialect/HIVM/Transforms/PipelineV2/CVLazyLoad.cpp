@@ -251,11 +251,10 @@ namespace mlir {
 namespace {
 struct CVLazyLoadPass : public impl::CVLazyLoadBase<CVLazyLoadPass> {
   void runOnOperation() override {
-    if (isCVPipelineSnapshot(getOperation()))
+    func::FuncOp funcOp = getOperation();
+    if (isCVPipelineSnapshot(funcOp) || hasLegacyCVPipelinedLoop(funcOp))
       return;
-    getOperation().walk<WalkOrder::PreOrder>([&](scf::ForOp loop) {
-      if (loop->hasAttr(LegacyCVPipelineAttr::name))
-        return WalkResult::skip();
+    funcOp.walk<WalkOrder::PreOrder>([&](scf::ForOp loop) {
       if (!loop->hasAttr(CVPipelinedLoopAttr::name))
         return WalkResult::advance();
       rematerializeLateLoads(loop);
