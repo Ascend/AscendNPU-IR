@@ -14,14 +14,34 @@
 // TRANSFORM: %{{.*}}, %[[GROUP:.*]] = transform.structured.fuse
 // TRANSFORM: transform.loop.unroll {{.*}}factor = 2
 // TRANSFORM: apply_patterns to %[[GROUP]] {
+// TRANSFORM-NEXT: transform.apply_patterns.canonicalization
+// TRANSFORM-NEXT: transform.apply_patterns.tensor.merge_consecutive_insert_extract_slice
 // TRANSFORM-NEXT: transform.apply_patterns.hfusion.forward_extract_slice
 // TRANSFORM: _finish_combine
 // TRANSFORM-NEXT: apply_patterns to %[[OUTER]] {
+// TRANSFORM-NEXT: transform.apply_patterns.canonicalization
+// TRANSFORM-NEXT: transform.apply_patterns.tensor.merge_consecutive_insert_extract_slice
 // TRANSFORM-NEXT: transform.apply_patterns.hfusion.forward_extract_slice
 // VECTOR-LABEL: func.func @grouped_computed_reduce
+// VECTOR-NOT: tensor.insert_slice
+// VECTOR-NOT: vector.transfer_write
 // VECTOR: arith.mulf {{.*}} : vector<1x1x1x64xf32>
+// VECTOR-NOT: tensor.insert_slice
+// VECTOR-NOT: vector.transfer_write
 // VECTOR: arith.addf {{.*}} : vector<1x64xf32>
-// VECTOR: return
+
+// Check that insert_slice and transfer_write occur only at the end of the loop,
+// with no redundant inserts/writes in the middle of the cycle.
+// VECTOR-NOT: tensor.insert_slice
+// VECTOR-NOT: vector.transfer_write
+// VECTOR: %[[GROUP_WRITE:.*]] = vector.transfer_write {{.*}} : vector<1x64xf32>, tensor<1x64xf32>
+// VECTOR-NEXT: %[[INSERT:.*]] = tensor.insert_slice %[[GROUP_WRITE]] into {{.*}} : tensor<1x64xf32> into tensor<4x64xf32>
+// VECTOR-NEXT: scf.yield %[[INSERT]] : tensor<4x64xf32>
+// VECTOR-NEXT: }
+// VECTOR-NOT: tensor.insert_slice
+// VECTOR-NOT: vector.transfer_write
+// VECTOR: %[[RESULT_WRITE:.*]] = vector.transfer_write {{.*}} : vector<64xf32>, tensor<64xf32>
+// VECTOR-NEXT: return %[[RESULT_WRITE]] : tensor<64xf32>
 func.func @grouped_computed_reduce(%a: tensor<16x64xf32>, %b: tensor<16x64xf32>, %c: tensor<16x64xf32>, %init: tensor<64xf32>) -> tensor<64xf32>
     attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PBR>} {
   %result = linalg.generic {
