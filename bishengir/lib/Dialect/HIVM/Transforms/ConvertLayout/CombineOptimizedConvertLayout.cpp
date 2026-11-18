@@ -715,70 +715,45 @@ struct FoldConvertLayoutFixpipePattern
     bool changed = false;
     for (Operation *user :
          llvm::make_early_inc_range(op.getResult().getUsers())) {
-      if (auto fixpipeOp = dyn_cast<FixpipeOp>(user)) {
-        if (fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2ND &&
-            fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2DN &&
-            fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2NZ)
-          continue;
-
-        rewriter.modifyOpInPlace(fixpipeOp, [&]() {
-          if (fixpipeOp.getDmaMode() == FixpipeDMAMode::NZ2NZ &&
-              needChannelSplit(op, fixpipeOp) && [&] {
-                using bishengir::npu::FixpipeCapabilityRequestBuilder;
-                std::optional<FixpipeCapabilityRequestBuilder> builder =
-                    FixpipeCapabilityRequestBuilder::from(fixpipeOp);
-                if (!builder)
-                  return false;
-                builder->channelSplit(true);
-                builder->srcAddressSpace(AddressSpace::L0C);
-                builder->dstAddressSpace(AddressSpace::L1);
-                std::optional<bishengir::npu::NPUArchitectureKind>
-                    architecture = lookupModuleArchitecture(fixpipeOp);
-                if (!architecture)
-                  return false;
-                auto storage = builder->build();
-                return bishengir::npu::queryNativeSupport(
-                           *architecture, storage.getRequest()) ==
-                       bishengir::npu::NativeSupport::Native;
-              }()) {
-            fixpipeOp.setChannelSplit(true);
-          }
-          fixpipeOp.getSrcMutable().assign(op.getSource());
-        });
-        changed = true;
+      auto fixpipeOp = dyn_cast<FixpipeOp>(user);
+      if (!fixpipeOp)
         continue;
-      }
 
-      // A hivm.custom op on the FIX pipe implements fixpipe semantics (e.g.
-      // "fixpipe_nz2dn_*" symbols). Treat it like a FixpipeOp and feed the
-      // fractal tensor directly, but only when the operand's declared
-      // data_layout matches the convert_layout source layout — i.e. the
-      // custom op already expects the fractal layout, making the
-      // Fractal->ND conversion redundant.
-      if (auto customOp = dyn_cast<CustomOp>(user)) {
-        if (customOp.getPipe() != PIPE::PIPE_FIX)
-          continue;
-        for (OpOperand &operand : customOp->getOpOperands()) {
-          if (operand.get() != op.getResult())
-            continue;
-          // Only fold when the operand's declared data_layout matches the
-          // convert_layout source layout — i.e. the custom op already expects
-          // the fractal layout, making the Fractal->ND conversion redundant.
-          auto operandLayout =
-              getCustomOpOperandLayout(customOp, operand.getOperandNumber());
-          if (!operandLayout ||
-              operandLayout.getDataLayout() != srcLayout.getDataLayout())
-            continue;
-          rewriter.modifyOpInPlace(customOp,
-                                   [&]() { operand.assign(op.getSource()); });
-          changed = true;
+      if (fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2ND &&
+          fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2DN &&
+          fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2NZ)
+        continue;
+
+      rewriter.modifyOpInPlace(fixpipeOp, [&]() {
+        if (fixpipeOp.getDmaMode() == FixpipeDMAMode::NZ2NZ &&
+            needChannelSplit(op, fixpipeOp) && [&] {
+              using bishengir::npu::FixpipeCapabilityRequestBuilder;
+              std::optional<FixpipeCapabilityRequestBuilder> builder =
+                  FixpipeCapabilityRequestBuilder::from(fixpipeOp);
+              if (!builder)
+                return false;
+              builder->channelSplit(true);
+              builder->srcAddressSpace(AddressSpace::L0C);
+              builder->dstAddressSpace(AddressSpace::L1);
+              std::optional<bishengir::npu::NPUArchitectureKind> architecture =
+                  lookupModuleArchitecture(fixpipeOp);
+              if (!architecture)
+                return false;
+              auto storage = builder->build();
+              return bishengir::npu::queryNativeSupport(*architecture,
+                                                        storage.getRequest()) ==
+                     bishengir::npu::NativeSupport::Native;
+            }()) {
+          fixpipeOp.setChannelSplit(true);
         }
-      }
+        fixpipeOp.getSrcMutable().assign(op.getSource());
+      });
+      changed = true;
     }
 
     if (!changed)
-      return rewriter.notifyMatchFailure(
-          op, "no compatible fixpipe/custom user to fold");
+      return rewriter.notifyMatchFailure(op,
+                                         "no compatible fixpipe user to fold");
 
     if (op.getResult().use_empty())
       rewriter.eraseOp(op);
