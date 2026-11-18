@@ -567,8 +567,9 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.nest<func::FuncOp>().addPass(
         std::make_unique<SelectCVPipelinePass>(hivmPipelineOptions));
     pm.addPass(createEraseCVPipelineSnapshotsPass());
-    // Reposition only registered kernels on the default v1 route, before
-    // buffer-count marking sees the split scopes. Explicit v2 skips this pass.
+    // Reposition runs on the default v1 route, before buffer-count marking
+    // sees the split scopes. Explicit v2 skips this pass. Inside the pass, a
+    // function whose loop PipelineV2 already marked is left unchanged.
     if (enableRegisteredPreloadHeuristics(hivmPipelineOptions)) {
       RepositionPreloadWorkOptions repositionOpts;
       repositionOpts.enablePreload = true;
