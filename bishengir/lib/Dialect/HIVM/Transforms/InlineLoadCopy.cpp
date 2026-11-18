@@ -281,7 +281,8 @@ static bool canRetargetBroadcastLoad(hivm::CopyOp copy) {
 
   SmallVector<int64_t> strides;
   int64_t offset;
-  return succeeded(utils::getStridesAndOffsetCompat(srcType, strides, offset)) &&
+  return succeeded(
+             utils::getStridesAndOffsetCompat(srcType, strides, offset)) &&
          !ShapedType::isDynamic(offset) &&
          llvm::none_of(strides, ShapedType::isDynamic);
 }
@@ -314,10 +315,9 @@ struct LoadCopyInlinePattern : public OpRewritePattern<hivm::CopyOp> {
           copyOp, "no LoadOp found that writes into copy src");
     }
 
-    if (matchedLoad.getBroadcastAxesAttr() &&
-        !canRetargetBroadcastLoad(copyOp))
+    if (matchedLoad.getBroadcastAxesAttr() && !canRetargetBroadcastLoad(copyOp))
       return rewriter.notifyMatchFailure(copyOp,
-                                        "cannot retarget broadcast load");
+                                         "cannot retarget broadcast load");
 
     if (CopyBeforeLoad(matchedLoad, copyOp)) {
       return rewriter.notifyMatchFailure(copyOp,
