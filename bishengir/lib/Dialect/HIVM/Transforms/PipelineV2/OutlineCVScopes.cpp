@@ -2995,6 +2995,9 @@ LogicalResult CVScopeOutliner::run() {
 // Legacy CVPipelining can hoist a TCB allocation out of a scope while leaving
 // its mark inside. Keep this allocation metadata with the allocation so that
 // splitting the mixed kernel cannot leave an annotation-only scope behind.
+// Marks inside an `hivm.legacy-cv-pipeline` loop stay next to the copy: moving
+// them onto the allocation changes the L1 lifetime of an already pipelined
+// mixed kernel.
 static void moveTCBMarksToAllocations(func::FuncOp funcOp) {
   SmallVector<annotation::MarkOp> marks;
   funcOp.walk([&](annotation::MarkOp markOp) {
@@ -3005,6 +3008,9 @@ static void moveTCBMarksToAllocations(func::FuncOp funcOp) {
   DominanceInfo dominance(funcOp);
   DenseMap<Operation *, Operation *> insertionTails;
   for (annotation::MarkOp markOp : marks) {
+    if (isPipelineReject(markOp))
+      continue;
+
     auto allocOp = markOp.getSrc().getDefiningOp<memref::AllocOp>();
     if (!allocOp || markOp->getBlock() == allocOp->getBlock())
       continue;
@@ -3054,7 +3060,8 @@ void OutlineCVScopesPass::runOnOperation() {
       continue;
   }
 
-  // Also repair loops skipped above because they were already legacy-pipelined.
+  // Repair hoisted TCB marks outside legacy-pipelined loops. Those loops keep
+  // the mark next to the copy.
   moveTCBMarksToAllocations(getOperation());
 
   LLVM_DEBUG({
