@@ -46,6 +46,12 @@ enum class CVPipelineMode {
   Dynamic, // dynamic mode pipeling (developing)
 };
 
+/// CV-pipelining scheduler mode
+enum class CVSchedulerMode {
+  Default, // default WorklistBuilder-based partitioning
+  Sms,     // Swinging Modulo Scheduling stage-level partitioning
+};
+
 namespace mlir {
 
 namespace hivm {

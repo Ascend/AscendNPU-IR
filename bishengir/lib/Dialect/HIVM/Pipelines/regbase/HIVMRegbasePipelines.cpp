@@ -381,7 +381,9 @@ struct SelectCVPipelinePass
         pipelineMode(options.setCVPipelineMode),
         workspaceMultiBufferNum(options.setWorkspaceMultibuffer),
         maxPipelineMultibuffer(options.setMaxPipelineMultibuffer),
-        simtVFDynamicSize(options.simtVFDynamicSize) {}
+        simtVFDynamicSize(options.simtVFDynamicSize),
+        schedulerMode(options.enableSchedulerAlg),
+        smsFailOnFallback(options.smsFailOnFallback) {}
 
   StringRef getArgument() const override { return "hivm-select-cv-pipeline"; }
   StringRef getDescription() const override {
@@ -418,6 +420,8 @@ struct SelectCVPipelinePass
       options.enableLazyLoading = enableLazyLoading;
       options.pipelineMode = pipelineMode;
       options.enablePreload = enablePreload;
+      options.schedulerMode = schedulerMode;
+      options.smsFailOnFallback = smsFailOnFallback;
       nested.addPass(createCVPipeliningPass(options));
     }
     // Explicit v2 takes precedence over the registry. Otherwise registered
@@ -443,6 +447,8 @@ private:
   unsigned workspaceMultiBufferNum;
   unsigned maxPipelineMultibuffer;
   int simtVFDynamicSize;
+  CVSchedulerMode schedulerMode;
+  bool smsFailOnFallback;
 };
 
 static void hivmPreBufferizationOptimizationPipeline(
