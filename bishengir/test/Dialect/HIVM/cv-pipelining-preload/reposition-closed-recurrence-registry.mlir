@@ -80,7 +80,7 @@ func.func @kernel_sdpa_bwd_q_closed_recurrence(%x: !row, %tile: !tile)
       scope.return %scaled : !row
     } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 0 : i32, no_inline}
     scf.yield %prod#1, %late : !row, !row
-  } {hivm.cv_pipelined_loop, hivm.legacy-cv-pipeline}
+  } {hivm.cv_pipelined_loop, "hivm.legacy-cv-pipeline"}
   return
 }
 
@@ -111,7 +111,7 @@ func.func @unregistered_closed_recurrence(%x: !row, %tile: !tile)
       scope.return %scaled : !row
     } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 0 : i32, no_inline}
     scf.yield %prod#1, %late : !row, !row
-  } {hivm.cv_pipelined_loop, hivm.legacy-cv-pipeline}
+  } {hivm.cv_pipelined_loop, "hivm.legacy-cv-pipeline"}
   return
 }
 
