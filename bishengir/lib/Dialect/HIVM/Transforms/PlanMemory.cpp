@@ -57,8 +57,12 @@ using namespace util;
 
 namespace {
 
-bool hasStandaloneMmad(func::FuncOp func) {
-  return func.walk([](MmadL0Op) { return WalkResult::interrupt(); })
+bool hasExplicitCubeOps(func::FuncOp func) {
+  return func
+      .walk([](Operation *op) {
+        return isa<MmadL0Op, L12L0Op>(op) ? WalkResult::interrupt()
+                                          : WalkResult::advance();
+      })
       .wasInterrupted();
 }
 
@@ -3811,13 +3815,13 @@ void PlanMemoryPass::runOnOperation() {
       continue;
     if (hivm::isVF(funcOp))
       continue;
-    // Select once per function. MMAD L1 and functions without MMAD L0 retain
-    // the legacy policy, even when another function in the module uses MMAD L0.
+    // Select once per function. Standalone L1-to-L0 copies also require
+    // explicit L0 allocation planning, even without an MMAD L0 user.
     this->enableMmadL0Planning = this->memMode == MemPlanMode::LOCAL_MEM_PLAN &&
-                                 hasStandaloneMmad(funcOp);
+                                 hasExplicitCubeOps(funcOp);
     if (this->enableMmadL0Planning) {
       if (!hacc::utils::isAscend950(moduleOp)) {
-        funcOp.emitError("mmadL0 memory planning supports only A5");
+        funcOp.emitError("explicit cube memory planning supports only A5");
         signalPassFailure();
         return;
       }
