@@ -47,3 +47,32 @@ func.func @unequal_paths(%a: f32, %b: f32, %n: index, %dst: memref<8xf32>) attri
 // CHECK: %[[OUT:.*]] = arith.addf %[[LL]], %[[R]] : vector<8xf32>
 // CHECK: vector.transfer_write %[[OUT]],
 // CHECK: return
+
+// A deep linear chain must fully lift in a single driver invocation: the
+// worklist picks up each broadcast this pattern creates for an operand, so no
+// scalar arithmetic may remain even though only the outermost broadcast was
+// seeded. Guards against a regression if the per-round full re-walk is removed.
+func.func @deep_chain(%a: f32, %b: f32, %n: index, %dst: memref<8xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  scf.for %iv = %c0 to %n step %c1 {
+    %s0 = arith.addf %a, %b : f32
+    %s1 = arith.mulf %s0, %a : f32
+    %s2 = arith.subf %s1, %b : f32
+    %s3 = arith.maxnumf %s2, %a : f32
+    %v = vector.broadcast %s3 : f32 to vector<8xf32>
+    vector.transfer_write %v, %dst[%c0] {in_bounds = [true]} : vector<8xf32>, memref<8xf32>
+  } {"outlined-loop-target-1"}
+  return
+}
+// CHECK-LABEL: func.func @deep_chain(
+// CHECK: arith.addf {{.*}} : vector<8xf32>
+// CHECK: arith.mulf {{.*}} : vector<8xf32>
+// CHECK: arith.subf {{.*}} : vector<8xf32>
+// CHECK: arith.maxnumf {{.*}} : vector<8xf32>
+// CHECK-NOT: arith.addf {{.*}} : f32
+// CHECK-NOT: arith.mulf {{.*}} : f32
+// CHECK-NOT: arith.subf {{.*}} : f32
+// CHECK-NOT: arith.maxnumf {{.*}} : f32
+// CHECK: vector.transfer_write
+// CHECK: return

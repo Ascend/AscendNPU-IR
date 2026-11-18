@@ -1,4 +1,6 @@
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/LiftScalarProducer.h"
+#include "bishengir/Dialect/HFusion/IR/HFusion.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
@@ -9,6 +11,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/TypeSwitch.h"
 #include <utility>
 
 using namespace mlir;
@@ -19,6 +22,28 @@ namespace {
 /// Lift one producer per match; retain scalar definitions until this driver
 /// ends. Keeping the cache keys alive avoids rewrite-listener bookkeeping.
 using LiftedScalarMap = DenseMap<std::pair<Value, Type>, Value>;
+
+/// fptosi/fptoui cast toward zero (IEEE-754 truncation). After lifting, the
+/// vector cast is lowered by ArithToHIVMAVE, which currently defaults a missing
+/// `round_mode` to ROUND; that would change the value (e.g. 1.75 -> 2 instead
+/// of 1). Only treat an op as safe to lift when it carries an explicit
+/// truncating round mode. A missing attribute is conservatively unsafe here
+/// because fixing the lowering default lives in a separate change.
+static bool hasTruncatingRounding(Operation *op) {
+  Attribute roundAttr = op->getAttr("round_mode");
+  if (!roundAttr)
+    return false;
+  return llvm::TypeSwitch<Attribute, bool>(roundAttr)
+      .Case<hfusion::RoundModeAttr>([](hfusion::RoundModeAttr attr) {
+        return attr.getValue() == hfusion::RoundMode::TRUNC ||
+               attr.getValue() == hfusion::RoundMode::TRUNCWITHOVERFLOW;
+      })
+      .Case<hivm::RoundModeAttr>([](hivm::RoundModeAttr attr) {
+        return attr.getValue() == hivm::RoundMode::TRUNC ||
+               attr.getValue() == hivm::RoundMode::TRUNCWITHOVERFLOW;
+      })
+      .Default([](Attribute) { return false; });
+}
 
 struct LiftBroadcastScalarProducer final
     : OpRewritePattern<vector::BroadcastOp> {
@@ -41,6 +66,14 @@ struct LiftBroadcastScalarProducer final
     // Vector division flushes subnormal operands on Ascend950PR, so lifting
     // division-like scalar operations is not value preserving.
     if (isa<arith::DivFOp, arith::RemFOp>(scalar))
+      return failure();
+
+    // fptosi/fptoui truncate toward zero. Lifting them to a vector cast whose
+    // lowering applies a non-truncating round mode would change the value
+    // (e.g. 1.75 -> 2 instead of 1), so only lift when the op carries an
+    // explicit truncating round mode.
+    if (isa<arith::FPToSIOp, arith::FPToUIOp>(scalar) &&
+        !hasTruncatingRounding(scalar))
       return failure();
 
     bool inVectorRegion = false;
@@ -86,25 +119,16 @@ LogicalResult liftScalarProducers(func::FuncOp func) {
   patterns.add<LiftBroadcastScalarProducer>(func.getContext(), lifted);
   GreedyRewriteConfig config;
   config.enableRegionSimplification = GreedySimplifyRegionLevel::Disabled;
-  config.strictMode = GreedyRewriteStrictness::ExistingOps;
+  // Let the driver's own worklist carry the broadcasts this pattern creates
+  // for each lifted operand, instead of re-walking the whole function every
+  // round; otherwise lifting a K-deep chain costs O(K * numOps) walks.
+  config.strictMode = GreedyRewriteStrictness::ExistingAndNewOps;
   config.fold = false;
   FrozenRewritePatternSet frozenPatterns(std::move(patterns));
 
-  size_t remainingRounds = 1;
-  func.walk([&](Operation *) { ++remainingRounds; });
-  while (remainingRounds--) {
-    SmallVector<Operation *> broadcasts;
-    func.walk([&](vector::BroadcastOp op) { broadcasts.push_back(op); });
-    bool changed = false;
-    if (failed(applyOpPatternsGreedily(broadcasts, frozenPatterns, config,
-                                       &changed)))
-      return failure();
-    if (!changed)
-      break;
-    if (remainingRounds == 0)
-      return failure();
-  }
-  return success();
+  SmallVector<Operation *> broadcasts;
+  func.walk([&](vector::BroadcastOp op) { broadcasts.push_back(op); });
+  return applyOpPatternsGreedily(broadcasts, frozenPatterns, config);
 }
 
 } // namespace mlir::hfusion
