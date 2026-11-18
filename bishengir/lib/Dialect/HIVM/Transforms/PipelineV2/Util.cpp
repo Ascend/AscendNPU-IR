@@ -33,6 +33,18 @@
 namespace mlir {
 namespace hivm {
 
+bool hasLegacyCVPipelinedLoop(func::FuncOp funcOp) {
+  if (!funcOp)
+    return false;
+  return funcOp
+      .walk([](LoopLikeOpInterface loop) {
+        if (loop->hasAttr(LegacyCVPipelineAttr::name))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      })
+      .wasInterrupted();
+}
+
 bool isPipelineReject(Operation *op) {
   for (Operation *curr = op; curr; curr = curr->getParentOp())
     if (curr->hasAttr(LegacyCVPipelineAttr::name))

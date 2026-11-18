@@ -125,14 +125,11 @@ static LogicalResult wrapStages(Block &block) {
 struct WrapCVPreloadScopesPass
     : mlir::hivm::impl::WrapCVPreloadScopesBase<WrapCVPreloadScopesPass> {
   void runOnOperation() override {
-    if (isCVPipelineSnapshot(getOperation()))
+    func::FuncOp funcOp = getOperation();
+    if (isCVPipelineSnapshot(funcOp) || hasLegacyCVPipelinedLoop(funcOp))
       return;
     SmallVector<LoopLikeOpInterface> loops;
-    getOperation().walk<WalkOrder::PreOrder>([&](LoopLikeOpInterface loop) {
-      // TODO: Temporary transition measure: skip loops already pipelined by
-      // legacy CVPipelining.
-      if (loop->hasAttr(LegacyCVPipelineAttr::name))
-        return WalkResult::skip();
+    funcOp.walk<WalkOrder::PreOrder>([&](LoopLikeOpInterface loop) {
       if (!loop->hasAttr(CVPipelinedLoopAttr::name))
         return WalkResult::advance();
       loops.push_back(loop);

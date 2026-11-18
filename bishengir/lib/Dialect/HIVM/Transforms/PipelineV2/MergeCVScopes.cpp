@@ -1956,7 +1956,8 @@ void LoopScopeMerger::run(ArrayRef<MergeRule> rules) {
 //===----------------------------------------------------------------------===//
 
 void MergeCVScopesPass::runOnOperation() {
-  if (isCVPipelineSnapshot(getOperation()))
+  func::FuncOp funcOp = getOperation();
+  if (isCVPipelineSnapshot(funcOp) || hasLegacyCVPipelinedLoop(funcOp))
     return;
   static constexpr LoopScopeMerger::MergeRule kDefaultRuleOrder[] = {
       {&LoopScopeMerger::applySinkNormalizedCounterInCAVScopeRule,
@@ -1975,11 +1976,8 @@ void MergeCVScopesPass::runOnOperation() {
        "merged.7-sink-alloca"}};
 
   SmallVector<scf::ForOp> targetLoops;
-  getOperation().walk<WalkOrder::PostOrder>([&](scf::ForOp forOp) {
-    // TODO: Temporary transition measure: skip loops already pipelined by
-    // legacy CVPipelining.
-    if (forOp->hasAttr(CVPipelinedLoopAttr::name) &&
-        !forOp->hasAttr(LegacyCVPipelineAttr::name))
+  funcOp.walk<WalkOrder::PostOrder>([&](scf::ForOp forOp) {
+    if (forOp->hasAttr(CVPipelinedLoopAttr::name))
       targetLoops.push_back(forOp);
   });
 

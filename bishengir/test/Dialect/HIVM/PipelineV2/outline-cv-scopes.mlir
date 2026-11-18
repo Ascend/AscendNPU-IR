@@ -1351,18 +1351,18 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
-// Legacy loops bypass outlining, but their TCB marks must still follow the
-// allocations hoisted out of the preload scopes. Preserve all attributes and
-// the order of multiple marks on the same allocation, including nested scopes.
+// Legacy loops bypass outlining, and their TCB marks stay next to the copy.
+// Preserve all attributes and the order of multiple marks, including nested
+// scopes.
 // TCB-LABEL: func.func @legacy_tcb_marks_to_allocations
 // TCB: scf.for
 // TCB-NEXT: %[[A:.*]] = memref.alloc()
-// TCB-NEXT: annotation.mark %[[A]] {effects = ["write", "read"], first, hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>}
-// TCB-NEXT: annotation.mark %[[A]] {effects = ["read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>, second} keys = ["tag"] values = [%{{.*}} : index]
 // TCB-NEXT: %[[B:.*]] = memref.alloc()
-// TCB-NEXT: annotation.mark %[[B]] {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>}
 // TCB-NEXT: scope.scope
-// TCB-NOT: annotation.mark
+// TCB-NEXT: annotation.mark %[[B]] {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>}
+// TCB-NEXT: annotation.mark %[[A]] {effects = ["write", "read"], first, hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>}
+// TCB-NEXT: scope.scope
+// TCB-NEXT: annotation.mark %[[A]] {effects = ["read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>, second} keys = ["tag"] values = [%{{.*}} : index]
 // TCB: } {"hivm.legacy-cv-pipeline"}
 module {
   func.func @legacy_tcb_marks_to_allocations(%n: index, %tag: index) {
