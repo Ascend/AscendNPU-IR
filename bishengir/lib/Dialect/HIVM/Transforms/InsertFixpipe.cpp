@@ -68,6 +68,26 @@ struct InsertFixpipe : public impl::InsertFixpipeBase<InsertFixpipe> {
   void runOnOperation() override;
 };
 
+// A while yield feeds a before argument, which the condition forwards.
+static OpResult getResultForYield(scf::YieldOp yield, unsigned index) {
+  Operation *parent = yield->getParentOp();
+  if (auto whileOp = dyn_cast<scf::WhileOp>(parent)) {
+    Value beforeArg = whileOp.getBeforeArguments()[index];
+    OpResult result;
+    for (auto [resultIndex, arg] :
+         llvm::enumerate(whileOp.getConditionOp().getArgs())) {
+      if (arg != beforeArg)
+        continue;
+      if (result)
+        return {};
+      result = whileOp->getOpResult(resultIndex);
+    }
+    return result;
+  }
+  return index < parent->getNumResults() ? parent->getOpResult(index)
+                                         : OpResult{};
+}
+
 /// Walk a region result through ancestor yields. True when this result, or a
 /// result it is forwarded to, is required to stay in L0C.
 static bool isForwardedResultRequiredInL0C(OpResult result) {
@@ -80,8 +100,8 @@ static bool isForwardedResultRequiredInL0C(OpResult result) {
     auto parent = dyn_cast<RegionBranchOpInterface>(yieldOp->getParentOp());
     if (!parent)
       continue;
-    if (isForwardedResultRequiredInL0C(
-            parent->getOpResult(use.getOperandNumber())))
+    auto forwarded = getResultForYield(yieldOp, use.getOperandNumber());
+    if (forwarded && isForwardedResultRequiredInL0C(forwarded))
       return true;
   }
   return false;
@@ -108,8 +128,9 @@ static bool shouldKeepYieldInL0C(OpOperand &use) {
         !isResultRemainInL0C(cast<OpResult>(ifOp.getResult(idx))))
       return false;
   }
-  return isForwardedResultRequiredInL0C(
-      parentOp->getOpResult(use.getOperandNumber()));
+  auto forwarded = getResultForYield(cast<scf::YieldOp>(use.getOwner()),
+                                     use.getOperandNumber());
+  return forwarded && isForwardedResultRequiredInL0C(forwarded);
 }
 
 static hivm::MmadL1Op traceAlongL0C(Value val) {
@@ -200,10 +221,15 @@ static bool isMixKernel(scf::IfOp ifOp, Value val) {
 }
 
 static bool needYieldOut(Operation *user, Value val) {
-  if (isa<scf::ForOp>(user->getParentOp()))
+  if (isa<scf::ForOp, scf::WhileOp>(user->getParentOp()))
     return true;
-  if (auto ifOp = dyn_cast<scf::IfOp>(user->getParentOp()))
+  if (auto ifOp = dyn_cast<scf::IfOp>(user->getParentOp())) {
+    auto index = findIdx(llvm::to_vector(user->getOperands()), val);
+    if (index && *index < ifOp.getNumResults() &&
+        isResultRemainInL0C(ifOp->getOpResult(*index)))
+      return true;
     return !isMixKernel(ifOp, val);
+  }
   return false;
 }
 
@@ -260,7 +286,10 @@ Operation *getInsertPointOutOfIf(Operation *op, int &resultIndx) {
   if (!yieldValueIndx.has_value())
     return op;
 
-  resultIndx = yieldValueIndx.value();
+  auto forwarded = getResultForYield(yieldOperand, *yieldValueIndx);
+  if (!forwarded)
+    return op;
+  resultIndx = forwarded.getResultNumber();
   return getInsertPointOutOfIf(yieldOperand->getParentOp(), resultIndx);
 }
 
@@ -297,7 +326,10 @@ Operation *getInsertPoint(Operation *op, int &resultIndx) {
                                 op->getResult(resultIndx));
   if (!yieldValueIndx.has_value())
     llvm::report_fatal_error("yield value must have user");
-  resultIndx = yieldValueIndx.value();
+  auto forwarded = getResultForYield(yieldOperand, *yieldValueIndx);
+  if (!forwarded)
+    return op;
+  resultIndx = forwarded.getResultNumber();
   return getInsertPoint(yieldParentOp, resultIndx);
 }
 
@@ -358,21 +390,36 @@ bool isAccumulationImpl(Operation *op, Value accumulator) {
   if (!accumulator)
     return false;
 
-  auto forOp = op->getParentOfType<scf::ForOp>();
-  if (!forOp)
+  auto accArg = dyn_cast<BlockArgument>(accumulator);
+  if (!accArg)
     return false;
 
-  auto accArg = dyn_cast<BlockArgument>(accumulator);
-  if (!accArg || accArg.getOwner() != forOp.getBody() ||
-      accArg.getArgNumber() < forOp.getNumInductionVars()) {
+  Block *loopBody = accArg.getOwner();
+  Operation *loop = loopBody->getParentOp();
+  if (!loop->isProperAncestor(op))
+    return false;
+
+  unsigned iterIdx = 0;
+  if (auto forOp = dyn_cast<scf::ForOp>(loop)) {
+    if (loopBody != forOp.getBody() ||
+        accArg.getArgNumber() < forOp.getNumInductionVars())
+      return false;
+    iterIdx = accArg.getArgNumber() - forOp.getNumInductionVars();
+  } else if (auto whileOp = dyn_cast<scf::WhileOp>(loop)) {
+    if (loopBody != whileOp.getAfterBody())
+      return false;
+    auto beforeArg = dyn_cast<BlockArgument>(
+        whileOp.getConditionOp().getArgs()[accArg.getArgNumber()]);
+    if (!beforeArg || beforeArg.getOwner() != whileOp.getBeforeBody())
+      return false;
+    iterIdx = beforeArg.getArgNumber();
+  } else {
     return false;
   }
 
-  unsigned iterIdx = accArg.getArgNumber() - forOp.getNumInductionVars();
-
   Value val = op->getResult(0);
   while (val) {
-    if (val == forOp.getBody()->getTerminator()->getOperand(iterIdx)) {
+    if (val == loopBody->getTerminator()->getOperand(iterIdx)) {
       return true;
     }
 
@@ -622,17 +669,20 @@ public:
 /// result indices that actually stay in L0C.
 static bool shouldSkipOuterFixpipeForAccumulation(Operation *opInst,
                                                   Value mmadLikeOpRes) {
-  if (!isAccumulation(opInst))
-    return false;
-
+  bool isLoopAccumulation = isAccumulation(opInst);
   int resultIndx = 0;
-  Operation *insertAfterOp = getInsertPoint(opInst, resultIndx);
+  // Match the insertion path, including its L0C-aware walk through scf.if.
+  Operation *insertAfterOp = isLoopAccumulation
+                                 ? getInsertPoint(opInst, resultIndx)
+                                 : getInsertPointOutOfIf(opInst, resultIndx);
+  if (!isLoopAccumulation && !isa<scf::WhileOp>(insertAfterOp))
+    return false;
   OpResult loopResult = insertAfterOp->getResult(resultIndx);
   if (Value(loopResult) == mmadLikeOpRes)
     return false;
 
-  auto forOp = dyn_cast<scf::ForOp>(insertAfterOp);
-  if (!forOp)
+  // Both scf.for and scf.while can carry an L0C accumulator to a later MMAD.
+  if (!isa<scf::ForOp, scf::WhileOp>(insertAfterOp))
     return false;
   if (!isResultInL0C(loopResult))
     return false;
@@ -664,9 +714,10 @@ static bool allUsersReachFixpipe(Value value) {
       if (auto result = forOp.getTiedLoopResult(use))
         return allUsersReachFixpipe(result);
     }
-    if (auto yieldOp = dyn_cast<scf::YieldOp>(use->getOwner()))
-      return allUsersReachFixpipe(
-          yieldOp->getParentOp()->getResult(use->getOperandNumber()));
+    if (auto yieldOp = dyn_cast<scf::YieldOp>(use->getOwner())) {
+      auto forwarded = getResultForYield(yieldOp, use->getOperandNumber());
+      return forwarded && allUsersReachFixpipe(forwarded);
+    }
     return false;
   });
 }
