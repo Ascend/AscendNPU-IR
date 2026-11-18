@@ -143,6 +143,7 @@ static void hivmAutoInsertLdStForMixCVPipeline(
   // path via isA5Target() (module hacc.target / pass --target).
   if (!hivmPipelineOptions.enableTritonKernelCompile)
     options.enableLegacy = true;
+  pm.nest<func::FuncOp>().addPass(createMarkMatmulRowCollapsesPass());
   if (options.enableLegacy) {
     pm.nest<func::FuncOp>().addPass(
         mlir::hivm::createInsertLoadStoreForMixCVPass(options));
