@@ -186,7 +186,8 @@ static void preProcess(OpPassManager &pm,
   pm.addPass(createSymbolDCEPass());
   convertAllToHFusion(pm, options);
   pm.nest<func::FuncOp>().addPass(createLegalizeBF16Pass());
-  pm.nest<func::FuncOp>().addPass(createLegalizeFP8Pass());
+  if (!hacc::utils::isAscend960(options.target))
+    pm.nest<func::FuncOp>().addPass(createLegalizeFP8Pass());
   DecomposeOptions decomposeOptions;
   decomposeOptions.hfusionDecomposePhase =
       bishengir::DecomposePhase::NO_CONSTRAINT;

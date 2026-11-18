@@ -330,11 +330,11 @@ struct Unroll64F32ForLoopPattern : public OpRewritePattern<scf::ForOp> {
         VFTruncFOp newTruncOp1 = rewriter.create<VFTruncFOp>(
             loc, newVecType, vtruncfOps[0].getSrc(), vtruncfOps[0].getMask(),
             vtruncfOps[0].getRnd(), vtruncfOps[0].getSat(),
-            VCVT_PartType::PART_EVEN);
+            VCVT_PartType::PART_EVEN, nullptr);
         VFTruncFOp newTruncOp2 = rewriter.create<VFTruncFOp>(
             loc, newVecType, vtruncfOps[1].getSrc(), vtruncfOps[1].getMask(),
             vtruncfOps[1].getRnd(), vtruncfOps[1].getSat(),
-            VCVT_PartType::PART_ODD);
+            VCVT_PartType::PART_ODD, nullptr);
         auto orOp =
             rewriter.create<VFOrOp>(loc, newVecType, newTruncOp1.getRes(),
                                     newTruncOp2.getRes(), newMask);
