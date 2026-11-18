@@ -163,7 +163,8 @@ bool isTiledSliceBoundary(LoopLikeOpInterface loop) {
          hasAttrWithPrefix(loop.getOperation(), "outlined-loop-target-");
 }
 
-// Moving a region operation also moves its contents, so check the entire subtree.
+// Moving a region operation also moves its contents, so check the entire
+// subtree.
 bool canMoveAcrossAV2Boundary(Operation *op, bool preserveSlices) {
   auto walker = [preserveSlices](Operation *nested) {
     if (preserveSlices && isa<tensor::ExtractSliceOp>(nested))
