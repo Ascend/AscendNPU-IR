@@ -2,14 +2,17 @@
 // UNSUPPORTED: bishengir_published
 // White-box regression test for issue #503: a 2D B64 GM-to-UB load whose
 // logical UB destination is NOT 32B aligned (offset 13 int64 elements) must
-// still reach the vector DMA template with pad_mode=PadValue and
-// left_padding_num=1, and the B64 padding repair flag fences must be emitted.
+// still reach the vector DMA template with pad_mode=PadValue,
+// left_padding_num=1 and right_padding_num=0, and the B64 padding repair
+// flag fences must be emitted.
 //
 // RUN: mkdir -p %t.d
 // RUN: bishengir-compile %s --target=Ascend950PR_9579 --enable-auto-multi-buffer=False --enable-auto-bind-sub-block=True --disable-ffts --limit-auto-multi-buffer-of-local-buffer=no-limit --enable-auto-blockify-loop --enable-hfusion-compile=true --enable-triton-kernel-compile=true --enable-vf-merge-level=1 --save-temps=%t.d -o %t.d/kernel.o
 // RUN: FileCheck --input-file=%t.d/kernel.ll %s
 //
-// CHECK: call void @load_gm_to_ubuf_2d_int64_t({{.*}}, i64 26, i64 39, i64 1, {{.*}}, i64 13, {{.*}}, i64 26, i64 64, i64 1, i32 2, i64 0, i64 1, i32 0)
+// The trailing operands are pad_mode=PadValue(2), pad_value=0,
+// left_padding_num=1, right_padding_num=0, eviction_policy=EvictFirst(0).
+// CHECK: call void @load_gm_to_ubuf_2d_int64_t({{.*}}, i64 26, i64 39, i64 1, {{.*}}, i64 13, {{.*}}, i64 26, i64 64, i64 1, i32 2, i64 0, i64 1, i64 0, i32 0)
 // CHECK: call void @llvm.hivm.SET.FLAG.IMM(i64 4, i64 1, i64 0)
 // CHECK: call void @llvm.hivm.WAIT.FLAG.IMM(i64 4, i64 1, i64 0)
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, ssbuffer.insertionOptimization} {
