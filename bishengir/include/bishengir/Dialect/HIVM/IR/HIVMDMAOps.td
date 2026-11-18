@@ -59,11 +59,6 @@ class HIVM_DmaOp<string mnemonic, list<Trait> traits = []> :
   }] # opNameDeclaration;
 }
 
-// Keep LoadOp verification and pre-rewrite type queries on one ODS constraint.
-def HIVM_LoadElementType : AnyTypeOf<[
-  F8E4M3FN, F8E5M2, I1, I8, UI8, I16, UI16, F16, BF16,
-  I32, UI32, F32, UI64, I64]>;
-
 def LoadOp : HIVM_DmaOp<"load", [
   AttrSizedOperandSegments,
   SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_MTE2">,
@@ -72,7 +67,8 @@ def LoadOp : HIVM_DmaOp<"load", [
   UniformReassociationFlattenTrait,
   DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
   // TODO: Use trait to avoid writing duplicate type constraints
-  OperElemTypeConstraints<[0], [HIVM_LoadElementType]>,
+  OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8,
+    I16, UI16, F16, BF16, I32, UI32, F32, UI64, I64]>,
   DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
     ["decomposeOperation", "getDecomposePhase"]>,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
@@ -225,14 +221,7 @@ def LoadOp : HIVM_DmaOp<"load", [
   let hasFolder = 1;
   let hasCanonicalizer = 1;
   let hasVerifier = 1; // verify parameter according to hardware version
-  // This LLVM version has no cppFunctionName constraint generator. All types
-  // above have leaf CPreds; emit their disjunction without a second type list.
   let extraClassDeclaration = DmaOpBaseDecl # [{
-    static bool isSupportedElementType(::mlir::Type type) {
-      return }] # !interleave(!foreach(t, HIVM_LoadElementType.allowedTypes,
-        !subst("$_self", "type", !cast<CPred>(t.predicate).predExpr)), " || ") # [{;
-    }
-
     /// True when the load pads inside the destination row, which is what the
     /// A6 templates implement. That form is selected on A6 when
     /// `right_padding_num` is present and not zero; an omitted left count

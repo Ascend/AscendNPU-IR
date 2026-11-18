@@ -49,10 +49,7 @@ static bool isSupportedElementType(Type t) {
   if (!isa<IntegerType, FloatType>(t))
     return false;
   unsigned width = t.getIntOrFloatBitWidth();
-  // Copies may carry types that a verified LoadOp cannot. Reuse its ODS
-  // constraint before creating any IR; width alone does not prove legality.
-  return (width == 8 || width == 16 || width == 32) &&
-         hivm::LoadOp::isSupportedElementType(t);
+  return width == 8 || width == 16 || width == 32;
 }
 
 static bool isGMSource(Value source, func::FuncOp func,
