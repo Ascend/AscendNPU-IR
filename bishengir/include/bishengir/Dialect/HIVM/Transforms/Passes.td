@@ -58,6 +58,21 @@ def NormalizeMatmul
   ];
 }
 
+def MarkMatmulRowCollapses
+    : HIVMPass<"hivm-mark-matmul-row-collapses", "func::FuncOp",
+               [MixKernel, PureAicKernel]> {
+  let summary = "Mark matrix row collapses that must precede NZ conversion";
+  let description = [{
+    On memory-based targets, annotate static 3D-to-2D row collapses feeding
+    MMAD with maybeUnCollapsibleReshape. Run after reshape propagation and
+    matmul normalization, before Cube/Vector load-store insertion, so the
+    rows are merged in ND before the complete matrix is converted to NZ.
+    Dynamic tensor shapes and unit-dimension removal are left unchanged.
+  }];
+  let constructor = "mlir::hivm::createMarkMatmulRowCollapsesPass()";
+  let dependentDialects = ["annotation::AnnotationDialect"];
+}
+
 def NormalizeConvOps
     : HIVMPass<"hivm-normalize-convops", AnyOp, [MixKernel, PureAicKernel]> {
   let summary = "Normalize hivm conv op";
