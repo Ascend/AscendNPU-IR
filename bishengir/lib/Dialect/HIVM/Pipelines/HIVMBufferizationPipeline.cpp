@@ -77,6 +77,11 @@ void bufferizationPipelineBase(OpPassManager &pm, bool isRegBased) {
   oneShotOptions.analysisHeuristic =
       OneShotBufferizationOptions::AnalysisHeuristic::TopDown;
   pm.addPass(createDecomposeAllocTensorCopyPass());
+  // Analyze only after normalization and copy decomposition have exposed
+  // memref-level writes as tensor operations. Reuse destination subsets with
+  // the same analysis options as the following tensor copy insertion.
+  pm.addPass(bishengir::bufferization::createEmptyTensorEliminationPass(
+      oneShotOptions));
   // Run a first round of analysis + tensor copy insertion.
   pm.addPass(
       bishengir::bufferization::createTensorCopyInsertionPass(oneShotOptions));
