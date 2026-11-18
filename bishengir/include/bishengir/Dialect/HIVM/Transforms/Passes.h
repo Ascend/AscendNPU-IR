@@ -393,6 +393,7 @@ std::unique_ptr<Pass> createHIVMBubbleUpExtractSlicePass(
 
 /// Create the tensor-level HIVM vectorization pass.
 std::unique_ptr<Pass> createHIVMVectorizePass();
+std::unique_ptr<Pass> createHIVMVectorizePhasePass(llvm::StringRef phase);
 
 // Create a pass to insert init and finish for debug.
 std::unique_ptr<Pass> createInsertInitAndFinishForDebugPass();
