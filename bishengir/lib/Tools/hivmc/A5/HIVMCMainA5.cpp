@@ -833,6 +833,18 @@ lowerDeviceToBinary(const SmallVector<IRModulePair> &llvmModules,
   // fallback.  The planned output paths are the per-Lane `.o` paths (MixCV)
   // or the single `outputFile` (single Lane).
   if (llvm::Error err = joinDeviceFailures(errors)) {
+    // A VF stack overflow is the one failure the RegBase driver retries with
+    // adjusted parameters.  Keep the lane alive (it is `Consumed` after the
+    // failed Compile) so the retry's recreateLane path can rebuild it;
+    // shutting the Worker down here would leave it `Stopped`, which the retry
+    // boundary treats as unrecoverable.  The planned outputs are still
+    // unlinked so the retry cannot observe a stale `.o` from this attempt.
+    // Every other error is terminal: drain + join the lanes as before.
+    // VF stack overflow is currently the only retryable device-compile error
+    // (the RegBase driver's tryVFStackRetry).  If more retryable error kinds
+    // are added, extend this predicate to match the driver's retry policy so
+    // the lane is preserved for every failure the driver will re-enter on.
+    bool retryable = isVFStackOverflowError(err);
     if (runtime && runtime->isActive()) {
       std::vector<std::string> plannedOutputs;
       for (size_t i = 0, e = llvmModules.size(); i != e; ++i)
@@ -843,7 +855,8 @@ lowerDeviceToBinary(const SmallVector<IRModulePair> &llvmModules,
               ? LaneMask::Both
               : (llvmModules[0].second == SubCoreTarget::AIC ? LaneMask::AIC
                                                              : LaneMask::AIV);
-      runtime->cleanupAfterLaneFailure(mask, plannedOutputs);
+      runtime->cleanupAfterLaneFailure(mask, plannedOutputs,
+                                       /*shutdownLanes=*/!retryable);
     }
     return err;
   }
@@ -1065,7 +1078,7 @@ llvm::Error runDeviceBiShengLIRCompile(
         // overflows) or abort.
         llvm::errs() << "[ERROR] Native lane "
                      << (lane == LaneKind::AIC ? "AIC" : "AIV")
-                     << " in unrecoverable state " << static_cast<int>(wst)
+                     << " in unrecoverable state " << workerStateName(wst)
                      << " at retry boundary; aborting\n";
         return llvm::make_error<DeviceCompileError>();
       }
