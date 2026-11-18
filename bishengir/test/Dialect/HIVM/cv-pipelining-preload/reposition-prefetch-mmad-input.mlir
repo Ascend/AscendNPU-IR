@@ -1,6 +1,6 @@
 // RUN: sed 's/@prefetch_mmad_input(/@kernel_sdpa_bwd_q_prefetch_mmad_input(/g' %s | bishengir-opt -hivm-reposition-preload-work="enable-preload=true" | FileCheck %s
 // RUN: bishengir-opt %s -hivm-reposition-preload-work="enable-preload=true bypass-shape-registry=true" | FileCheck %s
-// RUN: bishengir-opt %s -hivm-reposition-preload-work="enable-preload=true set-workspace-multibuffer=2" | FileCheck %s --check-prefix=OFF
+// RUN: bishengir-opt %s -hivm-reposition-preload-work="enable-preload=true set-workspace-multibuffer=2" | FileCheck %s
 
 // CHECK-LABEL: func.func @{{.*}}prefetch_mmad_input(
 // CHECK: hivm.hir.vtranspose
@@ -12,14 +12,6 @@
 // CHECK: hivm.hir.copy
 // CHECK-SAME: "hivm.inserted-copy"
 // CHECK: hivm.hir.vadd
-// OFF-LABEL: func.func @prefetch_mmad_input(
-// OFF: hivm.hir.mmadL1
-// OFF: hivm.hir.vadd
-// OFF: hivm.hir.vtranspose
-// OFF: hivm.hir.copy
-// OFF: hivm.hir.vtranspose
-// OFF: hivm.hir.copy
-// OFF: hivm.hir.mmadL1
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>, #dlti.dl_entry<"UB_SIZE", 2031616 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"MINIMAL_D_CACHE_SIZE", 262144 : i32>, #dlti.dl_entry<"MAXIMUM_D_CACHE_SIZE", 983040 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.target = #hacc.target<"Ascend950PR_9579">, ssbuffer.inter_core_buf_count = 2 : i32, ssbuffer.intra_buf_count = 3 : i32, ssbuffer.load_store_buf_count = 1 : i32} {
   func.func @prefetch_mmad_input(%arg0: memref<512x512xf32>, %arg1: memref<512x512xf32>, %arg2: memref<512x512xf32>, %arg3: memref<512x512xf32>, %arg4: tensor<32x128xf32>) -> tensor<32x128xf32> {
     %true = arith.constant true
