@@ -46,6 +46,55 @@ public:
   void runOnOperation() final;
 };
 
+bool involvesLinalgMatmulImpl(
+    mlir::Value value, llvm::SmallPtrSetImpl<mlir::Value> &seenValues,
+    llvm::SmallPtrSetImpl<mlir::Operation *> &seenOps) {
+  if (!seenValues.insert(value).second)
+    return false;
+
+  auto defOp = value.getDefiningOp();
+  if (!defOp)
+    return false;
+
+  if (!seenOps.insert(defOp).second)
+    return false;
+
+  if (llvm::isa<mlir::linalg::MatmulOp>(defOp))
+    return true;
+
+  if (auto forOp = llvm::dyn_cast<mlir::scf::ForOp>(defOp)) {
+    auto result = llvm::cast<mlir::OpResult>(value);
+    unsigned resultNumber = result.getResultNumber();
+
+    auto yieldOp =
+        llvm::cast<mlir::scf::YieldOp>(forOp.getBody()->getTerminator());
+
+    if (involvesLinalgMatmulImpl(yieldOp.getOperand(resultNumber), seenValues,
+                                 seenOps))
+      return true;
+
+    if (resultNumber < forOp.getInitArgs().size() &&
+        involvesLinalgMatmulImpl(forOp.getInitArgs()[resultNumber], seenValues,
+                                 seenOps))
+      return true;
+
+    return false;
+  }
+
+  for (mlir::Value operand : defOp->getOperands()) {
+    if (involvesLinalgMatmulImpl(operand, seenValues, seenOps))
+      return true;
+  }
+
+  return false;
+}
+
+bool involvesLinalgMatmul(mlir::Value value) {
+  llvm::SmallPtrSet<mlir::Value, 32> seenValues;
+  llvm::SmallPtrSet<mlir::Operation *, 32> seenOps;
+  return involvesLinalgMatmulImpl(value, seenValues, seenOps);
+}
+
 // TODO: Optimize to solve it generally by canonicalize
 bool isSafeToSimplifyCast(CastOp castOp) {
   auto inputType = getElementTypeOrSelf(castOp.getInputs().front());
@@ -404,7 +453,8 @@ getCastChainBlockReason(ArrayRef<CastOp> castChain) {
   if (crossesIntegerDomain(castChain))
     return CastChainBlockReason::CrossDomainWithoutIntegrality;
   if (hasPrecisionDownUpPattern(castChain) &&
-      !allHaveFastMathContract(castChain))
+      !allHaveFastMathContract(castChain) &&
+      !involvesLinalgMatmul(castChain.front()->getOperand(0)))
     return CastChainBlockReason::FloatPrecisionLoss;
   return CastChainBlockReason::None;
 }
