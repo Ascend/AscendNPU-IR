@@ -119,6 +119,29 @@ LogicalResult Flattener::flatten(bool multiDynamicShape) {
   breakSubByteI1CollapseBoundaries();
   propagateBroken();
   dumpIsConnected();
+  // Other users can introduce source boundaries after a slice was visited.
+  // Propagate these constraints to a fixed point before rebuilding any IR.
+  bool changed;
+  do {
+    auto previous = isConnected_;
+    propagateBroken();
+    op_->walk([&](Operation *op) {
+      if (auto slice = dyn_cast<tensor::ExtractSliceOp>(op))
+        propagateSliceBoundaries(slice.getSource(), slice.getResult(),
+                                 slice.getDroppedDims());
+      else if (auto slice = dyn_cast<tensor::InsertSliceOp>(op))
+        propagateSliceBoundaries(slice.getResult(), slice.getSource(),
+                                 slice.getDroppedDims());
+      else if (auto slice = dyn_cast<memref::SubViewOp>(op))
+        propagateSliceBoundaries(slice.getSource(), slice.getResult(),
+                                 slice.getDroppedDims());
+    });
+    changed = llvm::any_of(llvm::zip(previous, isConnected_), [](auto pair) {
+      const auto &[before, after] = pair;
+      return before.leftConnected != after.leftConnected ||
+             before.rightConnected != after.rightConnected;
+    });
+  } while (changed);
   adjustOperations();
   return success();
 }
