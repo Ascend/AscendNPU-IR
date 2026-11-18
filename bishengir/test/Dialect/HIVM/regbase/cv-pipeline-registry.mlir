@@ -6,14 +6,14 @@
 // Select the route per function, including decorated registry names. A
 // registered function defaults to v1 without a v2 fallback. Explicit v2 takes
 // precedence for both functions and skips the legacy reposition/merge passes.
-// Unregistered functions retain the legacy-then-v2 fallback by default, but
-// NormalizeWorkspaceStore stays off because CVPipelining already ran.
+// Unregistered functions retain the legacy-then-v2 fallback by default.
 // DEFAULT: IR Dump Before {{.*}}(cv-pipelining)
 // DEFAULT: func.func @kernel_sdpa_bwd_q_decorated
 // DEFAULT-NOT: (normalize-workspace-store)
 // DEFAULT: IR Dump Before {{.*}}(cv-pipelining)
 // DEFAULT: func.func @unregistered_kernel
-// DEFAULT-NOT: (normalize-workspace-store)
+// DEFAULT: IR Dump Before {{.*}}(normalize-workspace-store)
+// DEFAULT: func.func @unregistered_kernel
 // DEFAULT: IR Dump Before {{.*}}(hivm-reposition-preload-work)
 // DEFAULT: IR Dump Before {{.*}}(hivm-merge-same-preload-scopes)
 // DEFAULT-NOT: IR Dump Before

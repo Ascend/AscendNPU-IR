@@ -14,6 +14,7 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/Visitors.h"
 #include "llvm/ADT/SmallVector.h"
 
 #define DEBUG_TYPE "normalize-workspace-store"
@@ -28,13 +29,15 @@ using bishengir::memref_ext::AllocWorkspaceOp;
 
 namespace {
 
-static bool isInsideLegacyPipelinedLoop(Operation *op) {
-  for (Operation *curr = op->getParentOp(); curr != nullptr;
-       curr = curr->getParentOp()) {
-    if (curr->hasAttr(LegacyCVPipelineAttr::name))
-      return true;
-  }
-  return false;
+// CVPipelining sets this attribute only after it actually pipelines a loop.
+static bool cvPipeliningDidPipeline(func::FuncOp funcOp) {
+  return funcOp
+      .walk([&](Operation *op) {
+        if (op->hasAttr(LegacyCVPipelineAttr::name))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      })
+      .wasInterrupted();
 }
 
 struct NormalizeWorkspaceStorePass
@@ -43,11 +46,13 @@ struct NormalizeWorkspaceStorePass
     func::FuncOp funcOp = getOperation();
     if (isCVPipelineSnapshot(funcOp))
       return;
+    // Passing through CVPipelining is not enough. Skip only when that pass
+    // pipelined a loop; otherwise this rewrite still runs.
+    if (cvPipeliningDidPipeline(funcOp))
+      return;
 
     SmallVector<StoreOp> candidates;
     funcOp.walk([&](StoreOp storeOp) {
-      if (isInsideLegacyPipelinedLoop(storeOp))
-        return;
       if (storeOp.getNumResults() != 1)
         return;
       auto toTensorOp =
