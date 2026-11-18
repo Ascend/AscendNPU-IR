@@ -1,8 +1,8 @@
-name: compile-pkg
+name: PR PKG Compile
 
 on:
   pull_request_comment:
-    branches:  ["ci/workflow", "master"]
+    branches:  ["master"]
     types:
       - created
       - edited
@@ -14,7 +14,7 @@ on:
 jobs:
   build_x86_64:
     name: build (x86_64)
-    uses: ./.gitcode/workflows/build.yml
+    uses: ./.gitcode/workflows/pkg_builder.yml
     with:
       arch: x86_64
       runner_os: ubuntu
@@ -27,10 +27,11 @@ jobs:
       cann_path: /Ascend
       cann_version: "9.3.0"
       package_version: "2.0.0"
+      HUAWEICLOUD_OBS_PREFIX: ascendnpu-ir
 
   build_aarch64:
     name: build (aarch64)
-    uses: ./.gitcode/workflows/build.yml
+    uses: ./.gitcode/workflows/pkg_builder.yml
     with:
       arch: aarch64
       runner_os: euler
@@ -44,3 +45,4 @@ jobs:
       cann_path: /Ascend
       cann_version: "9.3.0"
       package_version: "2.0.0"
+      HUAWEICLOUD_OBS_PREFIX: ascendnpu-ir

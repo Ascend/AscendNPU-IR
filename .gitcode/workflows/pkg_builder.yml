@@ -1,4 +1,4 @@
-name: compile-reusable
+name: PKG Builder
 
 # ============================================================================
 # 可复用编译工作流（on.workflow_call）。
@@ -75,6 +75,11 @@ on:
         required: false
         type: string
         default: '/opt/buildtools/llvm15/build/bin'
+      HUAWEICLOUD_OBS_PREFIX:
+        description: 'OBS 对象前缀根目录，如 ascendnpu-ir'
+        required: false
+        type: string
+        default: 'ascendnpu-ir'
 
 jobs:
   build_binaries:
@@ -95,11 +100,27 @@ jobs:
       CMAKE_PATH: ${{ inputs.cmake_path }}
       NINJA_PATH: ${{ inputs.ninja_path }}
       LLVM_PATH: ${{ inputs.llvm_path }}
+      OBS_ROOT: ${{ inputs.HUAWEICLOUD_OBS_PREFIX }}
     steps:
       - name: Show trigger Info
+        id: trigger
         run: |
+          set -euo pipefail
+          # atomgit.start_timestamp 为北京时间 yyyyMMddHHmmss，如 20261118203101
+          START_TS="${{ atomgit.start_timestamp }}"
+          if [ -z "$START_TS" ]; then
+            START_TS="$(date -u -d '+8 hours' +%Y%m%d%H%M%S)"
+          fi
+          BUILD_DATE="$(printf '%s' "$START_TS" | cut -c1-4)/$(printf '%s' "$START_TS" | cut -c5-6)/$(printf '%s' "$START_TS" | cut -c7-8)"
+          BUILD_TIME="$(printf '%s' "$START_TS" | cut -c1-8)-$(printf '%s' "$START_TS" | cut -c9-14)"
+
+          echo "build_date=${BUILD_DATE}" >> "$ATOMGIT_OUTPUT"
+          echo "build_time=${BUILD_TIME}" >> "$ATOMGIT_OUTPUT"
           echo "event_name: ${{ atomgit.event_name }}"
           echo "commit sha: ${{ atomgit.sha }}"
+          echo "start_timestamp: ${START_TS}"
+          echo "build_date: ${BUILD_DATE}"
+          echo "build_time: ${BUILD_TIME}"
 
       - name: Checkout code
         uses: checkout
@@ -126,9 +147,10 @@ jobs:
       - name: Initialize submodules
         run: |
           set -euxo pipefail
-          git submodule update --init third-party/llvm-project
-          git submodule update --init third-party/torch-mlir
-          git submodule update --init third-party/shmem
+          git submodule update --init --depth 1 --jobs "$(nproc)" \
+            third-party/llvm-project \
+            third-party/torch-mlir \
+            third-party/shmem
 
       - name: Restore ccache
         uses: cache
@@ -177,20 +199,28 @@ jobs:
 
           EVENT_NAME="${{ atomgit.event_name }}"
           SHA="$(printf '%s' "${{ atomgit.sha }}" | cut -c1-13)"
+          # OBS 前缀根目录由参数传入，去掉结尾多余的 /
+          OBS_ROOT="${OBS_ROOT:-ascendnpu-ir}"
+          OBS_ROOT="${OBS_ROOT%/}"
           PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}_linux-${ARCH}"
           if [ "$EVENT_NAME" = "MR" ]; then
             # event_name = pull_request/pull_request/pull_request_target
             PR_ID="${{ atomgit.event.pull_request.number }}"
             PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}-pr${PR_ID}-${SHA}_linux-${ARCH}"
+            OBS_PREFIX="${OBS_ROOT}/snapshots/pr/"
           elif [ "$EVENT_NAME" = "Scheduler" ]; then
-            # event_name =schedule
-            BUILD_TIME="$(date -u -d '+8 hours' +%Y%m%d-%H%M%S)"
-            PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}-${BUILD_TIME}-${SHA}_linux-${ARCH}"
+            # event_name = schedule；分支取 ref_name，时间取构建触发时间
+            PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}-${{ steps.trigger.outputs.build_time }}-${SHA}_linux-${ARCH}"
+            OBS_PREFIX="${OBS_ROOT}/snapshots/${{ atomgit.ref_name }}/${{ steps.trigger.outputs.build_date }}/"
+          else
+            echo "unsupported event_name: ${EVENT_NAME}, only MR / Scheduler are allowed" >&2
+            exit 1
           fi
           mv "./cicd/CI/ascendnpu-ir_${PACKAGE_VERSION}_linux-${ARCH}.run" "./${PKG_NAME}.run"
 
           # 供 Upload artifact 复用同一个包名
           echo "pkg_name=${PKG_NAME}" >> "$ATOMGIT_OUTPUT"
+          echo "obs_prefix=${OBS_PREFIX}" >> "$ATOMGIT_OUTPUT"
 
       - name: Upload artifact
         id: upload
@@ -198,3 +228,16 @@ jobs:
         with:
           name: ${{ steps.package.outputs.pkg_name }}
           path: ascendnpu-ir_*_linux-*.run
+          overwrite: true
+          if-no-files-found: error
+
+      - name: Upload artifact to OBS
+        if: ${{ atomgit.event_name == 'Scheduler' }}
+        uses: obs-upload
+        with:
+          endpoint: "https://obs.cn-south-1.myhuaweicloud.com"
+          bucket: "ascendnpu-ir-pkg"
+          access-key: ${{ secrets.HUAWEICLOUD_OBS_AK }}
+          secret-key: ${{ secrets.HUAWEICLOUD_OBS_SK }}
+          artifact-path: ascendnpu-ir_*_linux-*.run
+          object-prefix: ${{ steps.package.outputs.obs_prefix }}
