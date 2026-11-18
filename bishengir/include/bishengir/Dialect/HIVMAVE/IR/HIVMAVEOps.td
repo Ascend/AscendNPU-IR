@@ -612,6 +612,24 @@ def AVE_VFSelectOp : AVE_LibFnOp<"vsel", [
   let extraClassDeclaration = opNameDeclaration;
 }
 
+// Byte-mask masked move: only the Ascend960 (V121) target has the vselrv2
+// instruction, which has no else operand. The false branch is therefore an
+// implicit zero fill: res = (mask_lane != 0) ? true_value : 0.
+def AVE_VFSelectRv2Op : AVE_Op<"vselrv2", [Pure,
+    AllTypesMatch<["true_value", "res"]>]> {
+  let summary = "AVE regbased byte-mask select (masked move) operation.";
+  let description = [{
+    Performs a byte-mask masked move, where `mask` is an 8-bit data register
+    (vector of u8/s8/i8): res = (mask_lane != 0) ? true_value : 0. Only the
+    Ascend960 (V121) target provides the vselrv2 instruction.
+  }];
+  let arguments = (ins AveByteMaskVector:$mask,
+                       AveExtValidVector:$true_value);
+  let results = (outs AveExtValidVector:$res);
+  let assemblyFormat = "$mask `,` $true_value attr-dict `:`"
+                       "type($mask) `,` type($res)";
+}
+
 def AVE_VFPltOp : AVE_Op<"plt", [Pure]> {
   let summary = [{
   PLT operation on ISA.
@@ -1115,6 +1133,15 @@ def AVE_VFVunpackOp : AVE_LibFnOp<"vunpack", [
 //// Tenary Ops
 //
 def AVE_VFMulaOp : AVE_TenaryOp<"vmula">;
+
+def AVE_VFmaOp : AVE_TenaryOp<"vfma">;
+def AVE_VFmsOp : AVE_TenaryOp<"vfms">;
+def AVE_VFnmaOp : AVE_TenaryOp<"vfnma">;
+def AVE_VFnmsOp : AVE_TenaryOp<"vfnms">;
+def AVE_VMaddOp : AVE_TenaryOp<"vmadd">;
+def AVE_VMsubOp : AVE_TenaryOp<"vmsub">;
+def AVE_VNmaddOp : AVE_TenaryOp<"vnmadd">;
+def AVE_VNmsubOp : AVE_TenaryOp<"vnmsub">;
 
 //
 //// Vector-Scalar Ops
