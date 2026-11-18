@@ -98,3 +98,82 @@ func.func @division(%a: f32, %b: f32, %n: index, %dst: memref<8xf32>) attributes
 // CHECK: vector.transfer_write %[[BC]],
 // CHECK-NOT: arith.divf {{.*}} : vector<8xf32>
 // CHECK: return
+
+// fptosi carrying an explicit truncating round mode is value preserving when
+// lifted, so it is vectorized together with its producer chain.
+func.func @fptosi_trunc(%a: f32, %b: f32, %n: index, %dst: memref<8xi32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  scf.for %iv = %c0 to %n step %c1 {
+    %s = arith.addf %a, %b : f32
+    %i = arith.fptosi %s {round_mode = #hfusion.round_mode<trunc>} : f32 to i32
+    %v = vector.broadcast %i : i32 to vector<8xi32>
+    vector.transfer_write %v, %dst[%c0] {in_bounds = [true]} : vector<8xi32>, memref<8xi32>
+  } {"outlined-loop-target-1"}
+  return
+}
+// CHECK-LABEL: func.func @fptosi_trunc(
+// CHECK: %[[SUM:.*]] = arith.addf {{.*}} : vector<8xf32>
+// CHECK: %[[I:.*]] = arith.fptosi %[[SUM]] {{.*}}round_mode = #hfusion.round_mode<trunc>{{.*}} : vector<8xf32> to vector<8xi32>
+// CHECK: vector.transfer_write %[[I]],
+// CHECK: return
+
+// fptosi without a round mode must stay scalar: lifting it would let the
+// ArithToHIVMAVE lowering attach its default (non-truncating) round mode and
+// change the value (e.g. 1.75 -> 2 instead of 1).
+func.func @fptosi_no_round(%a: f32, %b: f32, %n: index, %dst: memref<8xi32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  scf.for %iv = %c0 to %n step %c1 {
+    %s = arith.addf %a, %b : f32
+    %i = arith.fptosi %s : f32 to i32
+    %v = vector.broadcast %i : i32 to vector<8xi32>
+    vector.transfer_write %v, %dst[%c0] {in_bounds = [true]} : vector<8xi32>, memref<8xi32>
+  } {"outlined-loop-target-1"}
+  return
+}
+// CHECK-LABEL: func.func @fptosi_no_round(
+// CHECK: %[[S:.*]] = arith.fptosi %{{.*}} : f32 to i32
+// CHECK: %[[BC:.*]] = vector.broadcast %[[S]] : i32 to vector<8xi32>
+// CHECK: vector.transfer_write %[[BC]],
+// CHECK-NOT: arith.fptosi {{.*}} : vector<8xf32> to vector<8xi32>
+// CHECK: return
+
+// fptosi with a non-truncating round mode must stay scalar: the scalar path
+// truncates while the lifted vector cast would round, so the value differs.
+func.func @fptosi_round(%a: f32, %b: f32, %n: index, %dst: memref<8xi32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  scf.for %iv = %c0 to %n step %c1 {
+    %s = arith.addf %a, %b : f32
+    %i = arith.fptosi %s {round_mode = #hfusion.round_mode<round>} : f32 to i32
+    %v = vector.broadcast %i : i32 to vector<8xi32>
+    vector.transfer_write %v, %dst[%c0] {in_bounds = [true]} : vector<8xi32>, memref<8xi32>
+  } {"outlined-loop-target-1"}
+  return
+}
+// CHECK-LABEL: func.func @fptosi_round(
+// CHECK: %[[S:.*]] = arith.fptosi %{{.*}}round_mode = #hfusion.round_mode<round>{{.*}} : f32 to i32
+// CHECK: %[[BC:.*]] = vector.broadcast %[[S]] : i32 to vector<8xi32>
+// CHECK: vector.transfer_write %[[BC]],
+// CHECK-NOT: arith.fptosi {{.*}} : vector<8xf32> to vector<8xi32>
+// CHECK: return
+
+// fptoui without a round mode must stay scalar for the same reason as fptosi.
+func.func @fptoui_no_round(%a: f32, %b: f32, %n: index, %dst: memref<8xi32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  scf.for %iv = %c0 to %n step %c1 {
+    %s = arith.addf %a, %b : f32
+    %i = arith.fptoui %s : f32 to i32
+    %v = vector.broadcast %i : i32 to vector<8xi32>
+    vector.transfer_write %v, %dst[%c0] {in_bounds = [true]} : vector<8xi32>, memref<8xi32>
+  } {"outlined-loop-target-1"}
+  return
+}
+// CHECK-LABEL: func.func @fptoui_no_round(
+// CHECK: %[[S:.*]] = arith.fptoui %{{.*}} : f32 to i32
+// CHECK: %[[BC:.*]] = vector.broadcast %[[S]] : i32 to vector<8xi32>
+// CHECK: vector.transfer_write %[[BC]],
+// CHECK-NOT: arith.fptoui {{.*}} : vector<8xf32> to vector<8xi32>
+// CHECK: return
