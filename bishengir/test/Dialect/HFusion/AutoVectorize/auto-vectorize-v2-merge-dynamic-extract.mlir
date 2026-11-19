@@ -1,4 +1,8 @@
 // RUN: bishengir-opt %s --hfusion-auto-vectorize-v2 -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s --hfusion-auto-vectorize-v2=emit-transform-sequence | FileCheck %s --check-prefix=PLAN
+
+// PLAN: transform.structured.fuse_into_containing_op
+// PLAN: transform.hfusion.eliminate_single_iteration_scf_for
 
 #off = affine_map<()[s0] -> (s0 * 510)>
 #sz = affine_map<()[s0] -> (-s0 + 510)>

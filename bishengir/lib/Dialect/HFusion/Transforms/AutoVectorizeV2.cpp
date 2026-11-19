@@ -1186,10 +1186,8 @@ void AutoVectorizeV2::fuseProducersIntoConsumers(
       Value funcHandle = builder.create<transform::MatchOp>(
           loc, seqOp.getBodyBlock()->getArguments().front(),
           ArrayRef<StringRef>({func::FuncOp::getOperationName()}));
-      builder.create<transform::ApplyRegisteredPassOp>(
-          loc, builder.getType<transform::AnyOpType>(), funcHandle,
-          builder.getStringAttr("eliminate-single-iteration-scf-for"));
-      // Re-match all loops after the pass instead of reusing erased handles.
+      builder.create<transform::EliminateSingleIterationScfForOp>(loc,
+                                                                  funcHandle);
       applyCleanUp(builder, seqOp);
     }
 }
