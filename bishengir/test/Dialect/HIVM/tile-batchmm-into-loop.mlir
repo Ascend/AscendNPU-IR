@@ -2,6 +2,29 @@
 // RUN: bishengir-opt --hivm-tile-batchmm-into-loop='keep-regbase-batch=true' %s -split-input-file -verify-diagnostics | FileCheck %s --check-prefix=KEEP
 
 // -----
+// CHECK-LABEL: func.func @test_tile_fractal_batch_mmad(
+// CHECK: scf.for %[[BATCH:.*]] =
+// CHECK: %[[A:.*]] = tensor.extract_slice {{.*}}[%[[BATCH]], 0, 0, 0, 0] [1, 2, 2, 16, 16] [1, 1, 1, 1, 1] : tensor<2x2x2x16x16xbf16> to tensor<2x2x16x16xbf16>
+// CHECK: %[[B:.*]] = tensor.extract_slice {{.*}}[%[[BATCH]], 0, 0, 0, 0] [1, 2, 2, 16, 16] [1, 1, 1, 1, 1] : tensor<2x2x2x16x16xbf16> to tensor<2x2x16x16xbf16>
+// CHECK: hivm.hir.mmadL1 {batch_matmul} ins(%[[A]], %[[B]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @test_tile_fractal_batch_mmad(%dst: memref<2x32x32xf32>) {
+  %a = tensor.empty() : tensor<2x2x2x16x16xbf16>
+  %b = tensor.empty() : tensor<2x2x2x16x16xbf16>
+  %c = tensor.empty() : tensor<2x32x32xf32>
+  %true = arith.constant true
+  %c32 = arith.constant 32 : index
+  %result = hivm.hir.batchMmadL1
+    ins(%a, %b, %true, %c32, %c32, %c32
+        : tensor<2x2x2x16x16xbf16>, tensor<2x2x2x16x16xbf16>, i1, index, index, index)
+    outs(%c : tensor<2x32x32xf32>) -> tensor<2x32x32xf32>
+  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+    ins(%result : tensor<2x32x32xf32>) outs(%dst : memref<2x32x32xf32>)
+  return
+}
+}
+
+// -----
 // CHECK: func.func @test_tile_batchMmadL1(%[[DST:.*]]: memref<2x256x256xf16>)
 func.func @test_tile_batchMmadL1(%dst : memref<2x256x256xf16>) {
   // CHECK-DAG: %[[MA:.*]] = tensor.empty() : tensor<2x256x128xf16>
