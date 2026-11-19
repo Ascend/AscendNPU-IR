@@ -882,6 +882,9 @@ void buildHIVMTensorOptimizations(
     pm.nest<func::FuncOp>().addPass(createInitEntryKernelPass());
   pm.nest<func::FuncOp>().addPass(mlir::hivm::createHIVMNormalizeOpsPass());
   hivmPreBufferizationOptimizationPipeline(pm, hivmPipelineOptions);
+  // Scalar readback sinking must run before bufferization and GSS so that the
+  // sync solver derives V->S flags from the final consumer position.
+  pm.nest<func::FuncOp>().addPass(createSinkScalarReadbackPass());
 }
 
 void buildLowerHIVMPipelines(OpPassManager &pm,
