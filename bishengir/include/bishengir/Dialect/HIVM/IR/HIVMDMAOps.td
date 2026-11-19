@@ -728,7 +728,8 @@ def AtomicCasOp : HIVM_Op<"atomic_cas", [
 
 def AtomicXchgOp : HIVM_Op<"atomic_xchg", [
   NoLibraryFunctionTrait,
-  OperElemTypeConstraints<[0], [I8, I16, I32, F16, F32, I64, BF16]>
+  OperElemTypeConstraints<[0], [I8, I16, I32, F16, F32, I64, BF16]>,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Atomic Exchange Op";
   let description = [{

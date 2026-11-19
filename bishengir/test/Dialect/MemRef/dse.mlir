@@ -632,3 +632,22 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return
   }
 }
+
+// -----
+
+// The new value lives in a private alloc whose only users are the store and
+// hivm.hir.atomic_xchg. The exchange reads that alloc and writes GM, so DSE
+// must keep both.
+// CHECK-LABEL: func.func @keep_atomic_xchg_new_value
+// CHECK: memref.store
+// CHECK: hivm.hir.atomic_xchg
+module attributes {hacc.target = #hacc.target<"Ascend910_9382">} {
+  func.func @keep_atomic_xchg_new_value(%arg0: memref<?xi32>, %val: i32) {
+    %c0 = arith.constant 0 : index
+    %alloc = memref.alloc() : memref<1x1x1xi32>
+    memref.store %val, %alloc[%c0, %c0, %c0] : memref<1x1x1xi32>
+    %dst = memref.reinterpret_cast %arg0 to offset: [0], sizes: [1, 1, 1], strides: [1, 1, 1] : memref<?xi32> to memref<1x1x1xi32, strided<[1, 1, 1]>>
+    hivm.hir.atomic_xchg ins(%alloc : memref<1x1x1xi32>) outs(%dst : memref<1x1x1xi32, strided<[1, 1, 1]>>)
+    return
+  }
+}
