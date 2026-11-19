@@ -38,9 +38,13 @@ template <> struct TransToTag<true> {
   using tag = layout::nZ;
 };
 
-__aicore__ inline uint32_t getL1MmadPingPongId() {
-  static uint32_t pingPongId = 1;
-  pingPongId = 1 - pingPongId;
+__aicore__ inline int32_t
+getPingPongSignal(memref_t<int32_t, 0> *pingPongSignal) {
+  // Only called when enableDoubleBuffer is true (see L1Mmad below), which
+  // requires a non-null signal data pointer and a viable half-L0 tile size.
+  int32_t &pingPongId = pingPongSignal->aligned[pingPongSignal->offset];
+  // Normalize supplied state before flipping to keep the half id in range.
+  pingPongId = 1 - (pingPongId != 0);
   return pingPongId;
 }
 
@@ -50,10 +54,10 @@ CATLASS_DEVICE void
 L1Mmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
        __cbuf__ ElementBias *l1Bias, uint32_t l1M, uint32_t l1K, uint32_t l1N,
        uint32_t actualM, uint32_t actualK, uint32_t actualN,
-       uint32_t l1AMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,
-       uint32_t l1BMTE2MTE1EventId, uint32_t l1BMTE1MTE2EventId,
-       bool isL1FirstK, bool isL1LastK, UNIT_FLAG unit_flag_mode,
-       bool hasBias, int64_t l1BOuterStride = 0) {
+       memref_t<int32_t, 0> *pingPongSignal, uint32_t l1AMTE2MTE1EventId,
+       uint32_t l1AMTE1MTE2EventId, uint32_t l1BMTE2MTE1EventId,
+       uint32_t l1BMTE1MTE2EventId, bool isL1FirstK, bool isL1LastK,
+       UNIT_FLAG unit_flag_mode, bool hasBias, int64_t l1BOuterStride = 0) {
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(true);
     AscendCBisheng::SetHF32TransMode(true);
@@ -140,13 +144,20 @@ L1Mmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
   AscendCBisheng::LocalTensor<ElementACC> btTile = bTTensor;
 
   bool enableDoubleBuffer = true;
-  uint32_t l0K = RoundDown<C0_NUM_PER_FRACTAL>(
-      min(L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
-              RoundUp<L0AAlignHelper::M_ALIGNED>(actualM) / L0A_ELE_NUM_PER_C0 *
-              L0A_ELE_NUM_PER_C0,
-          L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
-              RoundUp<L0BAlignHelper::N_ALIGNED>(actualN) / L0B_ELE_NUM_PER_C0 *
-              L0B_ELE_NUM_PER_C0));
+  if (pingPongSignal == nullptr || pingPongSignal->aligned == nullptr) {
+    enableDoubleBuffer = false;
+  }
+
+  uint32_t l0K = 0;
+  if (enableDoubleBuffer) {
+    l0K = RoundDown<C0_NUM_PER_FRACTAL>(
+        min(L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
+                RoundUp<L0AAlignHelper::M_ALIGNED>(actualM) /
+                L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
+            L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
+                RoundUp<L0BAlignHelper::N_ALIGNED>(actualN) /
+                L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
+  }
   if (l0K == 0) {
     enableDoubleBuffer = false;
     l0K = RoundDown<C0_NUM_PER_FRACTAL>(
@@ -157,6 +168,14 @@ L1Mmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
                 RoundUp<L0BAlignHelper::N_ALIGNED>(actualN) /
                 L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
   }
+  if (l0K == 0) {
+    trap();
+  }
+
+  // Reserve the other half; each iteration waits on event 0.
+  if (!enableDoubleBuffer) {
+    AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(EVENT_ID1);
+  }
 
   uint32_t kL0Loop = CeilDiv(actualK, l0K);
 
@@ -165,7 +184,8 @@ L1Mmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
         (kL0Idx < kL0Loop - 1) ? l0K : (actualK - kL0Idx * l0K);
 
     // Get ping/pong id (0 or 1)
-    uint32_t pingPongId = enableDoubleBuffer ? getL1MmadPingPongId() : 0;
+    uint32_t pingPongId =
+        enableDoubleBuffer ? getPingPongSignal(pingPongSignal) : 0;
     uint32_t l0EventId = !pingPongId ? EVENT_ID0 : EVENT_ID1;
 
     // Locate the current tile on L0A
@@ -280,6 +300,11 @@ L1Mmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::M_MTE1>(l0EventId);
   }
 
+  // Restore event 1 after the last full-L0 MMAD for subsequent half reuse.
+  if (!enableDoubleBuffer) {
+    AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::M_MTE1>(EVENT_ID1);
+  }
+
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(false);
     AscendCBisheng::SetHF32TransMode(false);
@@ -288,19 +313,20 @@ L1Mmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
 
 template <class ElementA, class ElementB, class ElementACC, bool TA, bool TB,
           bool HF32>
-CATLASS_DEVICE void BatchL1Mmad(
-    __cc__ ElementACC *l0C, __cbuf__ ElementA *l1A,
-    __cbuf__ ElementB *l1B, uint32_t batchCount, uint32_t l1M,
-    uint32_t l1K, uint32_t l1N, uint32_t actualM, uint32_t actualK,
-    uint32_t actualN, uint32_t l1AMTE2MTE1EventId,
-    uint32_t l1AMTE1MTE2EventId, uint32_t l1BMTE2MTE1EventId,
-    uint32_t l1BMTE1MTE2EventId, bool initC, UNIT_FLAG unitFlag,
-    int64_t l1BOuterStride) {
+CATLASS_DEVICE void
+BatchL1Mmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A,
+            __cbuf__ ElementB *l1B, uint32_t batchCount, uint32_t l1M,
+            uint32_t l1K, uint32_t l1N, uint32_t actualM, uint32_t actualK,
+            uint32_t actualN, memref_t<int32_t, 0> *pingPongSignal,
+            uint32_t l1AMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,
+            uint32_t l1BMTE2MTE1EventId, uint32_t l1BMTE1MTE2EventId,
+            bool initC, UNIT_FLAG unitFlag, int64_t l1BOuterStride) {
   if (batchCount == 1) {
     L1Mmad<ElementA, ElementB, void, ElementACC, TA, TB, HF32>(
         l0C, l1A, l1B, nullptr, l1M, l1K, l1N, actualM, actualK, actualN,
-        l1AMTE2MTE1EventId, l1AMTE1MTE2EventId, l1BMTE2MTE1EventId,
-        l1BMTE1MTE2EventId, initC, true, unitFlag, false, l1BOuterStride);
+        pingPongSignal, l1AMTE2MTE1EventId, l1AMTE1MTE2EventId,
+        l1BMTE2MTE1EventId, l1BMTE1MTE2EventId, initC, true, unitFlag, false,
+        l1BOuterStride);
     return;
   }
 
@@ -357,6 +383,8 @@ CATLASS_DEVICE void BatchL1Mmad(
   CopyL1ToL0A copyL1ToL0A;
   CopyL1ToL0B copyL1ToL0B;
 
+  // Multi-batch chunks use the full L0 buffer.
+  AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(EVENT_ID1);
   AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(EVENT_ID0);
   if (l1AMTE2MTE1EventId != static_cast<uint32_t>(-1)) {
     AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
@@ -421,6 +449,8 @@ CATLASS_DEVICE void BatchL1Mmad(
     }
   }
 
+  AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::M_MTE1>(EVENT_ID1);
+
   if (l1AMTE1MTE2EventId != static_cast<uint32_t>(-1)) {
     AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
         l1AMTE1MTE2EventId);
@@ -439,9 +469,9 @@ CATLASS_DEVICE void BatchL1Mmad(
 
 template <typename SRC_TYPE, typename DST_TYPE, bool TA, bool TB, bool HF32>
 __aicore__ __attribute__((always_inline)) void batch_mma_tile_core(
-    memref_t<__cbuf__ SRC_TYPE, 5> *ma,
-    memref_t<__cbuf__ SRC_TYPE, 5> *mb, bool init, int64_t m, int64_t k,
-    int64_t n, memref_t<__cc__ DST_TYPE, 5> *mc,
+    memref_t<__cbuf__ SRC_TYPE, 5> *ma, memref_t<__cbuf__ SRC_TYPE, 5> *mb,
+    bool init, int64_t m, int64_t k, int64_t n,
+    memref_t<__cc__ DST_TYPE, 5> *mc, memref_t<int32_t, 0> *ping_pong_signal,
     int64_t batch_mmad_wait_l1a_event, int64_t batch_mmad_wait_l1b_event,
     int64_t l1a_wait_batch_mmad_event, int64_t l1b_wait_batch_mmad_event,
     int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,
@@ -483,7 +513,7 @@ __aicore__ __attribute__((always_inline)) void batch_mma_tile_core(
   Catlass::Gemm::BatchL1Mmad<SRC_TYPE, SRC_TYPE, DST_TYPE, TA, TB, HF32>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
       mb->aligned + mb->offset, ma->sizes[0], l1M, l1K, l1N, m, k, n,
-      batch_mmad_wait_l1a_event, l1a_wait_batch_mmad_event,
+      ping_pong_signal, batch_mmad_wait_l1a_event, l1a_wait_batch_mmad_event,
       batch_mmad_wait_l1b_event, l1b_wait_batch_mmad_event, init,
       unit_flag_mode, mb->strides[1]);
 }
@@ -494,6 +524,7 @@ __aicore__ __attribute__((always_inline)) void
 mma_tile_core(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
               memref_t<__cbuf__ SRC_TYPE, 4> *mb, bool init, int64_t m,
               int64_t k, int64_t n, memref_t<__cc__ DST_TYPE, 4> *mc,
+              memref_t<int32_t, 0> *ping_pong_signal,
               int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,
               int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,
               int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,
@@ -546,6 +577,7 @@ mma_tile_core(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
       actualM,                  // actualM
       actualK,                  // actualK
       actualN,                  // actualN
+      ping_pong_signal,         // ping_pong_signal
       mmad_l1_wait_l1a_event,   // l1AMTE2MTE1EventId
       l1a_wait_mmad_l1_event,   // l1AMTE1MTE2EventId
       mmad_l1_wait_l1b_event,   // l1BMTE2MTE1EventId
@@ -553,7 +585,8 @@ mma_tile_core(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
       init,                     // isL1FirstK
       true,                     // isL1LastK
       unit_flag_mode,           // unit_flag_mode
-      false                     // hasBias
+      false,                    // hasBias
+      0                         // l1BOuterStride
   );
 }
 
@@ -563,10 +596,11 @@ __aicore__ __attribute__((always_inline)) void
 mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
               memref_t<__cbuf__ SRC_TYPE, 4> *mb, bool init, int64_t m,
               int64_t k, int64_t n, memref_t<__cbuf__ BIAS_TYPE, 4> *bias,
-              memref_t<__cc__ DST_TYPE, 4> *mc, int64_t mmad_l1_wait_l1a_event,
-              int64_t mmad_l1_wait_l1b_event, int64_t l1a_wait_mmad_l1_event,
-              int64_t l1b_wait_mmad_l1_event, int64_t kloop_db_cond,
-              int64_t back_pipe_m_pipe_mte1_db_event0,
+              memref_t<__cc__ DST_TYPE, 4> *mc,
+              memref_t<int32_t, 0> *ping_pong_signal,
+              int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,
+              int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,
+              int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,
               int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,
               int64_t unit_flag_group_id) {
   uint32_t l1M =
@@ -616,6 +650,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
       actualM,                      // actualM
       actualK,                      // actualK
       actualN,                      // actualN
+      ping_pong_signal,             // ping_pong_signal
       mmad_l1_wait_l1a_event,       // l1AMTE2MTE1EventId
       l1a_wait_mmad_l1_event,       // l1AMTE1MTE2EventId
       mmad_l1_wait_l1b_event,       // l1BMTE2MTE1EventId
@@ -623,30 +658,31 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
       init,                         // isL1FirstK
       true,                         // isL1LastK
       unit_flag_mode,               // unit_flag_mode
-      true                          // hasBias
+      true,                         // hasBias
+      0                             // l1BOuterStride
   );
 }
 
-#define REGISTER_BATCH_MMA_TILE(suffix, src_type, dst_type, ta, tb, hf32)     \
-  __aicore__ __attribute__((always_inline)) void                              \
-      _mlir_ciface_batch_mma_tile_##src_type##_to_##dst_type##suffix(         \
-          memref_t<__cbuf__ src_type, 5> *src0,                               \
-          memref_t<__cbuf__ src_type, 5> *src1, bool init, int64_t m,         \
-          int64_t k, int64_t n, memref_t<__cc__ dst_type, 5> *dst,            \
-          int64_t batch_mmad_wait_l1a_event,                                  \
-          int64_t batch_mmad_wait_l1b_event,                                  \
-          int64_t l1a_wait_batch_mmad_event,                                  \
-          int64_t l1b_wait_batch_mmad_event, int64_t kloop_db_cond,           \
-          int64_t back_pipe_m_pipe_mte1_db_event0,                            \
-          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,  \
-          int64_t unit_flag_group_id) {                                       \
-    batch_mma_tile_core<src_type, dst_type, ta, tb, hf32>(                    \
-        src0, src1, init, m, k, n, dst, batch_mmad_wait_l1a_event,            \
-        batch_mmad_wait_l1b_event, l1a_wait_batch_mmad_event,                 \
-        l1b_wait_batch_mmad_event, kloop_db_cond,                             \
-        back_pipe_m_pipe_mte1_db_event0,                                      \
-        back_pipe_m_pipe_mte1_db_event1, unit_flag_mode,                      \
-        unit_flag_group_id);                                                  \
+#define REGISTER_BATCH_MMA_TILE(suffix, src_type, dst_type, ta, tb, hf32)      \
+  __aicore__ __attribute__((always_inline)) void                               \
+      _mlir_ciface_batch_mma_tile_##src_type##_to_##dst_type##suffix(          \
+          memref_t<__cbuf__ src_type, 5> *src0,                                \
+          memref_t<__cbuf__ src_type, 5> *src1, bool init, int64_t m,          \
+          int64_t k, int64_t n, memref_t<__cc__ dst_type, 5> *dst,             \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
+          int64_t batch_mmad_wait_l1a_event,                                   \
+          int64_t batch_mmad_wait_l1b_event,                                   \
+          int64_t l1a_wait_batch_mmad_event,                                   \
+          int64_t l1b_wait_batch_mmad_event, int64_t kloop_db_cond,            \
+          int64_t back_pipe_m_pipe_mte1_db_event0,                             \
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,   \
+          int64_t unit_flag_group_id) {                                        \
+    batch_mma_tile_core<src_type, dst_type, ta, tb, hf32>(                     \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        batch_mmad_wait_l1a_event, batch_mmad_wait_l1b_event,                  \
+        l1a_wait_batch_mmad_event, l1b_wait_batch_mmad_event, kloop_db_cond,   \
+        back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
+        unit_flag_mode, unit_flag_group_id);                                   \
   }
 
 #define DECLARE_MMA_TILE(src_scope, dst_scope, dim, src_type, dst_type,        \
@@ -657,6 +693,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -667,9 +704,9 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
                           bias_type)                                           \
   DECLARE_MMA_TILE(src_scope, dst_scope, dim, src_type, dst_type, bias_type) { \
     mma_tile_core<src_type, dst_type, bias_type, false, false, false>(         \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -683,6 +720,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t m, int64_t k, int64_t n,                                      \
           memref_t<__##src_scope##__ bias_type, dim> *bias,                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                         \
+          memref_t<int32_t, 0> *ping_pong_signal,                               \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,       \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,       \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,       \
@@ -694,9 +732,9 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
   DECLARE_MMA_TILE_BIAS(src_scope, dst_scope, dim, src_type, dst_type,         \
                         bias_type) {                                           \
     mma_tile_bias<src_type, dst_type, bias_type, false, false, false>(         \
-        src0, src1, init, m, k, n, bias, dst, mmad_l1_wait_l1a_event,          \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, bias, dst, ping_pong_signal,                \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -710,6 +748,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t m, int64_t k, int64_t n,                                           \
           memref_t<__##src_scope##__ bias_type, dim> *bias,                          \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                              \
+          memref_t<int32_t, 0> *ping_pong_signal,                                    \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,            \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,            \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,            \
@@ -721,9 +760,9 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
   DECLARE_MMA_TILE_BIAS_TA(src_scope, dst_scope, dim, src_type, dst_type,      \
                            bias_type) {                                        \
     mma_tile_bias<src_type, dst_type, bias_type, true, false, false>(          \
-        src0, src1, init, m, k, n, bias, dst, mmad_l1_wait_l1a_event,          \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, bias, dst, ping_pong_signal,                \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -737,6 +776,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t m, int64_t k, int64_t n,                                           \
           memref_t<__##src_scope##__ bias_type, dim> *bias,                          \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                              \
+          memref_t<int32_t, 0> *ping_pong_signal,                                    \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,            \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,            \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,            \
@@ -748,9 +788,9 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
   DECLARE_MMA_TILE_BIAS_TB(src_scope, dst_scope, dim, src_type, dst_type,      \
                            bias_type) {                                        \
     mma_tile_bias<src_type, dst_type, bias_type, false, true, false>(          \
-        src0, src1, init, m, k, n, bias, dst, mmad_l1_wait_l1a_event,          \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, bias, dst, ping_pong_signal,                \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -764,6 +804,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t m, int64_t k, int64_t n,                                              \
           memref_t<__##src_scope##__ bias_type, dim> *bias,                             \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                                 \
+          memref_t<int32_t, 0> *ping_pong_signal,                                       \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,               \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,               \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,               \
@@ -775,9 +816,9 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
   DECLARE_MMA_TILE_BIAS_TA_TB(src_scope, dst_scope, dim, src_type, dst_type,   \
                               bias_type) {                                     \
     mma_tile_bias<src_type, dst_type, bias_type, true, true, false>(           \
-        src0, src1, init, m, k, n, bias, dst, mmad_l1_wait_l1a_event,          \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, bias, dst, ping_pong_signal,                \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -791,6 +832,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t m, int64_t k, int64_t n,                                             \
           memref_t<__##src_scope##__ bias_type, dim> *bias,                            \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                                \
+          memref_t<int32_t, 0> *ping_pong_signal,                                      \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,              \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,              \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,              \
@@ -802,9 +844,9 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
   DECLARE_MMA_TILE_BIAS_HF32(src_scope, dst_scope, dim, src_type, dst_type,    \
                              bias_type) {                                      \
     mma_tile_bias<src_type, dst_type, bias_type, false, false, true>(          \
-        src0, src1, init, m, k, n, bias, dst, mmad_l1_wait_l1a_event,          \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, bias, dst, ping_pong_signal,                \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -818,6 +860,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t m, int64_t k, int64_t n,                                                \
           memref_t<__##src_scope##__ bias_type, dim> *bias,                               \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                                   \
+          memref_t<int32_t, 0> *ping_pong_signal,                                         \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,                 \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,                 \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,                 \
@@ -829,9 +872,9 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
   DECLARE_MMA_TILE_BIAS_TA_HF32(src_scope, dst_scope, dim, src_type, dst_type, \
                                 bias_type) {                                   \
     mma_tile_bias<src_type, dst_type, bias_type, true, false, true>(           \
-        src0, src1, init, m, k, n, bias, dst, mmad_l1_wait_l1a_event,          \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, bias, dst, ping_pong_signal,                \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -845,6 +888,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t m, int64_t k, int64_t n,                                                \
           memref_t<__##src_scope##__ bias_type, dim> *bias,                               \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                                   \
+          memref_t<int32_t, 0> *ping_pong_signal,                                         \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,                 \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,                 \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,                 \
@@ -856,9 +900,9 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
   DECLARE_MMA_TILE_BIAS_TB_HF32(src_scope, dst_scope, dim, src_type, dst_type, \
                                 bias_type) {                                   \
     mma_tile_bias<src_type, dst_type, bias_type, false, true, true>(           \
-        src0, src1, init, m, k, n, bias, dst, mmad_l1_wait_l1a_event,          \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, bias, dst, ping_pong_signal,                \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -872,6 +916,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t m, int64_t k, int64_t n,                                                   \
           memref_t<__##src_scope##__ bias_type, dim> *bias,                                  \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                                      \
+          memref_t<int32_t, 0> *ping_pong_signal,                                            \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,                    \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,                    \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,                    \
@@ -883,9 +928,9 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
   DECLARE_MMA_TILE_BIAS_TA_TB_HF32(src_scope, dst_scope, dim, src_type,        \
                                    dst_type, bias_type) {                      \
     mma_tile_bias<src_type, dst_type, bias_type, true, true, true>(            \
-        src0, src1, init, m, k, n, bias, dst, mmad_l1_wait_l1a_event,          \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, bias, dst, ping_pong_signal,                \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -898,6 +943,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -909,9 +955,9 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
   DECLARE_MMA_TILE_TA(src_scope, dst_scope, dim, src_type, dst_type,           \
                       bias_type) {                                             \
     mma_tile_core<src_type, dst_type, bias_type, true, false, false>(          \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -924,6 +970,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -935,9 +982,9 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
   DECLARE_MMA_TILE_TB(src_scope, dst_scope, dim, src_type, dst_type,           \
                       bias_type) {                                             \
     mma_tile_core<src_type, dst_type, bias_type, false, true, false>(          \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -950,6 +997,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -961,9 +1009,9 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
   DECLARE_MMA_TILE_TA_TB(src_scope, dst_scope, dim, src_type, dst_type,        \
                          bias_type) {                                          \
     mma_tile_core<src_type, dst_type, bias_type, true, true, false>(           \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -976,6 +1024,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -987,9 +1036,9 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
   DECLARE_MMA_TILE_HF32(src_scope, dst_scope, dim, src_type, dst_type,         \
                         bias_type) {                                           \
     mma_tile_core<src_type, dst_type, bias_type, false, false, true>(          \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -1002,6 +1051,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -1013,9 +1063,9 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
   DECLARE_MMA_TILE_TA_HF32(src_scope, dst_scope, dim, src_type, dst_type,      \
                            bias_type) {                                        \
     mma_tile_core<src_type, dst_type, bias_type, true, false, true>(           \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -1028,6 +1078,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -1039,9 +1090,9 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
   DECLARE_MMA_TILE_TB_HF32(src_scope, dst_scope, dim, src_type, dst_type,      \
                            bias_type) {                                        \
     mma_tile_core<src_type, dst_type, bias_type, false, true, true>(           \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -1054,6 +1105,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -1065,9 +1117,9 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
   DECLARE_MMA_TILE_TA_TB_HF32(src_scope, dst_scope, dim, src_type, dst_type,   \
                               bias_type) {                                     \
     mma_tile_core<src_type, dst_type, bias_type, true, true, true>(            \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }

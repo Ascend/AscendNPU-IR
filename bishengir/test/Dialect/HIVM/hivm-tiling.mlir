@@ -372,3 +372,73 @@ module {
     }
   }
 }
+
+// -----
+
+// The scalar signal stays shared while only C is carried by the tensor loops.
+module {
+  // CHECK-LABEL: func.func @mmadL1_with_signal(
+  // CHECK-SAME: %[[SIGNAL:[^ ,]+]]: memref<i32>
+  func.func @mmadL1_with_signal(%a: tensor<128x512xf16>,
+                    %b: tensor<512x64xf16>,
+                    %c: tensor<128x64xf32>,
+                    %tile_m: index, %signal: memref<i32>) -> tensor<128x64xf32> {
+    %c512 = arith.constant 512 : index
+    %c128 = arith.constant 128 : index
+    %c63 = arith.constant 63 : index
+    %true = arith.constant true
+    // CHECK: scf.for {{.*}} iter_args(%{{[^ =]+}} = %{{[^ )]+}}) -> (tensor<128x64xf32>) {
+    // CHECK: scf.for {{.*}} iter_args(%{{[^ =]+}} = %{{[^ )]+}}) -> (tensor<128x64xf32>) {
+    // CHECK: scf.for {{.*}} iter_args(%{{[^ =]+}} = %{{[^ )]+}}) -> (tensor<128x64xf32>) {
+    // CHECK: hivm.hir.mmadL1
+    // CHECK-SAME: ping_pong_signal(%[[SIGNAL]] : memref<i32>) -> tensor<?x32xf32>
+    %1 = hivm.hir.mmadL1 ins(%a, %b, %true, %c128, %c512, %c63 : tensor<128x512xf16>, tensor<512x64xf16>, i1, index, index, index) outs(%c : tensor<128x64xf32>) ping_pong_signal(%signal : memref<i32>) -> tensor<128x64xf32>
+    // CHECK: return %{{.*}} : tensor<128x64xf32>
+    return %1 : tensor<128x64xf32>
+  }
+  module attributes {transform.with_named_sequence} {
+    transform.named_sequence @__transform_main(%arg0: !transform.any_op) {
+      %0 = transform.structured.match ops{["func.func"]} in %arg0 : (!transform.any_op) -> !transform.any_op
+      %1 = transform.func.get_func_argument %0[3]: (!transform.any_op) -> !transform.any_value
+      %2 = transform.structured.match ops{["hivm.hir.mmadL1"]} in %0 : (!transform.any_op) -> !transform.any_op
+      transform.structured.tile_using_for %2 tile_sizes [%1, 32, 128] :
+        (!transform.any_op, !transform.any_value) -> (!transform.any_op, !transform.any_op, !transform.any_op, !transform.any_op)
+      transform.yield
+    }
+  }
+}
+
+// -----
+
+module {
+  // CHECK-LABEL: func.func @mmadL1_fuse_with_signal(
+  // CHECK-SAME: %[[SIGNAL:[^ ,]+]]: memref<i32>
+  func.func @mmadL1_fuse_with_signal(%a: tensor<128x512xf16>,
+                    %b: tensor<512x64xf16>,
+                    %c: tensor<128x64xf32>,
+                    %dst: tensor<128x64xf32>,
+                    %signal: memref<i32>) -> tensor<128x64xf32> {
+    %c512 = arith.constant 512 : index
+    %c128 = arith.constant 128 : index
+    %c64 = arith.constant 64 : index
+    %true = arith.constant true
+    // CHECK: scf.for
+    // CHECK:   scf.for
+    // CHECK:     %[[TILED_MMAD:.*]] = hivm.hir.mmadL1
+    // CHECK-SAME: ping_pong_signal(%[[SIGNAL]] : memref<i32>) -> tensor<32x32xf32>
+    // CHECK:     hivm.hir.store ins(%[[TILED_MMAD]] : tensor<32x32xf32>)
+    %mmad = hivm.hir.mmadL1 ins(%a, %b, %true, %c128, %c512, %c64 : tensor<128x512xf16>, tensor<512x64xf16>, i1, index, index, index) outs(%c : tensor<128x64xf32>) ping_pong_signal(%signal : memref<i32>) -> tensor<128x64xf32>
+    %stored = hivm.hir.store ins(%mmad : tensor<128x64xf32>) outs(%dst : tensor<128x64xf32>) -> tensor<128x64xf32>
+    return %stored : tensor<128x64xf32>
+  }
+  module attributes {transform.with_named_sequence} {
+    transform.named_sequence @__transform_main(%arg0: !transform.any_op) {
+      %0 = transform.structured.match ops{["func.func"]} in %arg0 : (!transform.any_op) -> !transform.any_op
+      %1 = transform.structured.match ops{["hivm.hir.store"]} in %0 : (!transform.any_op) -> !transform.op<"hivm.hir.store">
+      %tiled_store, %loops:2 = transform.structured.tile_using_for %1 tile_sizes [32, 32] : (!transform.op<"hivm.hir.store">) -> (!transform.any_op, !transform.any_op, !transform.any_op)
+      %2 = transform.structured.match ops{["hivm.hir.mmadL1"]} in %0 : (!transform.any_op) -> !transform.any_op
+      %fused_op, %new_containing_op = transform.structured.fuse_into_containing_op %2 into %loops#1 : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)
+      transform.yield
+    }
+  }
+}

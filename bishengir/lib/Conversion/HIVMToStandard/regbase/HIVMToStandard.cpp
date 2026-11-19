@@ -824,6 +824,7 @@ private:
     }
 
     auto syncRelatedArgs = op.getSyncRelatedArgs();
+    additionalArgs.push_back(op.getPingPongSignalLibValue(rewriter));
     std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
               std::back_inserter(additionalArgs));
 
@@ -889,6 +890,7 @@ public:
       SmallVector<Value> libParams =
           op.getInputOperands(/*includeSyncRelatedArgs=*/false);
       libParams.push_back(op.getC());
+      libParams.push_back(op.getPingPongSignalLibValue(rewriter));
       SmallVector<Value> syncArgs(op.getSyncRelatedArgs().begin(),
                                   op.getSyncRelatedArgs().end());
       llvm::append_range(libParams, syncArgs);
@@ -929,6 +931,7 @@ public:
     Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
     Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
     Value batch = rewriter.create<memref::DimOp>(loc, op.getA(), 0);
+    Value pingPongSignal = op.getPingPongSignalLibValue(rewriter);
     auto loop = rewriter.create<scf::ForOp>(loc, zero, batch, one);
 
     rewriter.setInsertionPointToStart(loop.getBody());
@@ -943,6 +946,7 @@ public:
         matrixA,       matrixB,       op.getInitCondition(),
         op.getRealM(), op.getRealK(), op.getRealN(),
         matrixC};
+    libParams.push_back(pingPongSignal);
     llvm::append_range(libParams, op.getSyncRelatedArgs());
     libParams.push_back(op.getUnitFlagModeLibValue(rewriter));
     libParams.push_back(op.getUnitFlagGroupIdValue(rewriter));
@@ -1014,6 +1018,7 @@ private:
     }
 
     auto syncRelatedArgs = op.getSyncRelatedArgs();
+    additionalArgs.push_back(op.getPingPongSignalLibValue(rewriter));
     std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
               std::back_inserter(additionalArgs));
   }
