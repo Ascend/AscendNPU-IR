@@ -18,7 +18,7 @@
 // RUN: bishengir-compile %s --target=Ascend950PR_9579 --enable-auto-multi-buffer=False --enable-auto-bind-sub-block=True --disable-ffts --limit-auto-multi-buffer-of-local-buffer=no-limit --enable-auto-blockify-loop --enable-hfusion-compile=true --enable-triton-kernel-compile=true --enable-vf-merge-level=1 --save-temps=%t.d -o %t.d/kernel.o
 // RUN: FileCheck --input-file=%t.d/kernel.ll %s
 //
-// CHECK: call void @load_gm_to_ubuf_2d_float({{.*}}i64 4, i64 26, i64 39, i64 1, {{.*}}i64 837, i64 4, i64 26, i64 1, i64 64, i32 2, float 1.000000e+00, i64 5, i64 0, i32 0)
+// CHECK: call void @load_gm_to_ubuf_2d_float({{.*}}i64 4, i64 26, i64 39, i64 1, {{.*}}i64 837, i64 4, i64 26, i64 1, i64 64, i32 2, float 1.000000e+00, i64 5, i32 0)
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, ssbuffer.insertionOptimization} {
   func.func @triton_poi_fused__to_copy_copy_slice_zeros_26(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg5: i32 {tt.divisibility = 16 : i32}, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32, %arg10: i32, %arg11: i32, %arg12: i32, %arg13: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "aiv", parallel_mode = "simd"} {
     %c39 = arith.constant 39 : index
