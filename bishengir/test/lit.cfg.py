@@ -148,8 +148,22 @@ def find_tool(name):
     return shutil.which(name)
 
 
+# Tests gated by `REQUIRES: execution-engine` can be skipped without
+# reconfiguring the build or passing lit options, e.g. with
+#   BISHENGIR_SKIP_EXECUTION_ENGINE_TESTS=1 ninja check-bishengir
+# The equivalent lit parameter form is:
+#   llvm-lit -Ddisable-execution-engine=1 <test-path>
+def env_flag(name):
+    return os.environ.get(name, "").strip().lower() in ("1", "on", "true", "yes")
+
+
+disable_execution_engine = env_flag(
+    "BISHENGIR_SKIP_EXECUTION_ENGINE_TESTS"
+) or lit_config.params.get("disable-execution-engine", "0") == "1"
+
 if (
     config.enable_execution_engine
+    and not disable_execution_engine
     and find_tool("mlir-cpu-runner")
     and find_runtime("mlir_runner_utils")
     and find_runtime("mlir_c_runner_utils")

@@ -129,7 +129,9 @@ static bool userCanReachMatmulOuts(Value current,
     if (auto loopOp = dyn_cast<LoopLikeOpInterface>(user)) {
       auto barg = getTiedBlockArgument(loopOp, use);
       if (barg) {
-        return userCanReachMatmulOuts(barg, visited);
+        if (userCanReachMatmulOuts(barg, visited))
+          return true;
+        continue;
       }
     }
 

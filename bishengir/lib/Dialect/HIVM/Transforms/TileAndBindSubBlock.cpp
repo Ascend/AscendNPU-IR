@@ -1248,14 +1248,14 @@ tileAndSliceOp(func::FuncOp func,
   // when no Store/Copy anchor exists, plus a leaf-aware success criterion.
   // CustomOp tiling in this version must be driven by a downstream Store/Copy
   // slice and handled later by CustomOpBubbleUpStrategy.
-  patterns.add<TileAndSliceStoreCopyOp<hivm::StoreOp>,
-               TileAndSliceStoreCopyOp<hivm::CopyOp>,
-               TileAndSliceStoreCopyOp<
-                   bufferization::MaterializeInDestinationOp>,
-               TileAndSliceIndirectStore, TileAndSliceStrideStore,
-               TileAndSliceDebugOp,
-               TileAndSliceLeaf<scf::ForOp>, TileAndSliceLeaf<scf::WhileOp>,
-               TileAndSliceLeaf<scf::IfOp>>(func->getContext(), analyzer);
+  patterns
+      .add<TileAndSliceStoreCopyOp<hivm::StoreOp>,
+           TileAndSliceStoreCopyOp<hivm::CopyOp>,
+           TileAndSliceStoreCopyOp<bufferization::MaterializeInDestinationOp>,
+           TileAndSliceIndirectStore, TileAndSliceStrideStore,
+           TileAndSliceDebugOp, TileAndSliceLeaf<scf::ForOp>,
+           TileAndSliceLeaf<scf::WhileOp>, TileAndSliceLeaf<scf::IfOp>>(
+          func->getContext(), analyzer);
   if (hacc::utils::isRegBasedArch(func->getParentOfType<ModuleOp>())) {
     patterns.add<TileAndSliceReduceOp>(func->getContext(), analyzer);
   }

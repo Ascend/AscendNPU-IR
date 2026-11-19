@@ -467,7 +467,7 @@ reduceARByBlocks(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst,
     INTRINSIC(pipe_barrier, PIPE_V);
     INTRINSIC_NO_ARGS(set_mask_count);
     INTRINSIC(set_vector_mask, 0, length);
-    vcgOP<OP, T>(dst_ptr, src_ptr);
+    vcgOP<OP, T>(dst_ptr, dst_ptr);
     INTRINSIC_NO_ARGS(set_mask_norm);
     num = num / num_per_block;
   }
@@ -507,7 +507,7 @@ reduceRByBlocks(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst,
     INTRINSIC(pipe_barrier, PIPE_V);
     INTRINSIC_NO_ARGS(set_mask_count);
     INTRINSIC(set_vector_mask, 0, num);
-    vcgOP<OP, T>(dst_ptr, src_ptr);
+    vcgOP<OP, T>(dst_ptr, dst_ptr);
     INTRINSIC_NO_ARGS(set_mask_norm);
     num = num / num_per_block;
   }

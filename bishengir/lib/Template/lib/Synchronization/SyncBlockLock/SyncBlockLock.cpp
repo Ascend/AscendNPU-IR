@@ -157,7 +157,7 @@ free_lock_var_with_subblock(memref_t<__gm__ int64_t, 1> *lock_var) {
 // granularity; packing slots can let one core's writeback clobber another.
 //===----------------------------------------------------------------------===//
 static constexpr int64_t SYNC_LOCK_CACHELINE_I64 = 8;
-static constexpr int64_t SYNC_LOCK_MAX_PARTICIPANTS = 1024;
+static constexpr int64_t SYNC_LOCK_MAX_PARTICIPANTS = 65535;
 static constexpr int64_t SYNC_LOCK_CHOOSING_BASE_I64 =
     SYNC_LOCK_CACHELINE_I64;
 

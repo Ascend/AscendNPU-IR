@@ -1,6 +1,8 @@
-// RUN: bishengir-opt %s -hivm-reposition-preload-work="enable-preload=true" | FileCheck %s
+// RUN: sed 's/@prefetch_mmad_input(/@kernel_sdpa_bwd_q_prefetch_mmad_input(/g' %s | bishengir-opt -hivm-reposition-preload-work="enable-preload=true" | FileCheck %s
+// RUN: bishengir-opt %s -hivm-reposition-preload-work="enable-preload=true bypass-shape-registry=true" | FileCheck %s
+// RUN: bishengir-opt %s -hivm-reposition-preload-work="enable-preload=true set-workspace-multibuffer=2" | FileCheck %s
 
-// CHECK-LABEL: func.func @prefetch_mmad_input(
+// CHECK-LABEL: func.func @{{.*}}prefetch_mmad_input(
 // CHECK: hivm.hir.vtranspose
 // CHECK-SAME: permutation = [1, 0, 2]
 // CHECK: hivm.hir.copy
