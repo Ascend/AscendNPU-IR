@@ -57,7 +57,8 @@ static hacc::TargetDevice resolveTarget(const V2PipelineOptions &options) {
 static void buildPreVectorizationPhase(OpPassManager &pm,
                                        const V2PipelineOptions &options) {
   regbase::registerKernelKindPassesForRegbase();
-  addFuncPass(pm, createInitEntryKernelPass());
+  if (!options.enableAutoBlockifyLoop)
+    addFuncPass(pm, createInitEntryKernelPass());
   canonicalizationHIVMPipeline(pm);
   pm.addPass(createNormalizeMatmulPass());
 
@@ -95,6 +96,13 @@ static void buildPreVectorizationPhase(OpPassManager &pm,
   // CV 1:2 needs operand-parallel sub-block partitioning; 1:1 targets skip it.
   if (needsCV12(hacc::symbolizeTargetDeviceEnum(options.target)))
     pm.addPass(createPartitionAndBindSubBlockPass());
+
+  if (options.enableAutoBlockifyLoop) {
+    pm.addPass(createInferFuncCoreTypePass());
+    addFuncPass(pm, createAutoBlockifyParallelLoopPass());
+    // Keep entry and exit CTRL writes outside the logical block loop.
+    addFuncPass(pm, createInitEntryKernelPass());
+  }
 }
 
 /// Tensor phase on the unsplit MIX.
