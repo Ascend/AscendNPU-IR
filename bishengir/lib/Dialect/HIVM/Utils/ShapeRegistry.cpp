@@ -70,3 +70,8 @@ bool mlir::hivm::shouldDedupInsertedL1Staging(StringRef name) {
 bool mlir::hivm::shouldSkipBindSubBlock(StringRef name) {
   return nameMatchesKeys(name, kSkipBindKeys, kSkipBindKeyCount);
 }
+
+bool mlir::hivm::shouldKeepLegacyCVPipeline(StringRef name) {
+  return nameMatchesKeys(name, kLegacyCVPipelineKeys,
+                         kLegacyCVPipelineKeyCount);
+}

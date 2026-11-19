@@ -406,7 +406,10 @@ struct SelectCVPipelinePass
     if (func->hasAttr("hivm.cv_pipeline_snapshot"))
       return;
     bool registered = isLoopShapeRegistered(func.getName());
-    bool useLegacy = !usePipelineV2;
+    // Listed kernels stay on the legacy CV pipeline and never run PipelineV2
+    // preload, even when --use-pipelinev2 is set.
+    bool keepLegacy = shouldKeepLegacyCVPipeline(func.getName());
+    bool useLegacy = !usePipelineV2 || keepLegacy;
     if (useLegacy && (!enableMixedCV || pipelineMode == CVPipelineMode::Off))
       return;
 
@@ -426,8 +429,9 @@ struct SelectCVPipelinePass
     }
     // Explicit v2 takes precedence over the registry. Otherwise registered
     // kernels keep v1 even when it declines a loop, while unregistered kernels
-    // retain the legacy-then-v2 fallback.
-    if (usePipelineV2 || (!registered && enablePreload)) {
+    // retain the legacy-then-v2 fallback. Kernels that stay on the legacy CV
+    // pipeline never take that fallback.
+    if (!keepLegacy && (usePipelineV2 || (!registered && enablePreload))) {
       if (usePipelineV2)
         nested.addPass(createSetBufferSizePass());
       buildCVPipelineV2(nested, maxPipelineMultibuffer, simtVFDynamicSize);
