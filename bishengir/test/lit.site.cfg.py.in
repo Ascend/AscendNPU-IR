@@ -18,6 +18,7 @@ config.llvm_src_root = path(r"@LLVM_SOURCE_DIR@")
 config.mlir_src_root = path(r"@MLIR_MAIN_SRC_DIR@")
 config.bishengir_obj_root = "@BISHENGIR_BINARY_DIR@"
 config.enable_assertions = @ENABLE_ASSERTIONS@
+config.expensive_pattern_api_checks = "@MLIR_ENABLE_EXPENSIVE_PATTERN_API_CHECKS@".upper() in ("1", "ON", "TRUE", "YES")
 config.enable_bindings_python = @MLIR_ENABLE_BINDINGS_PYTHON@
 config.bishengir_enable_torch_conversions = @BISHENGIR_ENABLE_TORCH_CONVERSIONS@
 config.bisheng_compiler_executable = "@BISHENG_COMPILER_EXECUTABLE@"

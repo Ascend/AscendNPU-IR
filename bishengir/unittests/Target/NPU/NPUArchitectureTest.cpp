@@ -117,6 +117,7 @@ struct ExpectedDeviceSpec {
   int maximumDCacheSize;
   int customAIC = -1;
   int customAIV = -1;
+  int ubBankGroupCount = 16;
 };
 
 TEST(NPUArchitectureTest, PublicHACCPassPreservesDeviceSpecSerialization) {
@@ -140,27 +141,27 @@ TEST(NPUArchitectureTest, PublicHACCPassPreservesDeviceSpecSerialization) {
       {TargetDevice::Ascend950DT_95A2, "Ascend950DT_95A2", 36, 72, 2031616,
        4194304, 2097152, true, 262144, 1048576},
       {TargetDevice::Ascend960DT_969B5, "Ascend960DT_969B5", 32, 32, 2555904,
-       4194304, 2097152, true, 262144, 983040},
+       4194304, 2097152, true, 262144, 983040, -1, -1, 32},
       {TargetDevice::Ascend960DT_969B6, "Ascend960DT_969B6", 32, 32, 2555904,
-       4194304, 2097152, true, 262144, 983040},
+       4194304, 2097152, true, 262144, 983040, -1, -1, 32},
       {TargetDevice::Ascend960DT_968B7, "Ascend960DT_968B7", 36, 36, 2555904,
-       4194304, 2097152, true, 262144, 983040},
+       4194304, 2097152, true, 262144, 983040, -1, -1, 32},
       {TargetDevice::Ascend960DT_966B7, "Ascend960DT_966B7", 36, 36, 2555904,
-       4194304, 2097152, true, 262144, 983040},
+       4194304, 2097152, true, 262144, 983040, -1, -1, 32},
       {TargetDevice::Ascend960DT_966B8, "Ascend960DT_966B8", 36, 36, 2555904,
-       4194304, 2097152, true, 262144, 983040},
+       4194304, 2097152, true, 262144, 983040, -1, -1, 32},
       {TargetDevice::Ascend960DT_961BY, "Ascend960DT_961BY", 48, 48, 2555904,
-       4194304, 2097152, true, 262144, 983040},
+       4194304, 2097152, true, 262144, 983040, -1, -1, 32},
       {TargetDevice::Ascend960DT_961BZ, "Ascend960DT_961BZ", 48, 48, 2555904,
-       4194304, 2097152, true, 262144, 983040},
+       4194304, 2097152, true, 262144, 983040, -1, -1, 32},
       {TargetDevice::Ascend960PR_969A1, "Ascend960PR_969A1", 48, 48, 2555904,
-       4194304, 2097152, true, 262144, 983040},
+       4194304, 2097152, true, 262144, 983040, -1, -1, 32},
       {TargetDevice::Ascend960PR_964A1, "Ascend960PR_964A1", 48, 48, 2555904,
-       4194304, 2097152, true, 262144, 983040},
+       4194304, 2097152, true, 262144, 983040, -1, -1, 32},
       {TargetDevice::Ascend960PR_936A1, "Ascend960PR_936A1", 48, 48, 2555904,
-       4194304, 2097152, true, 262144, 983040},
+       4194304, 2097152, true, 262144, 983040, -1, -1, 32},
       {TargetDevice::Ascend960, "Ascend960", 32, 64, 2555904, 4194304, 2097152,
-       true, 262144, 983040},
+       true, 262144, 983040, -1, -1, 32},
   };
 
   MLIRContext context;
@@ -180,7 +181,7 @@ TEST(NPUArchitectureTest, PublicHACCPassPreservesDeviceSpecSerialization) {
     ASSERT_TRUE(spec.has_value());
     auto concreteSpec = cast<hacc::TargetDeviceSpecAttr>(*spec);
     EXPECT_EQ(concreteSpec.getEntries().size(),
-              expected.hasRegBasedEntries ? 14u : 11u);
+              expected.hasRegBasedEntries ? 15u : 11u);
 
     auto expectInteger = [&](DeviceSpec field, int value) {
       SCOPED_TRACE(stringifyEnum(field).str());
@@ -209,10 +210,13 @@ TEST(NPUArchitectureTest, PublicHACCPassPreservesDeviceSpecSerialization) {
           spec->getSpecForIdentifierEnum(DeviceSpec::MINIMAL_D_CACHE_SIZE));
       EXPECT_FALSE(
           spec->getSpecForIdentifierEnum(DeviceSpec::MAXIMUM_D_CACHE_SIZE));
+      EXPECT_FALSE(
+          spec->getSpecForIdentifierEnum(DeviceSpec::UB_BANK_GROUP_COUNT));
       continue;
     }
     expectInteger(DeviceSpec::MINIMAL_D_CACHE_SIZE, expected.minimalDCacheSize);
     expectInteger(DeviceSpec::MAXIMUM_D_CACHE_SIZE, expected.maximumDCacheSize);
+    expectInteger(DeviceSpec::UB_BANK_GROUP_COUNT, expected.ubBankGroupCount);
     DataLayoutEntryInterface arch =
         spec->getSpecForIdentifierEnum(DeviceSpec::ARCH);
     ASSERT_TRUE(arch);

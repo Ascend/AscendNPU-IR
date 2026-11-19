@@ -114,8 +114,9 @@ traceBatchChainToFixpipe(Operation *op, int64_t batchDim,
 }
 
 RankedTensorType extractNonBatchType(RankedTensorType originType) {
-  if (originType.getRank() != 3)
-    llvm::report_fatal_error("current RankedTensorType must be 3D");
+  if (originType.getRank() < 3)
+    llvm::report_fatal_error(
+        "current RankedTensorType must contain a batch dimension");
 
   // Drop batch dimension
   return RankedTensorType::get(originType.getShape().drop_front(),
@@ -250,9 +251,11 @@ Value createTiledMmadL1(hivm::BatchMmadL1Op batchmmOp,
       matrixB, batchmmOp.getInitCondition(), batchmmOp.getRealM(),
       batchmmOp.getRealK(), batchmmOp.getRealN(), /*C=*/newOutput,
       batchmmOp.getPerChannelBias(), batchmmOp.getATransposeAttr(),
-      batchmmOp.getBTransposeAttr(), batchmmOp.getEnable_HF32Attr(), batchmmOp.getEnable_I4Attr());
-  // Set the batch_matmul attribute on the Mmad
+      batchmmOp.getBTransposeAttr(), batchmmOp.getEnable_HF32Attr(),
+      batchmmOp.getEnable_I4Attr());
   rewriter.modifyOpInPlace(tiledMmad, [&]() -> void {
+    if (Value signal = batchmmOp.getPingPongSignal())
+      tiledMmad.setPingPongSignal(signal);
     tiledMmad->setAttr(hivm::batchMatmulAttr,
                        UnitAttr::get(rewriter.getContext()));
   });

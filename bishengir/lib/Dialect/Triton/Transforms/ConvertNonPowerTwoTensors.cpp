@@ -1145,6 +1145,11 @@ void expandToSize(SmallVector<TypedAttr> &vec, size_t size) {
   }
 }
 
+bool hasDeviceAssert(Region &region) {
+  return region.walk([](triton::AssertOp) { return WalkResult::interrupt(); })
+      .wasInterrupted();
+}
+
 // Returns a SmallVector of TypedAttr padding requirements, one for each operand
 // (non tensor operands will have a nullptr TypedAttr) Operations that do not
 // require any padding will just return an empty SmallVector
@@ -1155,7 +1160,9 @@ getPaddingRequirements(OpBuilder &builder, Operation *op,
   TypeSwitch<Operation *>(op)
       .Case<triton::ReduceOp>([&](triton::ReduceOp reduceOp) {
         uint32_t reduceAxis = reduceOp.getAxis();
-        if (llvm::isPowerOf2_64(shapeData.find(reduceOp->getOperand(0))
+        // Assertions also observe padding on the parallel dimensions.
+        if (!hasDeviceAssert(reduceOp.getCombineOp()) &&
+            llvm::isPowerOf2_64(shapeData.find(reduceOp->getOperand(0))
                                     ->getSecond()
                                     .dataShape[reduceAxis])) {
           return;
@@ -1172,15 +1179,17 @@ getPaddingRequirements(OpBuilder &builder, Operation *op,
         }
       })
       .Case<triton::ScanOp>([&](triton::ScanOp scanOp) {
-        if (!scanOp.getReverse()) {
-          // No padding needed on forward scan op as padding is in the backmost
-          // positions
+        bool hasAssert = hasDeviceAssert(scanOp.getCombineOp());
+        if (!scanOp.getReverse() && !hasAssert) {
+          // A pure forward scan cannot observe the padded tail. Assertions in
+          // the combine region can observe it, e.g. overflow checks on sums.
           // TODO - If padding locations are changed, this needs to be removed
           res.clear();
           return;
         }
         uint32_t reduceAxis = scanOp.getAxis();
-        if (llvm::isPowerOf2_64(shapeData.find(scanOp->getOperand(0))
+        if (!hasAssert &&
+            llvm::isPowerOf2_64(shapeData.find(scanOp->getOperand(0))
                                     ->getSecond()
                                     .dataShape[reduceAxis])) {
           return;
@@ -1210,6 +1219,10 @@ getPaddingRequirements(OpBuilder &builder, Operation *op,
         // tt.store mask tensor should be false padded
         expandToSize(res, 3);
         res[2] = builder.getZeroAttr(builder.getI1Type());
+      })
+      .Case<triton::AssertOp>([&](triton::AssertOp) {
+        // Synthetic lanes must not cause a device assertion to fail.
+        res[0] = builder.getBoolAttr(true);
       })
       .Case<triton::DotOp>([&](triton::DotOp dotOp) {
         // tt.dot should be zero padded

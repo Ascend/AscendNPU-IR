@@ -23,13 +23,14 @@
 #ifndef BISHENGIR_INITALLEXTENSIONS_H_
 #define BISHENGIR_INITALLEXTENSIONS_H_
 
-#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMDialectExtension.h"
 #include "bishengir/Dialect/HIVM/TransformOps/HIVMTransformOps.h"
+#include "bishengir/Dialect/HIVM/TransformOps/VectorizeTransformOps.h"
 #include "bishengir/Dialect/SCF/TransformOps/SCFTransformOps.h"
+#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 #include "bishengir/Dialect/Utils/BytecodeDialectExtensions.h"
 #include "bishengir/Dialect/Utils/OpInterfaceUtils.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -43,6 +44,7 @@ inline void registerAllExtensions(mlir::DialectRegistry &registry) {
   // Register all transform dialect extensions.
   transform::registerTransformDialectExtension(registry);
   mlir::hivm::registerTransformDialectExtension(registry);
+  mlir::hivm::registerVectorizeTransformDialectExtension(registry);
   bishengir::hivm::registerHIVMDialectExtension(registry);
   mlir::hacc::func_ext::registerHACCDialectExtension(registry);
   mlir::hacc::llvm_ext::registerHACCDialectExtension(registry);

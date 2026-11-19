@@ -275,6 +275,19 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
 
   if (((stride0_gm < stride1_gm || stride1_gm < stride2_gm) ||
        (stride0_ub < stride1_ub || stride1_ub < stride2_ub))) {
+#if BISHENG_TPL_920R1
+    // A6 cost model: when the rows stay contiguous and the UB row/plane
+    // strides are 32B aligned, block DMA is the faster engine; everything
+    // else keeps the descriptor.
+    if (stride2_gm == 1 && stride2_ub == 1 && !has_padding &&
+        !hasUnalignedUbufStrideFor3dDma<T>(dst->sizes[1], dst->sizes[2],
+                                           dst->strides[0], dst->strides[1],
+                                           src->strides[0], src->strides[1])) {
+      load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T, DisableDCache>(
+          src, dst, left_padding_num, l2_cache_ctl);
+      return;
+    }
+#endif
     // Implicit transposition scenarios
     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
       load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);

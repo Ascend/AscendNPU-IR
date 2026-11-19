@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hivm-fuse-transpose-into-load | FileCheck %s
+// RUN: bishengir-opt %s -hivm-fuse-transpose-into-load --split-input-file | FileCheck %s
 
 // Dst subview offset %arg2 becomes last-dim offset after last-two permute.
 // DMA pad cannot write [0, %arg2); the fill must follow the new dest, but
@@ -482,4 +482,226 @@ func.func @fuse_load_keep_fill_in_unlikely_if(%arg0: memref<?xbf16>, %arg1: inde
   %6 = tensor.empty() : tensor<32x16xbf16>
   %transposed = linalg.transpose ins(%5 : tensor<16x32xbf16>) outs(%6 : tensor<32x16xbf16>) permutation = [1, 0]
   return %transposed : tensor<32x16xbf16>
+}
+
+// -----
+
+// Non-last-two-dim permutation: swap axes 0 and 1 of a 3D tile.
+// CHECK-LABEL: func.func @fuse_non_tail_3d
+// CHECK:       memref.reinterpret_cast %{{.*}} : memref<?xf32> to memref<32x13x3xf32, strided<[3, 96, 1], offset: ?>>
+// CHECK:       %[[ALLOC:.*]] = memref.alloc() : memref<32x13x3xf32>
+// CHECK:       hivm.hir.load ins(%{{.*}} : memref<32x13x3xf32, strided<[3, 96, 1], offset: ?>>)
+// CHECK-SAME:                outs(%[[ALLOC]] : memref<32x13x3xf32>)
+// CHECK-NOT:   linalg.transpose
+// CHECK:       return %{{.*}} : tensor<32x13x3xf32>
+module attributes {hacc.target = #hacc.target<"Ascend960">} {
+func.func @fuse_non_tail_3d(%arg0: memref<?xf32>, %off: index) -> tensor<32x13x3xf32> {
+  %alloc = memref.alloc() : memref<13x32x3xf32>
+  %rc = memref.reinterpret_cast %arg0 to offset: [%off], sizes: [13, 32, 3], strides: [96, 3, 1] : memref<?xf32> to memref<13x32x3xf32, strided<[96, 3, 1], offset: ?>>
+  hivm.hir.load ins(%rc : memref<13x32x3xf32, strided<[96, 3, 1], offset: ?>>) outs(%alloc : memref<13x32x3xf32>)
+  %t = bufferization.to_tensor %alloc restrict writable : memref<13x32x3xf32>
+  %empty = tensor.empty() : tensor<32x13x3xf32>
+  %tr = linalg.transpose ins(%t : tensor<13x32x3xf32>) outs(%empty : tensor<32x13x3xf32>) permutation = [1, 0, 2]
+  return %tr : tensor<32x13x3xf32>
+}
+}
+
+// -----
+
+// Non-last-two-dim permutation at rank 4: swap the two middle axes.
+// CHECK-LABEL: func.func @fuse_non_tail_4d
+// CHECK:       memref.reinterpret_cast %{{.*}} : memref<?xf16> to memref<6x128x8x15xf16, strided<[15360, 15, 1920, 1], offset: ?>>
+// CHECK:       %[[ALLOC:.*]] = memref.alloc() : memref<6x128x8x15xf16>
+// CHECK:       hivm.hir.load ins(%{{.*}} : memref<6x128x8x15xf16, strided<[15360, 15, 1920, 1], offset: ?>>)
+// CHECK-SAME:                outs(%[[ALLOC]] : memref<6x128x8x15xf16>)
+// CHECK-NOT:   linalg.transpose
+// CHECK:       return %{{.*}} : tensor<6x128x8x15xf16>
+module attributes {hacc.target = #hacc.target<"Ascend960">} {
+func.func @fuse_non_tail_4d(%arg0: memref<?xf16>, %off: index) -> tensor<6x128x8x15xf16> {
+  %alloc = memref.alloc() : memref<6x8x128x15xf16>
+  %rc = memref.reinterpret_cast %arg0 to offset: [%off], sizes: [6, 8, 128, 15], strides: [15360, 1920, 15, 1] : memref<?xf16> to memref<6x8x128x15xf16, strided<[15360, 1920, 15, 1], offset: ?>>
+  hivm.hir.load ins(%rc : memref<6x8x128x15xf16, strided<[15360, 1920, 15, 1], offset: ?>>) outs(%alloc : memref<6x8x128x15xf16>)
+  %t = bufferization.to_tensor %alloc restrict writable : memref<6x8x128x15xf16>
+  %empty = tensor.empty() : tensor<6x128x8x15xf16>
+  %tr = linalg.transpose ins(%t : tensor<6x8x128x15xf16>) outs(%empty : tensor<6x128x8x15xf16>) permutation = [0, 2, 1, 3]
+  return %tr : tensor<6x128x8x15xf16>
+}
+}
+
+// -----
+
+// A6 fuses tail-split permutations: the resulting load can only be moved by
+// NDDMA, whose descriptor covers the permuted source strides.
+// CHECK-LABEL: func.func @fuse_tail_split_4d_a6
+// CHECK:       memref.reinterpret_cast %{{.*}} : memref<?xf32> to memref<1x256x16x8xf32, strided<[32768, 1, 256, 4096], offset: ?>>
+// CHECK:       %[[ALLOC:.*]] = memref.alloc() : memref<1x256x16x8xf32>
+// CHECK:       hivm.hir.load ins(%{{.*}} : memref<1x256x16x8xf32, strided<[32768, 1, 256, 4096], offset: ?>>)
+// CHECK-SAME:                outs(%[[ALLOC]] : memref<1x256x16x8xf32>)
+// CHECK-NOT:   linalg.transpose
+// CHECK:       return %{{.*}} : tensor<1x256x16x8xf32>
+module attributes {hacc.target = #hacc.target<"Ascend960">} {
+func.func @fuse_tail_split_4d_a6(%arg0: memref<?xf32>, %off: index) -> tensor<1x256x16x8xf32> {
+  %alloc = memref.alloc() : memref<1x8x16x256xf32>
+  %rc = memref.reinterpret_cast %arg0 to offset: [%off], sizes: [1, 8, 16, 256], strides: [32768, 4096, 256, 1] : memref<?xf32> to memref<1x8x16x256xf32, strided<[32768, 4096, 256, 1], offset: ?>>
+  hivm.hir.load ins(%rc : memref<1x8x16x256xf32, strided<[32768, 4096, 256, 1], offset: ?>>) outs(%alloc : memref<1x8x16x256xf32>)
+  %t = bufferization.to_tensor %alloc restrict writable : memref<1x8x16x256xf32>
+  %empty = tensor.empty() : tensor<1x256x16x8xf32>
+  %tr = linalg.transpose ins(%t : tensor<1x8x16x256xf32>) outs(%empty : tensor<1x256x16x8xf32>) permutation = [0, 3, 2, 1]
+  return %tr : tensor<1x256x16x8xf32>
+}
+}
+
+// -----
+
+// Rank-3 tail split: src last axis (stride 1) lands on dst dim 2.
+// CHECK-LABEL: func.func @fuse_tail_split_3d_a6
+// CHECK:       memref.reinterpret_cast %{{.*}} : memref<?xf32> to memref<32x3x13xf32, strided<[3, 1, 96], offset: ?>>
+// CHECK:       %[[ALLOC:.*]] = memref.alloc() : memref<32x3x13xf32>
+// CHECK:       hivm.hir.load ins(%{{.*}} : memref<32x3x13xf32, strided<[3, 1, 96], offset: ?>>)
+// CHECK-SAME:                outs(%[[ALLOC]] : memref<32x3x13xf32>)
+// CHECK-NOT:   linalg.transpose
+// CHECK:       return %{{.*}} : tensor<32x3x13xf32>
+module attributes {hacc.target = #hacc.target<"Ascend960">} {
+func.func @fuse_tail_split_3d_a6(%arg0: memref<?xf32>, %off: index) -> tensor<32x3x13xf32> {
+  %alloc = memref.alloc() : memref<13x32x3xf32>
+  %rc = memref.reinterpret_cast %arg0 to offset: [%off], sizes: [13, 32, 3], strides: [96, 3, 1] : memref<?xf32> to memref<13x32x3xf32, strided<[96, 3, 1], offset: ?>>
+  hivm.hir.load ins(%rc : memref<13x32x3xf32, strided<[96, 3, 1], offset: ?>>) outs(%alloc : memref<13x32x3xf32>)
+  %t = bufferization.to_tensor %alloc restrict writable : memref<13x32x3xf32>
+  %empty = tensor.empty() : tensor<32x3x13xf32>
+  %tr = linalg.transpose ins(%t : tensor<13x32x3xf32>) outs(%empty : tensor<32x3x13xf32>) permutation = [1, 2, 0]
+  return %tr : tensor<32x3x13xf32>
+}
+}
+
+// -----
+
+// Tail-adjacent 3-cycle (NHWC -> NCHW): dst last axis comes from the
+// second-to-last source axis, but the source tail moves elsewhere.
+// CHECK-LABEL: func.func @fuse_tail_cycle_4d_a6
+// CHECK:       memref.reinterpret_cast %{{.*}} : memref<?xf32> to memref<2x24x9x16xf32, strided<[3456, 1, 384, 24], offset: ?>>
+// CHECK:       %[[ALLOC:.*]] = memref.alloc() : memref<2x24x9x16xf32>
+// CHECK:       hivm.hir.load ins(%{{.*}} : memref<2x24x9x16xf32, strided<[3456, 1, 384, 24], offset: ?>>)
+// CHECK-SAME:                outs(%[[ALLOC]] : memref<2x24x9x16xf32>)
+// CHECK-NOT:   linalg.transpose
+// CHECK:       return %{{.*}} : tensor<2x24x9x16xf32>
+module attributes {hacc.target = #hacc.target<"Ascend960">} {
+func.func @fuse_tail_cycle_4d_a6(%arg0: memref<?xf32>, %off: index) -> tensor<2x24x9x16xf32> {
+  %alloc = memref.alloc() : memref<2x9x16x24xf32>
+  %rc = memref.reinterpret_cast %arg0 to offset: [%off], sizes: [2, 9, 16, 24], strides: [3456, 384, 24, 1] : memref<?xf32> to memref<2x9x16x24xf32, strided<[3456, 384, 24, 1], offset: ?>>
+  hivm.hir.load ins(%rc : memref<2x9x16x24xf32, strided<[3456, 384, 24, 1], offset: ?>>) outs(%alloc : memref<2x9x16x24xf32>)
+  %t = bufferization.to_tensor %alloc restrict writable : memref<2x9x16x24xf32>
+  %empty = tensor.empty() : tensor<2x24x9x16xf32>
+  %tr = linalg.transpose ins(%t : tensor<2x9x16x24xf32>) outs(%empty : tensor<2x24x9x16xf32>) permutation = [0, 3, 1, 2]
+  return %tr : tensor<2x24x9x16xf32>
+}
+}
+
+// -----
+
+// 64-bit elements have no NDDMA instantiation, so the fused load would fall
+// back to a scalar copy; keep the transpose instead.
+// CHECK-LABEL: func.func @no_fuse_tail_split_b64_a6
+// CHECK:       linalg.transpose
+module attributes {hacc.target = #hacc.target<"Ascend960">} {
+func.func @no_fuse_tail_split_b64_a6(%arg0: memref<?xi64>, %off: index) -> tensor<2x24x16x9xi64> {
+  %alloc = memref.alloc() : memref<2x9x16x24xi64>
+  %rc = memref.reinterpret_cast %arg0 to offset: [%off], sizes: [2, 9, 16, 24], strides: [3456, 384, 24, 1] : memref<?xi64> to memref<2x9x16x24xi64, strided<[3456, 384, 24, 1], offset: ?>>
+  hivm.hir.load ins(%rc : memref<2x9x16x24xi64, strided<[3456, 384, 24, 1], offset: ?>>) outs(%alloc : memref<2x9x16x24xi64>)
+  %t = bufferization.to_tensor %alloc restrict writable : memref<2x9x16x24xi64>
+  %empty = tensor.empty() : tensor<2x24x16x9xi64>
+  %tr = linalg.transpose ins(%t : tensor<2x9x16x24xi64>) outs(%empty : tensor<2x24x16x9xi64>) permutation = [0, 3, 2, 1]
+  return %tr : tensor<2x24x16x9xi64>
+}
+}
+
+// -----
+
+// A5 must keep rejecting tail splits.
+// CHECK-LABEL: func.func @no_fuse_tail_split_a5
+// CHECK:       memref.reinterpret_cast %{{.*}} : memref<?xf32> to memref<1x8x16x256xf32, strided<[32768, 4096, 256, 1], offset: ?>>
+// CHECK:       linalg.transpose
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @no_fuse_tail_split_a5(%arg0: memref<?xf32>, %off: index) -> tensor<1x256x16x8xf32> {
+  %alloc = memref.alloc() : memref<1x8x16x256xf32>
+  %rc = memref.reinterpret_cast %arg0 to offset: [%off], sizes: [1, 8, 16, 256], strides: [32768, 4096, 256, 1] : memref<?xf32> to memref<1x8x16x256xf32, strided<[32768, 4096, 256, 1], offset: ?>>
+  hivm.hir.load ins(%rc : memref<1x8x16x256xf32, strided<[32768, 4096, 256, 1], offset: ?>>) outs(%alloc : memref<1x8x16x256xf32>)
+  %t = bufferization.to_tensor %alloc restrict writable : memref<1x8x16x256xf32>
+  %empty = tensor.empty() : tensor<1x256x16x8xf32>
+  %tr = linalg.transpose ins(%t : tensor<1x8x16x256xf32>) outs(%empty : tensor<1x256x16x8xf32>) permutation = [0, 3, 2, 1]
+  return %tr : tensor<1x256x16x8xf32>
+}
+}
+
+// -----
+
+// A5 must keep the historical last-two-dim only behavior.
+// CHECK-LABEL: func.func @no_fuse_non_tail_a5
+// CHECK:       hivm.hir.load ins(%{{.*}} : memref<13x32x3xf32, strided<[96, 3, 1], offset: ?>>)
+// CHECK:       linalg.transpose
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @no_fuse_non_tail_a5(%arg0: memref<?xf32>, %off: index) -> tensor<32x13x3xf32> {
+  %alloc = memref.alloc() : memref<13x32x3xf32>
+  %rc = memref.reinterpret_cast %arg0 to offset: [%off], sizes: [13, 32, 3], strides: [96, 3, 1] : memref<?xf32> to memref<13x32x3xf32, strided<[96, 3, 1], offset: ?>>
+  hivm.hir.load ins(%rc : memref<13x32x3xf32, strided<[96, 3, 1], offset: ?>>) outs(%alloc : memref<13x32x3xf32>)
+  %t = bufferization.to_tensor %alloc restrict writable : memref<13x32x3xf32>
+  %empty = tensor.empty() : tensor<32x13x3xf32>
+  %tr = linalg.transpose ins(%t : tensor<13x32x3xf32>) outs(%empty : tensor<32x13x3xf32>) permutation = [1, 0, 2]
+  return %tr : tensor<32x13x3xf32>
+}
+}
+
+// -----
+
+// A source stride above the 40-bit descriptor field must not be fused.
+// CHECK-LABEL: func.func @no_fuse_tail_split_huge_stride_a6
+// CHECK:       linalg.transpose
+module attributes {hacc.target = #hacc.target<"Ascend960">} {
+func.func @no_fuse_tail_split_huge_stride_a6(%arg0: memref<?xf32>, %off: index) -> tensor<2x5x4x3xf32> {
+  %alloc = memref.alloc() : memref<2x3x4x5xf32>
+  %rc = memref.reinterpret_cast %arg0 to offset: [%off], sizes: [2, 3, 4, 5], strides: [2199023255552, 20, 5, 1] : memref<?xf32> to memref<2x3x4x5xf32, strided<[2199023255552, 20, 5, 1], offset: ?>>
+  hivm.hir.load ins(%rc : memref<2x3x4x5xf32, strided<[2199023255552, 20, 5, 1], offset: ?>>) outs(%alloc : memref<2x3x4x5xf32>)
+  %t = bufferization.to_tensor %alloc restrict writable : memref<2x3x4x5xf32>
+  %empty = tensor.empty() : tensor<2x5x4x3xf32>
+  %tr = linalg.transpose ins(%t : tensor<2x3x4x5xf32>) outs(%empty : tensor<2x5x4x3xf32>) permutation = [0, 3, 2, 1]
+  return %tr : tensor<2x5x4x3xf32>
+}
+}
+
+// -----
+
+// The to_tensor memref is a rank-reduced subview: the permuted root gains a
+// leading dimension and the load keeps the transposed view.
+// CHECK-LABEL: func.func @fuse_inner_subview_a6
+// CHECK:       memref.reinterpret_cast %{{.*}} : memref<?xf32> to memref<32x13x3xf32, strided<[3, 96, 1], offset: ?>>
+// CHECK:       %[[ALLOC:.*]] = memref.alloc() : memref<2x32x13x3xf32>
+// CHECK:       hivm.hir.load ins(%{{.*}} : memref<32x13x3xf32, strided<[3, 96, 1], offset: ?>>)
+// CHECK-NOT:   linalg.transpose
+// CHECK:       return %{{.*}} : tensor<32x13x3xf32>
+module attributes {hacc.target = #hacc.target<"Ascend960">} {
+func.func @fuse_inner_subview_a6(%arg0: memref<?xf32>, %off: index, %slice: index) -> tensor<32x13x3xf32> {
+  %alloc = memref.alloc() : memref<2x13x32x3xf32>
+  %dst = memref.subview %alloc[%slice, 0, 0, 0] [1, 13, 32, 3] [1, 1, 1, 1] : memref<2x13x32x3xf32> to memref<13x32x3xf32, strided<[96, 3, 1], offset: ?>>
+  %rc = memref.reinterpret_cast %arg0 to offset: [%off], sizes: [13, 32, 3], strides: [96, 3, 1] : memref<?xf32> to memref<13x32x3xf32, strided<[96, 3, 1], offset: ?>>
+  hivm.hir.load ins(%rc : memref<13x32x3xf32, strided<[96, 3, 1], offset: ?>>) outs(%dst : memref<13x32x3xf32, strided<[96, 3, 1], offset: ?>>)
+  %src = memref.subview %alloc[%slice, 0, 0, 0] [1, 13, 32, 3] [1, 1, 1, 1] : memref<2x13x32x3xf32> to memref<13x32x3xf32, strided<[96, 3, 1], offset: ?>>
+  %t = bufferization.to_tensor %src restrict writable : memref<13x32x3xf32, strided<[96, 3, 1], offset: ?>>
+  %empty = tensor.empty() : tensor<32x13x3xf32>
+  %tr = linalg.transpose ins(%t : tensor<13x32x3xf32>) outs(%empty : tensor<32x13x3xf32>) permutation = [1, 0, 2]
+  return %tr : tensor<32x13x3xf32>
+}
+}
+
+// -----
+
+// Without a target attribute the pass keeps the historical A5 behaviour.
+// CHECK-LABEL: func.func @no_fuse_no_target_inner
+// CHECK:       linalg.transpose
+func.func @no_fuse_no_target_inner(%arg0: memref<?xf32>, %off: index) -> tensor<32x13x3xf32> {
+  %alloc = memref.alloc() : memref<13x32x3xf32>
+  %rc = memref.reinterpret_cast %arg0 to offset: [%off], sizes: [13, 32, 3], strides: [96, 3, 1] : memref<?xf32> to memref<13x32x3xf32, strided<[96, 3, 1], offset: ?>>
+  hivm.hir.load ins(%rc : memref<13x32x3xf32, strided<[96, 3, 1], offset: ?>>) outs(%alloc : memref<13x32x3xf32>)
+  %t = bufferization.to_tensor %alloc restrict writable : memref<13x32x3xf32>
+  %empty = tensor.empty() : tensor<32x13x3xf32>
+  %tr = linalg.transpose ins(%t : tensor<13x32x3xf32>) outs(%empty : tensor<32x13x3xf32>) permutation = [1, 0, 2]
+  return %tr : tensor<32x13x3xf32>
 }

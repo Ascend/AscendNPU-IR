@@ -116,8 +116,9 @@ def LoadOp
     In-row, A6 only: the pad elements are part of the destination row, so
     `D = lp + W + rp`. The row is written exactly as declared and its end does
     not have to fall on a 32-byte boundary. This form is selected when the
-    target is A6 and `right_padding_num` is present with a value that is not
-    zero; a left count that is omitted reads as zero.
+    target is A6 and `right_padding_num` is present, including an explicit
+    zero. Without that operand the legacy form is used. An omitted left count
+    reads as zero; canonicalization preserves the explicit right operand.
 
     ### Attributes
     #### `broadcast_axes`

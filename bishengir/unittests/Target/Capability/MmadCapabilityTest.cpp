@@ -16,9 +16,14 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/Capability/Cube/Mmad/MmadCapabilityBinding.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/Cube/Mmad/MmadCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Target/NPU/NPUArchitecture.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/MLIRContext.h"
 #include "gtest/gtest.h"
@@ -218,6 +223,48 @@ TEST_F(MmadCapabilityTest, DotScaledMixedFp8WithFormatAttrs) {
   EXPECT_EQ(queryNativeSupport(NPUArchitectureKind::kDavC310,
                                mixedFp8NoFormatAttrs.getRequest()),
             NativeSupport::Native);
+}
+
+// Covers the header-only helpers used by lowering and HFusion decompose.
+// A missing #hacc.target is not Native. C310 accepts an aligned unformatted
+// f8E5M2 pair; K that is not a multiple of 64 does not.
+TEST_F(MmadCapabilityTest, ModuleQueryHelpers) {
+  context.loadDialect<hacc::HACCDialect, func::FuncDialect>();
+  OpBuilder builder(&context);
+  auto loc = builder.getUnknownLoc();
+  OwningOpRef<ModuleOp> module = ModuleOp::create(loc);
+  builder.setInsertionPointToStart(module->getBody());
+  auto funcType = builder.getFunctionType({}, {});
+  auto func = builder.create<func::FuncOp>(loc, "anchor", funcType);
+  func.addEntryBlock();
+  builder.setInsertionPointToStart(&func.front());
+  Operation *anchor = builder.create<func::ReturnOp>(loc);
+
+  EXPECT_FALSE(hivm::mmadArchitecture(anchor).has_value());
+  EXPECT_FALSE(hivm::isNativeMmadMxTarget(anchor));
+  const uint64_t fp8e5 = static_cast<uint64_t>(HIVMMatmulDataformat::FP8E5M2_T);
+  EXPECT_FALSE(
+      hivm::isNativeMmadMx(anchor, f8e5, f8e5, i8, i8, f32, false, 0, 0, 64));
+  EXPECT_FALSE(hivm::isNativeMmadMx(anchor, f8e5, f8e5, i8, i8, f32, true,
+                                    fp8e5, fp8e5, ShapedType::kDynamic));
+
+  hacc::utils::setTargetDevice(*module, hacc::TargetDevice::Ascend950PR_9579);
+  EXPECT_EQ(hivm::mmadArchitecture(anchor), NPUArchitectureKind::kDavC310);
+  EXPECT_TRUE(hivm::isNativeMmadMxTarget(anchor));
+  EXPECT_TRUE(hivm::isNativeMmadMx(anchor, f8e5, f8e5, i8, i8, f32, false,
+                                   fp8e5, fp8e5, 64));
+  EXPECT_TRUE(hivm::isNativeMmadMx(anchor, f8e5, f8e5, i8, i8, f32, true, fp8e5,
+                                   fp8e5, 128));
+  EXPECT_FALSE(hivm::isNativeMmadMx(anchor, f8e5, f8e5, i8, i8, f32, false,
+                                    fp8e5, fp8e5, 32));
+  EXPECT_FALSE(hivm::isNativeMmadMx(anchor, f8e5, f8e5, i8, i8, f32, true,
+                                    fp8e5, fp8e5, 0));
+
+  hacc::utils::setTargetDevice(*module, hacc::TargetDevice::Ascend910B1);
+  EXPECT_EQ(hivm::mmadArchitecture(anchor), NPUArchitectureKind::kDavC220);
+  EXPECT_FALSE(hivm::isNativeMmadMxTarget(anchor));
+  EXPECT_FALSE(
+      hivm::isNativeMmadMx(anchor, f8e5, f8e5, i8, i8, f32, false, 0, 0, 64));
 }
 
 } // namespace

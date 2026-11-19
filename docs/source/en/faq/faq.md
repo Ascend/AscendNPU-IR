@@ -37,6 +37,16 @@ In the build directory, you can execute the following:
 - **bishengir tests**: `ninja check-bishengir` or `cmake --build . --target check-bishengir`
 - **LIT test suite**: `./bin/llvm-lit ../bishengir/test` (the path depends on the actual repository and build directory)
 
+To skip tests marked `REQUIRES: execution-engine` (for example, when the local
+`mlir-cpu-runner` runtime dependencies are unavailable), set the environment
+variable below; those tests are reported as UNSUPPORTED instead of failing:
+
+```bash
+BISHENGIR_SKIP_EXECUTION_ENGINE_TESTS=1 ninja check-bishengir
+# Or invoke lit directly:
+BISHENGIR_SKIP_EXECUTION_ENGINE_TESTS=1 ./bin/llvm-lit ../bishengir/test
+```
+
 For details, see [Build and Installation - Running Tests](../introduction/quick_start/installing_guide.md#running-tests).
 
 **Q: What environment is required for on-board deployment?**

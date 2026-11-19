@@ -33,7 +33,7 @@ struct LowerTritonPipelineOptions
       *this, "shared-memory-size",
       llvm::cl::desc("max size of shared memory available for simt vf"),
       llvm::cl::init(122880)};
-  PassOptions::Option<int32_t> simtOptimizationMode{
+  PassOptions::Option<uint32_t> simtOptimizationMode{
       *this, "simt-optimization-mode",
       llvm::cl::desc("set modes for some simt optimization passes"),
       llvm::cl::init(900101)};

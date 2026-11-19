@@ -105,6 +105,9 @@ Value mlir::hivm::NormalizeTraitsBase::createCastValueFromSourceOp(
   auto castOp = hivm::castTo(rewriter, loc, input,
                              rewriter.getAttr<hivm::RoundModeAttr>(roundMode),
                              targetElemType);
+  if (enableSaturate) {
+    castOp->setAttr("enable_saturate", rewriter.getBoolAttr(true));
+  }
   castOp.setCastAttr(rewriter.getAttr<hivm::TypeFnAttr>(typeFn));
   if (getElementTypeOrSelf(input.getType()).isInteger() &&
       targetElemType.isInteger() && unsignedMode != hivm::UnsignedMode::SI2SI)
@@ -136,7 +139,7 @@ Value mlir::hivm::NormalizeTraitsBase::createCastValueFromSourceOp(
 
 Value mlir::hivm::NormalizeTraitsBase::castScalarThroughTensor(
     PatternRewriter &rewriter, Location loc, Value scalar, Type dstType,
-    TypeFn castType, UnsignedMode unsignedMode) {
+    TypeFn castType, UnsignedMode unsignedMode, bool enableSaturate) {
   auto tensorType = RankedTensorType::get({1}, scalar.getType());
   Value fromElementsOp =
       rewriter.create<tensor::FromElementsOp>(loc, tensorType, scalar);
@@ -145,6 +148,9 @@ Value mlir::hivm::NormalizeTraitsBase::castScalarThroughTensor(
   auto castOp = hivm::castTo(
       rewriter, loc, fromElementsOp,
       rewriter.getAttr<hivm::RoundModeAttr>(roundMode), dstType);
+  if (enableSaturate) {
+    castOp->setAttr("enable_saturate", rewriter.getBoolAttr(true));
+  }
   castOp.setCastAttr(rewriter.getAttr<hivm::TypeFnAttr>(castType));
   if (unsignedMode != hivm::UnsignedMode::SI2SI)
     castOp->setAttr(hivm::UnsignedModeAttr::name,
@@ -304,6 +310,7 @@ mapCastRoundKindToRoundMode(CastRoundKind kind) {
       {CastRoundKind::TruncWithOverflow, hivm::RoundMode::TRUNCWITHOVERFLOW},
       {CastRoundKind::RInt, hivm::RoundMode::RINT},
       {CastRoundKind::TruncEnableOverflow, hivm::RoundMode::TRUNC},
+      {CastRoundKind::Odd, hivm::RoundMode::ODD},
   };
   return lookupOrNullopt(kindToMode, kind);
 }
@@ -421,10 +428,11 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createTernaryOp(
 mlir::Value mlir::hivm::NormalizeTraitsBase::createCastOp(
     PatternRewriter &rewriter, Location loc, Value input, Type targetElemType,
     std::optional<RoundMode> roundMode, TypeFn castType,
-    UnsignedMode unsignedMode) {
-  if (!isa<ShapedType>(input.getType()))
+    UnsignedMode unsignedMode, bool enableSaturate) {
+  if (!isa<ShapedType>(input.getType())) {
     return castScalarThroughTensor(rewriter, loc, input, targetElemType,
-                                   castType, unsignedMode);
+                                   castType, unsignedMode, enableSaturate);
+  }
 
   Type srcElemType = getElementTypeOrSelf(input.getType());
   hivm::RoundMode actualRoundMode =
@@ -437,6 +445,9 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createCastOp(
   auto castOp = hivm::castTo(rewriter, loc, input,
                              rewriter.getAttr<hivm::RoundModeAttr>(actualRoundMode),
                              targetElemType);
+  if (enableSaturate) {
+    castOp->setAttr("enable_saturate", rewriter.getBoolAttr(true));
+  }
   castOp.setCastAttr(rewriter.getAttr<hivm::TypeFnAttr>(castType));
   if (unsignedMode != hivm::UnsignedMode::SI2SI)
     castOp->setAttr(hivm::UnsignedModeAttr::name,

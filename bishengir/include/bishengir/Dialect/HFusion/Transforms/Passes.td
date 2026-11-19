@@ -20,6 +20,15 @@
 
 include "mlir/Pass/PassBase.td"
 
+def PrepareL1Gather : Pass<"hfusion-prepare-l1-gather", "func::FuncOp"> {
+  let summary = "Normalize explicitly hinted row gathers before legalization";
+  let constructor = "mlir::hfusion::createPrepareL1GatherPass()";
+  let dependentDialects = ["annotation::AnnotationDialect", "arith::ArithDialect",
+    "bufferization::BufferizationDialect", "hivm::HIVMDialect",
+    "linalg::LinalgDialect", "memref::MemRefDialect", "scf::SCFDialect",
+    "tensor::TensorDialect", "affine::AffineDialect"];
+}
+
 def HFusionOpFusion : Pass<"hfusion-fuse-ops", "ModuleOp"> {
   let summary = "HFusion Fuse operations on tensors";
   let constructor = "hfusion::createHFusionOpFusionPass()";
@@ -126,6 +135,11 @@ def GenericUnroller : Pass<"hfusion-generic-unroller", "func::FuncOp"> {
                          "transform::TransformDialect",
                          "arith::ArithDialect",
                          "vector::VectorDialect"];
+  let options = [Option<
+      "onlyScalarizeTagged", "only-scalarize-tagged", "bool",
+      /*default=*/"false",
+      "Only scalarize linalg.reduce ops explicitly marked for "
+      "scalarization">];
 }
 
 def AutoVectorizeVerifier
@@ -551,6 +565,12 @@ def LegalizeFP8Pass : Pass<"hfusion-legalize-fp8", "func::FuncOp"> {
   let summary = "normalize FP8 to FP32.";
   let constructor = "mlir::hfusion::createLegalizeFP8Pass()";
   let dependentDialects = ["linalg::LinalgDialect", "hfusion::HFusionDialect"];
+}
+
+def LegalizeScalarFP8Pass : Pass<"hfusion-legalize-scalar-fp8", "func::FuncOp"> {
+  let summary = "Carry scalar f8 conditional results as i8 bit patterns";
+  let constructor = "mlir::hfusion::createLegalizeScalarFP8Pass()";
+  let dependentDialects = ["arith::ArithDialect", "scf::SCFDialect"];
 }
 
 def LegalizeBoolPass : Pass<"hfusion-legalize-bool", "ModuleOp"> {

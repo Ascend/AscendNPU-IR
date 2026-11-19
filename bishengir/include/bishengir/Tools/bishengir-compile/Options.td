@@ -683,6 +683,28 @@ llvm::cl::values(
   }];
 }
 
+def EnableSchedulerAlg
+    : HIVMOptimizationControlOptions<
+          "Select the CV-pipelining scheduler algorithm (skew mode only).",
+          "CVSchedulerMode",
+          "CVSchedulerMode::Default"> {
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(CVSchedulerMode::Default, "default",
+             "Default WorklistBuilder-based partitioning"),
+  clEnumValN(CVSchedulerMode::Sms, "sms",
+             "SMS stage-level scheduling partitioning")
+)
+  }];
+}
+
+def SmsFailOnFallback
+    : HIVMOptimizationControlOptions<
+          "When true, treat SMS scheduler failure as a compilation error "
+          "instead of silently falling back to the default scheduler. "
+          "Useful for batch testing SMS enablement rates.",
+          "bool", "false">;
+
 def EnablePreload : BiShengIRCompileOpt<
   "Enable preload (skew mode) for CV-pipelining.",
   "bool",
@@ -1288,7 +1310,7 @@ def EnableFuseReductionIntoLoop : GeneralOptimizationControlOptions<
 
 def SimtOptimizationMode : GeneralOptimizationControlOptions<
   "set bishengir simt optimization modes",
-  "int",
+  "uint32_t",
   "900101"
 > {
   bit isSharedWithDownstreamToolchain = 1;
@@ -1337,6 +1359,13 @@ def EnableOptimizeScalarTransfers : HFusionOptimizationControlOptions<
   "true"
 >;
 
+def EnableLegalizeScalarFP8 : HFusionOptimizationControlOptions<
+  "Work around backend FP8 phi limitations after HFusion Normalize. "
+  "Disable to test native backend support.",
+  "bool",
+  "true"
+>;
+
 //===----------------------------------------------------------------------===//
 // HIVM Optimization Control Options
 //===----------------------------------------------------------------------===//
@@ -1380,7 +1409,8 @@ def DecoupledMemoryComputeScheduling : HIVMOptimizationControlOptions<
 >;
 
 def UsePipelinev2 : HIVMOptimizationControlOptions<
-  "Enable pipeline v2, bypassing cv-pipelining pass and using pipeline v2 passes (RegBase only for now).",
+  "Enable pipeline v2 for all kernels, overriding the registered-kernel "
+  "v1 default (RegBase only).",
   "bool",
   "false"
 >;
@@ -1661,6 +1691,13 @@ def UseDPX : BiShengIRCompileOpt<
 > {
   bit isSharedWithDownstreamToolchain = 1;
 }
+
+def SetMaxPipelineMultibuffer : HIVMOptimizationControlOptions<
+  "Maximum number of multibuffers for pipeline staging. ",
+  "unsigned",
+  "0"
+>;
+
 } // let optionScope = ["A5_ONLY"]
 
 #endif // BISHENGIR_TOOLS_BISHENGIR_COMPILE_OPTIONS_TD

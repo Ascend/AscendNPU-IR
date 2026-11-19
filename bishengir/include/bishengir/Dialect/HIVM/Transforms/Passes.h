@@ -46,6 +46,12 @@ enum class CVPipelineMode {
   Dynamic, // dynamic mode pipeling (developing)
 };
 
+/// CV-pipelining scheduler mode
+enum class CVSchedulerMode {
+  Default, // default WorklistBuilder-based partitioning
+  Sms,     // Swinging Modulo Scheduling stage-level partitioning
+};
+
 namespace mlir {
 
 namespace hivm {
@@ -77,6 +83,8 @@ std::unique_ptr<Pass> createHIVMNormalizeOpsPass();
 
 /// Create a pass to normalize hivm matmul op.
 std::unique_ptr<Pass> createNormalizeMatmulPass();
+
+std::unique_ptr<Pass> createMarkMatmulRowCollapsesPass();
 
 /// Create a pass to normalize hivm bitwise select op.
 std::unique_ptr<Pass> createNormalizeBitwiseSelectPass();
@@ -256,6 +264,8 @@ std::unique_ptr<Pass> createHIVMCanonicalizationPipelinePass();
 // run before createSetBufferSizePass, which consumes the inserted marks.
 std::unique_ptr<Pass> createInferBufferSizeFromSlicePass();
 
+std::unique_ptr<Pass> createPromoteL1GatherPass();
+
 // Create a pass to set buffer size
 std::unique_ptr<Pass> createSetBufferSizePass();
 
@@ -391,6 +401,7 @@ std::unique_ptr<Pass> createHIVMBubbleUpExtractSlicePass(
 
 /// Create the tensor-level HIVM vectorization pass.
 std::unique_ptr<Pass> createHIVMVectorizePass();
+std::unique_ptr<Pass> createHIVMVectorizePhasePass(llvm::StringRef phase);
 
 // Create a pass to insert init and finish for debug.
 std::unique_ptr<Pass> createInsertInitAndFinishForDebugPass();
@@ -418,8 +429,38 @@ std::unique_ptr<Pass> createAutoBlockifyParallelLoopPass();
 std::unique_ptr<Pass>
 createCVPipeliningPass(const CVPipeliningOptions &options = {});
 
+// Create Normalize Workspace Store pass for CV pipelining v2
+std::unique_ptr<Pass> createNormalizeWorkspaceStorePass();
+
 // Create Outline CV Scopes pass for CV pipelining v2
 std::unique_ptr<Pass> createOutlineCVScopesPass();
+
+// Create Merge CV Scopes pass for CV pipelining v2
+std::unique_ptr<Pass> createMergeCVScopesPass();
+
+// Create Intra Stage Scheduling pass for CV pipelining v2
+std::unique_ptr<Pass> createIntraStageSchedulingPass();
+
+// Create a CV Pipelining Staging pass
+std::unique_ptr<Pass>
+createPipelineStagingPass(const PipelineStagingOptions &options = {});
+
+/// Reload GM tensors in their consuming PipelineV2 preload stages.
+std::unique_ptr<Pass> createCVLazyLoadPass();
+
+/// Clone functions before OutlineCVScopes so preload can be rolled back.
+std::unique_ptr<Pass> createSaveCVPipelineSnapshotPass();
+
+/// Restore or inline PipelineV2 when the cross-scope UB estimate exceeds
+/// budget.
+std::unique_ptr<Pass>
+createGuardCVPipelineUBPass(const GuardCVPipelineUBOptions &options = {});
+
+/// Delete the private clones created by SaveCVPipelineSnapshot.
+std::unique_ptr<Pass> createEraseCVPipelineSnapshotsPass();
+
+/// Wrap scopes belonging to the same PipelineV2 preload stage.
+std::unique_ptr<Pass> createWrapCVPreloadScopesPass();
 
 // Create a pass to compose expands and collapses ops
 std::unique_ptr<Pass> createComposeCollapseExpandPass();
@@ -470,6 +511,9 @@ std::unique_ptr<Pass> createNonContiguousReshapeToCopyPass();
 
 std::unique_ptr<Pass> createSinkOpToConsumerInLoopPass();
 
+/// Create a pass to sink scalar readback chains to their consumers.
+std::unique_ptr<Pass> createSinkScalarReadbackPass();
+
 // Create a pass to flatten nested moduleOp
 std::unique_ptr<Pass> createFlattenModulePass();
 
@@ -511,6 +555,9 @@ std::unique_ptr<Pass> createRemoveCopyOpsPass();
 /// Create a pass to fuse linalg.transpose into hivm.hir.load via DMA
 /// on-the-fly transpose.
 std::unique_ptr<Pass> createFuseTransposeIntoLoadPass();
+
+/// Fuse supported independent operations into A6 loads.
+std::unique_ptr<Pass> createFuseOpIntoLoadPass();
 
 //===----------------------------------------------------------------------===//
 // V2 pipeline passes (see Passes.td)

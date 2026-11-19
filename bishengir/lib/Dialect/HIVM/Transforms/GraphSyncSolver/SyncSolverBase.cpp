@@ -2288,9 +2288,10 @@ bool SyncSolverBase::checkSkipCVPreloadingPair(Occurrence *occ1,
   auto *scopeOp2 = dyn_cast<Scope>(parOcc2->op);
   if (scopeOp1 != nullptr && scopeOp2 != nullptr) {
     if (scopeOp1->preloadNum.has_value() && scopeOp2->preloadNum.has_value()) {
-      assert(scopeOp1 != scopeOp2 &&
-             *scopeOp1->preloadNum != *scopeOp2->preloadNum);
-      return true;
+      assert(scopeOp1 != scopeOp2);
+      // A preload stage may be split across multiple scopes. Dependencies
+      // between those scopes still need synchronization within the stage.
+      return *scopeOp1->preloadNum != *scopeOp2->preloadNum;
     }
   }
   return false;
@@ -3089,17 +3090,9 @@ bool SyncSolverBase::checkMergeable(Scope *scopeOp, CorePipeInfo corePipeSrc,
     }
   }
   if (auto *conditionOp = llvm::dyn_cast<Condition>(scopeOp)) {
-    if (!checkMergeable(conditionOp->getTrueScope(), corePipeSrc, corePipeDst,
-                        eventId, true))
-      return false;
-
-    // Support hoisting backward events for an if without an else branch
-    // directly inside a loop body: for { if (cond) { inner loop } }.
-    if (conditionOp->isFalseScopeSynthetic && conditionOp->parentOp &&
-        isa_and_present<Loop>(conditionOp->parentOp->parentOp))
-      return true;
-
-    return checkMergeable(conditionOp->getFalseScope(), corePipeSrc,
+    return checkMergeable(conditionOp->getTrueScope(), corePipeSrc, corePipeDst,
+                          eventId, true) &&
+           checkMergeable(conditionOp->getFalseScope(), corePipeSrc,
                           corePipeDst, eventId, true);
   }
   if (auto *loopOp = llvm::dyn_cast<Loop>(scopeOp)) {

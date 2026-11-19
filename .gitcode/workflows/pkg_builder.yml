@@ -1,0 +1,258 @@
+name: PKG Builder
+
+# ============================================================================
+# 可复用编译工作流（on.workflow_call）。
+#
+# 本文件不直接响应 push / pull_request，由入口流水线（compile_npuir.yml）
+# 传参调用；入口决定分支、架构、镜像与 CANN 包，本文件只做通用构建逻辑。
+#
+# 输入: 
+#   branch           检出分支，留空表示使用触发流水线的 ref
+#   arch             目标架构 x86_64 / aarch64，用于 CANN 包名与制品名
+#   runner_arch      runner 标签中的 arch 值: x86 / arm
+#   image            构建容器镜像
+#   CANN_RUN_URL     CANN toolkit 安装包下载地址
+#   cann_path        CANN 安装根目录
+#   cann_version     CANN 版本号，用于拼安装包文件名
+#   package_version  交付制品版本号
+#
+# 依赖: 自托管 runner，且 image 已在 runner 本地存在或可从 registry 拉取
+# （镜像需自带 clang/lld/cmake/ninja/python3/ccache/git）。
+# ============================================================================
+
+on:
+  workflow_call:
+    inputs:
+      arch:
+        description: '目标架构: x86_64 或 aarch64'
+        required: true
+        type: string
+      branch:
+        description: '检出分支，留空表示使用触发流水线的 ref'
+        required: false
+        type: string
+        default: ''
+      runner_os:
+        description: 'runner 标签 os 的值，如 ubuntu 或 euler'
+        required: false
+        type: string
+        default: 'ubuntu'
+      runner_arch:
+        description: 'runner 标签 arch 的值，如 x86 或 arm'
+        required: false
+        type: string
+        default: 'x86'
+      image:
+        description: '构建容器镜像'
+        required: true
+        type: string
+      CANN_RUN_URL:
+        description: 'CANN toolkit 安装包地址'
+        required: true
+        type: string
+      cann_path:
+        description: 'CANN 安装根目录'
+        required: false
+        type: string
+        default: './Ascend'
+      cann_version:
+        description: 'CANN 版本号'
+        required: false
+        type: string
+        default: '9.3.0'
+      package_version:
+        description: '制品版本号'
+        required: false
+        type: string
+        default: '2.0.0'
+      cmake_path:
+        description: 'cmake 所在目录'
+        required: false
+        type: string
+        default: '/opt/buildtools/CMake/bin'
+      ninja_path:
+        description: 'ninja 所在目录'
+        required: false
+        type: string
+        default: '/opt/buildtools/ninja'
+      llvm_path:
+        description: 'clang / clang++ / lld 所在目录'
+        required: false
+        type: string
+        default: '/opt/buildtools/llvm15/build/bin'
+      HUAWEICLOUD_OBS_PREFIX:
+        description: 'OBS 对象前缀根目录，如 ascendnpu-ir'
+        required: false
+        type: string
+        default: 'ascendnpu-ir'
+
+jobs:
+  build_binaries:
+    name: build binaries
+    runs-on:
+      - self-hosted
+      - os=${{ inputs.runner_os }}
+      - arch=${{ inputs.runner_arch }}
+    container:
+      image: ${{ inputs.image }}
+      options: --user root
+    env:
+      CANN_RUN_URL: ${{ inputs.CANN_RUN_URL }}
+      CANN_VERSION: ${{ inputs.cann_version }}
+      CANN_PATH: ${{ inputs.cann_path }}
+      ARCH: ${{ inputs.arch }}
+      PACKAGE_VERSION: ${{ inputs.package_version }}
+      CMAKE_PATH: ${{ inputs.cmake_path }}
+      NINJA_PATH: ${{ inputs.ninja_path }}
+      LLVM_PATH: ${{ inputs.llvm_path }}
+      OBS_ROOT: ${{ inputs.HUAWEICLOUD_OBS_PREFIX }}
+    steps:
+      - name: Show trigger Info
+        id: trigger
+        run: |
+          set -euo pipefail
+          # atomgit.start_timestamp 为北京时间 yyyyMMddHHmmss，如 20261118203101
+          START_TS="${{ atomgit.start_timestamp }}"
+          if [ -z "$START_TS" ]; then
+            START_TS="$(date -u -d '+8 hours' +%Y%m%d%H%M%S)"
+          fi
+          # yyyyMMdd 形式的日期，如 20261119
+          BUILD_DATE="$(printf '%s' "$START_TS" | cut -c1-8)"
+          BUILD_TIME="$(printf '%s' "$START_TS" | cut -c1-8)-$(printf '%s' "$START_TS" | cut -c9-14)"
+
+          echo "build_date=${BUILD_DATE}" >> "$ATOMGIT_OUTPUT"
+          echo "build_time=${BUILD_TIME}" >> "$ATOMGIT_OUTPUT"
+          echo "event_name: ${{ atomgit.event_name }}"
+          echo "commit sha: ${{ atomgit.sha }}"
+          echo "start_timestamp: ${START_TS}"
+          echo "build_date: ${BUILD_DATE}"
+          echo "build_time: ${BUILD_TIME}"
+
+      - name: Checkout code
+        if: ${{ inputs.branch == '' }}
+        uses: checkout
+
+      - name: Checkout code (target branch)
+        if: ${{ inputs.branch != '' }}
+        uses: checkout
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Configure git safe directory
+        run: git config --global --add safe.directory '*'
+
+      - name: Download and install CANN toolkit
+        run: |
+          set -euxo pipefail
+          CANN_RUN_FILE="Ascend-cann-toolkit_${CANN_VERSION}_linux-${ARCH}.run"
+          curl -fL "$CANN_RUN_URL" -o "$CANN_RUN_FILE"
+          bash "$CANN_RUN_FILE" --full --quiet --install-path="$CANN_PATH"
+
+      - name: Verify tools
+        run: |
+          set -euxo pipefail
+          which cmake && cmake --version | head -1
+          which ninja && ninja --version
+          which clang && clang --version | head -1
+          which ld.lld && ld.lld --version | head -1
+          python3 --version
+
+      - name: Initialize submodules
+        run: |
+          set -euxo pipefail
+          git submodule update --init --depth 1 --jobs "$(nproc)" \
+            third-party/llvm-project \
+            third-party/torch-mlir \
+            third-party/shmem
+
+      - name: Restore ccache
+        uses: cache
+        with:
+          path: .ccache
+          key: ccache-${{ inputs.arch }}-${{ atomgit.sha }}
+          restore-keys: |
+            ccache-${{ inputs.arch }}-
+
+      - name: Build ascendnpu-ir binaries
+        run: |
+          set -euxo pipefail
+          source "$CANN_PATH/cann/set_env.sh"
+          export BISHENG_INSTALL_PATH="$CANN_PATH/cann/bin"
+          export PATH="$NINJA_PATH:$CMAKE_PATH:$PATH"
+          export CCACHE_DIR=".ccache"
+          mkdir -p "$CCACHE_DIR"
+          chmod +x build-tools/build.sh
+          ./build-tools/build.sh \
+            -o ./build \
+            --build-type Release \
+            -t \
+            --bisheng-compiler="${BISHENG_INSTALL_PATH}" \
+            --c-compiler="${LLVM_PATH}/clang" \
+            --cxx-compiler="${LLVM_PATH}/clang++" \
+            --build-torch-mlir \
+            --add-cmake-options="-DCMAKE_LINKER=${LLVM_PATH}/lld -DLLVM_ENABLE_LLD=ON" \
+            --build-triton \
+            --safety-options \
+            --safety-ld-options \
+            --skip-rpath \
+            --build-shmem-template \
+            --bishengir-publish ON \
+            --collect-binary
+
+      - name: Package binaries
+        id: package
+        run: |
+          set -euxo pipefail
+          # build run package
+          git clone -q --depth 1 -b npuir-ci https://gitcode.com/NPU-IR/CICD.git cicd
+
+          export BISHENGIR_ARTIFACT=./bishengir-output
+
+          bash cicd/CI/make-run.sh -a "$ARCH" -v "$PACKAGE_VERSION"
+
+          EVENT_NAME="${{ atomgit.event_name }}"
+          SHA="$(printf '%s' "${{ atomgit.sha }}" | cut -c1-13)"
+          # 归档目录使用的分支名：优先用入参 branch，否则取触发 ref 的短名
+          BRANCH_NAME="${{ inputs.branch || atomgit.ref_name }}"
+          # OBS 前缀根目录由参数传入，去掉结尾多余的 /
+          OBS_ROOT="${OBS_ROOT:-ascendnpu-ir}"
+          OBS_ROOT="${OBS_ROOT%/}"
+          PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}_linux-${ARCH}"
+          if [ "$EVENT_NAME" = "MR" ]; then
+            # event_name = pull_request/pull_request/pull_request_target
+            PR_ID="${{ atomgit.event.pull_request.number }}"
+            PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}-pr${PR_ID}-${SHA}_linux-${ARCH}"
+            OBS_PREFIX="${OBS_ROOT}/snapshots/pr/"
+          elif [ "$EVENT_NAME" = "Scheduler" ] || [ "$EVENT_NAME" = "Push" ]; then
+            # event_name = schedule / push（PR 合入）；命名与归档一致
+            PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}-${{ steps.trigger.outputs.build_time }}-${SHA}_linux-${ARCH}"
+            OBS_PREFIX="${OBS_ROOT}/snapshots/${BRANCH_NAME}/${{ steps.trigger.outputs.build_date }}/"
+          else
+            echo "unsupported event_name: ${EVENT_NAME}, only MR / Scheduler / Push are allowed" >&2
+            exit 1
+          fi
+          mv "./cicd/CI/ascendnpu-ir_${PACKAGE_VERSION}_linux-${ARCH}.run" "./${PKG_NAME}.run"
+
+          # 供 Upload artifact 复用同一个包名
+          echo "pkg_name=${PKG_NAME}" >> "$ATOMGIT_OUTPUT"
+          echo "obs_prefix=${OBS_PREFIX}" >> "$ATOMGIT_OUTPUT"
+
+      - name: Upload artifact
+        id: upload
+        uses: upload-artifact
+        with:
+          name: ${{ steps.package.outputs.pkg_name }}
+          path: ascendnpu-ir_*_linux-*.run
+          overwrite: true
+          if-no-files-found: error
+
+      - name: Upload artifact to OBS
+        if: ${{ atomgit.event_name == 'Scheduler' || atomgit.event_name == 'Push' }}
+        uses: obs-upload
+        with:
+          endpoint: "https://obs.cn-south-1.myhuaweicloud.com"
+          bucket: "ascendnpu-ir-pkg"
+          access-key: ${{ secrets.HUAWEICLOUD_OBS_AK }}
+          secret-key: ${{ secrets.HUAWEICLOUD_OBS_SK }}
+          artifact-path: ascendnpu-ir_*_linux-*.run
+          object-prefix: ${{ steps.package.outputs.obs_prefix }}

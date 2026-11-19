@@ -182,6 +182,9 @@ private:
 
   void insertMmadMxL1SyncArgs(IRRewriter &rewriter);
 
+  // Create the function-scoped L0 ping-pong signal and attach it to MMAD ops.
+  void insertPingPongSignal(IRRewriter &rewriter);
+
   void handleUnitFlagEnabledOps(IRRewriter &rewriter);
 
   // Ensure a barrier-all exists before function return.

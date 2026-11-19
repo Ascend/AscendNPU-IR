@@ -58,6 +58,7 @@ Value mlir::hfusion::NormalizeTraitsBase::createCastValueFromSourceOp(
       unsignedModeKind, signKind == CastSignKind::Preserve
                             ? getCastUnsignedMode(op)
                             : hfusion::UnsignedMode::SI2SI);
+
   hfusion::RoundMode defaultRoundMode =
       selectRoundMode<hfusion::RoundMode>(
           getElementTypeOrSelf(input.getType()), targetElemType);
@@ -243,17 +244,16 @@ static CompareFn mapCompareKindToCompareFn(CompareKind kind) {
 
 static std::optional<hfusion::RoundMode>
 mapCastRoundKindToRoundMode(CastRoundKind kind) {
-  static const llvm::DenseMap<CastRoundKind, hfusion::RoundMode>
-      kindToMode = {
-          {CastRoundKind::Round, hfusion::RoundMode::ROUND},
-          {CastRoundKind::Floor, hfusion::RoundMode::FLOOR},
-          {CastRoundKind::Ceil, hfusion::RoundMode::CEIL},
-          {CastRoundKind::RInt, hfusion::RoundMode::RINT},
-          {CastRoundKind::Trunc, hfusion::RoundMode::TRUNC},
-          {CastRoundKind::TruncEnableOverflow, hfusion::RoundMode::TRUNC},
-          {CastRoundKind::TruncWithOverflow,
-           hfusion::RoundMode::TRUNCWITHOVERFLOW},
-      };
+  static const llvm::DenseMap<CastRoundKind, hfusion::RoundMode> kindToMode = {
+      {CastRoundKind::Round, hfusion::RoundMode::ROUND},
+      {CastRoundKind::Floor, hfusion::RoundMode::FLOOR},
+      {CastRoundKind::Ceil, hfusion::RoundMode::CEIL},
+      {CastRoundKind::RInt, hfusion::RoundMode::RINT},
+      {CastRoundKind::Trunc, hfusion::RoundMode::TRUNC},
+      {CastRoundKind::TruncEnableOverflow, hfusion::RoundMode::TRUNC},
+      {CastRoundKind::TruncWithOverflow, hfusion::RoundMode::TRUNCWITHOVERFLOW},
+      {CastRoundKind::Odd, hfusion::RoundMode::ODD},
+  };
   return lookupMappedFn(kindToMode, kind);
 }
 
@@ -345,13 +345,13 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createBinaryOp(
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createCastOp(
     PatternRewriter &rewriter, Location loc, Value input, Type targetElemType,
     std::optional<RoundMode> roundMode, TypeFn castType,
-    UnsignedMode unsignedMode) {
+    UnsignedMode unsignedMode, bool enableSaturate) {
   if (!roundMode)
     roundMode = mlir::utils::selectRoundMode<RoundMode>(
         getElementTypeOrSelf(input.getType()), targetElemType);
   return hfusion::castTo(rewriter, input, targetElemType, *roundMode,
-                         std::nullopt, /*enableOverflow=*/true,
-                         /*enableSaturate=*/false, castType, unsignedMode);
+                         std::nullopt, /*enableOverflow=*/true, enableSaturate,
+                         castType, unsignedMode);
 }
 
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createShiftOp(

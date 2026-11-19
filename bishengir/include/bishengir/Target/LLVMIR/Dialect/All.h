@@ -14,6 +14,7 @@
 #ifndef MLIRBISHENGIR_TARGET_LLVMIR_DIALECT_ALL_H
 #define MLIRBISHENGIR_TARGET_LLVMIR_DIALECT_ALL_H
 
+#include "bishengir/Target/LLVMIR/Dialect/BMU/BMUToLLVMIRTranslation.h"
 #include "bishengir/Target/LLVMIR/Dialect/HACC/HACCToLLVMIRTranslation.h"
 #include "bishengir/Target/LLVMIR/Dialect/HIVM/HIVMToLLVMIRTranslation.h"
 #include "bishengir/Target/LLVMIR/Dialect/HIVMRegbaseIntrins/HIVMRegbaseIntrinsToLLVMIRTranslation.h"
@@ -30,6 +31,7 @@ registerAllToLLVMIRTranslations(mlir::DialectRegistry &registry) {
   mlir::registerHACCDialectTranslation(registry);
   mlir::registerHIVMDialectTranslation(registry);
   mlir::registerHIVMRegbaseIntrinsDialectTranslation(registry);
+  mlir::registerBMUDialectTranslation(registry);
 }
 
 } // namespace bishengir

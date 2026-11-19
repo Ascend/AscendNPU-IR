@@ -100,6 +100,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -110,9 +111,9 @@ load2d_transpose_cbuf_to_ca_intrin_core(
                           bias_type)                                           \
   DECLARE_MMA_TILE(src_scope, dst_scope, dim, src_type, dst_type, bias_type) { \
     mma_tile_core<src_type, dst_type, bias_type, false, false, false, false>(  \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -126,6 +127,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           int64_t m, int64_t k, int64_t n,                                      \
           memref_t<__##src_scope##__ bias_type, dim> *bias,                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                         \
+          memref_t<int32_t, 0> *ping_pong_signal,                               \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,       \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,       \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,       \
@@ -137,9 +139,9 @@ load2d_transpose_cbuf_to_ca_intrin_core(
   DECLARE_MMA_TILE_BIAS(src_scope, dst_scope, dim, src_type, dst_type,         \
                         bias_type) {                                           \
     mma_tile_bias<src_type, dst_type, bias_type, false, false, false, false>(  \
-        src0, src1, init, m, k, n, bias, dst, mmad_l1_wait_l1a_event,          \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, bias, dst, ping_pong_signal,                \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -152,6 +154,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -163,9 +166,9 @@ load2d_transpose_cbuf_to_ca_intrin_core(
   DECLARE_MMA_TILE_TA(src_scope, dst_scope, dim, src_type, dst_type,           \
                       bias_type) {                                             \
     mma_tile_core<src_type, dst_type, bias_type, true, false, false, false>(   \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -178,6 +181,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -189,9 +193,9 @@ load2d_transpose_cbuf_to_ca_intrin_core(
   DECLARE_MMA_TILE_TB(src_scope, dst_scope, dim, src_type, dst_type,           \
                       bias_type) {                                             \
     mma_tile_core<src_type, dst_type, bias_type, false, true, false, false>(   \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -204,6 +208,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -215,9 +220,9 @@ load2d_transpose_cbuf_to_ca_intrin_core(
   DECLARE_MMA_TILE_TA_TB(src_scope, dst_scope, dim, src_type, dst_type,        \
                          bias_type) {                                          \
     mma_tile_core<src_type, dst_type, bias_type, true, true, false, false>(    \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -230,6 +235,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -241,9 +247,9 @@ load2d_transpose_cbuf_to_ca_intrin_core(
   DECLARE_MMA_TILE_HF32(src_scope, dst_scope, dim, src_type, dst_type,         \
                         bias_type) {                                           \
     mma_tile_core<src_type, dst_type, bias_type, false, false, true, false>(   \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -256,6 +262,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -267,9 +274,9 @@ load2d_transpose_cbuf_to_ca_intrin_core(
   DECLARE_MMA_TILE_TA_HF32(src_scope, dst_scope, dim, src_type, dst_type,      \
                            bias_type) {                                        \
     mma_tile_core<src_type, dst_type, bias_type, true, false, true, false>(    \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -282,6 +289,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -293,9 +301,9 @@ load2d_transpose_cbuf_to_ca_intrin_core(
   DECLARE_MMA_TILE_TB_HF32(src_scope, dst_scope, dim, src_type, dst_type,      \
                            bias_type) {                                        \
     mma_tile_core<src_type, dst_type, bias_type, false, true, true, false>(    \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -308,6 +316,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -319,9 +328,9 @@ load2d_transpose_cbuf_to_ca_intrin_core(
   DECLARE_MMA_TILE_TA_TB_HF32(src_scope, dst_scope, dim, src_type, dst_type,   \
                               bias_type) {                                     \
     mma_tile_core<src_type, dst_type, bias_type, true, true, true, false>(     \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -334,6 +343,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -345,9 +355,9 @@ load2d_transpose_cbuf_to_ca_intrin_core(
   DECLARE_MMA_TILE_I4(src_scope, dst_scope, dim, src_type, dst_type,           \
                       bias_type) {                                             \
     mma_tile_core<src_type, dst_type, bias_type, false, false, false, true>(   \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -360,6 +370,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -371,9 +382,9 @@ load2d_transpose_cbuf_to_ca_intrin_core(
   DECLARE_MMA_TILE_TB_I4(src_scope, dst_scope, dim, src_type, dst_type,        \
                          bias_type) {                                          \
     mma_tile_core<src_type, dst_type, bias_type, false, true, false, true>(    \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -386,6 +397,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -397,9 +409,9 @@ load2d_transpose_cbuf_to_ca_intrin_core(
   DECLARE_MMA_TILE_HF32_I4(src_scope, dst_scope, dim, src_type, dst_type,      \
                            bias_type) {                                        \
     mma_tile_core<src_type, dst_type, bias_type, false, false, true, true>(    \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
@@ -412,6 +424,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
           int64_t m, int64_t k, int64_t n,                                     \
           memref_t<__##dst_scope##__ dst_type, 4> *dst,                        \
+          memref_t<int32_t, 0> *ping_pong_signal,                              \
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
@@ -423,68 +436,70 @@ load2d_transpose_cbuf_to_ca_intrin_core(
   DECLARE_MMA_TILE_TB_HF32_I4(src_scope, dst_scope, dim, src_type, dst_type,   \
                               bias_type) {                                     \
     mma_tile_core<src_type, dst_type, bias_type, false, true, true, true>(     \
-        src0, src1, init, m, k, n, dst, mmad_l1_wait_l1a_event,                \
-        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
-        l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
+        src0, src1, init, m, k, n, dst, ping_pong_signal,                      \
+        mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event,                        \
+        l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event, kloop_db_cond,         \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
         unit_flag_mode, unit_flag_group_id);                                   \
   }
 
 #define DECLARE_MMA_MX(a_type, b_type, dst_type, bias_type)                    \
   __aicore__ __attribute__((always_inline)) void                               \
-      _mlir_ciface_mmadmxL1_##a_type##_##b_type##_to_##dst_type(                          \
+      _mlir_ciface_mmadmxL1_##a_type##_##b_type##_to_##dst_type(               \
           memref_t<__cc__ dst_type, 4> *l0C,                                   \
           memref_t<__cbuf__ a_type, 4> *l1A,                                   \
           memref_t<__cbuf__ b_type, 4> *l1B,                                   \
           memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                           \
           memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m,    \
-          uint32_t k, uint32_t n, uint32_t l1AMTE2MTE1EventId,                 \
-          uint32_t l1ScaleAMTE2MTE1EventId, uint32_t l1BMTE2MTE1EventId,       \
-          uint32_t l1ScaleBMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,       \
-          uint32_t l1ScaleAMTE1MTE2EventId, uint32_t l1BMTE1MTE2EventId,       \
-          uint32_t l1ScaleBMTE1MTE2EventId)
-
-#define DECLARE_MMA_MX_BIAS(a_type, b_type, dst_type, bias_type)                 \
-  __aicore__ __attribute__((always_inline)) void                                \
-      _mlir_ciface_mmadmxL1_with_##bias_type##_bias_##a_type##_##b_type##_to_##dst_type(  \
-          memref_t<__cc__ dst_type, 4> *l0C,                                    \
-          memref_t<__cbuf__ a_type, 4> *l1A,                                  \
-          memref_t<__cbuf__ b_type, 4> *l1B,                                  \
-          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                            \
-          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m,     \
-          uint32_t k, uint32_t n, memref_t<__cbuf__ bias_type, 4> *bias,        \
-          uint32_t l1AMTE2MTE1EventId, uint32_t l1ScaleAMTE2MTE1EventId,        \
-          uint32_t l1BMTE2MTE1EventId, uint32_t l1ScaleBMTE2MTE1EventId,        \
-          uint32_t l1AMTE1MTE2EventId, uint32_t l1ScaleAMTE1MTE2EventId,        \
+          uint32_t k, uint32_t n, memref_t<int32_t, 0> *ping_pong_signal,      \
+          uint32_t l1AMTE2MTE1EventId, uint32_t l1ScaleAMTE2MTE1EventId,       \
+          uint32_t l1BMTE2MTE1EventId, uint32_t l1ScaleBMTE2MTE1EventId,       \
+          uint32_t l1AMTE1MTE2EventId, uint32_t l1ScaleAMTE1MTE2EventId,       \
           uint32_t l1BMTE1MTE2EventId, uint32_t l1ScaleBMTE1MTE2EventId)
+
+#define DECLARE_MMA_MX_BIAS(a_type, b_type, dst_type, bias_type)                         \
+  __aicore__ __attribute__((always_inline)) void                                         \
+      _mlir_ciface_mmadmxL1_with_##bias_type##_bias_##a_type##_##b_type##_to_##dst_type( \
+          memref_t<__cc__ dst_type, 4> *l0C,                                             \
+          memref_t<__cbuf__ a_type, 4> *l1A,                                             \
+          memref_t<__cbuf__ b_type, 4> *l1B,                                             \
+          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                                     \
+          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m,              \
+          uint32_t k, uint32_t n, memref_t<__cbuf__ bias_type, 4> *bias,                 \
+          memref_t<int32_t, 0> *ping_pong_signal, uint32_t l1AMTE2MTE1EventId,           \
+          uint32_t l1ScaleAMTE2MTE1EventId, uint32_t l1BMTE2MTE1EventId,                 \
+          uint32_t l1ScaleBMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,                 \
+          uint32_t l1ScaleAMTE1MTE2EventId, uint32_t l1BMTE1MTE2EventId,                 \
+          uint32_t l1ScaleBMTE1MTE2EventId)
 
 #define DECLARE_MMA_MX_TRANS(a_type, b_type, dst_type, bias_type, suffix)      \
   __aicore__ __attribute__((always_inline)) void                               \
-      _mlir_ciface_mmadmxL1_##a_type##_##b_type##_to_##dst_type##suffix(                  \
+      _mlir_ciface_mmadmxL1_##a_type##_##b_type##_to_##dst_type##suffix(       \
           memref_t<__cc__ dst_type, 4> *l0C,                                   \
           memref_t<__cbuf__ a_type, 4> *l1A,                                   \
           memref_t<__cbuf__ b_type, 4> *l1B,                                   \
           memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                           \
           memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m,    \
-          uint32_t k, uint32_t n, uint32_t l1AMTE2MTE1EventId,                 \
-          uint32_t l1ScaleAMTE2MTE1EventId, uint32_t l1BMTE2MTE1EventId,       \
-          uint32_t l1ScaleBMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,       \
-          uint32_t l1ScaleAMTE1MTE2EventId, uint32_t l1BMTE1MTE2EventId,       \
-          uint32_t l1ScaleBMTE1MTE2EventId)
-
-#define DECLARE_MMA_MX_BIAS_TRANS(a_type, b_type, dst_type, bias_type, suffix)            \
-  __aicore__ __attribute__((always_inline)) void                                        \
-      _mlir_ciface_mmadmxL1_with_##bias_type##_bias_##a_type##_##b_type##_to_##dst_type##suffix( \
-          memref_t<__cc__ dst_type, 4> *l0C,                                            \
-          memref_t<__cbuf__ a_type, 4> *l1A,                                          \
-          memref_t<__cbuf__ b_type, 4> *l1B,                                          \
-          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                                    \
-          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m,             \
-          uint32_t k, uint32_t n, memref_t<__cbuf__ bias_type, 4> *bias,                \
-          uint32_t l1AMTE2MTE1EventId, uint32_t l1ScaleAMTE2MTE1EventId,                \
-          uint32_t l1BMTE2MTE1EventId, uint32_t l1ScaleBMTE2MTE1EventId,                \
-          uint32_t l1AMTE1MTE2EventId, uint32_t l1ScaleAMTE1MTE2EventId,                \
+          uint32_t k, uint32_t n, memref_t<int32_t, 0> *ping_pong_signal,      \
+          uint32_t l1AMTE2MTE1EventId, uint32_t l1ScaleAMTE2MTE1EventId,       \
+          uint32_t l1BMTE2MTE1EventId, uint32_t l1ScaleBMTE2MTE1EventId,       \
+          uint32_t l1AMTE1MTE2EventId, uint32_t l1ScaleAMTE1MTE2EventId,       \
           uint32_t l1BMTE1MTE2EventId, uint32_t l1ScaleBMTE1MTE2EventId)
+
+#define DECLARE_MMA_MX_BIAS_TRANS(a_type, b_type, dst_type, bias_type, suffix)                   \
+  __aicore__ __attribute__((always_inline)) void                                                 \
+      _mlir_ciface_mmadmxL1_with_##bias_type##_bias_##a_type##_##b_type##_to_##dst_type##suffix( \
+          memref_t<__cc__ dst_type, 4> *l0C,                                                     \
+          memref_t<__cbuf__ a_type, 4> *l1A,                                                     \
+          memref_t<__cbuf__ b_type, 4> *l1B,                                                     \
+          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                                             \
+          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m,                      \
+          uint32_t k, uint32_t n, memref_t<__cbuf__ bias_type, 4> *bias,                         \
+          memref_t<int32_t, 0> *ping_pong_signal, uint32_t l1AMTE2MTE1EventId,                   \
+          uint32_t l1ScaleAMTE2MTE1EventId, uint32_t l1BMTE2MTE1EventId,                         \
+          uint32_t l1ScaleBMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,                         \
+          uint32_t l1ScaleAMTE1MTE2EventId, uint32_t l1BMTE1MTE2EventId,                         \
+          uint32_t l1ScaleBMTE1MTE2EventId)
 
 #define DECLARE_MMA_MX_FORMAT(src_type, dst_type, bias_type, a_format,                                  \
                               b_format)                                                                 \
@@ -495,11 +510,11 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           memref_t<__cbuf__ src_type, 4> *l1B,                                                          \
           memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                                                    \
           memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m,                             \
-          uint32_t k, uint32_t n, uint32_t l1AMTE2MTE1EventId,                                          \
-          uint32_t l1ScaleAMTE2MTE1EventId, uint32_t l1BMTE2MTE1EventId,                                \
-          uint32_t l1ScaleBMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,                                \
-          uint32_t l1ScaleAMTE1MTE2EventId, uint32_t l1BMTE1MTE2EventId,                                \
-          uint32_t l1ScaleBMTE1MTE2EventId)
+          uint32_t k, uint32_t n, memref_t<int32_t, 0> *ping_pong_signal,                               \
+          uint32_t l1AMTE2MTE1EventId, uint32_t l1ScaleAMTE2MTE1EventId,                                \
+          uint32_t l1BMTE2MTE1EventId, uint32_t l1ScaleBMTE2MTE1EventId,                                \
+          uint32_t l1AMTE1MTE2EventId, uint32_t l1ScaleAMTE1MTE2EventId,                                \
+          uint32_t l1BMTE1MTE2EventId, uint32_t l1ScaleBMTE1MTE2EventId)
 
 #define DECLARE_MMA_MX_BIAS_FORMAT(src_type, dst_type, bias_type, a_format,                                                     \
                                    b_format)                                                                                    \
@@ -511,10 +526,11 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                                                                            \
           memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m,                                                     \
           uint32_t k, uint32_t n, memref_t<__cbuf__ bias_type, 4> *bias,                                                        \
-          uint32_t l1AMTE2MTE1EventId, uint32_t l1ScaleAMTE2MTE1EventId,                                                        \
-          uint32_t l1BMTE2MTE1EventId, uint32_t l1ScaleBMTE2MTE1EventId,                                                        \
-          uint32_t l1AMTE1MTE2EventId, uint32_t l1ScaleAMTE1MTE2EventId,                                                        \
-          uint32_t l1BMTE1MTE2EventId, uint32_t l1ScaleBMTE1MTE2EventId)
+          memref_t<int32_t, 0> *ping_pong_signal, uint32_t l1AMTE2MTE1EventId,                                                  \
+          uint32_t l1ScaleAMTE2MTE1EventId, uint32_t l1BMTE2MTE1EventId,                                                        \
+          uint32_t l1ScaleBMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,                                                        \
+          uint32_t l1ScaleAMTE1MTE2EventId, uint32_t l1BMTE1MTE2EventId,                                                        \
+          uint32_t l1ScaleBMTE1MTE2EventId)
 
 #define DECLARE_MMA_MX_FORMAT_TRANS(src_type, dst_type, bias_type, a_format,                                    \
                                     b_format, suffix)                                                           \
@@ -525,11 +541,11 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           memref_t<__cbuf__ src_type, 4> *l1B,                                                                  \
           memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                                                            \
           memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m,                                     \
-          uint32_t k, uint32_t n, uint32_t l1AMTE2MTE1EventId,                                                  \
-          uint32_t l1ScaleAMTE2MTE1EventId, uint32_t l1BMTE2MTE1EventId,                                        \
-          uint32_t l1ScaleBMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,                                        \
-          uint32_t l1ScaleAMTE1MTE2EventId, uint32_t l1BMTE1MTE2EventId,                                        \
-          uint32_t l1ScaleBMTE1MTE2EventId)
+          uint32_t k, uint32_t n, memref_t<int32_t, 0> *ping_pong_signal,                                       \
+          uint32_t l1AMTE2MTE1EventId, uint32_t l1ScaleAMTE2MTE1EventId,                                        \
+          uint32_t l1BMTE2MTE1EventId, uint32_t l1ScaleBMTE2MTE1EventId,                                        \
+          uint32_t l1AMTE1MTE2EventId, uint32_t l1ScaleAMTE1MTE2EventId,                                        \
+          uint32_t l1BMTE1MTE2EventId, uint32_t l1ScaleBMTE1MTE2EventId)
 
 #define DECLARE_MMA_MX_BIAS_FORMAT_TRANS(src_type, dst_type, bias_type,                                                                 \
                                          a_format, b_format, suffix)                                                                    \
@@ -541,55 +557,60 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                                                                                    \
           memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m,                                                             \
           uint32_t k, uint32_t n, memref_t<__cbuf__ bias_type, 4> *bias,                                                                \
-          uint32_t l1AMTE2MTE1EventId, uint32_t l1ScaleAMTE2MTE1EventId,                                                                \
-          uint32_t l1BMTE2MTE1EventId, uint32_t l1ScaleBMTE2MTE1EventId,                                                                \
-          uint32_t l1AMTE1MTE2EventId, uint32_t l1ScaleAMTE1MTE2EventId,                                                                \
-          uint32_t l1BMTE1MTE2EventId, uint32_t l1ScaleBMTE1MTE2EventId)
+          memref_t<int32_t, 0> *ping_pong_signal, uint32_t l1AMTE2MTE1EventId,                                                          \
+          uint32_t l1ScaleAMTE2MTE1EventId, uint32_t l1BMTE2MTE1EventId,                                                                \
+          uint32_t l1ScaleBMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,                                                                \
+          uint32_t l1ScaleAMTE1MTE2EventId, uint32_t l1BMTE1MTE2EventId,                                                                \
+          uint32_t l1ScaleBMTE1MTE2EventId)
 
-#define REGISTER_MMA_MX(a_type, b_type, dst_type, bias_type)                  \
-  DECLARE_MMA_MX(a_type, b_type, dst_type, bias_type) {                       \
-    mmamx_tile_core<a_type, b_type, dst_type, bias_type>(                     \
+#define REGISTER_MMA_MX(a_type, b_type, dst_type, bias_type)                   \
+  DECLARE_MMA_MX(a_type, b_type, dst_type, bias_type) {                        \
+    mmamx_tile_core<a_type, b_type, dst_type, bias_type>(                      \
         l0C, l1A, l1B,                                                         \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
-        init, m, k, n, l1AMTE2MTE1EventId, l1ScaleAMTE2MTE1EventId,            \
-        l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId, l1AMTE1MTE2EventId,       \
-        l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId, l1ScaleBMTE1MTE2EventId); \
+        init, m, k, n, ping_pong_signal, l1AMTE2MTE1EventId,                   \
+        l1ScaleAMTE2MTE1EventId, l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId,  \
+        l1AMTE1MTE2EventId, l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId,       \
+        l1ScaleBMTE1MTE2EventId);                                              \
   }
 
-#define REGISTER_MMA_MX_BIAS(a_type, b_type, dst_type, bias_type)               \
-  DECLARE_MMA_MX_BIAS(a_type, b_type, dst_type, bias_type) {                    \
-    mmamx_tile_bias<a_type, b_type, dst_type, bias_type>(                     \
+#define REGISTER_MMA_MX_BIAS(a_type, b_type, dst_type, bias_type)              \
+  DECLARE_MMA_MX_BIAS(a_type, b_type, dst_type, bias_type) {                   \
+    mmamx_tile_bias<a_type, b_type, dst_type, bias_type>(                      \
         l0C, l1A, l1B,                                                         \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
-        init, m, k, n, bias, l1AMTE2MTE1EventId, l1ScaleAMTE2MTE1EventId,      \
-        l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId, l1AMTE1MTE2EventId,       \
-        l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId, l1ScaleBMTE1MTE2EventId); \
+        init, m, k, n, bias, ping_pong_signal, l1AMTE2MTE1EventId,             \
+        l1ScaleAMTE2MTE1EventId, l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId,  \
+        l1AMTE1MTE2EventId, l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId,       \
+        l1ScaleBMTE1MTE2EventId);                                              \
   }
 
 #define REGISTER_MMA_MX_TRANS(a_type, b_type, dst_type, bias_type, suffix, ta, \
                               tb)                                              \
-  DECLARE_MMA_MX_TRANS(a_type, b_type, dst_type, bias_type, suffix) {           \
-    mmamx_tile_core<a_type, b_type, dst_type, bias_type, ta, tb>(             \
+  DECLARE_MMA_MX_TRANS(a_type, b_type, dst_type, bias_type, suffix) {          \
+    mmamx_tile_core<a_type, b_type, dst_type, bias_type, ta, tb>(              \
         l0C, l1A, l1B,                                                         \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
-        init, m, k, n, l1AMTE2MTE1EventId, l1ScaleAMTE2MTE1EventId,            \
-        l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId, l1AMTE1MTE2EventId,       \
-        l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId, l1ScaleBMTE1MTE2EventId); \
+        init, m, k, n, ping_pong_signal, l1AMTE2MTE1EventId,                   \
+        l1ScaleAMTE2MTE1EventId, l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId,  \
+        l1AMTE1MTE2EventId, l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId,       \
+        l1ScaleBMTE1MTE2EventId);                                              \
   }
 
-#define REGISTER_MMA_MX_BIAS_TRANS(a_type, b_type, dst_type, bias_type, suffix, \
-                                  ta, tb)                                      \
-  DECLARE_MMA_MX_BIAS_TRANS(a_type, b_type, dst_type, bias_type, suffix) {    \
-    mmamx_tile_bias<a_type, b_type, dst_type, bias_type, ta, tb>(             \
+#define REGISTER_MMA_MX_BIAS_TRANS(a_type, b_type, dst_type, bias_type,        \
+                                   suffix, ta, tb)                             \
+  DECLARE_MMA_MX_BIAS_TRANS(a_type, b_type, dst_type, bias_type, suffix) {     \
+    mmamx_tile_bias<a_type, b_type, dst_type, bias_type, ta, tb>(              \
         l0C, l1A, l1B,                                                         \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
-        init, m, k, n, bias, l1AMTE2MTE1EventId, l1ScaleAMTE2MTE1EventId,      \
-        l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId, l1AMTE1MTE2EventId,       \
-        l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId, l1ScaleBMTE1MTE2EventId); \
+        init, m, k, n, bias, ping_pong_signal, l1AMTE2MTE1EventId,             \
+        l1ScaleAMTE2MTE1EventId, l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId,  \
+        l1AMTE1MTE2EventId, l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId,       \
+        l1ScaleBMTE1MTE2EventId);                                              \
   }
 
 #define REGISTER_MMA_MX_FORMAT(src_type, dst_type, bias_type, a_format,        \
@@ -599,10 +620,10 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         l0C, l1A, l1B,                                                         \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
-        init, m, k, n, l1AMTE2MTE1EventId, l1ScaleAMTE2MTE1EventId,            \
-        l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId, l1AMTE1MTE2EventId,       \
-        l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId, l1ScaleBMTE1MTE2EventId,  \
-        lhs_format, rhs_format);                                               \
+        init, m, k, n, ping_pong_signal, l1AMTE2MTE1EventId,                   \
+        l1ScaleAMTE2MTE1EventId, l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId,  \
+        l1AMTE1MTE2EventId, l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId,       \
+        l1ScaleBMTE1MTE2EventId, lhs_format, rhs_format);                      \
   }
 
 #define REGISTER_MMA_MX_BIAS_FORMAT(src_type, dst_type, bias_type, a_format,   \
@@ -613,10 +634,10 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         l0C, l1A, l1B,                                                         \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
-        init, m, k, n, bias, l1AMTE2MTE1EventId, l1ScaleAMTE2MTE1EventId,      \
-        l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId, l1AMTE1MTE2EventId,       \
-        l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId, l1ScaleBMTE1MTE2EventId,  \
-        lhs_format, rhs_format);                                               \
+        init, m, k, n, bias, ping_pong_signal, l1AMTE2MTE1EventId,             \
+        l1ScaleAMTE2MTE1EventId, l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId,  \
+        l1AMTE1MTE2EventId, l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId,       \
+        l1ScaleBMTE1MTE2EventId, lhs_format, rhs_format);                      \
   }
 
 #define REGISTER_MMA_MX_FORMAT_TRANS(src_type, dst_type, bias_type, a_format,  \
@@ -628,10 +649,10 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         l0C, l1A, l1B,                                                         \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
-        init, m, k, n, l1AMTE2MTE1EventId, l1ScaleAMTE2MTE1EventId,            \
-        l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId, l1AMTE1MTE2EventId,       \
-        l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId, l1ScaleBMTE1MTE2EventId,  \
-        lhs_format, rhs_format);                                               \
+        init, m, k, n, ping_pong_signal, l1AMTE2MTE1EventId,                   \
+        l1ScaleAMTE2MTE1EventId, l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId,  \
+        l1AMTE1MTE2EventId, l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId,       \
+        l1ScaleBMTE1MTE2EventId, lhs_format, rhs_format);                      \
   }
 
 #define REGISTER_MMA_MX_BIAS_FORMAT_TRANS(src_type, dst_type, bias_type,       \
@@ -643,10 +664,10 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         l0C, l1A, l1B,                                                         \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
-        init, m, k, n, bias, l1AMTE2MTE1EventId, l1ScaleAMTE2MTE1EventId,      \
-        l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId, l1AMTE1MTE2EventId,       \
-        l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId, l1ScaleBMTE1MTE2EventId,  \
-        lhs_format, rhs_format);                                               \
+        init, m, k, n, bias, ping_pong_signal, l1AMTE2MTE1EventId,             \
+        l1ScaleAMTE2MTE1EventId, l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId,  \
+        l1AMTE1MTE2EventId, l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId,       \
+        l1ScaleBMTE1MTE2EventId, lhs_format, rhs_format);                      \
   }
 
 #define REGISTER_MMA_MX_FP4(src_type, dst_type, bias_type, a_format, b_format) \
@@ -660,6 +681,70 @@ load2d_transpose_cbuf_to_ca_intrin_core(
                                b_format, suffix, ta, tb,                       \
                                Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T, \
                                Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T)
+
+// Heterogeneous A/B MX forms (Ascend960 only).  A is a native 16-bit or fp8
+// element, while B is a packed sub-byte format carried in an int8_t buffer.
+// The library symbol therefore has distinct A/B storage types plus both
+// format strings.
+#define DECLARE_MMA_MX_HETERO_FORMAT(a_type, b_type, dst_type, a_format,                                         \
+                                     b_format)                                                                   \
+  __aicore__ __attribute__((always_inline)) void                                                                 \
+      _mlir_ciface_mmadmxL1_##a_type##_##b_type##_to_##dst_type##_lhs_format_##a_format##_rhs_format_##b_format( \
+          memref_t<__cc__ dst_type, 4> *l0C,                                                                     \
+          memref_t<__cbuf__ a_type, 4> *l1A,                                                                     \
+          memref_t<__cbuf__ b_type, 4> *l1B,                                                                     \
+          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                                                             \
+          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m,                                      \
+          uint32_t k, uint32_t n, memref_t<int32_t, 0> *ping_pong_signal,                                        \
+          uint32_t l1AMTE2MTE1EventId, uint32_t l1ScaleAMTE2MTE1EventId,                                         \
+          uint32_t l1BMTE2MTE1EventId, uint32_t l1ScaleBMTE2MTE1EventId,                                         \
+          uint32_t l1AMTE1MTE2EventId, uint32_t l1ScaleAMTE1MTE2EventId,                                         \
+          uint32_t l1BMTE1MTE2EventId, uint32_t l1ScaleBMTE1MTE2EventId)
+
+#define DECLARE_MMA_MX_HETERO_BIAS_FORMAT(a_type, b_type, dst_type, bias_type,                                                           \
+                                          a_format, b_format)                                                                            \
+  __aicore__ __attribute__((always_inline)) void                                                                                         \
+      _mlir_ciface_mmadmxL1_with_##bias_type##_bias_##a_type##_##b_type##_to_##dst_type##_lhs_format_##a_format##_rhs_format_##b_format( \
+          memref_t<__cc__ dst_type, 4> *l0C,                                                                                             \
+          memref_t<__cbuf__ a_type, 4> *l1A,                                                                                             \
+          memref_t<__cbuf__ b_type, 4> *l1B,                                                                                             \
+          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                                                                                     \
+          memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m,                                                              \
+          uint32_t k, uint32_t n, memref_t<__cbuf__ bias_type, 4> *bias,                                                                 \
+          memref_t<int32_t, 0> *ping_pong_signal, uint32_t l1AMTE2MTE1EventId,                                                           \
+          uint32_t l1ScaleAMTE2MTE1EventId, uint32_t l1BMTE2MTE1EventId,                                                                 \
+          uint32_t l1ScaleBMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,                                                                 \
+          uint32_t l1ScaleAMTE1MTE2EventId, uint32_t l1BMTE1MTE2EventId,                                                                 \
+          uint32_t l1ScaleBMTE1MTE2EventId)
+
+#define REGISTER_MMA_MX_HETERO_FORMAT(a_type, b_type, dst_type, bias_type,     \
+                                      a_format, b_format, lhs_format,          \
+                                      rhs_format)                              \
+  DECLARE_MMA_MX_HETERO_FORMAT(a_type, b_type, dst_type, a_format, b_format) { \
+    mmamx_tile_core<a_type, b_type, dst_type, bias_type>(                      \
+        l0C, l1A, l1B,                                                         \
+        reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
+        reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
+        init, m, k, n, ping_pong_signal, l1AMTE2MTE1EventId,                   \
+        l1ScaleAMTE2MTE1EventId, l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId,  \
+        l1AMTE1MTE2EventId, l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId,       \
+        l1ScaleBMTE1MTE2EventId, lhs_format, rhs_format);                      \
+  }
+
+#define REGISTER_MMA_MX_HETERO_BIAS_FORMAT(a_type, b_type, dst_type,           \
+                                           bias_type, a_format, b_format,      \
+                                           lhs_format, rhs_format)             \
+  DECLARE_MMA_MX_HETERO_BIAS_FORMAT(a_type, b_type, dst_type, bias_type,       \
+                                    a_format, b_format) {                      \
+    mmamx_tile_bias<a_type, b_type, dst_type, bias_type>(                      \
+        l0C, l1A, l1B,                                                         \
+        reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
+        reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
+        init, m, k, n, bias, ping_pong_signal, l1AMTE2MTE1EventId,             \
+        l1ScaleAMTE2MTE1EventId, l1BMTE2MTE1EventId, l1ScaleBMTE2MTE1EventId,  \
+        l1AMTE1MTE2EventId, l1ScaleAMTE1MTE2EventId, l1BMTE1MTE2EventId,       \
+        l1ScaleBMTE1MTE2EventId, lhs_format, rhs_format);                      \
+  }
 
 extern "C" {
 DECLARE_MMA_TILE(cbuf, cc, 4, half, float, float);

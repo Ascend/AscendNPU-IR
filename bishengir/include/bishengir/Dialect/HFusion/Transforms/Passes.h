@@ -55,6 +55,8 @@ namespace hfusion {
 
 constexpr llvm::StringLiteral kFillVFAttrName = "hfusion.has_fill";
 
+std::unique_ptr<Pass> createPrepareL1GatherPass();
+
 class OutlineFuncOptions : public HFusionOpFusionOptions {
 public:
   OutlineFuncOptions(const HFusionOpFusionOptions &options, func::FuncOp funcOp)
@@ -214,6 +216,10 @@ std::unique_ptr<Pass> createLegalizeBF16Pass();
 
 /// Create a pass to legalize fp8 type
 std::unique_ptr<Pass> createLegalizeFP8Pass();
+
+/// Carry scalar f8 conditional results as i8 to work around backend
+/// limitations.
+std::unique_ptr<Pass> createLegalizeScalarFP8Pass();
 
 /// Create a pass to legalize bool
 std::unique_ptr<Pass> createLegalizeBoolPass();

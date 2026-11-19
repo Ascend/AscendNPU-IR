@@ -1370,6 +1370,15 @@ LoopLikeOpInterface getParentLoop(Value val) {
 
 BlockArgument getTiedBlockArgument(LoopLikeOpInterface loopOp,
                                    OpOperand &operand) {
+  if (operand.getOwner() != loopOp.getOperation())
+    return nullptr;
+  // While does not expose its init operands through getInitsMutable() on
+  // LoopLikeOpInterface. Its operands initialize the before block directly.
+  if (auto whileOp = dyn_cast<scf::WhileOp>(loopOp.getOperation())) {
+    auto beforeArgs = whileOp.getBeforeArguments();
+    unsigned index = operand.getOperandNumber();
+    return index < beforeArgs.size() ? beforeArgs[index] : BlockArgument{};
+  }
   for (auto barg : loopOp.getRegionIterArgs())
     if (loopOp.getTiedLoopInit(barg) == &operand) {
       return barg;

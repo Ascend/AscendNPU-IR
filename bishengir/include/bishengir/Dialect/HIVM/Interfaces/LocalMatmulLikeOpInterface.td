@@ -287,6 +287,48 @@ def HIVMLocalMatmulL1OpInterface
       /*defaultImplementation=*/[{ $_op.getPerChannelBiasMutable().assign(bias); }]>,
 
     InterfaceMethod<
+      /*desc=*/"Return the optional L0 ping-pong signal operand.",
+      /*retTy=*/"::mlir::Value",
+      /*methodName=*/"getMatmulPingPongSignal",
+      /*args=*/(ins),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{ return $_op.getPingPongSignal(); }]>,
+
+    InterfaceMethod<
+      /*desc=*/"Set the optional L0 ping-pong signal operand.",
+      /*retTy=*/"void",
+      /*methodName=*/"setPingPongSignal",
+      /*args=*/(ins "::mlir::Value":$signal),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{ $_op.getPingPongSignalMutable().assign(signal); }]>,
+
+    InterfaceMethod<
+      /*desc=*/"Return true when `operand` is the L0 ping-pong signal operand.",
+      /*retTy=*/"bool",
+      /*methodName=*/"isPingPongSignalOperand",
+      /*args=*/(ins "::mlir::OpOperand *":$operand),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{
+        return $_op.getPingPongSignal() &&
+               operand == &$_op.getPingPongSignalMutable()[0];
+      }]>,
+
+    InterfaceMethod<
+      /*desc=*/[{
+        Return the L0 ping-pong signal value to pass to the standard library
+        call, materializing a marked null `hivm.hir.pointer_cast` descriptor
+        when the optional operand is absent.
+      }],
+      /*retTy=*/"::mlir::Value",
+      /*methodName=*/"getPingPongSignalLibValue",
+      /*args=*/(ins "::mlir::OpBuilder &":$builder),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{
+        return ::mlir::hivm::detail::getLocalMatmulPingPongSignalLibValueImpl(
+            $_op.getOperation(), builder);
+      }]>,
+
+    InterfaceMethod<
       /*desc=*/"Return whether bias should be decomposed by elementwise add.",
       /*retTy=*/"bool",
       /*methodName=*/"shouldDecomposeBiasByElementAdd",

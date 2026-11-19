@@ -21,6 +21,15 @@
 include "mlir/Pass/PassBase.td"
 include "bishengir/Dialect/HIVM/Transforms/HIVMPass.td"
 
+def PromoteL1Gather : HIVMPass<"hivm-promote-l1-gather", "func::FuncOp"> {
+  let summary = "Promote explicitly hinted row gathers consumed by matmul to L1";
+  let constructor = "mlir::hivm::createPromoteL1GatherPass()";
+  let dependentDialects = ["annotation::AnnotationDialect", "arith::ArithDialect",
+    "bufferization::BufferizationDialect", "hivm::HIVMDialect",
+    "memref::MemRefDialect", "scf::SCFDialect", "tensor::TensorDialect",
+    "affine::AffineDialect"];
+}
+
 def InferFuncCoreType : HIVMPass<"hivm-infer-func-core-type", "ModuleOp"> {
   let summary = "Infer the core type of each function";
   let constructor = "mlir::hivm::createInferFuncCoreTypePass()";
@@ -56,6 +65,21 @@ def NormalizeMatmul
   let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
                            "tensor::TensorDialect",
   ];
+}
+
+def MarkMatmulRowCollapses
+    : HIVMPass<"hivm-mark-matmul-row-collapses", "func::FuncOp",
+               [MixKernel, PureAicKernel]> {
+  let summary = "Mark matrix row collapses that must precede NZ conversion";
+  let description = [{
+    On memory-based targets, annotate static 3D-to-2D row collapses feeding
+    MMAD with maybeUnCollapsibleReshape. Run after reshape propagation and
+    matmul normalization, before Cube/Vector load-store insertion, so the
+    rows are merged in ND before the complete matrix is converted to NZ.
+    Dynamic tensor shapes and unit-dimension removal are left unchanged.
+  }];
+  let constructor = "mlir::hivm::createMarkMatmulRowCollapsesPass()";
+  let dependentDialects = ["annotation::AnnotationDialect"];
 }
 
 def NormalizeConvOps
@@ -899,7 +923,9 @@ def RepositionPreloadWork
       "Reposition ops between and inside preload scopes after CVPipelining.";
   let description = [{
     Runs after CVPipelining and before MarkMultiBuffer, on the unsplit MIX
-    function. It repositions ops both between preload scopes and inside a
+    function. All transformations require a registered kernel name unless
+    bypass-shape-registry is explicitly enabled. It repositions ops both
+    between preload scopes and inside a
     scope. A later `mmadL1` that reads the same left matrix as an earlier
     one is moved, with its fixpipe, to just after that earlier matmul when
     every operand it needs is already available there. Inside a VECTOR
@@ -1063,6 +1089,24 @@ def SinkOpToConsumerInLoop
   let summary = "Sink op to consumer in loop.";
   let constructor = "mlir::hivm::createSinkOpToConsumerInLoopPass()";
   let dependentDialects = ["hivm::HIVMDialect"];
+}
+
+def SinkScalarReadback : HIVMPass<"hivm-sink-scalar-readback", "func::FuncOp"> {
+  let summary = "Sink scalar readback chains to their consumers.";
+  let description = [{
+    Move a scalar readback chain (`tensor.extract` of a single element of a
+    tensor produced by a vector function call, plus the pure scalar
+    computation that depends on it) down to its earliest consumer in the same
+    block.
+
+    The chain is memory-effect-free, so no alias analysis is needed.  The pass
+    runs in the tensor/SSA stage, before bufferization and before
+    graph-sync-solver, so the sync solver derives the V->S flags from the
+    consumer position instead of blocking the scalar core right after the
+    producer call.
+  }];
+  let constructor = "mlir::hivm::createSinkScalarReadbackPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "tensor::TensorDialect"];
 }
 
 def AlignAllocSize : HIVMPass<"hivm-align-alloc-size", "mlir::ModuleOp"> {
@@ -1478,9 +1522,13 @@ def HIVMVectorize : HIVMPass<"hivm-vectorize", "ModuleOp"> {
   let summary = "Vectorize tensor-level HIVM computation";
   let description = [{
     Module-level entry point for tensor-level HIVM vectorization.
+    Applies the embedded @hivm_vectorize sequence to the module.
   }];
+  let options = [Option<"phase", "phase", "std::string", [{"tensor"}],
+                        "Vectorizer-owned phase: tensor, buffers, "
+                        "prepare-buffers, align, tail, backend">];
   let constructor = "mlir::hivm::createHIVMVectorizePass()";
-  let dependentDialects = [];
+  let dependentDialects = ["transform::TransformDialect"];
 }
 
 def InsertInitAndFinishForDebug
@@ -1562,7 +1610,33 @@ def CVPipelining
               "CV-pipelining heuristics">,
        Option<"enablePreload", "enable-preload", "bool",
               /*default=*/"false",
-              "Enable registered-kernel CV-pipelining heuristics">];
+              "Enable registered-kernel CV-pipelining heuristics">,
+       Option<"schedulerMode", "scheduler", "CVSchedulerMode",
+              "CVSchedulerMode::Default",
+              "Scheduler mode for CV-pipelining partition.",
+              [{::llvm::cl::values(
+               clEnumValN(CVSchedulerMode::Default, "default",
+                          "Default WorklistBuilder-based partitioning"),
+               clEnumValN(CVSchedulerMode::Sms, "sms",
+                          "SMS stage-level scheduling partitioning"))}]>,
+       Option<"smsFailOnFallback", "sms-fail-on-fallback", "bool",
+              /*default=*/"false",
+              "When true, treat SMS scheduler failure as a compilation error "
+              "instead of silently falling back to the default scheduler. "
+              "Useful for batch testing SMS enablement rates.">];
+}
+
+def NormalizeWorkspaceStore
+    : HIVMPass<"normalize-workspace-store", "func::FuncOp",
+               [MixKernel, PureAicKernel]> {
+  let summary = "Rewrite workspace tensor stores to memref stores followed by "
+                "to_tensor for CV pipelining v2";
+  let constructor = "mlir::hivm::createNormalizeWorkspaceStorePass()";
+  let dependentDialects = ["annotation::AnnotationDialect",
+                           "hivm::HIVMDialect",
+                           "bishengir::memref_ext::MemRefExtDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect"];
 }
 
 def OutlineCVScopes
@@ -1574,6 +1648,134 @@ def OutlineCVScopes
                            "bishengir::memref_ext::MemRefExtDialect",
                            "bufferization::BufferizationDialect",
                            "memref::MemRefDialect"];
+}
+
+def MergeCVScopes
+    : HIVMPass<"merge-cv-scopes", "func::FuncOp", [MixKernel, PureAicKernel]> {
+  let summary = "Merge compatible CV scopes according to pipelining v2 rules";
+  let constructor = "mlir::hivm::createMergeCVScopesPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
+                           "mlir::scope::ScopeDialect",
+                           "bishengir::memref_ext::MemRefExtDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect", "tensor::TensorDialect",
+                           "arith::ArithDialect"];
+}
+
+def IntraStageScheduling
+    : HIVMPass<"intra-stage-scheduling", "func::FuncOp",
+               [MixKernel, PureAicKernel]> {
+  let summary = "Hoist the cube-facing dependencies of each vector scope into "
+                "a leading sub-scope";
+  let description = [{
+    Runs after MergeCVScopes, scheduling inside a stage rather than across
+    stages. For every vector scope followed by a cube scope in the same block,
+    the operations producing the values that cube scope reads are grouped into
+    one new scope placed at the beginning of the vector scope's body, so the
+    cube can start as soon as that group retires. The group is closed under
+    its dependencies, including the cross-core copy that fills the L1 buffer
+    the cube reads, and carries a `vf-scope` attribute. A vector scope is left
+    unchanged when it returns no value,
+    when no following cube scope reads its results, or when every one of its
+    results feeds that cube scope.
+  }];
+  let constructor = "mlir::hivm::createIntraStageSchedulingPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "mlir::scope::ScopeDialect",
+                           "memref::MemRefDialect"];
+}
+
+def PipelineStaging
+    : HIVMPass<"pipeline-staging", "func::FuncOp"> {
+  let summary = "Assign preload number to scopes";
+  let constructor = "mlir::hivm::createPipelineStagingPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
+                           "mlir::scope::ScopeDialect",
+                           "bishengir::memref_ext::MemRefExtDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect"];
+  let options = [Option<"maxPipelineMultibuffer", "max-pipeline-multibuffer", "unsigned",
+                        /*default=*/"0",
+                        "Maximum pipeline multibuffer.">];
+}
+
+def CVLazyLoad : HIVMPass<"cv-lazy-load", "func::FuncOp"> {
+  let summary = "Reload read-only GM tensors in consuming preload stages";
+  let description = [{
+    Runs after PipelineStaging and before WrapCVPreloadScopes. Clones a GM
+    load and its address, padding, cast and tensor-view operations into a consuming
+    VECTOR scope only when its preload number differs from the producer's.
+    Retains early loads needed for Cube inputs and removes unused scope results
+    to avoid keeping tensor snapshots live across preload stages.
+
+    Distinct GM roots are assumed independent. A write through any view of the
+    loaded GM root in the pipelined loop prevents rematerialization, including
+    writes in other stages or iterations. Unknown effects also prevent it.
+  }];
+  let constructor = "mlir::hivm::createCVLazyLoadPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "mlir::scope::ScopeDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect", "tensor::TensorDialect"];
+}
+
+def SaveCVPipelineSnapshot
+    : HIVMPass<"save-cv-pipeline-snapshot", "func::FuncOp"> {
+  let summary = "Clone a function before OutlineCVScopes";
+  let description = [{
+    Runs immediately before OutlineCVScopes. Stores a private clone of each
+    function that contains a loop. GuardCVPipelineUB restores that clone when
+    the cross-scope UB estimate exceeds capacity. The clone is marked with
+    `hivm.cv_pipeline_snapshot` and is skipped by the PipelineV2 passes.
+  }];
+  let constructor = "mlir::hivm::createSaveCVPipelineSnapshotPass()";
+  let dependentDialects = ["func::FuncDialect"];
+}
+
+def EraseCVPipelineSnapshots
+    : HIVMPass<"erase-cv-pipeline-snapshots", "ModuleOp"> {
+  let summary = "Erase PipelineV2 function snapshots";
+  let description = [{
+    Runs after GuardCVPipelineUB. Deletes the private clones created by
+    SaveCVPipelineSnapshot once the guard has either kept preload or copied
+    a clone back into its function.
+  }];
+  let constructor = "mlir::hivm::createEraseCVPipelineSnapshotsPass()";
+  let dependentDialects = ["func::FuncDialect"];
+}
+
+def GuardCVPipelineUB
+    : HIVMPass<"guard-cv-pipeline-ub", "func::FuncOp"> {
+  let summary = "Drop PipelineV2 preload when cross-scope UB exceeds capacity";
+  let description = [{
+    Runs after CVLazyLoad. Estimates UB for tensors passed across scopes and
+    for UB tightly-coupled buffers. The multibuffer factor of a value is one
+    plus the largest preload_num gap between its producer and any consumer.
+    Because cube:vector is 1:2, the estimate is compared with twice the UB
+    budget. Above that budget the function body is replaced with the clone
+    saved before OutlineCVScopes. Without that clone, the pipelined scopes
+    are inlined and preload attributes are removed.
+  }];
+  let constructor = "mlir::hivm::createGuardCVPipelineUBPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
+                           "mlir::scope::ScopeDialect",
+                           "annotation::AnnotationDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect"];
+  let options = [Option<"simtVFDynamicSize", "simt-vf-dynamic-size", "int",
+                        /*default=*/"216",
+                        "MIX/SIMT UB budget in KiB. Matches PlanMemory.">];
+}
+
+def WrapCVPreloadScopes
+    : HIVMPass<"wrap-cv-preload-scopes", "func::FuncOp"> {
+  let summary = "Wrap same-stage CV scopes in one preload scope";
+  let description = [{
+    Runs last in PipelineV2, after PipelineStaging. Preserves inner core
+    scopes and intervening operations while moving preload metadata to one
+    enclosing scope per stage. Values used outside a group are returned by
+    its wrapper. Singleton stages and unrelated loops are left unchanged.
+  }];
+  let constructor = "mlir::hivm::createWrapCVPreloadScopesPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "mlir::scope::ScopeDialect"];
 }
 
 def AutoBlockifyParallelLoop
@@ -1760,6 +1962,16 @@ def CombineOptimizedConvertLayout
       "Fold some convert layout patterns and change it into optimized form";
   let constructor = "mlir::hivm::createCombineOptimizedConvertLayoutPass()";
   let dependentDialects = ["hivm::HIVMDialect", ];
+  let options =
+      [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+              /*default=*/"false",
+              "Bypass shape registry check for duplicate inserted L1 staging">];
+}
+
+def MarkPreloadBuffers : HIVMPass<"hivm-mark-preload-buffers", "ModuleOp"> {
+  let summary = "Mark loop-local buffer slots for preload stages";
+  let constructor = "mlir::hivm::createMarkPreloadBuffersPass()";
+  let dependentDialects = ["annotation::AnnotationDialect"];
 }
 
 def MarkPreloadBuffers : HIVMPass<"hivm-mark-preload-buffers", "ModuleOp"> {
@@ -1825,6 +2037,23 @@ def FuseTransposeIntoLoad
                            "hivm::HIVMDialect", "linalg::LinalgDialect",
                            "memref::MemRefDialect", "scf::SCFDialect",
   ];
+}
+
+def FuseOpIntoLoad : HIVMPass<"hivm-fuse-op-into-load", "ModuleOp"> {
+  let summary = "Fuse proven same-function operations into A6 loads";
+  let description = [{
+    Register the supported static broadcast patterns together.
+    The MLIR pattern driver applies them within the nearest A6 module,
+    without unrelated folding, constant CSE or region simplification. Nested
+    modules are not processed by an outer module invocation. Combined
+    pad-to-broadcast chains remain unsupported.
+  }];
+  let constructor = "mlir::hivm::createFuseOpIntoLoadPass()";
+  let dependentDialects = ["arith::ArithDialect",
+                           "bufferization::BufferizationDialect",
+                           "func::FuncDialect", "hivm::HIVMDialect",
+                           "linalg::LinalgDialect", "memref::MemRefDialect",
+                           "scf::SCFDialect", "tensor::TensorDialect"];
 }
 
 def DecomposeAllocTensorCopy

@@ -1,6 +1,38 @@
 // RUN: bishengir-opt -hivm-insert-load-store-for-mix-cv -hivm-insert-load-store-for-scalar %s -split-input-file -verify-diagnostics --canonicalize-ext | FileCheck %s
 
 // -----
+// CHECK-LABEL: @convert_batched_vector_operand_to_fractal_before_cube_copy(
+// CHECK: %[[TRANSPOSED:.*]] = hivm.hir.vtranspose {{.*}} -> tensor<2x2x32x32xbf16>
+// CHECK: %[[COLLAPSED:.*]] = tensor.collapse_shape %[[TRANSPOSED]] {{.*}} into tensor<4x32x32xbf16>
+// CHECK: %[[EXPANDED:.*]] = tensor.expand_shape %[[COLLAPSED]] {{.*}} output_shape [4, 32, 2, 16] : tensor<4x32x32xbf16> into tensor<4x32x2x16xbf16>
+// CHECK: %[[LAYOUT_TRANSPOSED:.*]] = hivm.hir.vtranspose ins(%[[EXPANDED]] : tensor<4x32x2x16xbf16>) {{.*}} permutation = [0, 2, 1, 3] -> tensor<4x2x32x16xbf16>
+// CHECK: %[[FRACTAL:.*]] = tensor.expand_shape %[[LAYOUT_TRANSPOSED]] {{.*}} output_shape [4, 2, 2, 16, 16] : tensor<4x2x32x16xbf16> into tensor<4x2x2x16x16xbf16>
+// CHECK: %[[COPY:.*]] = hivm.hir.copy ins(%[[FRACTAL]] : tensor<4x2x2x16x16xbf16>)
+// CHECK: hivm.hir.batchMmadL1 ins(%[[COPY]], {{.*}} : tensor<4x2x2x16x16xbf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @convert_batched_vector_operand_to_fractal_before_cube_copy(
+    %a: tensor<2x2x32x32xbf16>, %b: tensor<4x32x32xbf16>)
+    -> tensor<4x32x32xf32>
+    attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  %true = arith.constant true
+  %c32 = arith.constant 32 : index
+  %transpose_init = tensor.empty() : tensor<2x2x32x32xbf16>
+  %transposed = hivm.hir.vtranspose
+    ins(%a : tensor<2x2x32x32xbf16>)
+    outs(%transpose_init : tensor<2x2x32x32xbf16>)
+    permutation = [0, 1, 3, 2] -> tensor<2x2x32x32xbf16>
+  %collapsed = tensor.collapse_shape %transposed [[0, 1], [2], [3]]
+    : tensor<2x2x32x32xbf16> into tensor<4x32x32xbf16>
+  %out = tensor.empty() : tensor<4x32x32xf32>
+  %result = hivm.hir.batchMmadL1
+    ins(%collapsed, %b, %true, %c32, %c32, %c32
+        : tensor<4x32x32xbf16>, tensor<4x32x32xbf16>, i1, index, index, index)
+    outs(%out : tensor<4x32x32xf32>) -> tensor<4x32x32xf32>
+  return %result : tensor<4x32x32xf32>
+}
+}
+
+// -----
 // CHECK-LABEL: @no_insert_store_between_extract_and_non_vector_non_cube_user(
 // CHECK: %[[EXTRACTED_INDEX:.*]] = tensor.extract %{{.*}}[%{{.*}}] : tensor<52xi64>
 // CHECK: %{{[A-Za-z0-9_]+}} = arith.index_cast %[[EXTRACTED_INDEX:.*]] : i64 to index
