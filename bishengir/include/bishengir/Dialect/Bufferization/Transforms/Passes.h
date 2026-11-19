@@ -35,12 +35,6 @@ namespace bufferization {
 /// analysis.
 std::unique_ptr<mlir::Pass> createNormalizeToTensorOpPass();
 
-/// Eliminate empty tensors using module-level One-Shot analysis with the
-/// supplied options, matching subsequent tensor copy insertion.
-std::unique_ptr<mlir::Pass> createEmptyTensorEliminationPass();
-std::unique_ptr<mlir::Pass> createEmptyTensorEliminationPass(
-    const mlir::bufferization::OneShotBufferizationOptions &options);
-
 /// Create a pass that runs One-Shot analysis and inserts tensor copies to
 /// resolve bufferization conflicts, without performing the bufferization.
 std::unique_ptr<mlir::Pass> createTensorCopyInsertionPass();
