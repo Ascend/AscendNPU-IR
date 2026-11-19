@@ -18,21 +18,43 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Support/LogicalResult.h"
 
+#include "llvm/ADT/TypeSwitch.h"
+
 #include <utility>
 
 namespace mlir {
 namespace hivm {
 class TCoreRatioAttr;
 
-/// Core placement can be stored as a dialect annotation or an ODS field.
-/// Do not inspect arbitrary TCoreTypeAttr metadata (e.g. pipelined loop tags).
-inline SmallVector<NamedAttribute> getCoreTypeAnnotations(Operation *op) {
-  SmallVector<NamedAttribute> annotations;
-  for (StringRef name : {StringRef(TCoreTypeAttr::name), StringRef("tcoretype"),
-                         StringRef("tcore_type")})
-    if (auto attr = op->getAttrOfType<TCoreTypeAttr>(name))
-      annotations.emplace_back(StringAttr::get(op->getContext(), name), attr);
-  return annotations;
+inline std::optional<TCoreType> getExplicitCoreType(Operation *op) {
+  return llvm::TypeSwitch<Operation *, std::optional<TCoreType>>(op)
+      .Case<CustomOp, CustomMacroOp>(
+          [](auto customOp) { return customOp.getCoreType(); })
+      .Case<DebugOp, LoadOp>([](auto nativeOp) -> std::optional<TCoreType> {
+        if (auto attr = nativeOp.getTcoretypeAttr())
+          return attr.getTcoretype();
+        return std::nullopt;
+      })
+      .Case<SyncBlockSetOp, SyncBlockWaitOp, SyncIntraBlockSetOp,
+            SyncIntraBlockWaitOp>(
+          [](auto nativeOp) -> std::optional<TCoreType> {
+            return nativeOp.getTcoreTypeAttr().getTcoretype();
+          })
+      .Default(
+          [](Operation *) -> std::optional<TCoreType> { return std::nullopt; });
+}
+
+/// Update the explicit placement field read by getExplicitCoreType.
+inline void setExplicitCoreType(Operation *op, TCoreType core) {
+  auto attr = TCoreTypeAttr::get(op->getContext(), core);
+  llvm::TypeSwitch<Operation *>(op)
+      .Case<CustomOp, CustomMacroOp>(
+          [&](auto customOp) { customOp.setCoreType(core); })
+      .Case<DebugOp, LoadOp>(
+          [&](auto nativeOp) { nativeOp.setTcoretypeAttr(attr); })
+      .Case<SyncBlockSetOp, SyncBlockWaitOp, SyncIntraBlockSetOp,
+            SyncIntraBlockWaitOp>(
+          [&](auto nativeOp) { nativeOp.setTcoreTypeAttr(attr); });
 }
 
 /// Resolve explicitly flexible placement after function classification. Query
@@ -72,36 +94,36 @@ inline void resolveFlexibleCoreTypes(
 
   struct Resolution {
     Operation *op;
-    StringAttr name;
     TCoreType core;
   };
   SmallVector<Resolution> resolutions;
   func.walk([&](Operation *op) {
     if (op == func.getOperation())
       return;
-    for (NamedAttribute annotation : getCoreTypeAnnotations(op)) {
-      auto core = cast<TCoreTypeAttr>(annotation.getValue()).getTcoretype();
-      bool flexible = core == TCoreType::CUBE_OR_VECTOR;
-      if (!flexible && !(specializeBoth && core == TCoreType::CUBE_AND_VECTOR))
-        continue;
-      if (auto inferred = detail::queryCoreTypeHelper(op))
-        core = *inferred;
-      if (core == TCoreType::CUBE_OR_VECTOR ||
-          (specializeBoth && funcCore != TFuncCoreType::MIX &&
-           core == TCoreType::CUBE_AND_VECTOR)) {
-        // Keep flexible region skeletons during MIX analysis. Their bodies
-        // must remain traversable by the split's dependency annotation walk.
-        if (op->getNumRegions() && fallback == TCoreType::CUBE_AND_VECTOR)
-          continue;
-        core = fallback;
-      }
-      resolutions.push_back({op, annotation.getName(), core});
-    }
+    // Builtin declarations have a fixed placement contract checked by their
+    // verifier, even when the surrounding function has a concrete core type.
+    if (llvm::TypeSwitch<Operation *, bool>(op)
+            .Case<CustomOp, CustomMacroOp>(
+                [](auto customOp) { return customOp.isBuiltin(); })
+            .Default(false))
+      return;
+    auto explicitCore = getExplicitCoreType(op);
+    if (!explicitCore)
+      return;
+    auto core = *explicitCore;
+    bool flexible = core == TCoreType::CUBE_OR_VECTOR;
+    if (!flexible && !(specializeBoth && core == TCoreType::CUBE_AND_VECTOR))
+      return;
+    if (auto inferred = detail::queryCoreTypeHelper(op))
+      core = *inferred;
+    if (core == TCoreType::CUBE_OR_VECTOR ||
+        (specializeBoth && funcCore != TFuncCoreType::MIX &&
+         core == TCoreType::CUBE_AND_VECTOR))
+      core = fallback;
+    resolutions.push_back({op, core});
   });
   for (const Resolution &resolution : resolutions)
-    resolution.op->setAttr(
-        resolution.name,
-        TCoreTypeAttr::get(func.getContext(), resolution.core));
+    setExplicitCoreType(resolution.op, resolution.core);
 }
 
 /// Verify that a mixed function or split core half has no required work when

@@ -331,9 +331,8 @@ private:
         return WalkResult::interrupt();
       }
 
-      for (NamedAttribute annotation : hivm::getCoreTypeAnnotations(op))
-        refineConstraint(
-            c, cast<hivm::TCoreTypeAttr>(annotation.getValue()).getTcoretype());
+      if (auto core = hivm::getExplicitCoreType(op))
+        refineConstraint(c, *core);
 
       // LoadOp and DebugOp infer a missing core type by walking users, which
       // calls back into this query. An explicit tcoretype is local, so count
