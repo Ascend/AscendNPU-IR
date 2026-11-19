@@ -15,6 +15,7 @@
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/TilingUtils.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Attrs.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/LiftScalarProducer.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/PlanContext.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Verify.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
@@ -1350,10 +1351,14 @@ LogicalResult AutoVectorizeV2::vectorize(func::FuncOp func,
   LogicalResult result = transform::applyTransformNamedSequence(
       func, seqOp, func->getParentOfType<ModuleOp>(), transformOptions);
   seqOp->erase();
+  if (failed(result))
+    return failure();
+
+  if (failed(hfusion::liftScalarProducers(func)))
+    return failure();
 
   hfusion::AutoVectorizeVerifier verifier;
   return failure(
-      failed(result) ||
       failed(verifier.verifyFreeVectorRegion(true).emitDiagnostics(false).check(
           func)));
 }
