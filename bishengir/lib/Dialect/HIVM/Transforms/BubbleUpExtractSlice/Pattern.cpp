@@ -141,6 +141,18 @@ createNewParentOpAfterBubbledUp(RewriterBase &rewriter, size_t tilingDim,
   return newSrc;
 }
 
+// At global tile boundary p, sub-block 0 has consumed ceil(p/2) rows and
+// sub-block 1 has consumed floor(p/2). Their final boundaries are exactly
+// the extents of the slices created by the outer sub-block loop.
+static OpFoldResult getSubBlockBoundary(RewriterBase &rewriter, Location loc,
+                                        OpFoldResult boundary, Value subBlock) {
+  AffineExpr p, id;
+  bindDims(rewriter.getContext(), p, id);
+  return affine::makeComposedFoldedAffineApply(
+      rewriter, loc, (p + 1 - id).floorDiv(kSubBlockDim),
+      {boundary, getAsOpFoldResult(subBlock)});
+}
+
 // This function create new childOp after bubble up
 
 // For example:
@@ -166,21 +178,34 @@ createNewChildOpAfterBubbledUp(RewriterBase &rewriter, size_t tilingDim,
   auto containingLoop = childOp->template getParentOfType<scf::ForOp>();
   if (!containingLoop)
     return failure();
-  auto newSize = getSingleTileSize(rewriter, childOp->getLoc(),
-                                   createdNewParent->getResult(0), tilingDim,
-                                   containingLoop);
-  if (failed(newSize))
+  auto tilingLoop = findContainingTilingLoop(childOp);
+  if (failed(tilingLoop))
     return failure();
-
-  rewriter.setInsertionPointToStart(containingLoop.getBody());
-  auto newOffsetAtTileDim =
-      calculateOffsetAtTilingDim(rewriter, childOp->getLoc(), containingLoop,
-                                 createdNewParent->getResult(0), tilingDim);
+  OpFoldResult size = childOp.getMixedSizes()[tilingDim];
+  OpFoldResult offset;
+  if (isSubBlockBindedFor(*tilingLoop) &&
+      ShapedType::isDynamic(childOp.getStaticSizes()[tilingDim]) &&
+      parentOp.getStaticSizes()[tilingDim] % kSubBlockDim != 0) {
+    offset = getSubBlockBoundary(rewriter, childOp.getLoc(),
+                                 parentOp.getMixedOffsets()[tilingDim],
+                                 tilingLoop->getInductionVar());
+  } else {
+    auto newSize = getSingleTileSize(rewriter, childOp.getLoc(),
+                                     createdNewParent->getResult(0), tilingDim,
+                                     containingLoop);
+    if (failed(newSize))
+      return failure();
+    size = *newSize;
+    rewriter.setInsertionPointToStart(containingLoop.getBody());
+    offset =
+        calculateOffsetAtTilingDim(rewriter, childOp.getLoc(), containingLoop,
+                                   createdNewParent->getResult(0), tilingDim);
+  }
 
   auto rankType = cast<ShapedType>(childOp.getSourceType());
   if (failed(findCorrespondingSizesOffsetsStrides(
-          rewriter, rankType, tilingDim, newOffsetAtTileDim, newSize.value(),
-          newViewStrides, newViewOffsets, newViewSizes, newViewShape)))
+          rewriter, rankType, tilingDim, offset, size, newViewStrides,
+          newViewOffsets, newViewSizes, newViewShape)))
     return failure();
 
   rewriter.setInsertionPoint(childOp);
@@ -820,6 +845,10 @@ handleExtractOfExtractSameDimCase(tensor::ExtractSliceOp sliceOp,
 
   auto maybeNewSliceOp = createNewChildOpAfterBubbledUp(
       rewriter, tilingDim, sliceOp, parentSliceOp, newSrc);
+  if (failed(maybeNewSliceOp)) {
+    rewriter.eraseOp(newSrc);
+    return failure();
+  }
   rewriter.replaceOp(sliceOp, maybeNewSliceOp.value());
 
   return success();
@@ -920,38 +949,51 @@ createNewInsertForExtractOfInsertSameDim(RewriterBase &rewriter,
                                          size_t tilingDim,
                                          tensor::ExtractSliceOp sliceOp,
                                          tensor::InsertSliceOp parentInsertOp,
-                                         tensor::ExtractSliceOp newSrc,
                                          tensor::ExtractSliceOp newDst) {
-  SmallVector<OpFoldResult, 4> newInsertStrides;
-  SmallVector<OpFoldResult, 4> newInsertOffsets;
-  SmallVector<OpFoldResult, 4> newInsertSizes;
-  SmallVector<int64_t, 4> newInsertShape;
-  auto maybeTilingLoop = findContainingTilingLoop(sliceOp);
-  if (failed(maybeTilingLoop))
+  auto loop = findContainingTilingLoop(sliceOp);
+  if (failed(loop))
     return failure();
-  auto size =
-      getSingleTileSize(rewriter, sliceOp->getLoc(), parentInsertOp.getSource(),
-                        tilingDim, maybeTilingLoop.value());
-  if (failed(size))
-    return failure();
-  auto rankType = cast<ShapedType>(parentInsertOp.getSourceType());
-
-  auto containingLoop = sliceOp->getParentOfType<scf::ForOp>();
-  if (!containingLoop)
-    return failure();
-  rewriter.setInsertionPointToStart(containingLoop.getBody());
-  auto newOffsetAtTileDim = calculateOffsetAtTilingDim(
-      rewriter, sliceOp->getLoc(), containingLoop, size.value());
-  if (failed(findCorrespondingSizesOffsetsStrides(
-          rewriter, rankType, tilingDim, newOffsetAtTileDim, size.value(),
-          newInsertStrides, newInsertOffsets, newInsertSizes, newInsertShape)))
-    return failure();
-
+  Location loc = sliceOp.getLoc();
+  auto offsets = parentInsertOp.getMixedOffsets();
+  auto sizes = parentInsertOp.getMixedSizes();
+  SmallVector<OpFoldResult> srcOffsets(sizes.size(), rewriter.getIndexAttr(0));
+  int64_t tileSize = parentInsertOp.getStaticSizes()[tilingDim];
+  if (!isSubBlockBindedFor(*loop) || tileSize % kSubBlockDim == 0) {
+    auto tile = getSingleTileSize(rewriter, loc, parentInsertOp.getSource(),
+                                  tilingDim, *loop);
+    if (failed(tile))
+      return failure();
+    sizes[tilingDim] = *tile;
+    rewriter.setInsertionPointToStart(loop->getBody());
+    srcOffsets[tilingDim] = calculateOffsetAtTilingDim(
+        rewriter, loc, *loop, parentInsertOp.getSource(), tilingDim);
+    auto innerLoop = parentInsertOp->getParentOfType<scf::ForOp>();
+    rewriter.setInsertionPointToStart(innerLoop.getBody());
+    offsets[tilingDim] =
+        calculateOffsetAtTilingDim(rewriter, loc, innerLoop, *tile);
+  } else {
+    Value subBlock = loop->getInductionVar();
+    AffineExpr p, q;
+    bindDims(rewriter.getContext(), p, q);
+    OpFoldResult start = offsets[tilingDim];
+    OpFoldResult end = affine::makeComposedFoldedAffineApply(
+        rewriter, loc, p + tileSize, {start});
+    offsets[tilingDim] = getSubBlockBoundary(rewriter, loc, start, subBlock);
+    auto localEnd = getSubBlockBoundary(rewriter, loc, end, subBlock);
+    sizes[tilingDim] = affine::makeComposedFoldedAffineApply(
+        rewriter, loc, p - q, {localEnd, offsets[tilingDim]});
+    // Skip the first sub-block's portion when slicing for sub-block 1.
+    srcOffsets[tilingDim] = affine::makeComposedFoldedAffineApply(
+        rewriter, loc, p * (tileSize - q),
+        {getAsOpFoldResult(subBlock), sizes[tilingDim]});
+  }
   rewriter.setInsertionPoint(sliceOp);
-  auto newInsertSliceOp = rewriter.create<tensor::InsertSliceOp>(
-      sliceOp->getLoc(), newSrc, newDst, newInsertOffsets, newInsertSizes,
-      newInsertStrides);
-  return newInsertSliceOp;
+  auto strides = parentInsertOp.getMixedStrides();
+  auto src = rewriter.create<tensor::ExtractSliceOp>(
+      loc, parentInsertOp.getSource(), srcOffsets, sizes, strides);
+  markCreatedExtractSliceOp(rewriter, src);
+  return rewriter.create<tensor::InsertSliceOp>(loc, src, newDst, offsets,
+                                                sizes, strides);
 }
 
 static LogicalResult
@@ -1046,14 +1088,8 @@ handleExtractOfInsertSameDimCase(tensor::ExtractSliceOp sliceOp,
       sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
   markCreatedExtractSliceOp(rewriter, newDst);
 
-  auto maybeNewSrc = createNewParentOpAfterBubbledUp(rewriter, tilingDim,
-                                                     sliceOp, parentInsertOp);
-  if (failed(maybeNewSrc))
-    return failure();
-  auto newSrc = maybeNewSrc.value();
-
   auto maybeNewInsertOp = createNewInsertForExtractOfInsertSameDim(
-      rewriter, tilingDim, sliceOp, parentInsertOp, newSrc, newDst);
+      rewriter, tilingDim, sliceOp, parentInsertOp, newDst);
   if (failed(maybeNewInsertOp))
     return failure();
 

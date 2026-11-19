@@ -88,6 +88,9 @@ enum class PlanMemoryUBCopyBankMode {
 static constexpr llvm::StringLiteral kMappingAttrName = "mapping";
 static constexpr llvm::StringLiteral kMapForToForallAttrName =
     "map_for_to_forall";
+constexpr llvm::StringLiteral kTileCubeVectorLoopAttrName =
+    "hivm.tile_cube_vector_loop";
+constexpr llvm::StringLiteral kTilingDimAttrName = "hivm.tiling_dim";
 // Marks the serial loop created by SIMTVFSubTiling so generic HIVM tiling
 // helpers can treat it like other tiling loops.
 constexpr llvm::StringLiteral kSimtVFTileLoopAttrName =

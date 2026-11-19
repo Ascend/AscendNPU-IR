@@ -1121,6 +1121,45 @@ void DimensionAnalyzer::combineInferable() {
   }
 }
 
+void DimensionAnalyzer::markPartialLoopTile(scf::ForOp loop) {
+  if (!loop->hasAttrOfType<UnitAttr>(kTileCubeVectorLoopAttrName))
+    return;
+  auto dimAttr = loop->getAttrOfType<IntegerAttr>(kTilingDimAttrName);
+  if (!dimAttr || dimAttr.getInt() < 0)
+    return;
+
+  // TileCubeVectorLoop emits zero-based loops. Require an exact division to
+  // split the same axis again without introducing a dynamically sized tile.
+  auto ub = getConstantIntValue(loop.getUpperBound());
+  auto step = getConstantIntValue(loop.getStep());
+  if (ub && step && *step > 0 && *ub % *step == 0)
+    return;
+
+  uint64_t dim = dimAttr.getInt();
+  Value iv = loop.getInductionVar();
+  for (Operation *user : iv.getUsers()) {
+    Value fullTile;
+    if (auto extract = dyn_cast<tensor::ExtractSliceOp>(user))
+      fullTile = extract.getSource();
+    else if (auto insert = dyn_cast<tensor::InsertSliceOp>(user))
+      fullTile = insert.getDest();
+    else if (auto subview = dyn_cast<memref::SubViewOp>(user))
+      fullTile = subview.getSource();
+    else
+      continue;
+
+    auto offsets = cast<OffsetSizeAndStrideOpInterface>(user).getMixedOffsets();
+    if (dim >= offsets.size() || dyn_cast<Value>(offsets[dim]) != iv ||
+        !valueToDimIndicesIndex_.contains(fullTile))
+      continue;
+    auto idx = getValueDimIndices(fullTile)[dim];
+    tilingDimKindMapForCollapser[structuralDsu_->find(idx)] =
+        TilingDimensionKind::PartialLoopTile;
+    tilingDimKindMapForShape[equivalentDsu_->find(idx)] =
+        TilingDimensionKind::PartialLoopTile;
+  }
+}
+
 void DimensionAnalyzer::markDimensions() {
   requiredUbCounts.clear();
   requiredUbBuffers.clear();
@@ -1206,6 +1245,10 @@ void DimensionAnalyzer::markDimensions() {
 
   op_->walk<WalkOrder::PreOrder>([&](Operation *op) {
     TypeSwitch<Operation *>(op)
+        .Case<scf::ForOp>([this](scf::ForOp loop) {
+          if (!isRegbased)
+            markPartialLoopTile(loop);
+        })
         .Case<hivm::VReduceOp>([&](auto op) {
           // By default reduce would connect with each other
           LDBG("Trying to mark this reduce op " << op);

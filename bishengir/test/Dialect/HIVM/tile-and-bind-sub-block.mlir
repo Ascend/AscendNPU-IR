@@ -6781,3 +6781,61 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">, hivm.module_c
     return
   }
 }
+
+// -----
+
+// The final row tile has only 21 rows. Seed CV1:2 on the static column axis.
+// CHECK-LABEL: func.func @partial_row_tile_mix_aiv
+// PRE-LABEL: After tileAndSliceStore: func.func @partial_row_tile_mix_aiv
+// PRE: hivm.hir.store ins({{.*}} : tensor<210x56xf32>)
+#tail = affine_map<(d0) -> (210 - d0, 27)>
+module attributes {hacc.target = #hacc.target<"Ascend910B3">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @partial_row_tile_mix_aiv(%src: tensor<210x112xf32>, %out: memref<210x112xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : index
+    %c27 = arith.constant 27 : index
+    %c210 = arith.constant 210 : index
+    %init = tensor.empty() : tensor<210x112xf32>
+    %result = scf.for %row = %c0 to %c210 step %c27 iter_args(%acc = %init) -> (tensor<210x112xf32>) {
+      %rows = affine.min #tail(%row)
+      %slice = tensor.extract_slice %src[%row, 0] [%rows, 112] [1, 1] : tensor<210x112xf32> to tensor<?x112xf32>
+      %tile = tensor.empty(%rows) : tensor<?x112xf32>
+      %abs = hivm.hir.vabs ins(%slice : tensor<?x112xf32>) outs(%tile : tensor<?x112xf32>) -> tensor<?x112xf32>
+      %updated = tensor.insert_slice %abs into %acc[%row, 0] [%rows, 112] [1, 1] : tensor<?x112xf32> into tensor<210x112xf32>
+      scf.yield %updated : tensor<210x112xf32>
+    } {hivm.tile_cube_vector_loop, hivm.tiling_dim = 0 : i64}
+    hivm.hir.store ins(%result : tensor<210x112xf32>) outs(%out : memref<210x112xf32>)
+    return
+  }
+}
+
+// -----
+
+// Each 108-element sub-block processes eight tiles of alternating size.
+// CHECK-DAG: #[[$TILE_START:map[0-9]*]] = affine_map<(d0)[s0] -> ((-d0 + s0 * 27 + 1) floordiv 2)>
+// CHECK-DAG: #[[$TILE_SIZE:map[0-9]*]] = affine_map<(d0)[s0] -> ((-d0 + s0 * 27) floordiv 2 - (-d0 + s0 * 27 + 1) floordiv 2 + 14)>
+// CHECK-LABEL: func.func @odd_loop_tile(
+// CHECK-DAG: %[[OFFSET:[0-9]+]] = affine.apply #[[$TILE_START]]
+// CHECK-DAG: %[[SIZE:[0-9]+]] = affine.apply #[[$TILE_SIZE]]
+// CHECK: tensor.extract_slice {{.*}}[%[[OFFSET]]] [%[[SIZE]]] [1] : tensor<108xf32> to tensor<?xf32>
+// CHECK: hivm.hir.vabs
+// CHECK: tensor.insert_slice {{.*}}[%[[OFFSET]]] [%[[SIZE]]] [1] : tensor<?xf32> into tensor<108xf32>
+// CHECK: hivm.hir.store
+// CHECK: mapping = [#hivm.sub_block<x>]
+module attributes {hacc.target = #hacc.target<"Ascend910B3">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @odd_loop_tile(%src: memref<216xf32>, %dst: memref<216xf32>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix} {
+    %c0 = arith.constant 0 : index
+    %c27 = arith.constant 27 : index
+    %c216 = arith.constant 216 : index
+    %input = bufferization.to_tensor %src restrict : memref<216xf32>
+    %empty = tensor.empty() : tensor<216xf32>
+    %result = scf.for %i = %c0 to %c216 step %c27 iter_args(%out = %empty) -> (tensor<216xf32>) {
+      %tile = tensor.extract_slice %input[%i] [27] [1] : tensor<216xf32> to tensor<27xf32>
+      %init = tensor.empty() : tensor<27xf32>
+      %abs = hivm.hir.vabs ins(%tile : tensor<27xf32>) outs(%init : tensor<27xf32>) -> tensor<27xf32>
+      %updated = tensor.insert_slice %abs into %out[%i] [27] [1] : tensor<27xf32> into tensor<216xf32>
+      scf.yield %updated : tensor<216xf32>
+    }
+    hivm.hir.store ins(%result : tensor<216xf32>) outs(%dst : memref<216xf32>)
+    return
+  }
+}
