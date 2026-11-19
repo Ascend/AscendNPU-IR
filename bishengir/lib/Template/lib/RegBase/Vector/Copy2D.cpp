@@ -213,6 +213,21 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
   int64_t stride1_ub = dst->strides[1];
   int64_t stride0_gm = src->strides[0];
   int64_t stride0_ub = dst->strides[0];
+  // A reverse or repeated source row still permits independent row DMAs.
+  // Handle the aligned, unpadded case before the general negative-stride and
+  // transpose fallbacks; otherwise it would become a scalar GM->UB copy.
+  constexpr int64_t num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
+  const int64_t row_size = src->sizes[1];
+  if (stride0_gm <= 0 && stride1_gm == 1 && stride1_ub == 1 &&
+      stride0_ub >= row_size && stride0_ub % num_per_block == 0 &&
+      row_size % num_per_block == 0 &&
+      row_size <= INTRIN_MAX_BURST_LEN / sizeof(T) && left_padding_num == 0 &&
+      pad_mode == PadMode::Null) {
+    load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
+        src, dst, left_padding_num, static_cast<uint8_t>(eviction_policy));
+    return;
+  }
+
   if (stride1_gm < 0 || stride0_gm < 0 || stride1_ub < 0 || stride0_ub < 0)
       [[unlikely]] {
     load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst);

@@ -30,6 +30,21 @@ def PromoteL1Gather : HIVMPass<"hivm-promote-l1-gather", "func::FuncOp"> {
     "affine::AffineDialect"];
 }
 
+def OptimizeRowLoads : HIVMPass<"hivm-optimize-row-loads", "func::FuncOp",
+                                  [MixKernel, PureAivKernel]> {
+  let summary = "Sink row masks and pair adjacent scalar row loads";
+  let constructor = "mlir::hivm::createOptimizeRowLoadsPass()";
+  let options = [
+    Option<"enabled", "enabled", "bool", "true",
+           "Enable scalar row DMA optimization">,
+    Option<"fallbackLoop", "fallback-loop", "bool", "false",
+           "Emit the paired-row fallback as a nested two-lane parallel loop">
+  ];
+  let dependentDialects = ["affine::AffineDialect", "arith::ArithDialect",
+                           "hivm::HIVMDialect", "memref::MemRefDialect",
+                           "scf::SCFDialect", "tensor::TensorDialect"];
+}
+
 def InferFuncCoreType : HIVMPass<"hivm-infer-func-core-type", "ModuleOp"> {
   let summary = "Infer the core type of each function";
   let constructor = "mlir::hivm::createInferFuncCoreTypePass()";
