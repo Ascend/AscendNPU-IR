@@ -1855,8 +1855,20 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
     Location loc = conversion.getLoc();
     Value src = conversion.getInputs()[0];
     Value dst = conversion.getOutputs()[0];
-    // The cast dominates every user, so one buffer inserted here does too.
-    rewriter.setInsertionPoint(conversion);
+    // Delay the shared allocation within the cast's block, before every
+    // failing use or the enclosing operation that contains it.
+    Block *block = conversion->getBlock();
+    Operation *allocBefore = block->getTerminator();
+    for (OpOperand *use : failedUses) {
+      Operation *user = block->findAncestorOpInBlock(*use->getOwner());
+      if (!user) {
+        allocBefore = conversion;
+        break;
+      }
+      if (user->isBeforeInBlock(allocBefore))
+        allocBefore = user;
+    }
+    rewriter.setInsertionPoint(allocBefore);
     Value shared = utils::createEmptyOp(rewriter, loc, dst);
 
     // Dominance makes the buffer referable here; it does not make the data
@@ -1876,7 +1888,7 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
           rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, shared));
     };
     if (!getTightlyCoupledBufferId(src)) {
-      seedBefore(conversion);
+      seedBefore(allocBefore);
     } else {
       // One seed per failing op, not per failing operand: an op that names the
       // cast result twice needs one copy in front of it.
