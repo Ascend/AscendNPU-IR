@@ -28,6 +28,11 @@ arange_3d_core(__ubuf__ T *dst_ptr, int64_t size0, int64_t size1, int64_t size2,
   static_assert((sizeof(T) == 2 || sizeof(T) == 4 || sizeof(T) == 8) &&
                 "Arange_3d_core do not support this data type");
 
+  // VArange is scheduled on PIPE_V. Wait for preceding vector accesses before
+  // overwriting the destination with scalar stores.
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+
   // scalar write to UB
   // TODO: use vadds() when the last dimension is aligned
   for (int i = 0; i < size0; ++i) {
@@ -49,6 +54,10 @@ arange_3d_core(__ubuf__ T *dst_ptr, int64_t size0, int64_t size1, int64_t size2,
       }
     }
   }
+
+  // Make the scalar stores visible to following vector operations.
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
 }
 
 template <typename T,
