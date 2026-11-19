@@ -549,6 +549,9 @@ std::unique_ptr<Pass> createRemoveCopyOpsPass();
 /// on-the-fly transpose.
 std::unique_ptr<Pass> createFuseTransposeIntoLoadPass();
 
+/// Fuse supported independent operations into A6 loads.
+std::unique_ptr<Pass> createFuseOpIntoLoadPass();
+
 //===----------------------------------------------------------------------===//
 // V2 pipeline passes (see Passes.td)
 //===----------------------------------------------------------------------===//

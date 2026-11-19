@@ -56,6 +56,13 @@ class FlattenOpsRewritePattern
     // collapsed shape may lose the padding offset info.
     if (isa<hivm::LoadOp>(op.getOperation())) {
       auto loadOp = cast<hivm::LoadOp>(op.getOperation());
+      // Broadcast axes and span padding describe the original rank-2/3
+      // dimensions. Uniform collapse neither remaps the axes nor preserves
+      // the per-row right padding count, so keep these loads rank-preserving.
+      if (loadOp.getBroadcastAxesAttr() || loadOp.isSpanPaddedLoad())
+        return rewriter.notifyMatchFailure(
+            op, "LoadOp with broadcast axes or in-row span padding");
+
       auto leftPad = loadOp.getLeftPaddingNum();
       if (leftPad) {
         auto constIdx = leftPad.getDefiningOp<arith::ConstantIndexOp>();

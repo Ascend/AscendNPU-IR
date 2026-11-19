@@ -17,6 +17,7 @@
 
 #include "bishengir/Dialect/HFusion/Transforms/Flattener/Flattener.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/TensorView/IR/TensorViewDialect.h"
 
 using namespace mlir;
@@ -89,9 +90,17 @@ LogicalResult Flattener::flatten(bool multiDynamicShape) {
   auto result = initialize();
   if (failed(result))
     return success();
-  // TensorView tile axes retain their logical ranks.
+  // TensorView tile axes and broadcast/span load axes retain their logical
+  // ranks. Disconnect both load operands before propagating collapse
+  // constraints, so producers (including memory_space_cast) cannot collapse
+  // only the source. Unrelated dimension groups remain available for
+  // flattening.
   op_->walk([&](Operation *op) {
-    if (!isa<tv::ViewLoadOp, tv::ViewStoreOp>(op))
+    auto loadOp = dyn_cast<hivm::LoadOp>(op);
+    bool preserveLoadRank =
+        options.registerBased && loadOp &&
+        (loadOp.getBroadcastAxesAttr() || loadOp.isSpanPaddedLoad());
+    if (!isa<tv::ViewLoadOp, tv::ViewStoreOp>(op) && !preserveLoadRank)
       return;
     for (Value value :
          llvm::concat<Value>(op->getOperands(), op->getResults())) {

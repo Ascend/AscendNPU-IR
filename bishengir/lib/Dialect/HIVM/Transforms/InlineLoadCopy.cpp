@@ -254,6 +254,39 @@ static bool hasInterveningMemoryEffect(Value src, hivm::LoadOp matchedLoad,
   return false;
 }
 
+// Prove a plain copy and a statically identical replacement destination.
+// Equal types include shape, element type, memory space and layout; dynamic
+// descriptor fields are not an equality proof. Load semantics stay on the load.
+static bool canRetargetBroadcastLoad(hivm::CopyOp copy) {
+  if (copy.getPadValue() ||
+      (copy.getPadMode() &&
+       copy.getPadModeAttr().getPadmode() != PadMode::PadNull))
+    return false;
+
+  auto srcType = dyn_cast<MemRefType>(copy.getSrc().getType());
+  auto dstType = dyn_cast<MemRefType>(copy.getDst().getType());
+  if (!srcType || srcType != dstType || !srcType.hasStaticShape())
+    return false;
+
+  // Identity reassociation is only a marker; other collapses are not proved
+  // equivalent here and retain the original copy.
+  if (copy.getCollapseReassociation()) {
+    auto groups = copy.getReassociationIndices(/*isCollapse=*/true);
+    if (groups.size() != static_cast<size_t>(srcType.getRank()))
+      return false;
+    for (auto [axis, group] : llvm::enumerate(groups))
+      if (group.size() != 1 || group.front() != static_cast<int64_t>(axis))
+        return false;
+  }
+
+  SmallVector<int64_t> strides;
+  int64_t offset;
+  return succeeded(
+             utils::getStridesAndOffsetCompat(srcType, strides, offset)) &&
+         !ShapedType::isDynamic(offset) &&
+         llvm::none_of(strides, ShapedType::isDynamic);
+}
+
 struct LoadCopyInlinePattern : public OpRewritePattern<hivm::CopyOp> {
   using OpRewritePattern<hivm::CopyOp>::OpRewritePattern;
 
@@ -282,6 +315,10 @@ struct LoadCopyInlinePattern : public OpRewritePattern<hivm::CopyOp> {
           copyOp, "no LoadOp found that writes into copy src");
     }
 
+    if (matchedLoad.getBroadcastAxesAttr() && !canRetargetBroadcastLoad(copyOp))
+      return rewriter.notifyMatchFailure(copyOp,
+                                         "cannot retarget broadcast load");
+
     if (CopyBeforeLoad(matchedLoad, copyOp)) {
       return rewriter.notifyMatchFailure(copyOp,
                                          "copy and load are not in order");
@@ -300,6 +337,16 @@ struct LoadCopyInlinePattern : public OpRewritePattern<hivm::CopyOp> {
     if (loadSrcEffected) {
       return rewriter.notifyMatchFailure(
           copyOp, "Cannot optimize, source buffer is used");
+    }
+
+    if (matchedLoad.getBroadcastAxesAttr()) {
+      // All fallible checks precede the clone. Preserve every load operand and
+      // attribute; only its destination changes, at the existing copy position.
+      auto load = cast<hivm::LoadOp>(rewriter.clone(*matchedLoad));
+      load.getDstMutable().assign(copyOp.getDst());
+      rewriter.eraseOp(copyOp);
+      rewriter.eraseOp(matchedLoad);
+      return success();
     }
 
     rewriter.replaceOpWithNewOp<hivm::LoadOp>(
