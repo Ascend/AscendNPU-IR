@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/CustomOp/CustomOpUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -89,15 +90,46 @@ class FlattenOpsRewritePattern
       return rewriter.notifyMatchFailure(op, "Identity reassociation");
     auto inputReassociation = res->getInputReassociation();
     auto initReassociation = res->getInitReassociation();
-    IRMapping newValueMapping;
+    // Operands to collapse, and the role each was first seen in. Temp buffers
+    // of a custom op are scratch memory outside the iteration space: their
+    // shape is unrelated to the collapsed dimensions, and the flatten analysis
+    // excludes them as well (`getHIVMOperands(false)`).
+    SmallVector<OpOperand *> toCollapse;
+    DenseMap<Value, bool> collapseAsInput;
     for (OpOperand &operand : op->getOpOperands()) {
-      const auto &reassociation =
-          (op.isDpsInput(&operand) ? inputReassociation : initReassociation);
-      if (isa<MemRefType>(operand.get().getType())) {
-        auto collapsedOperand = rewriter.create<memref::CollapseShapeOp>(
-            op.getLoc(), operand.get(), reassociation);
-        newValueMapping.map(operand.get(), collapsedOperand);
+      if (!isa<MemRefType>(operand.get().getType()))
+        continue;
+      if (hivm::isCustomLikeTempBuffer(op.getOperation(), &operand))
+        continue;
+      bool isInput = op.isDpsInput(&operand);
+      auto seen = collapseAsInput.find(operand.get());
+      if (seen == collapseAsInput.end()) {
+        collapseAsInput[operand.get()] = isInput;
+        toCollapse.push_back(&operand);
+        continue;
       }
+    }
+    // The clone substitutes by value, so a reused operand can only carry one
+    // replacement. Check for conflicting roles only when their reassociations
+    // differ, before creating any collapse operations.
+    if (inputReassociation != initReassociation) {
+      for (OpOperand &operand : op->getOpOperands()) {
+        if (!isa<MemRefType>(operand.get().getType()))
+          continue;
+        if (hivm::isCustomLikeTempBuffer(op.getOperation(), &operand))
+          continue;
+        if (collapseAsInput.lookup(operand.get()) != op.isDpsInput(&operand))
+          return rewriter.notifyMatchFailure(
+              op, "operand reused across roles with different reassociations");
+      }
+    }
+    IRMapping newValueMapping;
+    for (OpOperand *operand : toCollapse) {
+      const auto &reassociation =
+          (op.isDpsInput(operand) ? inputReassociation : initReassociation);
+      auto collapsedOperand = rewriter.create<memref::CollapseShapeOp>(
+          op.getLoc(), operand->get(), reassociation);
+      newValueMapping.map(operand->get(), collapsedOperand);
     }
     Operation *clonedOperation =
         rewriter.clone(*op.getOperation(), newValueMapping);
@@ -109,7 +141,7 @@ class FlattenOpsRewritePattern
     rewriter.replaceOp(op, clonedOperation);
     LDBG((clonedOperation->getParentOp() ? *(clonedOperation->getParentOp())
                                          : *clonedOperation));
-    return failure();
+    return success();
   }
 };
 struct FlattenOpsPass : public impl::HIVMFlattenOpsBase<FlattenOpsPass> {

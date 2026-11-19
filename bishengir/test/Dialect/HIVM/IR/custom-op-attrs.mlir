@@ -50,6 +50,31 @@ func.func @custom_indexing_map_named_maps(%arg0: memref<2x2xf32>, %arg1: tensor<
 
 // -----
 
+// Per-rank implementations for hivm-flatten-ops.
+
+func.func @custom_flatten_symbols(%arg0: memref<2x2xf32>, %arg1: memref<2x2xf32>)
+    attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  hivm.hir.custom
+      {hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+       hivm.pipe = #hivm.pipe<PIPE_V>,
+       hivm.vf_mode = #hivm.vf_mode<SIMD>,
+       symbol = "k_flatten_2d",
+       flatten_ranks = [1 : i64],
+       flatten_symbols = ["k_flatten_1d"],
+       iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>]}
+      "user.flatten"
+      ins(%arg0 : memref<2x2xf32>)
+      outs(%arg1 : memref<2x2xf32>)
+  return
+}
+
+// CHECK-LABEL: func.func @custom_flatten_symbols
+// CHECK:       flatten_ranks = [1]
+// CHECK-SAME:  flatten_symbols = ["k_flatten_1d"]
+// CHECK-SAME:  symbol = "k_flatten_2d"
+
+// -----
+
 // Extra buffer type/size attributes (used by hivm-alloc-extra-buffer for CustomOp).
 
 func.func @custom_extra_buffer_attrs_single(%arg0: memref<1xf32>, %arg1: tensor<1xf32>)
