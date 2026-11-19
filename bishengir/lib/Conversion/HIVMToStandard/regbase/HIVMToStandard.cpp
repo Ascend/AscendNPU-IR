@@ -2716,6 +2716,29 @@ public:
   }
 };
 
+class StrideLoadOpToLibraryCallPattern
+    : public OpRewritePattern<hivm::StrideLoadOp> {
+public:
+  using OpRewritePattern<hivm::StrideLoadOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::StrideLoadOp op,
+                                PatternRewriter &rewriter) const final {
+    SmallVector<Value> operands(op->getOperands());
+    Type elemType = getElementTypeOrSelf(op.getSrc().getType());
+    if (elemType.isFloat8E4M3FN() || elemType.isFloat8E5M2()) {
+      auto otherIndex = op.getOtherMutable().getOperandNumber();
+      operands[otherIndex] = rewriter.create<arith::BitcastOp>(
+          op.getLoc(), rewriter.getI8Type(), op.getOther());
+    }
+
+    replaceWithLibCall(rewriter, op,
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       operands, {});
+    return success();
+  }
+};
+
 void populateHIVMToStandardConversionPatternsRegBase(
     RewritePatternSet &patterns, bool isOpsAligned) {
   // clang-format off
@@ -2785,7 +2808,7 @@ void populateHIVMToStandardConversionPatternsRegBase(
                SyncBlockOpToLibraryCallPattern<hivm::FreeLockVarOp>,
                SIMTOpToLibraryCallPattern<hivm::EmbeddingGatherOp>,
                SIMTOpToLibraryCallPattern<hivm::IndirectLoadOp>,
-               SIMTOpToLibraryCallPattern<hivm::StrideLoadOp>,
+               StrideLoadOpToLibraryCallPattern,
                SIMTOpToLibraryCallPattern<hivm::StrideStoreOp>,
                SIMTOpToLibraryCallPattern<hivm::IndirectStoreOp>,
                SIMTOpToLibraryCallPattern<hivm::GatherTOp>,
