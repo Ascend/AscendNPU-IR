@@ -22,6 +22,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/MemRef/Transforms/ComposeSubView.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Utils/IndexingUtils.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/PatternMatch.h"
@@ -35,6 +36,7 @@
 #include "llvm/Support/LogicalResult.h"
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/NDDMA/ComposeUnitStrideSubview.h"
@@ -323,6 +325,120 @@ static void applyPadFillPolicy(PadFillPolicy policy, TileView &dst,
   }
 }
 
+/// Field widths of the NDDMA descriptor (nddma_desc in
+/// __clang_cce_aicore_functions.h: loop0 .. loop4, each with a 20-bit size and
+/// a 40-bit source stride).
+///
+/// Only the source-side widths are needed here; the destination stride and the
+/// padding are checked by the template at run time.
+struct NddmaDescLimits {
+  static constexpr int64_t kLoops = 5;
+  static constexpr int64_t kSizeBits = 20;
+  static constexpr int64_t kSrcStrideBits = 40;
+};
+
+/// Whether the transpose can be represented by an NDDMA load permutation:
+/// any non-identity permutation with rank in [2, NddmaDescLimits::kLoops].
+static bool isSupportedNDDMAPermutation(ArrayRef<int64_t> permutation) {
+  const int64_t rank = static_cast<int64_t>(permutation.size());
+  if (rank < 2 || rank > NddmaDescLimits::kLoops)
+    return false;
+  // Reject entries that are not dimension indices first: the shared helper
+  // asserts non-negativity and only checks uniqueness, not the range.
+  if (llvm::any_of(permutation,
+                   [rank](int64_t dim) { return dim < 0 || dim >= rank; }))
+    return false;
+  if (!isPermutationVector(permutation))
+    return false;
+  // An identity permutation has nothing to fuse.
+  for (int64_t dim = 0; dim < rank; ++dim) {
+    if (permutation[dim] != dim)
+      return true;
+  }
+  return false;
+}
+
+/// Whether the permutation leaves the last (innermost) axis in place.
+static bool permutationKeepsLastAxis(ArrayRef<int64_t> permutation) {
+  const int64_t rank = static_cast<int64_t>(permutation.size());
+  return rank > 0 && permutation[rank - 1] == rank - 1;
+}
+
+/// How a fused permutation reaches the DMA templates. A6 adds one class on top
+/// of the historical last-two-dim swap; other targets accept only that one.
+/// The template cannot tell the two tail classes apart - only the strides
+/// matter - and both leave the fused source without a unit-stride innermost
+/// axis, so NDDMA is their only engine. Only InnerAxisSwap leaves the template
+/// a choice; the pass keeps the tail classes apart because admission, rank cap
+/// and the descriptor check differ.
+///
+///   LastTwoDim    [1,0], [0,2,1], [0,1,3,2], [0,1,2,4,3]
+///                 the tail axis is moved one place down
+///   InnerAxisSwap [1,0,2], [0,2,1,3], [0,1,3,2,4]
+///                 the tail axis stays in place, so rows stay contiguous:
+///                 block DMA for 32B-aligned rows, else NDDMA
+///   TailSplit     [2,1,0], [0,3,2,1], [4,1,2,3,0]
+///                 the tail axis is moved further out, not into the rank-2
+///                 slot; NDDMA-only, and its descriptor bounds are checked
+///                 before fusing
+///
+/// All classes: a single load in the alias tree, no padding on the load, a
+/// contiguous tile, and the load dominating to_tensor. Rank <= 5 applies to the
+/// two A6-only classes; the last-two-dim swap keeps its historical rank.
+enum class PermutationKind { LastTwoDim, InnerAxisSwap, TailSplit };
+
+/// Classify `perm` for the target described by `module`; std::nullopt means the
+/// permutation must stay as a linalg.transpose.
+///
+/// This is the only place that knows which generation accepts what: adding a
+/// target means extending the gate below, nothing else.
+static std::optional<PermutationKind>
+classifyPermutation(ModuleOp module, ArrayRef<int64_t> perm) {
+  if (isLastTwoDimTranspose(perm))
+    return PermutationKind::LastTwoDim;
+
+  // ---- generation gate: extend here for new targets ----
+  if (!module || !hacc::utils::isAscend960(module))
+    return std::nullopt;
+
+  if (!isSupportedNDDMAPermutation(perm))
+    return std::nullopt;
+  return permutationKeepsLastAxis(perm) ? PermutationKind::InnerAxisSwap
+                                        : PermutationKind::TailSplit;
+}
+
+/// Source-side descriptor check for the tail-split scenario
+/// (PermutationKind::TailSplit). A tail split leaves NDDMA as the only engine,
+/// and an unrepresentable tile would have its descriptor fields truncated
+/// silently, so such a transpose must not be fused. The destination needs no
+/// check (fresh contiguous tile); the template's canFitNddmaDescriptor covers
+/// it, plus padding.
+static bool canPermutedSourceFitNddma(const TileView &srcTile,
+                                      ArrayRef<int64_t> srcPerm,
+                                      unsigned elementBytes) {
+  // No 64-bit NDDMA instantiation.
+  constexpr int64_t kMaxSize = (int64_t{1} << NddmaDescLimits::kSizeBits) - 1;
+  constexpr int64_t kMaxSrcStride =
+      (int64_t{1} << NddmaDescLimits::kSrcStrideBits) - 1;
+  if (elementBytes == 0 || elementBytes > 4)
+    return false;
+  MemRefType type = srcTile.viewType;
+  if (type.getRank() != static_cast<int64_t>(srcPerm.size()))
+    return false;
+  SmallVector<int64_t> strides;
+  int64_t offset = 0;
+  if (failed(getStridesAndOffset(type, strides, offset)))
+    return false;
+  for (int64_t dim : srcPerm) {
+    if (type.isDynamicDim(dim) || type.getShape()[dim] > kMaxSize)
+      return false;
+    const int64_t stride = strides[dim];
+    if (ShapedType::isDynamic(stride) || stride < 0 || stride > kMaxSrcStride)
+      return false;
+  }
+  return true;
+}
+
 struct FuseTransposeIntoLoadPattern
     : public OpRewritePattern<linalg::TransposeOp> {
   using OpRewritePattern<linalg::TransposeOp>::OpRewritePattern;
@@ -332,11 +448,13 @@ struct FuseTransposeIntoLoadPattern
   LogicalResult matchAndRewrite(linalg::TransposeOp transposeOp,
                                 PatternRewriter &rewriter) const override {
     ArrayRef<int64_t> perm = transposeOp.getPermutation();
-    if (!isLastTwoDimTranspose(perm)) {
-      // Only fuse last-two-dim transpose to nddma.
-      // TODO: should we support arbitrary permuations?
+    auto moduleOp = transposeOp->getParentOfType<ModuleOp>();
+    // Which permutation classes this target fuses is decided in one place; the
+    // rest of the pattern only switches on the resulting kind.
+    const auto kind = classifyPermutation(moduleOp, perm);
+    if (!kind) {
       return rewriter.notifyMatchFailure(transposeOp,
-                                         "expected last-two-dim transpose");
+                                         "unsupported transpose permutation");
     }
 
     Value input = transposeOp.getDpsInputOperand(0)->get();
@@ -388,14 +506,37 @@ struct FuseTransposeIntoLoadPattern
     LDBG("loadSrcTile: " << *loadSrcTile);
     LDBG("loadDstTile: " << *loadDstTile);
 
+    // Tail-split loads have no block-DMA path, so an unrepresentable tile would
+    // fall back to scalar; refuse the fusion instead.
+    if (*kind == PermutationKind::TailSplit) {
+      const Type elementType = loadSrcTile->rootType.getElementType();
+      const unsigned elementBytes =
+          elementType.isIntOrFloat() ? elementType.getIntOrFloatBitWidth() / 8
+                                     : 0;
+      if (!canPermutedSourceFitNddma(*loadSrcTile, perm, elementBytes)) {
+        return rewriter.notifyMatchFailure(
+            transposeOp, "NDDMA cannot represent the permuted load");
+      }
+    }
+
     rewriter.setInsertionPoint(loadOp);
 
-    ViewPermutator srcPermutator(
-        *loadSrcTile,
-        getLastTwoDimPermutation(loadSrcTile->viewType.getRank()));
-    ViewPermutator dstPermutator(
-        *loadDstTile,
-        getLastTwoDimPermutation(loadDstTile->viewType.getRank()));
+    // Replay the permutation on a tile view. The historical last-two-dim path
+    // swaps the last two dims of the view, which adapts to rank-reduced views;
+    // the permutations that only A6 fuses are replayed verbatim, which is valid
+    // because LoadOp requires src and dst to share a rank and
+    // verifyLoadTileCompatibleWithPermTile pins the load tile to the transpose
+    // rank.
+    auto tilePermutation = [&](const TileView &tile) {
+      if (*kind == PermutationKind::LastTwoDim)
+        return getLastTwoDimPermutation(tile.viewType.getRank());
+      return SmallVector<int64_t>(perm.begin(), perm.end());
+    };
+    auto srcPerm = tilePermutation(*loadSrcTile);
+    auto dstPerm = tilePermutation(*loadDstTile);
+
+    ViewPermutator srcPermutator(*loadSrcTile, srcPerm);
+    ViewPermutator dstPermutator(*loadDstTile, dstPerm);
     if (!srcPermutator.canPermute() || !dstPermutator.canPermute()) {
       return rewriter.notifyMatchFailure(transposeOp,
                                          "failed to permute load tiles");
@@ -410,10 +551,9 @@ struct FuseTransposeIntoLoadPattern
     auto toTensorSrc = toTensorOp.getMemref();
     if (auto subview = toTensorSrc.getDefiningOp<memref::SubViewOp>()) {
       TileView subviewTile{subview};
+      auto subviewPerm = tilePermutation(subviewTile);
       TileView newSubviewTile =
-          ViewPermutator(subviewTile, getLastTwoDimPermutation(
-                                          subviewTile.viewType.getRank()))
-              .permute(rewriter);
+          ViewPermutator(subviewTile, subviewPerm).permute(rewriter);
       TileView::unifyRoot(newSubviewTile, newLoadDstTile, rewriter);
       newMemref = newSubviewTile.view;
     }
