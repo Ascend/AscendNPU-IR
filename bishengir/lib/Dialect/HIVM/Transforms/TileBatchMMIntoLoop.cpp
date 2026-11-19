@@ -114,8 +114,9 @@ traceBatchChainToFixpipe(Operation *op, int64_t batchDim,
 }
 
 RankedTensorType extractNonBatchType(RankedTensorType originType) {
-  if (originType.getRank() != 3)
-    llvm::report_fatal_error("current RankedTensorType must be 3D");
+  if (originType.getRank() < 3)
+    llvm::report_fatal_error(
+        "current RankedTensorType must contain a batch dimension");
 
   // Drop batch dimension
   return RankedTensorType::get(originType.getShape().drop_front(),
