@@ -264,6 +264,8 @@ std::unique_ptr<Pass> createHIVMCanonicalizationPipelinePass();
 // run before createSetBufferSizePass, which consumes the inserted marks.
 std::unique_ptr<Pass> createInferBufferSizeFromSlicePass();
 
+std::unique_ptr<Pass> createPromoteL1GatherPass();
+
 // Create a pass to set buffer size
 std::unique_ptr<Pass> createSetBufferSizePass();
 

@@ -147,6 +147,9 @@ static void preProcess(OpPassManager &pm,
                        const HFusionPipelineOptions &options) {
   pm.nest<func::FuncOp>().addPass(createUpliftWhileToForPass());
 
+  if (options.enableTritonKernelCompile)
+    pm.nest<func::FuncOp>().addPass(createPrepareL1GatherPass());
+
   LegalizeBoolPassOptions clampOptions;
   clampOptions.enableClamp = true;
   pm.addPass(createLegalizeBoolPass(clampOptions));

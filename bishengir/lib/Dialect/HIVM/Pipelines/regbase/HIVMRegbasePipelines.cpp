@@ -476,6 +476,7 @@ static void hivmPreBufferizationOptimizationPipeline(
         hivmPipelineOptions.inlineQuantScaleInFixpipe;
     pm.addPass(mlir::hivm::createInlineFixpipePass(inlineFixpipeOpts));
   }
+  pm.nest<func::FuncOp>().addPass(createPromoteL1GatherPass());
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
   convertTensorToTightCoupledBuffer(pm);
   if (hivmPipelineOptions.enableLayoutOptimization) {

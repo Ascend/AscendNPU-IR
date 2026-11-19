@@ -1383,6 +1383,14 @@ def HIVM_ParallelLoopAttr : HIVM_Attr<"ParallelLoop", "parallel_loop"> {
   }];
 }
 
+def HIVM_EnableL1GatherAttr : HIVM_Attr<"EnableL1Gather", "enable_l1_gather"> {
+  let description = [{
+    Opt in to direct GM-to-L1 gathering for a tensor consumed by matmul.
+    Set by compile_hint(tensor, "hivm.enable_l1_gather", true).
+    Unsupported access patterns retain their original lowering.
+  }];
+}
+
 def HIVM_CVPipelinedLoopAttr
     : HIVM_Attr<"CVPipelinedLoop", "cv_pipelined_loop"> {
   let description = [{

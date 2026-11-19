@@ -20,6 +20,15 @@
 
 include "mlir/Pass/PassBase.td"
 
+def PrepareL1Gather : Pass<"hfusion-prepare-l1-gather", "func::FuncOp"> {
+  let summary = "Normalize explicitly hinted row gathers before legalization";
+  let constructor = "mlir::hfusion::createPrepareL1GatherPass()";
+  let dependentDialects = ["annotation::AnnotationDialect", "arith::ArithDialect",
+    "bufferization::BufferizationDialect", "hivm::HIVMDialect",
+    "linalg::LinalgDialect", "memref::MemRefDialect", "scf::SCFDialect",
+    "tensor::TensorDialect", "affine::AffineDialect"];
+}
+
 def HFusionOpFusion : Pass<"hfusion-fuse-ops", "ModuleOp"> {
   let summary = "HFusion Fuse operations on tensors";
   let constructor = "hfusion::createHFusionOpFusionPass()";

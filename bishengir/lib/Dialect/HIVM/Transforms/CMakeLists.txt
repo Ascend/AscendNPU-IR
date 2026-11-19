@@ -36,6 +36,7 @@ set(HIVM_VECTORIZE_SEQUENCE "\"${HIVM_VECTORIZE_SEQUENCE}\"")
 configure_file(HIVMVectorize/HIVMVectorize.inc.in HIVMVectorize/HIVMVectorize.inc @ONLY)
 
 add_bishengir_dialect_library(BiShengIRHIVMTransforms
+  PromoteL1Gather.cpp
   ${Mix_PASSES}
   ${ALIGN_BUFFER}
   ${BUBBLE_UP_EXTRACT_SLICE}
@@ -216,6 +217,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   LINK_LIBS PUBLIC
   BiShengIRArithTransforms
   BiShengIRVectorTransforms
+  MLIRArithValueBoundsOpInterfaceImpl
   MLIRAffineDialect
   MLIRAffineTransforms
   MLIRAnalysis
