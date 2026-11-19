@@ -1549,14 +1549,15 @@ struct ConstantOpToHivmVCIVCPLowering
       if (processValue(i, quotients[i].getSExtValue(), PATTERN_LIST) == 0)
         return failure();
     }
-    Operation *defineOp = nullptr;
-    if (p_vci)
-      defineOp =
-          p_vci.createInstr(rewriter, constantOp.getLoc(), denseAttr.getType(),
-                            tileElementType, mulValue, addValue);
-    else
-      llvm::report_fatal_error(
-          "TODO implement arith.constant dense -> VCP lowering");
+    // VCP-only matches are not implemented here. Let other patterns, such as
+    // segmented VCI lowering, try the constant before creating any IR.
+    if (!p_vci)
+      return rewriter.notifyMatchFailure(
+          constantOp, "VCP-only constant is not supported by this lowering");
+
+    Operation *defineOp =
+        p_vci.createInstr(rewriter, constantOp.getLoc(), denseAttr.getType(),
+                          tileElementType, mulValue, addValue);
     if (defineOp == nullptr)
       return failure();
 
@@ -1726,8 +1727,11 @@ struct ConstantOpToHivmSegmentedVCILowering
       if (stepAt < 0)
         break;
 
-      // Segments must tile the vector evenly, and there must be >= 2 of them.
-      if (n % stepAt != 0 || n / stepAt < 2)
+      // Require the first boundary to be followed by one complete segment,
+      // rather than inferring a staircase from a jump near the end.  A later
+      // final segment may be partial: masked gathers commonly end their active
+      // prefix in the middle of one.
+      if (n / stepAt < 2)
         return std::nullopt;
       if (static_cast<int64_t>(form.terms.size()) >= kMaxGapTerms)
         return std::nullopt;
