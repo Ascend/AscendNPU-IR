@@ -1586,17 +1586,16 @@ private:
       return;
     }
 
-    // Both pad counts are absent-means-zero.
-    Value zero =
-        rewriter.create<arith::ConstantIndexOp>(op->getLoc(), 0).getResult();
+    // calculate left padding num
     Value leftPaddingNum =
-        op.getLeftPaddingNum() ? op.getLeftPaddingNum() : zero;
-    Value rightPaddingNum =
-        op.getRightPaddingNum() ? op.getRightPaddingNum() : zero;
+        op.getLeftPaddingNum()
+            ? op.getLeftPaddingNum()
+            : rewriter.create<arith::ConstantIndexOp>(op->getLoc(), 0)
+                  .getResult();
     inputOperands.push_back(leftPaddingNum);
-    inputOperands.push_back(rightPaddingNum);
+    if (op.isSpanPaddedLoad())
+      inputOperands.push_back(op.getRightPaddingNum());
   }
-
   void addPadOperands(PatternRewriter &rewriter, CopyOpType op,
                       SmallVector<Value> &inputOperands,
                       std::pair<bool, bool> pad) const {
