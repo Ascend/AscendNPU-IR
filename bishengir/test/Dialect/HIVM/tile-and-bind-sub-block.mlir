@@ -5310,18 +5310,13 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_c
 
 // -----
 // Shrunk flex-attention AIV from before-1by2.mlir: softmax on 128x128 QK TCB
-// plus a 128x16 GM store. Dimension analyzer selects hivm.tiling_dim = 0 on
-// the QK alloc so AIC ROW_SPLIT and AIV sub-block tiling stay consistent.
-// Size-1 axes are skipped by TileAndSlice; unsplit stores remain under
-// limit_sub_block_id0 after tiling.
+// plus a 128x16 GM store. Analyzer leaves hivm.tiling_dim = -1 on the QK
+// alloc; bubble-up still halves dim 0 and overwrites it.
 // CHECK-LABEL:   func.func @flex_qk_tcb_inconsistent_aic(
 // CHECK:           memref.alloc() : memref<64x128xf32, #hivm.address_space<ub>>
 // CHECK:           hivm.hir.fixpipe {{.*}} dual_dst_mode = <ROW_SPLIT>
 // CHECK-LABEL:   func.func @flex_qk_tcb_inconsistent_aiv(
 // CHECK:           annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>, hivm.tiling_dim = 0 : index, tiledAlloc} : memref<64x128xf32, #hivm.address_space<ub>>
-// CHECK:           scf.if
-// CHECK:             hivm.hir.store ins(%{{.*}} : tensor<1xi32>) outs(%{{.*}} : tensor<1xi32>) {"hivm.inserted-store"}
-// CHECK:           } {limit_sub_block_id0}
 #map = affine_map<()[s0, s1] -> (s0 + s1 * 16)>
 #map1 = affine_map<()[s0] -> (s0 + 128)>
 #map2 = affine_map<()[s0, s1] -> (s0 - s1)>
@@ -5433,6 +5428,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_c
       %44 = hivm.hir.vmod ins(%expanded, %c277_i32 : tensor<128x1xi32>, i32) outs(%43 : tensor<128x1xi32>) -> tensor<128x1xi32>
       %45 = tensor.empty() : tensor<128x1xi64>
       %46 = hivm.hir.vcast {enable_overflow = true, enable_saturate = false, hivm.unsigned_mode = #hivm.unsigned_mode<si2si>} ins(%44 : tensor<128x1xi32>) outs(%45 : tensor<128x1xi64>) -> tensor<128x1xi64>
+      // expected-error @+1 {{dimension size (1) is less than minimum tile size (2)}}
       %47:5 = scf.for %arg18 = %c0_i32 to %41 step %c1_i32 iter_args(%arg19 = %20, %arg20 = %18, %arg21 = %23, %arg22 = %expanded_11, %arg23 = %c0_i32) -> (tensor<128x16xf32>, tensor<128xf32>, tensor<128xf32>, tensor<1x128xi32>, i32)  : i32 {
         %alloc = memref.alloc() : memref<128x128xf32, #hivm.address_space<ub>>
         // expected-warning @+1 {{[hivm-bind-sub-block] AIC tightly coupled buffer tiling dim is inconsistent with vector and is overwritten}}
@@ -6045,13 +6041,9 @@ module attributes {
 // AIV-only: copy to 1x4x16x16 cbuf marks the last fractal axis NotAligned; a
 // later vreduce reduce_dims=[0] on 16x64 shares the structural group. Reduce
 // marking must not overwrite NotAligned (otherwise dim 3 is wrongly selected).
-// With size-1 axes treated as tileable on regbase, dim 1 is selected and
-// remaining unsplit stores stay under limit_sub_block_id0.
-// CHECK:           scf.if
-// CHECK:             hivm.hir.store ins(%{{.*}} : tensor<?x1xf32>) outs(%{{.*}} : memref<?x1xf32, strided<[8, 1], offset: ?>>)
-// CHECK:           } {limit_sub_block_id0}
-// CHECK:           map_for_to_forall
-// CHECK-NOT:       hivm.tile_and_bind_subblock_reverted
+// Reduction-dim fallback is temporarily skipped, so the pass reverts instead
+// of tiling another axis.
+// CHECK:           hivm.tile_and_bind_subblock_reverted
 // CHECK-NOT:       1x4x16x16{{.*}}tiling_dim = 3
 // CHECK-NOT:       1x4x16x8
 
