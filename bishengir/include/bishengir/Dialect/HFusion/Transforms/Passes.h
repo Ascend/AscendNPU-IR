@@ -55,6 +55,8 @@ namespace hfusion {
 
 constexpr llvm::StringLiteral kFillVFAttrName = "hfusion.has_fill";
 
+std::unique_ptr<Pass> createPrepareL1GatherPass();
+
 class OutlineFuncOptions : public HFusionOpFusionOptions {
 public:
   OutlineFuncOptions(const HFusionOpFusionOptions &options, func::FuncOp funcOp)
