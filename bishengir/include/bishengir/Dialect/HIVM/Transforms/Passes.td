@@ -2070,6 +2070,10 @@ def DecomposeAllocTensorCopy
     `hivm.hir.copy` carries an in-place write, keeping the write visible to
     the following conflict analysis.
 
+    On AIC kernels, copies of broadcast results are instead rewritten as a
+    fresh allocation plus a clone of the broadcast writing into it, avoiding
+    hivm::copyOp in AIC kernel.
+
     allocTensorCopyOp should be decomposed before RaW conflict analysis pass
     (TensorCopyInsertion and OneShotBufferize)
   }];
