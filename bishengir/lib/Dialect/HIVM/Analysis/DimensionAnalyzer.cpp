@@ -486,8 +486,8 @@ DimensionAnalyzer::getHigherDimCounts(ArrayRef<Dimension> candidate,
 
 bool DimensionAnalyzer::isValidTilingSize(int64_t dim) const {
   if (isRegbased)
-    return !ShapedType::isDynamic(dim);
-  return !ShapedType::isDynamic(dim) && dim % tilingSize == 0;
+    return !ShapedType::isDynamic(dim) && dim != 1;
+  return !ShapedType::isDynamic(dim) && dim % 2 == 0;
 }
 
 template <typename StoreOpTy>
