@@ -23,18 +23,19 @@ constexpr uint32_t STRIDE_STORE_THREAD_NUM = 1024;
 
 template <typename DTYPE>
 struct IsStrideStoreDTypeSupported {
-  static constexpr bool value =
-      std::is_same<DTYPE, float>::value ||
-      std::is_same<DTYPE, half>::value ||
-      std::is_same<DTYPE, bfloat16_t>::value ||
-      std::is_same<DTYPE, int8_t>::value ||
-      std::is_same<DTYPE, int16_t>::value ||
-      std::is_same<DTYPE, int32_t>::value ||
-      std::is_same<DTYPE, int64_t>::value ||
-      std::is_same<DTYPE, uint8_t>::value ||
-      std::is_same<DTYPE, uint16_t>::value ||
-      std::is_same<DTYPE, uint32_t>::value ||
-      std::is_same<DTYPE, uint64_t>::value;
+  static constexpr bool value = std::is_same<DTYPE, float>::value ||
+                                std::is_same<DTYPE, half>::value ||
+                                std::is_same<DTYPE, bfloat16_t>::value ||
+                                std::is_same<DTYPE, int8_t>::value ||
+                                std::is_same<DTYPE, int16_t>::value ||
+                                std::is_same<DTYPE, int32_t>::value ||
+                                std::is_same<DTYPE, int64_t>::value ||
+                                std::is_same<DTYPE, uint8_t>::value ||
+                                std::is_same<DTYPE, uint16_t>::value ||
+                                std::is_same<DTYPE, uint32_t>::value ||
+                                std::is_same<DTYPE, uint64_t>::value ||
+                                std::is_same<DTYPE, float8_e4m3_t>::value ||
+                                std::is_same<DTYPE, float8_e5m2_t>::value;
 };
 
 __aiv__ __attribute__((always_inline)) static int32_t
@@ -143,8 +144,9 @@ stride_store_1d(memref_t<__gm__ DTYPE, 1> *dst,
                 ITYPE numel) {
   static_assert(IsStrideStoreDTypeSupported<DTYPE>::value,
                 "Currently stride_store supports "
-                "float|half|bfloat16_t|int8_t|int16_t|int32_t|int64_t|"
-                "uint8_t|uint16_t|uint32_t|uint64_t.");
+                "float|half|bfloat16_t|float8_e4m3_t|float8_e5m2_t|int8_t|"
+                "int16_t|int32_t|int64_t|uint8_t|uint16_t|uint32_t|"
+                "uint64_t.");
 
   int32_t innerOffset = static_cast<int32_t>(offset);
   int32_t innerStride = static_cast<int32_t>(stride);
@@ -183,8 +185,9 @@ __aiv__ __attribute__((always_inline)) void stride_store_2d(
     ITYPE offset, ITYPE stride0, ITYPE stride1, ITYPE numel0, ITYPE numel1) {
   static_assert(IsStrideStoreDTypeSupported<DTYPE>::value,
                 "Currently stride_store supports "
-                "float|half|bfloat16_t|int8_t|int16_t|int32_t|int64_t|"
-                "uint8_t|uint16_t|uint32_t|uint64_t.");
+                "float|half|bfloat16_t|float8_e4m3_t|float8_e5m2_t|int8_t|"
+                "int16_t|int32_t|int64_t|uint8_t|uint16_t|uint32_t|"
+                "uint64_t.");
 
   int32_t innerOffset = static_cast<int32_t>(offset);
   int32_t innerStride0 = static_cast<int32_t>(stride0);
@@ -237,8 +240,9 @@ __aiv__ __attribute__((always_inline)) void stride_store_3d(
     ITYPE numel1, ITYPE numel2) {
   static_assert(IsStrideStoreDTypeSupported<DTYPE>::value,
                 "Currently stride_store supports "
-                "float|half|bfloat16_t|int8_t|int16_t|int32_t|int64_t|"
-                "uint8_t|uint16_t|uint32_t|uint64_t.");
+                "float|half|bfloat16_t|float8_e4m3_t|float8_e5m2_t|int8_t|"
+                "int16_t|int32_t|int64_t|uint8_t|uint16_t|uint32_t|"
+                "uint64_t.");
 
   int32_t innerOffset = static_cast<int32_t>(offset);
   int32_t innerStride0 = static_cast<int32_t>(stride0);
@@ -279,6 +283,8 @@ extern "C" {
 REGISTE_STRIDE_STORE_1D(float, int32_t);
 REGISTE_STRIDE_STORE_1D(half, int32_t);
 REGISTE_STRIDE_STORE_1D(bfloat16_t, int32_t);
+REGISTE_STRIDE_STORE_1D(float8_e4m3_t, int32_t);
+REGISTE_STRIDE_STORE_1D(float8_e5m2_t, int32_t);
 REGISTE_STRIDE_STORE_1D(int8_t, int32_t);
 REGISTE_STRIDE_STORE_1D(int16_t, int32_t);
 REGISTE_STRIDE_STORE_1D(int32_t, int32_t);
@@ -290,6 +296,8 @@ REGISTE_STRIDE_STORE_1D(uint64_t, int32_t);
 REGISTE_STRIDE_STORE_1D(float, int64_t);
 REGISTE_STRIDE_STORE_1D(half, int64_t);
 REGISTE_STRIDE_STORE_1D(bfloat16_t, int64_t);
+REGISTE_STRIDE_STORE_1D(float8_e4m3_t, int64_t);
+REGISTE_STRIDE_STORE_1D(float8_e5m2_t, int64_t);
 REGISTE_STRIDE_STORE_1D(int8_t, int64_t);
 REGISTE_STRIDE_STORE_1D(int16_t, int64_t);
 REGISTE_STRIDE_STORE_1D(int32_t, int64_t);
@@ -302,6 +310,8 @@ REGISTE_STRIDE_STORE_1D(uint64_t, int64_t);
 REGISTE_STRIDE_STORE_2D(float, int32_t);
 REGISTE_STRIDE_STORE_2D(half, int32_t);
 REGISTE_STRIDE_STORE_2D(bfloat16_t, int32_t);
+REGISTE_STRIDE_STORE_2D(float8_e4m3_t, int32_t);
+REGISTE_STRIDE_STORE_2D(float8_e5m2_t, int32_t);
 REGISTE_STRIDE_STORE_2D(int8_t, int32_t);
 REGISTE_STRIDE_STORE_2D(int16_t, int32_t);
 REGISTE_STRIDE_STORE_2D(int32_t, int32_t);
@@ -313,6 +323,8 @@ REGISTE_STRIDE_STORE_2D(uint64_t, int32_t);
 REGISTE_STRIDE_STORE_2D(float, int64_t);
 REGISTE_STRIDE_STORE_2D(half, int64_t);
 REGISTE_STRIDE_STORE_2D(bfloat16_t, int64_t);
+REGISTE_STRIDE_STORE_2D(float8_e4m3_t, int64_t);
+REGISTE_STRIDE_STORE_2D(float8_e5m2_t, int64_t);
 REGISTE_STRIDE_STORE_2D(int8_t, int64_t);
 REGISTE_STRIDE_STORE_2D(int16_t, int64_t);
 REGISTE_STRIDE_STORE_2D(int32_t, int64_t);
@@ -325,6 +337,8 @@ REGISTE_STRIDE_STORE_2D(uint64_t, int64_t);
 REGISTE_STRIDE_STORE_3D(float, int32_t);
 REGISTE_STRIDE_STORE_3D(half, int32_t);
 REGISTE_STRIDE_STORE_3D(bfloat16_t, int32_t);
+REGISTE_STRIDE_STORE_3D(float8_e4m3_t, int32_t);
+REGISTE_STRIDE_STORE_3D(float8_e5m2_t, int32_t);
 REGISTE_STRIDE_STORE_3D(int8_t, int32_t);
 REGISTE_STRIDE_STORE_3D(int16_t, int32_t);
 REGISTE_STRIDE_STORE_3D(int32_t, int32_t);
@@ -336,6 +350,8 @@ REGISTE_STRIDE_STORE_3D(uint64_t, int32_t);
 REGISTE_STRIDE_STORE_3D(float, int64_t);
 REGISTE_STRIDE_STORE_3D(half, int64_t);
 REGISTE_STRIDE_STORE_3D(bfloat16_t, int64_t);
+REGISTE_STRIDE_STORE_3D(float8_e4m3_t, int64_t);
+REGISTE_STRIDE_STORE_3D(float8_e5m2_t, int64_t);
 REGISTE_STRIDE_STORE_3D(int8_t, int64_t);
 REGISTE_STRIDE_STORE_3D(int16_t, int64_t);
 REGISTE_STRIDE_STORE_3D(int32_t, int64_t);

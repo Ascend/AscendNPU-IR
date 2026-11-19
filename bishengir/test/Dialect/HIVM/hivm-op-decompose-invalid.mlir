@@ -60,3 +60,14 @@ func.func @test_f64_to_f16_truncf_unsupported(%0: f64) -> f16 {
   %1 = arith.truncf %0 : f64 to f16
   return %1 : f16
 }
+
+// -----
+// The f64 DMA template is available only for rank-1 loads.
+func.func @test_rank2_f64_load_unsupported() {
+  %src = memref.alloc() : memref<2x16xf64, #hivm.address_space<gm>>
+  %dst = memref.alloc() : memref<2x16xf64, #hivm.address_space<ub>>
+  // expected-error@+1 {{f64 is not supported on this target}}
+  hivm.hir.load ins(%src : memref<2x16xf64, #hivm.address_space<gm>>)
+                outs(%dst : memref<2x16xf64, #hivm.address_space<ub>>)
+  return
+}

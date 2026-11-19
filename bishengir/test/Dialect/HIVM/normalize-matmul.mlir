@@ -465,11 +465,11 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
 // -----
 // A3: pre-loop mmad feeds an scf.for accumulation => keep it all in L0C.
 // CHECK-LABEL: func.func @test_a3_dot_reuse_l0c
-// CHECK: %[[C:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c}
+// CHECK: %[[C:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32]}
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
 // CHECK: scf.for {{.*}} iter_args(%[[ARG1:.*]] = %[[C]])
-// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
-// CHECK: } {normalized_in_L0C = [0 : i32]}
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
+// CHECK: } {hivm.remain_in_l0c = [0 : i32], normalized_in_L0C = [0 : i32]}
 // CHECK-NOT: hivm.hir.vadd
 // CHECK: return
 module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
@@ -508,8 +508,8 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
 // CHECK: scf.for {{.*}} iter_args(%[[ARG1:.*]] = %[[INIT]])
 // CHECK: memref.load
 // CHECK: arith.cmpi eq
-// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
-// CHECK: } {hivm.remain_in_l0c, normalized_in_L0C = [0 : i32]}
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
+// CHECK: } {hivm.remain_in_l0c = [0 : i32], normalized_in_L0C = [0 : i32]}
 // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
 // CHECK-NOT: hivm.hir.vadd
 // CHECK: return
@@ -546,8 +546,8 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
 // CHECK: scf.for
 // CHECK: memref.load
 // CHECK: arith.cmpi eq
-// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
-// CHECK: } {normalized_in_L0C = [0 : i32]}
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
+// CHECK: } {hivm.remain_in_l0c = [0 : i32], normalized_in_L0C = [0 : i32]}
 // CHECK-NOT: hivm.hir.vadd
 // CHECK: return
 module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
@@ -573,8 +573,8 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
 // CHECK-LABEL: func.func @test_a3_may_not_exec_dynamic_bounds
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
 // CHECK: scf.for
-// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
-// CHECK: } {may_not_exec, normalized_in_L0C = [0 : i32]}
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
+// CHECK: } {hivm.remain_in_l0c = [0 : i32], may_not_exec, normalized_in_L0C = [0 : i32]}
 // CHECK: %[[N:.*]] = memref.load
 // CHECK: %[[GUARD:.*]] = arith.cmpi eq, %[[N]], %{{.*}} : i32
 // CHECK: scf.if %[[GUARD]]
@@ -609,8 +609,8 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
 // CHECK: scf.while ({{.*}}) : (tensor<16x16xf32>, i32) -> (tensor<16x16xf32>, i32) {
 // CHECK: scf.condition
 // CHECK: } do {
-// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
-// CHECK: } attributes {may_not_exec, normalized_in_L0C = [0 : i32]}
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
+// CHECK: } attributes {hivm.remain_in_l0c = [0 : i32], may_not_exec, normalized_in_L0C = [0 : i32]}
 // CHECK: %[[N:.*]] = memref.load
 // CHECK-SAME: hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>
 // CHECK: %[[GUARD:.*]] = arith.cmpi eq, %[[N]], %{{.*}} : i32
@@ -758,13 +758,14 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">, hfusion.disableHfu
 }
 
 // -----
-// A3: scf.if with else branch yielding vbrc (not in L0C) should NOT get
+// A3: scf.if with else branch yielding vbrc (not in L0C) does not get
 // hivm.remain_in_l0c, because the else path doesn't keep data in L0C.
+// The mmad in the then branch still does: its own result stays in L0C.
 // CHECK-LABEL: func.func @test_a3_dot_reuse_l0c_through_if_else_not_l0c
 // CHECK: %[[VBRC:.*]] = hivm.hir.vbrc
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
 // CHECK: scf.if
-// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: } else {
 // CHECK: scf.yield %[[VBRC]]
 // CHECK: } {may_not_exec, normalized_in_L0C = [0 : i32]}
@@ -1751,7 +1752,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     // CHECK: %[[C:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c
     // CHECK: %[[FOR:.*]] = scf.for {{.*}} iter_args(%[[ARG1:.*]] = %[[C]])
     %0 = scf.for %arg0 = %c0_i32 to %c8_i32 step %c1_i32 iter_args(%arg1 = %c) -> (tensor<64x32xf32>) : i32 {
-      // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+      // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
       %mmadL1 = hivm.hir.mmadL1 ins(%a, %d, %false, %c16, %c16, %c16 : tensor<64x32xf32>, tensor<32x32xf32>, i1, index, index, index) outs(%arg1 : tensor<64x32xf32>) -> tensor<64x32xf32>
       scf.yield %mmadL1 : tensor<64x32xf32>
     }
@@ -1781,7 +1782,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     %d = bufferization.to_tensor %alloc_d restrict writable : memref<32x32xf32>
     // CHECK: %[[FOR:.*]] = scf.for {{.*}} iter_args(%[[ARG1:.*]] = %[[C:.*]])
     %0 = scf.for %arg0 = %c0_i32 to %c8_i32 step %c1_i32 iter_args(%arg1 = %a_c) -> (tensor<64x32xf32>) : i32 {
-      // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+      // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
       %mmadL1 = hivm.hir.mmadL1 ins(%a, %d, %false, %c16, %c16, %c16 : tensor<64x32xf32>, tensor<32x32xf32>, i1, index, index, index) outs(%arg1 : tensor<64x32xf32>) -> tensor<64x32xf32>
       scf.yield %mmadL1 : tensor<64x32xf32>
     }
@@ -1940,7 +1941,7 @@ func.func @test_matmul_with_scope_matmul_limited_in_cube(%arg1: memref<16x16xf16
       %189 = scf.if %187 -> tensor<64x64xf32> {
         // CHECK: %[[LOADED:.*]] = memref.load %[[ALLOCA]][] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
         // CHECK: %[[CMP:.*]] = arith.cmpi eq, %[[LOADED]], %[[C0_I32]] : i32
-        // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C} ins({{.*}}, {{.*}}, %[[CMP]], %[[C64]], %[[C64]], %[[C64]]
+        // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C} ins({{.*}}, {{.*}}, %[[CMP]], %[[C64]], %[[C64]], %[[C64]]
         // CHECK: %[[INCREMENTED:.*]] = arith.addi %[[LOADED]], %[[C1_I32]] : i32
         // CHECK: memref.store %[[INCREMENTED]], %[[ALLOCA]][] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
         %190 = hivm.hir.mmadL1 ins(%ma, %mb, %false, %c0, %c0, %c0 : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index) outs(%arg22 : tensor<64x64xf32>) -> tensor<64x64xf32>
@@ -1950,7 +1951,7 @@ func.func @test_matmul_with_scope_matmul_limited_in_cube(%arg1: memref<16x16xf16
       } {hivm.matmul_limited_in_cube, ssbuffer.if = 6 : i32}
 
       scf.yield %189 : tensor<64x64xf32>
-    // CHECK: } {normalized_in_L0C = [0 : i32]}
+    // CHECK: } {hivm.remain_in_l0c = [0 : i32], normalized_in_L0C = [0 : i32]}
     }
 
     bufferization.materialize_in_destination %result in writable %alloc_15 : (tensor<64x64xf32>, memref<64x64xf32>) -> ()
@@ -1995,7 +1996,7 @@ func.func @test_dot_pad_only_k_l1M_for_real_m() -> tensor<128x128xf32> {
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK-NOT: may_not_exec
 // CHECK: scf.for
-// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_matmul_at_least_once_annotation(%arg0: i32, %arg1: i32) -> tensor<64x64xf32> {
   %c64 = arith.constant 64 : index
@@ -2069,7 +2070,7 @@ func.func @test_mmadl1_normalize_in_nested_ccf(%arg0: i1, %arg1: i1, %arg2: i32,
 // A direct scf.for-carried matmul result may have independent side users.
 // CHECK-LABEL: func.func @test_mmadl1_normalize_for_with_side_user
 // CHECK: memref.alloca() {normalize_matmul_counter
-// CHECK: hivm.hir.mmadL1 {{.*}}normalized_in_L0C
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_mmadl1_normalize_for_with_side_user(
     %a: tensor<16x16xf16>, %b: tensor<16x16xf16>, %ub: i32)
@@ -2255,7 +2256,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     // CHECK: %[[C:.*]] = hivm.hir.mmadmxL1 {already_set_real_mkn, hivm.remain_in_l0c
     // CHECK: %[[FOR:.*]] = scf.for {{.*}} iter_args(%[[ARG1:.*]] = %[[C]])
     %0 = scf.for %arg0 = %c0_i32 to %c8_i32 step %c1_i32 iter_args(%arg1 = %c) -> (tensor<64x32xf32>) : i32 {
-      // CHECK: %[[MMAD:.*]] = hivm.hir.mmadmxL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+      // CHECK: %[[MMAD:.*]] = hivm.hir.mmadmxL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
       %mmadMx = hivm.hir.mmadmxL1 ins(%a, %d, %scaleA, %scaleB, %false, %c16, %c16, %c16 : tensor<64x32xf8E4M3FN>, tensor<32x32xf8E4M3FN>, tensor<1xi8>, tensor<1xi8>, i1, index, index, index) outs(%arg1 : tensor<64x32xf32>) -> tensor<64x32xf32>
       scf.yield %mmadMx : tensor<64x32xf32>
     }
@@ -2288,7 +2289,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     %scaleB = bufferization.to_tensor %alloc_scaleB restrict writable : memref<1xi8>
     // CHECK: %[[FOR:.*]] = scf.for {{.*}} iter_args(%[[ARG1:.*]] = %[[C:.*]])
     %0 = scf.for %arg0 = %c0_i32 to %c8_i32 step %c1_i32 iter_args(%arg1 = %a_c) -> (tensor<64x32xf32>) : i32 {
-      // CHECK: %[[MMAD:.*]] = hivm.hir.mmadmxL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+      // CHECK: %[[MMAD:.*]] = hivm.hir.mmadmxL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
       %mmadMx = hivm.hir.mmadmxL1 ins(%a, %d, %scaleA, %scaleB, %false, %c16, %c16, %c16 : tensor<64x32xf8E4M3FN>, tensor<32x32xf8E4M3FN>, tensor<1xi8>, tensor<1xi8>, i1, index, index, index) outs(%arg1 : tensor<64x32xf32>) -> tensor<64x32xf32>
       scf.yield %mmadMx : tensor<64x32xf32>
     }
@@ -2338,7 +2339,7 @@ func.func @test_mmadmx_with_scope_matmul_limited_in_cube() {
       %189 = scf.if %187 -> tensor<64x64xf32> {
         // CHECK: %[[LOADED:.*]] = memref.load %[[ALLOCA]][] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
         // CHECK: %[[CMP:.*]] = arith.cmpi eq, %[[LOADED]], %[[C0_I32]] : i32
-        // CHECK: hivm.hir.mmadmxL1 {already_set_real_mkn, normalized_in_L0C} ins({{.*}}, {{.*}}, {{.*}}, {{.*}}, %[[CMP]], %[[C64]], %[[C64]], %[[C64]]
+        // CHECK: hivm.hir.mmadmxL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C} ins({{.*}}, {{.*}}, {{.*}}, {{.*}}, %[[CMP]], %[[C64]], %[[C64]], %[[C64]]
         // CHECK: %[[INCREMENTED:.*]] = arith.addi %[[LOADED]], %[[C1_I32]] : i32
         // CHECK: memref.store %[[INCREMENTED]], %[[ALLOCA]][] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
         %190 = hivm.hir.mmadmxL1 ins(%ma, %mb, %scaleA, %scaleB, %false, %c0, %c0, %c0 : tensor<64x64xf8E4M3FN>, tensor<64x64xf8E4M3FN>, tensor<1xi8>, tensor<1xi8>, i1, index, index, index) outs(%arg22 : tensor<64x64xf32>) -> tensor<64x64xf32>
@@ -2348,7 +2349,7 @@ func.func @test_mmadmx_with_scope_matmul_limited_in_cube() {
       } {hivm.matmul_limited_in_cube, ssbuffer.if = 6 : i32}
 
       scf.yield %189 : tensor<64x64xf32>
-    // CHECK: } {normalized_in_L0C = [0 : i32]}
+    // CHECK: } {hivm.remain_in_l0c = [0 : i32], normalized_in_L0C = [0 : i32]}
     }
 
     bufferization.materialize_in_destination %result in writable %alloc_15 : (tensor<64x64xf32>, memref<64x64xf32>) -> ()
@@ -2489,8 +2490,8 @@ func.func @test_mmadL1_already_set_real_mkn_noop() -> tensor<16x16xf32> {
 // A5: batchMmadL1 split-K CCF keeps L0C with counter-based init.
 // CHECK-LABEL: func.func @test_batchMmadL1_splitk_reuse_l0c
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
-// CHECK: hivm.hir.batchMmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
-// CHECK: } {normalized_in_L0C = [0 : i32]}
+// CHECK: hivm.hir.batchMmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
+// CHECK: } {hivm.remain_in_l0c = [0 : i32], normalized_in_L0C = [0 : i32]}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_batchMmadL1_splitk_reuse_l0c() -> tensor<2x16x16xf32> {
   %c0_i32 = arith.constant 0 : i32
@@ -2599,8 +2600,8 @@ func.func @test_mmadL1_tensor_operands_Normalize_Mkn() -> tensor<128x256xf32> {
 // A5: dynamic for-bounds => may_not_exec, and no zero-fill guard after the loop.
 // CHECK-LABEL: func.func @test_mmadL1_may_not_exec_dynamic_bounds
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
-// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
-// CHECK: } {may_not_exec, normalized_in_L0C = [0 : i32]}
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
+// CHECK: } {hivm.remain_in_l0c = [0 : i32], may_not_exec, normalized_in_L0C = [0 : i32]}
 // CHECK: return
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_mmadL1_may_not_exec_dynamic_bounds(%lb: i32, %ub: i32) -> tensor<16x16xf32> {
@@ -2750,8 +2751,8 @@ func.func @test_mmadmx_already_set_real_mkn_noop() -> tensor<16x16xf32> {
 // A5: empty init (NoBias) split-K still gets counter + remain_in_l0c.
 // CHECK-LABEL: func.func @test_mmadL1_empty_init_splitk
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
-// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
-// CHECK: } {normalized_in_L0C = [0 : i32]}
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
+// CHECK: } {hivm.remain_in_l0c = [0 : i32], normalized_in_L0C = [0 : i32]}
 // CHECK-NOT: may_not_exec
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_mmadL1_empty_init_splitk() -> tensor<16x16xf32> {
@@ -2775,8 +2776,8 @@ func.func @test_mmadL1_empty_init_splitk() -> tensor<16x16xf32> {
 // A5: mmadmx dynamic bounds => may_not_exec, and no zero-fill guard after the loop.
 // CHECK-LABEL: func.func @test_mmadmx_may_not_exec_dynamic_bounds
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
-// CHECK: hivm.hir.mmadmxL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
-// CHECK: } {may_not_exec, normalized_in_L0C = [0 : i32]}
+// CHECK: hivm.hir.mmadmxL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
+// CHECK: } {hivm.remain_in_l0c = [0 : i32], may_not_exec, normalized_in_L0C = [0 : i32]}
 // CHECK: return
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_mmadmx_may_not_exec_dynamic_bounds(%lb: i32, %ub: i32) -> tensor<16x16xf32> {
@@ -2803,7 +2804,7 @@ func.func @test_mmadmx_may_not_exec_dynamic_bounds(%lb: i32, %ub: i32) -> tensor
 // CHECK-LABEL: func.func @test_mmadmx_at_least_once_annotation
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
 // CHECK-NOT: may_not_exec
-// CHECK: hivm.hir.mmadmxL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+// CHECK: hivm.hir.mmadmxL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_mmadmx_at_least_once_annotation(%lb: i32, %ub: i32) -> tensor<16x16xf32> {
   %c1 = arith.constant 1 : i32
@@ -2848,9 +2849,9 @@ func.func @test_mmadL1_dynamic_alloc_Normalize_Mkn(%m: index, %k: index, %n: ind
 // A5: batch pre-mmad + for reuses L0C — the pre-mmad result is the loop's init
 // and the loop body accumulates on top of it, so no counter and no tail vadd.
 // CHECK-LABEL: func.func @test_batchMmadL1_reuse_l0c_pre
-// CHECK: %[[PRE:.*]] = hivm.hir.batchMmadL1 {already_set_real_mkn, hivm.remain_in_l0c}
+// CHECK: %[[PRE:.*]] = hivm.hir.batchMmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32]}
 // CHECK: scf.for {{.*}} iter_args(%{{.*}} = %[[PRE]])
-// CHECK: hivm.hir.batchMmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+// CHECK: hivm.hir.batchMmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK-NOT: hivm.hir.vadd
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_batchMmadL1_reuse_l0c_pre() -> tensor<2x16x16xf32> {
@@ -2898,7 +2899,7 @@ func.func @test_mmadmx_f8e5m2_Normalize_Mkn() -> tensor<32x64xf32> {
 // A5: constant empty loop (ub==lb) sets may_not_exec.
 // CHECK-LABEL: func.func @test_mmadL1_empty_loop_bounds_may_not_exec
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
-// CHECK: } {may_not_exec, normalized_in_L0C = [0 : i32]}
+// CHECK: } {hivm.remain_in_l0c = [0 : i32], may_not_exec, normalized_in_L0C = [0 : i32]}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_mmadL1_empty_loop_bounds_may_not_exec() -> tensor<16x16xf32> {
   %c0_i32 = arith.constant 0 : i32
@@ -2923,8 +2924,8 @@ func.func @test_mmadL1_empty_loop_bounds_may_not_exec() -> tensor<16x16xf32> {
 // A5: batch dynamic bounds => may_not_exec.
 // CHECK-LABEL: func.func @test_batchMmadL1_may_not_exec_dynamic
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
-// CHECK: hivm.hir.batchMmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
-// CHECK: } {may_not_exec, normalized_in_L0C = [0 : i32]}
+// CHECK: hivm.hir.batchMmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
+// CHECK: } {hivm.remain_in_l0c = [0 : i32], may_not_exec, normalized_in_L0C = [0 : i32]}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_batchMmadL1_may_not_exec_dynamic(%lb: i32, %ub: i32) -> tensor<2x16x16xf32> {
   %c1 = arith.constant 1 : i32
@@ -2947,8 +2948,8 @@ func.func @test_batchMmadL1_may_not_exec_dynamic(%lb: i32, %ub: i32) -> tensor<2
 // A5: mmadmx empty-init split-K CCF.
 // CHECK-LABEL: func.func @test_mmadmx_empty_init_splitk
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
-// CHECK: hivm.hir.mmadmxL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
-// CHECK: } {normalized_in_L0C = [0 : i32]}
+// CHECK: hivm.hir.mmadmxL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
+// CHECK: } {hivm.remain_in_l0c = [0 : i32], normalized_in_L0C = [0 : i32]}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_mmadmx_empty_init_splitk() -> tensor<16x16xf32> {
   %c0_i32 = arith.constant 0 : i32
@@ -2970,10 +2971,11 @@ func.func @test_mmadmx_empty_init_splitk() -> tensor<16x16xf32> {
 }
 
 // -----
-// A5: scf.if-only CCF sets may_not_exec (no remain_in_l0c on if parent).
+// A5: scf.if-only CCF sets may_not_exec. The mmad stays in L0C, but the if
+// parent does not: its else yield is the vbrc, not an L0C accumulator.
 // CHECK-LABEL: func.func @test_mmadL1_if_only_may_not_exec
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
-// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: } {may_not_exec, normalized_in_L0C = [0 : i32]}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_mmadL1_if_only_may_not_exec(%cond: i1) -> tensor<16x16xf32> {
@@ -3962,7 +3964,7 @@ func.func @test_postperchannel_vcast_after_for(%a: tensor<16x16xf16>, %b: tensor
 // The first result is used twice by the second mm: as its C/output operand and
 // as its optional input. Multiple SSA uses must not prevent reusing L0C.
 // CHECK-LABEL: func.func @test_reuse_l0c_with_result_as_ins_and_outs
-// CHECK: %[[FIRST:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+// CHECK: %[[FIRST:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
 // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C} ins({{.*}}, {{.*}}, {{.*}}, {{.*}}, {{.*}}, {{.*}}, %[[FIRST]]
 // CHECK-SAME: outs(%[[FIRST]]
 // CHECK-NOT: hivm.hir.vadd
@@ -3991,7 +3993,7 @@ func.func @test_reuse_l0c_with_result_as_ins_and_outs(
 // CHECK-LABEL: func.func @test_post_per_channel_bias_after_for
 // CHECK: %[[BIAS:.*]] = bufferization.to_tensor %alloc{{.*}} : memref<128xf32>
 // CHECK: scf.for
-// CHECK: hivm.hir.mmadL1 {{.*}} ins({{.*}}, %[[BIAS]] : {{.*}}tensor<128xf32>)
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C, normalized_init_or_bias} ins({{.*}}, %[[BIAS]] : {{.*}}tensor<128xf32>)
 // CHECK-NOT: hivm.hir.vbrc
 // CHECK-NOT: hivm.hir.vadd
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -4060,5 +4062,236 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     %brc = hivm.hir.vbrc ins(%bias : tensor<16x1xf32>) outs(%init : tensor<16x128xf32>) broadcast_dims = [1] -> tensor<16x128xf32>
     %add = hivm.hir.vadd ins(%loop, %brc : tensor<16x128xf32>, tensor<16x128xf32>) outs(%init : tensor<16x128xf32>) -> tensor<16x128xf32>
     return %add : tensor<16x128xf32>
+  }
+}
+
+// -----
+// remain_in_l0c is copied backward from a normalized_in_L0C result through
+// scf.yield until a cube op that already has remain_in_l0c. The inner loop
+// only forwards the value, so it gains the index and not normalized_in_L0C.
+// The outer result that carries the tensor is index 1, not the i32 iter arg.
+// CHECK-LABEL: func.func @propagate_remain_in_l0c_nested_index
+// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {{.*}}hivm.remain_in_l0c
+// CHECK: scf.yield %[[MMAD]]
+// CHECK: } {hivm.remain_in_l0c = [0 : i32]}
+// CHECK: scf.yield %{{.*}}, %{{.*}}
+// CHECK: } {hivm.remain_in_l0c = [1 : i32], normalized_in_L0C = [1 : i32]}
+module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
+  func.func @propagate_remain_in_l0c_nested_index() -> (i32, tensor<16x16xf32>) {
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c4_i32 = arith.constant 4 : i32
+    %c0 = arith.constant 0 : index
+    %false = arith.constant false
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %a = tensor.empty() : tensor<16x16xf16>
+    %b = tensor.empty() : tensor<16x16xf16>
+    %0:2 = scf.for %i = %c0_i32 to %c4_i32 step %c1_i32
+        iter_args(%tok = %c0_i32, %acc = %empty) -> (i32, tensor<16x16xf32>) : i32 {
+      %inner = scf.for %j = %c0_i32 to %c4_i32 step %c1_i32
+          iter_args(%inner_acc = %acc) -> (tensor<16x16xf32>) : i32 {
+        %mmad = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+            ins(%a, %b, %false, %c0, %c0, %c0
+                : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+            outs(%inner_acc : tensor<16x16xf32>) -> tensor<16x16xf32>
+        scf.yield %mmad : tensor<16x16xf32>
+      }
+      %next = arith.addi %tok, %c1_i32 : i32
+      scf.yield %next, %inner : i32, tensor<16x16xf32>
+    } {normalized_in_L0C = [1 : i32]}
+    return %0#0, %0#1 : i32, tensor<16x16xf32>
+  }
+}
+
+// -----
+// An scf.if is marked only when every branch comes from a cube op that already
+// has remain_in_l0c. The else yield is the loop iter arg, so the if and the
+// outer loop stay unmarked.
+// CHECK-LABEL: func.func @remain_in_l0c_if_requires_every_branch
+// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {{.*}}
+// CHECK: scf.yield %[[MMAD]]
+// CHECK: }
+// CHECK: scf.yield %[[INNER:.*]] :
+// CHECK: } else {
+// CHECK: scf.yield %{{.*}} :
+// CHECK: }
+// CHECK: scf.yield %{{.*}} :
+module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
+  func.func @remain_in_l0c_if_requires_every_branch(%cond: i1) -> tensor<16x16xf32> {
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c4_i32 = arith.constant 4 : i32
+    %c0 = arith.constant 0 : index
+    %false = arith.constant false
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %a = tensor.empty() : tensor<16x16xf16>
+    %b = tensor.empty() : tensor<16x16xf16>
+    %0 = scf.for %i = %c0_i32 to %c4_i32 step %c1_i32
+        iter_args(%acc = %empty) -> (tensor<16x16xf32>) : i32 {
+      %guarded = scf.if %cond -> (tensor<16x16xf32>) {
+        %inner = scf.for %j = %c0_i32 to %c4_i32 step %c1_i32
+            iter_args(%inner_acc = %acc) -> (tensor<16x16xf32>) : i32 {
+          %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+              ins(%a, %b, %false, %c0, %c0, %c0
+                  : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+              outs(%inner_acc : tensor<16x16xf32>) -> tensor<16x16xf32>
+          scf.yield %mmad : tensor<16x16xf32>
+        }
+        scf.yield %inner : tensor<16x16xf32>
+      } else {
+        scf.yield %acc : tensor<16x16xf32>
+      }
+      scf.yield %guarded : tensor<16x16xf32>
+    } {normalized_in_L0C = [0 : i32]}
+    return %0 : tensor<16x16xf32>
+  }
+}
+
+// -----
+// Both scf.if branches are remain cube ops, so the if result is marked too.
+// CHECK-LABEL: func.func @remain_in_l0c_if_both_branches
+// CHECK: %[[MMAD1:.*]] = hivm.hir.mmadL1
+// CHECK: scf.yield %[[MMAD1]]
+// CHECK: } else {
+// CHECK: %[[MMAD2:.*]] = hivm.hir.mmadL1
+// CHECK: scf.yield %[[MMAD2]]
+// CHECK: } {hivm.remain_in_l0c = [0 : i32], normalized_in_L0C = [0 : i32]}
+module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
+  func.func @remain_in_l0c_if_both_branches(%cond: i1) -> tensor<16x16xf32> {
+    %c0 = arith.constant 0 : index
+    %false = arith.constant false
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %a = tensor.empty() : tensor<16x16xf16>
+    %b = tensor.empty() : tensor<16x16xf16>
+    %0 = scf.if %cond -> (tensor<16x16xf32>) {
+      %mmad = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+          ins(%a, %b, %false, %c0, %c0, %c0
+              : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+          outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scf.yield %mmad : tensor<16x16xf32>
+    } else {
+      %mmad = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+          ins(%a, %b, %false, %c0, %c0, %c0
+              : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+          outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scf.yield %mmad : tensor<16x16xf32>
+    } {normalized_in_L0C = [0 : i32]}
+    return %0 : tensor<16x16xf32>
+  }
+}
+
+// -----
+// The after-region mmad already has remain_in_l0c. The before region ends in
+// scf.condition, so only the tensor yield is walked and the while gains
+// remain_in_l0c at index 0. The i32 countdown is not an L0C result. The
+// fallback if still zeros the tensor when the loop never ran, and is not
+// marked remain_in_l0c.
+// CHECK-LABEL: func.func @countdown_while_l0c_to_ub
+// CHECK: %[[MM:.*]] = hivm.hir.mmadL1 {{.*}}hivm.remain_in_l0c
+// CHECK: scf.yield %[[MM]]
+// CHECK: } attributes {hivm.remain_in_l0c = [0 : i32], may_not_exec, normalized_in_L0C = [0 : i32]}
+// CHECK-NOT: hivm.remain_in_l0c
+// CHECK: scf.if
+// CHECK: hivm.hir.vbrc
+// CHECK: } else {
+// CHECK: scf.yield %{{.*}}#0
+// CHECK: } {fallback_not_exec}
+// CHECK: hivm.hir.store
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
+  func.func @countdown_while_l0c_to_ub(
+      %lhs: tensor<16x32xf32>, %rhs: tensor<32x32xf32>, %count: i32,
+      %out: memref<16x32xf32>)
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>,
+                  mix_mode = "mix"} {
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %true = arith.constant true
+    %init = tensor.empty() : tensor<16x32xf32>
+    %while:2 = scf.while (%acc = %init, %n = %count) : (tensor<16x32xf32>, i32) -> (tensor<16x32xf32>, i32) {
+      %cond = arith.cmpi sgt, %n, %c0_i32 : i32
+      scf.condition(%cond) %acc, %n : tensor<16x32xf32>, i32
+    } do {
+    ^bb0(%acc: tensor<16x32xf32>, %n: i32):
+      %next = arith.subi %n, %c1_i32 : i32
+      %mm = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, hivm.remain_in_l0c, normalized_in_L0C}
+          ins(%lhs, %rhs, %true, %c16, %c32, %c32 : tensor<16x32xf32>, tensor<32x32xf32>, i1, index, index, index)
+          outs(%acc : tensor<16x32xf32>) -> tensor<16x32xf32>
+      scf.yield %mm, %next : tensor<16x32xf32>, i32
+    } attributes {may_not_exec, normalized_in_L0C = [0 : i32]}
+    %no_mm = arith.cmpi eq, %count, %c0_i32 : i32
+    %merged = scf.if %no_mm -> (tensor<16x32xf32>) {
+      %empty = tensor.empty() : tensor<16x32xf32>
+      %zero = hivm.hir.vbrc ins(%cst : f32) outs(%empty : tensor<16x32xf32>) -> tensor<16x32xf32>
+      scf.yield %zero : tensor<16x32xf32>
+    } else {
+      scf.yield %while#0 : tensor<16x32xf32>
+    } {fallback_not_exec}
+    hivm.hir.store ins(%merged : tensor<16x32xf32>) outs(%out : memref<16x32xf32>)
+    return
+  }
+}
+
+// -----
+// remain_in_l0c is copied from the inner mmad through the inner scf.for, the
+// scf.if, and the outer scf.for. The if's else yield is the outer iter arg,
+// the same L0C accumulator, so both branches qualify and the if is marked.
+// The trailing zero-fill if is off that path and stays unmarked.
+// CHECK-LABEL: func.func @mmad_l0c_across_nested_control_flow
+// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {{.*}}hivm.remain_in_l0c
+// CHECK: scf.yield %[[MMAD]]
+// CHECK: } {hivm.remain_in_l0c = [0 : i32]}
+// CHECK: scf.yield %{{.*}}
+// CHECK: } else {
+// CHECK: scf.yield %{{.*}}
+// CHECK: } {hivm.remain_in_l0c = [0 : i32]}
+// CHECK: scf.yield %{{.*}}
+// CHECK: } {hivm.remain_in_l0c = [0 : i32], may_not_exec, normalized_in_L0C = [0 : i32]}
+// CHECK-NOT: hivm.remain_in_l0c
+// CHECK: hivm.hir.vbrc
+// CHECK: hivm.hir.vadd
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @mmad_l0c_across_nested_control_flow(
+      %lhs: tensor<64x16xf32>, %rhs: tensor<16x16xf32>, %vec: tensor<64x16xf32>,
+      %cond: i1) -> tensor<64x16xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c3_i32 = arith.constant 3 : i32
+    %true = arith.constant true
+    %cst = arith.constant 0.000000e+00 : f32
+    %c16 = arith.constant 16 : index
+    %c64 = arith.constant 64 : index
+    %acc = tensor.empty() : tensor<64x16xf32>
+    %outer = scf.for %i = %c0_i32 to %c3_i32 step %c1_i32
+        iter_args(%outer_acc = %acc) -> (tensor<64x16xf32>) : i32 {
+      %guarded = scf.if %cond -> (tensor<64x16xf32>) {
+        %inner = scf.for %j = %c0_i32 to %c3_i32 step %c1_i32
+            iter_args(%inner_acc = %outer_acc) -> (tensor<64x16xf32>) : i32 {
+          %mmad = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+              ins(%lhs, %rhs, %true, %c64, %c16, %c16
+                  : tensor<64x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+              outs(%inner_acc : tensor<64x16xf32>) -> tensor<64x16xf32>
+          scf.yield %mmad : tensor<64x16xf32>
+        }
+        scf.yield %inner : tensor<64x16xf32>
+      } else {
+        scf.yield %outer_acc : tensor<64x16xf32>
+      }
+      scf.yield %guarded : tensor<64x16xf32>
+    } {may_not_exec, normalized_in_L0C = [0 : i32]}
+    %merged = scf.if %cond -> (tensor<64x16xf32>) {
+      %empty = tensor.empty() : tensor<64x16xf32>
+      %zero = hivm.hir.vbrc ins(%cst : f32) outs(%empty : tensor<64x16xf32>)
+          -> tensor<64x16xf32>
+      scf.yield %zero : tensor<64x16xf32>
+    } else {
+      scf.yield %outer : tensor<64x16xf32>
+    }
+    %res = hivm.hir.vadd ins(%merged, %vec : tensor<64x16xf32>, tensor<64x16xf32>)
+        outs(%acc : tensor<64x16xf32>) -> tensor<64x16xf32>
+    return %res : tensor<64x16xf32>
   }
 }

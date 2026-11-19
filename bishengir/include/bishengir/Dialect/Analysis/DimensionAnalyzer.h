@@ -260,6 +260,8 @@ protected:
                          std::is_same_v<T, tensor::InsertSliceOp> ||
                          std::is_same_v<T, memref::SubViewOp>>>
   void processSlicingOp(T slicingOp);
+  void propagateSliceBoundaries(Value superview, Value subview,
+                                const llvm::SmallBitVector &droppedDims);
   void processExtractSliceOp(tensor::ExtractSliceOp extractSliceOp);
   void processIfOp(scf::IfOp op);
   void processForOp(scf::ForOp op);

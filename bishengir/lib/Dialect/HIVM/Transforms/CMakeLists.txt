@@ -10,6 +10,12 @@ file(GLOB INSERT_LOAD_STORE_FOR_MIX_CV ${CMAKE_CURRENT_SOURCE_DIR}/InsertLoadSto
 file(GLOB NDDMA CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/NDDMA/*.cpp)
 file(GLOB TILING ${CMAKE_CURRENT_SOURCE_DIR}/Tiling/*.cpp)
 file(GLOB NORMALIZE ${CMAKE_CURRENT_SOURCE_DIR}/regbase/Normalize/*.cpp)
+file(GLOB SMS_ALG_UTILS CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/../Utils/PipeSchedule/Alg/Sms/*.cpp)
+file(GLOB MS_COST_MODEL_UTILS CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/../Utils/PipeSchedule/CostModel/*.cpp)
+file(GLOB MS_UTILS CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/../Utils/PipeSchedule/*.cpp)
 set(TILE_AND_BIND_SUB_BLOCK
     ${CMAKE_CURRENT_SOURCE_DIR}/TileAndBindSubBlock/Helper.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/TileAndBindSubBlock/TileUtils.cpp)
@@ -19,6 +25,15 @@ file(GLOB BUFFER_POOL CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/BufferPool/*.cpp)
 file(GLOB PIPELINE_V2 CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/PipelineV2/*.cpp)
+
+set(HIVM_VECTORIZE_SEQUENCE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/HIVMVectorize/Sequences/HIVMVectorize.mlir")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${HIVM_VECTORIZE_SEQUENCE_FILE}")
+file(READ "${HIVM_VECTORIZE_SEQUENCE_FILE}" HIVM_VECTORIZE_SEQUENCE)
+string(REPLACE "\\" "\\\\" HIVM_VECTORIZE_SEQUENCE "${HIVM_VECTORIZE_SEQUENCE}")
+string(REPLACE "\"" "\\\"" HIVM_VECTORIZE_SEQUENCE "${HIVM_VECTORIZE_SEQUENCE}")
+string(REPLACE "\n" "\\n\"\n    \"" HIVM_VECTORIZE_SEQUENCE "${HIVM_VECTORIZE_SEQUENCE}")
+set(HIVM_VECTORIZE_SEQUENCE "\"${HIVM_VECTORIZE_SEQUENCE}\"")
+configure_file(HIVMVectorize/HIVMVectorize.inc.in HIVMVectorize/HIVMVectorize.inc @ONLY)
 
 add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ${Mix_PASSES}
@@ -34,6 +49,9 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ${PIPELINE_V2}
   ${BUFFER_POOL}
   ${NORMALIZE}
+  ${SMS_ALG_UTILS}
+  ${MS_COST_MODEL_UTILS}
+  ${MS_UTILS}
   AddFFTSToSyncBlockSetOp.cpp
   AllocExtraBuffer.cpp
   AllocToAlloca.cpp
@@ -70,6 +88,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ConvertLayout/Propagate/PropagateConvertLayoutExtractSlice.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutInsertSlice.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutVBrc.cpp
+  MarkPreloadBuffers.cpp
   CreatePreload.cpp
   PeelPreload.cpp
   CVPipelining.cpp
@@ -86,6 +105,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   HIVMOptFuncOutput.cpp
   HIVMOptSinglePoint.cpp
   HIVMVectorize.cpp
+  HIVMVectorizeBuffers.cpp
   HIVMVectorizeLowering.cpp
   HoistTightlyCoupledAlloc.cpp
   InferFuncCoreType.cpp
@@ -128,6 +148,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   LowerCreateSyncBlockLock.cpp
   LowerMultiBufferCounter.cpp
   MarkDisableLoad.cpp
+  MarkMatmulRowCollapses.cpp
   MarkMultiBuffer.cpp
   MarkSimtScopeNoInline.cpp
   MarkSyncBlockLockWithSubblock.cpp
@@ -156,6 +177,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   SetBufferSize.cpp
   RepositionPreloadWork.cpp
   SinkOpToConsumerInLoop.cpp
+  SinkScalarReadback.cpp
   SIMTVFSubTiling.cpp
   SplitKernelUtils.cpp
   SplitSimtModule.cpp
@@ -188,8 +210,12 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   BiShengIRFixpipeCapabilityBindingIncGen
   BiShengIRCubeLoadCapabilityIncGen
   BiShengIRCubeLoadCapabilityBindingIncGen
+  BiShengIRSyncCapabilityIncGen
+  BiShengIRSyncCapabilityBindingIncGen
 
   LINK_LIBS PUBLIC
+  BiShengIRArithTransforms
+  BiShengIRVectorTransforms
   MLIRAffineDialect
   MLIRAffineTransforms
   MLIRAnalysis
@@ -205,18 +231,24 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   BiShengIRHACCDialect
   BiShengIRNPUMmadCapability
   BiShengIRNPUFixpipeCapability
+  BiShengIRNPUSyncCapability
   BiShengIRHIVMAnalysis
   BiShengIRHIVMDialect
+  BiShengIRHIVMVectorizeTransformOps
   BiShengIRMathExtDialect
   BiShengIRScopeDialect
   MLIRIR
   MLIRLinalgDialect
+  MLIRLinalgTransforms
   MLIRLinalgUtils
   MLIRLLVMCommonConversion
   MLIRLLVMDialect
   MLIRMathDialect
   MLIRMemRefDialect
   MLIRMemRefTransforms
+  MLIRParser
+  MLIRTransformDialect
+  MLIRTransformDialectTransforms
   MLIRVectorDialect
   BiShengIRMemRefExtDialect
   BiShengIRDialectUtils

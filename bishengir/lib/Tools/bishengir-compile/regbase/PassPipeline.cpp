@@ -171,14 +171,25 @@ void buildAffinityPipeline(OpPassManager &pm,
   pm.addPass(hivm::createTritonGlobalKernelArgsToHIVMOpPass());
   pm.addPass(createCanonicalizeModulePass());
 
-  pm.nest<func::FuncOp>().addPass(hivm::createMarkTightlyCoupledBufferPass());
-  pm.addPass(hivm::createV2SplitKernelPass());
-  pm.addPass(createCanonicalizerPass());
+  if (config.getEnableTlaCvPipelining()) {
+    // TODO: Use MarkMultiBuffer after better support for staged preload with
+    // memref alloc.
+    pm.addPass(hivm::createMarkPreloadBuffersPass());
+  }
 
+  // Outline marked VFs before SplitMix so it can classify the calls as
+  // VECTOR. The surrounding task scopes retain their preload boundaries.
   OutlineScopeOptions outlineScopeOptions;
   outlineScopeOptions.outlineMarkedScopesOnly = true;
   pm.addPass(scope::createOutlineScopePass(outlineScopeOptions));
-  // Expose C/V core operations to memory inference and planning.
+
+  // Resolve scalar ownership before inlining erases the MIX task scopes.
+  // Kernel splitting uses these annotations with or without automatic sync.
+  MarkRealCoreTypeOptions markOptions;
+  markOptions.bypassShapeRegistry = true;
+  pm.addPass(hivm::createMarkRealCoreTypePass(markOptions));
+
+  // Inline ordinary scopes while retaining the original CV task boundaries.
   pm.addPass(scope::createInlineScopePass());
 
   // The input AVE specifies predicates, layouts and instruction modes.
@@ -196,17 +207,37 @@ void buildAffinityPipeline(OpPassManager &pm,
   // spaces for all memref values.
   pm.addPass(hivm::createInferHIVMMemScopePass());
 
+  pm.nest<func::FuncOp>().addPass(hivm::createMarkTightlyCoupledBufferPass());
+
   PlanMemoryOptions planMemoryOptions;
   planMemoryOptions.enableMemoryDisplay =
       config.getEnablePrintMemoryAllocatedSize() ||
       config.getEnableMemoryDisplay();
-  // Explicit synchronization cannot cover new aliases introduced by planning.
-  // Independent local allocations carry mem_unique; views express sharing.
-  planMemoryOptions.disableTightlyCoupledBufferReuse = true;
+  // An explicit block protocol cannot synchronize newly introduced TCB aliases.
+  planMemoryOptions.disableTightlyCoupledBufferReuse =
+      config.getDisableTightlyCoupledBufferReuse() ||
+      config.getDisableAutoInjectBlockSync();
   planMemoryOptions.disableVFReachableCheck =
       config.getDisableVFReachableCheck();
   planMemoryOptions.planMemoryStrategy = config.getPlanMemoryStrategy();
+  // TLA mode requires a deterministic local plan: disable the plan-memory
+  // retry loop (fallback stages and shuffle-seed retries).
+  planMemoryOptions.enableTLAmode = config.getEnableTlaMode();
   pm.addPass(hivm::createPlanMemoryPass(planMemoryOptions));
+
+  if (!config.getDisableAutoInjectBlockSync()) {
+    CrossCoreGSSOptions crossCoreOptions;
+    crossCoreOptions.solverVersion = config.getHIVMSyncSolverVersion();
+    pm.nest<func::FuncOp>().addPass(
+        hivm::createCrossCoreGSSPass(crossCoreOptions));
+  }
+  pm.addPass(hivm::createV2SplitKernelPass());
+
+  if (config.getEnableTlaCvPipelining()) {
+    CreatePreloadOptions preloadOptions;
+    preloadOptions.bypassShapeRegistry = true;
+    pm.addPass(hivm::createCreatePreloadPass(preloadOptions));
+  }
 
   // Fold addresses and views while preserving input instruction choices.
   pm.nest<func::FuncOp>().addPass(createCSEPass());
@@ -220,15 +251,13 @@ void buildAffinityPipeline(OpPassManager &pm,
     syncOptions.solverVersion = config.getHIVMSyncSolverVersion();
     pm.nest<func::FuncOp>().addPass(
         hivm::createGraphSyncSolverPass(syncOptions));
-
-    // Materialize declared slots after GSS so synchronization and buffer
-    // selection share the same loop counter. Frontends must reject multibuffer
-    // hints when auto-sync is disabled; users then manage slots explicitly.
-    pm.nest<func::FuncOp>().addPass(hivm::createEnableMultiBufferPass());
-    pm.nest<func::FuncOp>().addPass(hivm::createLowerMultiBufferCounterPass());
-    pm.addPass(createCanonicalizerPass());
-    pm.nest<func::FuncOp>().addPass(createCSEPass());
   }
+
+  // Lower rotating addresses and counters even with explicit synchronization.
+  pm.nest<func::FuncOp>().addPass(hivm::createEnableMultiBufferPass());
+  pm.nest<func::FuncOp>().addPass(hivm::createLowerMultiBufferCounterPass());
+  pm.addPass(createCanonicalizerPass());
+  pm.nest<func::FuncOp>().addPass(createCSEPass());
 
   // Lower the prepared AVE directly, without the shared AVE optimizations.
   buildLowerToLLVMPipeline(pm, config);

@@ -218,6 +218,27 @@ int64_t getIntegerSpecValue(DataLayoutEntryInterface entry) {
   return cast<IntegerAttr>(entry.getValue()).getValue().getSExtValue();
 }
 
+uint32_t getBankGroupCount(ModuleOp op) {
+  constexpr uint32_t kDefaultUbBankGroupCount = 16;
+  auto maybeSpecInterface = getNPUTargetSpec(op);
+  if (maybeSpecInterface.has_value()) {
+    DataLayoutEntryInterface entry =
+        maybeSpecInterface.value().getSpecForIdentifierEnum(
+            DeviceSpec::UB_BANK_GROUP_COUNT);
+    if (entry) {
+      if (auto intAttr = dyn_cast<IntegerAttr>(entry.getValue()))
+        return static_cast<uint32_t>(intAttr.getInt());
+    }
+  }
+  // Fall back to the generated target spec table for IR that has no device
+  // spec attached yet (e.g. standalone opt invocations).
+  if (auto target = getTargetDevice(op); target.has_value()) {
+    if (auto spec = lookupTargetSpec(*target); spec.has_value())
+      return static_cast<uint32_t>(spec.value()->UbBankGroupCount);
+  }
+  return kDefaultUbBankGroupCount;
+}
+
 std::optional<llvm::VersionTuple> getHIVMCVersion(ModuleOp op) {
   if (auto versionAttr =
           op->getAttrOfType<HIVMCVersionAttr>(HIVMCVersionAttr::name))
@@ -380,8 +401,12 @@ bool isAscend950(llvm::StringRef targetDevice) {
 
 bool isAscend960(TargetDevice targetDevice) {
   static const std::unordered_set<TargetDevice> ascend960Devices = {
-      TargetDevice::Ascend960, TargetDevice::Ascend960DT_969B5,
-      TargetDevice::Ascend960DT_968B7, TargetDevice::Ascend960DT_961BX};
+      TargetDevice::Ascend960,         TargetDevice::Ascend960DT_969B5,
+      TargetDevice::Ascend960DT_969B6, TargetDevice::Ascend960DT_968B7,
+      TargetDevice::Ascend960DT_966B7, TargetDevice::Ascend960DT_966B8,
+      TargetDevice::Ascend960DT_961BY, TargetDevice::Ascend960DT_961BZ,
+      TargetDevice::Ascend960PR_969A1, TargetDevice::Ascend960PR_964A1,
+      TargetDevice::Ascend960PR_936A1};
 
   return ascend960Devices.find(targetDevice) != ascend960Devices.end();
 }

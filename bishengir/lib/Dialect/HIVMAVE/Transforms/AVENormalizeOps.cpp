@@ -74,8 +74,8 @@ static bool breaksPB16AlignmentOnNextContinuousStore(VFMaskedStoreOp store) {
 ///     #ave.unaligned_ub_access,
 ///     functionType = #ave.func_dist_type<pb8>} : memref<64xi1, strided<[1],
 ///     offset: ?>, #hivm.address_space<ub>> into vector<64xi1>
-///    %6 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb8>} : vector<64xi1>
-///    %7 = ave.hir.preg.and <b8> %5, %res, %6 : vector<64xi1>
+///    %6 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb8>} :
+///    vector<64xi1> %7 = ave.hir.preg.and <b8> %5, %res, %6 : vector<64xi1>
 /// ```
 /// After conversion:
 /// ```mlir
@@ -84,11 +84,10 @@ static bool breaksPB16AlignmentOnNextContinuousStore(VFMaskedStoreOp store) {
 ///     functionType = #ave.func_dist_type<pb16>} : memref<64xi1,
 ///     strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xi1>
 ///    %6 = ave.hir.preg.cast %res <PK_B16> : vector<64xi1> -> vector<64xi1>
-///    %7 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb8>} : vector<64xi1>
-///    %10 = ave.hir.preg.and <b8> %5, %6, %7 : vector<64xi1>
+///    %7 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb8>} :
+///    vector<64xi1> %10 = ave.hir.preg.and <b8> %5, %6, %7 : vector<64xi1>
 /// ```
-static LogicalResult insertPregCastAfterLoad(VFLoadOp load,
-                                             VectorType vectorTy,
+static LogicalResult insertPregCastAfterLoad(VFLoadOp load, VectorType vectorTy,
                                              PatternRewriter &rewriter) {
   auto vecMemTypeOpt = getVecMemType(load.getResult(0).getType());
   if (!vecMemTypeOpt)
@@ -96,9 +95,9 @@ static LogicalResult insertPregCastAfterLoad(VFLoadOp load,
   auto vecMemType = *vecMemTypeOpt;
 
   if (vecMemType == hivmave::VecMemType::B8) {
-    load->setAttr("functionType", hivmave::FunctionDistTypeAttr::get(
-                                      load.getContext(),
-                                      hivmave::FunctionDistType::PB16));
+    load->setAttr("functionType",
+                  hivmave::FunctionDistTypeAttr::get(
+                      load.getContext(), hivmave::FunctionDistType::PB16));
   } else {
     return failure();
   }
@@ -151,14 +150,14 @@ insertPregCastBeforeStore(VFMaskedStoreOp store, VectorType maskType,
     if (funcDist != hivmave::FunctionDistType::PB8)
       return failure();
     if (vecSize == 64) {
-      store->setAttr("functionType", hivmave::FunctionDistTypeAttr::get(
-                                         store.getContext(),
-                                         hivmave::FunctionDistType::PB32));
+      store->setAttr("functionType",
+                     hivmave::FunctionDistTypeAttr::get(
+                         store.getContext(), hivmave::FunctionDistType::PB32));
       castMode = hivmave::PregCastMode::UNPK4_B8;
     } else if (vecSize == 128) {
-      store->setAttr("functionType", hivmave::FunctionDistTypeAttr::get(
-                                         store.getContext(),
-                                         hivmave::FunctionDistType::PB16));
+      store->setAttr("functionType",
+                     hivmave::FunctionDistTypeAttr::get(
+                         store.getContext(), hivmave::FunctionDistType::PB16));
       castMode = hivmave::PregCastMode::UNPK_B8;
     } else {
       return failure();
@@ -167,9 +166,9 @@ insertPregCastBeforeStore(VFMaskedStoreOp store, VectorType maskType,
     if (funcDist != hivmave::FunctionDistType::PB16 || vecSize != 64 ||
         !breaksPB16AlignmentOnNextContinuousStore(store))
       return failure();
-    store->setAttr("functionType", hivmave::FunctionDistTypeAttr::get(
-                                       store.getContext(),
-                                       hivmave::FunctionDistType::PB32));
+    store->setAttr("functionType",
+                   hivmave::FunctionDistTypeAttr::get(
+                       store.getContext(), hivmave::FunctionDistType::PB32));
     castMode = hivmave::PregCastMode::UNPK_B16;
   } else {
     return failure();
@@ -328,7 +327,8 @@ struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
         store->getAttrOfType<FunctionDistTypeAttr>("functionType");
 
     if ((store.getPattern() == hivmave::StoreDist::NORM_B8 ||
-         store.getPattern() == hivmave::StoreDist::NORM_B16) && funcDistAttr) {
+         store.getPattern() == hivmave::StoreDist::NORM_B16) &&
+        funcDistAttr) {
       switch (funcDistAttr.getValue()) {
       case hivmave::FunctionDistType::PK:
         if (elemWidth == 8) {
@@ -416,7 +416,8 @@ struct AVEStoreWithStridePattern
 /// Handle func_dist_type (INTLV2/INTLV4) on ops by inserting intlv ops
 /// after the op to sparsify the data layout.
 /// Supports single-result ops (VFGatherOp, VFVCIOp) via getRes()
-/// and two-result ops (VFInterleaveOp, VFDeInterleaveOp) via getRes1()/getRes2().
+/// and two-result ops (VFInterleaveOp, VFDeInterleaveOp) via
+/// getRes1()/getRes2().
 template <typename IntlvOp>
 struct AVEIntlvFuncDistPattern : public OpRewritePattern<IntlvOp> {
   AVEIntlvFuncDistPattern(MLIRContext *context)
@@ -472,7 +473,8 @@ struct AVEIntlvFuncDistPattern : public OpRewritePattern<IntlvOp> {
 
 /// Instead of materializing intlv/dintlv for VectorLayoutCastOp's functionType,
 /// move the functionType attribute to the defining op of srcVal.
-/// The actual intlv/dintlv lowering will be handled in ConvertHIVMAVEToAVEIntrin.
+/// The actual intlv/dintlv lowering will be handled in
+/// ConvertHIVMAVEToAVEIntrin.
 struct AVEVectorLayoutCastPattern
     : public OpRewritePattern<hivmave::VectorLayoutCastOp> {
   explicit AVEVectorLayoutCastPattern(MLIRContext *context)
@@ -636,7 +638,8 @@ struct AVEPgePattern : public OpRewritePattern<VFPgeOp> {
         normPattern = PgePattern::H;
       break;
     default:
-      llvm::report_fatal_error("Invalid element bit width for a predicate vector.");
+      llvm::report_fatal_error(
+          "Invalid element bit width for a predicate vector.");
     }
     if (normPattern == pattern)
       return failure();
@@ -657,8 +660,7 @@ static void adaptBitWidthForLoad(IRRewriter &rewriter,
     SmallVector<Operation *> oldUsers(dstVec.getUsers());
     // Add additional op to adpat dist mode for unaligned load
     if (supportsNativeVectorLowering && load->hasAttr(UnalignedAttr::name)) {
-      Value result =
-          addDistForUnalignedLoad(dstVec, dist, loc, rewriter);
+      Value result = addDistForUnalignedLoad(dstVec, dist, loc, rewriter);
       if (result != dstVec) {
         LDBG("add intlv for unaligned load");
         for (Operation *u : oldUsers)
@@ -693,8 +695,7 @@ static void adaptBitWidthForStore(IRRewriter &rewriter,
     rewriter.setInsertionPoint(store);
     // Add additional op to adpat dist mode for unaligned store
     if (supportsNativeVectorLowering && store->hasAttr(UnalignedAttr::name)) {
-      Value result =
-          addDistForUnalignedStore(srcVec, dist, loc, rewriter);
+      Value result = addDistForUnalignedStore(srcVec, dist, loc, rewriter);
       if (result != srcVec) {
         LDBG("add dintlv for unaligned store");
         // set new src vector of store

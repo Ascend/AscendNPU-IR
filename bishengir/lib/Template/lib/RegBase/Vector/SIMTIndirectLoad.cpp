@@ -33,34 +33,80 @@ struct IndirectLoadSrcPtr<DTYPE, true> {
     using type = volatile __gm__ DTYPE *;
 };
 
-template<typename DTYPE, typename ITYPE, bool IsVolatile>
-__simt_vf__ LAUNCH_BOUND(MAX_THREAD_NUM)
-__aiv__ __attribute__((always_inline)) static void simtIndirectLoad1D(
-    typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type src,
-    __ubuf__ ITYPE *indices,
-    __ubuf__ DTYPE *dst,
-    __ubuf__ bool *mask,
-    __ubuf__ DTYPE *other,
-    const uint32_t indice_size0,
-    const uint32_t indice_stride0,
-    const uint32_t dst_stride0,
-    const uint32_t mask_stride0,
-    const uint32_t other_stride0
-)
-{
-    for (uint32_t i0 = threadIdx.x; i0 < indice_size0; i0 += blockDim.x) {
-        uint32_t maskIdx = i0 * mask_stride0;
-        uint32_t dstIdx = i0 * dst_stride0;
-        if (mask[maskIdx]) {
-            uint32_t indiceIdx = i0 * indice_stride0;
-            ITYPE srcIdx = indices[indiceIdx];
-            dst[dstIdx] = src[srcIdx];
-        }
-        else {
-            uint32_t otherIdx = i0 * other_stride0;
-            dst[dstIdx] = other[otherIdx];
-        }
+// A5 does not provide an f32-to-f64 conversion instruction. The f64 indirect
+// load template accepts f32 fallback values to avoid f64 vector constants, so
+// widen those values through their IEEE-754 bit representation instead.
+__simt_callee__ __aiv__ __attribute__((always_inline)) static double
+extendFloatToDouble(float value) {
+  union {
+    float asFloat;
+    uint32_t asBits;
+  } src = {value};
+  union {
+    uint64_t asBits;
+    double asDouble;
+  } dst;
+
+  const uint32_t sign = src.asBits >> 31;
+  const uint32_t exponent = (src.asBits >> 23) & 0xff;
+  uint32_t significand = src.asBits & 0x7fffff;
+  uint64_t dstExponent = 0;
+  uint64_t dstSignificand = 0;
+
+  if (exponent == 0xff) {
+    dstExponent = 0x7ff;
+    dstSignificand = static_cast<uint64_t>(significand) << 29;
+  } else if (exponent != 0) {
+    dstExponent = static_cast<uint64_t>(exponent + 896);
+    dstSignificand = static_cast<uint64_t>(significand) << 29;
+  } else if (significand != 0) {
+    int32_t unbiasedExponent = -126;
+    while ((significand & (1u << 23)) == 0) {
+      significand <<= 1;
+      --unbiasedExponent;
     }
+    dstExponent = static_cast<uint64_t>(unbiasedExponent + 1023);
+    dstSignificand = static_cast<uint64_t>(significand & 0x7fffff) << 29;
+  }
+
+  dst.asBits = (static_cast<uint64_t>(sign) << 63) | (dstExponent << 52) |
+               dstSignificand;
+  return dst.asDouble;
+}
+
+template <typename DTYPE, typename OTYPE>
+__simt_callee__ __aiv__ __attribute__((always_inline)) static DTYPE
+convertIndirectLoadFallback(OTYPE value) {
+  return static_cast<DTYPE>(value);
+}
+
+template <>
+__simt_callee__ __aiv__ __attribute__((always_inline)) double
+convertIndirectLoadFallback<double, float>(float value) {
+  return extendFloatToDouble(value);
+}
+
+template <typename DTYPE, typename ITYPE, typename OTYPE, bool IsVolatile>
+__simt_vf__ LAUNCH_BOUND(MAX_THREAD_NUM)
+__aiv__ __attribute__((always_inline)) static void
+simtIndirectLoad1D(typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type src,
+                   __ubuf__ ITYPE *indices, __ubuf__ DTYPE *dst,
+                   __ubuf__ bool *mask, __ubuf__ OTYPE *other,
+                   const uint32_t indice_size0, const uint32_t indice_stride0,
+                   const uint32_t dst_stride0, const uint32_t mask_stride0,
+                   const uint32_t other_stride0) {
+  for (uint32_t i0 = threadIdx.x; i0 < indice_size0; i0 += blockDim.x) {
+    uint32_t maskIdx = i0 * mask_stride0;
+    uint32_t dstIdx = i0 * dst_stride0;
+    if (mask[maskIdx]) {
+      uint32_t indiceIdx = i0 * indice_stride0;
+      ITYPE srcIdx = indices[indiceIdx];
+      dst[dstIdx] = src[srcIdx];
+    } else {
+      uint32_t otherIdx = i0 * other_stride0;
+      dst[dstIdx] = convertIndirectLoadFallback<DTYPE>(other[otherIdx]);
+    }
+  }
 }
 
 template<typename DTYPE, typename ITYPE, bool IsVolatile>
@@ -83,345 +129,321 @@ __aiv__ __attribute__((always_inline)) static void simtIndirectLoad1DWithOutMask
     }
 }
 
-template<typename DTYPE, typename ITYPE, bool IsVolatile>
+template <typename DTYPE, typename ITYPE, typename OTYPE, bool IsVolatile>
 __simt_vf__ LAUNCH_BOUND(MAX_THREAD_NUM)
-__aiv__ __attribute__((always_inline)) static void simtIndirectLoad2D(
-    typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type src,
-    __ubuf__ ITYPE *indices,
-    __ubuf__ DTYPE *dst,
-    __ubuf__ bool *mask,
-    __ubuf__ DTYPE *other,
-    const uint32_t indice_size0,
-    const uint32_t indice_size1,
-    const uint32_t indice_stride0,
-    const uint32_t indice_stride1,
-    const uint32_t dst_stride0,
-    const uint32_t dst_stride1,
-    const uint32_t mask_stride0,
-    const uint32_t mask_stride1,
-    const uint32_t other_stride0,
-    const uint32_t other_stride1
-) {
-    for (uint32_t ty = threadIdx.y; ty < indice_size0; ty += blockDim.y) {
-        for (uint32_t tx = threadIdx.x; tx < indice_size1; tx += blockDim.x) {
-            uint32_t maskIdx = ty * mask_stride0 + tx * mask_stride1;
-            uint32_t dstIdx = ty * dst_stride0 + tx * dst_stride1;
-            if (mask[maskIdx]) {
-                uint32_t indiceIdx = ty * indice_stride0 + tx * indice_stride1;
-                ITYPE srcIdx = indices[indiceIdx];
-                dst[dstIdx] = src[srcIdx];
-            }
-            else {
-                uint32_t otherIdx = ty * other_stride0 + tx * other_stride1;
-                dst[dstIdx] = other[otherIdx];
-            }
-        }
+__aiv__ __attribute__((always_inline)) static void
+simtIndirectLoad2D(typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type src,
+                   __ubuf__ ITYPE *indices, __ubuf__ DTYPE *dst,
+                   __ubuf__ bool *mask, __ubuf__ OTYPE *other,
+                   const uint32_t indice_size0, const uint32_t indice_size1,
+                   const uint32_t indice_stride0, const uint32_t indice_stride1,
+                   const uint32_t dst_stride0, const uint32_t dst_stride1,
+                   const uint32_t mask_stride0, const uint32_t mask_stride1,
+                   const uint32_t other_stride0, const uint32_t other_stride1) {
+  for (uint32_t ty = threadIdx.y; ty < indice_size0; ty += blockDim.y) {
+    for (uint32_t tx = threadIdx.x; tx < indice_size1; tx += blockDim.x) {
+      uint32_t maskIdx = ty * mask_stride0 + tx * mask_stride1;
+      uint32_t dstIdx = ty * dst_stride0 + tx * dst_stride1;
+      if (mask[maskIdx]) {
+        uint32_t indiceIdx = ty * indice_stride0 + tx * indice_stride1;
+        ITYPE srcIdx = indices[indiceIdx];
+        dst[dstIdx] = src[srcIdx];
+      } else {
+        uint32_t otherIdx = ty * other_stride0 + tx * other_stride1;
+        dst[dstIdx] = convertIndirectLoadFallback<DTYPE>(other[otherIdx]);
+      }
     }
+  }
 }
 
-
-template<typename DTYPE, typename ITYPE, bool IsVolatile>
+template <typename DTYPE, typename ITYPE, typename OTYPE, bool IsVolatile>
 __simt_vf__ LAUNCH_BOUND(MAX_THREAD_NUM3D)
-__aiv__ __attribute__((always_inline)) static void simtIndirectLoad3D(
-    typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type src,
-    __ubuf__ ITYPE *indices,
-    __ubuf__ DTYPE *dst,
-    __ubuf__ bool *mask,
-    __ubuf__ DTYPE* other,
-    const uint32_t indice_size0,
-    const uint32_t indice_size1,
-    const uint32_t indice_size2,
-    const uint32_t indice_stride0,
-    const uint32_t indice_stride1,
-    const uint32_t indice_stride2,
-    const uint32_t dst_stride0,
-    const uint32_t dst_stride1,
-    const uint32_t dst_stride2,
-    const uint32_t mask_stride0,
-    const uint32_t mask_stride1,
-    const uint32_t mask_stride2,
-    const uint32_t other_stride0,
-    const uint32_t other_stride1,
-    const uint32_t other_stride2
-) {
-    const uint32_t num_elems = indice_size0 * indice_size1 * indice_size2;
-    for (uint32_t tx = threadIdx.x; tx < num_elems; tx += blockDim.x) {
-        uint32_t elem_idx = tx;
-        uint32_t i2 = elem_idx % indice_size2; elem_idx /= indice_size2;
-        uint32_t i1 = elem_idx % indice_size1; elem_idx /= indice_size1;
-        uint32_t i0 = elem_idx;
+__aiv__ __attribute__((always_inline)) static void
+simtIndirectLoad3D(typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type src,
+                   __ubuf__ ITYPE *indices, __ubuf__ DTYPE *dst,
+                   __ubuf__ bool *mask, __ubuf__ OTYPE *other,
+                   const uint32_t indice_size0, const uint32_t indice_size1,
+                   const uint32_t indice_size2, const uint32_t indice_stride0,
+                   const uint32_t indice_stride1, const uint32_t indice_stride2,
+                   const uint32_t dst_stride0, const uint32_t dst_stride1,
+                   const uint32_t dst_stride2, const uint32_t mask_stride0,
+                   const uint32_t mask_stride1, const uint32_t mask_stride2,
+                   const uint32_t other_stride0, const uint32_t other_stride1,
+                   const uint32_t other_stride2) {
+  const uint32_t num_elems = indice_size0 * indice_size1 * indice_size2;
+  for (uint32_t tx = threadIdx.x; tx < num_elems; tx += blockDim.x) {
+    uint32_t elem_idx = tx;
+    uint32_t i2 = elem_idx % indice_size2;
+    elem_idx /= indice_size2;
+    uint32_t i1 = elem_idx % indice_size1;
+    elem_idx /= indice_size1;
+    uint32_t i0 = elem_idx;
 
-        uint32_t maskIdx = i0*mask_stride0 + i1*mask_stride1 + i2*mask_stride2;
-        uint32_t dstIdx = i0*dst_stride0 + i1*dst_stride1 + i2*dst_stride2;
-        if (mask[maskIdx]) {
-            uint32_t indiceIdx = i0*indice_stride0 + i1*indice_stride1 + i2*indice_stride2;
-            ITYPE srcIdx = indices[indiceIdx];
-            dst[dstIdx] = src[srcIdx];
-        }
-        else {
-            uint32_t otherIdx = i0*other_stride0 + i1*other_stride1 + i2*other_stride2;
-            dst[dstIdx] = other[otherIdx];
-        }
+    uint32_t maskIdx =
+        i0 * mask_stride0 + i1 * mask_stride1 + i2 * mask_stride2;
+    uint32_t dstIdx = i0 * dst_stride0 + i1 * dst_stride1 + i2 * dst_stride2;
+    if (mask[maskIdx]) {
+      uint32_t indiceIdx =
+          i0 * indice_stride0 + i1 * indice_stride1 + i2 * indice_stride2;
+      ITYPE srcIdx = indices[indiceIdx];
+      dst[dstIdx] = src[srcIdx];
+    } else {
+      uint32_t otherIdx =
+          i0 * other_stride0 + i1 * other_stride1 + i2 * other_stride2;
+      dst[dstIdx] = convertIndirectLoadFallback<DTYPE>(other[otherIdx]);
     }
+  }
 }
 
-template<typename DTYPE, typename ITYPE, bool IsVolatile>
+template <typename DTYPE, typename ITYPE, typename OTYPE, bool IsVolatile>
 __simt_vf__ LAUNCH_BOUND(MAX_THREAD_NUM4_5D)
-__aiv__ __attribute__((always_inline)) static void simtIndirectLoad4D(
-    typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type src,
-    __ubuf__ ITYPE  *indices,
-    __ubuf__ DTYPE  *dst,
-    __ubuf__ bool *mask,
-    __ubuf__ DTYPE * other,
-    const uint32_t indice_size0,
-    const uint32_t indice_size1,
-    const uint32_t indice_size2,
-    const uint32_t indice_size3,
-    const uint32_t indice_stride0,
-    const uint32_t indice_stride1,
-    const uint32_t indice_stride2,
-    const uint32_t indice_stride3,
-    const uint32_t dst_stride0,
-    const uint32_t dst_stride1,
-    const uint32_t dst_stride2,
-    const uint32_t dst_stride3,
-    const uint32_t mask_stride0,
-    const uint32_t mask_stride1,
-    const uint32_t mask_stride2,
-    const uint32_t mask_stride3,
-    const uint32_t other_stride0,
-    const uint32_t other_stride1,
-    const uint32_t other_stride2,
-    const uint32_t other_stride3
-) {
-    const uint32_t num_elems = indice_size0 * indice_size1 * indice_size2 * indice_size3;
-    for (uint32_t tx = threadIdx.x; tx < num_elems; tx += blockDim.x) {
-        uint32_t elem_idx = tx;
-        uint32_t i3 = elem_idx % indice_size3; elem_idx /= indice_size3;
-        uint32_t i2 = elem_idx % indice_size2; elem_idx /= indice_size2;
-        uint32_t i1 = elem_idx % indice_size1; elem_idx /= indice_size1;
-        uint32_t i0 = elem_idx;
+__aiv__ __attribute__((always_inline)) static void
+simtIndirectLoad4D(typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type src,
+                   __ubuf__ ITYPE *indices, __ubuf__ DTYPE *dst,
+                   __ubuf__ bool *mask, __ubuf__ OTYPE *other,
+                   const uint32_t indice_size0, const uint32_t indice_size1,
+                   const uint32_t indice_size2, const uint32_t indice_size3,
+                   const uint32_t indice_stride0, const uint32_t indice_stride1,
+                   const uint32_t indice_stride2, const uint32_t indice_stride3,
+                   const uint32_t dst_stride0, const uint32_t dst_stride1,
+                   const uint32_t dst_stride2, const uint32_t dst_stride3,
+                   const uint32_t mask_stride0, const uint32_t mask_stride1,
+                   const uint32_t mask_stride2, const uint32_t mask_stride3,
+                   const uint32_t other_stride0, const uint32_t other_stride1,
+                   const uint32_t other_stride2, const uint32_t other_stride3) {
+  const uint32_t num_elems =
+      indice_size0 * indice_size1 * indice_size2 * indice_size3;
+  for (uint32_t tx = threadIdx.x; tx < num_elems; tx += blockDim.x) {
+    uint32_t elem_idx = tx;
+    uint32_t i3 = elem_idx % indice_size3;
+    elem_idx /= indice_size3;
+    uint32_t i2 = elem_idx % indice_size2;
+    elem_idx /= indice_size2;
+    uint32_t i1 = elem_idx % indice_size1;
+    elem_idx /= indice_size1;
+    uint32_t i0 = elem_idx;
 
-        uint32_t maskIdx = i0*mask_stride0 + i1*mask_stride1 + i2*mask_stride2 + i3*mask_stride3;
-        uint32_t dstIdx = i0*dst_stride0 + i1*dst_stride1 + i2*dst_stride2 + i3*dst_stride3;
-        if (mask[maskIdx]) {
-            uint32_t indiceIdx = i0*indice_stride0 + i1*indice_stride1 + i2*indice_stride2 + i3*indice_stride3;
-            ITYPE srcIdx = indices[indiceIdx];
-            dst[dstIdx] = src[srcIdx];
-        }
-        else {
-            uint32_t otherIdx = i0*other_stride0 + i1*other_stride1 + i2*other_stride2 + i3*other_stride3;
-            dst[dstIdx] = other[otherIdx];
-        }
+    uint32_t maskIdx = i0 * mask_stride0 + i1 * mask_stride1 +
+                       i2 * mask_stride2 + i3 * mask_stride3;
+    uint32_t dstIdx = i0 * dst_stride0 + i1 * dst_stride1 + i2 * dst_stride2 +
+                      i3 * dst_stride3;
+    if (mask[maskIdx]) {
+      uint32_t indiceIdx = i0 * indice_stride0 + i1 * indice_stride1 +
+                           i2 * indice_stride2 + i3 * indice_stride3;
+      ITYPE srcIdx = indices[indiceIdx];
+      dst[dstIdx] = src[srcIdx];
+    } else {
+      uint32_t otherIdx = i0 * other_stride0 + i1 * other_stride1 +
+                          i2 * other_stride2 + i3 * other_stride3;
+      dst[dstIdx] = convertIndirectLoadFallback<DTYPE>(other[otherIdx]);
     }
+  }
 }
 
-template<typename DTYPE, typename ITYPE, bool IsVolatile>
+template <typename DTYPE, typename ITYPE, typename OTYPE, bool IsVolatile>
 __simt_vf__ LAUNCH_BOUND(MAX_THREAD_NUM4_5D)
-__aiv__ __attribute__((always_inline)) static void simtIndirectLoad5D(
-    typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type src,
-    __ubuf__ ITYPE *indices,
-    __ubuf__ DTYPE *dst,
-    __ubuf__ bool *mask,
-    __ubuf__ DTYPE* other,
-    const uint32_t indice_size0,
-    const uint32_t indice_size1,
-    const uint32_t indice_size2,
-    const uint32_t indice_size3,
-    const uint32_t indice_size4,
-    const uint32_t indice_stride0,
-    const uint32_t indice_stride1,
-    const uint32_t indice_stride2,
-    const uint32_t indice_stride3,
-    const uint32_t indice_stride4,
-    const uint32_t dst_stride0,
-    const uint32_t dst_stride1,
-    const uint32_t dst_stride2,
-    const uint32_t dst_stride3,
-    const uint32_t dst_stride4,
-    const uint32_t mask_stride0,
-    const uint32_t mask_stride1,
-    const uint32_t mask_stride2,
-    const uint32_t mask_stride3,
-    const uint32_t mask_stride4,
-    const uint32_t other_stride0,
-    const uint32_t other_stride1,
-    const uint32_t other_stride2,
-    const uint32_t other_stride3,
-    const uint32_t other_stride4
-)  {
-    const uint32_t num_elems = indice_size0 * indice_size1 * indice_size2 * indice_size3 * indice_size4;
-    for (uint32_t tx = threadIdx.x; tx < num_elems; tx += blockDim.x) {
-        uint32_t elem_idx = tx;
-        uint32_t i4 = elem_idx % indice_size4; elem_idx /= indice_size4;
-        uint32_t i3 = elem_idx % indice_size3; elem_idx /= indice_size3;
-        uint32_t i2 = elem_idx % indice_size2; elem_idx /= indice_size2;
-        uint32_t i1 = elem_idx % indice_size1; elem_idx /= indice_size1;
-        uint32_t i0 = elem_idx;
+__aiv__ __attribute__((always_inline)) static void
+simtIndirectLoad5D(typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type src,
+                   __ubuf__ ITYPE *indices, __ubuf__ DTYPE *dst,
+                   __ubuf__ bool *mask, __ubuf__ OTYPE *other,
+                   const uint32_t indice_size0, const uint32_t indice_size1,
+                   const uint32_t indice_size2, const uint32_t indice_size3,
+                   const uint32_t indice_size4, const uint32_t indice_stride0,
+                   const uint32_t indice_stride1, const uint32_t indice_stride2,
+                   const uint32_t indice_stride3, const uint32_t indice_stride4,
+                   const uint32_t dst_stride0, const uint32_t dst_stride1,
+                   const uint32_t dst_stride2, const uint32_t dst_stride3,
+                   const uint32_t dst_stride4, const uint32_t mask_stride0,
+                   const uint32_t mask_stride1, const uint32_t mask_stride2,
+                   const uint32_t mask_stride3, const uint32_t mask_stride4,
+                   const uint32_t other_stride0, const uint32_t other_stride1,
+                   const uint32_t other_stride2, const uint32_t other_stride3,
+                   const uint32_t other_stride4) {
+  const uint32_t num_elems =
+      indice_size0 * indice_size1 * indice_size2 * indice_size3 * indice_size4;
+  for (uint32_t tx = threadIdx.x; tx < num_elems; tx += blockDim.x) {
+    uint32_t elem_idx = tx;
+    uint32_t i4 = elem_idx % indice_size4;
+    elem_idx /= indice_size4;
+    uint32_t i3 = elem_idx % indice_size3;
+    elem_idx /= indice_size3;
+    uint32_t i2 = elem_idx % indice_size2;
+    elem_idx /= indice_size2;
+    uint32_t i1 = elem_idx % indice_size1;
+    elem_idx /= indice_size1;
+    uint32_t i0 = elem_idx;
 
-        uint32_t maskIdx = i0*mask_stride0 + i1*mask_stride1 + i2*mask_stride2 + i3*mask_stride3 + i4*mask_stride4;
-        uint32_t dstIdx = i0*dst_stride0 + i1*dst_stride1 + i2*dst_stride2 + i3*dst_stride3 + i4*dst_stride4;
-        if (mask[maskIdx]) {
-            uint32_t indiceIdx = i0*indice_stride0 + i1*indice_stride1 + i2*indice_stride2 + i3*indice_stride3 + i4*indice_stride4;
-            ITYPE srcIdx = indices[indiceIdx];
-            dst[dstIdx] = src[srcIdx];
-        }
-        else {
-            uint32_t otherIdx = i0*other_stride0 + i1*other_stride1 + i2*other_stride2 + i3*other_stride3 + i4*other_stride4;
-            dst[dstIdx] = other[otherIdx];
-        }
+    uint32_t maskIdx = i0 * mask_stride0 + i1 * mask_stride1 +
+                       i2 * mask_stride2 + i3 * mask_stride3 +
+                       i4 * mask_stride4;
+    uint32_t dstIdx = i0 * dst_stride0 + i1 * dst_stride1 + i2 * dst_stride2 +
+                      i3 * dst_stride3 + i4 * dst_stride4;
+    if (mask[maskIdx]) {
+      uint32_t indiceIdx = i0 * indice_stride0 + i1 * indice_stride1 +
+                           i2 * indice_stride2 + i3 * indice_stride3 +
+                           i4 * indice_stride4;
+      ITYPE srcIdx = indices[indiceIdx];
+      dst[dstIdx] = src[srcIdx];
+    } else {
+      uint32_t otherIdx = i0 * other_stride0 + i1 * other_stride1 +
+                          i2 * other_stride2 + i3 * other_stride3 +
+                          i4 * other_stride4;
+      dst[dstIdx] = convertIndirectLoadFallback<DTYPE>(other[otherIdx]);
     }
+  }
 }
 
-template<int DIM, typename DTYPE, typename ITYPE, bool IsVolatile>
+template <int DIM, typename DTYPE, typename ITYPE, typename OTYPE,
+          bool IsVolatile>
 __aiv__ __attribute__((always_inline)) void indirect_load(
-    memref_t<__gm__ DTYPE, 1> *src,
-    memref_t<__ubuf__ ITYPE, DIM> *indices,
-    memref_t<__ubuf__ DTYPE, DIM> *dst,
-    memref_t<__ubuf__ bool, DIM> *mask,
-    memref_t<__ubuf__ DTYPE, DIM> *other
-) {
-    static_assert(DIM <= 5, "DIM must be <= 5");
-    static_assert(std::is_same<DTYPE, float>::value ||
-                  std::is_same<DTYPE, half>::value ||
-                  std::is_same<DTYPE, bfloat16_t>::value ||
-                  std::is_same<DTYPE, int8_t>::value ||
-                  std::is_same<DTYPE, int16_t>::value ||
-                  std::is_same<DTYPE, int32_t>::value ||
-                  std::is_same<DTYPE, int64_t>::value ||
-                  std::is_same<DTYPE, uint8_t>::value ||
-                  std::is_same<DTYPE, uint16_t>::value ||
-                  std::is_same<DTYPE, uint32_t>::value ||
-                  std::is_same<DTYPE, uint64_t>::value ||
-                  std::is_same<DTYPE, bool>::value ||
-                  std::is_same<DTYPE, hifloat8_t>::value ||
-                  std::is_same<DTYPE, hifloat4x2_t>::value ||
-                  std::is_same<DTYPE, float8_e4m3_t>::value ||
-                  std::is_same<DTYPE, float8_e5m2_t>::value,
+    memref_t<__gm__ DTYPE, 1> *src, memref_t<__ubuf__ ITYPE, DIM> *indices,
+    memref_t<__ubuf__ DTYPE, DIM> *dst, memref_t<__ubuf__ bool, DIM> *mask,
+    memref_t<__ubuf__ OTYPE, DIM> *other) {
+  static_assert(DIM <= 5, "DIM must be <= 5");
+  static_assert(std::is_same<DTYPE, float>::value ||
+                    std::is_same<DTYPE, double>::value ||
+                    std::is_same<DTYPE, half>::value ||
+                    std::is_same<DTYPE, bfloat16_t>::value ||
+                    std::is_same<DTYPE, int8_t>::value ||
+                    std::is_same<DTYPE, int16_t>::value ||
+                    std::is_same<DTYPE, int32_t>::value ||
+                    std::is_same<DTYPE, int64_t>::value ||
+                    std::is_same<DTYPE, uint8_t>::value ||
+                    std::is_same<DTYPE, uint16_t>::value ||
+                    std::is_same<DTYPE, uint32_t>::value ||
+                    std::is_same<DTYPE, uint64_t>::value ||
+                    std::is_same<DTYPE, bool>::value ||
+                    std::is_same<DTYPE, hifloat8_t>::value ||
+                    std::is_same<DTYPE, hifloat4x2_t>::value ||
+                    std::is_same<DTYPE, float8_e4m3_t>::value ||
+                    std::is_same<DTYPE, float8_e5m2_t>::value,
                 //   std::is_same<DTYPE, float4_e2m1_t>::value ||
                 //   std::is_same<DTYPE, float4_e1m2_t>::value,
-                  "Currently dtype of data supports only \
+                "Currently dtype of data supports only \
                     float|half|bfloat16_t|int8_t|int16_t|int32_t|int64_t| \
                     bool|hifloat8_t|hifloat4x2_t|float8_e4m3_t|float8_e5m2_t|float4_e2m1_t|float4_e1m2_t.");
-    static_assert(std::is_same<ITYPE, int32_t>::value ||
-                  std::is_same<ITYPE, int64_t>::value,
-                  "Currently dtype of index supports only int32|int64");
+  static_assert(std::is_same<ITYPE, int32_t>::value ||
+                    std::is_same<ITYPE, int64_t>::value,
+                "Currently dtype of index supports only int32|int64");
 
-    unsigned int block_dim_x = 1;
-    unsigned int block_dim_y = 1;
-    unsigned int block_dim_z = 1;
+  unsigned int block_dim_x = 1;
+  unsigned int block_dim_y = 1;
+  unsigned int block_dim_z = 1;
 
-    if constexpr (DIM == 1) {
-        cce::async_invoke<simtIndirectLoad1D<DTYPE, ITYPE, IsVolatile>>(cce::dim3{MAX_THREAD_NUM},
-            reinterpret_cast<typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type> (src->aligned),
-            reinterpret_cast<__ubuf__ ITYPE*> (indices->aligned + indices->offset),
-            reinterpret_cast<__ubuf__ DTYPE*> (dst->aligned + dst->offset),
-            reinterpret_cast<__ubuf__ bool*> (mask->aligned + mask->offset),
-            reinterpret_cast<__ubuf__ DTYPE*> (other->aligned + other->offset),
-            indices->sizes[0],
-            indices->strides[0],
-            dst->strides[0],
-            mask->strides[0],
-            other->strides[0]);
-    }else if constexpr (DIM == 2) {
-        const uint32_t size0 = indices->sizes[0];
-        const uint32_t size1 = indices->sizes[1];
-        const uint32_t stride0 = indices->strides[0];
-        const uint32_t stride1 = indices->strides[1];
+  if constexpr (DIM == 1) {
+    cce::async_invoke<simtIndirectLoad1D<DTYPE, ITYPE, OTYPE, IsVolatile>>(
+        cce::dim3{MAX_THREAD_NUM},
+        reinterpret_cast<typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type>(
+            src->aligned),
+        reinterpret_cast<__ubuf__ ITYPE *>(indices->aligned + indices->offset),
+        reinterpret_cast<__ubuf__ DTYPE *>(dst->aligned + dst->offset),
+        reinterpret_cast<__ubuf__ bool *>(mask->aligned + mask->offset),
+        reinterpret_cast<__ubuf__ OTYPE *>(other->aligned + other->offset),
+        indices->sizes[0], indices->strides[0], dst->strides[0],
+        mask->strides[0], other->strides[0]);
+  } else if constexpr (DIM == 2) {
+    const uint32_t size0 = indices->sizes[0];
+    const uint32_t size1 = indices->sizes[1];
+    const uint32_t stride0 = indices->strides[0];
+    const uint32_t stride1 = indices->strides[1];
 
-        if (size1 >= MAX_THREAD_NUM) {
-            block_dim_x = MAX_THREAD_NUM;
-        } else if (size1 * size0 >= MAX_THREAD_NUM) {
-            block_dim_x = size1;
-            block_dim_y = MAX_THREAD_NUM / block_dim_x;
-        } else {
-            block_dim_x = size1;
-            block_dim_y = size0;
-        }
-
-        cce::async_invoke<simtIndirectLoad2D<DTYPE, ITYPE, IsVolatile>>(cce::dim3{block_dim_x, block_dim_y},
-            reinterpret_cast<typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type> (src->aligned),
-            reinterpret_cast<__ubuf__ ITYPE*> (indices->aligned + indices->offset),
-            reinterpret_cast<__ubuf__ DTYPE*> (dst->aligned + dst->offset),
-            reinterpret_cast<__ubuf__ bool*> (mask->aligned + mask->offset),
-            reinterpret_cast<__ubuf__ DTYPE*> (other->aligned + other->offset),
-            size0, size1,
-            stride0, stride1,
-            dst->strides[0], dst->strides[1],
-            mask->strides[0], mask->strides[1],
-            other->strides[0], other->strides[1]
-        );
-    }else if constexpr (DIM == 3) {
-        const uint32_t size0 = indices->sizes[0];
-        const uint32_t size1 = indices->sizes[1];
-        const uint32_t size2 = indices->sizes[2];
-        const uint32_t stride0 = indices->strides[0];
-        const uint32_t stride1 = indices->strides[1];
-        const uint32_t stride2 = indices->strides[2];
-
-        cce::async_invoke<simtIndirectLoad3D<DTYPE, ITYPE, IsVolatile>>(cce::dim3{MAX_THREAD_NUM3D},
-            reinterpret_cast<typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type> (src->aligned),
-            reinterpret_cast<__ubuf__ ITYPE*> (indices->aligned + indices->offset),
-            reinterpret_cast<__ubuf__ DTYPE*> (dst->aligned + dst->offset),
-            reinterpret_cast<__ubuf__ bool*> (mask->aligned + mask->offset),
-            reinterpret_cast<__ubuf__ DTYPE*> (other->aligned + other->offset),
-            size0, size1, size2,
-            stride0, stride1, stride2,
-            dst->strides[0], dst->strides[1], dst->strides[2],
-            mask->strides[0], mask->strides[1],  mask->strides[2],
-            other->strides[0], other->strides[1], other->strides[2]
-            );
-    }else if constexpr (DIM == 4) {
-        const uint32_t size0 = indices->sizes[0];
-        const uint32_t size1 = indices->sizes[1];
-        const uint32_t size2 = indices->sizes[2];
-        const uint32_t size3 = indices->sizes[3];
-        const uint32_t stride0 = indices->strides[0];
-        const uint32_t stride1 = indices->strides[1];
-        const uint32_t stride2 = indices->strides[2];
-        const uint32_t stride3 = indices->strides[3];
-
-        cce::async_invoke<simtIndirectLoad4D<DTYPE, ITYPE, IsVolatile>>(cce::dim3{MAX_THREAD_NUM4_5D},
-            reinterpret_cast<typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type> (src->aligned),
-            reinterpret_cast<__ubuf__ ITYPE*> (indices->aligned + indices->offset),
-            reinterpret_cast<__ubuf__ DTYPE*> (dst->aligned + dst->offset),
-            reinterpret_cast<__ubuf__ bool*> (mask->aligned + mask->offset),
-            reinterpret_cast<__ubuf__ DTYPE*> (other->aligned + other->offset),
-            size0, size1, size2, size3,
-            stride0, stride1, stride2, stride3,
-            dst->strides[0], dst->strides[1], dst->strides[2], dst->strides[3],
-            mask->strides[0], mask->strides[1], mask->strides[2], mask->strides[3],
-            other->strides[0], other->strides[1], other->strides[2], other->strides[3]
-        );
-    }else if constexpr (DIM == 5) {
-        const uint32_t stride0 = indices->strides[0];
-        const uint32_t stride1 = indices->strides[1];
-        const uint32_t stride2 = indices->strides[2];
-        const uint32_t stride3 = indices->strides[3];
-        const uint32_t stride4 = indices->strides[4];
-        const uint32_t size0 = indices->sizes[0];
-        const uint32_t size1 = indices->sizes[1];
-        const uint32_t size2 = indices->sizes[2];
-        const uint32_t size3 = indices->sizes[3];
-        const uint32_t size4 = indices->sizes[4];
-
-        cce::async_invoke<simtIndirectLoad5D<DTYPE, ITYPE, IsVolatile>>(cce::dim3{MAX_THREAD_NUM4_5D},
-            reinterpret_cast<typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type> (src->aligned),
-            reinterpret_cast<__ubuf__ ITYPE*> (indices->aligned + indices->offset),
-            reinterpret_cast<__ubuf__ DTYPE*> (dst->aligned + dst->offset),
-            reinterpret_cast<__ubuf__ bool*> (mask->aligned + mask->offset),
-            reinterpret_cast<__ubuf__ DTYPE*> (other->aligned + other->offset),
-            size0, size1, size2, size3, size4,
-            stride0, stride1, stride2, stride3, stride4,
-            dst->strides[0], dst->strides[1], dst->strides[2], dst->strides[3], dst->strides[4],
-            mask->strides[0], mask->strides[1], mask->strides[2], mask->strides[3], mask->strides[4],
-            other->strides[0], other->strides[1], other->strides[2], other->strides[3], other->strides[4]
-        );
+    if (size1 >= MAX_THREAD_NUM) {
+      block_dim_x = MAX_THREAD_NUM;
+    } else if (size1 * size0 >= MAX_THREAD_NUM) {
+      block_dim_x = size1;
+      block_dim_y = MAX_THREAD_NUM / block_dim_x;
+    } else {
+      block_dim_x = size1;
+      block_dim_y = size0;
     }
+
+    cce::async_invoke<simtIndirectLoad2D<DTYPE, ITYPE, OTYPE, IsVolatile>>(
+        cce::dim3{block_dim_x, block_dim_y},
+        reinterpret_cast<typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type>(
+            src->aligned),
+        reinterpret_cast<__ubuf__ ITYPE *>(indices->aligned + indices->offset),
+        reinterpret_cast<__ubuf__ DTYPE *>(dst->aligned + dst->offset),
+        reinterpret_cast<__ubuf__ bool *>(mask->aligned + mask->offset),
+        reinterpret_cast<__ubuf__ OTYPE *>(other->aligned + other->offset),
+        size0, size1, stride0, stride1, dst->strides[0], dst->strides[1],
+        mask->strides[0], mask->strides[1], other->strides[0],
+        other->strides[1]);
+  } else if constexpr (DIM == 3) {
+    const uint32_t size0 = indices->sizes[0];
+    const uint32_t size1 = indices->sizes[1];
+    const uint32_t size2 = indices->sizes[2];
+    const uint32_t stride0 = indices->strides[0];
+    const uint32_t stride1 = indices->strides[1];
+    const uint32_t stride2 = indices->strides[2];
+
+    cce::async_invoke<simtIndirectLoad3D<DTYPE, ITYPE, OTYPE, IsVolatile>>(
+        cce::dim3{MAX_THREAD_NUM3D},
+        reinterpret_cast<typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type>(
+            src->aligned),
+        reinterpret_cast<__ubuf__ ITYPE *>(indices->aligned + indices->offset),
+        reinterpret_cast<__ubuf__ DTYPE *>(dst->aligned + dst->offset),
+        reinterpret_cast<__ubuf__ bool *>(mask->aligned + mask->offset),
+        reinterpret_cast<__ubuf__ OTYPE *>(other->aligned + other->offset),
+        size0, size1, size2, stride0, stride1, stride2, dst->strides[0],
+        dst->strides[1], dst->strides[2], mask->strides[0], mask->strides[1],
+        mask->strides[2], other->strides[0], other->strides[1],
+        other->strides[2]);
+  } else if constexpr (DIM == 4) {
+    const uint32_t size0 = indices->sizes[0];
+    const uint32_t size1 = indices->sizes[1];
+    const uint32_t size2 = indices->sizes[2];
+    const uint32_t size3 = indices->sizes[3];
+    const uint32_t stride0 = indices->strides[0];
+    const uint32_t stride1 = indices->strides[1];
+    const uint32_t stride2 = indices->strides[2];
+    const uint32_t stride3 = indices->strides[3];
+
+    cce::async_invoke<simtIndirectLoad4D<DTYPE, ITYPE, OTYPE, IsVolatile>>(
+        cce::dim3{MAX_THREAD_NUM4_5D},
+        reinterpret_cast<typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type>(
+            src->aligned),
+        reinterpret_cast<__ubuf__ ITYPE *>(indices->aligned + indices->offset),
+        reinterpret_cast<__ubuf__ DTYPE *>(dst->aligned + dst->offset),
+        reinterpret_cast<__ubuf__ bool *>(mask->aligned + mask->offset),
+        reinterpret_cast<__ubuf__ OTYPE *>(other->aligned + other->offset),
+        size0, size1, size2, size3, stride0, stride1, stride2, stride3,
+        dst->strides[0], dst->strides[1], dst->strides[2], dst->strides[3],
+        mask->strides[0], mask->strides[1], mask->strides[2], mask->strides[3],
+        other->strides[0], other->strides[1], other->strides[2],
+        other->strides[3]);
+  } else if constexpr (DIM == 5) {
+    const uint32_t stride0 = indices->strides[0];
+    const uint32_t stride1 = indices->strides[1];
+    const uint32_t stride2 = indices->strides[2];
+    const uint32_t stride3 = indices->strides[3];
+    const uint32_t stride4 = indices->strides[4];
+    const uint32_t size0 = indices->sizes[0];
+    const uint32_t size1 = indices->sizes[1];
+    const uint32_t size2 = indices->sizes[2];
+    const uint32_t size3 = indices->sizes[3];
+    const uint32_t size4 = indices->sizes[4];
+
+    cce::async_invoke<simtIndirectLoad5D<DTYPE, ITYPE, OTYPE, IsVolatile>>(
+        cce::dim3{MAX_THREAD_NUM4_5D},
+        reinterpret_cast<typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type>(
+            src->aligned),
+        reinterpret_cast<__ubuf__ ITYPE *>(indices->aligned + indices->offset),
+        reinterpret_cast<__ubuf__ DTYPE *>(dst->aligned + dst->offset),
+        reinterpret_cast<__ubuf__ bool *>(mask->aligned + mask->offset),
+        reinterpret_cast<__ubuf__ OTYPE *>(other->aligned + other->offset),
+        size0, size1, size2, size3, size4, stride0, stride1, stride2, stride3,
+        stride4, dst->strides[0], dst->strides[1], dst->strides[2],
+        dst->strides[3], dst->strides[4], mask->strides[0], mask->strides[1],
+        mask->strides[2], mask->strides[3], mask->strides[4], other->strides[0],
+        other->strides[1], other->strides[2], other->strides[3],
+        other->strides[4]);
+  }
 }
 
 extern "C" {
 REGISTE_INDIRECT_LOAD(1, float, int32_t);
+REGISTE_INDIRECT_LOAD(1, double, int32_t);
+REGISTE_INDIRECT_LOAD_MIXED(1, double, int32_t, float);
 REGISTE_INDIRECT_LOAD(1, half, int32_t);
 REGISTE_INDIRECT_LOAD(1, bfloat16_t, int32_t);
 REGISTE_INDIRECT_LOAD(1, int8_t, int32_t);
@@ -441,6 +463,8 @@ REGISTE_INDIRECT_LOAD(1, float8_e5m2_t, int32_t);
 // REGISTE_INDIRECT_LOAD(1, float4_e1m2_t, int32_t);
 
 REGISTE_INDIRECT_LOAD(1, float, int64_t);
+REGISTE_INDIRECT_LOAD(1, double, int64_t);
+REGISTE_INDIRECT_LOAD_MIXED(1, double, int64_t, float);
 REGISTE_INDIRECT_LOAD(1, half, int64_t);
 REGISTE_INDIRECT_LOAD(1, bfloat16_t, int64_t);
 REGISTE_INDIRECT_LOAD(1, int8_t, int64_t);
@@ -460,6 +484,8 @@ REGISTE_INDIRECT_LOAD(1, float8_e5m2_t, int64_t);
 // REGISTE_INDIRECT_LOAD(1, float4_e1m2_t, int64_t);
 
 REGISTE_INDIRECT_LOAD(2, float, int32_t);
+REGISTE_INDIRECT_LOAD(2, double, int32_t);
+REGISTE_INDIRECT_LOAD_MIXED(2, double, int32_t, float);
 REGISTE_INDIRECT_LOAD(2, half, int32_t);
 REGISTE_INDIRECT_LOAD(2, bfloat16_t, int32_t);
 REGISTE_INDIRECT_LOAD(2, int8_t, int32_t);
@@ -479,6 +505,8 @@ REGISTE_INDIRECT_LOAD(2, float8_e5m2_t, int32_t);
 // REGISTE_INDIRECT_LOAD(2, float4_e1m2_t, int32_t);
 
 REGISTE_INDIRECT_LOAD(2, float, int64_t);
+REGISTE_INDIRECT_LOAD(2, double, int64_t);
+REGISTE_INDIRECT_LOAD_MIXED(2, double, int64_t, float);
 REGISTE_INDIRECT_LOAD(2, half, int64_t);
 REGISTE_INDIRECT_LOAD(2, bfloat16_t, int64_t);
 REGISTE_INDIRECT_LOAD(2, int8_t, int64_t);
@@ -498,6 +526,8 @@ REGISTE_INDIRECT_LOAD(2, float8_e5m2_t, int64_t);
 // REGISTE_INDIRECT_LOAD(2, float4_e1m2_t, int64_t);
 
 REGISTE_INDIRECT_LOAD(3, float, int32_t);
+REGISTE_INDIRECT_LOAD(3, double, int32_t);
+REGISTE_INDIRECT_LOAD_MIXED(3, double, int32_t, float);
 REGISTE_INDIRECT_LOAD(3, half, int32_t);
 REGISTE_INDIRECT_LOAD(3, bfloat16_t, int32_t);
 REGISTE_INDIRECT_LOAD(3, int8_t, int32_t);
@@ -517,6 +547,8 @@ REGISTE_INDIRECT_LOAD(3, float8_e5m2_t, int32_t);
 // REGISTE_INDIRECT_LOAD(3, float4_e1m2_t, int32_t);
 
 REGISTE_INDIRECT_LOAD(3, float, int64_t);
+REGISTE_INDIRECT_LOAD(3, double, int64_t);
+REGISTE_INDIRECT_LOAD_MIXED(3, double, int64_t, float);
 REGISTE_INDIRECT_LOAD(3, half, int64_t);
 REGISTE_INDIRECT_LOAD(3, bfloat16_t, int64_t);
 REGISTE_INDIRECT_LOAD(3, int8_t, int64_t);
@@ -536,6 +568,8 @@ REGISTE_INDIRECT_LOAD(3, float8_e5m2_t, int64_t);
 // REGISTE_INDIRECT_LOAD(3, float4_e1m2_t, int64_t);
 
 REGISTE_INDIRECT_LOAD(4, float, int32_t);
+REGISTE_INDIRECT_LOAD(4, double, int32_t);
+REGISTE_INDIRECT_LOAD_MIXED(4, double, int32_t, float);
 REGISTE_INDIRECT_LOAD(4, half, int32_t);
 REGISTE_INDIRECT_LOAD(4, bfloat16_t, int32_t);
 REGISTE_INDIRECT_LOAD(4, int8_t, int32_t);
@@ -555,6 +589,8 @@ REGISTE_INDIRECT_LOAD(4, float8_e5m2_t, int32_t);
 // REGISTE_INDIRECT_LOAD(4, float4_e1m2_t, int32_t);
 
 REGISTE_INDIRECT_LOAD(4, float, int64_t);
+REGISTE_INDIRECT_LOAD(4, double, int64_t);
+REGISTE_INDIRECT_LOAD_MIXED(4, double, int64_t, float);
 REGISTE_INDIRECT_LOAD(4, half, int64_t);
 REGISTE_INDIRECT_LOAD(4, bfloat16_t, int64_t);
 REGISTE_INDIRECT_LOAD(4, int8_t, int64_t);
@@ -574,6 +610,8 @@ REGISTE_INDIRECT_LOAD(4, float8_e5m2_t, int64_t);
 // REGISTE_INDIRECT_LOAD(4, float4_e1m2_t, int64_t);
 
 REGISTE_INDIRECT_LOAD(5, float, int32_t);
+REGISTE_INDIRECT_LOAD(5, double, int32_t);
+REGISTE_INDIRECT_LOAD_MIXED(5, double, int32_t, float);
 REGISTE_INDIRECT_LOAD(5, half, int32_t);
 REGISTE_INDIRECT_LOAD(5, bfloat16_t, int32_t);
 REGISTE_INDIRECT_LOAD(5, int8_t, int32_t);
@@ -593,6 +631,8 @@ REGISTE_INDIRECT_LOAD(5, float8_e5m2_t, int32_t);
 // REGISTE_INDIRECT_LOAD(5, float4_e1m2_t, int32_t);
 
 REGISTE_INDIRECT_LOAD(5, float, int64_t);
+REGISTE_INDIRECT_LOAD(5, double, int64_t);
+REGISTE_INDIRECT_LOAD_MIXED(5, double, int64_t, float);
 REGISTE_INDIRECT_LOAD(5, half, int64_t);
 REGISTE_INDIRECT_LOAD(5, bfloat16_t, int64_t);
 REGISTE_INDIRECT_LOAD(5, int8_t, int64_t);

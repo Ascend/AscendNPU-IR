@@ -185,8 +185,9 @@ computeFinalDeltaAuxA5(const SmallVector<ModuleOp, 2> &modules,
                        bool isMixKernel, bool mixKernelHasDebugOrShmem) {
   std::map<LaneKind, std::vector<std::string>> result;
   // Parse appendBishengOptions once (same scan as compileDeviceKernel's Native
-  // auxPaths construction below).  Shared via parseAppendBishengOptionsAuxFromTokens
-  // so the two lists stay byte-identical.
+  // auxPaths construction below).  Shared via
+  // parseAppendBishengOptionsAuxFromTokens so the two lists stay
+  // byte-identical.
   std::vector<std::string> tokens;
   const std::string appendOpts = config.getAppendBiShengOptions();
   if (!appendOpts.empty())
@@ -235,7 +236,6 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
                     SubCoreTarget coreType, const HIVMCMainConfig &config,
                     bool isMixKernel, bool mixKernelHasDebugOrShmem,
                     const std::map<SubCoreTarget, std::string> &bitcodePaths) {
-  BishengAsyncRuntime *runtime = config.getRuntime();
   bool regbaseCompile = hacc::utils::isRegBasedArch(config.getTargetBackend());
   std::string extension = config.shouldSaveLinkedIR() ? ".ll" : ".o";
   std::string outputPath = config.shouldSaveLinkedIR()
@@ -379,6 +379,8 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
 
   StringRef bishengBin = getBiShengCompilerName();
 
+#if BISHENGIR_HAVE_BISHENG_LLC
+  BishengAsyncRuntime *runtime = config.getRuntime();
   // ---- Native (libbisheng-llc.so) backend path --------------------------
   // Active iff a runtime was created (BISHENG_BACKEND=native && !CPURunner).
   // Never falls back to Process.
@@ -594,13 +596,16 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
       // Map the vendor's recoverable VF-stack overflow code to the same
       // VFStackOverflowError the Process path raises, so the regbase retry
       // loop's isVFStackOverflowError() fires under both backends.
+#if BISHENGIR_HAVE_BISHENG_LLC
       if (res.vendorStatus == BISHENG_LLC_VF_STACK_OVERFLOW)
         return llvm::make_error<VFStackOverflowError>();
+#endif
       return llvm::make_error<DeviceCompileError>();
     }
     return outputBin;
   }
   // ---- End Native path --------------------------------------------------
+#endif
 
   // Debug: dump process-mode IR for offline replay comparison.
   if (getenv("BISHENG_NATIVE_DUMP")) {
@@ -835,6 +840,18 @@ lowerDeviceToBinary(const SmallVector<IRModulePair> &llvmModules,
   // fallback.  The planned output paths are the per-Lane `.o` paths (MixCV)
   // or the single `outputFile` (single Lane).
   if (llvm::Error err = joinDeviceFailures(errors)) {
+    // A VF stack overflow is the one failure the RegBase driver retries with
+    // adjusted parameters.  Keep the lane alive (it is `Consumed` after the
+    // failed Compile) so the retry's recreateLane path can rebuild it;
+    // shutting the Worker down here would leave it `Stopped`, which the retry
+    // boundary treats as unrecoverable.  The planned outputs are still
+    // unlinked so the retry cannot observe a stale `.o` from this attempt.
+    // Every other error is terminal: drain + join the lanes as before.
+    // VF stack overflow is currently the only retryable device-compile error
+    // (the RegBase driver's tryVFStackRetry).  If more retryable error kinds
+    // are added, extend this predicate to match the driver's retry policy so
+    // the lane is preserved for every failure the driver will re-enter on.
+    bool retryable = isVFStackOverflowError(err);
     if (runtime && runtime->isActive()) {
       std::vector<std::string> plannedOutputs;
       for (size_t i = 0, e = llvmModules.size(); i != e; ++i)
@@ -845,7 +862,8 @@ lowerDeviceToBinary(const SmallVector<IRModulePair> &llvmModules,
               ? LaneMask::Both
               : (llvmModules[0].second == SubCoreTarget::AIC ? LaneMask::AIC
                                                              : LaneMask::AIV);
-      runtime->cleanupAfterLaneFailure(mask, plannedOutputs);
+      runtime->cleanupAfterLaneFailure(mask, plannedOutputs,
+                                       /*shutdownLanes=*/!retryable);
     }
     return err;
   }
@@ -900,7 +918,7 @@ translateDeviceKernelToLLVM(const SmallVector<ModuleOp, 2> &modulesToLower,
       m->setAttr(hivm_regbaseintrins::kDavinciV2IntrinsicsModuleAttrName,
                  mlir::UnitAttr::get(m->getContext()));
     std::unique_ptr<llvm::Module> llvmModule =
-        translateModuleToLLVMIR(m, llvmContext);
+        translateModuleToLegacyLLVMIR(m, llvmContext);
     if (!llvmModule) {
       m->emitError(
           "Failed to translate module from LLVM Dialect IR to BiShengLIR\n");
@@ -1051,8 +1069,7 @@ llvm::Error runDeviceBiShengLIRCompile(
                                                          : LaneMask::AIV,
                                    /*aicBaseAux=*/{}, /*aivBaseAux=*/{});
       } else if (wst == WorkerState::Ready ||
-                 wst == WorkerState::BaseAuxReady ||
-                 wst == WorkerState::Cold ||
+                 wst == WorkerState::BaseAuxReady || wst == WorkerState::Cold ||
                  wst == WorkerState::Starting) {
         // Lane is still usable (previous attempt returned before Compile)
         // or not yet started.  ensureLaneLoadInit submits LoadInit iff the
@@ -1068,7 +1085,7 @@ llvm::Error runDeviceBiShengLIRCompile(
         // overflows) or abort.
         llvm::errs() << "[ERROR] Native lane "
                      << (lane == LaneKind::AIC ? "AIC" : "AIV")
-                     << " in unrecoverable state " << static_cast<int>(wst)
+                     << " in unrecoverable state " << workerStateName(wst)
                      << " at retry boundary; aborting\n";
         return llvm::make_error<DeviceCompileError>();
       }
@@ -1460,7 +1477,7 @@ LogicalResult runHostBiShengLIRCompile(
   llvm::LLVMContext llvmContext;
   LDBG("Translating host module from LLVM Dialect IR to BiShengLIR");
   std::unique_ptr<llvm::Module> llvmModule =
-      translateModuleToLLVMIR(mod, llvmContext);
+      translateModuleToLegacyLLVMIR(mod, llvmContext);
   if (!llvmModule)
     return mod->emitError(
         "Failed to translate host module from LLVM Dialect IR to BiShengLIR\n");
@@ -1583,10 +1600,10 @@ llvm::Error bishengir::runHIVMCCompileA5(ModuleOp hirCompileModule,
   // The runtime is created at CLI main() and the LoadInit command
   // (submitLoadInit) is submitted at runRegBasePipeline entry (before the
   // first RegBase Pass).  This function reads the runtime off the config:
-  // emit lir_lowering begin/end trace events for the post-RegBase HIVM lowering,
-  // then runBiShengLIRCompileA5 (which also reads config.getRuntime()) lets
-  // compileDeviceKernel drain LoadInit / PreloadBase / PreloadFinalDelta
-  // tickets and submit compile on the lane Worker.
+  // emit lir_lowering begin/end trace events for the post-RegBase HIVM
+  // lowering, then runBiShengLIRCompileA5 (which also reads
+  // config.getRuntime()) lets compileDeviceKernel drain LoadInit / PreloadBase
+  // / PreloadFinalDelta tickets and submit compile on the lane Worker.
   if (runtime && runtime->isActive())
     runtime->emitEvent("MAIN", "lir_lowering", "begin");
 

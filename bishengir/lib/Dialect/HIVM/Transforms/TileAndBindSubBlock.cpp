@@ -141,6 +141,23 @@ static bool isUbToUbCopy(Operation *op) {
          maybeAddressSpace->getAddressSpace() == hivm::AddressSpace::UB;
 }
 
+/// True when the analyzer did not pick a dim (`-1`) or picked a size-1 axis
+/// that TileAndSlice cannot split across sub-blocks. For masked store/copy
+/// (extract_slice/subview of a larger buffer), use the pre-slice extent so a
+/// rank-preserving size-1 view of a tileable axis is not rejected.
+static bool isInvalidTilingDim(Value value, int64_t tilingDim) {
+  if (tilingDim == -1)
+    return true;
+  if (auto extractSliceOp = value.getDefiningOp<tensor::ExtractSliceOp>())
+    value = extractSliceOp.getSource();
+  else if (auto subViewOp = value.getDefiningOp<memref::SubViewOp>())
+    value = subViewOp.getSource();
+  auto shapedType = dyn_cast<ShapedType>(value.getType());
+  if (!shapedType || tilingDim < 0 || tilingDim >= shapedType.getRank())
+    return false;
+  return shapedType.getDimSize(tilingDim) == 1;
+}
+
 static void insertBubblePropagatorUpLinkForSlicedOperand(
     PatternRewriter &rewriter, OpOperand *operand,
     ArrayRef<OpFoldResult> mixedOffsets, ArrayRef<OpFoldResult> mixedSize,
@@ -416,17 +433,21 @@ public:
                             // a tiling start point.
         }
       }
-      // If the copy input is memref, we cannot tile it.
-      if (isa<mlir::MemRefType>(inputType)) {
-        Op->emitWarning(
-            "Copy input memref is not supported, skip tile and bind.");
-        return failure();
+      // Tile elementwise buffer copies along the axis selected for both sides.
+      if (auto srcType = dyn_cast<MemRefType>(inputType)) {
+        auto dstType = dyn_cast<MemRefType>(dstOpr->get().getType());
+        if (!dstType || !srcType.hasStaticShape() ||
+            srcType.getShape() != dstType.getShape() || Op.getPadMode() ||
+            Op.getPadValue() || Op.getCollapseReassociation() ||
+            !isUbToUbCopy(Op) || tilingDim == -1 ||
+            tilingDim != analyzer.getTilingDim(dstOpr->get()))
+          return failure();
       }
     }
     LLVM_DEBUG(DBGS() << "The " << Op->getName().getStringRef()
                       << " op tiling dim is: " << tilingDim << "\n");
     auto maybeContainingLoop = findContainingSubblockLoop(Op);
-    if (tilingDim == -1 || failed(maybeContainingLoop)) {
+    if (isInvalidTilingDim(src, tilingDim) || failed(maybeContainingLoop)) {
       Op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
       return failure();
     }
@@ -601,7 +622,8 @@ public:
                       << "\n");
 
     auto maybeContainingLoop = findContainingSubblockLoop(op);
-    if (tilingDim == -1 || failed(maybeContainingLoop)) {
+    if (isInvalidTilingDim(op.getSrc(), tilingDim) ||
+        failed(maybeContainingLoop)) {
       op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
       return failure();
     }
@@ -636,7 +658,8 @@ public:
                       << "\n");
 
     auto maybeContainingLoop = findContainingSubblockLoop(op);
-    if (tilingDim == -1 || failed(maybeContainingLoop)) {
+    if (isInvalidTilingDim(op.getSrc(), tilingDim) ||
+        failed(maybeContainingLoop)) {
       op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
       return failure();
     }
@@ -860,7 +883,8 @@ public:
       return failure();
     int64_t tilingDim = analyzer.getTilingDim(debugOp.getArg());
     auto maybeContainingLoop = findContainingSubblockLoop(debugOp);
-    if (tilingDim == -1 || failed(maybeContainingLoop))
+    if (isInvalidTilingDim(debugOp.getArg(), tilingDim) ||
+        failed(maybeContainingLoop))
       return failure();
 
     auto containingLoop = maybeContainingLoop.value();
@@ -915,7 +939,7 @@ public:
       return failure();
     for (auto res : op->getResults()) {
       int64_t tilingDim = analyzer.getTilingDim(res);
-      if (tilingDim == -1 || !res.use_empty())
+      if (isInvalidTilingDim(res, tilingDim) || !res.use_empty())
         continue;
 
       auto containingLoop = maybeContainingLoop.value();
@@ -1244,14 +1268,14 @@ tileAndSliceOp(func::FuncOp func,
   // when no Store/Copy anchor exists, plus a leaf-aware success criterion.
   // CustomOp tiling in this version must be driven by a downstream Store/Copy
   // slice and handled later by CustomOpBubbleUpStrategy.
-  patterns.add<TileAndSliceStoreCopyOp<hivm::StoreOp>,
-               TileAndSliceStoreCopyOp<hivm::CopyOp>,
-               TileAndSliceStoreCopyOp<
-                   bufferization::MaterializeInDestinationOp>,
-               TileAndSliceIndirectStore, TileAndSliceStrideStore,
-               TileAndSliceDebugOp,
-               TileAndSliceLeaf<scf::ForOp>, TileAndSliceLeaf<scf::WhileOp>,
-               TileAndSliceLeaf<scf::IfOp>>(func->getContext(), analyzer);
+  patterns
+      .add<TileAndSliceStoreCopyOp<hivm::StoreOp>,
+           TileAndSliceStoreCopyOp<hivm::CopyOp>,
+           TileAndSliceStoreCopyOp<bufferization::MaterializeInDestinationOp>,
+           TileAndSliceIndirectStore, TileAndSliceStrideStore,
+           TileAndSliceDebugOp, TileAndSliceLeaf<scf::ForOp>,
+           TileAndSliceLeaf<scf::WhileOp>, TileAndSliceLeaf<scf::IfOp>>(
+          func->getContext(), analyzer);
   if (hacc::utils::isRegBasedArch(func->getParentOfType<ModuleOp>())) {
     patterns.add<TileAndSliceReduceOp>(func->getContext(), analyzer);
   }
@@ -1539,10 +1563,13 @@ void TileAndBindSubBlockPass::runOnOperation() {
     return;
   }
 
-  // If there is a possibility that loadOp and storeOp accessing the same
-  // address, skip this pass
-  if (!hacc::utils::isRegBasedArch(moduleOp) &&
-      areLoadAndStoreSameAddress(aivFunctions)) {
+  // Different GM views at the same offset may choose incompatible sub-block
+  // partitions for a load and store.
+  // Intra-core synchronization cannot order those cross-sub-block accesses.
+  // Preserve the membase guard and reject these view hazards on regbase.
+  if (areLoadAndStoreSameAddress(
+          aivFunctions,
+          /*checkRegbaseHazards=*/hacc::utils::isRegBasedArch(moduleOp))) {
     (void)limitAllAivToSubBlock0();
     return;
   }

@@ -109,8 +109,8 @@ module {
 
       scope.scope : () -> () {
         // preload_num=0 consumes them two stages later, so distance + 1 = 3.
-        %dv = hivm.hir.mmadL1 {a_transpose, hivm.remain_in_l0c} ins(%p, %p2#1, %true, %c64, %c64, %c128 : tensor<4x4x16x16xf16>, tensor<8x4x16x16xf16>, i1, index, index, index) outs(%acc : tensor<8x4x16x16xf32>) -> tensor<8x4x16x16xf32>
-        %dk = hivm.hir.mmadL1 {hivm.remain_in_l0c} ins(%p, %p2#0, %true, %c64, %c64, %c128 : tensor<4x4x16x16xf16>, tensor<8x4x16x16xf16>, i1, index, index, index) outs(%acc : tensor<8x4x16x16xf32>) -> tensor<8x4x16x16xf32>
+        %dv = hivm.hir.mmadL1 {a_transpose, hivm.remain_in_l0c = [0 : i32]} ins(%p, %p2#1, %true, %c64, %c64, %c128 : tensor<4x4x16x16xf16>, tensor<8x4x16x16xf16>, i1, index, index, index) outs(%acc : tensor<8x4x16x16xf32>) -> tensor<8x4x16x16xf32>
+        %dk = hivm.hir.mmadL1 {hivm.remain_in_l0c = [0 : i32]} ins(%p, %p2#0, %true, %c64, %c64, %c128 : tensor<4x4x16x16xf16>, tensor<8x4x16x16xf16>, i1, index, index, index) outs(%acc : tensor<8x4x16x16xf32>) -> tensor<8x4x16x16xf32>
         "test.use"(%dv, %dk) : (tensor<8x4x16x16xf32>, tensor<8x4x16x16xf32>) -> ()
         scope.return
       } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 0 : i32, no_inline}

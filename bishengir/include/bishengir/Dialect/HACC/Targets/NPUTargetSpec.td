@@ -58,6 +58,9 @@ class TargetSpec <string name> {
   // Align size of UB buffer in bits.
   int UbAlignSize = ?;
 
+  // The number of UB bank groups.
+  int UbBankGroupCount = 16;
+
   // Align size of L1 buffer in bits.
   int L1AlignSize = ?;
 
@@ -573,6 +576,7 @@ class Ascend960_BaseSpec<string name> : TargetSpec<name> {
   let L0bSize = 524288;           // bits = 64KB
   let L0cSize = 2097152;          // bits = 256KB
   let UbAlignSize = 256;          // bits = 32B
+  let UbBankGroupCount = 32;
   let L1AlignSize = 256;          // bits = 32B
   let L0cAlignSize = 4096;        // bits = 512B
   let Arch = Dav_920R1;
@@ -590,13 +594,55 @@ def Ascend960DT_969B5_Spec : Ascend960_BaseSpec<"Ascend960DT_969B5"> {
   let VectorCoreCount = 32;
 }
 
+def Ascend960DT_969B6_Spec : Ascend960_BaseSpec<"Ascend960DT_969B6"> {
+  let AiCoreCount = 32;
+  let CubeCoreCount = 32;
+  let VectorCoreCount = 32;
+}
+
 def Ascend960DT_968B7_Spec : Ascend960_BaseSpec<"Ascend960DT_968B7"> {
   let AiCoreCount = 36;
   let CubeCoreCount = 36;
   let VectorCoreCount = 36;
 }
 
-def Ascend960DT_961BX_Spec : Ascend960_BaseSpec<"Ascend960DT_961BX"> {
+def Ascend960DT_966B7_Spec : Ascend960_BaseSpec<"Ascend960DT_966B7"> {
+  let AiCoreCount = 36;
+  let CubeCoreCount = 36;
+  let VectorCoreCount = 36;
+}
+
+def Ascend960DT_966B8_Spec : Ascend960_BaseSpec<"Ascend960DT_966B8"> {
+  let AiCoreCount = 36;
+  let CubeCoreCount = 36;
+  let VectorCoreCount = 36;
+}
+
+def Ascend960DT_961BY_Spec : Ascend960_BaseSpec<"Ascend960DT_961BY"> {
+  let AiCoreCount = 48;
+  let CubeCoreCount = 48;
+  let VectorCoreCount = 48;
+}
+
+def Ascend960DT_961BZ_Spec : Ascend960_BaseSpec<"Ascend960DT_961BZ"> {
+  let AiCoreCount = 48;
+  let CubeCoreCount = 48;
+  let VectorCoreCount = 48;
+}
+
+def Ascend960PR_969A1_Spec : Ascend960_BaseSpec<"Ascend960PR_969A1"> {
+  let AiCoreCount = 48;
+  let CubeCoreCount = 48;
+  let VectorCoreCount = 48;
+}
+
+def Ascend960PR_964A1_Spec : Ascend960_BaseSpec<"Ascend960PR_964A1"> {
+  let AiCoreCount = 48;
+  let CubeCoreCount = 48;
+  let VectorCoreCount = 48;
+}
+
+def Ascend960PR_936A1_Spec : Ascend960_BaseSpec<"Ascend960PR_936A1"> {
   let AiCoreCount = 48;
   let CubeCoreCount = 48;
   let VectorCoreCount = 48;

@@ -79,6 +79,15 @@ def EnableTlaMode : FeatureControlOptions<
   "false"
 > {
   let optionScope = ["A5_ONLY"];
+  let passGroup = ["HIVM"];
+}
+
+def EnableTlaCvPipelining : FeatureControlOptions<
+  "Expand staged TLA loops through native preload in affinity mode.",
+  "bool",
+  "false"
+> {
+  let optionScope = ["A5_ONLY"];
 }
 
 def EnableUbufSaving : FeatureControlOptions<
@@ -674,6 +683,28 @@ llvm::cl::values(
   }];
 }
 
+def EnableSchedulerAlg
+    : HIVMOptimizationControlOptions<
+          "Select the CV-pipelining scheduler algorithm (skew mode only).",
+          "CVSchedulerMode",
+          "CVSchedulerMode::Default"> {
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(CVSchedulerMode::Default, "default",
+             "Default WorklistBuilder-based partitioning"),
+  clEnumValN(CVSchedulerMode::Sms, "sms",
+             "SMS stage-level scheduling partitioning")
+)
+  }];
+}
+
+def SmsFailOnFallback
+    : HIVMOptimizationControlOptions<
+          "When true, treat SMS scheduler failure as a compilation error "
+          "instead of silently falling back to the default scheduler. "
+          "Useful for batch testing SMS enablement rates.",
+          "bool", "false">;
+
 def EnablePreload : BiShengIRCompileOpt<
   "Enable preload (skew mode) for CV-pipelining.",
   "bool",
@@ -788,8 +819,13 @@ llvm::cl::values(
                 // Ascend960 series
                 REGISTER_TARGET(Ascend960),
                 // Ascend960DT series
-                REGISTER_TARGET(Ascend960DT_969B5), REGISTER_TARGET(Ascend960DT_968B7),
-                REGISTER_TARGET(Ascend960DT_961BX),
+                REGISTER_TARGET(Ascend960DT_969B5), REGISTER_TARGET(Ascend960DT_969B6),
+                REGISTER_TARGET(Ascend960DT_968B7), REGISTER_TARGET(Ascend960DT_966B7),
+                REGISTER_TARGET(Ascend960DT_966B8), REGISTER_TARGET(Ascend960DT_961BY),
+                REGISTER_TARGET(Ascend960DT_961BZ),
+                // Ascend960PR series
+                REGISTER_TARGET(Ascend960PR_969A1), REGISTER_TARGET(Ascend960PR_964A1),
+                REGISTER_TARGET(Ascend960PR_936A1),
                 REGISTER_TARGET(Unknown)
   #undef REGISTER_TARGET
   #undef TO_STRING
@@ -1283,7 +1319,7 @@ def EnableFuseReductionIntoLoop : GeneralOptimizationControlOptions<
 
 def SimtOptimizationMode : GeneralOptimizationControlOptions<
   "set bishengir simt optimization modes",
-  "int",
+  "uint32_t",
   "900101"
 > {
   bit isSharedWithDownstreamToolchain = 1;
@@ -1375,7 +1411,8 @@ def DecoupledMemoryComputeScheduling : HIVMOptimizationControlOptions<
 >;
 
 def UsePipelinev2 : HIVMOptimizationControlOptions<
-  "Enable pipeline v2, bypassing cv-pipelining pass and using pipeline v2 passes (RegBase only for now).",
+  "Enable pipeline v2 for all kernels, overriding the registered-kernel "
+  "v1 default (RegBase only).",
   "bool",
   "false"
 >;
@@ -1656,6 +1693,13 @@ def UseDPX : BiShengIRCompileOpt<
 > {
   bit isSharedWithDownstreamToolchain = 1;
 }
+
+def SetMaxPipelineMultibuffer : HIVMOptimizationControlOptions<
+  "Maximum number of multibuffers for pipeline staging. ",
+  "unsigned",
+  "0"
+>;
+
 } // let optionScope = ["A5_ONLY"]
 
 #endif // BISHENGIR_TOOLS_BISHENGIR_COMPILE_OPTIONS_TD

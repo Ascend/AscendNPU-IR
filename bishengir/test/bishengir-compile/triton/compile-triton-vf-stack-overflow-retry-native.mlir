@@ -7,10 +7,11 @@
 //      instead of the external `bisheng` process exit status, so the error
 //      message is "[ERROR] Native: bishengLlcCompile failed: VF_STACK_OVERFLOW"
 //      rather than "[ERROR] failed to execute bisheng".
-//   2. When retry is disabled, the Native lane enters an unrecoverable state
-//      after the first failure and aborts at the retry boundary — the second
-//      ccec invocation never runs, so `exceeded vf stack size` appears only
-//      once (vs. twice in Process mode).
+//   2. A failed Compile leaves the lane in `Consumed`, not `Stopped`: the
+//      failure cleanup keeps the Worker alive for a retryable VF overflow, so
+//      the retry boundary rebuilds the lane via recreateLane.  Both the retry
+//      ladder and the retry-disabled double attempt therefore run, matching
+//      Process mode.
 //
 // The kernel is triton-generated (i64 input, K=8 runtime scalar divisors,
 // auto-multi-buffer on); its fused vector function needs 12288 bytes of VF
@@ -46,14 +47,12 @@
 // CHECK: ub overflow
 // CHECK: {{\[ERROR\] Failed to run BiShengIR regbase pipeline}}
 
-// Retry disabled: the Native lane fails once with VF_STACK_OVERFLOW, then
-// aborts at the retry boundary because the lane is unrecoverable — the
-// second ccec invocation never runs, so `exceeded vf stack size` appears
-// only once.
+// Retry disabled: both attempts in the default budget fail in ccec with the
+// raw overflow, and no retry NOTE is ever printed.  The lane is rebuilt from
+// its Consumed state between attempts, so the second ccec invocation runs.
 // OFF-NOT: {{\[NOTE\]}}
-// OFF: exceeded vf stack size
+// OFF-COUNT-2: exceeded vf stack size
 // OFF: {{\[ERROR\] Native: bishengLlcCompile failed: VF_STACK_OVERFLOW}}
-// OFF: {{\[ERROR\] Native lane AIV in unrecoverable state}}
 // OFF: {{\[ERROR\] Failed to run BiShengIR regbase pipeline}}
 
 // Stack limit already in force: the retry declines (the lever is spent), the

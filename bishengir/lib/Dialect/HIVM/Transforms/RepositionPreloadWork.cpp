@@ -1731,8 +1731,22 @@ static void remapClonedScalarOperands(const DenseMap<Value, Value> &cloned,
   }
 }
 
+/// True when the sink chain carries no work besides the copy itself: no
+/// MTE2 load, no vector computation and no call. Sinking such a lone copy
+/// past unused mmad scopes only relocates the DMA, so the move is abandoned.
+static bool clusterHasOnlyCopy(ArrayRef<Operation *> cluster) {
+  return llvm::all_of(cluster, [](Operation *op) {
+    if (isa<hivm::CopyOp, annotation::MarkOp>(op))
+      return true;
+    if (isa<func::CallOp>(op))
+      return false;
+    return !op->getDialect() || op->getDialect()->getNamespace() != "hivm";
+  });
+}
+
 /// Move a load→VF→hir.copy chain past unused mmad scopes so the copy sits
 /// in the VECTOR immediately before the mmad that actually reads it.
+/// A chain that holds nothing but the copy is left in place.
 static LogicalResult sinkCopyChainPastUnusedMmad(scf::ForOp &forOp) {
   for (int iter = 0; iter < 32; ++iter) {
     SmallVector<scope::ScopeOp> scopes;
@@ -1755,6 +1769,9 @@ static LogicalResult sinkCopyChainPastUnusedMmad(scf::ForOp &forOp) {
 
       hivm::CopyOp copy;
       scope::ScopeOp consumer;
+      SmallVector<Operation *> cluster;
+      SmallVector<Value> destEmpties;
+      SmallVector<Value> extras;
       for (hivm::CopyOp candidate : copies) {
         if (!isLoopLevelCopyDest(candidate, producer, forOp))
           continue;
@@ -1764,8 +1781,19 @@ static LogicalResult sinkCopyChainPastUnusedMmad(scf::ForOp &forOp) {
           continue;
         if (!hasInterveningMmadScope(producer, later))
           continue;
+        SmallVector<Operation *> candidateCluster;
+        SmallVector<Value> candidateEmpties;
+        SmallVector<Value> candidateExtras;
+        if (!collectExclusiveCopyCluster(candidate, producer, candidateCluster,
+                                         candidateEmpties, candidateExtras))
+          continue;
+        if (clusterHasOnlyCopy(candidateCluster))
+          continue;
         copy = candidate;
         consumer = later;
+        cluster = std::move(candidateCluster);
+        destEmpties = std::move(candidateEmpties);
+        extras = std::move(candidateExtras);
         break;
       }
       if (!copy)
@@ -1776,12 +1804,6 @@ static LogicalResult sinkCopyChainPastUnusedMmad(scf::ForOp &forOp) {
       if (!destScope || destScope == producer)
         continue;
 
-      SmallVector<Operation *> cluster;
-      SmallVector<Value> destEmpties;
-      SmallVector<Value> extras;
-      if (!collectExclusiveCopyCluster(copy, producer, cluster, destEmpties,
-                                       extras))
-        continue;
       collectForwardedDepsForScalarExtras(producer, extras);
       SmallVector<unsigned> privatizeIdx;
       if (!adoptIterationOpsForCrossStageSink(cluster, extras, producer,
@@ -3186,23 +3208,23 @@ static LogicalResult prefetchTopLevelMmadInput(func::FuncOp funcOp) {
     mmads.push_back(mmad);
   });
 
-  auto hasMmadBetweenProducerAndMmad =
-      [](hivm::MmadL1Op mmad, ArrayRef<Operation *> chain) {
-        if (chain.empty())
-          return false;
-        Operation *chainHead = chain.front();
-        Operation *producer = chainHead->getOperand(0).getDefiningOp();
-        if (!producer || producer->getBlock() != mmad->getBlock())
-          return false;
-        if (!producer->isBeforeInBlock(mmad.getOperation()))
-          return false;
-        for (Operation *cur = producer->getNextNode();
-             cur && cur != mmad.getOperation(); cur = cur->getNextNode()) {
-          if (isa<hivm::MmadL1Op>(cur))
-            return true;
-        }
-        return false;
-      };
+  auto hasMmadBetweenProducerAndMmad = [](hivm::MmadL1Op mmad,
+                                          ArrayRef<Operation *> chain) {
+    if (chain.empty())
+      return false;
+    Operation *chainHead = chain.front();
+    Operation *producer = chainHead->getOperand(0).getDefiningOp();
+    if (!producer || producer->getBlock() != mmad->getBlock())
+      return false;
+    if (!producer->isBeforeInBlock(mmad.getOperation()))
+      return false;
+    for (Operation *cur = producer->getNextNode();
+         cur && cur != mmad.getOperation(); cur = cur->getNextNode()) {
+      if (isa<hivm::MmadL1Op>(cur))
+        return true;
+    }
+    return false;
+  };
 
   for (auto mmad : llvm::reverse(mmads)) {
     auto prepInfo = matchStdPrepChain(mmad);
@@ -3270,17 +3292,38 @@ static LogicalResult verifyPreloadIterArgUses(func::FuncOp func) {
   return result;
 }
 
+// PipelineV2 outlines a loop and marks it `hivm.cv_pipelined_loop` without
+// `hivm.legacy-cv-pipeline`. Legacy CVPipelining sets both. Reposition is the
+// legacy placement pass, so a function that already took the v2 route skips it.
+static bool hasPreloadV2Loop(func::FuncOp funcOp) {
+  bool found = false;
+  funcOp.walk([&](scf::ForOp forOp) {
+    if (forOp->hasAttr(hivm::CVPipelinedLoopAttr::name) &&
+        !forOp->hasAttr(hivm::LegacyCVPipelineAttr::name)) {
+      found = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return found;
+}
+
 void RepositionPreloadWorkPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
   if (isSplitMixModule(moduleOp))
     return;
   for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
-    if (!this->enablePreload)
+    if (!this->enablePreload || hasPreloadV2Loop(funcOp))
       continue;
     if (failed(prefetchTopLevelMmadInput(funcOp)))
       return signalPassFailure();
   }
   for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
+    // Closed-recurrence sinking is not limited to the shape registry.
+    // Cross-scope heuristics still go through allowLoopShapeHeuristics.
+    // A preload-v2 loop keeps the placement PipelineV2 already chose.
+    if (hasPreloadV2Loop(funcOp))
+      continue;
     bool sinkAcrossScopes = hivm::allowLoopShapeHeuristics(
         this->bypassShapeRegistry, funcOp.getName(), this->enablePreload,
         this->workspaceMultiBufferNum);

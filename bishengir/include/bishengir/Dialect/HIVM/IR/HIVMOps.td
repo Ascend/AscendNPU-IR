@@ -993,6 +993,9 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       static constexpr StringLiteral kInplaceOutsAttrName = "inplace_outs";
       static constexpr StringLiteral kInlineModeAttrName = "hivm.inline_mode";
 
+      std::optional<int32_t>
+      getInplaceInputIndexForOutput(int64_t outputIndex);
+
       int getMaxRank() {
         if (auto maxRankAttr =
                 getOperation()->template getAttrOfType<IntegerAttr>(kMaxRankAttrName))
@@ -1023,6 +1026,7 @@ def CustomOp : HIVM_CustomOp<"custom", [
 
   let description = customOpDescription#customOpAttrsDescription#[{
       - Pipe     : which pipe to execute on, refer to PipeAttr.
+      - inplace_outs : input-to-output storage binding.
   }];
 
   let arguments = args;

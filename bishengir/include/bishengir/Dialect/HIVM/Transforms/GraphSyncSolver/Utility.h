@@ -33,6 +33,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
+#include <atomic>
 #include <deque>
 
 #define INTRA_CORE_EVENT_ID_NUM (int64_t)8
@@ -369,7 +370,7 @@ struct Occurrence {
 
 struct ConflictPair {
 
-  static int globalIdCounter;
+  static std::atomic<int> globalIdCounter;
 
   // Identity + the two conflicting ops
   const int id;
@@ -425,8 +426,9 @@ struct ConflictPair {
                OperationBase *waitOp, Occurrence *setOcc, Occurrence *waitOcc,
                CorePipeInfo setCorePipeInfo, CorePipeInfo waitCorePipeInfo,
                int startIndex, int endIndex)
-      : id(globalIdCounter++), op1(op1), op2(op2), setOp(setOp), waitOp(waitOp),
-        setOcc(setOcc), waitOcc(waitOcc), setCorePipeInfo(setCorePipeInfo),
+      : id(globalIdCounter.fetch_add(1, std::memory_order_relaxed)), op1(op1),
+        op2(op2), setOp(setOp), waitOp(waitOp), setOcc(setOcc),
+        waitOcc(waitOcc), setCorePipeInfo(setCorePipeInfo),
         waitCorePipeInfo(waitCorePipeInfo), startIndex(startIndex),
         endIndex(endIndex) {};
 
@@ -510,15 +512,16 @@ public:
   const bool reversePriority;
 
 private:
-  static int globalIdCounter;
+  static std::atomic<int> globalIdCounter;
   llvm::SmallVector<int64_t> eventIds;
   llvm::DenseMap<ConflictPair *, int64_t> conflictPairs;
 
 public:
   EventIdNode(ConflictPair *conflictPair, int64_t eventIdNum,
               bool reversePriority)
-      : id(globalIdCounter++), initConflictPair(conflictPair),
-        eventIdNum(eventIdNum), reversePriority(reversePriority) {
+      : id(globalIdCounter.fetch_add(1, std::memory_order_relaxed)),
+        initConflictPair(conflictPair), eventIdNum(eventIdNum),
+        reversePriority(reversePriority) {
     insertConflictPair(conflictPair);
   }
 

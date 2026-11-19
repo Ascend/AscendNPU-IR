@@ -1,6 +1,9 @@
 // RUN: bishengir-opt %s -hivm-reposition-preload-work="bypass-shape-registry=true enable-preload=true" -split-input-file -verify-diagnostics
+// RUN: bishengir-opt %s -hivm-reposition-preload-work="enable-preload=true set-workspace-multibuffer=2" -verify-diagnostics
 
 // A preload loop must not leave one iter_arg in scopes of different stages.
+// The verifier runs for unregistered functions too. A loop marked only
+// hivm.cv_pipelined_loop (PipelineV2) still skips the pass.
 func.func @iter_arg_two_preload_scopes(%g: memref<?xi64>)
     attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
   %c0 = arith.constant 0 : index

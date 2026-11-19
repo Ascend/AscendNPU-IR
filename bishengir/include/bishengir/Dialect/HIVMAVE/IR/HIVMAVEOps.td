@@ -226,7 +226,8 @@ def AVE_VFExtFOp : AVE_Op<"vextf", [Pure, AVEElementwiseOpInterface]> {
   let summary = "Extfloat operation for AVE.";
   let arguments = (ins AveVector<[BF16, F16, F8E4M3FN, F8E5M2]>:$src,
                        AveMaskType:$mask,
-                       AVE_VCVT_PartTypeAttr:$part);
+                       AVE_VCVT_PartTypeAttr:$part,
+                       OptionalAttr<AVE_VCVT_ModeTypeAttr>:$mode);
   let results = (outs AveVector<[F32, BF16, F16]>:$res);
   let assemblyFormat = "$src `,` $part `,` $mask attr-dict `:`"
                        "type($src) `,` type($res) `,` type($mask)";
@@ -279,9 +280,66 @@ def AVE_VFTruncFOp : AVE_Op<"vtruncf", [Pure, AVEElementwiseOpInterface]> {
                        AveMaskType:$mask,
                        HIVM_RoundModeAttr:$rnd,
                        BoolAttr:$sat,
-                       AVE_VCVT_PartTypeAttr:$part);
+                       AVE_VCVT_PartTypeAttr:$part,
+                       OptionalAttr<AVE_VCVT_ModeTypeAttr>:$mode);
   let results = (outs AveVector<[BF16, F16, F8E4M3FN, F8E5M2]>:$res);
   let assemblyFormat = "$src `,` $rnd `,` $sat `,` $part `,` $mask attr-dict `:`"
+                       "type($src) `,` type($res) `,` type($mask)";
+}
+
+def AVE_VFTruncE8M0FOp : AVE_Op<"vtruncf.e8m0", [Pure, AVEElementwiseOpInterface]> {
+  let summary = "Truncate bf16 to e8m0 (scale) operation for AVE.";
+  let arguments = (ins AveVector<[BF16]>:$src,
+                       AveMaskType:$mask,
+                       HIVM_RoundModeAttr:$rnd,
+                       BoolAttr:$sat,
+                       AVE_VCVT_PartTypeAttr:$part,
+                       OptionalAttr<AVE_VCVT_ModeTypeAttr>:$mode);
+  let results = (outs AveVector<[UI8]>:$res);
+  let assemblyFormat = "$src `,` $rnd `,` $sat `,` $part `,` $mask attr-dict `:`"
+                       "type($src) `,` type($res) `,` type($mask)";
+}
+
+def AVE_VFExtE8M0FOp : AVE_Op<"vextf.e8m0", [Pure, AVEElementwiseOpInterface]> {
+  let summary = "Extend e8m0 (scale) to bf16 operation for AVE.";
+  let arguments = (ins AveVector<[UI8]>:$src,
+                       AveMaskType:$mask,
+                       AVE_VCVT_PartTypeAttr:$part,
+                       OptionalAttr<AVE_VCVT_ModeTypeAttr>:$mode);
+  let results = (outs AveVector<[BF16]>:$res);
+  let assemblyFormat = "$src `,` $part `,` $mask attr-dict `:`"
+                       "type($src) `,` type($res) `,` type($mask)";
+}
+
+def AVE_VFTruncE6M2FOp : AVE_Op<"vtruncf.e6m2", [Pure, AVEElementwiseOpInterface]> {
+  let summary = "Truncate bf16 to e6m2 operation for AVE.";
+  let arguments = (ins AveVector<[BF16]>:$src,
+                       AveMaskType:$mask,
+                       HIVM_RoundModeAttr:$rnd,
+                       AVE_VCVT_PartTypeAttr:$part,
+                       OptionalAttr<AVE_VCVT_ModeTypeAttr>:$mode);
+  let results = (outs AveVector<[UI8]>:$res);
+  let assemblyFormat = "$src `,` $rnd `,` $part `,` $mask attr-dict `:`"
+                       "type($src) `,` type($res) `,` type($mask)";
+}
+
+def AVE_VFExtE6M2FOp : AVE_Op<"vextf.e6m2", [Pure, AVEElementwiseOpInterface]> {
+  let summary = "Extend e6m2 to bf16 operation for AVE.";
+  let arguments = (ins AveVector<[UI8]>:$src,
+                       AveMaskType:$mask,
+                       AVE_VCVT_PartTypeAttr:$part);
+  let results = (outs AveVector<[BF16]>:$res);
+  let assemblyFormat = "$src `,` $part `,` $mask attr-dict `:`"
+                       "type($src) `,` type($res) `,` type($mask)";
+}
+
+def AVE_VFExtRcpE6M2FOp : AVE_Op<"vextf.rcpe6m2", [Pure, AVEElementwiseOpInterface]> {
+  let summary = "Extend reciprocal e6m2 (rcpe6m2) to bf16 operation for AVE.";
+  let arguments = (ins AveVector<[UI8]>:$src,
+                       AveMaskType:$mask,
+                       AVE_VCVT_PartTypeAttr:$part);
+  let results = (outs AveVector<[BF16]>:$res);
+  let assemblyFormat = "$src `,` $part `,` $mask attr-dict `:`"
                        "type($src) `,` type($res) `,` type($mask)";
 }
 
@@ -552,6 +610,24 @@ def AVE_VFSelectOp : AVE_LibFnOp<"vsel", [
   let assemblyFormat = "$mask `,` $true_value `,` $false_value attr-dict `:`"
                        "type($mask) `,` type($res)";
   let extraClassDeclaration = opNameDeclaration;
+}
+
+// Byte-mask masked move: only the Ascend960 (V121) target has the vselrv2
+// instruction, which has no else operand. The false branch is therefore an
+// implicit zero fill: res = (mask_lane != 0) ? true_value : 0.
+def AVE_VFSelectRv2Op : AVE_Op<"vselrv2", [Pure,
+    AllTypesMatch<["true_value", "res"]>]> {
+  let summary = "AVE regbased byte-mask select (masked move) operation.";
+  let description = [{
+    Performs a byte-mask masked move, where `mask` is an 8-bit data register
+    (vector of u8/s8/i8): res = (mask_lane != 0) ? true_value : 0. Only the
+    Ascend960 (V121) target provides the vselrv2 instruction.
+  }];
+  let arguments = (ins AveByteMaskVector:$mask,
+                       AveExtValidVector:$true_value);
+  let results = (outs AveExtValidVector:$res);
+  let assemblyFormat = "$mask `,` $true_value attr-dict `:`"
+                       "type($mask) `,` type($res)";
 }
 
 def AVE_VFPltOp : AVE_Op<"plt", [Pure]> {
@@ -1057,6 +1133,15 @@ def AVE_VFVunpackOp : AVE_LibFnOp<"vunpack", [
 //// Tenary Ops
 //
 def AVE_VFMulaOp : AVE_TenaryOp<"vmula">;
+
+def AVE_VFmaOp : AVE_TenaryOp<"vfma">;
+def AVE_VFmsOp : AVE_TenaryOp<"vfms">;
+def AVE_VFnmaOp : AVE_TenaryOp<"vfnma">;
+def AVE_VFnmsOp : AVE_TenaryOp<"vfnms">;
+def AVE_VMaddOp : AVE_TenaryOp<"vmadd">;
+def AVE_VMsubOp : AVE_TenaryOp<"vmsub">;
+def AVE_VNmaddOp : AVE_TenaryOp<"vnmadd">;
+def AVE_VNmsubOp : AVE_TenaryOp<"vnmsub">;
 
 //
 //// Vector-Scalar Ops

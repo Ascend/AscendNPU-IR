@@ -31,6 +31,17 @@ def ConvertNonPowerTwoTensors
   ];
 }
 
+def ConvertZeroDimTensors 
+  : Pass<"convert-zero-dim-tensors", "mlir::ModuleOp"> {
+  let summary = "Converts 0D tensors into either scalars or 1D tensors depending on usage";
+  let constructor = "bishengir::triton::createConvertZeroDimTensorsPass()";
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::triton::TritonDialect",
+    "mlir::tensor::TensorDialect",
+  ];
+}
+
 def SetBishengirSimtOptAttr
     : Pass<"set-bishengir-simt-opt-attr", "mlir::ModuleOp"> {
   let summary = "Set BishengIR SIMT optimization module attribute";

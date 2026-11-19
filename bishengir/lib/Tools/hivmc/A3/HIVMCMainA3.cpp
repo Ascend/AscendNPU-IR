@@ -537,6 +537,13 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
     arguments.push_back("-mllvm");
     arguments.push_back("-enable-module-inliner");
   }
+  // IndVarSimplify can rewrite an i64 loop accumulator into a closed form
+  // that needs an i65 multiply. ccec lowers it to the unsupported __multi3
+  // helper, so keep Triton loops iterative on A3 as well.
+  if (config.shouldCompileTriton()) {
+    arguments.push_back("-mllvm");
+    arguments.push_back("-replexitval=unusedindvarinloop");
+  }
 
   std::string paramSizeArg =
       "--cce-aicore-input-parameter-size=" +
@@ -614,7 +621,11 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
     if (auto version = detectCannVersion();
         !version || *version >= std::make_tuple(9u, 2u, 0u))
       extraOpts.push_back("-enable-module-inliner");
-    // 7. -O0 translation: dav-c220 driver injects -cce-dyn-kernel-stack-size
+    // 7. keep Triton loops iterative: IndVarSimplify can introduce an i65
+    //    multiply that ccec lowers to unsupported __multi3.
+    if (config.shouldCompileTriton())
+      extraOpts.push_back("-replexitval=unusedindvarinloop");
+    // 8. -O0 translation: dav-c220 driver injects -cce-dyn-kernel-stack-size
     //    at -O0 (dav-c310 -O0 has no extra -mllvm).
     if (config.shouldEnableDebugVariables())
       extraOpts.push_back("-cce-dyn-kernel-stack-size=true");
@@ -913,7 +924,7 @@ translateDeviceKernelToLLVM(ArrayRef<ModuleOp> modulesToLower,
     }
     hivm::removeModuleCoreTypeAttr(m);
     std::unique_ptr<llvm::Module> llvmModule =
-        translateModuleToLLVMIR(m, llvmContext);
+        translateModuleToLegacyLLVMIR(m, llvmContext);
     if (!llvmModule) {
       m->emitError(
           "Failed to translate module from LLVM Dialect IR to BiShengLIR\n");
@@ -1225,7 +1236,7 @@ runHostBiShengLIRCompile(ModuleOp mod, const HIVMCMainConfig &config,
   llvm::LLVMContext llvmContext;
   LDBG("Translating host module from LLVM Dialect IR to BiShengLIR");
   std::unique_ptr<llvm::Module> llvmModule =
-      translateModuleToLLVMIR(mod, llvmContext);
+      translateModuleToLegacyLLVMIR(mod, llvmContext);
   if (!llvmModule)
     return mod->emitError(
         "Failed to translate host module from LLVM Dialect IR to BiShengLIR\n");

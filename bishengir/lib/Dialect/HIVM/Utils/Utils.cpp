@@ -230,6 +230,11 @@ bool isRemainInL0c(OpOperand &use) {
   auto *defOp = result.getDefiningOp();
   if (!defOp)
     return false;
+  // scf.if is remain only for a result propagateRemainInL0C marked. Walking
+  // the then yield would treat a mixed if as L0C when only that branch's
+  // mmad stays in L0C.
+  if (isa<scf::IfOp>(defOp))
+    return isResultRemainInL0C(result);
   if (defOp->hasAttr(RemainInL0CAttr::name)) {
     return true;
   }
@@ -245,31 +250,35 @@ bool isRemainInL0c(OpOperand &use) {
   return isRemainInL0c(terminator->getOpOperand(result.getResultNumber()));
 }
 
-bool isResultInL0C(OpResult result) {
+static bool findValueInArrayAttr(ArrayAttr arrayAttr, uint64_t idx) {
+  return llvm::any_of(arrayAttr.getValue(), [idx](Attribute element) {
+    auto intAttr = dyn_cast<IntegerAttr>(element);
+    return intAttr && intAttr.getValue().getZExtValue() == idx;
+  });
+}
+
+static bool isInL0CBasedOnAttr(OpResult &result, StringRef attrName) {
   Operation *op = result.getOwner();
+  if (auto attr = op->getAttrOfType<UnitAttr>(attrName))
+    return true;
+  if (auto arrayAttr = op->getAttrOfType<ArrayAttr>(attrName))
+    return findValueInArrayAttr(arrayAttr, result.getResultNumber());
+  return false;
+}
 
-  auto findValueInArrayAttr = [](ArrayAttr arrayAttr, uint64_t idx) {
-    return llvm::any_of(arrayAttr.getValue(), [idx](Attribute element) {
-      auto intAttr = dyn_cast<IntegerAttr>(element);
-      return intAttr && intAttr.getValue().getZExtValue() == idx;
-    });
-  };
-
-  auto isInL0CBasedOnAttr = [&result, &op,
-                             findValueInArrayAttr](StringRef attrName) {
-    if (auto attr = op->getAttrOfType<UnitAttr>(attrName))
-      return true;
-    if (auto arrayAttr = op->getAttrOfType<ArrayAttr>(attrName))
-      return findValueInArrayAttr(arrayAttr, result.getResultNumber());
-    return false;
-  };
-
-  if (isInL0CBasedOnAttr(RemainInL0CAttr::name))
+bool isResultInL0C(OpResult result) {
+  if (isInL0CBasedOnAttr(result, RemainInL0CAttr::name))
     return true;
 
-  if (isInL0CBasedOnAttr(kNormalizedInL0C))
+  if (isInL0CBasedOnAttr(result, kNormalizedInL0C))
     return true;
 
+  return false;
+}
+
+bool isResultRemainInL0C(OpResult result) {
+  if (isInL0CBasedOnAttr(result, RemainInL0CAttr::name))
+    return true;
   return false;
 }
 
@@ -1361,6 +1370,15 @@ LoopLikeOpInterface getParentLoop(Value val) {
 
 BlockArgument getTiedBlockArgument(LoopLikeOpInterface loopOp,
                                    OpOperand &operand) {
+  if (operand.getOwner() != loopOp.getOperation())
+    return nullptr;
+  // While does not expose its init operands through getInitsMutable() on
+  // LoopLikeOpInterface. Its operands initialize the before block directly.
+  if (auto whileOp = dyn_cast<scf::WhileOp>(loopOp.getOperation())) {
+    auto beforeArgs = whileOp.getBeforeArguments();
+    unsigned index = operand.getOperandNumber();
+    return index < beforeArgs.size() ? beforeArgs[index] : BlockArgument{};
+  }
   for (auto barg : loopOp.getRegionIterArgs())
     if (loopOp.getTiedLoopInit(barg) == &operand) {
       return barg;

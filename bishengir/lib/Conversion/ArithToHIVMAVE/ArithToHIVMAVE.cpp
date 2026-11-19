@@ -8,6 +8,7 @@
 
 #include "bishengir/Conversion/ArithToHIVMAVE/ArithToHIVMAVE.h"
 #include "bishengir/Conversion/HFusionToHIVM/Utils.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -399,8 +400,9 @@ struct VFTypeConvertionPattern : public OpConversionPattern<OpToBeConverted> {
         newOp = rewriter.create<VFExtSIOp>(loc, outVecType, in, adjustedMask,
                                            part, nullptr);
     } else if constexpr (std::is_same_v<OpToBeConverted, arith::ExtFOp>) {
-      newOp =
-          rewriter.create<VFExtFOp>(loc, outVecType, in, adjustedMask, part);
+      // mode is optional; default Merging.
+      newOp = rewriter.create<VFExtFOp>(loc, outVecType, in, adjustedMask, part,
+                                        nullptr);
     } else if constexpr (std::is_same_v<OpToBeConverted, arith::TruncIOp>) {
       const bool isI32ToI8 =
           inElemType.isSignlessInteger(32) && outElemType.isSignlessInteger(8);
@@ -447,8 +449,10 @@ struct VFTypeConvertionPattern : public OpConversionPattern<OpToBeConverted> {
                 hivmave::findReuseableMaskOrCreateOne(op, f32VecType, rewriter);
             auto f32Op = rewriter.create<VFSIntToFpOp>(loc, f32VecType, in,
                                                        maskF32, rnd, nullptr);
-            auto f16Op = rewriter.create<VFTruncFOp>(
-                loc, f16VecType, f32Op.getResult(), maskF32, rnd, sat, part);
+            // mode is optional; default Merging.
+            auto f16Op =
+                rewriter.create<VFTruncFOp>(loc, f16VecType, f32Op.getResult(),
+                                            maskF32, rnd, sat, part, nullptr);
             newOp = rewriter.create<VFFpToSIntOp>(
                 loc, outVecType, f16Op.getResult(), maskF16, rnd, sat, part);
           }
@@ -601,8 +605,9 @@ struct VFTypeConvertionPattern : public OpConversionPattern<OpToBeConverted> {
         newOp = rewriter.create<VFTruncIOp>(loc, outVecType, in, adjustedMask,
                                             sat, part, nullptr, uni);
     } else if constexpr (std::is_same_v<OpToBeConverted, arith::TruncFOp>) {
+      // mode is optional; default Merging.
       newOp = rewriter.create<VFTruncFOp>(loc, outVecType, in, adjustedMask,
-                                          rnd, sat, part);
+                                          rnd, sat, part, nullptr);
     } else if constexpr (std::is_same_v<OpToBeConverted, arith::SIToFPOp>) {
       if (inElemType.isSignlessInteger(64))
         newOp = rewriter.create<VFSIntToFpOp>(loc, outVecType, in, adjustedMask,
@@ -1544,14 +1549,15 @@ struct ConstantOpToHivmVCIVCPLowering
       if (processValue(i, quotients[i].getSExtValue(), PATTERN_LIST) == 0)
         return failure();
     }
-    Operation *defineOp = nullptr;
-    if (p_vci)
-      defineOp =
-          p_vci.createInstr(rewriter, constantOp.getLoc(), denseAttr.getType(),
-                            tileElementType, mulValue, addValue);
-    else
-      llvm::report_fatal_error(
-          "TODO implement arith.constant dense -> VCP lowering");
+    // VCP-only matches are not implemented here. Let other patterns, such as
+    // segmented VCI lowering, try the constant before creating any IR.
+    if (!p_vci)
+      return rewriter.notifyMatchFailure(
+          constantOp, "VCP-only constant is not supported by this lowering");
+
+    Operation *defineOp =
+        p_vci.createInstr(rewriter, constantOp.getLoc(), denseAttr.getType(),
+                          tileElementType, mulValue, addValue);
     if (defineOp == nullptr)
       return failure();
 
@@ -1721,8 +1727,11 @@ struct ConstantOpToHivmSegmentedVCILowering
       if (stepAt < 0)
         break;
 
-      // Segments must tile the vector evenly, and there must be >= 2 of them.
-      if (n % stepAt != 0 || n / stepAt < 2)
+      // Require the first boundary to be followed by one complete segment,
+      // rather than inferring a staircase from a jump near the end.  A later
+      // final segment may be partial: masked gathers commonly end their active
+      // prefix in the middle of one.
+      if (n / stepAt < 2)
         return std::nullopt;
       if (static_cast<int64_t>(form.terms.size()) >= kMaxGapTerms)
         return std::nullopt;
@@ -2419,16 +2428,23 @@ struct FmaOpLowering : public OpConversionPattern<math::FmaOp> {
     Type elementType = resVecType.getElementType();
     if (!elementType.isF16() && !elementType.isBF16() && !elementType.isF32()) {
       return rewriter.notifyMatchFailure(
-          op, "AVE vmula supports only f16, bf16, and f32");
+          op, "AVE fused multiply-add supports only f16, bf16, and f32");
     }
 
     Value mask =
         hivmave::findReuseableMaskOrCreateOne(op, resVecType, rewriter);
 
-    // AVE vmula uses its first operand as the accumulator:
+    // Both AVE FMA ops use their first operand as the accumulator:
     //   dst = src1 * src2 + dst
-    // Preserve math.fma(a, b, c) by passing c as dst.
-    auto res = rewriter.create<hivmave::VFMulaOp>(loc, resType, c, a, b, mask);
+    // Preserve math.fma(a, b, c) by passing c as dst. Only the dav-920r1
+    // (Ascend960) toolchain provides vfma; keep vmula for the other regbased
+    // targets (e.g. Ascend950).
+    auto moduleOp = op->getParentOfType<ModuleOp>();
+    Value res;
+    if (moduleOp && mlir::hacc::utils::isAscend960(moduleOp))
+      res = rewriter.create<hivmave::VFmaOp>(loc, resType, c, a, b, mask);
+    else
+      res = rewriter.create<hivmave::VFMulaOp>(loc, resType, c, a, b, mask);
     rewriter.replaceOp(op, res);
     return success();
   }

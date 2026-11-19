@@ -32,7 +32,6 @@
 // CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
 // CHECK:   %[[S6:.*]] = scope.scope : () -> tensor<64xf32> {
 // CHECK:     hivm.hir.vsub ins(%[[ACC2]], %[[S4]] : tensor<64xf32>, tensor<64xf32>)
-// CHECK:     hivm.hir.vexp
 // CHECK:     scope.return {{.*}} : tensor<64xf32>
 // CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
 // CHECK:   %[[S7:.*]] = scope.scope : () -> tensor<4x4x16x16xf16> {
@@ -42,9 +41,7 @@
 // CHECK:     scope.return {{.*}} : tensor<4x4x16x16xf16>
 // CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
 // CHECK:   %[[S8:.*]] = scope.scope : () -> tensor<64xf32> {
-// CHECK:     hivm.hir.vreduce <sum> ins(%[[S5]] : tensor<64x64xf32>)
-// CHECK:     hivm.hir.vmul ins(%[[ACC0]], %[[S6]] : tensor<64xf32>, tensor<64xf32>)
-// CHECK:     hivm.hir.vadd
+// CHECK:     hivm.hir.vexp ins(%[[S6]] : tensor<64xf32>)
 // CHECK:     scope.return {{.*}} : tensor<64xf32>
 // CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
 // CHECK:   %[[S9:.*]] = scope.scope : () -> tensor<64x128xf32> {
@@ -53,12 +50,24 @@
 // CHECK:     hivm.hir.fixpipe
 // CHECK:     scope.return {{.*}} : tensor<64x128xf32>
 // CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
-// CHECK:   %[[S10:.*]] = scope.scope : () -> tensor<64x128xf32> {
+// CHECK:   %[[S10:.*]] = scope.scope : () -> tensor<64xf32> {
+// CHECK:     hivm.hir.vmul ins(%[[ACC0]], %[[S8]] : tensor<64xf32>, tensor<64xf32>)
+// CHECK:     scope.return {{.*}} : tensor<64xf32>
+// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK:   %[[S11:.*]] = scope.scope : () -> tensor<64x128xf32> {
 // CHECK:     hivm.hir.vmul ins(%[[ACC1]], {{.*}})
-// CHECK:     hivm.hir.vadd ins(%[[S9]], {{.*}})
 // CHECK:     scope.return {{.*}} : tensor<64x128xf32>
 // CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
-// CHECK:   scf.yield %[[S8]], %[[S10]], %[[S4]], %[[S1]], %[[S2]] : tensor<64xf32>, tensor<64x128xf32>, tensor<64xf32>, i32, i32
+// CHECK:   %[[S12:.*]] = scope.scope : () -> tensor<64xf32> {
+// CHECK:     hivm.hir.vreduce <sum> ins(%[[S5]] : tensor<64x64xf32>)
+// CHECK:     hivm.hir.vadd ins(%[[S10]], {{.*}})
+// CHECK:     scope.return {{.*}} : tensor<64xf32>
+// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK:   %[[S13:.*]] = scope.scope : () -> tensor<64x128xf32> {
+// CHECK:     hivm.hir.vadd ins(%[[S9]], %[[S11]] : tensor<64x128xf32>, tensor<64x128xf32>)
+// CHECK:     scope.return {{.*}} : tensor<64x128xf32>
+// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK:   scf.yield %[[S12]], %[[S13]], %[[S4]], %[[S1]], %[[S2]] : tensor<64xf32>, tensor<64x128xf32>, tensor<64xf32>, i32, i32
 // CHECK: } {fixpipe_for_mmad_result_already_inserted = true, hivm.cv_pipelined_loop, tt.divisibility_arg1 = dense<64> : tensor<1xi32>}
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>, #dlti.dl_entry<"UB_SIZE", 2031616 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"MINIMAL_D_CACHE_SIZE", 262144 : i32>, #dlti.dl_entry<"MAXIMUM_D_CACHE_SIZE", 983040 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
 func.func @_attn_fwd(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg6: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, true, true, true, true, false, false, false]> : vector<10xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix", parallel_mode = "simd"} {

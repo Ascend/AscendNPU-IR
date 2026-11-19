@@ -95,15 +95,16 @@ static FailureOr<int64_t> getPhysicalBlockNum(mlir::triton::FuncOp funcOp) {
   return intAttr.getValue().getSExtValue();
 }
 
-static LogicalProgramIds buildLogicalProgramIds(OpBuilder &builder,
-                                                Location loc,
-                                                Value linearProgramId,
-                                                GridArgs grid) {
-  Value divX = builder.create<arith::DivUIOp>(loc, linearProgramId, grid.x);
+static LogicalProgramIds
+buildLogicalProgramIds(OpBuilder &builder, Location locX, Location locY,
+                       Location locZ, Value linearProgramId, GridArgs grid) {
+  // The x division is shared by the y and z indices, so attribute it to the
+  // x-axis program id.
+  Value divX = builder.create<arith::DivUIOp>(locX, linearProgramId, grid.x);
   return {
-      builder.create<arith::RemUIOp>(loc, linearProgramId, grid.x),
-      builder.create<arith::RemUIOp>(loc, divX, grid.y),
-      builder.create<arith::DivUIOp>(loc, divX, grid.y),
+      builder.create<arith::RemUIOp>(locX, linearProgramId, grid.x),
+      builder.create<arith::RemUIOp>(locY, divX, grid.y),
+      builder.create<arith::DivUIOp>(locZ, divX, grid.y),
   };
 }
 
@@ -187,30 +188,48 @@ struct SIMTAutoBlockifyPass
     auto *bodyBlock = entryBlock->splitBlock(entryBlock->begin());
 
     // Generate the prologue to prepare the loop over blocks.
-    Location loc = ttFunc.getLoc();
+    // Attribute it to the `tt.program_id` op that this loop replaces
+    // (preferring the X axis), so that the generated bounds computation keeps
+    // a real source line instead of falling back to the function definition
+    // line.
+    Location loc = programIdOps.front().getLoc();
+    for (auto pidOp : programIdOps)
+      if (pidOp.getAxis() == mlir::triton::ProgramIDDim::X) {
+        loc = pidOp.getLoc();
+        break;
+      }
+    // The loop bound computation below is pure blockify scaffolding with no
+    // corresponding source construct, so it deliberately carries no source
+    // location. Emitting a real line for it would make the debugger stop on
+    // user lines (e.g. the program_id line) in the middle of unrelated code
+    // once the backend interleaves the scalar chains.
+    Location scaffoldLoc = UnknownLoc::get(ttFunc.getContext());
     OpBuilder builder(entryBlock, entryBlock->begin());
 
-    Value yz = builder.create<arith::MulIOp>(loc, grid.y, grid.z);
-    Value logicalBlockNums = builder.create<arith::MulIOp>(loc, grid.x, yz);
-    Value linearHwBlockIdx = builder.create<gpu::LinearBlockIdOp>(loc);
+    Value yz = builder.create<arith::MulIOp>(scaffoldLoc, grid.y, grid.z);
+    Value logicalBlockNums =
+        builder.create<arith::MulIOp>(scaffoldLoc, grid.x, yz);
+    Value linearHwBlockIdx = builder.create<gpu::LinearBlockIdOp>(scaffoldLoc);
     Value blockIdx = builder.create<arith::IndexCastOp>(
-        loc, builder.getI32Type(), linearHwBlockIdx);
-    Value physicalBlockNum =
-        builder.create<arith::ConstantIntOp>(loc, *maybePhysicalBlockNum, 32);
-    Value chunk = builder.create<arith::CeilDivUIOp>(loc, logicalBlockNums,
-                                                     physicalBlockNum);
-    Value lowerBound = builder.create<arith::MulIOp>(loc, blockIdx, chunk);
-    Value end = builder.create<arith::AddIOp>(loc, lowerBound, chunk);
+        scaffoldLoc, builder.getI32Type(), linearHwBlockIdx);
+    Value physicalBlockNum = builder.create<arith::ConstantIntOp>(
+        scaffoldLoc, *maybePhysicalBlockNum, 32);
+    Value chunk = builder.create<arith::CeilDivUIOp>(
+        scaffoldLoc, logicalBlockNums, physicalBlockNum);
+    Value lowerBound =
+        builder.create<arith::MulIOp>(scaffoldLoc, blockIdx, chunk);
+    Value end = builder.create<arith::AddIOp>(scaffoldLoc, lowerBound, chunk);
     Value upperBound =
-        builder.create<arith::MinUIOp>(loc, end, logicalBlockNums);
-    Value one = builder.create<arith::ConstantIntOp>(loc, 1, 32);
+        builder.create<arith::MinUIOp>(scaffoldLoc, end, logicalBlockNums);
+    Value one = builder.create<arith::ConstantIntOp>(scaffoldLoc, 1, 32);
 
     // Create the loop over blocks.
     // scf.for LinearIdx = blockIdx * chunk
     //          to min((blockIdx + 1) * chunk, logicalBlocks), step 1
-    auto forOp = builder.create<scf::ForOp>(loc, lowerBound, upperBound, one);
+    auto forOp =
+        builder.create<scf::ForOp>(scaffoldLoc, lowerBound, upperBound, one);
     // Create the final `tt.return` following that loop.
-    builder.create<mlir::triton::ReturnOp>(loc);
+    builder.create<mlir::triton::ReturnOp>(scaffoldLoc);
 
     // Transfer the function body as the loop body.
     if (originalFuncHasOneBlock) {
@@ -284,8 +303,18 @@ struct SIMTAutoBlockifyPass
       builder.setInsertionPointToStart(thenBlock);
     }
 
-    LogicalProgramIds logicalPids =
-        buildLogicalProgramIds(builder, loc, linearProgramId, grid);
+    // Each logical program id keeps the location of the `tt.get_program_id`
+    // op it replaces, so that pid_x/pid_y/pid_z stay on their own source lines.
+    auto axisLoc = [&](mlir::triton::ProgramIDDim axis) -> Location {
+      for (auto pidOp : programIdOps)
+        if (pidOp.getAxis() == axis)
+          return pidOp.getLoc();
+      return loc;
+    };
+    LogicalProgramIds logicalPids = buildLogicalProgramIds(
+        builder, axisLoc(mlir::triton::ProgramIDDim::X),
+        axisLoc(mlir::triton::ProgramIDDim::Y),
+        axisLoc(mlir::triton::ProgramIDDim::Z), linearProgramId, grid);
 
     auto replaceProgramId = [&logicalPids](mlir::triton::GetProgramIdOp op) {
       Value replacement = logicalPids.x;

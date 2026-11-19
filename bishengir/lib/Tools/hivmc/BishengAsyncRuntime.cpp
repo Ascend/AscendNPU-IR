@@ -805,18 +805,22 @@ void BishengAsyncRuntime::ensureLaneLoadInit(LaneKind lane) {
 }
 
 void BishengAsyncRuntime::cleanupAfterLaneFailure(
-    LaneMask mask, const std::vector<std::string> &plannedOutputs) {
-  // One-lane-failure cleanup.  Drain + join all Writers for the lanes in
-  // `mask` BEFORE removing planned output files (join-before-remove), then
-  // unlink every path in `plannedOutputs` (best-effort; missing files are
-  // silently ignored).  This guarantees:
-  //   1. The other Lane's in-flight Writer is drained + joined before any
-  //      partial `.o` is unlinked (no use-after-free on the output file
-  //      being written by a still-running Worker thread).
+    LaneMask mask, const std::vector<std::string> &plannedOutputs,
+    bool shutdownLanes) {
+  // One-lane-failure cleanup.  Drain the retained tickets for the lanes in
+  // `mask`, optionally join their Workers, then unlink every path in
+  // `plannedOutputs` (best-effort; missing files are silently ignored).  This
+  // guarantees:
+  //   1. The other Lane's in-flight Writer is drained before any partial `.o`
+  //      is unlinked (no use-after-free on the output file being written by a
+  //      still-running Worker thread).
   //   2. No stale `.o` from a previous attempt remains (a retry that
   //      succeeds would otherwise see the stale `.o` and might falsely pass
   //      or produce a wrong mixed result).
-  //   3. Aborts the lane (fail-closed); no silent recovery.
+  //   3. Aborts the lane (fail-closed); no silent recovery, unless the caller
+  //      explicitly marks the failure retryable by passing shutdownLanes =
+  //      false (VF stack overflow).  In that case the lane stays `Consumed`
+  //      so the RegBase retry can rebuild it via recreateLane.
   emitEvent("MAIN", "failure_cleanup", "begin");
   // Step 1: drain retained tickets for the masked lanes (best-effort).
   if (static_cast<uint8_t>(mask) & static_cast<uint8_t>(LaneMask::AIC)) {
@@ -830,11 +834,14 @@ void BishengAsyncRuntime::cleanupAfterLaneFailure(
     (void)drainFinalDeltaTicket(LaneKind::AIV);
   }
   // Step 2: shutdown (join) the masked workers so any in-flight Compile
-  // finishes writing its `.o` before we unlink.  Join-before-remove.
-  if (static_cast<uint8_t>(mask) & static_cast<uint8_t>(LaneMask::AIC))
-    workers_[0]->shutdownWorker();
-  if (static_cast<uint8_t>(mask) & static_cast<uint8_t>(LaneMask::AIV))
-    workers_[1]->shutdownWorker();
+  // finishes writing its `.o` before we unlink.  Join-before-remove.  Skipped
+  // for a retryable failure: the lane must stay `Consumed` for recreateLane.
+  if (shutdownLanes) {
+    if (static_cast<uint8_t>(mask) & static_cast<uint8_t>(LaneMask::AIC))
+      workers_[0]->shutdownWorker();
+    if (static_cast<uint8_t>(mask) & static_cast<uint8_t>(LaneMask::AIV))
+      workers_[1]->shutdownWorker();
+  }
   // Step 3: unlink planned output files (best-effort).
   for (const auto &path : plannedOutputs) {
     if (path.empty())

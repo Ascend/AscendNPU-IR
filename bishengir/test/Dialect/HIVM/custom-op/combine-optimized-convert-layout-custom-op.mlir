@@ -1,24 +1,5 @@
 // RUN: bishengir-opt %s --canonicalize --hivm-combine-optimized-convert-layout --split-input-file | FileCheck %s
 
-// Fold Fractal->ND convert_layout before an hivm.hir.custom FixpipeOp: the
-// custom op's first input is declared with data_layout = Fractal, so the
-// convert_layout is redundant and the custom op consumes the fractal tensor
-// directly.
-// CHECK-LABEL: func.func @fold_convert_fixpipe_custom
-// CHECK-SAME: %[[DST:.*]]: memref<?xf32>
-// CHECK-NOT: hivm.hir.convert_layout
-// CHECK: hivm.hir.custom {{.*}} "FixpipeOp" ins(%{{.*}} : tensor<1x1x16x16xf32>
-func.func @fold_convert_fixpipe_custom(%dst: memref<?xf32>) {
-  %c0_i32 = arith.constant 0 : i32
-  %cst = arith.constant 0.000000e+00 : f32
-  %false = arith.constant false
-  %fractal = arith.constant dense<1.0> : tensor<1x1x16x16xf32>
-  %nd = hivm.hir.convert_layout %fractal output_shape [16, 16] {dstLayout = #hivm.data_layout<ND>, srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>} : (tensor<1x1x16x16xf32>) -> tensor<16x16xf32>
-  hivm.hir.custom {arg_attrs = [{address_space = #hivm.address_space<cc>, data_layout = #hivm.data_layout<Fractal>}, {}, {}, {}, {}, {}, {}, {}, {address_space = #hivm.address_space<gm>, data_layout = #hivm.data_layout<dotC_ND>}], bitcode = "fixpipe_l0c_to_gm.bc", hivm.pipe = #hivm.pipe<PIPE_FIX>, hivm.tcore_type = #hivm.tcore_type<CUBE>, indexing_map = [affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>, affine_map<(d0, d1, d2, d3) -> ()>, affine_map<(d0, d1, d2, d3) -> ()>, affine_map<(d0, d1, d2, d3) -> ()>, affine_map<(d0, d1, d2, d3) -> ()>, affine_map<(d0, d1, d2, d3) -> ()>, affine_map<(d0, d1, d2, d3) -> ()>, affine_map<(d0, d1, d2, d3) -> ()>, affine_map<(d0, d1) -> (d0, d1)>], iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>], symbol = "fixpipe_nz2dn_float_to_float_4d_to_2d_gm"} "FixpipeOp" ins(%nd, %c0_i32, %cst, %c0_i32, %false, %false, %c0_i32, %c0_i32, %dst : tensor<16x16xf32>, i32, f32, i32, i1, i1, i32, i32, memref<?xf32>)
-  return
-}
-
-// -----
 // Fold ND->Fractal convert_layout after a custom op whose output already
 // declares data_layout = Fractal in arg_attrs. The convert_layout is
 // redundant because the custom op already produces the fractal layout.

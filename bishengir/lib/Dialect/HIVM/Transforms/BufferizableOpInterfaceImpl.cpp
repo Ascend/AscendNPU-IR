@@ -22,15 +22,23 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/BufferizableOpInterfaceImpl.h"
 
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Bufferization/IR/DstBufferizableOpInterfaceImpl.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/StructuredOpsUtils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Matchers.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 
 using namespace mlir;
 using namespace hivm;
@@ -259,57 +267,381 @@ struct NDNZConversionOpInterface
 };
 
 template <typename CustomOpT>
-static std::optional<int32_t> getInplaceInputIndexForOutput(CustomOpT op,
-                                                            int64_t outputIdx) {
-  if (outputIdx < 0)
-    return std::nullopt;
-
-  auto argAttrs =
-      op->template getAttrOfType<ArrayAttr>(CustomOpT::kArgAttrsName);
-  if (!argAttrs)
-    return std::nullopt;
-
-  for (auto [inputIdx, inputAttr] : llvm::enumerate(argAttrs)) {
-    if (inputIdx >= op.getInputs().size())
-      break;
-
-    auto dict = dyn_cast<DictionaryAttr>(inputAttr);
-    if (!dict)
-      continue;
-
-    auto inplaceOutAttr = dyn_cast_or_null<IntegerAttr>(
-        dict.get(CustomOpT::kInplaceOutsAttrName));
-    if (!inplaceOutAttr)
-      continue;
-
-    if (inplaceOutAttr.getInt() == outputIdx)
-      return static_cast<int32_t>(inputIdx);
-  }
-
-  return std::nullopt;
-}
-
-template <typename CustomOpT>
 static std::optional<int64_t> getDpsInitIndex(CustomOpT op,
                                               OpOperand &opOperand) {
-  auto dpsOp = cast<DestinationStyleOpInterface>(op.getOperation());
-  if (!dpsOp.isDpsInit(&opOperand)) {
+  if (!op.isDpsInit(&opOperand))
     return std::nullopt;
-  }
-  return opOperand.getOperandNumber() -
-         dpsOp.getDpsInits().getBeginOperandIndex();
+  return opOperand.getOperandNumber() - op.getDpsInits().getBeginOperandIndex();
 }
 
 template <typename CustomOpT>
 static bool isInplaceOutputOperand(CustomOpT op, OpOperand &opOperand) {
   auto outputIdx = getDpsInitIndex(op, opOperand);
-  return outputIdx && getInplaceInputIndexForOutput(op, *outputIdx).has_value();
+  return outputIdx && op.getInplaceInputIndexForOutput(*outputIdx).has_value();
+}
+
+static std::optional<std::pair<unsigned, unsigned>>
+getRequiredByteAlias(Operation *op) {
+  auto custom = dyn_cast<CustomOp>(op);
+  if (!custom || custom.getNumResults() == 0)
+    return std::nullopt;
+  for (unsigned output = 0; output < custom.getOutputs().size(); ++output) {
+    auto input = custom.getInplaceInputIndexForOutput(output);
+    if (input && custom.getInputs()[*input].getType() !=
+                     custom.getOutputs()[output].getType())
+      return std::make_pair(*input, output);
+  }
+  return std::nullopt;
+}
+
+static LogicalResult
+getByteAliasBufferOperands(CustomOp op, std::pair<unsigned, unsigned> alias,
+                           SmallVectorImpl<Value> &operands,
+                           RewriterBase &rewriter,
+                           const BufferizationOptions &options) {
+  unsigned aliasedOutput = op.getInputs().size() + alias.second;
+  operands.assign(op->operand_begin(), op->operand_end());
+  for (auto [index, operand] : llvm::enumerate(op->getOperands())) {
+    if (index == alias.first || index == aliasedOutput ||
+        !isa<TensorType>(operand.getType()))
+      continue;
+    auto other = getBuffer(rewriter, operand, options);
+    if (failed(other))
+      return failure();
+    operands[index] = *other;
+  }
+  return success();
+}
+
+static std::pair<Value, Value> replaceByteAliasAlloc(memref::AllocOp alloc,
+                                                     Location loc,
+                                                     RewriterBase &rewriter) {
+  rewriter.setInsertionPoint(alloc);
+  auto type = alloc.getType();
+  int64_t bytes = type.getNumElements() * type.getElementTypeBitWidth() / 8;
+  auto byteType = MemRefType::get({bytes}, rewriter.getI8Type(), AffineMap{},
+                                  type.getMemorySpace());
+  auto raw = rewriter.create<memref::AllocOp>(loc, byteType);
+  raw->setAttrs(alloc->getAttrs());
+  if (!raw.getAlignmentAttr() || raw.getAlignmentAttr().getInt() < 32)
+    raw.setAlignmentAttr(rewriter.getI64IntegerAttr(32));
+  auto zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  auto dense =
+      rewriter.create<memref::ViewOp>(loc, type, raw, zero, ValueRange{});
+  rewriter.replaceOp(alloc, dense.getResult());
+  return {raw.getResult(), dense.getResult()};
+}
+
+static LogicalResult bufferizeByteAliasOutputs(
+    CustomOp op, std::pair<unsigned, unsigned> alias, Value root, Value zero,
+    SmallVectorImpl<Value> &operands, RewriterBase &rewriter,
+    const BufferizationOptions &options) {
+  auto scoreType = cast<MemRefType>(operands[alias.first].getType());
+  auto outputType =
+      bufferization::getBufferType(op->getResult(alias.second), options);
+  if (failed(outputType))
+    return failure();
+  MemRefType pType = MemRefType::Builder(cast<MemRefType>(*outputType))
+                         .setMemorySpace(scoreType.getMemorySpace());
+  auto rootType = cast<MemRefType>(root.getType());
+  int64_t flatElements = rootType.getNumElements() *
+                         rootType.getElementTypeBitWidth() /
+                         pType.getElementTypeBitWidth();
+  auto flatType = MemRefType::get({flatElements}, pType.getElementType(),
+                                  AffineMap{}, pType.getMemorySpace());
+  auto flat = rewriter.create<memref::ViewOp>(op.getLoc(), flatType, root, zero,
+                                              ValueRange{});
+  auto [strides, offset] = utils::getStridesAndOffsetCompat(pType);
+  auto p = rewriter.create<memref::ReinterpretCastOp>(
+      op.getLoc(), pType, flat, offset, pType.getShape(), strides);
+  unsigned inputCount = op.getInputs().size();
+  operands[inputCount + alias.second] = p.getResult();
+  Operation *pInit = op.getOutputs()[alias.second].getDefiningOp();
+  auto bufferOp = clone(rewriter, op, /*newResultTypes=*/TypeRange{}, operands);
+  auto attrs =
+      llvm::to_vector(op->getAttrOfType<ArrayAttr>(CustomOp::kArgAttrsName));
+  NamedAttrList inputAttrs(cast<DictionaryAttr>(attrs[alias.first]));
+  inputAttrs.erase(CustomOp::kInplaceOutsAttrName);
+  attrs[alias.first] = inputAttrs.getDictionary(op.getContext());
+  bufferOp->setAttr(CustomOp::kArgAttrsName, rewriter.getArrayAttr(attrs));
+  replaceOpWithBufferizedValues(
+      rewriter, op,
+      ArrayRef<Value>(operands).slice(inputCount, op.getOutputs().size()));
+  if (pInit && isOpTriviallyDead(pInit))
+    rewriter.eraseOp(pInit);
+  return success();
+}
+
+static Value castBufferMemorySpace(RewriterBase &rewriter, Location loc,
+                                   Value buffer, Attribute memorySpace) {
+  auto type = cast<MemRefType>(buffer.getType());
+  if (type.getMemorySpace() == memorySpace)
+    return buffer;
+  MemRefType target = MemRefType::Builder(type).setMemorySpace(memorySpace);
+  return rewriter.create<memref::MemorySpaceCastOp>(loc, target, buffer);
+}
+
+// Resolve a whole-buffer selection before constructing its byte views.
+static Operation *getBufferSelector(Value value) {
+  while (Operation *def = value.getDefiningOp()) {
+    if (isa<scf::IfOp, arith::SelectOp>(def))
+      return def;
+    if (!isa<memref::MemorySpaceCastOp, memref::CastOp>(def))
+      break;
+    value = def->getOperand(0);
+  }
+  return nullptr;
+}
+
+static LogicalResult
+bufferizeSelectedByteAlias(CustomOp op, std::pair<unsigned, unsigned> alias,
+                           Value score, Operation *selector,
+                           RewriterBase &rewriter,
+                           const BufferizationOptions &options) {
+  auto reject = [&op]() {
+    return op.emitOpError(
+        "inplace_outs requires a selection of whole local input allocations");
+  };
+  auto ifSelector = dyn_cast<scf::IfOp>(selector);
+  auto selectSelector = dyn_cast<arith::SelectOp>(selector);
+  Value selectorResult = selector->getResult(0);
+  Value selectorCondition =
+      ifSelector ? ifSelector.getCondition() : selectSelector.getCondition();
+  auto scoreType = dyn_cast<MemRefType>(score.getType());
+  if (!scoreType || selector->getNumResults() != 1 ||
+      selector->getBlock() != op->getBlock())
+    return reject();
+  auto selectedType = dyn_cast<MemRefType>(selectorResult.getType());
+  auto isUBOrGeneric = [](MemRefType type) {
+    return type && (!type.getMemorySpace() ||
+                    getOptionalHIVMAddressSpace(type) == AddressSpace::UB);
+  };
+  if (!isUBOrGeneric(scoreType) || !isUBOrGeneric(selectedType))
+    return reject();
+
+  SmallVector<memref::AllocOp> allocations;
+  SmallVector<std::pair<Value, Block *>> selectorInputs;
+  if (ifSelector) {
+    for (Block *block : {ifSelector.thenBlock(), ifSelector.elseBlock()}) {
+      auto yield = cast<scf::YieldOp>(block->getTerminator());
+      selectorInputs.push_back({yield.getOperand(0), block});
+    }
+  } else {
+    selectorInputs.push_back({selectSelector.getTrueValue(), nullptr});
+    selectorInputs.push_back({selectSelector.getFalseValue(), nullptr});
+  }
+  for (auto [rootValue, block] : selectorInputs) {
+    Value value = rootValue;
+    // Each address-preserving step has one source.
+    while (Operation *def = value.getDefiningOp()) {
+      if (block ? def->getBlock() != block : isa<memref::AllocOp>(def))
+        break;
+      if (!isa<memref::MemorySpaceCastOp, memref::CastOp,
+               bufferization::ToMemrefOp, bufferization::ToTensorOp>(def))
+        return reject();
+      value = def->getOperand(0);
+    }
+    auto alloc = value.getDefiningOp<memref::AllocOp>();
+    if (!alloc || alloc.getType().getShape() != scoreType.getShape() ||
+        alloc.getType().getElementType() != scoreType.getElementType() ||
+        !alloc.getType().getLayout().isIdentity() ||
+        !isUBOrGeneric(alloc.getType()))
+      return reject();
+    allocations.push_back(alloc);
+  }
+  if (allocations[0].getType().getMemorySpace() !=
+      allocations[1].getType().getMemorySpace())
+    return reject();
+  // Acquire the remaining operands before replacing allocations.
+  SmallVector<Value> operands;
+  if (failed(
+          getByteAliasBufferOperands(op, alias, operands, rewriter, options)))
+    return failure();
+  bool sameAllocation = allocations[0] == allocations[1];
+  Value trueRoot =
+      replaceByteAliasAlloc(allocations[0], op.getLoc(), rewriter).first;
+  Value falseRoot =
+      sameAllocation
+          ? trueRoot
+          : replaceByteAliasAlloc(allocations[1], op.getLoc(), rewriter).first;
+  // Select the same allocation for both views. The original branch keeps
+  // its waits and other effects until ordinary canonicalization drops its
+  // now-unused result.
+  rewriter.setInsertionPoint(selector);
+  auto selected = rewriter.create<arith::SelectOp>(
+      selector->getLoc(), selectorCondition, trueRoot, falseRoot);
+  if (selectSelector)
+    selected->setAttrs(selector->getAttrs());
+  auto zero = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+  Value root = castBufferMemorySpace(
+      rewriter, op.getLoc(), selected.getResult(), scoreType.getMemorySpace());
+  MemRefType denseType = MemRefType::Builder(scoreType).setLayout({});
+  Value dense = rewriter.create<memref::ViewOp>(op.getLoc(), denseType, root,
+                                                zero, ValueRange{});
+  if (dense.getType() != scoreType)
+    dense = rewriter.create<memref::CastOp>(op.getLoc(), scoreType, dense);
+  operands[alias.first] = dense;
+
+  rewriter.setInsertionPoint(op);
+  return bufferizeByteAliasOutputs(op, alias, root, zero, operands, rewriter,
+                                   options);
+}
+
+static LogicalResult
+bufferizeRequiredByteAlias(CustomOp op, std::pair<unsigned, unsigned> alias,
+                           RewriterBase &rewriter,
+                           const BufferizationOptions &options) {
+  if (options.copyBeforeWrite)
+    return op.emitOpError("inplace_outs cannot use copyBeforeWrite");
+
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPoint(op);
+  FailureOr<Value> buffer =
+      getBuffer(rewriter, op.getInputs()[alias.first], options);
+  if (failed(buffer))
+    return failure();
+  Value score = *buffer;
+  auto scoreType = dyn_cast<MemRefType>(score.getType());
+  if (auto selected = getBufferSelector(score))
+    return bufferizeSelectedByteAlias(op, alias, score, selected, rewriter,
+                                      options);
+  if (!scoreType || !scoreType.getLayout().isIdentity())
+    return op.emitOpError(
+        "inplace_outs requires a dense identity input buffer");
+
+  Value root = score;
+  if (auto cast = root.getDefiningOp<memref::MemorySpaceCastOp>())
+    root = cast.getSource();
+  if (auto view = root.getDefiningOp<memref::ViewOp>()) {
+    if (!matchPattern(view.getByteShift(), m_Zero()))
+      return op.emitOpError("inplace_outs requires a zero-offset input view");
+    root = view.getSource();
+  }
+  auto alloc = root.getDefiningOp<memref::AllocOp>();
+  int64_t bytes =
+      scoreType.getNumElements() * scoreType.getElementTypeBitWidth() / 8;
+  auto rootType = dyn_cast<MemRefType>(root.getType());
+  bool byteRoot =
+      rootType && rootType.getRank() == 1 &&
+      rootType.getElementType().isInteger(8) && rootType.hasStaticShape() &&
+      rootType.getDimSize(0) == bytes && rootType.getLayout().isIdentity();
+  bool typedRoot = rootType && rootType.getShape() == scoreType.getShape() &&
+                   rootType.getElementType() == scoreType.getElementType() &&
+                   rootType.getLayout().isIdentity();
+  if (!alloc || (!byteRoot && !typedRoot))
+    return op.emitOpError(
+        "inplace_outs requires a whole local input allocation");
+
+  // Resolve other buffers before changing allocations; the aliased output
+  // initializer requires neither a buffer nor a copy.
+  SmallVector<Value> operands;
+  if (failed(
+          getByteAliasBufferOperands(op, alias, operands, rewriter, options)))
+    return failure();
+  if (!byteRoot) {
+    bool directScore = score == root;
+    auto [raw, dense] = replaceByteAliasAlloc(alloc, op.getLoc(), rewriter);
+    root = raw;
+    if (directScore)
+      score = dense;
+  }
+  if (byteRoot &&
+      (!alloc.getAlignmentAttr() || alloc.getAlignmentAttr().getInt() < 32))
+    rewriter.modifyOpInPlace(alloc, [&alloc, &rewriter] {
+      alloc.setAlignmentAttr(rewriter.getI64IntegerAttr(32));
+    });
+  operands[alias.first] = score;
+
+  rewriter.setInsertionPoint(op);
+  root = castBufferMemorySpace(rewriter, op.getLoc(), root,
+                               scoreType.getMemorySpace());
+  auto zero = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+  return bufferizeByteAliasOutputs(op, alias, root, zero, operands, rewriter,
+                                   options);
 }
 
 template <typename CustomOpT>
 struct HIVMCustomOpInterface
     : public DstBufferizableOpInterfaceExternalModel<
           HIVMCustomOpInterface<CustomOpT>, CustomOpT> {
+  using Base =
+      DstBufferizableOpInterfaceExternalModel<HIVMCustomOpInterface<CustomOpT>,
+                                              CustomOpT>;
+
+  bool bufferizesToMemoryWrite(Operation *op, OpOperand &operand,
+                               const AnalysisState &state) const {
+    if (auto alias = getRequiredByteAlias(op)) {
+      auto custom = cast<CustomOp>(op);
+      return operand.getOperandNumber() == alias->first ||
+             (custom.isDpsInit(&operand) &&
+              operand.getOperandNumber() !=
+                  custom.getInputs().size() + alias->second);
+    }
+    return Base::bufferizesToMemoryWrite(op, operand, state);
+  }
+
+  AliasingValueList getAliasingValues(Operation *op, OpOperand &operand,
+                                      const AnalysisState &state) const {
+    if (auto alias = getRequiredByteAlias(op)) {
+      if (operand.getOperandNumber() == alias->first)
+        return {{op->getResult(alias->second), BufferRelation::Unknown}};
+      if (operand.getOperandNumber() ==
+          cast<CustomOp>(op).getInputs().size() + alias->second)
+        return {};
+    }
+    return Base::getAliasingValues(op, operand, state);
+  }
+
+  FailureOr<BaseMemRefType>
+  getBufferType(Operation *op, Value value, const BufferizationOptions &options,
+                SmallVector<Value> &invocationStack) const {
+    if (auto alias = getRequiredByteAlias(op);
+        alias && value == op->getResult(alias->second)) {
+      auto custom = cast<CustomOp>(op);
+      auto inputType = bufferization::getBufferType(
+          custom.getInputs()[alias->first], options, invocationStack);
+      if (failed(inputType))
+        return failure();
+      auto output = cast<RankedTensorType>(value.getType());
+      auto type = MemRefType::get(output.getShape(), output.getElementType(),
+                                  AffineMap{}, inputType->getMemorySpace());
+      auto attrs = cast<DictionaryAttr>(custom->getAttrOfType<ArrayAttr>(
+          CustomOp::kArgAttrsName)[alias->first]);
+      auto binding = attrs.getAs<ArrayAttr>(CustomOp::kInplaceOutsAttrName);
+      if (!binding)
+        return type;
+      auto map = cast<AffineMapAttr>(binding[1]).getValue();
+      if (map.getNumDims() != output.getRank() ||
+          map.getNumResults() != output.getRank() || map.getNumSymbols())
+        return custom.emitOpError("invalid inplace_outs output view map");
+      auto offsetExpr = makeCanonicalStridedLayoutExpr(
+          output.getShape(), map.getResults(), custom.getContext());
+      auto layout = AffineMap::get(output.getRank(), 0, offsetExpr);
+      type = MemRefType::Builder(type).setLayout(AffineMapAttr::get(layout));
+      SmallVector<int64_t> strides;
+      int64_t offset;
+      if (failed(utils::getStridesAndOffsetCompat(type, strides, offset)) ||
+          offset != 0 ||
+          llvm::any_of(strides, [](int64_t stride) { return stride < 0; }))
+        return custom.emitOpError(
+            "inplace_outs requires a static zero-offset output byte view");
+      int64_t span = 1;
+      for (auto [size, stride] : llvm::zip(type.getShape(), strides))
+        span += (size - 1) * stride;
+      auto input =
+          cast<RankedTensorType>(custom.getInputs()[alias->first].getType());
+      if (span * output.getElementTypeBitWidth() >
+          input.getNumElements() * input.getElementTypeBitWidth())
+        return custom.emitOpError(
+            "inplace_outs output byte view exceeds the input capacity");
+      type = MemRefType::Builder(type).setLayout(
+          StridedLayoutAttr::get(custom.getContext(), offset, strides));
+      return type;
+    }
+    return bufferization::detail::defaultGetBufferType(value, options,
+                                                       invocationStack);
+  }
+
   bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
                               const AnalysisState &state) const {
     auto customOp = cast<CustomOpT>(op);
@@ -321,32 +653,37 @@ struct HIVMCustomOpInterface
 
   bool mustBufferizeInPlace(Operation *op, OpOperand &opOperand,
                             const AnalysisState &state) const {
-    return isInplaceOutputOperand(cast<CustomOpT>(op), opOperand);
+    auto customOp = cast<CustomOpT>(op);
+    if (auto alias = getRequiredByteAlias(op)) {
+      if (opOperand.getOperandNumber() == alias->first)
+        return true;
+      if (getDpsInitIndex(customOp, opOperand) == alias->second)
+        return false;
+    }
+    return isInplaceOutputOperand(customOp, opOperand);
   }
 
   bool isNotConflicting(Operation *op, OpOperand *uRead, OpOperand *uWrite,
                         const AnalysisState &state) const {
     if (!uRead || !uWrite || uRead->getOwner() != op ||
-        uWrite->getOwner() != op) {
+        uWrite->getOwner() != op || uRead->get() != uWrite->get())
       return false;
-    }
 
     auto customOp = cast<CustomOpT>(op);
     auto outputIdx = getDpsInitIndex(customOp, *uWrite);
-    if (!outputIdx) {
+    if (!outputIdx)
       return false;
-    }
 
-    auto inputIdx = getInplaceInputIndexForOutput(customOp, *outputIdx);
-    if (!inputIdx) {
-      return false;
-    }
-
-    return uRead->getOperandNumber() == static_cast<unsigned>(*inputIdx);
+    auto inputIdx = customOp.getInplaceInputIndexForOutput(*outputIdx);
+    return inputIdx &&
+           uRead->getOperandNumber() == static_cast<unsigned>(*inputIdx);
   }
 
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
+    if (auto alias = getRequiredByteAlias(op))
+      return bufferizeRequiredByteAlias(cast<CustomOp>(op), *alias, rewriter,
+                                        options);
     return bufferizeDestinationStyleOpInterface(
         rewriter, cast<DestinationStyleOpInterface>(op), options,
         /* supportMixedTensorBufferMode */ true);

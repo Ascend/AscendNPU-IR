@@ -89,3 +89,155 @@ func.func @inline_fixpipe_for_iter_arg_mmad(
   return
 }
 }
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+// CHECK-LABEL: func.func @while_for_l0c_fixpipe_before_store
+// CHECK: %[[FOR:.*]] = scf.for
+// CHECK:   %[[WHILE:.*]] = scf.while
+// CHECK:     %[[IF:.*]] = scf.if
+// CHECK:       %[[MMAD:.*]] = hivm.hir.mmadL1
+// CHECK-NOT: hivm.hir.fixpipe
+// CHECK:       scf.yield %[[MMAD]]
+// CHECK:     } else {
+// CHECK-NOT: hivm.hir.fixpipe
+// CHECK:       scf.yield
+// CHECK:     }
+// CHECK:     scf.yield %[[IF]]
+// CHECK:   }
+// CHECK:   scf.yield %[[WHILE]]
+// CHECK: }
+// CHECK-NOT: hivm.hir.fixpipe {{.*}} ins(%[[MMAD]]
+// CHECK-NOT: hivm.hir.fixpipe {{.*}} ins(%[[IF]]
+// CHECK-NOT: hivm.hir.fixpipe {{.*}} ins(%[[WHILE]]
+// CHECK: %[[FP:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[FOR]]
+// CHECK: %[[SLICE:.*]] = tensor.extract_slice %[[FP]]
+// CHECK: hivm.hir.store ins(%[[SLICE]]
+func.func @while_for_l0c_fixpipe_before_store(
+    %cond: i1,
+    %a: tensor<16x16xf16>,
+    %b: tensor<16x16xf16>,
+    %out: memref<?x?xf32, strided<[16, 1], offset: ?>>) {
+  %true = arith.constant true
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c16 = arith.constant 16 : index
+  %init = tensor.empty() : tensor<16x16xf32>
+  %for = scf.for %i = %c0 to %c2 step %c1
+      iter_args(%acc = %init) -> (tensor<16x16xf32>) {
+    %while = scf.while (%wacc = %acc) : (tensor<16x16xf32>) -> (tensor<16x16xf32>) {
+      scf.condition(%cond) %wacc : tensor<16x16xf32>
+    } do {
+    ^bb0(%wacc: tensor<16x16xf32>):
+      %if = scf.if %cond -> (tensor<16x16xf32>) {
+        %mmad = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
+            ins(%a, %b, %true, %c16, %c16, %c16
+                : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+            outs(%wacc : tensor<16x16xf32>) -> tensor<16x16xf32>
+        scf.yield %mmad : tensor<16x16xf32>
+      } else {
+        scf.yield %wacc : tensor<16x16xf32>
+      } {hivm.remain_in_l0c = [0 : i32]}
+      scf.yield %if : tensor<16x16xf32>
+    } attributes {hivm.remain_in_l0c = [0 : i32]}
+    scf.yield %while : tensor<16x16xf32>
+  } {hivm.remain_in_l0c = [0 : i32], normalized_in_L0C = [0 : i32]}
+  %slice = tensor.extract_slice %for[0, 0] [%c16, %c16] [1, 1]
+      : tensor<16x16xf32> to tensor<?x?xf32>
+  hivm.hir.store ins(%slice : tensor<?x?xf32>)
+      outs(%out : memref<?x?xf32, strided<[16, 1], offset: ?>>)
+  return
+}
+}
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+// Two L0C results, matching the carried pair that is sliced and stored after
+// the outer scf.for. Each fixpipe reads one for-result; neither yield is
+// rewritten.
+// CHECK-LABEL: func.func @while_for_two_l0c_fixpipes_before_stores
+// CHECK: %[[FOR:.*]]:2 = scf.for
+// CHECK:   %[[WHILE:.*]]:2 = scf.while
+// CHECK:     %[[IF1:.*]] = scf.if
+// CHECK:       %[[MMAD1:.*]] = hivm.hir.mmadL1
+// CHECK-NOT: hivm.hir.fixpipe
+// CHECK:       scf.yield %[[MMAD1]]
+// CHECK:     } else {
+// CHECK-NOT: hivm.hir.fixpipe
+// CHECK:       scf.yield
+// CHECK:     }
+// CHECK:     %[[IF0:.*]] = scf.if
+// CHECK:       %[[MMAD0:.*]] = hivm.hir.mmadL1
+// CHECK-NOT: hivm.hir.fixpipe
+// CHECK:       scf.yield %[[MMAD0]]
+// CHECK:     } else {
+// CHECK-NOT: hivm.hir.fixpipe
+// CHECK:       scf.yield
+// CHECK:     }
+// CHECK:     scf.yield %[[IF0]], %[[IF1]]
+// CHECK:   }
+// CHECK:   scf.yield %[[WHILE]]#0, %[[WHILE]]#1
+// CHECK: }
+// CHECK-DAG: %[[FP0:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[FOR]]#0
+// CHECK-DAG: %[[FP1:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[FOR]]#1
+// CHECK: %[[SLICE1:.*]] = tensor.extract_slice %[[FP1]]
+// CHECK: hivm.hir.store ins(%[[SLICE1]]
+// CHECK: %[[SLICE0:.*]] = tensor.extract_slice %[[FP0]]
+// CHECK: hivm.hir.store ins(%[[SLICE0]]
+func.func @while_for_two_l0c_fixpipes_before_stores(
+    %cond: i1,
+    %a: tensor<16x16xf16>,
+    %b: tensor<16x16xf16>,
+    %out0: memref<?x?xf32, strided<[16, 1], offset: ?>>,
+    %out1: memref<?x?xf32, strided<[16, 1], offset: ?>>) {
+  %true = arith.constant true
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c16 = arith.constant 16 : index
+  %init0 = tensor.empty() : tensor<16x16xf32>
+  %init1 = tensor.empty() : tensor<16x16xf32>
+  // Result 0 accumulates in the second if; result 1 accumulates in the first.
+  %for:2 = scf.for %i = %c0 to %c2 step %c1
+      iter_args(%acc0 = %init0, %acc1 = %init1) -> (tensor<16x16xf32>, tensor<16x16xf32>) {
+    %while:2 = scf.while (%w0 = %acc0, %w1 = %acc1)
+        : (tensor<16x16xf32>, tensor<16x16xf32>) -> (tensor<16x16xf32>, tensor<16x16xf32>) {
+      scf.condition(%cond) %w0, %w1 : tensor<16x16xf32>, tensor<16x16xf32>
+    } do {
+    ^bb0(%w0: tensor<16x16xf32>, %w1: tensor<16x16xf32>):
+      %if1 = scf.if %cond -> (tensor<16x16xf32>) {
+        %mmad1 = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
+            ins(%a, %b, %true, %c16, %c16, %c16
+                : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+            outs(%w1 : tensor<16x16xf32>) -> tensor<16x16xf32>
+        scf.yield %mmad1 : tensor<16x16xf32>
+      } else {
+        scf.yield %w1 : tensor<16x16xf32>
+      } {hivm.remain_in_l0c = [0 : i32]}
+      %if0 = scf.if %cond -> (tensor<16x16xf32>) {
+        %mmad0 = hivm.hir.mmadL1 {a_transpose, already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
+            ins(%a, %b, %true, %c16, %c16, %c16
+                : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+            outs(%w0 : tensor<16x16xf32>) -> tensor<16x16xf32>
+        scf.yield %mmad0 : tensor<16x16xf32>
+      } else {
+        scf.yield %w0 : tensor<16x16xf32>
+      } {hivm.remain_in_l0c = [0 : i32]}
+      scf.yield %if0, %if1 : tensor<16x16xf32>, tensor<16x16xf32>
+    } attributes {hivm.remain_in_l0c = [0 : i32, 1 : i32]}
+    scf.yield %while#0, %while#1 : tensor<16x16xf32>, tensor<16x16xf32>
+  } {hivm.remain_in_l0c = [0 : i32, 1 : i32], normalized_in_L0C = [1 : i32, 0 : i32]}
+  %slice1 = tensor.extract_slice %for#1[0, 0] [%c16, %c16] [1, 1]
+      : tensor<16x16xf32> to tensor<?x?xf32>
+  hivm.hir.store ins(%slice1 : tensor<?x?xf32>)
+      outs(%out1 : memref<?x?xf32, strided<[16, 1], offset: ?>>)
+  %slice0 = tensor.extract_slice %for#0[0, 0] [%c16, %c16] [1, 1]
+      : tensor<16x16xf32> to tensor<?x?xf32>
+  hivm.hir.store ins(%slice0 : tensor<?x?xf32>)
+      outs(%out0 : memref<?x?xf32, strided<[16, 1], offset: ?>>)
+  return
+}
+}

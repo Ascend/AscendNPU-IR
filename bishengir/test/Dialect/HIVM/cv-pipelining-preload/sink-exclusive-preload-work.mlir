@@ -1314,3 +1314,57 @@ func.func @keep_cluster_reading_vector_written_buffer(
   return
 }
 }
+
+// -----
+
+// Pure copy chain: the sink cluster holds nothing but the copy itself (no
+// MTE2 load, no vector computation). Sinking it past the unused CUBE would
+// only relocate the DMA, so the copy must stay in its producer VECTOR and no
+// new copy may appear after the unused CUBE.
+// CHECK-LABEL: func.func @keep_pure_copy_chain_before_unused_mmad
+// CHECK:         scope.scope
+// CHECK:           hivm.hir.copy
+// CHECK:           scope.return
+// CHECK:         } {{{.*}}VECTOR
+// CHECK:         scope.scope
+// CHECK:           hivm.hir.mmadL1
+// CHECK-NOT:       hivm.hir.copy
+// CHECK:         } {{{.*}}CUBE
+// CHECK-NOT:       hivm.hir.copy
+// CHECK:         %[[W:.*]] = bufferization.to_tensor
+// CHECK:         scope.scope
+// CHECK:           hivm.hir.mmadL1 {{.*}}ins(%[[W]]
+func.func @keep_pure_copy_chain_before_unused_mmad(
+    %src: tensor<16x16xbf16>,
+    %other: tensor<16x16xbf16>)
+    attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  %c16 = arith.constant 16 : index
+  %true = arith.constant true
+  scf.for %i = %c0 to %c4 step %c1 {
+    %cbuf = memref.alloc() : memref<16x16xbf16, #hivm.address_space<cbuf>>
+    scope.scope : () -> () {
+      hivm.hir.copy ins(%src : tensor<16x16xbf16>)
+                    outs(%cbuf : memref<16x16xbf16, #hivm.address_space<cbuf>>)
+                    {"hivm.inserted-copy"}
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 1 : i32, no_inline}
+    scope.scope : () -> () {
+      %acc = tensor.empty() : tensor<16x16xf32>
+      %m = hivm.hir.mmadL1 ins(%other, %other, %true, %c16, %c16, %c16 : tensor<16x16xbf16>, tensor<16x16xbf16>, i1, index, index, index) outs(%acc : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.preload_num = 2 : i32, no_inline}
+    scope.scope : () -> () {
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 3 : i32, no_inline}
+    %w = bufferization.to_tensor %cbuf restrict writable : memref<16x16xbf16, #hivm.address_space<cbuf>>
+    scope.scope : () -> () {
+      %acc = tensor.empty() : tensor<16x16xf32>
+      %m = hivm.hir.mmadL1 ins(%w, %other, %true, %c16, %c16, %c16 : tensor<16x16xbf16>, tensor<16x16xbf16>, i1, index, index, index) outs(%acc : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.preload_num = 0 : i32, no_inline}
+  }
+  return
+}

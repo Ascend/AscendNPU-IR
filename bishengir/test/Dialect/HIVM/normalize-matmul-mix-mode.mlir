@@ -2,7 +2,7 @@
 
 // Tests that hfusion.disableHfusionVectorize no longer causes NormalizeMatmul
 // to skip mmadL1. Mix mode now follows the same counter-based path as SIMD:
-// counter creation, may_not_exec, normalized_in_L0C, and tail fallback.
+// counter creation, may_not_exec, and tail fallback.
 
 // -----
 // Dynamic bounds: loop may be empty (lb >= ub). NormalizeMatmul must create
@@ -12,8 +12,8 @@
 // CHECK-LABEL: func.func @test_mix_dynamic_bounds_tail_fallback
 // CHECK: memref.alloca() {normalize_matmul_counter
 // CHECK: scf.for
-// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
-// CHECK: } {may_not_exec, normalized_in_L0C = [0 : i32]}
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
+// CHECK: } {hivm.remain_in_l0c = [0 : i32], may_not_exec, normalized_in_L0C = [0 : i32]}
 // CHECK: arith.cmpi eq
 // CHECK: scf.if
 // CHECK: hivm.hir.vbrc
@@ -44,14 +44,14 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">, hfusion.disab
 
 // -----
 // Constant bounds (lb < ub): loop is guaranteed to run. NormalizeMatmul still
-// creates counter and sets normalized_in_L0C, but no may_not_exec and no
+// creates the counter, but no may_not_exec and no
 // fallback scf.if.
 
 // CHECK-LABEL: func.func @test_mix_constant_bounds_no_fallback
 // CHECK: memref.alloca() {normalize_matmul_counter
 // CHECK: scf.for
-// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
-// CHECK: } {normalized_in_L0C = [0 : i32]}
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c = [0 : i32], normalized_in_L0C}
+// CHECK: } {hivm.remain_in_l0c = [0 : i32], normalized_in_L0C = [0 : i32]}
 // CHECK-NOT: may_not_exec
 // CHECK-NOT: fallback_not_exec
 // CHECK: hivm.hir.vmul

@@ -46,8 +46,8 @@ Operation *mlir::hivm::syncsolver::getTcbPoolAddressSource(Value value) {
   return nullptr;
 }
 
-int ConflictPair::globalIdCounter = 0;
-int EventIdNode::globalIdCounter = 0;
+std::atomic<int> ConflictPair::globalIdCounter{0};
+std::atomic<int> EventIdNode::globalIdCounter{0};
 
 std::string UnitFlagInfo::str() const {
   std::string unitFlag = UnitFlagInfoBase::str();

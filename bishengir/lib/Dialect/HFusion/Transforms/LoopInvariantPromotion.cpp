@@ -482,23 +482,30 @@ static BlockArgument getPristineArgument(Value v) {
 
 static TypedAttr getFilledConstant(Value v,
                                    SymbolTableCollection &symbolTables) {
-  // Consumers beyond the first are fed a copy of the filled tensor -- the copy
-  // that later shows up as a UB-to-UB `hivm.hir.copy`. A copy of a uniform
-  // tensor is just as uniform.
-  while (auto copy = v.getDefiningOp<linalg::CopyOp>()) {
-    if (copy.getInputs().size() != 1)
-      return {};
-    v = copy.getInputs().front();
+  // Consumers may receive a copy or a slice of the filled tensor. Both preserve
+  // a uniform fill value.
+  while (Operation *def = v.getDefiningOp()) {
+    if (auto copy = dyn_cast<linalg::CopyOp>(def)) {
+      if (copy.getInputs().size() != 1)
+        return {};
+      v = copy.getInputs().front();
+      continue;
+    }
+    if (auto extract = dyn_cast<tensor::ExtractSliceOp>(def)) {
+      v = extract.getSource();
+      continue;
+    }
+    break;
   }
   auto call = v.getDefiningOp<func::CallOp>();
   if (!call)
     return {};
   auto callee = dyn_cast_or_null<func::FuncOp>(
       symbolTables.lookupNearestSymbolFrom(call, call.getCalleeAttr()));
-  if (!callee || callee.isExternal() ||
-      !callee->hasAttr(kFillVFAttrName))
+  if (!callee || callee.isExternal() || !callee->hasAttr(kFillVFAttrName))
     return {};
-  auto retOp = dyn_cast<func::ReturnOp>(callee.getBody().front().getTerminator());
+  auto retOp =
+      dyn_cast<func::ReturnOp>(callee.getBody().front().getTerminator());
   if (!retOp)
     return {};
 
@@ -562,7 +569,7 @@ static void foldConstantFills(ModuleOp module, IRRewriter &rewriter) {
     auto callee = dyn_cast_or_null<func::FuncOp>(
         symbolTables.lookupNearestSymbolFrom(call, call.getCalleeAttr()));
     if (callee && !soleCaller.insert({callee, call}).second)
-      shared.insert(callee);  // multi call sites, bail out.
+      shared.insert(callee); // multi call sites, bail out.
   });
 
   SmallVector<std::pair<vector::TransferReadOp, TypedAttr>> folds;

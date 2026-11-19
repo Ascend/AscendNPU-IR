@@ -236,6 +236,20 @@ def AVE_VCVT_PartTypeAttr : EnumAttr<AVE_Dialect, AVE_VCVT_PartType, "vcvt_part_
   let assemblyFormat = [{`<` $value `>`}];
 }
 
+def AVE_VCVT_MODE_UNKNOWN : I32EnumAttrCase<"UNKNOWN", 0, "unknown">;
+def AVE_VCVT_MODE_MERGING : I32EnumAttrCase<"MERGING", 1, "merging">;
+def AVE_VCVT_MODE_ZEROING : I32EnumAttrCase<"ZEROING", 2, "zeroing">;
+def AVE_VCVT_ModeType : I32EnumAttr<"VCVT_ModeType",
+    "Mode patterns for the #mode option in AVE VCVT operation",
+    [AVE_VCVT_MODE_UNKNOWN, AVE_VCVT_MODE_MERGING, AVE_VCVT_MODE_ZEROING]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "mlir::hivmave";
+}
+
+def AVE_VCVT_ModeTypeAttr : EnumAttr<AVE_Dialect, AVE_VCVT_ModeType, "vcvt_mode_type"> {
+  let assemblyFormat = [{`<` $value `>`}];
+}
+
 def AVE_VCI_INCREASE : I32EnumAttrCase<"INCREASE", 0>;
 def AVE_VCI_DECREASE : I32EnumAttrCase<"DECREASE", 1>;
 def AVE_VCIType : I32EnumAttr<"VCIType",
