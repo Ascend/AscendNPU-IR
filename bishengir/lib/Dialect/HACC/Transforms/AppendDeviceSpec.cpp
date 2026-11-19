@@ -87,13 +87,14 @@ HACCTargetDeviceSpecInterface buildNPUTargetSpecAttr(MLIRContext *context,
   const bool isRegBase = hacc::utils::isRegBasedArch(spec.device);
   for (uint32_t i = 0; i <= getMaxEnumValForDeviceSpec(); i++) {
     auto specEntry = static_cast<DeviceSpec>(i);
-
-    // MINIMAL_D_CACHE_SIZE / MAXIMUM_D_CACHE_SIZE / ARCH are regbase-only
-    // (introduced by A5). The external hivmc shipped with CANN for membase
-    // targets cannot parse them, so skip them on membase arch.
+    // MINIMAL_D_CACHE_SIZE / MAXIMUM_D_CACHE_SIZE / ARCH / UB_BANK_GROUP_COUNT
+    // are regbase-only (introduced by A5/A6). The external hivmc shipped with
+    // CANN for membase targets cannot parse them, so skip them on membase
+    // arch.
     if (!isRegBase && (specEntry == DeviceSpec::MINIMAL_D_CACHE_SIZE ||
                        specEntry == DeviceSpec::MAXIMUM_D_CACHE_SIZE ||
-                       specEntry == DeviceSpec::ARCH)) {
+                       specEntry == DeviceSpec::ARCH ||
+                       specEntry == DeviceSpec::UB_BANK_GROUP_COUNT)) {
       continue;
     }
 
