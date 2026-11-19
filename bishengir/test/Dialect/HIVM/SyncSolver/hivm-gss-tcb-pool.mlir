@@ -13,12 +13,12 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %src = hivm.hir.pointer_cast(%zero) : memref<16x16xf32, #hivm.address_space<cc>>
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
-    %a0, %id0 = hivm.hir.tcb_pool_alloc %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
+    %a0, %id0 = hivm.hir.experimental.tcb_pool_alloc %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
     %dst0 = hivm.hir.pointer_cast(%a0) : memref<16x16xf32, #hivm.address_space<ub>>
     // CHECK-NOT: hivm.hir.pipe_barrier[<PIPE_FIX>]
     // CHECK: hivm.hir.fixpipe
     hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%src : memref<16x16xf32, #hivm.address_space<cc>>) outs(%dst0 : memref<16x16xf32, #hivm.address_space<ub>>)
-    %a1, %id1 = hivm.hir.tcb_pool_alloc %meta, %pool {segment = 1 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
+    %a1, %id1 = hivm.hir.experimental.tcb_pool_alloc %meta, %pool {segment = 1 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
     %dst1 = hivm.hir.pointer_cast(%a1) : memref<16x16xf32, #hivm.address_space<ub>>
     // CHECK-NOT: hivm.hir.pipe_barrier[<PIPE_FIX>]
     // CHECK: hivm.hir.fixpipe
@@ -37,11 +37,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %pool0 = hivm.hir.pointer_cast(%zero) : memref<4096xi8, #hivm.address_space<ub>>
     %pool1 = hivm.hir.pointer_cast(%overlap) : memref<4096xi8, #hivm.address_space<ub>>
     %src = hivm.hir.pointer_cast(%zero) : memref<16x16xf32, #hivm.address_space<cc>>
-    %a0, %id0 = hivm.hir.tcb_pool_alloc %meta0, %pool0 {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
+    %a0, %id0 = hivm.hir.experimental.tcb_pool_alloc %meta0, %pool0 {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
     %dst0 = hivm.hir.pointer_cast(%a0) : memref<16x16xf32, #hivm.address_space<ub>>
     // CHECK: hivm.hir.fixpipe
     hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%src : memref<16x16xf32, #hivm.address_space<cc>>) outs(%dst0 : memref<16x16xf32, #hivm.address_space<ub>>)
-    %a1, %id1 = hivm.hir.tcb_pool_alloc %meta1, %pool1 {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
+    %a1, %id1 = hivm.hir.experimental.tcb_pool_alloc %meta1, %pool1 {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
     %dst1 = hivm.hir.pointer_cast(%a1) : memref<16x16xf32, #hivm.address_space<ub>>
     // CHECK: hivm.hir.pipe_barrier[<PIPE_FIX>]
     // CHECK-NEXT: hivm.hir.fixpipe
@@ -59,12 +59,12 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %pool0 = hivm.hir.pointer_cast(%zero) : memref<4096xi8, #hivm.address_space<ub>>
     %pool1 = hivm.hir.pointer_cast(%outside) : memref<4096xi8, #hivm.address_space<ub>>
     %src = hivm.hir.pointer_cast(%zero) : memref<16x16xf32, #hivm.address_space<cc>>
-    %a0, %id0 = hivm.hir.tcb_pool_alloc %meta0, %pool0 {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
+    %a0, %id0 = hivm.hir.experimental.tcb_pool_alloc %meta0, %pool0 {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
     %dst0 = hivm.hir.pointer_cast(%a0) : memref<16x16xf32, #hivm.address_space<ub>>
     // CHECK-NOT: hivm.hir.pipe_barrier[<PIPE_FIX>]
     // CHECK: hivm.hir.fixpipe
     hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%src : memref<16x16xf32, #hivm.address_space<cc>>) outs(%dst0 : memref<16x16xf32, #hivm.address_space<ub>>)
-    %a1, %id1 = hivm.hir.tcb_pool_alloc %meta1, %pool1 {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
+    %a1, %id1 = hivm.hir.experimental.tcb_pool_alloc %meta1, %pool1 {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
     %dst1 = hivm.hir.pointer_cast(%a1) : memref<16x16xf32, #hivm.address_space<ub>>
     // CHECK-NOT: hivm.hir.pipe_barrier[<PIPE_FIX>]
     // CHECK: hivm.hir.fixpipe
@@ -81,13 +81,13 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %src = hivm.hir.pointer_cast(%zero) : memref<16x16xf32, #hivm.address_space<cc>>
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
-    %a0, %id0 = hivm.hir.tcb_pool_alloc %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
+    %a0, %id0 = hivm.hir.experimental.tcb_pool_alloc %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
     %dst0 = hivm.hir.pointer_cast(%a0) : memref<16x16xf32, #hivm.address_space<ub>>
     %raw = hivm.hir.pointer_cast(%zero) : memref<16x16xf32, #hivm.address_space<ub>>
     %mixed = arith.select %cond, %dst0, %raw : memref<16x16xf32, #hivm.address_space<ub>>
     // CHECK: hivm.hir.fixpipe
     hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%src : memref<16x16xf32, #hivm.address_space<cc>>) outs(%mixed : memref<16x16xf32, #hivm.address_space<ub>>)
-    %a1, %id1 = hivm.hir.tcb_pool_alloc %meta, %pool {segment = 1 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
+    %a1, %id1 = hivm.hir.experimental.tcb_pool_alloc %meta, %pool {segment = 1 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
     %dst1 = hivm.hir.pointer_cast(%a1) : memref<16x16xf32, #hivm.address_space<ub>>
     // CHECK: hivm.hir.pipe_barrier[<PIPE_FIX>]
     // CHECK-NEXT: hivm.hir.fixpipe
@@ -103,7 +103,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %src = hivm.hir.pointer_cast(%zero) : memref<16x16xf32, #hivm.address_space<cc>>
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
-    %a0, %id0 = hivm.hir.tcb_pool_alloc %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
+    %a0, %id0 = hivm.hir.experimental.tcb_pool_alloc %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
     %dst0 = hivm.hir.pointer_cast(%a0) : memref<16x16xf32, #hivm.address_space<ub>>
     // CHECK: hivm.hir.fixpipe
     hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%src : memref<16x16xf32, #hivm.address_space<cc>>) outs(%dst0 : memref<16x16xf32, #hivm.address_space<ub>>)
@@ -122,7 +122,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     scf.for %i = %c0 to %n step %c1 {
-      %a0, %id0 = hivm.hir.tcb_pool_alloc %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
+      %a0, %id0 = hivm.hir.experimental.tcb_pool_alloc %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
       %dst0 = hivm.hir.pointer_cast(%a0) : memref<16x16xf32, #hivm.address_space<ub>>
       // CHECK-NOT: hivm.hir.pipe_barrier[<PIPE_FIX>]
       // CHECK: hivm.hir.fixpipe
@@ -140,7 +140,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %src = hivm.hir.pointer_cast(%zero) : memref<16x16xf32, #hivm.address_space<cc>>
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
-    %a0, %id0 = hivm.hir.tcb_pool_alloc %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
+    %a0, %id0 = hivm.hir.experimental.tcb_pool_alloc %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
     %dst0 = hivm.hir.pointer_cast(%a0) : memref<16x16xf32, #hivm.address_space<ub>>
     // CHECK: scf.for
     scf.for %i = %c0 to %n step %c1 {
@@ -161,7 +161,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %c1 = arith.constant 1 : index
     // CHECK: scf.for
     scf.for %outer = %c0 to %n step %c1 {
-      %a0, %id0 = hivm.hir.tcb_pool_alloc %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
+      %a0, %id0 = hivm.hir.experimental.tcb_pool_alloc %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
       %dst0 = hivm.hir.pointer_cast(%a0) : memref<16x16xf32, #hivm.address_space<ub>>
       // CHECK: scf.for
       scf.for %i = %c0 to %n step %c1 {
@@ -181,7 +181,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %src = hivm.hir.pointer_cast(%zero) : memref<16x16xf32, #hivm.address_space<cc>>
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
-    %a0, %id0 = hivm.hir.tcb_pool_alloc %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
+    %a0, %id0 = hivm.hir.experimental.tcb_pool_alloc %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
     %dst0 = hivm.hir.pointer_cast(%a0) : memref<16x16xf32, #hivm.address_space<ub>>
     // CHECK: hivm.hir.fixpipe
     hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%src : memref<16x16xf32, #hivm.address_space<cc>>) outs(%dst0 : memref<16x16xf32, #hivm.address_space<ub>>)
@@ -201,7 +201,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %src = hivm.hir.pointer_cast(%zero) : memref<16x16xf32, #hivm.address_space<cc>>
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
-    %a0, %id0 = hivm.hir.tcb_pool_alloc %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
+    %a0, %id0 = hivm.hir.experimental.tcb_pool_alloc %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
     %dst0 = hivm.hir.pointer_cast(%a0) : memref<16x16xf32, #hivm.address_space<ub>>
     // CHECK-NOT: hivm.hir.pipe_barrier[<PIPE_FIX>]
     // CHECK: hivm.hir.fixpipe
@@ -223,7 +223,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %zero = arith.constant 0 : i64
     %inside = arith.constant 2048 : i64
     %pool = hivm.hir.pointer_cast(%zero) : memref<4096xi8, #hivm.address_space<ub>>
-    %address, %id = hivm.hir.tcb_pool_get %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
+    %address, %id = hivm.hir.experimental.tcb_pool_get %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
     %src = hivm.hir.pointer_cast(%address) : memref<16x16xf32, #hivm.address_space<ub>>
     %raw = hivm.hir.pointer_cast(%inside) : memref<16x16xf32, #hivm.address_space<ub>>
     // CHECK: hivm.hir.vadd
@@ -243,7 +243,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %zero = arith.constant 0 : i64
     %outside = arith.constant 4096 : i64
     %pool = hivm.hir.pointer_cast(%zero) : memref<4096xi8, #hivm.address_space<ub>>
-    %address, %id = hivm.hir.tcb_pool_get %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
+    %address, %id = hivm.hir.experimental.tcb_pool_get %meta, %pool {segment = 0 : i32} : memref<44xi32, #hivm.address_space<ssbuf>>, memref<4096xi8, #hivm.address_space<ub>> -> (i64, i32)
     %src = hivm.hir.pointer_cast(%address) : memref<16x16xf32, #hivm.address_space<ub>>
     %raw = hivm.hir.pointer_cast(%outside) : memref<16x16xf32, #hivm.address_space<ub>>
     // CHECK-NOT: hivm.hir.set_flag
