@@ -62,9 +62,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   // CHECK-LABEL: test_mmadL1_with_k_init
-  // CHECK-NOT: hivm
+  // CHECK-NOT: hivm.hir.mmadL1
   func.func @test_mmadL1_with_k_init() {
     // CHECK: %[[C0:.*]] = arith.constant 0 : i8
+    // CHECK: %[[ZERO:.*]] = arith.constant 0 : i64
     // CHECK: %[[C_1:.*]] = arith.constant -1 : i64
     // CHECK: %[[C:.*]] = memref.alloc() : memref<256x256xf32>
     %mc = memref.alloc() : memref<256x256xf32>
@@ -84,12 +85,14 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
       // CHECK: %[[INIT:.*]] = arith.cmpi
       %init_condition = arith.cmpi eq, %arg0, %start : index
 
+      // CHECK: %[[NULL:.*]] = hivm.hir.pointer_cast(%[[ZERO]]) {hivm.ping_pong_signal} : memref<i32>
       // Create dynamic layout memerf
       // CHECK: %[[CASTA:.*]] = memref.cast %[[A]] : memref<256x128xf16> to memref<?x?xf16, strided<[?, ?], offset: ?>>
       // CHECK: %[[CASTB:.*]] = memref.cast %[[B]] : memref<128x256xf16> to memref<?x?xf16, strided<[?, ?], offset: ?>>
       // CHECK: %[[CASTC:.*]] = memref.cast %[[C]] : memref<256x256xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
 
-      // CHECK: func.call @mma_tile_half_to_float(%[[CASTA]], %[[CASTB]], %[[INIT]], {{.*}}, {{.*}}, {{.*}}, %[[CASTC]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C0]]
+      // CHECK: %[[SIGNAL:.*]] = memref.cast %[[NULL]] : memref<i32> to memref<i32, strided<[], offset: ?>>
+      // CHECK: call @mma_tile_half_to_float(%[[CASTA]], %[[CASTB]], %[[INIT]], {{.*}}, {{.*}}, {{.*}}, %[[CASTC]], %[[SIGNAL]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C0]]
       // CHECK-SAME:               (memref<?x?xf16, strided<[?, ?], offset: ?>>,
       // CHECK-SAME:                memref<?x?xf16, strided<[?, ?], offset: ?>>,
       // CHECK-SAME:                i1,
@@ -97,6 +100,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
       // CHECK-SAME:                index,
       // CHECK-SAME:                index,
       // CHECK-SAME:                memref<?x?xf32, strided<[?, ?], offset: ?>>,
+      // CHECK-SAME:                memref<i32, strided<[], offset: ?>>,
       // CHECK-SAME:                i64, i64, i64, i64, i64, i64, i64,
       // CHECK-SAME:                i8, i64) -> ()
       hivm.hir.mmadL1 ins(%ma, %mb, %init_condition, %c256, %c128, %c256 :
@@ -111,7 +115,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   // CHECK-LABEL: test_mmadL1
-  // CHECK-NOT: hivm
+  // CHECK-NOT: hivm.hir.mmadL1
   func.func @test_mmadL1() {
     %ma = memref.alloc() : memref<256x128xf16>
     %mb = memref.alloc() : memref<128x256xf16>
@@ -146,7 +150,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   // CHECK-LABEL: test_nd2nz
-  // CHECK-NOT: hivm
+  // CHECK-NOT: hivm.hir
   func.func @test_nd2nz() {
     %gmA = memref.alloc() : memref<1024x2048xf16>
     %gmASubview = memref.subview %gmA[0, 0][256, 128][1, 1]

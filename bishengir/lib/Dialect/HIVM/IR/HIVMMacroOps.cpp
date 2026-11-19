@@ -485,6 +485,21 @@ getLocalMatmulOperandsTargetLayoutImpl(Operation *operation) {
   return valLayoutMap;
 }
 
+// Keep the library signature identical for present and absent signals. The
+// templates recognize a null aligned pointer as the full-L0 fallback.
+Value getLocalMatmulPingPongSignalLibValueImpl(Operation *operation,
+                                               OpBuilder &builder) {
+  auto op = cast<LocalMatmulLikeOpInterface>(operation);
+  if (Value signal = op.getMatmulPingPongSignal())
+    return signal;
+  Value zero = builder.create<arith::ConstantIntOp>(operation->getLoc(), 0, 64);
+  auto type = MemRefType::get({}, builder.getI32Type());
+  auto nullSignal =
+      builder.create<hivm::PointerCastOp>(operation->getLoc(), type, zero);
+  nullSignal->setAttr(hivm::PingPongSignalAttr::name, builder.getUnitAttr());
+  return nullSignal;
+}
+
 } // namespace detail
 } // namespace hivm
 } // namespace mlir
@@ -584,10 +599,10 @@ void MmadL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
                      UnitAttr a_transpose, UnitAttr b_transpose,
                      UnitAttr enable_HF32, UnitAttr enable_i4) {
   build(odsBuilder, odsState, result_tensors, a, b, init_condition, real_m,
-        real_k, real_n, c, /*sync_related_args*/ ValueRange{},
-        /*unit_flag_cond*/ ValueRange{}, per_channel_bias, a_transpose,
-        b_transpose, enable_HF32, enable_i4, /*unit_flag_mode*/ ArrayAttr{},
-        /*unit_flag_group_id*/ IntegerAttr{});
+        real_k, real_n, /*ping_pong_signal*/ Value{}, c,
+        /*sync_related_args*/ ValueRange{}, /*unit_flag_cond*/ ValueRange{},
+        per_channel_bias, a_transpose, b_transpose, enable_HF32, enable_i4,
+        /*unit_flag_mode*/ ArrayAttr{}, /*unit_flag_group_id*/ IntegerAttr{});
 }
 
 int MmadL1Op::getNumSyncRelatedArgs() { return 7; }
@@ -1088,10 +1103,10 @@ void BatchMmadL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
                           UnitAttr a_transpose, UnitAttr b_transpose,
                           UnitAttr enable_HF32, UnitAttr enable_i4) {
   build(odsBuilder, odsState, result_tensors, a, b, init_condition, real_m,
-        real_k, real_n, c, /*sync_related_args*/ ValueRange{},
-        /*unit_flag_cond*/ ValueRange{}, per_channel_bias, a_transpose,
-        b_transpose, enable_HF32, enable_i4, /*unit_flag_mode*/ ArrayAttr{},
-        /*unit_flag_group_id*/ IntegerAttr{});
+        real_k, real_n, /*ping_pong_signal*/ Value{}, c,
+        /*sync_related_args*/ ValueRange{}, /*unit_flag_cond*/ ValueRange{},
+        per_channel_bias, a_transpose, b_transpose, enable_HF32, enable_i4,
+        /*unit_flag_mode*/ ArrayAttr{}, /*unit_flag_group_id*/ IntegerAttr{});
 }
 
 int BatchMmadL1Op::getNumSyncRelatedArgs() { return 7; }
@@ -1300,7 +1315,7 @@ void MmadMxL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
                        UnitAttr a_transpose, UnitAttr b_transpose,
                        Value per_channel_bias) {
   build(odsBuilder, odsState, result_tensors, a, b, scaleA, scaleB,
-        init_condition, real_m, real_k, real_n, c,
+        init_condition, real_m, real_k, real_n, /*ping_pong_signal*/ Value{}, c,
         /*sync_related_args*/ ValueRange{}, per_channel_bias, lhsFormat,
         rhsFormat, a_transpose, b_transpose);
 }
