@@ -27,6 +27,11 @@ on:
         description: '目标架构: x86_64 或 aarch64'
         required: true
         type: string
+      branch:
+        description: '检出分支，留空表示使用触发流水线的 ref'
+        required: false
+        type: string
+        default: ''
       runner_os:
         description: 'runner 标签 os 的值，如 ubuntu 或 euler'
         required: false
@@ -123,7 +128,14 @@ jobs:
           echo "build_time: ${BUILD_TIME}"
 
       - name: Checkout code
+        if: ${{ inputs.branch == '' }}
         uses: checkout
+
+      - name: Checkout code (target branch)
+        if: ${{ inputs.branch != '' }}
+        uses: checkout
+        with:
+          ref: ${{ inputs.branch }}
 
       - name: Configure git safe directory
         run: git config --global --add safe.directory '*'
@@ -199,6 +211,8 @@ jobs:
 
           EVENT_NAME="${{ atomgit.event_name }}"
           SHA="$(printf '%s' "${{ atomgit.sha }}" | cut -c1-13)"
+          # 归档目录使用的分支名：优先用入参 branch，否则取触发 ref 的短名
+          BRANCH_NAME="${{ inputs.branch || atomgit.ref_name }}"
           # OBS 前缀根目录由参数传入，去掉结尾多余的 /
           OBS_ROOT="${OBS_ROOT:-ascendnpu-ir}"
           OBS_ROOT="${OBS_ROOT%/}"
@@ -211,7 +225,7 @@ jobs:
           elif [ "$EVENT_NAME" = "Scheduler" ]; then
             # event_name = schedule；分支取 ref_name，时间取构建触发时间
             PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}-${{ steps.trigger.outputs.build_time }}-${SHA}_linux-${ARCH}"
-            OBS_PREFIX="${OBS_ROOT}/snapshots/${{ atomgit.ref_name }}/${{ steps.trigger.outputs.build_date }}/"
+            OBS_PREFIX="${OBS_ROOT}/snapshots/${BRANCH_NAME}/${{ steps.trigger.outputs.build_date }}/"
           else
             echo "unsupported event_name: ${EVENT_NAME}, only MR / Scheduler are allowed" >&2
             exit 1
