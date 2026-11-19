@@ -5,6 +5,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Transforms/Transforms.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/AsmState.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Diagnostics.h"
@@ -1318,7 +1319,14 @@ public:
       os << "Location: ";
       failedOp->getLoc().print(os);
       os << "\n";
-      os << "Operation: " << *failedOp << "\n";
+      // Function passes may run alongside mutations of sibling functions.
+      // Keep SSA numbering local and avoid implicit verification while printing
+      // a failed operation, which may itself be invalid.
+      AsmState asmState(getOperation(),
+                        OpPrintingFlags().useLocalScope().printGenericOpForm());
+      os << "Operation: ";
+      failedOp->print(os, asmState);
+      os << "\n";
       os << "Opcode: " << failedOp->getName() << "\n";
       os << "Operand types:\n";
       for (Value operand : failedOp->getOperands())
@@ -1330,7 +1338,9 @@ public:
       for (Value result : failedOp->getResults()) {
         if (!isa<VectorType>(result.getType()))
           continue;
-        os << "  Result: " << result << "  State: ";
+        os << "  Result: ";
+        result.printAsOperand(os, asmState);
+        os << "  State: ";
         auto state = failure.solve->inputs.find(result);
         if (state == failure.solve->inputs.end())
           os << "<unassigned>\n";
@@ -1340,7 +1350,9 @@ public:
       for (Value operand : failedOp->getOperands()) {
         if (!isa<VectorType>(operand.getType()))
           continue;
-        os << "  Operand: " << operand << "  State: ";
+        os << "  Operand: ";
+        operand.printAsOperand(os, asmState);
+        os << "  State: ";
         auto state = failure.solve->inputs.find(operand);
         if (state == failure.solve->inputs.end())
           os << "<unassigned>\n";
