@@ -794,9 +794,15 @@ void EnableStrideAlignPass::runOnOperation() {
     // handlePropagateFailure, whose fallback would otherwise hand each
     // remaining failing use a private buffer.
     retryDeferredPropagation(rewriter, funcOp);
-    handlePropagateFailure(rewriter, funcOp);
-    if (archIsRegbased)
-      materializeRemainingStaticUBLayoutCasts(rewriter, funcOp);
+    if (failed(handlePropagateFailure(rewriter, funcOp))) {
+      failedPass = true;
+      return WalkResult::interrupt();
+    }
+    if (archIsRegbased &&
+        failed(materializeRemainingStaticUBLayoutCasts(rewriter, funcOp))) {
+      failedPass = true;
+      return WalkResult::interrupt();
+    }
 
     // Master metadata contract, membase only: regbase (A5) targets must not
     // carry this attribute.
