@@ -206,6 +206,9 @@ static void preProcess(OpPassManager &pm,
       !options.disableHfusionVectorize && !options.enableMixedCV;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
+  if (options.enableLegalizeScalarFP8) {
+    pm.nest<func::FuncOp>().addPass(createLegalizeScalarFP8Pass());
+  }
 
   pm.addPass(createLegalizeBoolPass());
   pm.nest<func::FuncOp>().addPass(createSimplifyOpsPass());
@@ -215,6 +218,9 @@ static void preProcess(OpPassManager &pm,
   //  a) convert scalar-vector ops to vector-scalar ops
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
+  if (options.enableLegalizeScalarFP8) {
+    pm.nest<func::FuncOp>().addPass(createLegalizeScalarFP8Pass());
+  }
 }
 
 static void preFlattenPass(OpPassManager &pm,
@@ -368,6 +374,9 @@ static void postProcess(OpPassManager &pm,
       !options.disableHfusionVectorize && !options.enableMixedCV;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
+  if (options.enableLegalizeScalarFP8) {
+    pm.nest<func::FuncOp>().addPass(createLegalizeScalarFP8Pass());
+  }
 
   // will only operate on functions with ShallowCV fusion kind
   AddFFTSAddrOptions addFFTSAddrOpt;
@@ -625,6 +634,9 @@ void buildHFusionRegBasePipeline(OpPassManager &pm,
       !options.disableHfusionVectorize && !options.enableMixedCV;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
+  if (options.enableLegalizeScalarFP8) {
+    pm.nest<func::FuncOp>().addPass(createLegalizeScalarFP8Pass());
+  }
 
   pm.nest<func::FuncOp>().addPass(createHFusionInlineBrcPass());
   hfusionAutoVectorizePipeline(pm, options);
