@@ -17,6 +17,16 @@
 #include "Cube/LocalMmad/LocalMmadUtils.h"
 #include "Synchronization/SyncUtils.h"
 
+__aicore__ inline int32_t
+getPingPongSignal(memref_t<int32_t, 0> *ping_pong_signal) {
+  // Only called when enable_double_buffer is true (see mma_tile below), which
+  // requires a non-null signal data pointer and a viable half-L0 k_part.
+  int32_t &ping_pong_id = ping_pong_signal->aligned[ping_pong_signal->offset];
+  // Normalize supplied state before flipping to keep the half id in range.
+  ping_pong_id = 1 - (ping_pong_id != 0);
+  return ping_pong_id;
+}
+
 template <typename TYPE> struct b16_converter {
   using type = TYPE;
 };
@@ -317,7 +327,8 @@ __aicore__ __attribute__((always_inline)) void
 mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
          bool init, int64_t m, int64_t k, int64_t n,
          memref_t<__cbuf__ BIAS_TYPE, 4> *bias,
-         memref_t<__cc__ DST_TYPE, 4> *mc, int64_t mmad_l1_wait_l1a_event,
+         memref_t<__cc__ DST_TYPE, 4> *mc,
+         memref_t<int32_t, 0> *ping_pong_signal, int64_t mmad_l1_wait_l1a_event,
          int64_t mmad_l1_wait_l1b_event, int64_t l1a_wait_mmad_l1_event,
          int64_t l1b_wait_mmad_l1_event, int64_t kloop_db_cond,
          int64_t back_pipe_m_pipe_mte1_db_event0,
@@ -400,10 +411,18 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
   // compute k_part, namely how much k can be put into L0, it is main block
   // aligned tile size
   bool enable_double_buffer = true;
-  int64_t l0ab_pingpong_buffer_len = L0AB_BUFFER_BYTES / 2 / sizeof(SRC_TYPE);
-  int64_t k_part = FLOOR_FACTOR(l0ab_pingpong_buffer_len /
-                                    CEIL_FACTOR(mn_max, max_align_value),
-                                max_align_value);
+  if (ping_pong_signal == nullptr || ping_pong_signal->aligned == nullptr) {
+    enable_double_buffer = false;
+  }
+
+  int64_t k_part = 0;
+  int64_t l0ab_pingpong_buffer_len = 0;
+  if (enable_double_buffer) {
+    l0ab_pingpong_buffer_len = L0AB_BUFFER_BYTES / 2 / sizeof(SRC_TYPE);
+    k_part = FLOOR_FACTOR(l0ab_pingpong_buffer_len /
+                              CEIL_FACTOR(mn_max, max_align_value),
+                          max_align_value);
+  }
   if (k_part == 0) {
     enable_double_buffer = false;
     l0ab_pingpong_buffer_len = L0AB_BUFFER_BYTES / sizeof(SRC_TYPE);
@@ -411,8 +430,6 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
                               CEIL_FACTOR(mn_max, max_align_value),
                           max_align_value);
   }
-  int64_t k_part_b = (I4 && (m0 < n0)) ? (2 * k_part) : k_part;
-
   if (k_part == 0) {
     trap();
   }
@@ -424,6 +441,12 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
     INTRINSIC(set_flag, PIPE_M, PIPE_MTE1, EVENT_ID1);
   }
 
+  // Reserve the other half; each iteration waits on event 0.
+  if (!enable_double_buffer) {
+    INTRINSIC(wait_flag, PIPE_M, PIPE_MTE1, EVENT_ID1);
+  }
+
+  int64_t k_part_b = (I4 && (m0 < n0)) ? (2 * k_part) : k_part;
   const int64_t k_part_loop = (k_actual + k_part - 1) / k_part;
   for (int64_t k_part_idx = 0; k_part_idx < k_part_loop; k_part_idx++) {
     const bool is_outer_k_start = k_part_idx == 0;
@@ -449,30 +472,24 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
     }
 
     int64_t ping_pong_id = 0;
+    int64_t m_mte1_event_id = EVENT_ID0;
     if (enable_double_buffer) {
-      ping_pong_id = (kloop_db_cond != -1)
-                         ? (kloop_db_cond * k_part_loop + k_part_idx) % 2
-                         : k_part_idx % 2;
+      ping_pong_id = getPingPongSignal(ping_pong_signal);
+      m_mte1_event_id = (ping_pong_id == 0)
+                            ? (back_pipe_m_pipe_mte1_db_event0 != -1
+                                   ? back_pipe_m_pipe_mte1_db_event0
+                                   : EVENT_ID0)
+                            : (back_pipe_m_pipe_mte1_db_event1 != -1
+                                   ? back_pipe_m_pipe_mte1_db_event1
+                                   : EVENT_ID1);
     }
-    int64_t m_mte1_event_id = (ping_pong_id == 0)
-                                  ? (back_pipe_m_pipe_mte1_db_event0 != -1
-                                         ? back_pipe_m_pipe_mte1_db_event0
-                                         : EVENT_ID0)
-                                  : (back_pipe_m_pipe_mte1_db_event1 != -1
-                                         ? back_pipe_m_pipe_mte1_db_event1
-                                         : EVENT_ID1);
     __ca__ SRC_TYPE *l0a_buf =
         l0a_base + ping_pong_id * l0ab_pingpong_buffer_len;
     __cb__ SRC_TYPE *l0b_buf =
         l0b_base + ping_pong_id * l0ab_pingpong_buffer_len;
 
     // pipe_mte1 wait for previous iteration pipe_m to finish
-    if (enable_double_buffer) {
-      INTRINSIC(wait_flag, PIPE_M, PIPE_MTE1, m_mte1_event_id);
-    } else {
-      INTRINSIC(wait_flag, PIPE_M, PIPE_MTE1, EVENT_ID0);
-      INTRINSIC(wait_flag, PIPE_M, PIPE_MTE1, EVENT_ID1);
-    }
+    INTRINSIC(wait_flag, PIPE_M, PIPE_MTE1, m_mte1_event_id);
 
     // load matrix A from L1 to L0A
     if (is_outer_k_start && mmad_l1_wait_l1a_event != -1) {
@@ -577,17 +594,18 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
     }
 
     // pipe_m set next iteration pipe_mte1
-    if (enable_double_buffer) {
-      INTRINSIC(set_flag, PIPE_M, PIPE_MTE1, m_mte1_event_id);
-    } else {
-      INTRINSIC(set_flag, PIPE_M, PIPE_MTE1, EVENT_ID0);
-      INTRINSIC(set_flag, PIPE_M, PIPE_MTE1, EVENT_ID1);
-    }
+    INTRINSIC(set_flag, PIPE_M, PIPE_MTE1, m_mte1_event_id);
 
     if constexpr (HF32) {
       set_hf32_ctrl_none();
     }
   }
+
+  // Restore event 1 after the last full-L0 MMAD for subsequent half reuse.
+  if (!enable_double_buffer) {
+    INTRINSIC(set_flag, PIPE_M, PIPE_MTE1, EVENT_ID1);
+  }
+
   if (back_pipe_m_pipe_mte1_db_event0 == -1) {
     INTRINSIC(wait_flag, PIPE_M, PIPE_MTE1, EVENT_ID0);
   }
@@ -607,15 +625,16 @@ __aicore__ __attribute__((always_inline)) void
 mma_tile_core(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
               memref_t<__cbuf__ SRC_TYPE, 4> *mb, bool init, int64_t m,
               int64_t k, int64_t n, memref_t<__cc__ DST_TYPE, 4> *mc,
+              memref_t<int32_t, 0> *ping_pong_signal,
               int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,
               int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,
               int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,
               int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,
               int64_t unit_flag_group_id) {
   mma_tile<SRC_TYPE, DST_TYPE, BIAS_TYPE, TA, TB, HF32, I4>(
-      ma, mb, init, m, k, n, nullptr, mc, mmad_l1_wait_l1a_event,
-      mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event,
-      kloop_db_cond, back_pipe_m_pipe_mte1_db_event0,
+      ma, mb, init, m, k, n, nullptr, mc, ping_pong_signal,
+      mmad_l1_wait_l1a_event, mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,
+      l1b_wait_mmad_l1_event, kloop_db_cond, back_pipe_m_pipe_mte1_db_event0,
       back_pipe_m_pipe_mte1_db_event1, unit_flag_mode, unit_flag_group_id);
 }
 
@@ -625,14 +644,15 @@ __aicore__ __attribute__((always_inline)) void
 mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
               memref_t<__cbuf__ SRC_TYPE, 4> *mb, bool init, int64_t m,
               int64_t k, int64_t n, memref_t<__cbuf__ BIAS_TYPE, 4> *bias,
-              memref_t<__cc__ DST_TYPE, 4> *mc, int64_t mmad_l1_wait_l1a_event,
-              int64_t mmad_l1_wait_l1b_event, int64_t l1a_wait_mmad_l1_event,
-              int64_t l1b_wait_mmad_l1_event, int64_t kloop_db_cond,
-              int64_t back_pipe_m_pipe_mte1_db_event0,
+              memref_t<__cc__ DST_TYPE, 4> *mc,
+              memref_t<int32_t, 0> *ping_pong_signal,
+              int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,
+              int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,
+              int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,
               int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,
               int64_t unit_flag_group_id) {
   mma_tile<SRC_TYPE, DST_TYPE, BIAS_TYPE, TA, TB, HF32, I4>(
-      ma, mb, init, m, k, n, bias, mc, mmad_l1_wait_l1a_event,
+      ma, mb, init, m, k, n, bias, mc, ping_pong_signal, mmad_l1_wait_l1a_event,
       mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event,
       kloop_db_cond, back_pipe_m_pipe_mte1_db_event0,
       back_pipe_m_pipe_mte1_db_event1, unit_flag_mode, unit_flag_group_id);
