@@ -419,10 +419,6 @@ struct BufferizeMaterializeOpLowering
                                                  bufMIDOp.getSource(), dst);
       return success();
     }
-    // Preserve restricted, writable materializations until the bufferization
-    // pipeline so EmptyTensorElimination can reuse their destination storage.
-    if (bufMIDOp.getRestrict() && bufMIDOp.getWritable())
-      return failure();
     rewriter.replaceOpWithNewOp<hivm::CopyOp>(
         bufMIDOp, bufMIDOp.getResultTypes(), bufMIDOp.getSource(), dst);
     return success();

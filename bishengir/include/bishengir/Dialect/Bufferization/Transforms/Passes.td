@@ -41,47 +41,6 @@ def NormalizeToTensorOp : Pass<"normalize-to-tensor", "mlir::func::FuncOp"> {
                            "mlir::memref::MemRefDialect"];
 }
 
-def EmptyTensorElimination
-    : Pass<"empty-tensor-elimination", "mlir::ModuleOp"> {
-  let summary = "Eliminate empty tensors using module-level One-Shot analysis";
-  let description = [{
-    This pass runs One-Shot Bufferize analysis and replaces eligible
-    `tensor.empty` operations with existing destination subsets. It traces
-    the source of operations such as `tensor.insert_slice` and
-    `bufferization.materialize_in_destination` back to an empty tensor and
-    reuses the corresponding destination when the analysis permits it.
-    For a memref destination, `bufferization.materialize_in_destination`
-    must have both `restrict` and `writable` to enable this transformation.
-
-    This allows producers to bufferize directly into destination storage,
-    avoiding temporary allocations and copies. When function boundary
-    analysis is enabled, destination relationships are tracked across calls,
-    including calls to vector functions. This pass does not bufferize the IR.
-  }];
-  let constructor =
-      "bishengir::bufferization::createEmptyTensorEliminationPass()";
-  let dependentDialects = ["mlir::bufferization::BufferizationDialect",
-                           "mlir::tensor::TensorDialect"];
-  let options = [
-    Option<"bufferizeFunctionBoundaries", "bufferize-function-boundaries",
-           "bool", /*default=*/"true",
-           "Analyze function boundaries, including function calls.">,
-    Option<"analysisHeuristic", "analysis-heuristic", "std::string",
-           /*default=*/"\"bottom-up\"",
-           "Analysis traversal: bottom-up, top-down, "
-           "bottom-up-from-terminators, or fuzzer.">,
-    Option<"analysisFuzzerSeed", "analysis-fuzzer-seed", "unsigned",
-           /*default=*/"0", "Seed for the fuzzer analysis heuristic.">,
-    Option<"allowReturnAllocsFromLoops", "allow-return-allocs-from-loops",
-           "bool", /*default=*/"true",
-           "Allows returning/yielding new allocations from a loop.">,
-    Option<"allowUnknownOps", "allow-unknown-ops", "bool", /*default=*/"false",
-           "Allows unknown (not bufferizable) ops in the input IR.">,
-    Option<"checkParallelRegions", "check-parallel-regions", "bool",
-           /*default=*/"true", "Account for parallel regions in RaW analysis.">
-  ];
-}
-
 def TensorCopyInsertion : Pass<"tensor-copy-insertion", "mlir::ModuleOp"> {
   let summary = "Run One-Shot analysis and insert tensor copies to resolve "
                 "bufferization conflicts";
