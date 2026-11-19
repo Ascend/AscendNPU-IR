@@ -14,7 +14,6 @@
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
-#include "mlir/IR/Verifier.h"
 #include "llvm/Support/Debug.h"
 
 using namespace mlir;
@@ -142,8 +141,6 @@ void FusedNode::consolidateToTail(Operation *newOp) const {
       if (prev->getNextNode() != next)
         llvm::report_fatal_error(StringRef(
             "consolidateToTail make wrong order in " + node->loopLabel));
-  if (failed(verify(opsOrdered.back()->getParentOp())))
-    llvm::report_fatal_error("consolidateToTail produced invalid IR");
 }
 
 void FusedNode::estimateTileSizeForOp(

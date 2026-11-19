@@ -42,6 +42,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
+#include "mlir/IR/Verifier.h"
 #include "mlir/Pass/PassManager.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
@@ -1199,6 +1200,12 @@ void AutoVectorizeV2::buildTileAndFuseTransformSequenceForBlock(
   ctx.constraint().compute(block, ctx);
   planFuseSiblingForLeafNodes(block, ctx);
   planFuseProducersIntoConsumers(block, ctx);
+  // Only multi-op nodes went through consolidation. Verify their common
+  // parent once, after both planning steps have finished reordering the block.
+  if (llvm::any_of(ctx.nodes(),
+                   [](const auto &node) { return node->size() > 1; }) &&
+      failed(verify(block->getParentOp())))
+    llvm::report_fatal_error("AV2 fusion planning produced invalid IR");
   ctx.computeTileSize();
 #ifndef NDEBUG
   LLVM_DEBUG(llvm::dbgs() << "========Dumping LeafNodeGroups begin========\n");
