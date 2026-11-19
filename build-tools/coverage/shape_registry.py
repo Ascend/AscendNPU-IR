@@ -32,6 +32,10 @@ _SKIP_BIND_PAYLOAD = "LcJwjCbUC6RX8UyyLmCTITPGew=="
 # of one tensor are merged.
 _DEDUP_L1_SKIP_PAYLOAD = "PstihynUBKVVwUqgFVSdNi/NcoUd4gG1Rv8itBl+mDgCyHOIHe0YpWv1TaUfbpoMNM1jmyPUHKBS+3ewEH+TDDvWZIwmgQ=="
 
+# Kernels that stay on the legacy CV pipeline. Keep this out of _PAYLOAD so
+# matching names do not run PipelineV2 preload.
+_LEGACY_CV_PIPELINE_PAYLOAD = "LcJliC7nCq1r8Fu2Lm2BNwLIcpss7gM="
+
 _KEY = bytes((0x5d, 0xa3, 0x17, 0xe9, 0x42, 0x8b, 0x6f, 0xc1,
               0x34, 0x9e, 0x28, 0xd7, 0x71, 0x0b, 0xf6, 0x53))
 
@@ -87,6 +91,8 @@ def emit_cxx(path):
                      _keys(_SKIP_BIND_PAYLOAD))
         _write_table(f, "kDedupL1SkipKeyCount", "kDedupL1SkipKeys",
                      _keys(_DEDUP_L1_SKIP_PAYLOAD))
+        _write_table(f, "kLegacyCVPipelineKeyCount", "kLegacyCVPipelineKeys",
+                     _keys(_LEGACY_CV_PIPELINE_PAYLOAD))
         f.write("} // namespace\n")
     return 0
 
@@ -100,6 +106,8 @@ def main():
                     help="print decoded bind-sub-block skip names")
     ap.add_argument("--list-dedup-l1-skip", action="store_true",
                     help="print kernels excluded from inserted-L1 dedup")
+    ap.add_argument("--list-legacy-cv", action="store_true",
+                    help="print kernels that stay on the legacy CV pipeline")
     args = ap.parse_args()
     if args.list:
         print("\n".join(_decode(_PAYLOAD)))
@@ -109,6 +117,9 @@ def main():
         return 0
     if args.list_dedup_l1_skip:
         print("\n".join(_decode(_DEDUP_L1_SKIP_PAYLOAD)))
+        return 0
+    if args.list_legacy_cv:
+        print("\n".join(_decode(_LEGACY_CV_PIPELINE_PAYLOAD)))
         return 0
     if args.emit_cxx:
         return emit_cxx(args.emit_cxx)

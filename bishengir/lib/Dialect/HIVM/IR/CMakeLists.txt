@@ -21,7 +21,7 @@ if(Python3_Interpreter_FOUND)
   set(SKEW_SHAPE_TABLE_TARGET BiShengIRSkewShapeTable)
 else()
   file(WRITE ${SKEW_SHAPE_TABLE}
-       "namespace {\nconstexpr unsigned kSpanKeyCount = 0;\nconstexpr uint64_t kSpanKeys[1] = {0ULL};\nconstexpr unsigned kSkipBindKeyCount = 0;\nconstexpr uint64_t kSkipBindKeys[1] = {0ULL};\nconstexpr unsigned kDedupL1SkipKeyCount = 0;\nconstexpr uint64_t kDedupL1SkipKeys[1] = {0ULL};\n}\n")
+       "namespace {\nconstexpr unsigned kSpanKeyCount = 0;\nconstexpr uint64_t kSpanKeys[1] = {0ULL};\nconstexpr unsigned kSkipBindKeyCount = 0;\nconstexpr uint64_t kSkipBindKeys[1] = {0ULL};\nconstexpr unsigned kDedupL1SkipKeyCount = 0;\nconstexpr uint64_t kDedupL1SkipKeys[1] = {0ULL};\nconstexpr unsigned kLegacyCVPipelineKeyCount = 0;\nconstexpr uint64_t kLegacyCVPipelineKeys[1] = {0ULL};\n}\n")
 endif()
 
 file(GLOB HIVM_FLATTEN ${CMAKE_CURRENT_SOURCE_DIR}/FlattenInterface/*.cpp)
