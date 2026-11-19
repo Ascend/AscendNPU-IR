@@ -864,7 +864,7 @@ private:
       SmallVector<std::pair<std::string, SmallVector<int64_t>>>
           &otherVectorizableOps,
       PlanContext &result);
-  Value getOpTransformHandle(std::string label, OpBuilder &builder,
+  Value getOpTransformHandle(StringRef label, OpBuilder &builder,
                              transform::SequenceOp seqOp);
   void planFuseSiblingForLeafNodes(Block *block, PlanContext &result);
   void planFuseProducersIntoConsumers(Block *block, PlanContext &result);
@@ -875,11 +875,11 @@ private:
       SmallVector<std::pair<std::string, SmallVector<int64_t>>>
           &otherVectorizableOps);
   void fuseProducersIntoConsumers(
-      OpBuilder &builder, transform::SequenceOp seqOp, Block *block,
-      PlanContext &result,
+      OpBuilder &builder, transform::SequenceOp seqOp, PlanContext &result,
       SmallVector<std::pair<std::string, SmallVector<int64_t>>>
           &otherVectorizableOps);
-  void applyCleanUp(OpBuilder &builder, transform::SequenceOp seqOp);
+  void applyCleanUp(OpBuilder &builder, transform::SequenceOp seqOp,
+                    StringRef tiledLoopLabel = {});
   void sortFunc(func::FuncOp func);
   transform::SequenceOp buildTransformSequence(func::FuncOp func,
                                                RetriedOptions &retryCtx,
@@ -1044,8 +1044,7 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(Block *block,
   }
 }
 
-Value AutoVectorizeV2::getOpTransformHandle(std::string label,
-                                            OpBuilder &builder,
+Value AutoVectorizeV2::getOpTransformHandle(StringRef label, OpBuilder &builder,
                                             transform::SequenceOp seqOp) {
   DictionaryAttr opAttr = builder.getDictionaryAttr(
       builder.getNamedAttr(label, builder.getUnitAttr()));
@@ -1134,8 +1133,7 @@ void AutoVectorizeV2::tileAndFuseSiblingForLeafNodes(
 }
 
 void AutoVectorizeV2::fuseProducersIntoConsumers(
-    OpBuilder &builder, transform::SequenceOp seqOp, Block *block,
-    PlanContext &ctx,
+    OpBuilder &builder, transform::SequenceOp seqOp, PlanContext &ctx,
     SmallVector<std::pair<std::string, SmallVector<int64_t>>>
         &otherVectorizableOps) {
   auto loc = seqOp.getLoc();
@@ -1188,7 +1186,7 @@ void AutoVectorizeV2::fuseProducersIntoConsumers(
           ArrayRef<StringRef>({func::FuncOp::getOperationName()}));
       builder.create<transform::EliminateSingleIterationScfForOp>(loc,
                                                                   funcHandle);
-      applyCleanUp(builder, seqOp);
+      applyCleanUp(builder, seqOp, fusedNode->getLabel());
     }
 }
 
@@ -1237,7 +1235,7 @@ void AutoVectorizeV2::buildTileAndFuseTransformSequenceForBlock(
   }
 #endif
   tileAndFuseSiblingForLeafNodes(builder, seqOp, ctx, otherVectorizableOps);
-  fuseProducersIntoConsumers(builder, seqOp, block, ctx, otherVectorizableOps);
+  fuseProducersIntoConsumers(builder, seqOp, ctx, otherVectorizableOps);
 }
 
 void AutoVectorizeV2::buildVectorizeTransformSequence(
@@ -1266,7 +1264,8 @@ void AutoVectorizeV2::buildVectorizeTransformSequence(
 }
 
 void AutoVectorizeV2::applyCleanUp(OpBuilder &builder,
-                                   transform::SequenceOp seqOp) {
+                                   transform::SequenceOp seqOp,
+                                   StringRef tiledLoopLabel) {
   auto loopLikeAttr = transform::MatchInterfaceEnumAttr::get(
       builder.getContext(), transform::MatchInterfaceEnum::LoopLikeInterface);
   Value loopLikeHandle = builder
@@ -1280,10 +1279,21 @@ void AutoVectorizeV2::applyCleanUp(OpBuilder &builder,
   builder.create<transform::ApplyLoopInvariantCodeMotionWithSliceBoundaryOp>(
       loopLikeHandle.getLoc(), loopLikeHandle);
 
-  Value funcHandle = builder.create<transform::MatchOp>(
-      builder.getInsertionPoint()->getLoc(),
-      seqOp.getBodyBlock()->getArguments().front(),
-      ArrayRef<StringRef>({func::FuncOp::getOperationName()}));
+  Location loc = seqOp.getLoc();
+  Value target;
+  if (tiledLoopLabel.empty()) {
+    target = builder.create<transform::MatchOp>(
+        loc, seqOp.getBodyBlock()->getArgument(0),
+        ArrayRef<StringRef>({func::FuncOp::getOperationName()}));
+  } else {
+    // Loop promotion consumes the function handle. Match the labeled consumer
+    // again to find its current parent.
+    Value tiledLoop = getOpTransformHandle(tiledLoopLabel, builder, seqOp);
+    target = builder.create<transform::GetParentOp>(
+        loc, builder.getType<transform::AnyOpType>(), tiledLoop,
+        /*isolated_from_above=*/false, /*allow_empty_results=*/false,
+        /*op_name=*/nullptr);
+  }
   auto bodyBuilder = [](OpBuilder &innerBuilder, Location loc) {
     innerBuilder.create<transform::ApplyCanonicalizationPatternsOp>(loc);
     innerBuilder
@@ -1291,9 +1301,7 @@ void AutoVectorizeV2::applyCleanUp(OpBuilder &builder,
             loc);
   };
   transform::ApplyPatternsOp applyPatternsOp =
-      builder.create<transform::ApplyPatternsOp>(funcHandle.getLoc(),
-                                                 /*target=*/funcHandle,
-                                                 /*bodyBuilder=*/bodyBuilder);
+      builder.create<transform::ApplyPatternsOp>(loc, target, bodyBuilder);
   applyPatternsOp.setApplyCse(true);
   applyPatternsOp.setDisablePatternsAttr(builder.getArrayAttr(
       SmallVector<Attribute>{builder.getStringAttr("SimplifyTrivialLoops")}));
