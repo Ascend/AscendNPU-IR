@@ -187,6 +187,11 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
 
 namespace utils {
 
+void reportFatalError(Value value, const llvm::Twine &message) {
+  llvm::dbgs() << value << "\n";
+  llvm::report_fatal_error(message);
+}
+
 llvm::SmallVector<size_t> getIntegersOfArrayAttr(Operation *op,
                                                  llvm::StringLiteral attrName) {
   ArrayAttr arr = op->getAttrOfType<ArrayAttr>(attrName);

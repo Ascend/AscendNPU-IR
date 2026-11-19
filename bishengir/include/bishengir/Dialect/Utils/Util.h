@@ -83,6 +83,10 @@ LogicalResult getStridesAndOffsetCompat(MemRefType type,
 std::pair<SmallVector<int64_t>, int64_t>
 getStridesAndOffsetCompat(MemRefType type);
 
+/// Dump `value` and report a fatal error with `message`. Used to report IR
+/// that a pass cannot handle.
+[[noreturn]] void reportFatalError(Value value, const llvm::Twine &message);
+
 /// Return true if `type` is rank-1 with a static unit stride.
 bool hasStaticUnitStride(MemRefType type);
 
