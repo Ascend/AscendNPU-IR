@@ -17,6 +17,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     %c128 = arith.constant 128 : index
 
     // CHECK: call @mmadmxL1_with_float_bias_float8_e5m2_t_float8_e5m2_t_to_float
+    // CHECK-SAME: memref<i32, strided<[], offset: ?>>
     hivm.hir.mmadmxL1
       ins(%ma, %mb, %scaleA, %scaleB, %init, %c256, %c128, %c256, %bias :
           memref<256x128xf8E5M2>, memref<128x256xf8E5M2>,
@@ -105,7 +106,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   // CHECK-LABEL: test_nd2nz_mmadmx_forbias
-  // CHECK-NOT: hivm
+  // CHECK-NOT: hivm.hir
   func.func @test_nd2nz_mmadmx_forbias() {
     %gmBias = memref.alloc() : memref<1x256xf32>
     %bias = memref.alloc() : memref<1x1x1x256xf32>

@@ -850,6 +850,8 @@ module {
 module attributes {hacc.target = #hacc.target<"Ascend910_9589"> } {
   // CHECK: func.func @dotdot_mix_aic
   func.func @dotdot_mix_aic(%arg0: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg6: i32, %arg7: i32, %arg8: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, true, true, true, false, false, false]> : vector<9xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
+    // CHECK: %[[PING_PONG:.*]] = memref.alloca() {hivm.ping_pong_signal} : memref<i32>
+    // CHECK: memref.store %{{.*}}, %[[PING_PONG]][] : memref<i32>
     %c6336_i64 = arith.constant 6336 : i64
     %c3072_i64 = arith.constant 3072 : i64
     %c2048_i64 = arith.constant 2048 : i64
@@ -872,6 +874,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589"> } {
     hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_MTE1>] flag = 0
 
     // CHECK: hivm.hir.mmadL1
+    // CHECK-SAME: ping_pong_signal(%[[PING_PONG]] : memref<i32>)
     hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C} ins(%4, %2, %true, %c16, %c16, %c16 : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>, memref<2x1x16x8xf32, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%5 : memref<1x1x16x16xf32, #hivm.address_space<cc>>)
     // CHECK-NEXT: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
 
@@ -886,6 +889,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589"> } {
 
     // CHECK: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_MTE1>, <EVENT_ID0>]
     // CHECK-NEXT: hivm.hir.mmadL1
+    // CHECK-SAME: ping_pong_signal(%[[PING_PONG]] : memref<i32>)
     hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C} ins(%6, %3, %true, %c16, %c16, %c16 : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>, memref<2x1x16x8xf32, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%7 : memref<1x1x16x16xf32, #hivm.address_space<cc>>)
     // CHECK-NEXT: hivm.hir.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
     // CHECK-NEXT: hivm.hir.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]

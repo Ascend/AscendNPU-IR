@@ -137,8 +137,10 @@ struct MmadL1OpInterface
 
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
+    // An explicit ping-pong signal is already a memref.
     return bufferizeDestinationStyleOpInterface(
-        rewriter, cast<DestinationStyleOpInterface>(op), options);
+        rewriter, cast<DestinationStyleOpInterface>(op), options,
+        /*supportMixedTensorBufferMode=*/true);
   }
 };
 
@@ -154,8 +156,10 @@ struct BatchMmadL1OpInterface
 
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
+    // An explicit ping-pong signal is already a memref.
     return bufferizeDestinationStyleOpInterface(
-        rewriter, cast<DestinationStyleOpInterface>(op), options);
+        rewriter, cast<DestinationStyleOpInterface>(op), options,
+        /*supportMixedTensorBufferMode=*/true);
   }
 };
 

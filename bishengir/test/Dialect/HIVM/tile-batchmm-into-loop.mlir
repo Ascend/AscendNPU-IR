@@ -33,6 +33,32 @@ func.func @test_tile_batchMmadL1(%dst : memref<2x256x256xf16>) {
 }
 
 // -----
+// CHECK-LABEL: func.func @test_forward_batch_mmad_ping_pong_signal(
+// CHECK-SAME: %[[SIGNAL:[a-zA-Z0-9_]+]]: memref<i32>
+func.func @test_forward_batch_mmad_ping_pong_signal(
+    %signal: memref<i32>, %dst: memref<2x16x16xf16>) {
+  %ma = tensor.empty() : tensor<2x16x32xf16>
+  %mb = tensor.empty() : tensor<2x32x16xf16>
+  %mc = tensor.empty() : tensor<2x16x16xf32>
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  %c32 = arith.constant 32 : index
+  // CHECK: scf.for
+  // CHECK:   %[[RES:[a-zA-Z0-9_]+]] = hivm.hir.mmadL1
+  // CHECK-SAME: ping_pong_signal(%[[SIGNAL]] : memref<i32>)
+  %result = hivm.hir.batchMmadL1
+      ins(%ma, %mb, %true, %c16, %c32, %c16 : tensor<2x16x32xf16>,
+          tensor<2x32x16xf16>, i1, index, index, index)
+      outs(%mc : tensor<2x16x16xf32>)
+      ping_pong_signal(%signal : memref<i32>) -> tensor<2x16x16xf32>
+  // CHECK:   hivm.hir.fixpipe
+  // CHECK-SAME: ins(%[[RES]] : tensor<16x16xf32>)
+  hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, enable_nz2nd}
+      ins(%result : tensor<2x16x16xf32>) outs(%dst : memref<2x16x16xf16>)
+  return
+}
+
+// -----
 // CHECK-LABEL: func.func @test_preserve_fixpipe_operands_memref(
 func.func @test_preserve_fixpipe_operands_memref(
     %dst: memref<2x16x16xf32>, %quant_scale: f32, %unit_flag_cond: i1) {
