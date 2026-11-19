@@ -1,6 +1,6 @@
 // RUN: bishengir-opt %s -hivm-bind-sub-block -verify-diagnostics | FileCheck %s
 
-// A 1x1 scalar TCB stays untiled, so the AIC fixpipe cannot be
+// A 1x1 scalar TCB stays untiled (tiling_dim=-1), so the AIC fixpipe cannot be
 // split into a dual destination. If the AIV is still split, one sub-block can
 // read a slot the AIC did not write. The pass must roll the pair back to CV1:1
 // and limit the AIV store to sub-block 0.
@@ -28,6 +28,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">, hivm.module_cor
     %sb = tensor.empty() : tensor<4x1xf32>
     %sout = tensor.empty() : tensor<1x1xf32>
     %smmad = hivm.hir.mmadL1 {fixpipe_already_inserted = true} ins(%sa, %sb, %true, %c1, %c4, %c1 : tensor<1x4xf32>, tensor<4x1xf32>, i1, index, index, index) outs(%sout : tensor<1x1xf32>) -> tensor<1x1xf32>
+    // expected-warning@+1 {{The tilingDim in AIC does not exist!}}
     hivm.hir.fixpipe ins(%smmad : tensor<1x1xf32>) outs(%alloc : memref<1x1xf32, #hivm.address_space<ub>>)
     return
   }
