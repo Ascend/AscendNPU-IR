@@ -1,6 +1,8 @@
 name: Daily PKG Compile
 
 on:
+  push:
+      branches: ["master"]
   schedule:
     # cron 按 UTC 解析，对应北京时间 12:00 与 02:00
     - cron: '0 12 * * *'
