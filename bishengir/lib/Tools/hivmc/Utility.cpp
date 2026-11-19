@@ -7,10 +7,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Tools/hivmc/Utility.h"
+#include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Target/LLVMIR/Export.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/IR/IntrinsicsHIVM.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
@@ -288,8 +290,51 @@ std::unique_ptr<llvm::Module>
 translateModuleToLegacyLLVMIR(mlir::Operation *module,
                               llvm::LLVMContext &context) {
   auto llvmModule = mlir::translateModuleToLLVMIR(module, context);
-  if (llvmModule)
-    llvmModule->setIsNewDbgInfoFormat(false);
+  if (!llvmModule)
+    return nullptr;
+  llvmModule->setIsNewDbgInfoFormat(false);
+  if (module->hasAttr(
+          mlir::hivm_regbaseintrins::kDavinciV2IntrinsicsModuleAttrName)) {
+    // CANN names integer shuffles by signedness. The lane permutation is
+    // identical for signed and unsigned data.
+    SmallVector<llvm::Function *> replacedDeclarations;
+    for (llvm::Function &function : *llvmModule) {
+      auto id = function.getIntrinsicID();
+      if (id != llvm::Intrinsic::hivm_vintlvv2 &&
+          id != llvm::Intrinsic::hivm_vdintlvv2)
+        continue;
+      auto *type = dyn_cast<llvm::FixedVectorType>(function.getReturnType());
+      if (!type || function.getName() !=
+                       llvm::Intrinsic::getName(id, {type}, llvmModule.get()))
+        continue;
+      auto *element = type->getElementType();
+      if (!element->isIntegerTy(8) && !element->isIntegerTy(16) &&
+          !element->isIntegerTy(32))
+        continue;
+      std::string name = (llvm::Intrinsic::getBaseName(id) + ".v" +
+                          Twine(type->getNumElements()) + "s" +
+                          Twine(element->getIntegerBitWidth()))
+                             .str();
+      if (auto *symbol = llvmModule->getNamedValue(name)) {
+        auto *decl = dyn_cast<llvm::Function>(symbol);
+        if (!decl || !decl->isDeclaration() ||
+            decl->getFunctionType() != function.getFunctionType() ||
+            decl->getAddressSpace() != function.getAddressSpace() ||
+            decl->getCallingConv() != function.getCallingConv()) {
+          module->emitError("incompatible declaration of CANN intrinsic ")
+              << name;
+          return nullptr;
+        }
+        // Retain the attributes set by LLVM on the intrinsic declaration.
+        decl->replaceAllUsesWith(&function);
+        decl->setName("");
+        replacedDeclarations.push_back(decl);
+      }
+      function.setName(name);
+    }
+    for (llvm::Function *decl : replacedDeclarations)
+      decl->eraseFromParent();
+  }
   return llvmModule;
 }
 

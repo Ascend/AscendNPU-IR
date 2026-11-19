@@ -59,6 +59,7 @@ add_bishengir_dialect_library(BiShengIRHIVMVectorizeTransformOps
   MLIRLinalgDialect
   MLIRLinalgTransformOps
   MLIRLinalgTransforms
+  MLIRLLVMDialect
   MLIRMathDialect
   MLIRMemRefDialect
   MLIRParser
