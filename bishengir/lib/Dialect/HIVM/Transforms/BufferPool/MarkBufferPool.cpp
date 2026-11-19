@@ -377,7 +377,6 @@ static void applyPlan(FunctionPlan &plan) {
       mark->setAttr(MemPoolIdAttr::name, id);
       mark->setAttr(MemPoolSizeAttr::name, size);
       mark->setAttr(MultiBufferAttr::name, size);
-      mark->setAttr(HIVMMemoryUniqueAttr::name, builder.getUnitAttr());
       load->scope->setAttr(MemPoolIdAttr::name, id);
     }
   }
