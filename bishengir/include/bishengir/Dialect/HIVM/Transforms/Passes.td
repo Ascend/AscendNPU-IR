@@ -1974,12 +1974,6 @@ def MarkPreloadBuffers : HIVMPass<"hivm-mark-preload-buffers", "ModuleOp"> {
   let dependentDialects = ["annotation::AnnotationDialect"];
 }
 
-def MarkPreloadBuffers : HIVMPass<"hivm-mark-preload-buffers", "ModuleOp"> {
-  let summary = "Mark loop-local buffer slots for preload stages";
-  let constructor = "mlir::hivm::createMarkPreloadBuffersPass()";
-  let dependentDialects = ["annotation::AnnotationDialect"];
-}
-
 def CreatePreload
     : HIVMPass<"create-preload", AnyOp, [MixKernel, PureAicKernel]> {
   let summary = "Create preload for CV pipelining";
