@@ -5,9 +5,13 @@
 // RUN:   --enable-auto-multi-buffer=true --enable-auto-bind-sub-block=true \
 // RUN:   --custom-aic-number=28 --custom-aiv-number=56 --disable-ffts \
 // RUN:   --enable-auto-blockify-loop --use-pipelinev2=true \
+// RUN:   --shared-mem-dynamic-size=122881 %if asserts %{ --debug-only=guard-cv-pipeline-ub %} \
 // RUN:   --enable-lir-compile=false --mlir-disable-threading \
 // RUN:   --mlir-print-ir-before=hivm-partition-and-bind-sub-block \
-// RUN:   -o %t.ll 2>&1 || true) | FileCheck %s
+// RUN:   -o %t.ll 2>&1 || true) | FileCheck %s %if asserts %{ --check-prefixes=CHECK,BUDGET %}
+
+// 122881 bytes gives the guard 120 whole KiB per core, or 1966080 bits for two cores.
+// BUDGET: [guard-cv-pipeline-ub] estimated {{[0-9]+}} budget 1966080{{$}}
 
 // This registered symbol skips the early coupled-buffer marking. CV v2 must
 // identify coupled buffers before marking their stage-dependent slot counts.

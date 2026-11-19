@@ -381,7 +381,10 @@ struct SelectCVPipelinePass
         pipelineMode(options.setCVPipelineMode),
         workspaceMultiBufferNum(options.setWorkspaceMultibuffer),
         maxPipelineMultibuffer(options.setMaxPipelineMultibuffer),
-        simtVFDynamicSize(options.simtVFDynamicSize),
+        // The guard takes whole KiB. Round down to stay within the byte budget.
+        simtVFDynamicSize(options.sharedMemDynamicSize >= 0
+                              ? options.sharedMemDynamicSize / 1024
+                              : GuardCVPipelineUBOptions{}.simtVFDynamicSize),
         schedulerMode(options.enableSchedulerAlg),
         smsFailOnFallback(options.smsFailOnFallback) {}
 
