@@ -37,7 +37,7 @@ module attributes {hacc.target = #hacc.target<"Ascend960">} {
 // A zero right count is the same as no right count, so the in-row form is not
 // selected and the legacy six-operand ABI is used.
 // CHECK-LABEL: func.func @rp_zero_is_legacy(
-// CHECK: call @load_gm_to_ubuf_2d_float({{.*}}, %c2, %c0, %c0_i32) :
+// CHECK: call @load_gm_to_ubuf_2d_float({{.*}}, %c2, %c0_i32) :
  func.func @rp_zero_is_legacy(%src: memref<2x8xf32, #hivm.address_space<gm>>, %dst: memref<2x10xf32, #hivm.address_space<ub>>) {
   %p = arith.constant 7.0 : f32
   %lp = arith.constant 2 : index
