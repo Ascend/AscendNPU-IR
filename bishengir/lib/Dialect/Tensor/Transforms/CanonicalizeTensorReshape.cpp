@@ -19,7 +19,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/HFusion/IR/HFusion.h"
+#include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -250,17 +250,17 @@ getReshapedLoadSourceType(MemRefType srcType, ArrayRef<int64_t> dstShape,
   return result;
 }
 
-/// Shape-only print branches can keep a separate copy of the loaded snapshot.
-static bool isUsedOnlyForPrint(Value value) {
+/// Trace shape-only branches whose consumers all require a Cube layout.
+static bool isUsedOnlyForMatmul(Value value) {
   if (value.use_empty())
     return false;
   return llvm::all_of(value.getUsers(), [value](Operation *user) {
-    if (isa<hfusion::PrintOp>(user))
+    if (hfusion::isMatmulOps(user))
       return true;
     if (isa<tensor::ReshapeOp, tensor::ExpandShapeOp, tensor::CollapseShapeOp,
             tensor::CastOp>(user) &&
         user->getOperand(0) == value)
-      return isUsedOnlyForPrint(user->getResult(0));
+      return isUsedOnlyForMatmul(user->getResult(0));
     return false;
   });
 }
@@ -283,9 +283,10 @@ static bool isUsedOnlyForPrint(Value value) {
 /// checks, retaining a collapse_shape operation's explicit reassociation.
 ///
 /// Safety requirements:
-/// - The tensor has one use, or the folded branch serves only prints. The
-///   alloc is used only by its initializing copy and to_tensor. Shared
-///   tensor users keep the original load until its last reshape is folded.
+/// - The tensor has one use, or the folded branch serves only matmul while
+///   another branch needs the original logical layout. Compatible Vector
+///   views retain one shared snapshot rather than duplicating UB buffers.
+///   The alloc is used only by its initializing copy and to_tensor.
 ///   memref.copy has no results, so use_empty(copy) cannot prove that the
 ///   destination buffer has no other consumers.
 /// - Alloc, copy, to_tensor, and reshape are ordered in one block. Insert each
@@ -313,9 +314,10 @@ foldMemrefLoadReshape(Value tensorSrc, RankedTensorType srcType,
     return failure();
 
   if (!tensorSrc.hasOneUse() &&
-      !isUsedOnlyForPrint(reshapeLikeOp->getResult(0)))
-    return rewriter.notifyMatchFailure(reshapeLikeOp,
-                                       "shared non-print reshape source");
+      (!isUsedOnlyForMatmul(reshapeLikeOp->getResult(0)) ||
+       isUsedOnlyForMatmul(tensorSrc)))
+    return rewriter.notifyMatchFailure(
+        reshapeLikeOp, "shared reshape source without a separate Cube layout");
 
   auto toTensor = tensorSrc.getDefiningOp<bufferization::ToTensorOp>();
   if (!toTensor || toTensor.getResult() != tensorSrc)
@@ -465,7 +467,7 @@ public:
 
   LogicalResult matchAndRewrite(tensor::ExpandShapeOp op,
                                 PatternRewriter &rewriter) const override {
-    // A shared print may leave the original flat load's other view expanded.
+    // Reshape decomposition may leave a shared flat load's view expanded.
     if (op.getSrcType().getRank() != 1)
       return failure();
     return foldMemrefLoadReshape(op.getSrc(), op.getSrcType(),

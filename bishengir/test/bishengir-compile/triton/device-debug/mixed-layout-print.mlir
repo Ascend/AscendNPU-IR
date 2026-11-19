@@ -6,6 +6,10 @@
 // RUN: FileCheck %s --check-prefix=BATCH --implicit-check-not="error:" --implicit-check-not="InsertConvertLayout" < %t/batch-fallback.log
 // RUN: bishengir-compile %t/matmul.mlir --target=Ascend950PR_9579 --enable-hfusion-compile=true --enable-triton-kernel-compile=true --enable-tuning-mode=true --only-run-hivm-pipeline=true --enable-layout-optimization=false -o %t/matmul-v1.out > %t/matmul-v1.log 2>&1
 // RUN: FileCheck %s --check-prefix=CLEAN --allow-empty --implicit-check-not="error:" < %t/matmul-v1.log
+// RUN: bishengir-compile %t/vector.mlir --target=Ascend950PR_9579 --enable-hfusion-compile=true --enable-triton-kernel-compile=true --enable-tuning-mode=true --only-run-hivm-pipeline=true --enable-layout-optimization=false -o %t/vector-v1.out > %t/vector-v1.log 2>&1
+// RUN: FileCheck %s --check-prefix=VECTOR < %t/vector-v1.out
+// RUN: bishengir-compile %t/vector.mlir --target=Ascend950PR_9579 --enable-hfusion-compile=true --enable-triton-kernel-compile=true --enable-tuning-mode=true --only-run-hivm-pipeline=true --enable-layout-optimization=true -o %t/vector-v2.out > %t/vector-v2.log 2>&1
+// RUN: FileCheck %s --check-prefix=VECTOR < %t/vector-v2.out
 
 
 // LOWERED-LABEL: llvm.func @kernel_mix_aic
@@ -15,6 +19,18 @@
 // LOWERED: llvm.call @print_4d_bfloat16_t_ubuf.vector
 // LOWERED: llvm.call @print_4d_bfloat16_t_ubuf.vector
 // LOWERED: llvm.call @print_4d_float_ubuf.vector
+
+// Two print shapes share one 128 KiB snapshot. Duplicating this load would
+// need 256 KiB of UB, exceeding the target's 248 KiB capacity.
+// VECTOR-LABEL: llvm.func @kernel(
+// VECTOR-NOT: llvm.call @load_gm_to_ubuf
+// VECTOR: %[[UB:.*]] = llvm.inttoptr {{.*}} : i64 to !llvm.ptr<6>
+// VECTOR-NEXT: llvm.call @load_gm_to_ubuf_1d_bfloat16_t({{.*}}, %[[UB]], %[[UB]],
+// VECTOR-NOT: llvm.call @load_gm_to_ubuf
+// VECTOR: llvm.call @print_4d_bfloat16_t_ubuf({{.*}}, %[[UB]], %[[UB]],
+// VECTOR-NOT: llvm.call @load_gm_to_ubuf
+// VECTOR: llvm.call @print_1d_bfloat16_t_ubuf({{.*}}, %[[UB]], %[[UB]],
+// VECTOR-NOT: llvm.call @load_gm_to_ubuf
 
 // Reconstructed from the rank-4 print / rank-3 batch-matmul report. Batch
 // matmul retains its existing layout fallback. Both batched and ordinary
@@ -95,6 +111,23 @@ module {
     %reinterpret_cast_9 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [1024], strides: [1] : memref<?xf32> to memref<1024xf32, strided<[1]>>
     %reshape_10 = tensor.reshape %4(%cst) : (tensor<32x32xf32>, tensor<1xi64>) -> tensor<1024xf32>
     bufferization.materialize_in_destination %reshape_10 in writable %reinterpret_cast_9 : (tensor<1024xf32>, memref<1024xf32, strided<[1]>>) -> ()
+    return
+  }
+}
+
+//--- vector.mlir
+module {
+  func.func private @triton_print(tensor<32x2x32x32xbf16>) attributes {hex = false, prefix = " x: "}
+  func.func private @triton_print_flat(tensor<65536xbf16>) attributes {hex = false, prefix = "flat"}
+  func.func @kernel(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xbf16> {tt.tensor_kind = 0 : i32}, %arg3: memref<?xbf16> {tt.tensor_kind = 0 : i32}, %arg4: memref<?xf32> {tt.tensor_kind = 1 : i32}, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32, %arg10: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "mix", parallel_mode = "simd"} {
+    %in = memref.reinterpret_cast %arg2 to offset: [0], sizes: [65536], strides: [1] : memref<?xbf16> to memref<65536xbf16, strided<[1]>>
+    %buf = memref.alloc() : memref<65536xbf16>
+    memref.copy %in, %buf : memref<65536xbf16, strided<[1]>> to memref<65536xbf16>
+    %v = bufferization.to_tensor %buf restrict writable : memref<65536xbf16>
+    %shape = arith.constant dense<[32, 2, 32, 32]> : tensor<4xi64>
+    %p = tensor.reshape %v(%shape) : (tensor<65536xbf16>, tensor<4xi64>) -> tensor<32x2x32x32xbf16>
+    call @triton_print(%p) : (tensor<32x2x32x32xbf16>) -> ()
+    call @triton_print_flat(%v) : (tensor<65536xbf16>) -> ()
     return
   }
 }
