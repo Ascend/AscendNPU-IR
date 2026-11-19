@@ -36,6 +36,11 @@ bool isLoopShapeRegistered(llvm::StringRef name);
 /// enable preload / TCB heuristics.
 bool shouldSkipBindSubBlock(llvm::StringRef name);
 
+/// True when `name` matches a kernel that stays on the legacy CV pipeline.
+/// PipelineV2 preload is not run for these kernels, including when
+/// `--use-pipelinev2` is set. Decorated symbols still match.
+bool shouldKeepLegacyCVPipeline(llvm::StringRef name);
+
 /// Allow-list for DedupInsertedL1StagingPattern. It is
 /// `isLoopShapeRegistered` excluding kernels that regress when two private
 /// L1 stagings of the same tensor are merged. The exclusion is currently
