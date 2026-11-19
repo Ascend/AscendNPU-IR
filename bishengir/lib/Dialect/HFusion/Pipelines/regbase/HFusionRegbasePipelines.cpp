@@ -424,6 +424,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   treeReduceOptions.enableRA = treeReduceFlags.enableRA;
   treeReduceOptions.enableAR = treeReduceFlags.enableAR;
   treeReduceOptions.ascendStyleRA = hfusionOptions.useAscendStyleRA;
+  pm.addPass(hivm::createFuseOpIntoLoadPass());
   if (enableSIMDVFFusion(hfusionOptions)) {
     bool runRegBasePasses = !hfusionOptions.enableMixedCV &&
                             hacc::utils::isRegBasedArch(hfusionOptions.target);
@@ -449,6 +450,9 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     canonicalizationPipeline(pm, hfusionOptions);
   }
   pm.nest<func::FuncOp>().addPass(hivm::createFuseTransposeIntoLoadPass());
+  // Reapply all independent load-fusion patterns after VF fusion/transpose,
+  // retaining this producer boundary before pre-vectorization fusion.
+  pm.addPass(hivm::createFuseOpIntoLoadPass());
   PreVectorizationFusionOptions preVecOptions;
   preVecOptions.enableTritonCompile = hfusionOptions.enableTritonKernelCompile;
   preVecOptions.maxFusedElementwiseOps =
