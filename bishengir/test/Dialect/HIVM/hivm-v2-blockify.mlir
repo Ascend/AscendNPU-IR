@@ -1,9 +1,9 @@
 // REQUIRES: enable-lir-compile
 // RUN: mkdir -p %t.on %t.off
 // RUN: echo 'source_filename = "support"' > %t.ll
-// RUN: bishengir-compile %s --target=Ascend960DT_968B7 --use-pipeline-version=2 --enable-hfusion-compile --enable-triton-kernel-compile --disable-ffts --custom-aic-number=32 --custom-aiv-number=64 --enable-auto-blockify-loop --link-aicore-bitcode=%t.ll --save-temps=%t.on -o %t.on/kernel
+// RUN: env BISHENG_BACKEND=process bishengir-compile %s --target=Ascend960DT_968B7 --use-pipeline-version=2 --enable-hfusion-compile --enable-triton-kernel-compile --disable-ffts --custom-aic-number=32 --custom-aiv-number=64 --enable-auto-blockify-loop --link-aicore-bitcode=%t.ll --save-temps=%t.on -o %t.on/kernel
 // RUN: FileCheck %s --check-prefix=LOOP --input-file=%t.on/kernel.ll
-// RUN: bishengir-compile %s --target=Ascend960DT_968B7 --use-pipeline-version=2 --enable-hfusion-compile --enable-triton-kernel-compile --disable-ffts --custom-aic-number=32 --custom-aiv-number=64 --link-aicore-bitcode=%t.ll --save-temps=%t.off -o %t.off/kernel
+// RUN: env BISHENG_BACKEND=process bishengir-compile %s --target=Ascend960DT_968B7 --use-pipeline-version=2 --enable-hfusion-compile --enable-triton-kernel-compile --disable-ffts --custom-aic-number=32 --custom-aiv-number=64 --link-aicore-bitcode=%t.ll --save-temps=%t.off -o %t.off/kernel
 // RUN: FileCheck %s --check-prefix=DIRECT --implicit-check-not="phi i32" --input-file=%t.off/kernel.ll
 
 // Both Triton program IDs follow the induction variable. This AIV kernel
