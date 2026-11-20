@@ -482,6 +482,8 @@ static void hivmPostBufferizationOptimizationPipeline(
   planMemoryOption.disableTightlyCoupledBufferReuse =
       hivmPipelineOptions.disableTightlyCoupledBufferReuse;
   planMemoryOption.planMemoryStrategy = hivmPipelineOptions.planMemoryStrategy;
+  planMemoryOption.planMemoryUBCopyBankMode =
+      hivmPipelineOptions.planMemoryUBCopyBankMode;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
 
   // Lower hivm ops to loops

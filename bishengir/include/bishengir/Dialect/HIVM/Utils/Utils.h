@@ -75,6 +75,13 @@ enum class PlanMemoryStrategy {
   LARGEST_FIRST, // sort by const bits descending, allocate larger buffer first
 };
 
+/// PlanMemory UB-to-UB copy bank conflict avoidance mode.
+enum class PlanMemoryUBCopyBankMode {
+  OFF,     // Disable bank conflict avoidance.
+  PREFER,  // Avoid bank conflicts when possible.
+  REQUIRE, // Require bank constraints visible during planning.
+};
+
 // TODO : put it into platform info
 #define MASTK_MODE_CTROL_BIT 56
 

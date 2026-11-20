@@ -834,6 +834,8 @@ static void hivmPostBufferizationOptimizationPipeline(
       hivmPipelineOptions.disableVFReachableCheck;
   planMemoryOption.enableTLAmode = hivmPipelineOptions.enableTlaMode;
   planMemoryOption.planMemoryStrategy = hivmPipelineOptions.planMemoryStrategy;
+  planMemoryOption.planMemoryUBCopyBankMode =
+      hivmPipelineOptions.planMemoryUBCopyBankMode;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
   pm.addPass(createTcbPoolOpInsertionPass());
 

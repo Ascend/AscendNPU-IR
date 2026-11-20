@@ -588,6 +588,23 @@ llvm::cl::values(
   }];
 }
 
+def PlanMemoryUBCopyBankMode : HIVMOptimizationControlOptions<
+  "PlanMemory UB-to-UB copy bank conflict avoidance mode.",
+  "mlir::hivm::PlanMemoryUBCopyBankMode",
+  "mlir::hivm::PlanMemoryUBCopyBankMode::OFF"
+> {
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(mlir::hivm::PlanMemoryUBCopyBankMode::OFF, "off",
+             "Disable bank conflict avoidance"),
+  clEnumValN(mlir::hivm::PlanMemoryUBCopyBankMode::PREFER, "prefer",
+             "Avoid bank conflicts when possible"),
+  clEnumValN(mlir::hivm::PlanMemoryUBCopyBankMode::REQUIRE, "require",
+             "Require bank constraints visible during planning")
+)
+  }];
+}
+
 def EnableAutoBindSubBlock : HIVMOptimizationControlOptions<
   "Enable auto bind sub block.",
   "bool",
