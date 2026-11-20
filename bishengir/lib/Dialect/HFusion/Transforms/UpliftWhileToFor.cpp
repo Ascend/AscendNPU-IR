@@ -37,8 +37,11 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Transforms/Patterns.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/APInt.h"
@@ -113,6 +116,84 @@ struct NormalizeSignExtendedWhileCondition
   }
 };
 
+/// Peel scalar constructors so filled tensors and dense constants can be
+/// matched as the same induction variable or step.
+static Value unwrapSingleton(Value value) {
+  if (auto fill = value.getDefiningOp<linalg::FillOp>()) {
+    Value scalar = fill.getInputs().front();
+    if (scalar.getType() ==
+        cast<RankedTensorType>(value.getType()).getElementType())
+      return scalar;
+  }
+  if (auto elements = value.getDefiningOp<tensor::FromElementsOp>())
+    return elements.getElements().front();
+  return value;
+}
+
+/// Keep a unit-step loop counter in scalar SSA. A tensor-backed predicate
+/// otherwise makes Cube read the vector counter from L1 after core splitting.
+struct ScalarizeWhileInductionVariable : OpRewritePattern<scf::WhileOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(scf::WhileOp loop,
+                                PatternRewriter &rewriter) const override {
+    auto condition = loop.getConditionOp();
+    auto cmp = condition.getCondition().getDefiningOp<arith::CmpIOp>();
+    if (!cmp || cmp.getPredicate() != arith::CmpIPredicate::slt ||
+        condition.getArgs() != ValueRange(loop.getBeforeArguments()))
+      return failure();
+
+    auto extract = cmp.getLhs().getDefiningOp<tensor::ExtractOp>();
+    if (!extract || !extract.getType().isIntOrIndex() ||
+        extract.getType().isInteger(1))
+      return failure();
+    auto iv = dyn_cast<BlockArgument>(extract.getTensor());
+    auto type = extract.getTensor().getType();
+    if (!iv || iv.getOwner() != loop.getBeforeBody() || type.getEncoding() ||
+        !type.hasStaticShape() || type.getNumElements() != 1 ||
+        !llvm::hasNItems(iv.getUses(), 2) ||
+        !llvm::all_of(extract.getIndices(),
+                      [](Value i) { return matchPattern(i, m_Zero()); }))
+      return failure();
+
+    unsigned index = iv.getArgNumber();
+    BlockArgument bodyIV = loop.getAfterArguments()[index];
+    auto add =
+        loop.getYieldOp().getOperand(index).getDefiningOp<arith::AddIOp>();
+    if (!add || !bodyIV.hasOneUse() || *bodyIV.user_begin() != add ||
+        !add->hasOneUse() || !loop.getResult(index).use_empty())
+      return failure();
+    Value step = add.getLhs() == bodyIV ? add.getRhs() : add.getLhs();
+    // A signed IV below its bound can always advance by one without overflow.
+    if (!matchPattern(unwrapSingleton(step), m_One()))
+      return failure();
+
+    Value initial = unwrapSingleton(loop.getInits()[index]);
+    Type scalarType = extract.getType();
+    if (isa<ShapedType>(initial.getType())) {
+      DenseIntElementsAttr constant;
+      if (!matchPattern(initial, m_Constant(&constant)))
+        return failure();
+      initial = rewriter.create<arith::ConstantOp>(
+          loop.getLoc(), constant.getSplatValue<IntegerAttr>());
+    }
+    Value one = rewriter.create<arith::ConstantOp>(
+        add.getLoc(), rewriter.getIntegerAttr(scalarType, 1));
+    rewriter.modifyOpInPlace(loop, [&] {
+      loop.getInitsMutable()[index].set(initial);
+      iv.setType(scalarType);
+      bodyIV.setType(scalarType);
+      loop.getResult(index).setType(scalarType);
+    });
+    rewriter.replaceOp(extract, iv);
+    rewriter.modifyOpInPlace(add, [&] {
+      add->setOperands({bodyIV, one});
+      add.getResult().setType(scalarType);
+    });
+    return success();
+  }
+};
+
 struct UpliftWhileToForPass
     : public impl::UpliftWhileToForBase<UpliftWhileToForPass> {
   using Base = impl::UpliftWhileToForBase<UpliftWhileToForPass>;
@@ -128,6 +209,7 @@ struct UpliftWhileToForPass
     if (this->bypassShapeRegistry ||
         hivm::isLoopShapeRegistered(funcOp.getName()))
       patterns.add<NormalizeSignExtendedWhileCondition>(ctx);
+    patterns.add<ScalarizeWhileInductionVariable>(ctx);
     scf::populateUpliftWhileToForPatterns(patterns);
 
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns))))
