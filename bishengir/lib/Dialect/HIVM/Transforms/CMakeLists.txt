@@ -37,6 +37,7 @@ configure_file(HIVMVectorize/HIVMVectorize.inc.in HIVMVectorize/HIVMVectorize.in
 
 add_bishengir_dialect_library(BiShengIRHIVMTransforms
   PromoteL1Gather.cpp
+  OptimizeRowLoads.cpp
   ${Mix_PASSES}
   ${ALIGN_BUFFER}
   ${BUBBLE_UP_EXTRACT_SLICE}
@@ -217,10 +218,11 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   LINK_LIBS PUBLIC
   BiShengIRArithTransforms
   BiShengIRVectorTransforms
-  MLIRArithValueBoundsOpInterfaceImpl
   MLIRAffineDialect
   MLIRAffineTransforms
   MLIRAnalysis
+  MLIRArithValueBoundsOpInterfaceImpl
+  MLIRValueBoundsOpInterface
   MLIRArithDialect
   MLIRArithUtils
   BiShengIRAnnotationDialect

@@ -1396,6 +1396,14 @@ def EnableLegalizeScalarFP8 : HFusionOptimizationControlOptions<
 // HIVM Optimization Control Options
 //===----------------------------------------------------------------------===//
 
+def EnableHivmUbRowGatherFallbackLoop : HIVMOptimizationControlOptions<
+  "Emit the paired-row fallback as a nested two-lane parallel loop",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
+}
+
 def EnableFusedMultiplyAdd : HIVMOptimizationControlOptions<
   "Enable fused multiply add",
   "bool",

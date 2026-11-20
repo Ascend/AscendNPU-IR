@@ -656,6 +656,11 @@ static void hivmPreBufferizationOptimizationPipeline(
     tileOptions.batchMatmul = hivmPipelineOptions.enableHIVMBatchMatmul;
     pm.addPass(createTileAndBindSubBlockPass(tileOptions));
   }
+  // Sink row masks and pair compatible AIV row loads after subblock tiling.
+  OptimizeRowLoadsOptions rowLoadOptions;
+  rowLoadOptions.fallbackLoop =
+      hivmPipelineOptions.enableHivmUbRowGatherFallbackLoop;
+  pm.nest<func::FuncOp>().addPass(createOptimizeRowLoadsPass(rowLoadOptions));
   canonicalizationHIVMPipeline(pm);
   hivmWorkspacePipeline(pm, hivmPipelineOptions);
   pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
