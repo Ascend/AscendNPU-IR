@@ -992,6 +992,30 @@ func.func @test_pointer_cast_alias_rematerialization() {
 
 // -----
 
+// The returned view's extent must be recomputed with the shifted stage index.
+// CHECK-LABEL: func.func @affine_view_extent(
+// CHECK: scf.for %[[IV:.*]] =
+// CHECK: %[[SHIFTED:.*]] = arith.subi %[[IV]],
+// CHECK: %[[SIZE:.*]] = affine.apply {{.*}}(%[[SHIFTED]])
+// CHECK: %[[VIEW:.*]] = memref.view {{.*}}[%[[SIZE]]]
+// CHECK: "test.consume"(%[[VIEW]])
+func.func @affine_view_extent(%buffer: memref<16xi8>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  scf.for %i = %c0 to %c4 step %c1 {
+    %result = scope.scope : () -> memref<?xi8> {
+      %size = affine.apply affine_map<(d0) -> (d0 + 1)>(%i)
+      %view = memref.view %buffer[%c0][%size] : memref<16xi8> to memref<?xi8>
+      scope.return %view : memref<?xi8>
+    } {no_inline, hivm.preload_num = 0 : i32, hivm.max_preload_num = 2 : i32}
+    "test.consume"(%result) : (memref<?xi8>) -> ()
+  }
+  return
+}
+
+// -----
+
 // Test that loops with multiple scope.scope ops having the same preload_num (e.g. preload_num = 0)
 // are all properly recognized as preload scopes and converted to scf.if, without unindexed scopes
 // being duplicated by fallback cloning.
