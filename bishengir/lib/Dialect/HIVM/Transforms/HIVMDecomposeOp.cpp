@@ -1493,10 +1493,14 @@ private:
   LogicalResult decomposeEltwiseAtomic(hivm::StoreOp op,
                                        PatternRewriter &rewriter, Location loc,
                                        bool isUnsigned = false) const {
-    auto lockVar = createSyncBlockLockVar(rewriter, op->getLoc());
-
-    // 1. insert sync_block_lock
-    createAtomicSyncBlockLock(rewriter, loc, lockVar);
+    // An earlier pass already locked the returned GM snapshot together with
+    // this update. Do not open a second lock on the same variable.
+    bool alreadySync = op->hasAttr("already_sync");
+    Value lockVar;
+    if (!alreadySync) {
+      lockVar = createSyncBlockLockVar(rewriter, op->getLoc());
+      createAtomicSyncBlockLock(rewriter, loc, lockVar);
+    }
 
     // 2. create tmp memref alloc and load dst to tmp
     auto src = op.getSrc();
@@ -1542,8 +1546,8 @@ private:
     // 4. store tmp to dst
     rewriter.create<hivm::StoreOp>(loc, TypeRange{}, resUB, dst);
 
-    // 5. insert sync_block_unlock
-    createAtomicSyncBlockUnlock(rewriter, loc, lockVar);
+    if (!alreadySync)
+      createAtomicSyncBlockUnlock(rewriter, loc, lockVar);
 
     rewriter.eraseOp(op);
     return success();
@@ -1567,6 +1571,8 @@ class AtomicRMWOpLowering : public OpRewritePattern<hivm::AtomicRMWOp> {
       // Add atomic attr to hivm.store
       auto hsAtomicKind = op.getAtomicKind();
       newStoreOp.setAtomicKind(hsAtomicKind);
+      if (op->hasAttr("already_sync"))
+        newStoreOp->setAttr("already_sync", rewriter.getUnitAttr());
 
       rewriter.replaceOp(op, newStoreOp);
       return success();
@@ -1635,9 +1641,12 @@ private:
   LogicalResult decomposeEltwiseAtomic(hivm::AtomicRMWOp op,
                                        PatternRewriter &rewriter,
                                        Location loc) const {
-    // 1. insert sync_block_lock
-    auto lockVar = createSyncBlockLockVar(rewriter, op->getLoc());
-    createAtomicSyncBlockLock(rewriter, loc, lockVar);
+    bool alreadySync = op->hasAttr("already_sync");
+    Value lockVar;
+    if (!alreadySync) {
+      lockVar = createSyncBlockLockVar(rewriter, op->getLoc());
+      createAtomicSyncBlockLock(rewriter, loc, lockVar);
+    }
 
     // 2. create tmp memref alloc and load dst to tmp
     auto src = op.getSrc();
@@ -1671,8 +1680,8 @@ private:
     // 4. store tmp to dst
     rewriter.create<hivm::StoreOp>(loc, TypeRange{}, resUB, dst);
 
-    // 5. insert sync_block_unlock
-    createAtomicSyncBlockUnlock(rewriter, loc, lockVar);
+    if (!alreadySync)
+      createAtomicSyncBlockUnlock(rewriter, loc, lockVar);
 
     rewriter.eraseOp(op);
 

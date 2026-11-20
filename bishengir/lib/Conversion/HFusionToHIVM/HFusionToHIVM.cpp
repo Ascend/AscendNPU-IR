@@ -1009,6 +1009,8 @@ struct HFusionStoreOpToHIVMStoreOp : public OpRewritePattern<hfusion::StoreOp> {
     auto hsAtomicKind = op.getAtomicKind();
     hivm::AtomicKind hvAtomicKind = mapAtomicKindHFusionToHiVM(hsAtomicKind);
     newStoreOp.setAtomicKind(hvAtomicKind);
+    if (auto alreadySync = op->getAttr("already_sync"))
+      newStoreOp->setAttr("already_sync", alreadySync);
 
     rewriter.replaceOp(op, newStoreOp);
     return success();
@@ -1298,6 +1300,8 @@ struct HFusionToHIVMAtomicRMWOp
     auto hivmAtomicOp = rewriter.create<hivm::AtomicRMWOp>(
         op->getLoc(), op->getResultTypes(), op.getInput(), op.getDst(),
         mapAtomicKindHFusionToHiVM(op.getAtomicKind()));
+    if (auto alreadySync = op->getAttr("already_sync"))
+      hivmAtomicOp->setAttr("already_sync", alreadySync);
     rewriter.replaceOp(op, hivmAtomicOp);
     return success();
   }

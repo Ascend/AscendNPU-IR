@@ -2228,6 +2228,37 @@ func.func @test_atomic_add_with_retuned_value(%arg0: memref<?xi8> {hacc.arg_type
 }
 
 // -----
+// The returned snapshot is already inside this lock. i64 software update
+// must not open a second one.
+// CHECK-LABEL: func.func @i64_atomic_add_already_sync
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>}
+// CHECK-NOT: hivm.hir.sync_block_lock
+// CHECK-NOT: atomic =
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>}
+func.func @i64_atomic_add_already_sync(%src: memref<1xi64>, %dst: memref<1xi64>) {
+  %lock = hivm.hir.create_sync_block_lock : memref<1xi64>
+  hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%lock : memref<1xi64>)
+  hivm.hir.store ins(%src : memref<1xi64>) outs(%dst : memref<1xi64>) {already_sync} atomic = <add>
+  hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%lock : memref<1xi64>)
+  return
+}
+
+// -----
+// CHECK-LABEL: func.func @i64_atomic_rmw_already_sync
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>}
+// CHECK-NOT: hivm.hir.sync_block_lock
+// CHECK-NOT: hivm.hir.atomic_rmw
+// CHECK-NOT: atomic =
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>}
+func.func @i64_atomic_rmw_already_sync(%src: memref<1xi64>, %dst: memref<1xi64>) {
+  %lock = hivm.hir.create_sync_block_lock : memref<1xi64>
+  hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%lock : memref<1xi64>)
+  hivm.hir.atomic_rmw {already_sync} ins(%src : memref<1xi64>) outs(%dst : memref<1xi64>) atomic_kind = <add>
+  hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%lock : memref<1xi64>)
+  return
+}
+
+// -----
 // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<16xi8>
 // CHECK: hivm.hir.load ins(%arg1 : memref<16xi8>) outs(%[[ALLOC]] : memref<16xi8>)
 // CHECK: %[[ALLOC2:.*]] = memref.alloc() : memref<16xi8>
