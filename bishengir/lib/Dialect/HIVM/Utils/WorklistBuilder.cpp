@@ -1012,9 +1012,6 @@ LogicalResult WorklistBuilder::populateDependencies(Operation &separator) {
       }
     }
     for (Value result : op->getResults()) {
-      if (!isa<ShapedType>(result.getType()))
-        continue;
-
       for (OpOperand &use : result.getUses()) {
         Operation *usr = use.getOwner();
 
