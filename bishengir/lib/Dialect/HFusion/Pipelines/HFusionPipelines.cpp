@@ -123,6 +123,7 @@ static void preProcess(OpPassManager &pm,
   //  a) convert scalar-vector ops to vector-scalar ops
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
+  pm.nest<func::FuncOp>().addPass(createLegalizeBF16Pass());
 }
 
 static void preFlattenPass(OpPassManager &pm,
