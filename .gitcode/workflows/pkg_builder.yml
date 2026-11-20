@@ -247,7 +247,6 @@ jobs:
           if-no-files-found: error
 
       - name: Upload artifact to OBS
-        if: ${{ atomgit.event_name == 'Scheduler' || atomgit.event_name == 'Push' }}
         uses: obs-upload
         with:
           endpoint: "https://obs.cn-south-1.myhuaweicloud.com"
