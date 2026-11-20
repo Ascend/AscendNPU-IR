@@ -158,9 +158,12 @@ static void preProcess(OpPassManager &pm,
   }
   if (options.enableTritonKernelCompile &&
       hacc::utils::isRegBasedArch(options.target)) {
-    if (options.enableFuseReductionIntoLoop)
+    if (options.enableFuseReductionIntoLoop) {
+      bishengir::FuseReductionIntoLoopOptions fusionOptions;
+      fusionOptions.mode = options.fuseReductionIntoLoopMode;
       pm.nest<func::FuncOp>().addPass(
-          bishengir::createFuseReductionIntoLoopPass());
+          bishengir::createFuseReductionIntoLoopPass(fusionOptions));
+    }
     pm.nest<func::FuncOp>().addPass(createLegalizeScalarPass());
 
     // Convert the operations to HFusion as much as possible to make
