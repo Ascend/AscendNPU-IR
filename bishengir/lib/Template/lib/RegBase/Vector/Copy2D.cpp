@@ -284,6 +284,9 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
       left_padding_num == 0 ||
       (stride1_ub == 1 && pad_mode != PadMode::FirstElem &&
        !std::is_same_v<T, int64_t> && !std::is_same_v<T, uint64_t> &&
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+       !std::is_same_v<T, hifloat8_t> &&
+#endif
        !std::is_same_v<T, float8_e4m3_t> && !std::is_same_v<T, float8_e5m2_t> &&
        isStrideAligned<T>(stride0_ub) &&
        CEIL_FACTOR(left_padding_num + dst->sizes[1],
@@ -983,6 +986,9 @@ REGISTE_DMA_LOAD(2, half);
 REGISTE_DMA_LOAD(2, float);
 REGISTE_DMA_LOAD(2, bfloat16_t);
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTE_DMA_LOAD_FP8(2, hifloat8_t);
+#endif
 REGISTE_DMA_LOAD_FP8(2, float8_e4m3_t);
 REGISTE_DMA_LOAD_FP8(2, float8_e5m2_t);
 #endif
@@ -1001,6 +1007,9 @@ REGISTE_DMA_STORE(2, half);
 REGISTE_DMA_STORE(2, float);
 REGISTE_DMA_STORE(2, bfloat16_t);
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTE_DMA_STORE(2, hifloat8_t);
+#endif
 REGISTE_DMA_STORE(2, float8_e4m3_t);
 REGISTE_DMA_STORE(2, float8_e5m2_t);
 #endif
@@ -1020,6 +1029,9 @@ REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, half)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, float)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, bfloat16_t)
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, hifloat8_t);
+#endif
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, float8_e4m3_t);
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, float8_e5m2_t);
 #endif
@@ -1034,6 +1046,9 @@ REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, int16_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, uint16_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, int32_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, uint32_t)
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, hifloat8_t)
+#endif
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, float8_e4m3_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, float8_e5m2_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, half)

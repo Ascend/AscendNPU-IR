@@ -2469,6 +2469,13 @@ struct ConstantFolding : public OpRewritePattern<hfusion::CastOp> {
 
   LogicalResult matchAndRewrite(hfusion::CastOp castOp,
                                 PatternRewriter &rewriter) const override {
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+    if (isa<HiFloat8Type>(
+            getElementTypeOrSelf(castOp.getInputs()[0].getType())) ||
+        isa<HiFloat8Type>(
+            getElementTypeOrSelf(castOp.getOutputs()[0].getType())))
+      return failure();
+#endif
     auto output = castOp.getOutputs()[0];
     auto tensorEmptyOp = output.getDefiningOp<tensor::EmptyOp>();
     if (!tensorEmptyOp)
@@ -2516,6 +2523,11 @@ void CastOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 LogicalResult CastOp::verify() {
   auto roundMode = getRoundMode();
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+  if (roundMode == hfusion::RoundMode::HYBRID &&
+      !isa<HiFloat8Type>(getElementTypeOrSelf(getOutputs()[0].getType())))
+    return emitOpError("HYBRID rounding requires a HiFloat8 result");
+#endif
   if (roundMode == hfusion::RoundMode::TRUNCWITHOVERFLOW) {
     auto inputType = getElementTypeOrSelf(getInputs()[0].getType());
     auto outputType = getElementTypeOrSelf(getOutputs()[0].getType());

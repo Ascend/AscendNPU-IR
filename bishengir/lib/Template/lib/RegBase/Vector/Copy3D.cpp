@@ -1027,6 +1027,9 @@ REGISTE_DMA_LOAD(3, half);
 REGISTE_DMA_LOAD(3, float);
 REGISTE_DMA_LOAD(3, bfloat16_t);
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTE_DMA_LOAD_FP8(3, hifloat8_t);
+#endif
 REGISTE_DMA_LOAD_FP8(3, float8_e4m3_t);
 REGISTE_DMA_LOAD_FP8(3, float8_e5m2_t);
 #endif
@@ -1045,6 +1048,9 @@ REGISTE_DMA_STORE(3, half);
 REGISTE_DMA_STORE(3, float);
 REGISTE_DMA_STORE(3, bfloat16_t);
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTE_DMA_STORE(3, hifloat8_t);
+#endif
 REGISTE_DMA_STORE(3, float8_e4m3_t);
 REGISTE_DMA_STORE(3, float8_e5m2_t);
 #endif
@@ -1064,6 +1070,9 @@ REGISTE_DMA_UB_COPY(ubuf, ubuf, 3, half)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 3, float)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 3, bfloat16_t)
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTE_DMA_UB_COPY(ubuf, ubuf, 3, hifloat8_t);
+#endif
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 3, float8_e4m3_t);
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 3, float8_e5m2_t);
 #endif
@@ -1078,6 +1087,9 @@ REGISTE_DMA_UB_COPY(ubuf, cbuf, 3, int16_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 3, uint16_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 3, int32_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 3, uint32_t)
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTE_DMA_UB_COPY(ubuf, cbuf, 3, hifloat8_t)
+#endif
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 3, float8_e4m3_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 3, float8_e5m2_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 3, half)
