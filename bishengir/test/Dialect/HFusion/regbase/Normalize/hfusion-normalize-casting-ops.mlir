@@ -920,3 +920,75 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %1 : tensor<16xi8>
   }
 }
+
+// -----
+
+// CHECK-LABEL: @scalar_f32_to_f8E4M3FN(
+// CHECK: %[[C0:.*]] = arith.constant 0 : index
+// CHECK: %[[INPUT:.*]] = tensor.from_elements %arg0 : tensor<1xf32>
+// CHECK: %[[CAST:.*]] = hfusion.cast {{.*}}round_mode = #hfusion.round_mode<rint>{{.*}} ins(%[[INPUT]] : tensor<1xf32>) outs({{.*}} : tensor<1xf8E4M3FN>) -> tensor<1xf8E4M3FN>
+// CHECK: %[[RESULT:.*]] = tensor.extract %[[CAST]][%[[C0]]] : tensor<1xf8E4M3FN>
+// CHECK-NOT: arith.truncf
+// CHECK: return %[[RESULT]] : f8E4M3FN
+func.func @scalar_f32_to_f8E4M3FN(%arg0: f32) -> f8E4M3FN {
+  %cast = arith.truncf %arg0 : f32 to f8E4M3FN
+  return %cast : f8E4M3FN
+}
+
+// -----
+
+// The broadcast/cast rewrite must still use a tensor conversion for FP8.
+// CHECK-LABEL: @fill_f32_to_f8E4M3FN(
+// CHECK: %[[INPUT:.*]] = tensor.from_elements %arg0 : tensor<1xf32>
+// CHECK: %[[CAST:.*]] = hfusion.cast {{.*}} ins(%[[INPUT]] : tensor<1xf32>) outs({{.*}} : tensor<1xf8E4M3FN>) -> tensor<1xf8E4M3FN>
+// CHECK: %[[SCALAR:.*]] = tensor.extract %[[CAST]][{{.*}}] : tensor<1xf8E4M3FN>
+// CHECK: %[[FILL:.*]] = linalg.fill ins(%[[SCALAR]] : f8E4M3FN) outs({{.*}} : tensor<64xf8E4M3FN>)
+// CHECK: return %[[FILL]]
+func.func @fill_f32_to_f8E4M3FN(%arg0: f32) -> tensor<64xf8E4M3FN> {
+  %empty = tensor.empty() : tensor<64xf32>
+  %filled = linalg.fill ins(%arg0 : f32) outs(%empty : tensor<64xf32>) -> tensor<64xf32>
+  %dst = tensor.empty() : tensor<64xf8E4M3FN>
+  %cast = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%filled : tensor<64xf32>) outs(%dst : tensor<64xf8E4M3FN>) -> tensor<64xf8E4M3FN>
+  return %cast : tensor<64xf8E4M3FN>
+}
+
+// -----
+
+// CHECK-LABEL: @scalar_f32_to_f8E5M2(
+// CHECK: %[[C0:.*]] = arith.constant 0 : index
+// CHECK: %[[INPUT:.*]] = tensor.from_elements %arg0 : tensor<1xf32>
+// CHECK: %[[CAST:.*]] = hfusion.cast {{.*}}round_mode = #hfusion.round_mode<rint>{{.*}} ins(%[[INPUT]] : tensor<1xf32>) outs({{.*}} : tensor<1xf8E5M2>) -> tensor<1xf8E5M2>
+// CHECK: %[[RESULT:.*]] = tensor.extract %[[CAST]][%[[C0]]] : tensor<1xf8E5M2>
+// CHECK-NOT: arith.truncf
+// CHECK: return %[[RESULT]] : f8E5M2
+func.func @scalar_f32_to_f8E5M2(%arg0: f32) -> f8E5M2 {
+  %cast = arith.truncf %arg0 : f32 to f8E5M2
+  return %cast : f8E5M2
+}
+
+// -----
+
+// The broadcast/cast rewrite must still use a tensor conversion for FP8.
+// CHECK-LABEL: @fill_f32_to_f8E5M2(
+// CHECK: %[[INPUT:.*]] = tensor.from_elements %arg0 : tensor<1xf32>
+// CHECK: %[[CAST:.*]] = hfusion.cast {{.*}} ins(%[[INPUT]] : tensor<1xf32>) outs({{.*}} : tensor<1xf8E5M2>) -> tensor<1xf8E5M2>
+// CHECK: %[[SCALAR:.*]] = tensor.extract %[[CAST]][{{.*}}] : tensor<1xf8E5M2>
+// CHECK: %[[FILL:.*]] = linalg.fill ins(%[[SCALAR]] : f8E5M2) outs({{.*}} : tensor<64xf8E5M2>)
+// CHECK: return %[[FILL]]
+func.func @fill_f32_to_f8E5M2(%arg0: f32) -> tensor<64xf8E5M2> {
+  %empty = tensor.empty() : tensor<64xf32>
+  %filled = linalg.fill ins(%arg0 : f32) outs(%empty : tensor<64xf32>) -> tensor<64xf32>
+  %dst = tensor.empty() : tensor<64xf8E5M2>
+  %cast = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%filled : tensor<64xf32>) outs(%dst : tensor<64xf8E5M2>) -> tensor<64xf8E5M2>
+  return %cast : tensor<64xf8E5M2>
+}
+
+// -----
+
+// CHECK-LABEL: @scalar_f32_to_f16(
+// CHECK-NEXT: %[[CAST:.*]] = arith.truncf %arg0 : f32 to f16
+// CHECK-NEXT: return %[[CAST]] : f16
+func.func @scalar_f32_to_f16(%arg0: f32) -> f16 {
+  %cast = arith.truncf %arg0 : f32 to f16
+  return %cast : f16
+}
