@@ -294,6 +294,11 @@ std::string VCastOp::getCastName(bool withMode) {
 }
 
 LogicalResult VCastOp::verify() {
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+  if (getRoundMode() == hivm::RoundMode::HYBRID &&
+      !isa<HiFloat8Type>(getElementTypeOrSelf(getSingleDst().getType())))
+    return emitOpError("HYBRID rounding requires a HiFloat8 result");
+#endif
   /// considering cast f32 to f16 and cast f16 to i8 both support
   /// round/rint/floor/ceil/trunc modes, so cast f32 to i8 supports these
   /// modes.

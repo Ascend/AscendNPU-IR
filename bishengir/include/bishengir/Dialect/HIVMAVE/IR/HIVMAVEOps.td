@@ -235,6 +235,7 @@ def AVE_VFExtFOp : AVE_Op<"vextf", [Pure, AVEElementwiseOpInterface]> {
   let results = (outs AveVector<[F32, BF16, F16]>:$res);
   let assemblyFormat = "$src `,` $part `,` $mask attr-dict `:`"
                        "type($src) `,` type($res) `,` type($mask)";
+  let hasVerifier = 1;
 }
 
 def AVE_VFExtSIOp : AVE_LibFnOp<"vextsi", [Pure, AVEElementwiseOpInterface, DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>]> {
@@ -293,6 +294,7 @@ def AVE_VFTruncFOp : AVE_Op<"vtruncf", [Pure, AVEElementwiseOpInterface]> {
       F8E4M3FN, F8E5M2]>:$res);
   let assemblyFormat = "$src `,` $rnd `,` $sat `,` $part `,` $mask attr-dict `:`"
                        "type($src) `,` type($res) `,` type($mask)";
+  let hasVerifier = 1;
 }
 
 def AVE_VFTruncE8M0FOp : AVE_Op<"vtruncf.e8m0", [Pure, AVEElementwiseOpInterface]> {
@@ -459,11 +461,17 @@ def AVE_VFBroadcastScalarOp : AVE_LibFnOp<"scalar_broadcast", [Pure,DeclareOpInt
   let extraClassDeclaration = opNameDeclaration;
 }
 
+def AVE_VectorBroadcastType : AnyTypeOf<[AveExtValidVector
+#ifdef BSPUB_DAVINCI_BISHENGIR
+    , AveVector<[HiF8]>
+#endif
+    ]>;
+
 def HIVM_VFBroadcastVectorOp : AVE_LibFnOp<"vector_broadcast", [Pure,DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName","getOpLibraryCallInputs"]>]> {
-  let arguments = (ins AveExtValidVector:$src,
+  let arguments = (ins AVE_VectorBroadcastType:$src,
                        AveMaskType:$mask,
                        BoolAttr: $low);
-  let results = (outs AveExtValidVector:$res);
+  let results = (outs AVE_VectorBroadcastType:$res);
   let assemblyFormat = "$src `,` $mask `,` $low attr-dict `:` type($src) `,` type($mask) `->` type($res)";
   let extraClassDeclaration = opNameDeclaration;
 }

@@ -2523,6 +2523,11 @@ void CastOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 LogicalResult CastOp::verify() {
   auto roundMode = getRoundMode();
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+  if (roundMode == hfusion::RoundMode::HYBRID &&
+      !isa<HiFloat8Type>(getElementTypeOrSelf(getOutputs()[0].getType())))
+    return emitOpError("HYBRID rounding requires a HiFloat8 result");
+#endif
   if (roundMode == hfusion::RoundMode::TRUNCWITHOVERFLOW) {
     auto inputType = getElementTypeOrSelf(getInputs()[0].getType());
     auto outputType = getElementTypeOrSelf(getOutputs()[0].getType());

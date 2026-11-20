@@ -247,17 +247,17 @@ public:
   LogicalResult matchAndRewrite(CastOpType castOp,
                                 PatternRewriter &rewriter) const override {
     if (!Traits::shouldNormalizeFillCastToTensorBrc(castOp))
-#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
       return failure();
 
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
     // HiFloat8 conversion is a vector operation. Do not move it to a
     // broadcast's scalar input or a rank-zero temporary tensor.
     if (isa<HiFloat8Type>(
             getElementTypeOrSelf(castOp.getDpsInputs()[0].getType())) ||
         isa<HiFloat8Type>(
             getElementTypeOrSelf(castOp.getDpsInits()[0].getType())))
-#endif
       return failure();
+#endif
 
     Value src = castOp.getDpsInputs()[0];
     if (isa<BlockArgument>(src))

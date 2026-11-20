@@ -1216,11 +1216,7 @@ class HIVM_ElementwiseTernaryOp<string mnemonic, list<Trait> traits = []> :
 def VSelOp : HIVM_ElementwiseTernaryOp<"vsel",
     [OperElemTypeConstraints<[/*condition=*/0], [I1,I8]>,
      OperElemTypeConstraints<[/*src0=*/1, /*src1=*/2],
-                             [I1, AnyI8, AnyI16, F16, BF16,
-#ifdef BSPUB_DAVINCI_BISHENGIR
-                                 HiF8,
-#endif
-                                 F8E4M3FN,
+                             [I1, AnyI8, AnyI16, F16, BF16, F8E4M3FN,
                               F8E5M2, AnyI32, F32, I64, UI64]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface, ["getExtraBufferSize"]>,
      BroadcastableOTF]> {
@@ -1851,11 +1847,7 @@ def VConcatOp : HIVM_VectorOp<"vconcat",
 
 def VGatherOp : HIVM_VectorOp<"vgather",
     [HIVMOpSameOperandsAndResultRank,
-     OperElemTypeConstraints<[0], [I1, I8, I16, UI16, I32, UI32, F16, BF16, F32,
-#ifdef BSPUB_DAVINCI_BISHENGIR
-         HiF8,
-#endif
-         F8E4M3FN, F8E5M2]>,
+     OperElemTypeConstraints<[0], [I1, I8, I16, UI16, I32, UI32, F16, BF16, F32, F8E4M3FN, F8E5M2]>,
      OperElemTypeConstraints<[1], [I16, I32]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,

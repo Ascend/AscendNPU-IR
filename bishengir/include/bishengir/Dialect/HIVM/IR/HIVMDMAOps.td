@@ -700,11 +700,7 @@ def NCHW2C1HWNC0Op : HIVM_DmaOp<"nchw2c1hwnc0", [
 
 def AtomicCasOp : HIVM_Op<"atomic_cas", [
   NoLibraryFunctionTrait,
-  OperElemTypeConstraints<[0], [I8, I16, I32, F16, BF16, F32,
-#ifdef BSPUB_DAVINCI_BISHENGIR
-      HiF8,
-#endif
-      F8E4M3FN,
+  OperElemTypeConstraints<[0], [I8, I16, I32, F16, BF16, F32, F8E4M3FN,
                                 F8E5M2, I64]>,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {

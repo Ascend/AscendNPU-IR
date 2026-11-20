@@ -963,7 +963,11 @@ struct HIVMBroadCastScalarOpLowering : public ConvertOpToLLVMPattern<OpTy> {
       auto i8Type = IntegerType::get(rewriter.getContext(), 8);
       auto i8VecTy =
           VectorType::get(SmallVector<int64_t>{vecTy.getNumElements()}, i8Type);
-      if (isa<Float8E4M3FNType>(elementType) ||
+      if (
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+          isa<HiFloat8Type>(scalar.getType()) ||
+#endif
+          isa<Float8E4M3FNType>(elementType) ||
           isa<Float8E5M2Type>(elementType) ||
           scalar.getType().isFloat8E4M3FN() ||
           scalar.getType().isFloat8E5M2()) {
@@ -2780,11 +2784,6 @@ struct HIVMVecBrcOpPattern
     else
       vdup = vdupLowerToIntrin<VdupmZInstrOp>(vecBrcOp, rewriter);
 
-#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
-    if (!vdup)
-      return rewriter.notifyMatchFailure(vecBrcOp,
-                                         "unsupported vector broadcast type");
-#endif
     rewriter.replaceOp(vecBrcOp, vdup);
     return success();
   }
@@ -3048,11 +3047,8 @@ struct HIVMTypeConvertionOpLowering
               cstValue(srcOp.getSat()), cstValue(srcOp.getPart()));
 #if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
         else if (isa<HiFloat8Type>(outElemType)) {
-          auto mode = srcOp.getRnd();
-          if (mode != hivm::RoundMode::ROUND && mode != hivm::RoundMode::HYBRID)
-            return srcOp.emitError("HiFloat8 supports only ROUND or HYBRID");
           // HIVM HYBRID is 7; CCE ROUND_HYBRID is 6.
-          auto cceRnd = mode == hivm::RoundMode::HYBRID ? 6u : 1u;
+          auto cceRnd = srcOp.getRnd() == hivm::RoundMode::HYBRID ? 6u : 1u;
           newOp = rewriter.create<VcvtffF322HiF8InstrOp>(
               loc, dstVLVectorTy, srcCasted, mask, cstValue(cceRnd),
               cstValue(srcOp.getSat()), cstValue(srcOp.getPart()));
@@ -3185,13 +3181,7 @@ struct HIVMTypeConvertionOpLowering
           loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
     }
     if (!newOp)
-#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
-      return rewriter.notifyMatchFailure(
-          srcOp,
-          "unsupported type conversion; use FP32 as the HiFloat8 bridge");
-#else
       llvm::report_fatal_error("Unsupported type conversion op.");
-#endif
 
     UnrealizedConversionCastOp resultCasted =
         rewriter.create<UnrealizedConversionCastOp>(loc, resType,
@@ -5308,6 +5298,18 @@ struct HIVMAVEToAVEIntrinPass
     // unsupported semantics explicitly rather than leaving AVE ops behind in
     // a partial conversion (in particular, do not use 950 groups on 960).
     auto supported = moduleOp.walk([&](Operation *op) {
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+      // VFTruncFOp verifies its own result type. The remaining AVE conversions
+      // that share the rounding attribute must not forward HYBRID to CCE.
+      if (auto rnd = op->getAttrOfType<hivm::RoundModeAttr>("rnd");
+          rnd && rnd.getValue() == hivm::RoundMode::HYBRID &&
+          op->getName().getDialectNamespace() ==
+              AVEDialect::getDialectNamespace() &&
+          !isa<VFTruncFOp>(op)) {
+        op->emitOpError("HYBRID rounding requires a HiFloat8 result");
+        return WalkResult::interrupt();
+      }
+#endif
       if (isa<GroupReductionOp>(op) && !hacc::utils::isAscend950(moduleOp)) {
         op->emitOpError("group reduction currently supports only Ascend950");
         return WalkResult::interrupt();
@@ -5334,9 +5336,6 @@ struct HIVMAVEToAVEIntrinPass
 
     LLVMConversionTarget target(getContext());
     target.addLegalOp<LLVM::BitcastOp>();
-#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
-    target.addIllegalOp<VFExtFOp>();
-#endif
     target.addLegalDialect<hivm_regbaseintrins::HIVMRegbaseIntrinsDialect>();
     target.addIllegalOp<PregPackOp, PregUnpackOp, PregInterleaveOp,
                         PregDeinterleaveOp, VFRegisterGatherOp,
