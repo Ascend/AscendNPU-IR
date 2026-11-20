@@ -251,6 +251,39 @@ OpTrait::CollapsibleConsecutiveTargetDimsTrait
 | `VFlipOp` | `flip_axis` |
 | `VSortOp` | `sort_axis` |
 | 逐元素操作 | `iterator_types`（broadcast、transpose 数组） |
+| `CustomOp` / `CustomMacroOp` | `iterator_types`、`indexing_map`、`symbol`（按 `flatten_ranks`/`flatten_symbols` 替换） |
+
+### 自定义算子的展平
+
+`hivm.hir.custom` 与 `hivm.hir.custom_macro` 的实现体对编译器不透明，因此展平能力由算子作者显式声明驱动，编译器不做语义猜测。声明分两部分：
+
+- 循环语义：`iterator_types` 的每个元素必须是 `parallel`。任一其他迭代类型使整个算子保持原样；仅以秩为键不能区分折叠后不同的轴语义。
+
+- 折叠后的实现：原生算子的模板库按秩命名，编译器可以在降秩后自行选择模板。自定义算子的实现来自用户 bitcode，`symbol` 对应的函数签名（如 `memref_t<T, 2>`）在编译时已固定，编译器无法改写其秩。作者需为每个可能的折叠后秩提供实现：把操作数折叠到 `flatten_ranks[i]` 维后，改为调用 `flatten_symbols[i]`。折叠后的秩没有对应实现时不展平，算子保持原秩并继续调用 `symbol`。
+
+出现以下任一情况时退化为恒等映射，算子保持原秩与原 `symbol`：
+
+| 情况 | 原因 |
+| ---------------------------------------- | -------------------------------------------------- |
+| 未声明 `iterator_types`，长度与秩不符，元素畸形，或存在非 `parallel` 元素 | 循环语义未知或声明不自洽，不可猜测 |
+| 未声明 `flatten_ranks`/`flatten_symbols`，或 `flatten_ranks` 不含折叠后的秩 | `symbol` 对应的实现按原秩描述符编写，折叠后的操作数没有可调用的实现 |
+| `indexing_map` 非恒等、畸形，或条目数不等于结构化操作数数 | 置换/投影映射无法在折叠后的迭代空间上复现；条目不足时剩余操作数根本未被描述 |
+| 内建算子（`__builtin_*`） | 绑定编译器内建模板，签名由编译器固定 |
+| 操作数携带 `align_dim`（经 `arg_attrs`） | 对齐要求锚定在具体维度上，合并后该要求失去意义 |
+| 算子带 shaped result | 只有操作数被改写，result 会停留在原秩 |
+| 操作数携带非顶层 `memref` 的 shaped 类型（如 `tensor`） | 只有顶层 memref 会被折叠，这类操作数会保持原秩而兄弟操作数已降秩 |
+| 临时缓冲区同时作为 `inputs`/`outputs` 操作数传入 | 改写按值而非按操作数位置进行，折叠其中一处会连带改写另一处 |
+| 各操作数的迭代域不逐维一致 | 恒等 indexing 声称它们共享同一迭代域，折叠会掩盖不一致 |
+| 各操作数秩不一致 | 不构成单一迭代空间 |
+| 操作数的布局没有 strides 形式 | `memref.collapse_shape` 不接受这种操作数，而折叠流水在任何 verifier 之前就去构造折叠后的类型 |
+
+展平后，`symbol` 改为 `flatten_symbols` 中折叠结果秩对应的实现（`bitcode` 不变），`iterator_types` 按折叠结果重建（每个结果维度均为 `parallel`），恒等 `indexing_map` 同步重建为新秩的恒等映射。`flatten_ranks`/`flatten_symbols` 本身保留在算子上。
+
+`tmps` 操作数段声明的临时缓冲区是迭代空间之外的暂存内存，其形状与折叠无关，不会被折叠。
+
+作者声明映射时，必须保证每个函数对全部受支持重关联、形状、偏移量、步长和别名关系均与原函数等价，并保持临时缓冲区和同步契约。全部迭代维度为 `parallel` 并不自动证明这一点，详细约束见[展平属性](custom_op.md#展平属性)。
+
+例如全 `parallel` 的 `memref<4x8x16xf32, strided<[320, 40, 1]>>` 只能合并前两维，产生 `memref<32x16xf32, strided<[40, 1]>>`。表中有二维实现时调用它，只有一维实现时保持三维。若迭代类型改为 `[parallel, parallel, reduction]`，无论表中有哪些秩，都保持原样。
 
 ## 能力与限制
 
@@ -272,10 +305,12 @@ OpTrait::CollapsibleConsecutiveTargetDimsTrait
 | 限制 | 描述 | 规避方案 |
 | ---------------------------- | --------------------------------------------------------- | ------------------------------------------------------- |
 | 仅支持MemRef类型 | 只折叠`MemRefType`操作数 | 张量必须先进行缓冲化（bufferize） |
-| 需要静态形状 | 动态维度可能无法正确折叠 | 优先运行符号方言或形状推断Pass |
+| 动态形状支持有限 | 动态维度本身可以折叠（如`memref<?x7xf32>`），但折叠后的 extent 只能在运行期确定 | 优先运行符号方言或形状推断Pass |
+| 需要 strided 布局 | 布局无法表示成 strides 时（如`affine_map<(d0, d1) -> (d0 floordiv 2, d0 mod 2, d1)>`），`memref.collapse_shape`不接受该操作数 | 折叠前先规范化布局 |
 | 严格屏障模式 | 屏障维度（受限轴）始终保持独立 | 通过`getLimitedAxes()`自动处理 |
 | 转置后向维度 | 某些操作的最后一个维度不能进行OTF转置 | 算法保留最后一个维度不折叠 |
 | 非HIVMStructuredOp | 未实现接口的操作返回恒等映射 | 实现`FlattenInterface` |
+| 自定义算子需显式声明 | 未声明`iterator_types`，或未通过`flatten_ranks`/`flatten_symbols`提供折叠后秩实现的`CustomOp`保持原秩 | 在算子上声明`iterator_types`，并为可能的折叠后秩提供实现 |
 
 **边界情况**：
 

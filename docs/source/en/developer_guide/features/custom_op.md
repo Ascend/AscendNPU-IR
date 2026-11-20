@@ -31,9 +31,10 @@ Custom operators allow users to freely use the interfaces provided by AscendNPU 
 | `VFMode` | The running mode on the vector unit | See `VFModeAttr`. This attribute is ignored when the core type is Cube. Note: Built-in operators may or may not specify it; the compiler checks correctness and normalizes it |
 | `Symbol` | The name of the implementation function | - |
 | `sync_event_slots` | The synchronization slot metadata of a Macro custom operator. `GraphSyncSolver` fills in `sync_related_args` accordingly and injects `set/wait flag` before and after the macro. | The list length must match the number of `set_flag`/`wait_flag` pairs on the same pipe pair within the macro implementation body. See [Macro sync_event_slots](#macro-operator-synchronization-slots-sync_event_slots) for details |
-| `iterator_types` | Operand-by-operand iterator semantics, used by structured lowering and flatten-type Passes (`HIVM_IteratorTypeAttr`) | Optional; when set, the length should cover the inputs and outputs participating in tiling |
+| `iterator_types` | Iterator semantics per iteration-space dimension, used by structured lowering and flatten Passes (`HIVM_IteratorTypeAttr`) | Optional; when set, its length is the rank of the iteration space shared by the operands, not the number of operands |
 | `indexing_map` | Operand-by-operand affine index mapping (same role as Linalg's `indexing_maps`) | Optional, of type `ArrayAttr<AffineMapAttr>` |
-| `max_rank` | The maximum tensor rank supported by flatten/layout-type Passes | Optional `i64` attribute, default value 5 |
+| `max_rank` | The maximum tensor rank supported by layout-type Passes | Optional `i64` attribute, default value 5 |
+| `flatten_ranks` / `flatten_symbols` | Implementation symbols for the ranks produced by `hivm-flatten-ops`. After collapsing to `flatten_ranks[i]`, the operator calls `flatten_symbols[i]` instead of `symbol`; a rank without an entry leaves the operator unchanged | Optional and paired. `flatten_ranks` is an `ArrayAttr` of distinct positive integer values representable as signed 64-bit integers; `flatten_symbols` is an `ArrayAttr<StringAttr>` of the same length. See [Flatten Attributes](#flatten-attributes) |
 | `align_dim` | Operand-by-operand dimension alignment hint | Attached to the corresponding operand via `arg_attrs` |
 | `arg_attrs` | Operand-by-operand dictionary attribute array | Of type `ArrayAttr` (for example, `{align_dim = 1 : i64}` on operand 2). The Triton frontend generates it automatically based on `align_dim` on the registered class |
 | `extra_buffers_types` | The element types of temporary buffers | `memref` is allocated by the `hivm-alloc-extra-buffer` Pass and appended to `temp_buffers` (`tmps` in assembly) |
@@ -75,9 +76,10 @@ Custom operators allow users to freely use the interfaces provided by AscendNPU 
 | VFMode | Running mode of the custom operator on the vector core: SIMT/SIMD/MIX |
 | Symbol | Function name provided by the user |
 | sync_event_slots | Macro synchronization slot declaration, used for GraphSyncSolver integration |
-| iterator_types | Operand-by-operand iterator semantics for tiling / flatten |
+| iterator_types | Iterator semantics per iteration-space dimension for tiling and flatten Passes; its length is the rank shared by the operands, not the number of operands |
 | indexing_map | Operand-by-operand affine mapping for structured lowering |
 | max_rank | Maximum tensor rank supported by the layout Pass (default 5) |
+| flatten_ranks / flatten_symbols | Implementation symbol per collapsed rank for the flatten Pass |
 | align_dim / arg_attrs | Operand-by-operand alignment hints for the alignment adjustment Pass |
 | extra_buffers_* / tmps | Temporary buffer declaration and allocation |
 | no_side_effect | Pure operator marker for optimization |
@@ -93,7 +95,16 @@ The current custom operator system has two capabilities that are still being imp
 
 - **Incomplete adaptation of Pass interaction**
 
-  The transformation passes for various custom operators, including Flatten optimization, alignment adjustment, memory planning, and layout transformation, still require additional adaptation logic, and the related work is in progress.
+  The transformation passes for various custom operators, including alignment adjustment, memory planning, and layout transformation, still require additional adaptation logic, and the related work is in progress.
+
+Flatten optimization is supported when a custom operator declares `iterator_types`
+and provides the implementation for the collapsed rank through `flatten_ranks` /
+`flatten_symbols`. Every iterator must be `parallel`; other iterator kinds leave
+the whole operator unchanged. The pass selects `symbol` for the produced rank.
+Operators without those declarations, ranks without an implementation, built-in
+operators, non-identity `indexing_map` values, and operands with `align_dim` keep
+their rank and symbol. Temporary buffers in `tmps` are never collapsed. See
+[Auto Flatten](auto_flatten.md) and the [flatten attribute contract](#flatten-attributes).
 
 ## MLIR Example
 
@@ -240,6 +251,115 @@ class tiled_custom_op:
         ]
 ```
 
+(flatten-attributes)=
+
+#### Flatten Attributes
+
+`hivm-flatten-ops` merges neighbouring `parallel` dimensions into one (see
+[Auto Flatten](auto_flatten.md)), which lowers the rank of the
+memref descriptors handed to the device implementation. A custom op is
+implemented by user bitcode, and the signature behind `symbol` (say
+`memref_t<T, 2>`) is fixed when that bitcode is built, so the compiler cannot
+re-rank it. Flattening a custom op therefore requires the author to provide the
+implementation for each rank the operands may be collapsed to:
+
+- `flatten_ranks[i]`: a rank the collapse may produce;
+- `flatten_symbols[i]`: the function to call once the operands are collapsed to
+  that rank. It lives in the same `bitcode` as `symbol`.
+
+`max_rank` bounds the rank of the library call signature derived by
+`LibraryFunctionOpInterface`. The flatten pass does not read it.
+
+For an eligible all-`parallel` op, the pass uses the operand shapes and layouts
+to determine which dimensions can be merged. If the resulting lower rank has
+an entry in `flatten_ranks`, the pass inserts `memref.collapse_shape` and sets
+`symbol` to the corresponding `flatten_symbols` entry. Otherwise it keeps the
+original rank and symbol. A partially contiguous layout may retain several
+dimensions. A `reduction`, `cumulative`, or other non-`parallel` iterator
+also preserves the original rank and symbol.
+
+Declaring a table entry promises equivalence to the original implementation for
+every supported reassociation, static or dynamic shape, offset, stride and
+aliasing relationship that can select that entry. `parallel` alone does not
+prove that an implementation is independent of the original coordinates or
+shape decomposition. Do not declare the entry if required information cannot
+be recovered from the preserved arguments.
+
+Input and output memref descriptors must use the selected rank. Element types,
+address spaces, argument order, scalar and temporary-buffer arguments, results,
+side effects, core, pipe and VF mode must remain compatible. A `CustomMacroOp`
+must also preserve its synchronization slots and event-argument contract.
+Partially contiguous does not mean densely packed: device code must honor the
+actual descriptor offsets and strides. Attribute verification does not prove
+the bitcode signature or algorithm.
+
+A rank alone cannot describe general axis-dependent computation: two original
+views can collapse to identical descriptors yet require computation along
+different axes. The updated iterator attributes are not passed to device
+functions, so these ops are not flattened.
+
+MLIR example:
+
+```mlir
+// Before: `symbol` is the rank-2 implementation, a rank-1 one is declared too
+hivm.hir.custom
+    {hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+     hivm.pipe = #hivm.pipe<PIPE_V>,
+     hivm.vf_mode = #hivm.vf_mode<SIMD>,
+     symbol = "custom_add_2d",
+     flatten_ranks = [1 : i64],
+     flatten_symbols = ["custom_add_1d"],
+     iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>],
+     bitcode = "/path/to/add.bc"}
+    "add"
+    ins(%a, %b : memref<4x8xi32>, memref<4x8xi32>)
+    outs(%c : memref<4x8xi32>)
+
+// After: operands collapsed to rank 1, `symbol` switched to the rank-1 implementation
+%a1 = memref.collapse_shape %a [[0, 1]] : memref<4x8xi32> into memref<32xi32>
+%b1 = memref.collapse_shape %b [[0, 1]] : memref<4x8xi32> into memref<32xi32>
+%c1 = memref.collapse_shape %c [[0, 1]] : memref<4x8xi32> into memref<32xi32>
+hivm.hir.custom
+    {symbol = "custom_add_1d",
+     flatten_ranks = [1 : i64],
+     flatten_symbols = ["custom_add_1d"],
+     iterator_types = [#hivm.iterator_type<parallel>], ...}
+    "add"
+    ins(%a1, %b1 : memref<32xi32>, memref<32xi32>)
+    outs(%c1 : memref<32xi32>)
+```
+
+The device code provides both entry points in the same bitcode (descriptor
+type as in the [Triton example](#triton-custom-operator-example)):
+
+```cpp
+extern "C" {
+__aiv__ void _mlir_ciface_custom_add_2d(memref_t<__ubuf__ int32_t, 2> *src0,
+                                        memref_t<__ubuf__ int32_t, 2> *src1,
+                                        memref_t<__ubuf__ int32_t, 2> *dst);
+__aiv__ void _mlir_ciface_custom_add_1d(memref_t<__ubuf__ int32_t, 1> *src0,
+                                        memref_t<__ubuf__ int32_t, 1> *src1,
+                                        memref_t<__ubuf__ int32_t, 1> *dst);
+}
+```
+
+Triton registration (the per-rank mapping on the class is emitted as the two
+attributes above):
+
+```python
+@al.register_custom_op
+class add:
+    core = al.CORE.VECTOR
+    pipe = al.PIPE.PIPE_V
+    mode = al.MODE.SIMD
+    iterator_types = [al.IteratorType.Parallel, al.IteratorType.Parallel]
+
+    def __init__(self, a, b, out=None):
+        self.symbol = "custom_add_2d"
+        self.flatten_symbols = {1: "custom_add_1d"}   # called once collapsed to rank 1
+        self.bitcode = "add.bc"
+```
+
 #### Operand Alignment Attributes (align_dim, arg_attrs)
 
 `align_dim` is used to mark the dimension of a specified operand that needs to be aligned. In MLIR, this attribute is attached to the operand at the corresponding index through `arg_attrs`. An example is as follows:
@@ -306,6 +426,9 @@ This attribute marks a pure operator that only reads inputs and only writes decl
 ```
 
 <!-- npu="A3,910b" id1 -->
+
+(triton-custom-operator-example)=
+
 ### Triton custom operator example
 
 **Note:**
