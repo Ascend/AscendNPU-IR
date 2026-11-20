@@ -30,6 +30,7 @@
 // PRE: cv-pipelining
 // PRE: hivm-normalize-matmul
 // FULL: hivm-vectorize{phase=tensor}
+// FULL-NEXT: canonicalize
 // FULL-NOT: hfusion-merge-vf
 // FULL: hfusion-simplify-vf-arg
 // FULL: tensor-copy-insertion

@@ -314,7 +314,7 @@ def VFOperandSubstitution
 def PlanMemory : HIVMPass<"hivm-plan-memory", "ModuleOp"> {
   let summary = "Plan memory for HIVM Ops";
   let constructor = "mlir::hivm::createPlanMemoryPass()";
-  let dependentDialects = ["hivm::HIVMDialect", "annotation::AnnotationDialect"];
+  let dependentDialects = ["hivm::HIVMDialect", ];
   let options =
       [Option<"memMode", "mem-plan-mode", "hivm::MemPlanMode",
               "hivm::MemPlanMode::LOCAL_MEM_PLAN",
