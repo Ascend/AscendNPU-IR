@@ -160,3 +160,24 @@ target_link_options(BiShengIRHIVMPartitionTests PRIVATE -fuse-ld=lld)
 if(TARGET check-bishengir)
   add_dependencies(check-bishengir run-BiShengIRHIVMPartitionTests)
 endif()
+
+add_bishengir_unittest(BiShengIRHIVMCustomOpMemoryEffectsTests
+  PARTIAL_SOURCES_INTENDED
+  CustomOpMemoryEffectsTest.cpp
+)
+
+target_link_libraries(BiShengIRHIVMCustomOpMemoryEffectsTests PRIVATE
+  BiShengIRHIVMDialect
+  MLIRFuncDialect
+  MLIRIR
+  MLIRParser
+  MLIRSideEffectInterfaces
+)
+
+# The default bishengir link flags use lld-only options; keep this target
+# linkable when the test binary is built directly from CMake.
+target_link_options(BiShengIRHIVMCustomOpMemoryEffectsTests PRIVATE -fuse-ld=lld)
+
+if(TARGET check-bishengir)
+  add_dependencies(check-bishengir run-BiShengIRHIVMCustomOpMemoryEffectsTests)
+endif()
