@@ -1583,21 +1583,6 @@ public:
     return row;
   }
 
-  void sinkMask() {
-    rewriter.setInsertionPoint(core.copy);
-    IRMapping mapping;
-    for (auto [tensor, read] : mask->rowReads)
-      mapping.map(read, read);
-    Value valid = emitPredicate(mapping);
-    auto guard =
-        rewriter.create<scf::IfOp>(core.copy.getLoc(), valid, !hoistedFill);
-    core.copy->moveBefore(guard.thenBlock()->getTerminator());
-    if (!hoistedFill) {
-      rewriter.setInsertionPointToStart(guard.elseBlock());
-      emitFill(mapping);
-    }
-  }
-
 private:
   Value emitPredicate(IRMapping &mapping) {
     if (mask) {
@@ -1761,15 +1746,16 @@ static bool optimizeRowGather(scf::ForOp loop, bool fallbackLoop,
   RowTransfer transfer;
   if (failed(matchRowGather(loop, transfer, rewriter)))
     return false;
+  // Fill hoisting and mask sinking are only performed as part of pairing, so a
+  // loop whose rows cannot be paired is left untouched.
+  if ((transfer.tripCount && *transfer.tripCount < 2) ||
+      failed(verifyRowTransfer(transfer, rewriter)))
+    return false;
   RowObservers observers(transfer.core);
   auto mask =
       matchRowMask(transfer.core, transfer.coversTile,
                    transfer.core.slice.getMixedOffsets()[0].dyn_cast<Value>(),
                    observers, dominance, rewriter);
-  bool pair = (!transfer.tripCount || *transfer.tripCount >= 2) &&
-              succeeded(verifyRowTransfer(transfer, rewriter));
-  if (!pair && !mask)
-    return false;
   auto *maskPlan = mask ? &*mask : nullptr;
   auto fill = analyzeHoistedFill(transfer, maskPlan, observers, dominance);
 
@@ -1777,10 +1763,7 @@ static bool optimizeRowGather(scf::ForOp loop, bool fallbackLoop,
   rewriter.setInsertionPoint(loop);
   if (fill)
     rows.emitHoistedFill(*fill);
-  if (pair)
-    emitRowDMA(transfer, rows, fallbackLoop, rewriter);
-  else
-    rows.sinkMask();
+  emitRowDMA(transfer, rows, fallbackLoop, rewriter);
   if (mask)
     eraseRowSelection(*mask, rewriter);
   return true;

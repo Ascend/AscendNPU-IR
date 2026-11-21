@@ -107,21 +107,18 @@ module attributes {hacc.target = #hacc.target<"Ascend960">} {
 }
 
 // -----
-// A source subview needs no reinterpret descriptor for mask sinking. A private
-// padded destination need not be dense. Live metadata observations through a
-// transparent tile cast do not read data or defeat private ownership.
+// A valid row mask is not sunk when the destination cannot be paired: the
+// padded destination tile is not dense, so the loop stays untouched. Live
+// metadata observations through a transparent tile cast do not read data.
 // CHECK-LABEL: func.func @metadata_mask_without_descriptor(
-// CHECK: hivm.hir.vbrc
 // CHECK: scf.for {{.*}} step %c1
-// CHECK: tensor.extract
-// CHECK-NOT: tensor.extract
-// CHECK: scf.if
 // CHECK: hivm.hir.load
-// CHECK-NOT: tensor.extract
-// CHECK-NOT: arith.select
-// CHECK: %[[DIM:.*]] = tensor.dim
-// CHECK-NOT: arith.select
-// CHECK: return {{.*}}, %[[DIM]] : tensor<4x8xf32>, index
+// CHECK: } {hivm.parallel_loop}
+// CHECK-NOT: hivm.hir.vbrc
+// CHECK-NOT: scf.if
+// CHECK: %[[DIM:.*]] = tensor.dim %{{.*}}, %c0 : tensor<?x8xf32>
+// CHECK: %[[SEL:.*]] = arith.select
+// CHECK: return %[[SEL]], %[[DIM]] : tensor<4x8xf32>, index
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @metadata_mask_without_descriptor(%base: memref<?x8xf32>, %ids: tensor<4xi32>) -> (tensor<4x8xf32>, index)
       attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
