@@ -559,6 +559,12 @@ def LegalizeBF16Pass : Pass<"hfusion-legalize-bf16", "func::FuncOp"> {
   let summary = "normalize BF16 to FP32.";
   let constructor = "mlir::hfusion::createLegalizeBF16Pass()";
   let dependentDialects = ["linalg::LinalgDialect", "hfusion::HFusionDialect"];
+  let options = [
+    Option<"enableBf16", "enable-bf16", "bool", /*default=*/"false",
+           "Keep BF16 element types on the native Ascend 950 vector "
+           "instructions (add/sub/mul/min/max/cmp/sel) instead of "
+           "legalizing them to FP32.">
+  ];
 }
 
 def LegalizeFP8Pass : Pass<"hfusion-legalize-fp8", "func::FuncOp"> {
