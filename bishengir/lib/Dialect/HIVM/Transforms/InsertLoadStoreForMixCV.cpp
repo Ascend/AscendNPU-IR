@@ -1171,8 +1171,9 @@ static FailureOr<uint64_t> getBlockElemsFor32BAlign(Type elemType) {
 /// %54 = tensor.empty() : tensor<16x16xf32>
 /// %55 = hivm.hir.mmadL1 ins(%copy, %52, %true, %c16, %c16, %c16 : ...
 
+template <typename MmadOpType>
 LogicalResult
-insertConvertLayout(PatternRewriter &rewriter, hivm::MmadL1Op mmadOp,
+insertConvertLayout(PatternRewriter &rewriter, MmadOpType mmadOp,
                     const llvm::SmallVector<OpOperand *> &consumerOperands) {
   if (consumerOperands.empty()) {
     return failure();
@@ -1191,8 +1192,9 @@ insertConvertLayout(PatternRewriter &rewriter, hivm::MmadL1Op mmadOp,
     rewriter.setInsertionPoint(consumerOp);
 
     // TODO: Consider encapsulating it as an nd2dz function
-    int64_t M = tensorType.getDimSize(0);
-    int64_t N = tensorType.getDimSize(1);
+    int64_t rank = tensorType.getRank();
+    int64_t M = tensorType.getDimSize(rank - 2);
+    int64_t N = tensorType.getDimSize(rank - 1);
     bool isA = (origTensor == mmadOp.getA());
     bool isTranspose = isA ? mmadOp.getATranspose().has_value()
                            : mmadOp.getBTranspose().has_value();
@@ -1205,7 +1207,10 @@ insertConvertLayout(PatternRewriter &rewriter, hivm::MmadL1Op mmadOp,
     if ((M != ShapedType::kDynamic && (M % alignM)) || (newN != N)) {
       int64_t newM = static_cast<int64_t>(
           AlignUp(static_cast<uint64_t>(M), static_cast<uint64_t>(alignM)));
-      auto paddedType = RankedTensorType::get({newM, newN}, elemType);
+      SmallVector<int64_t> paddedShape(tensorType.getShape());
+      paddedShape[rank - 2] = newM;
+      paddedShape[rank - 1] = newN;
+      auto paddedType = RankedTensorType::get(paddedShape, elemType);
       Value zeroConst = rewriter.create<arith::ConstantOp>(
           loc, elemType, rewriter.getZeroAttr(elemType));
 
@@ -1214,12 +1219,11 @@ insertConvertLayout(PatternRewriter &rewriter, hivm::MmadL1Op mmadOp,
       auto vbrcOp = rewriter.create<hivm::VBrcOp>(loc, paddedType, zeroConst,
                                                   emptyForVbrc);
       Value initializedMatrix = vbrcOp->getResult(0);
-      SmallVector<OpFoldResult> offsets = {rewriter.getIndexAttr(0),
-                                           rewriter.getIndexAttr(0)};
-      SmallVector<OpFoldResult> sizes = {rewriter.getIndexAttr(M),
-                                         rewriter.getIndexAttr(N)};
-      SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1),
-                                           rewriter.getIndexAttr(1)};
+      SmallVector<OpFoldResult> offsets(rank, rewriter.getIndexAttr(0));
+      SmallVector<OpFoldResult> sizes;
+      SmallVector<OpFoldResult> strides(rank, rewriter.getIndexAttr(1));
+      for (int64_t dim : tensorType.getShape())
+        sizes.push_back(rewriter.getIndexAttr(dim));
       origTensor = rewriter.create<tensor::InsertSliceOp>(
           loc, origTensor, initializedMatrix, offsets, sizes, strides);
       tensorType = mlir::cast<RankedTensorType>(origTensor.getType());
@@ -1227,7 +1231,6 @@ insertConvertLayout(PatternRewriter &rewriter, hivm::MmadL1Op mmadOp,
       N = newN;
     }
 
-    SmallVector<ReassociationIndices> reassociation = {{0}, {1, 2}};
     auto blkOr = getBlockElemsFor32BAlign(elemType);
     if (failed(blkOr)) {
       return consumerOp->emitOpError()
@@ -1239,18 +1242,36 @@ insertConvertLayout(PatternRewriter &rewriter, hivm::MmadL1Op mmadOp,
     int64_t M1 = M / alignM;
     // TODO: enhance UB alignment
     int64_t N1 = N / blk;
-    auto dstTy = RankedTensorType::get({M, N1, blk}, elemType);
+    SmallVector<int64_t> batchShape(tensorType.getShape().drop_back(2));
+    SmallVector<int64_t> expandedShape(batchShape);
+    expandedShape.append({M, N1, blk});
+    SmallVector<ReassociationIndices> reassociation;
+    for (int64_t i = 0; i < rank - 1; ++i)
+      reassociation.push_back({i});
+    reassociation.push_back({rank - 1, rank});
+    auto dstTy = RankedTensorType::get(expandedShape, elemType);
     auto expandOp = rewriter.create<tensor::ExpandShapeOp>(
         loc, dstTy, origTensor, reassociation);
-    auto emptyTensorType = RankedTensorType::get({N1, M, blk}, elemType);
+    SmallVector<int64_t> transposedShape(batchShape);
+    transposedShape.append({N1, M, blk});
+    auto emptyTensorType = RankedTensorType::get(transposedShape, elemType);
     auto emptyTransposed = rewriter.create<tensor::EmptyOp>(
         loc, emptyTensorType.getShape(), emptyTensorType.getElementType());
-    SmallVector<int64_t> premVec = {1, 0, 2};
+    SmallVector<int64_t> premVec;
+    for (int64_t i = 0; i < rank - 2; ++i)
+      premVec.push_back(i);
+    premVec.append({rank - 1, rank - 2, rank});
     auto transposed = rewriter.create<hivm::VTransposeOp>(
         loc, emptyTransposed->getResultTypes(), expandOp.getResult(),
         emptyTransposed.getResult(), rewriter.getDenseI64ArrayAttr(premVec));
-    auto nzTy = RankedTensorType::get({N1, M1, alignM, blk}, elemType);
-    SmallVector<ReassociationIndices> nzReassoc = {{0}, {1, 2}, {3}};
+    SmallVector<int64_t> nzShape(batchShape);
+    nzShape.append({N1, M1, alignM, blk});
+    auto nzTy = RankedTensorType::get(nzShape, elemType);
+    SmallVector<ReassociationIndices> nzReassoc;
+    for (int64_t i = 0; i < rank - 1; ++i)
+      nzReassoc.push_back({i});
+    nzReassoc.push_back({rank - 1, rank});
+    nzReassoc.push_back({rank + 1});
     auto nzOp = rewriter.create<tensor::ExpandShapeOp>(
         loc, nzTy, transposed->getResult(0), nzReassoc);
     rewriter.modifyOpInPlace(consumerOp, [&]() { consumerOperand->set(nzOp); });
@@ -1273,11 +1294,11 @@ template <typename... OpTypes> static bool traceVector(Value v) {
           ...);
 }
 
-template <typename OpType>
-struct AddConvertLayoutUBToL1 : public OpRewritePattern<hivm::MmadL1Op> {
-  using OpRewritePattern<hivm::MmadL1Op>::OpRewritePattern;
+template <typename OpType, typename MmadOpType = hivm::MmadL1Op>
+struct AddConvertLayoutUBToL1 : public OpRewritePattern<MmadOpType> {
+  using OpRewritePattern<MmadOpType>::OpRewritePattern;
   ~AddConvertLayoutUBToL1() override = default;
-  LogicalResult matchAndRewrite(hivm::MmadL1Op op,
+  LogicalResult matchAndRewrite(MmadOpType op,
                                 PatternRewriter &rewriter) const override {
     bool changed = false;
     for (OpOperand *operand : op.getDpsInputOperands()) {
@@ -1359,10 +1380,11 @@ struct AddConvertLayoutUBToL1 : public OpRewritePattern<hivm::MmadL1Op> {
       llvm::SmallVector<OpOperand *> consumerOperands{operand};
       bool isBiasOperand = (beforeValue == op.getPerChannelBias());
       auto tensorType = mlir::dyn_cast<RankedTensorType>(beforeValue.getType());
-      // Only rank-2 tensors (original ND format) need to be transposed.
-      // After ND2NZ conversion the tensor becomes rank-4 (NZ format), so
-      // transposition is not required.
-      bool needTransposed = (tensorType.getRank() == 2);
+      // A matrix is rank-2, while a batched matrix is rank-3. Their converted
+      // fractal layouts are rank-4 and rank-5 respectively.
+      int64_t expectedNDRank =
+          std::is_same_v<MmadOpType, hivm::BatchMmadL1Op> ? 3 : 2;
+      bool needTransposed = tensorType.getRank() == expectedNDRank;
       if (isBiasOperand || !needTransposed)
         continue;
       LogicalResult result =
@@ -1477,12 +1499,27 @@ void populateAddConvertLayoutUBToL1(RewritePatternSet &patterns) {
   (patterns.add<AddConvertLayoutUBToL1<OpTypes>>(patterns.getContext()), ...);
 }
 
+template <typename... OpTypes>
+void populateBatchAddConvertLayoutUBToL1(RewritePatternSet &patterns) {
+  (patterns.add<AddConvertLayoutUBToL1<OpTypes, hivm::BatchMmadL1Op>>(
+       patterns.getContext()),
+   ...);
+}
+
 LogicalResult
 InsertLoadStoreForMixCVPass::addConvertLayoutUBToL1(func::FuncOp funcOp) {
   RewritePatternSet patterns(funcOp.getContext());
   GreedyRewriteConfig rewriteConfig;
   populateAddConvertLayoutUBToL1<
       tensor::InsertSliceOp, hivm::FixpipeOp, func::CallOp, mlir::scf::ForOp,
+      hivm::IndirectLoadOp, hivm::StrideLoadOp, mlir::hivm::GatherLoadOp,
+      mlir::scope::ScopeOp, tensor::CollapseShapeOp, bufferization::ToTensorOp,
+      memref::AllocOp,
+#define GET_OP_LIST
+#include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
+      >(patterns);
+  populateBatchAddConvertLayoutUBToL1<
+      tensor::InsertSliceOp, func::CallOp, mlir::scf::ForOp,
       hivm::IndirectLoadOp, hivm::StrideLoadOp, mlir::hivm::GatherLoadOp,
       mlir::scope::ScopeOp, tensor::CollapseShapeOp, bufferization::ToTensorOp,
       memref::AllocOp,
@@ -1497,6 +1534,9 @@ InsertLoadStoreForMixCVPass::addConvertLayoutUBToL1(func::FuncOp funcOp) {
 
   funcOp->walk(
       [](hivm::MmadL1Op op) -> void { op->removeAttr(kConvertLayoutOperand); });
+  funcOp->walk([](hivm::BatchMmadL1Op op) -> void {
+    op->removeAttr(kConvertLayoutOperand);
+  });
   return success();
 }
 

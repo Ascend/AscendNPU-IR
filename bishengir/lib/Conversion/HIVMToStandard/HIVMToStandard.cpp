@@ -424,6 +424,7 @@ private:
     }
 
     auto syncRelatedArgs = op.getSyncRelatedArgs();
+    additionalArgs.push_back(op.getPingPongSignalLibValue(rewriter));
     std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
               std::back_inserter(additionalArgs));
 

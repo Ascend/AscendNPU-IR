@@ -27,6 +27,11 @@ on:
         description: '目标架构: x86_64 或 aarch64'
         required: true
         type: string
+      branch:
+        description: '检出分支，留空表示使用触发流水线的 ref'
+        required: false
+        type: string
+        default: ''
       runner_os:
         description: 'runner 标签 os 的值，如 ubuntu 或 euler'
         required: false
@@ -111,7 +116,8 @@ jobs:
           if [ -z "$START_TS" ]; then
             START_TS="$(date -u -d '+8 hours' +%Y%m%d%H%M%S)"
           fi
-          BUILD_DATE="$(printf '%s' "$START_TS" | cut -c1-4)/$(printf '%s' "$START_TS" | cut -c5-6)/$(printf '%s' "$START_TS" | cut -c7-8)"
+          # yyyyMMdd 形式的日期，如 20261119
+          BUILD_DATE="$(printf '%s' "$START_TS" | cut -c1-8)"
           BUILD_TIME="$(printf '%s' "$START_TS" | cut -c1-8)-$(printf '%s' "$START_TS" | cut -c9-14)"
 
           echo "build_date=${BUILD_DATE}" >> "$ATOMGIT_OUTPUT"
@@ -123,7 +129,14 @@ jobs:
           echo "build_time: ${BUILD_TIME}"
 
       - name: Checkout code
+        if: ${{ inputs.branch == '' }}
         uses: checkout
+
+      - name: Checkout code (target branch)
+        if: ${{ inputs.branch != '' }}
+        uses: checkout
+        with:
+          ref: ${{ inputs.branch }}
 
       - name: Configure git safe directory
         run: git config --global --add safe.directory '*'
@@ -199,6 +212,8 @@ jobs:
 
           EVENT_NAME="${{ atomgit.event_name }}"
           SHA="$(printf '%s' "${{ atomgit.sha }}" | cut -c1-13)"
+          # 归档目录使用的分支名：优先用入参 branch，否则取触发 ref 的短名
+          BRANCH_NAME="${{ inputs.branch || atomgit.ref_name }}"
           # OBS 前缀根目录由参数传入，去掉结尾多余的 /
           OBS_ROOT="${OBS_ROOT:-ascendnpu-ir}"
           OBS_ROOT="${OBS_ROOT%/}"
@@ -208,12 +223,12 @@ jobs:
             PR_ID="${{ atomgit.event.pull_request.number }}"
             PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}-pr${PR_ID}-${SHA}_linux-${ARCH}"
             OBS_PREFIX="${OBS_ROOT}/snapshots/pr/"
-          elif [ "$EVENT_NAME" = "Scheduler" ]; then
-            # event_name = schedule；分支取 ref_name，时间取构建触发时间
+          elif [ "$EVENT_NAME" = "Scheduler" ] || [ "$EVENT_NAME" = "Push" ]; then
+            # event_name = schedule / push（PR 合入）；命名与归档一致
             PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}-${{ steps.trigger.outputs.build_time }}-${SHA}_linux-${ARCH}"
-            OBS_PREFIX="${OBS_ROOT}/snapshots/${{ atomgit.ref_name }}/${{ steps.trigger.outputs.build_date }}/"
+            OBS_PREFIX="${OBS_ROOT}/snapshots/${BRANCH_NAME}/${{ steps.trigger.outputs.build_date }}/"
           else
-            echo "unsupported event_name: ${EVENT_NAME}, only MR / Scheduler are allowed" >&2
+            echo "unsupported event_name: ${EVENT_NAME}, only MR / Scheduler / Push are allowed" >&2
             exit 1
           fi
           mv "./cicd/CI/ascendnpu-ir_${PACKAGE_VERSION}_linux-${ARCH}.run" "./${PKG_NAME}.run"
@@ -232,7 +247,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload artifact to OBS
-        if: ${{ atomgit.event_name == 'Scheduler' }}
+        if: ${{ atomgit.event_name == 'Scheduler' || atomgit.event_name == 'Push' }}
         uses: obs-upload
         with:
           endpoint: "https://obs.cn-south-1.myhuaweicloud.com"

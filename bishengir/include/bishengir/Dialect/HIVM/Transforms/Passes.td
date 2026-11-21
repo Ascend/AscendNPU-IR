@@ -21,6 +21,15 @@
 include "mlir/Pass/PassBase.td"
 include "bishengir/Dialect/HIVM/Transforms/HIVMPass.td"
 
+def PromoteL1Gather : HIVMPass<"hivm-promote-l1-gather", "func::FuncOp"> {
+  let summary = "Promote explicitly hinted row gathers consumed by matmul to L1";
+  let constructor = "mlir::hivm::createPromoteL1GatherPass()";
+  let dependentDialects = ["annotation::AnnotationDialect", "arith::ArithDialect",
+    "bufferization::BufferizationDialect", "hivm::HIVMDialect",
+    "memref::MemRefDialect", "scf::SCFDialect", "tensor::TensorDialect",
+    "affine::AffineDialect"];
+}
+
 def InferFuncCoreType : HIVMPass<"hivm-infer-func-core-type", "ModuleOp"> {
   let summary = "Infer the core type of each function";
   let constructor = "mlir::hivm::createInferFuncCoreTypePass()";
@@ -1083,6 +1092,24 @@ def SinkOpToConsumerInLoop
   let dependentDialects = ["hivm::HIVMDialect"];
 }
 
+def SinkScalarReadback : HIVMPass<"hivm-sink-scalar-readback", "func::FuncOp"> {
+  let summary = "Sink scalar readback chains to their consumers.";
+  let description = [{
+    Move a scalar readback chain (`tensor.extract` of a single element of a
+    tensor produced by a vector function call, plus the pure scalar
+    computation that depends on it) down to its earliest consumer in the same
+    block.
+
+    The chain is memory-effect-free, so no alias analysis is needed.  The pass
+    runs in the tensor/SSA stage, before bufferization and before
+    graph-sync-solver, so the sync solver derives the V->S flags from the
+    consumer position instead of blocking the scalar core right after the
+    producer call.
+  }];
+  let constructor = "mlir::hivm::createSinkScalarReadbackPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "tensor::TensorDialect"];
+}
+
 def AlignAllocSize : HIVMPass<"hivm-align-alloc-size", "mlir::ModuleOp"> {
   let summary =
       "Automatically align memref.alloc size for special hivm op that "
@@ -1999,6 +2026,23 @@ def FuseTransposeIntoLoad
                            "hivm::HIVMDialect", "linalg::LinalgDialect",
                            "memref::MemRefDialect", "scf::SCFDialect",
   ];
+}
+
+def FuseOpIntoLoad : HIVMPass<"hivm-fuse-op-into-load", "ModuleOp"> {
+  let summary = "Fuse proven same-function operations into A6 loads";
+  let description = [{
+    Register the supported static broadcast patterns together.
+    The MLIR pattern driver applies them within the nearest A6 module,
+    without unrelated folding, constant CSE or region simplification. Nested
+    modules are not processed by an outer module invocation. Combined
+    pad-to-broadcast chains remain unsupported.
+  }];
+  let constructor = "mlir::hivm::createFuseOpIntoLoadPass()";
+  let dependentDialects = ["arith::ArithDialect",
+                           "bufferization::BufferizationDialect",
+                           "func::FuncDialect", "hivm::HIVMDialect",
+                           "linalg::LinalgDialect", "memref::MemRefDialect",
+                           "scf::SCFDialect", "tensor::TensorDialect"];
 }
 
 def DecomposeAllocTensorCopy

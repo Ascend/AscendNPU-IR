@@ -1314,6 +1314,18 @@ def HIVM_CVPipelinedMultiBufferAttr
   }];
 }
 
+def HIVM_PingPongSignalAttr : HIVM_Attr<"PingPongSignal", "ping_pong_signal"> {
+  let description = [{
+    Marks the function-scoped `memref.alloca` holding the L0 ping-pong
+    signal shared by every MMAD op in the function. The alloca is a
+    `memref<i32>` and is zeroed at function entry.
+
+    Also marks the null `hivm.hir.pointer_cast` descriptor passed when a signal
+    is absent. CPU lowering must preserve this sentinel instead of replacing
+    it with an uninitialized allocation.
+  }];
+}
+
 def HIVM_StrideAlignValueAttr : HIVM_Attr<"StrideAlignDims", "stride_align_dims"> {
   let description = [{
     HIVM stride align dims.
@@ -1380,6 +1392,14 @@ def HIVM_InsertSliceSourceIndexAttr
 def HIVM_ParallelLoopAttr : HIVM_Attr<"ParallelLoop", "parallel_loop"> {
   let description = [{
     Specifies that marked loop can run in parallel.
+  }];
+}
+
+def HIVM_EnableL1GatherAttr : HIVM_Attr<"EnableL1Gather", "enable_l1_gather"> {
+  let description = [{
+    Opt in to direct GM-to-L1 gathering for a tensor consumed by matmul.
+    Set by compile_hint(tensor, "hivm.enable_l1_gather", true).
+    Unsupported access patterns retain their original lowering.
   }];
 }
 

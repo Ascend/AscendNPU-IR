@@ -220,6 +220,11 @@ class PointerCastToAllocaPattern
 
   LogicalResult matchAndRewrite(hivm::PointerCastOp op,
                                 PatternRewriter &rewriter) const final {
+    // A marked signal pointer_cast represents an absent signal, not storage.
+    // Keep its null data pointer for the subsequent HIVM-to-LLVM conversion.
+    if (op->hasAttr(hivm::PingPongSignalAttr::name))
+      return rewriter.notifyMatchFailure(op, "preserve the null MMAD signal");
+
     // Convert hivm::PointerCastOp to memref::AllocaOp which would lower to
     // simple stack space allocation in CPU backend.
     rewriter.replaceOpWithNewOp<memref::AllocaOp>(

@@ -194,6 +194,8 @@ module {
       %gmA : memref<16xf8E5M2, #hivm.address_space<gm>>,
       %gmB : memref<16xf8E5M2, #hivm.address_space<gm>>)
       attributes {hacc.entry, hivm.func_core_type = #hivm.func_core_type<AIC>} {
+    // CHECK-NEXT: %[[MX_SIGNAL:.*]] = memref.alloca() {hivm.ping_pong_signal} : memref<i32>
+    // CHECK: memref.store %{{.*}}, %[[MX_SIGNAL]][] : memref<i32>
     %c0_i64   = arith.constant 0 : i64
     %c64_i64  = arith.constant 64 : i64
     %c128_i64 = arith.constant 128 : i64
@@ -235,6 +237,7 @@ module {
             i1, index, index, index)
         outs(%bufC1 : memref<256xf32>)
     // CHECK: hivm.hir.mmadmxL1
+    // CHECK-SAME: ping_pong_signal(%[[MX_SIGNAL]] : memref<i32>)
     // CHECK-SAME: sync_related_args(
 
     // No extra Set/Wait between Mmad ops
@@ -242,6 +245,7 @@ module {
 
     // Second Mmad: MmadL1Op (reads same L1 buffers)
     // CHECK: hivm.hir.mmadL1
+    // CHECK-SAME: ping_pong_signal(%[[MX_SIGNAL]] : memref<i32>)
     hivm.hir.mmadL1
         ins(%bufA, %bufB, %true, %c16, %c256, %c16 :
             memref<16xf8E5M2, #hivm.address_space<cbuf>>,
@@ -430,6 +434,8 @@ module {
       %gmA : memref<256x128xf8E5M2, #hivm.address_space<gm>>,
       %gmB : memref<128x256xf8E5M2, #hivm.address_space<gm>>)
       attributes {hacc.entry, hivm.func_core_type = #hivm.func_core_type<AIC>} {
+    // CHECK-NEXT: %[[MX_REUSE_SIGNAL:.*]] = memref.alloca() {hivm.ping_pong_signal} : memref<i32>
+    // CHECK: memref.store %{{.*}}, %[[MX_REUSE_SIGNAL]][] : memref<i32>
     %c0_i64     = arith.constant 0 : i64
     %c65536_i64 = arith.constant 65536 : i64
     %c131072_i64 = arith.constant 131072 : i64
@@ -467,6 +473,7 @@ module {
             i1, index, index, index)
         outs(%bufC1 : memref<256x256xf32>)
     // CHECK: hivm.hir.mmadmxL1
+    // CHECK-SAME: ping_pong_signal(%[[MX_REUSE_SIGNAL]] : memref<i32>)
     // CHECK-SAME: sync_related_args(
     // CHECK-SAME:   %c0_i64, %c-1_i64, %c1_i64, %c-1_i64
 
@@ -482,6 +489,7 @@ module {
         outs(%bufC2 : memref<256x256xf32>)
     // The second MmadMxL1Op reuses the same event IDs from the first
     // CHECK: hivm.hir.mmadmxL1
+    // CHECK-SAME: ping_pong_signal(%[[MX_REUSE_SIGNAL]] : memref<i32>)
     // CHECK-NOT: sync_related_args
     return
   }

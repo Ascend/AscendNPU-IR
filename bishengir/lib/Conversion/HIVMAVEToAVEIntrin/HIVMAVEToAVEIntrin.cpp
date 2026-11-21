@@ -1966,6 +1966,42 @@ struct HIVMSelectOpLowering : public ConvertOpToLLVMPattern<VFSelectOp> {
   }
 };
 
+// Lower the byte-mask masked move to vselrv2. The instruction only exists on
+// the Ascend960 (V121) target, so every other target keeps the op untouched
+// and the predicate select (ave.hir.vsel) lowering above is unchanged.
+struct HIVMVselrv2OpLowering : public ConvertOpToLLVMPattern<VFSelectRv2Op> {
+  explicit HIVMVselrv2OpLowering(LLVMTypeConverter &converter)
+      : ConvertOpToLLVMPattern<VFSelectRv2Op>(converter) {}
+  LogicalResult
+  matchAndRewrite(VFSelectRv2Op op, VFSelectRv2Op::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto moduleOp = op->getParentOfType<ModuleOp>();
+    if (!moduleOp || !hacc::utils::isAscend960(moduleOp))
+      return rewriter.notifyMatchFailure(
+          op, "vselrv2 requires the Ascend960 (V121) target");
+
+    auto loc = op.getLoc();
+    VectorType vType = cast<VectorType>(op.getRes().getType());
+    Type elementType = vType.getElementType();
+    if (!elementType.isInteger(8) && !isa<Float8E4M3FNType>(elementType) &&
+        !isa<Float8E5M2Type>(elementType))
+      return rewriter.notifyMatchFailure(op,
+                                         "vselrv2 requires 8-bit or f8 data");
+
+    auto vlType = createVLVectorType(elementType);
+    Value mask = getVLRegValueOrSelf(adaptor.getMask(), rewriter);
+    Value trueValue = getVLRegValueOrSelf(adaptor.getTrueValue(), rewriter);
+    Value result =
+        rewriter.create<Vselrv2InstrOp>(loc, vlType, trueValue, mask);
+    if (vlType != vType) {
+      result = rewriter.create<UnrealizedConversionCastOp>(loc, vType, result)
+                   ->getResult(0);
+    }
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
 template <typename IntrSOpTy, typename IntrUOpTy>
 static Value cmpLowerToIntrin(VFCmpOp cmpOp,
                               ConversionPatternRewriter &rewriter) {
@@ -3772,6 +3808,19 @@ struct HIVMExpdifOpLowering
   }
 };
 
+// The fused multiply-add instruction families only exist on the Ascend960
+// (V121) target; every other regbased target keeps using vmula.
+template <typename OpTy> constexpr bool isAscend960OnlyTenaryOp() {
+  return std::is_same_v<OpTy, hivmave::VFmaOp> ||
+         std::is_same_v<OpTy, hivmave::VFmsOp> ||
+         std::is_same_v<OpTy, hivmave::VFnmaOp> ||
+         std::is_same_v<OpTy, hivmave::VFnmsOp> ||
+         std::is_same_v<OpTy, hivmave::VMaddOp> ||
+         std::is_same_v<OpTy, hivmave::VMsubOp> ||
+         std::is_same_v<OpTy, hivmave::VNmaddOp> ||
+         std::is_same_v<OpTy, hivmave::VNmsubOp>;
+}
+
 template <typename OpTy, typename IntrV256S8OpTy, typename IntrV256U8OpTy,
           typename IntrV128S16OpTy, typename IntrV128U16OpTy,
           typename IntrV64S32OpTy, typename IntrV64U32OpTy,
@@ -3783,6 +3832,13 @@ struct TenaryLowerToIntrinsic : public ConvertOpToLLVMPattern<OpTy> {
   LogicalResult
   matchAndRewrite(OpTy op, typename OpTy::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+
+    if constexpr (isAscend960OnlyTenaryOp<OpTy>()) {
+      auto moduleOp = op->template getParentOfType<ModuleOp>();
+      if (!moduleOp || !hacc::utils::isAscend960(moduleOp))
+        return rewriter.notifyMatchFailure(
+            op, "this instruction requires the Ascend960 (V121) target");
+    }
 
     auto loc = op.getLoc();
     Value src1 = op.getSrc1();
@@ -3892,10 +3948,51 @@ template <typename... Args> struct TenaryRegistryImpl {
   }
 };
 
-using TenaryRegistry = TenaryRegistryImpl<TenaryRegEntry<
-    hivmave::VFMulaOp, VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
-    VmulaSMInstrOp, VmulaUMInstrOp, VmulaSMInstrOp, VmulaUMInstrOp,
-    VmulaSMInstrOp, VmulaSMInstrOp, VmulaSMInstrOp>>;
+using TenaryRegistry = TenaryRegistryImpl<
+    TenaryRegEntry<hivmave::VFMulaOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VmulaSMInstrOp, VmulaUMInstrOp,
+                   VmulaSMInstrOp, VmulaUMInstrOp, VmulaSMInstrOp,
+                   VmulaSMInstrOp, VmulaSMInstrOp>,
+    TenaryRegEntry<hivmave::VFmaOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VfmaInstrOp, VfmaInstrOp,
+                   VfmaInstrOp>,
+    TenaryRegEntry<hivmave::VFmsOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VfmsInstrOp, VfmsInstrOp,
+                   VfmsInstrOp>,
+    TenaryRegEntry<hivmave::VFnmaOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VfnmaInstrOp, VfnmaInstrOp,
+                   VfnmaInstrOp>,
+    TenaryRegEntry<hivmave::VFnmsOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VfnmsInstrOp, VfnmsInstrOp,
+                   VfnmsInstrOp>,
+    TenaryRegEntry<hivmave::VMaddOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VmaddInstrOp, VmaddInstrOp,
+                   VmaddInstrOp>,
+    TenaryRegEntry<hivmave::VMsubOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VmsubInstrOp, VmsubInstrOp,
+                   VmsubInstrOp>,
+    TenaryRegEntry<hivmave::VNmaddOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VnmaddInstrOp, VnmaddInstrOp,
+                   VnmaddInstrOp>,
+    TenaryRegEntry<hivmave::VNmsubOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VnmsubInstrOp, VnmsubInstrOp,
+                   VnmsubInstrOp>>;
 
 template <typename OpToBeConverted>
 struct HIVMPredicateBinaryLogicOpLowering
@@ -4153,7 +4250,8 @@ void populateHIVMAVEToAVEIntrinPatterns(LLVMTypeConverter &converter,
                HIVMGatherOpLowering, HIVMBlockGatherOpLowering, HIVMScatterOpLowering,
                HIVMPgeOpLowering, HIVMPltOpLowering, HIVMPltMOpLowering,
                HIVMVtrcOpLowering, HIVMVSlideOpLowering,
-               HIVMSelectOpLowering, HIVMReductionOpLowering,
+               HIVMSelectOpLowering, HIVMVselrv2OpLowering,
+               HIVMReductionOpLowering,
                HIVMVCIOpLowering, HIVMBroadcastScalarOpLowering,
                HIVMVShiftOpLowering<hivmave::VFShrOp>,
                HIVMVShiftOpLowering<hivmave::VFShrsOp>,

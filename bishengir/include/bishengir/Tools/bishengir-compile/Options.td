@@ -1319,7 +1319,7 @@ def EnableFuseReductionIntoLoop : GeneralOptimizationControlOptions<
 
 def SimtOptimizationMode : GeneralOptimizationControlOptions<
   "set bishengir simt optimization modes",
-  "int",
+  "uint32_t",
   "900101"
 > {
   bit isSharedWithDownstreamToolchain = 1;
@@ -1364,6 +1364,13 @@ def HfusionMaxFusedElementwiseOps : HFusionOptimizationControlOptions<
 def EnableOptimizeScalarTransfers : HFusionOptimizationControlOptions<
   "Lift intermediate scalar chains onto tensor<1xelem>. "
   "Turned off for one retry after a UB overflow or an autovectorize failure.",
+  "bool",
+  "true"
+>;
+
+def EnableLegalizeScalarFP8 : HFusionOptimizationControlOptions<
+  "Work around backend FP8 phi limitations after HFusion Normalize. "
+  "Disable to test native backend support.",
   "bool",
   "true"
 >;

@@ -147,6 +147,9 @@ static void preProcess(OpPassManager &pm,
                        const HFusionPipelineOptions &options) {
   pm.nest<func::FuncOp>().addPass(createUpliftWhileToForPass());
 
+  if (options.enableTritonKernelCompile)
+    pm.nest<func::FuncOp>().addPass(createPrepareL1GatherPass());
+
   LegalizeBoolPassOptions clampOptions;
   clampOptions.enableClamp = true;
   pm.addPass(createLegalizeBoolPass(clampOptions));
@@ -203,6 +206,9 @@ static void preProcess(OpPassManager &pm,
       !options.disableHfusionVectorize && !options.enableMixedCV;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
+  if (options.enableLegalizeScalarFP8) {
+    pm.nest<func::FuncOp>().addPass(createLegalizeScalarFP8Pass());
+  }
 
   pm.addPass(createLegalizeBoolPass());
   pm.nest<func::FuncOp>().addPass(createSimplifyOpsPass());
@@ -212,6 +218,9 @@ static void preProcess(OpPassManager &pm,
   //  a) convert scalar-vector ops to vector-scalar ops
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
+  if (options.enableLegalizeScalarFP8) {
+    pm.nest<func::FuncOp>().addPass(createLegalizeScalarFP8Pass());
+  }
 }
 
 static void preFlattenPass(OpPassManager &pm,
@@ -365,6 +374,9 @@ static void postProcess(OpPassManager &pm,
       !options.disableHfusionVectorize && !options.enableMixedCV;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
+  if (options.enableLegalizeScalarFP8) {
+    pm.nest<func::FuncOp>().addPass(createLegalizeScalarFP8Pass());
+  }
 
   // will only operate on functions with ShallowCV fusion kind
   AddFFTSAddrOptions addFFTSAddrOpt;
@@ -412,6 +424,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   treeReduceOptions.enableRA = treeReduceFlags.enableRA;
   treeReduceOptions.enableAR = treeReduceFlags.enableAR;
   treeReduceOptions.ascendStyleRA = hfusionOptions.useAscendStyleRA;
+  pm.addPass(hivm::createFuseOpIntoLoadPass());
   if (enableSIMDVFFusion(hfusionOptions)) {
     bool runRegBasePasses = !hfusionOptions.enableMixedCV &&
                             hacc::utils::isRegBasedArch(hfusionOptions.target);
@@ -437,6 +450,9 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     canonicalizationPipeline(pm, hfusionOptions);
   }
   pm.nest<func::FuncOp>().addPass(hivm::createFuseTransposeIntoLoadPass());
+  // Reapply all independent load-fusion patterns after VF fusion/transpose,
+  // retaining this producer boundary before pre-vectorization fusion.
+  pm.addPass(hivm::createFuseOpIntoLoadPass());
   PreVectorizationFusionOptions preVecOptions;
   preVecOptions.enableTritonCompile = hfusionOptions.enableTritonKernelCompile;
   preVecOptions.maxFusedElementwiseOps =
@@ -622,6 +638,9 @@ void buildHFusionRegBasePipeline(OpPassManager &pm,
       !options.disableHfusionVectorize && !options.enableMixedCV;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
+  if (options.enableLegalizeScalarFP8) {
+    pm.nest<func::FuncOp>().addPass(createLegalizeScalarFP8Pass());
+  }
 
   pm.nest<func::FuncOp>().addPass(createHFusionInlineBrcPass());
   hfusionAutoVectorizePipeline(pm, options);

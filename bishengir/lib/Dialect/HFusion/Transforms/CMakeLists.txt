@@ -54,6 +54,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   OutlineVectorFunction.cpp
   PackTilingData.cpp
   PrepareI1Nx1ForVectorization.cpp
+  PrepareL1Gather.cpp
   PreVectorizationFusion.cpp
   PullFillIntoVectorFunction.cpp
   ReCacheIO.cpp
@@ -75,6 +76,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   VectorizeOps.cpp
   LegalizeBF16.cpp
   LegalizeFP8.cpp
+  LegalizeScalarFP8.cpp
   LegalizeBool.cpp
   DowngradeFP64CstOp.cpp
   WrapHostFunc.cpp

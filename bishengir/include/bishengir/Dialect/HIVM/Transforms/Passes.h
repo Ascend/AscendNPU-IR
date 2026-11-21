@@ -264,6 +264,8 @@ std::unique_ptr<Pass> createHIVMCanonicalizationPipelinePass();
 // run before createSetBufferSizePass, which consumes the inserted marks.
 std::unique_ptr<Pass> createInferBufferSizeFromSlicePass();
 
+std::unique_ptr<Pass> createPromoteL1GatherPass();
+
 // Create a pass to set buffer size
 std::unique_ptr<Pass> createSetBufferSizePass();
 
@@ -502,6 +504,9 @@ std::unique_ptr<Pass> createNonContiguousReshapeToCopyPass();
 
 std::unique_ptr<Pass> createSinkOpToConsumerInLoopPass();
 
+/// Create a pass to sink scalar readback chains to their consumers.
+std::unique_ptr<Pass> createSinkScalarReadbackPass();
+
 // Create a pass to flatten nested moduleOp
 std::unique_ptr<Pass> createFlattenModulePass();
 
@@ -543,6 +548,9 @@ std::unique_ptr<Pass> createRemoveCopyOpsPass();
 /// Create a pass to fuse linalg.transpose into hivm.hir.load via DMA
 /// on-the-fly transpose.
 std::unique_ptr<Pass> createFuseTransposeIntoLoadPass();
+
+/// Fuse supported independent operations into A6 loads.
+std::unique_ptr<Pass> createFuseOpIntoLoadPass();
 
 //===----------------------------------------------------------------------===//
 // V2 pipeline passes (see Passes.td)

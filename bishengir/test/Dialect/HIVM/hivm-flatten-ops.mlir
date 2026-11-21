@@ -1275,3 +1275,40 @@ func.func @test_ssbuf_unaffected(%arg0: i64) attributes {hivm.func_core_type = #
   }
   return
 }
+
+// -----
+
+// The rewrite substitutes by value, so one value can hold one replacement. A
+// permutation-like op whose input and init group dimensions differently would
+// need two, and collapsing it under either one alone produces operands that no
+// longer agree -- the op then fails its own transpose verifier. Decline it.
+// CHECK-LABEL: func.func @same_value_two_reassociations_not_flattened
+// CHECK-NOT:     memref.collapse_shape
+// CHECK:         hivm.hir.vadd
+// CHECK-SAME:      memref<4x4x4x8xi32>, memref<4x4x4x8xi32>)
+// CHECK-SAME:      outs(%{{.*}} : memref<4x4x4x8xi32>) transpose = [1, 2, 0, 3]
+func.func @same_value_two_reassociations_not_flattened(%buf: memref<4x4x4x8xi32>) {
+  hivm.hir.vadd ins(%buf, %buf : memref<4x4x4x8xi32>, memref<4x4x4x8xi32>)
+                outs(%buf : memref<4x4x4x8xi32>)
+                transpose = [1, 2, 0, 3]
+  return
+}
+
+// -----
+
+// A dynamic shape must not be read as agreement. Both groupings collapse to
+// `?x?x?` here, but that says nothing: instantiate the extents and the two
+// disagree, and the op built from either one alone is the very op the verifier
+// rejects (`memref<16x4x8xi32>` with `transpose = [1, 0, 2]` fails "transpose
+// behavior"). Refusing the merge keeps that IR from being emitted at all.
+// CHECK-LABEL: func.func @same_value_dynamic_not_flattened
+// CHECK-NOT:     memref.collapse_shape
+// CHECK:         hivm.hir.vadd
+// CHECK-SAME:      memref<?x?x?x?xi32>, memref<?x?x?x?xi32>)
+// CHECK-SAME:      transpose = [1, 2, 0, 3]
+func.func @same_value_dynamic_not_flattened(%buf: memref<?x?x?x?xi32>) {
+  hivm.hir.vadd ins(%buf, %buf : memref<?x?x?x?xi32>, memref<?x?x?x?xi32>)
+                outs(%buf : memref<?x?x?x?xi32>)
+                transpose = [1, 2, 0, 3]
+  return
+}

@@ -824,6 +824,7 @@ private:
     }
 
     auto syncRelatedArgs = op.getSyncRelatedArgs();
+    additionalArgs.push_back(op.getPingPongSignalLibValue(rewriter));
     std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
               std::back_inserter(additionalArgs));
 
@@ -889,6 +890,7 @@ public:
       SmallVector<Value> libParams =
           op.getInputOperands(/*includeSyncRelatedArgs=*/false);
       libParams.push_back(op.getC());
+      libParams.push_back(op.getPingPongSignalLibValue(rewriter));
       SmallVector<Value> syncArgs(op.getSyncRelatedArgs().begin(),
                                   op.getSyncRelatedArgs().end());
       llvm::append_range(libParams, syncArgs);
@@ -929,6 +931,7 @@ public:
     Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
     Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
     Value batch = rewriter.create<memref::DimOp>(loc, op.getA(), 0);
+    Value pingPongSignal = op.getPingPongSignalLibValue(rewriter);
     auto loop = rewriter.create<scf::ForOp>(loc, zero, batch, one);
 
     rewriter.setInsertionPointToStart(loop.getBody());
@@ -943,6 +946,7 @@ public:
         matrixA,       matrixB,       op.getInitCondition(),
         op.getRealM(), op.getRealK(), op.getRealN(),
         matrixC};
+    libParams.push_back(pingPongSignal);
     llvm::append_range(libParams, op.getSyncRelatedArgs());
     libParams.push_back(op.getUnitFlagModeLibValue(rewriter));
     libParams.push_back(op.getUnitFlagGroupIdValue(rewriter));
@@ -1014,6 +1018,7 @@ private:
     }
 
     auto syncRelatedArgs = op.getSyncRelatedArgs();
+    additionalArgs.push_back(op.getPingPongSignalLibValue(rewriter));
     std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
               std::back_inserter(additionalArgs));
   }
@@ -2710,6 +2715,29 @@ public:
   }
 };
 
+class StrideLoadOpToLibraryCallPattern
+    : public OpRewritePattern<hivm::StrideLoadOp> {
+public:
+  using OpRewritePattern<hivm::StrideLoadOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::StrideLoadOp op,
+                                PatternRewriter &rewriter) const final {
+    SmallVector<Value> operands(op->getOperands());
+    Type elemType = getElementTypeOrSelf(op.getSrc().getType());
+    if (elemType.isFloat8E4M3FN() || elemType.isFloat8E5M2()) {
+      auto otherIndex = op.getOtherMutable().getOperandNumber();
+      operands[otherIndex] = rewriter.create<arith::BitcastOp>(
+          op.getLoc(), rewriter.getI8Type(), op.getOther());
+    }
+
+    replaceWithLibCall(rewriter, op,
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       operands, {});
+    return success();
+  }
+};
+
 void populateHIVMToStandardConversionPatternsRegBase(
     RewritePatternSet &patterns, bool isOpsAligned) {
   // clang-format off
@@ -2779,7 +2807,7 @@ void populateHIVMToStandardConversionPatternsRegBase(
                SyncBlockOpToLibraryCallPattern<hivm::FreeLockVarOp>,
                SIMTOpToLibraryCallPattern<hivm::EmbeddingGatherOp>,
                SIMTOpToLibraryCallPattern<hivm::IndirectLoadOp>,
-               SIMTOpToLibraryCallPattern<hivm::StrideLoadOp>,
+               StrideLoadOpToLibraryCallPattern,
                SIMTOpToLibraryCallPattern<hivm::StrideStoreOp>,
                SIMTOpToLibraryCallPattern<hivm::IndirectStoreOp>,
                SIMTOpToLibraryCallPattern<hivm::GatherTOp>,
