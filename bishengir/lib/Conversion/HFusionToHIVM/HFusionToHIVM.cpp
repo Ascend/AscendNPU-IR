@@ -1067,8 +1067,15 @@ struct HFusionPrintOpToHIVMDebugOp : public OpRewritePattern<hfusion::PrintOp> {
     rewriter.setInsertionPoint(op);
     Value opArg = op.getArg();
 
-    (void)(rewriter.replaceOpWithNewOp<hivm::DebugOp>(
-        op, HIVMDebugTypePrint, op.getPrefix(), op.getHex(), opArg));
+    // Keep the signedness of the printed value so that unsigned integers can
+    // reach the unsigned print library entries (uint8_t/uint16_t/uint32_t).
+    // The attribute must be read before the op is replaced: replaceOpWithNewOp
+    // destroys `op`.
+    auto isSignedAttr = op->getAttrOfType<DenseI32ArrayAttr>("is_signed");
+    auto debugOp = rewriter.replaceOpWithNewOp<hivm::DebugOp>(
+        op, HIVMDebugTypePrint, op.getPrefix(), op.getHex(), opArg);
+    if (isSignedAttr)
+      debugOp->setAttr("is_signed", isSignedAttr);
 
     return success();
   }
