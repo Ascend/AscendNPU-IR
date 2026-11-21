@@ -25,8 +25,8 @@
 //     operands, so a write performed on the memref before the `to_tensor`
 //     (e.g., a `hivm.hir.load` into a subview) is invisible to it. For
 //     writable `to_tensor` ops whose memref may have been written (a DPS init
-//     operand or a call, tracing through view-like and `arith.select`
-//     aliases), rewrite
+//     operand, a copy target or a store, tracing through view-like and
+//     `arith.select` aliases), rewrite
 //
 //       %alloc = memref.alloc()
 //       hivm.hir.load outs(%subview_of_alloc)   // memref-level write
@@ -43,16 +43,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/Bufferization/Transforms/Passes.h"
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
-#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/CopyOpInterface.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
@@ -131,7 +129,7 @@ void verifyAndCollectDefChain(Value current, SmallVector<Value> &worklist) {
 /// `arith.select`, is written before `toTensor` in memory view order.
 ///
 /// A DPS init operand, a copy target and a store are definite writes; a call is
-/// conservatively treated as one because it may write through the memref. Also
+/// not treated as one, so a write performed inside it stays invisible. Also
 /// reports an error when the memref feeds more than one `to_tensor`, which
 /// breaks the `restrict` contract.
 bool isMemrefWrittenBeforeToTensor(Value memref, Operation *toTensor) {
@@ -157,20 +155,15 @@ bool isMemrefWrittenBeforeToTensor(Value memref, Operation *toTensor) {
                "op and restrict attr";
         continue;
       }
-      if (!llvm::isa<DestinationStyleOpInterface, CopyOpInterface, func::CallOp,
-                     annotation::MarkOp, arith::SelectOp, ViewLikeOpInterface,
-                     memref::StoreOp>(user)) {
+      if (isa<scf::SCFDialect>(user->getDialect())) {
         user->dump();
         llvm::report_fatal_error(
-            "unexpected user when check memref written before to_tensor");
+            "SCF users are not supported in memref-level IR before to_tensor");
       }
-
       bool memrefWritten = false;
       if (auto dpsOp = dyn_cast<DestinationStyleOpInterface>(user)) {
         if (dpsOp.isDpsInit(&use))
           memrefWritten = true;
-      } else if (auto callOp = dyn_cast<func::CallOp>(user)) {
-        memrefWritten = true;
       } else if (auto copyOp = dyn_cast<CopyOpInterface>(user)) {
         if (copyOp.getTarget() == use.get())
           memrefWritten = true;

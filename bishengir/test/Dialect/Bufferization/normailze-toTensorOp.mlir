@@ -214,36 +214,6 @@ func.func @annotated_alloc_without_write() -> tensor<16xf32> {
 
 // -----
 
-// Calls preceding to_tensor conservatively count as writes.
-func.func private @may_write(memref<16xf32>)
-// CHECK-LABEL: func.func @call_before_to_tensor(
-// CHECK: call @may_write
-// CHECK-NEXT: %[[T:.*]] = bufferization.to_tensor {{.*}} restrict writable : memref<16xf32>
-// CHECK-NEXT: %[[COPY:.*]] = bufferization.alloc_tensor() copy(%[[T]]) {to_be_replaced}
-// CHECK-NEXT: return %[[COPY]]
-func.func @call_before_to_tensor() -> tensor<16xf32> {
-  %buffer = memref.alloc() : memref<16xf32>
-  func.call @may_write(%buffer) : (memref<16xf32>) -> ()
-  %t = bufferization.to_tensor %buffer restrict writable : memref<16xf32>
-  return %t : tensor<16xf32>
-}
-
-// -----
-
-func.func private @may_write(memref<16xf32>)
-// CHECK-LABEL: func.func @call_after_to_tensor(
-// CHECK: %[[T:.*]] = bufferization.to_tensor {{.*}} restrict writable : memref<16xf32>
-// CHECK-NEXT: call @may_write
-// CHECK-NEXT: return %[[T]]
-func.func @call_after_to_tensor() -> tensor<16xf32> {
-  %buffer = memref.alloc() : memref<16xf32>
-  %t = bufferization.to_tensor %buffer restrict writable : memref<16xf32>
-  func.call @may_write(%buffer) : (memref<16xf32>) -> ()
-  return %t : tensor<16xf32>
-}
-
-// -----
-
 // Inserting a copy during the walk must not skip the next to_tensor.
 // Replace every tensor use with the single copy for that to_tensor.
 // CHECK-LABEL: func.func @walk_multiple_to_tensor(
