@@ -144,7 +144,7 @@ TEST(NPUArchitectureTest, PublicHACCPassPreservesDeviceSpecSerialization) {
        4194304, 2097152, true, 262144, 983040, -1, -1, 32},
       {TargetDevice::Ascend960DT_969B6, "Ascend960DT_969B6", 32, 32, 2555904,
        4194304, 2097152, true, 262144, 983040, -1, -1, 32},
-      {TargetDevice::Ascend960DT_968B7, "Ascend960DT_968B7", 36, 36, 2555904,
+      {TargetDevice::Ascend960DT_968B7, "Ascend960DT_968B7", 64, 64, 2555904,
        4194304, 2097152, true, 262144, 983040, -1, -1, 32},
       {TargetDevice::Ascend960DT_966B7, "Ascend960DT_966B7", 36, 36, 2555904,
        4194304, 2097152, true, 262144, 983040, -1, -1, 32},
