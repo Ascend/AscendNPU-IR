@@ -372,3 +372,232 @@ func.func @wrapper_anchors_cube_fan_out(%x: f32) {
   } {hivm.cv_pipelined_loop}
   return
 }
+
+// -----
+
+// Model the two loop-carried branches of DHU: V0 -> V1 -> C -> tail,
+// and gate -> tail. Rule 2 must not absorb the adjacent, unrelated gate
+// into V0/V1. Rule 5 merges gate with tail inside the LCD wrapper even
+// though tail also has a CUBE predecessor. The alternate path through C
+// must still prevent merging V0/V1 with gate/tail.
+// CHECK-LABEL: func.func @lcd_gate_merges_with_tail
+// CHECK: scf.for {{.*}} iter_args(%[[ARG:.*]] = {{.*}}) -> (f32) {
+// CHECK-NEXT: %[[W:.*]] = scope.scope : () -> f32 {
+// CHECK-NEXT: %[[HEAD:.*]] = scope.scope : () -> f32 {
+// CHECK-NEXT: %[[A:.*]] = arith.addf %[[ARG]], %[[ARG]]
+// CHECK-NEXT: %[[B:.*]] = arith.negf %[[A]]
+// CHECK-NEXT: scope.return %[[B]] : f32
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: %[[C:.*]] = scope.scope : () -> f32 {
+// CHECK-NEXT: %[[D:.*]] = arith.negf %[[HEAD]]
+// CHECK-NEXT: scope.return %[[D]] : f32
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT: %[[TAIL:.*]] = scope.scope : () -> f32 {
+// CHECK-NEXT: %[[GATE:.*]] = arith.mulf %[[ARG]], %[[ARG]]
+// CHECK-NEXT: %[[SUM:.*]] = arith.addf %[[GATE]], %[[C]]
+// CHECK-NEXT: scope.return %[[SUM]] : f32
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: scope.return %[[TAIL]] : f32
+// CHECK-NEXT: } {cv_merged_scope}
+// CHECK-NEXT: scf.yield %[[W]] : f32
+func.func @lcd_gate_merges_with_tail(%x: f32) -> f32 {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %result = scf.for %i = %c0 to %c1 step %c1 iter_args(%arg = %x) -> f32 {
+    %v0 = scope.scope : () -> f32 {
+      %a = arith.addf %arg, %arg : f32
+      scope.return %a : f32
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    %gate = scope.scope : () -> f32 {
+      %a = arith.mulf %arg, %arg : f32
+      scope.return %a : f32
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    %v1 = scope.scope : () -> f32 {
+      %a = arith.negf %v0 : f32
+      scope.return %a : f32
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    %c = scope.scope : () -> f32 {
+      %a = arith.negf %v1 : f32
+      scope.return %a : f32
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+    %tail = scope.scope : () -> f32 {
+      %a = arith.addf %gate, %c : f32
+      scope.return %a : f32
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    scf.yield %tail : f32
+  } {hivm.cv_pipelined_loop}
+  return %result : f32
+}
+
+// -----
+
+// Adjacent VECTOR scopes with no dependency remain separate, including
+// inside nested wrappers. Sharing an external function argument is not
+// a shared scope predecessor.
+// CHECK-LABEL: func.func @nested_unconnected_scopes
+// CHECK: scf.for
+// CHECK-NEXT: scope.scope : () -> () {
+// CHECK-NEXT: scope.scope : () -> () {
+// CHECK-NEXT: scope.scope : () -> () {
+// CHECK-NEXT: {{.*}} = arith.addf
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: scope.scope : () -> () {
+// CHECK-NEXT: {{.*}} = arith.mulf
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {cv_merged_scope}
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {cv_merged_scope}
+func.func @nested_unconnected_scopes(%x: f32) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  scf.for %i = %c0 to %c1 step %c1 {
+    scope.scope : () -> () {
+      scope.scope : () -> () {
+        scope.scope : () -> () {
+          %a = arith.addf %x, %x : f32
+          scope.return
+        } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+        scope.scope : () -> () {
+          %a = arith.mulf %x, %x : f32
+          scope.return
+        } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+        scope.return
+      } {cv_merged_scope}
+      scope.return
+    } {cv_merged_scope}
+  } {hivm.cv_pipelined_loop}
+  return
+}
+
+// -----
+
+// Nested Rule 5 must retain memory-order edges: the CUBE load between two
+// VECTOR stores prevents their contraction even without any SSA edges.
+// CHECK-LABEL: func.func @nested_memory_detour
+// CHECK: scf.for
+// CHECK-NEXT: scope.scope : () -> () {
+// CHECK-NEXT: scope.scope : () -> () {
+// CHECK-NEXT: memref.store
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: scope.scope : () -> () {
+// CHECK-NEXT: {{.*}} = memref.load
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT: scope.scope : () -> () {
+// CHECK-NEXT: memref.store
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {cv_merged_scope}
+func.func @nested_memory_detour(%x: f32, %buf: memref<1xf32>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  scf.for %i = %c0 to %c1 step %c1 {
+    scope.scope : () -> () {
+      scope.scope : () -> () {
+        memref.store %x, %buf[%c0] : memref<1xf32>
+        scope.return
+      } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+      scope.scope : () -> () {
+        %a = memref.load %buf[%c0] : memref<1xf32>
+        scope.return
+      } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+      scope.scope : () -> () {
+        memref.store %x, %buf[%c0] : memref<1xf32>
+        scope.return
+      } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+      scope.return
+    } {cv_merged_scope}
+  } {hivm.cv_pipelined_loop}
+  return
+}
+
+// -----
+
+// Recurse through multiple scope bodies and merge fan-out to a fixed point.
+// Each VECTOR scope has an incompatible CUBE predecessor, so Rule 2 cannot
+// merge them through its backward walk.
+// CHECK-LABEL: func.func @deep_scope_fan_out
+// CHECK: scf.for
+// CHECK-NEXT: scope.scope : () -> () {
+// CHECK-NEXT: scope.scope : () -> () {
+// CHECK-NEXT: %[[C:.*]] = scope.scope : () -> f32 {
+// CHECK-NEXT: %[[A:.*]] = arith.negf
+// CHECK-NEXT: scope.return %[[A]] : f32
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT: scope.scope : () -> () {
+// CHECK-NEXT: {{.*}} = arith.addf %[[C]], %[[C]]
+// CHECK-NEXT: {{.*}} = arith.mulf %[[C]], %[[C]]
+// CHECK-NEXT: {{.*}} = arith.subf %[[C]], %[[C]]
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {cv_merged_scope}
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {cv_merged_scope}
+func.func @deep_scope_fan_out(%x: f32) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  scf.for %i = %c0 to %c1 step %c1 {
+    scope.scope : () -> () {
+      scope.scope : () -> () {
+        %c = scope.scope : () -> f32 {
+          %a = arith.negf %x : f32
+          scope.return %a : f32
+        } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+        scope.scope : () -> () {
+          %a = arith.addf %c, %c : f32
+          scope.return
+        } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+        scope.scope : () -> () {
+          %a = arith.mulf %c, %c : f32
+          scope.return
+        } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+        scope.scope : () -> () {
+          %a = arith.subf %c, %c : f32
+          scope.return
+        } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+        scope.return
+      } {cv_merged_scope}
+      scope.return
+    } {cv_merged_scope}
+  } {hivm.cv_pipelined_loop}
+  return
+}
+
+// -----
+
+// Traversing scope bodies must not optimize an unmarked nested loop as part
+// of its enclosing pipelined loop.
+// CHECK-LABEL: func.func @leave_unmarked_nested_loop
+// CHECK: scf.for
+// CHECK-NEXT: scf.for
+// CHECK-NEXT: %[[V:.*]] = scope.scope : () -> f32 {
+// CHECK-NEXT: %[[A:.*]] = arith.addf
+// CHECK-NEXT: scope.return %[[A]] : f32
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: scope.scope : () -> () {
+// CHECK-NEXT: {{.*}} = arith.mulf %[[V]], %[[V]]
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+func.func @leave_unmarked_nested_loop(%x: f32) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  scf.for %i = %c0 to %c1 step %c1 {
+    scf.for %j = %c0 to %c1 step %c1 {
+      %v = scope.scope : () -> f32 {
+        %a = arith.addf %x, %x : f32
+        scope.return %a : f32
+      } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+      scope.scope : () -> () {
+        %a = arith.mulf %v, %v : f32
+        scope.return
+      } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    }
+  } {hivm.cv_pipelined_loop}
+  return
+}
