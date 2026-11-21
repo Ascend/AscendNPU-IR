@@ -1308,7 +1308,7 @@ bool MemLivenessAnalysis::AllDeadAfter(Operation *op, SetVector<Value> aliasVec,
     return live.isDeadAfter(aliasBuffer, op) &&
            llvm::all_of(aliasBuffer.getUsers(), [&](Operation *user) {
              // user is before or equal to (in same op but different block) op.
-             return !util::isBeforeInMemoryView(op, user);
+             return !utils::isBeforeInMemoryView(op, user);
            });
   });
 }

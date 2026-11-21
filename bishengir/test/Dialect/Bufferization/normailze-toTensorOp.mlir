@@ -100,7 +100,7 @@ func.func @memspace_cast_preexisting(%arg0: memref<5x20x16x16xf16>) -> tensor<5x
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 func.func @select_user_mixed_arm(%arg0: tensor<64x64xf32>, %addr: i64, %cond: i1) -> tensor<2x4x16x16xf32> {
   %ping = memref.alloc() : memref<2x4x16x16xf32, #hivm.address_space<ub>>
-  %other = hivm.hir.pointer_cast(%addr) : memref<2x4x16x16xf32, #hivm.address_space<ub>>
+  %other = memref.alloc() : memref<2x4x16x16xf32, #hivm.address_space<ub>>
   %sel = arith.select %cond, %ping, %other : memref<2x4x16x16xf32, #hivm.address_space<ub>>
   hivm.hir.fixpipe ins(%arg0 : tensor<64x64xf32>) outs(%sel : memref<2x4x16x16xf32, #hivm.address_space<ub>>) dual_dst_mode = <COLUMN_SPLIT>
   %cast = memref.memory_space_cast %ping : memref<2x4x16x16xf32, #hivm.address_space<ub>> to memref<2x4x16x16xf32>

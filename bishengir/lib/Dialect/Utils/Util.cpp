@@ -388,6 +388,26 @@ ModuleOp getTopLevelModuleOp(Operation *op) {
   return moduleOp;
 }
 
+bool isBeforeInMemoryView(Operation *before, Operation *after) {
+  auto moduleOp = utils::getTopLevelModuleOp(before);
+  // Map every block on `before`'s ancestor chain to the op it contains.
+  DenseMap<Block *, Operation *> block2Op;
+  for (Operation *beforeParentOp = before; beforeParentOp != moduleOp;
+       beforeParentOp = beforeParentOp->getParentOp()) {
+    block2Op.try_emplace(beforeParentOp->getBlock(), beforeParentOp);
+  }
+  for (Operation *afterParentOp = after; afterParentOp != moduleOp;
+       afterParentOp = afterParentOp->getParentOp()) {
+    auto it = block2Op.find(afterParentOp->getBlock());
+    // The two ancestor chains meet in this block: compare the positions there.
+    if (it != block2Op.end()) {
+      auto *beforeParentOp = it->second;
+      return beforeParentOp->isBeforeInBlock(afterParentOp);
+    }
+  }
+  return false;
+}
+
 void eraseTriviallyDeadOps(ArrayRef<Operation *> ops) {
   for (auto I = ops.rbegin(), E = ops.rend(); I != E;) {
     Operation *curOp = *I;
