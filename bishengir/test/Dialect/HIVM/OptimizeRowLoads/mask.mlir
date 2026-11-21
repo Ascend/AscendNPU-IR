@@ -7,7 +7,7 @@
 
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // Pairing preserves the exact fallback, including its sign.
-  // Source subviews below exercise mask sinking without pairable descriptors.
+  // The pairable descriptors below exercise mask sinking on the paired path.
   // PAIR-LABEL: func.func @masked_negative_zero(
   // PAIR: scf.for {{.*}} step %c2
   // PAIR: %[[BOTH:.*]] = arith.andi
@@ -150,12 +150,18 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
   // A select with gathered data in its false branch inverts the row predicate.
   // SINGLE-LABEL: func.func @inverse_mask(
-  // SINGLE: hivm.hir.vbrc {{.*}} outs({{.*}} : memref<4x16xf16>)
-  // SINGLE: scf.for {{.*}} step %c1
+  // SINGLE: hivm.hir.vbrc ins({{.*}} : f16) outs({{.*}} : memref<4x16xf16>)
+  // SINGLE: scf.for {{.*}} step %c2
   // SINGLE: arith.cmpi slt
+  // SINGLE: %[[BOTH:.*]] = arith.andi
+  // SINGLE: scf.if %[[BOTH]] {
+  // SINGLE: hivm.hir.load
+  // SINGLE: } else {
   // SINGLE: scf.if
   // SINGLE: hivm.hir.load
-  // SINGLE-NOT: } else {
+  // SINGLE: scf.if
+  // SINGLE: hivm.hir.load
+  // SINGLE: } {hivm.parallel_loop}
   // SINGLE-NOT: hivm.hir.vbrc
   // SINGLE-NOT: arith.select
   // SINGLE: hivm.hir.vadd
@@ -175,7 +181,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %safe = arith.maxsi %id, %zero : i32
       %scaled = arith.muli %safe, %c32 : i32
       %offset = arith.index_cast %scaled : i32 to index
-      %src = memref.subview %base[%offset, 0] [1, 16] [1, 1]
+      %src = memref.reinterpret_cast %base to offset: [%offset], sizes: [1, 16], strides: [16, 1]
         : memref<?x16xf16> to memref<1x16xf16, strided<[16, 1], offset: ?>>
       %row = memref.subview %dst[%i, 0] [1, 16] [1, 1]
         : memref<4x16xf16> to memref<1x16xf16, strided<[16, 1], offset: ?>>
@@ -393,14 +399,21 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // BF16 legalization can keep subsequent vector arithmetic in F32. Move
   // only the mask into the row loop and preserve both real conversions.
   // SINGLE-LABEL: func.func @bf16_fused_vector_mask(
-  // SINGLE: hivm.hir.vbrc {{.*}} outs({{.*}} : memref<4x16xbf16>)
-  // SINGLE: scf.for {{.*}} step %c1
+  // SINGLE: %[[ZERO:.*]] = arith.constant -0.000000e+00 : bf16
+  // SINGLE: hivm.hir.vbrc ins(%[[ZERO]] : bf16) outs({{.*}} : memref<4x16xbf16>)
+  // SINGLE: scf.for {{.*}} step %c2
+  // SINGLE: %[[BOTH:.*]] = arith.andi
+  // SINGLE: scf.if %[[BOTH]] {
+  // SINGLE: hivm.hir.load
+  // SINGLE: } else {
   // SINGLE: scf.if
   // SINGLE: hivm.hir.load
-  // SINGLE-NOT: } else {
+  // SINGLE: scf.if
+  // SINGLE: hivm.hir.load
+  // SINGLE: } {hivm.parallel_loop}
   // SINGLE-NOT: hivm.hir.vbrc
   // SINGLE-NOT: hivm.hir.vsel
-  // SINGLE: hivm.hir.vcast
+  // SINGLE: hivm.hir.vcast {{.*}} : tensor<4x16xbf16>) {{.*}} : tensor<4x16xf32>)
   // SINGLE: hivm.hir.vmul
   // SINGLE: hivm.hir.vcast
   // SINGLE: hivm.hir.vmax
@@ -421,7 +434,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %safe = arith.maxsi %id, %zero : i32
       %scaled = arith.muli %safe, %c32 : i32
       %offset = arith.index_cast %scaled : i32 to index
-      %src = memref.subview %base[%offset, 0] [1, 16] [1, 1]
+      %src = memref.reinterpret_cast %base to offset: [%offset], sizes: [1, 16], strides: [16, 1]
         : memref<?x16xbf16> to memref<1x16xbf16, strided<[16, 1], offset: ?>>
       %row = memref.subview %dst[%i, 0] [1, 16] [1, 1]
         : memref<4x16xbf16> to memref<1x16xbf16, strided<[16, 1], offset: ?>>
@@ -454,21 +467,34 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
   // A negated row predicate is scalarized into the row guard.
   // GUARD-LABEL: func.func @masked_vnot(
-  // GUARD: scf.for {{.*}} step %c1
+  // GUARD: hivm.hir.vbrc ins({{.*}} : f16) outs({{.*}} : memref<4x16xf16>)
+  // GUARD: scf.for {{.*}} step %c2
   // GUARD: %[[CMP:.*]] = arith.cmpi eq
   // GUARD: %[[NOT:.*]] = arith.xori %[[CMP]], %true
+  // GUARD: %[[BOTH:.*]] = arith.andi
+  // GUARD: scf.if %[[BOTH]] {
+  // GUARD: hivm.hir.load
+  // GUARD: } else {
   // GUARD: scf.if %[[NOT]] {
   // GUARD: hivm.hir.load
-  // GUARD-NOT: } else {
-  // GUARD-NOT: hivm.hir.vbrc
+  // GUARD: scf.if
+  // GUARD: hivm.hir.load
   // GUARD: } {hivm.parallel_loop}
+  // GUARD-NOT: arith.select
+  // GUARD: hivm.hir.vadd
+  // GUARD: return
   // SINGLE-LABEL: func.func @masked_vnot(
-  // SINGLE: hivm.hir.vbrc {{.*}} outs({{.*}} : memref<4x16xf16>)
-  // SINGLE: scf.for {{.*}} step %c1
+  // SINGLE: hivm.hir.vbrc ins({{.*}} : f16) outs({{.*}} : memref<4x16xf16>)
+  // SINGLE: scf.for {{.*}} step %c2
+  // SINGLE: arith.cmpi ne
+  // SINGLE: %[[BOTH:.*]] = arith.andi
+  // SINGLE: scf.if %[[BOTH]] {
+  // SINGLE: hivm.hir.load
+  // SINGLE: } else {
   // SINGLE: scf.if
   // SINGLE: hivm.hir.load
-  // SINGLE-NOT: } else {
-  // SINGLE-NOT: hivm.hir.vbrc
+  // SINGLE: scf.if
+  // SINGLE: hivm.hir.load
   // SINGLE: } {hivm.parallel_loop}
   // SINGLE-NOT: hivm.hir.vsel
   // SINGLE: hivm.hir.vadd
@@ -487,7 +513,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %id = tensor.extract %ids[%i] : tensor<4xi32>
       %scaled = arith.muli %id, %c32 : i32
       %offset = arith.index_cast %scaled : i32 to index
-      %src = memref.subview %base[%offset, 0] [1, 16] [1, 1]
+      %src = memref.reinterpret_cast %base to offset: [%offset], sizes: [1, 16], strides: [16, 1]
         : memref<?x16xf16> to memref<1x16xf16, strided<[16, 1], offset: ?>>
       %row = memref.subview %dst[%i, 0] [1, 16] [1, 1]
         : memref<4x16xf16> to memref<1x16xf16, strided<[16, 1], offset: ?>>
@@ -517,13 +543,18 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // general mask path reads it one element at a time in the loop.
   // GUARD-LABEL: func.func @masked_external(
   // GUARD: %[[BYTES:.*]] = hivm.hir.vcast ins(%arg2 : tensor<4xi1>)
-  // GUARD: scf.for {{.*}} step %c1
+  // GUARD: hivm.hir.vbrc ins({{.*}} : f16) outs({{.*}} : memref<4x16xf16>)
+  // GUARD: scf.for {{.*}} step %c2
   // GUARD: %[[BYTE:.*]] = tensor.extract %[[BYTES]][{{.*}}] : tensor<4xi8>
   // GUARD: %[[M:.*]] = arith.cmpi ne, %[[BYTE]]
+  // GUARD: %[[BOTH:.*]] = arith.andi
+  // GUARD: scf.if %[[BOTH]] {
+  // GUARD: hivm.hir.load
+  // GUARD: } else {
   // GUARD: scf.if %[[M]] {
   // GUARD: hivm.hir.load
-  // GUARD-NOT: } else {
-  // GUARD-NOT: hivm.hir.vbrc
+  // GUARD: scf.if
+  // GUARD: hivm.hir.load
   // GUARD: } {hivm.parallel_loop}
   // GUARD-NOT: arith.select
   // GUARD: hivm.hir.vadd
@@ -541,7 +572,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %id = tensor.extract %ids[%i] : tensor<4xi32>
       %scaled = arith.muli %id, %c32 : i32
       %offset = arith.index_cast %scaled : i32 to index
-      %src = memref.subview %base[%offset, 0] [1, 16] [1, 1]
+      %src = memref.reinterpret_cast %base to offset: [%offset], sizes: [1, 16], strides: [16, 1]
         : memref<?x16xf16> to memref<1x16xf16, strided<[16, 1], offset: ?>>
       %row = memref.subview %dst[%i, 0] [1, 16] [1, 1]
         : memref<4x16xf16> to memref<1x16xf16, strided<[16, 1], offset: ?>>

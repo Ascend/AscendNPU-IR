@@ -1,6 +1,6 @@
 // RUN: bishengir-opt %s -hivm-optimize-row-loads | FileCheck %s
 
-// Source subviews exercise mask sinking without a pairable source descriptor.
+// Pairable descriptors exercise mask sinking through the paired row loads.
 
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // Sinking replaces only the select; the two widening casts and the distinct
@@ -11,7 +11,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK: scf.for
   // CHECK: scf.if
   // CHECK: hivm.hir.load
-  // CHECK-NOT: } else {
+  // CHECK: } else {
+  // CHECK: scf.if
+  // CHECK: hivm.hir.load
+  // CHECK: scf.if
+  // CHECK: hivm.hir.load
   // CHECK-NOT: hivm.hir.vbrc
   // CHECK: } {hivm.parallel_loop}
   // CHECK: %[[LOADED:.*]] = bufferization.to_tensor
@@ -40,7 +44,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %safe = arith.maxsi %id, %zero : i32
       %scaled = arith.muli %safe, %stride : i32
       %offset = arith.index_cast %scaled : i32 to index
-      %src = memref.subview %base[%offset, 0] [1, 32] [1, 1]
+      %src = memref.reinterpret_cast %base to offset: [%offset], sizes: [1, 32], strides: [32, 1]
         : memref<?x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
       %row = memref.subview %dst[%i, 0] [1, 32] [1, 1]
         : memref<4x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
@@ -78,7 +82,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK: scf.for
   // CHECK: scf.if
   // CHECK: hivm.hir.load
-  // CHECK-NOT: } else {
+  // CHECK: } else {
+  // CHECK: scf.if
+  // CHECK: hivm.hir.load
+  // CHECK: scf.if
+  // CHECK: hivm.hir.load
   // CHECK-NOT: hivm.hir.vbrc
   // CHECK: } {hivm.parallel_loop}
   // CHECK: %[[LOADED:.*]] = bufferization.to_tensor
@@ -107,7 +115,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %safe = arith.maxsi %id, %zero : i32
       %scaled = arith.muli %safe, %stride : i32
       %offset = arith.index_cast %scaled : i32 to index
-      %src = memref.subview %base[%offset, 0] [1, 32] [1, 1]
+      %src = memref.reinterpret_cast %base to offset: [%offset], sizes: [1, 32], strides: [32, 1]
         : memref<?x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
       %row = memref.subview %dst[%i, 0] [1, 32] [1, 1]
         : memref<4x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
@@ -146,7 +154,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK: scf.for
   // CHECK: scf.if
   // CHECK: hivm.hir.load
-  // CHECK-NOT: } else {
+  // CHECK: } else {
+  // CHECK: scf.if
+  // CHECK: hivm.hir.load
+  // CHECK: scf.if
+  // CHECK: hivm.hir.load
   // CHECK-NOT: hivm.hir.vbrc
   // CHECK: } {hivm.parallel_loop}
   // CHECK: %[[LOADED:.*]] = bufferization.to_tensor
@@ -173,7 +185,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %safe = arith.maxsi %id, %zero : i32
       %scaled = arith.muli %safe, %stride : i32
       %offset = arith.index_cast %scaled : i32 to index
-      %src = memref.subview %base[%offset, 0] [1, 32] [1, 1]
+      %src = memref.reinterpret_cast %base to offset: [%offset], sizes: [1, 32], strides: [32, 1]
         : memref<?x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
       %row = memref.subview %dst[%i, 0] [1, 32] [1, 1]
         : memref<4x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
@@ -207,7 +219,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK: scf.for
   // CHECK: scf.if
   // CHECK: hivm.hir.load
-  // CHECK-NOT: } else {
+  // CHECK: } else {
+  // CHECK: scf.if
+  // CHECK: hivm.hir.load
+  // CHECK: scf.if
+  // CHECK: hivm.hir.load
   // CHECK-NOT: hivm.hir.vbrc
   // CHECK: } {hivm.parallel_loop}
   // CHECK: %[[LOADED:.*]] = bufferization.to_tensor
@@ -234,7 +250,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %safe = arith.maxsi %id, %zero : i32
       %scaled = arith.muli %safe, %stride : i32
       %offset = arith.index_cast %scaled : i32 to index
-      %src = memref.subview %base[%offset, 0] [1, 32] [1, 1]
+      %src = memref.reinterpret_cast %base to offset: [%offset], sizes: [1, 32], strides: [32, 1]
         : memref<?x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
       %row = memref.subview %dst[%i, 0] [1, 32] [1, 1]
         : memref<4x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
@@ -263,8 +279,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %sum : tensor<4x32xf32>
   }
 
-  // One half has no i8 preimage. Classification succeeds without changing the
-  // load or select.
+  // One half has no i8 preimage. The select survives; only the loads pair.
   // CHECK-LABEL: func.func @fractional_fallback_keeps_select(
   // CHECK: scf.for
   // CHECK-NOT: scf.if
@@ -293,7 +308,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %safe = arith.maxsi %id, %zero : i32
       %scaled = arith.muli %safe, %stride : i32
       %offset = arith.index_cast %scaled : i32 to index
-      %src = memref.subview %base[%offset, 0] [1, 32] [1, 1]
+      %src = memref.reinterpret_cast %base to offset: [%offset], sizes: [1, 32], strides: [32, 1]
         : memref<?x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
       %row = memref.subview %dst[%i, 0] [1, 32] [1, 1]
         : memref<4x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
@@ -353,7 +368,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %safe = arith.maxsi %id, %zero : i32
       %scaled = arith.muli %safe, %stride : i32
       %offset = arith.index_cast %scaled : i32 to index
-      %src = memref.subview %base[%offset, 0] [1, 32] [1, 1]
+      %src = memref.reinterpret_cast %base to offset: [%offset], sizes: [1, 32], strides: [32, 1]
         : memref<?x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
       %row = memref.subview %dst[%i, 0] [1, 32] [1, 1]
         : memref<4x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
@@ -394,7 +409,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK: scf.for
   // CHECK: scf.if
   // CHECK: hivm.hir.load
-  // CHECK-NOT: } else {
+  // CHECK: } else {
+  // CHECK: scf.if
+  // CHECK: hivm.hir.load
+  // CHECK: scf.if
+  // CHECK: hivm.hir.load
   // CHECK-NOT: hivm.hir.vbrc
   // CHECK: } {hivm.parallel_loop}
   // CHECK: %[[LOADED:.*]] = bufferization.to_tensor
@@ -424,7 +443,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %safe = arith.maxsi %id, %zero : i32
       %scaled = arith.muli %safe, %stride : i32
       %offset = arith.index_cast %scaled : i32 to index
-      %src = memref.subview %base[%offset, 0] [1, 32] [1, 1]
+      %src = memref.reinterpret_cast %base to offset: [%offset], sizes: [1, 32], strides: [32, 1]
         : memref<?x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
       %row = memref.subview %dst[%i, 0] [1, 32] [1, 1]
         : memref<4x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
@@ -464,7 +483,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK: scf.for
   // CHECK: scf.if
   // CHECK: hivm.hir.load
-  // CHECK-NOT: } else {
+  // CHECK: } else {
+  // CHECK: scf.if
+  // CHECK: hivm.hir.load
+  // CHECK: scf.if
+  // CHECK: hivm.hir.load
   // CHECK-NOT: hivm.hir.vbrc
   // CHECK: } {hivm.parallel_loop}
   // CHECK: %[[LOADED:.*]] = bufferization.to_tensor
@@ -494,7 +517,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %safe = arith.maxsi %id, %zero : i32
       %scaled = arith.muli %safe, %stride : i32
       %offset = arith.index_cast %scaled : i32 to index
-      %src = memref.subview %base[%offset, 0] [1, 32] [1, 1]
+      %src = memref.reinterpret_cast %base to offset: [%offset], sizes: [1, 32], strides: [32, 1]
         : memref<?x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
       %row = memref.subview %dst[%i, 0] [1, 32] [1, 1]
         : memref<4x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
@@ -560,7 +583,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %safe = arith.maxsi %id, %zero : i32
       %scaled = arith.muli %safe, %stride : i32
       %offset = arith.index_cast %scaled : i32 to index
-      %src = memref.subview %base[%offset, 0] [1, 32] [1, 1]
+      %src = memref.reinterpret_cast %base to offset: [%offset], sizes: [1, 32], strides: [32, 1]
         : memref<?x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
       %row = memref.subview %dst[%i, 0] [1, 32] [1, 1]
         : memref<4x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
@@ -620,7 +643,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %safe = arith.maxsi %id, %zero : i32
       %scaled = arith.muli %safe, %stride : i32
       %offset = arith.index_cast %scaled : i32 to index
-      %src = memref.subview %base[%offset, 0] [1, 32] [1, 1]
+      %src = memref.reinterpret_cast %base to offset: [%offset], sizes: [1, 32], strides: [32, 1]
         : memref<?x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
       %row = memref.subview %dst[%i, 0] [1, 32] [1, 1]
         : memref<4x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
@@ -659,7 +682,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %safe = arith.maxsi %id, %zero : i32
       %scaled = arith.muli %safe, %stride : i32
       %offset = arith.index_cast %scaled : i32 to index
-      %src = memref.subview %base[%offset, 0] [1, 32] [1, 1]
+      %src = memref.reinterpret_cast %base to offset: [%offset], sizes: [1, 32], strides: [32, 1]
         : memref<?x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
       %row = memref.subview %dst[%i, 0] [1, 32] [1, 1]
         : memref<4x32xi8> to memref<1x32xi8, strided<[32, 1], offset: ?>>
@@ -707,7 +730,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %dst = memref.alloc() : memref<4x32xui8>
     scf.for %i = %c0 to %c4 step %c1 {
       %off = arith.muli %i, %c32 : index
-      %src = memref.subview %base[%off, 0] [1, 32] [1, 1]
+      %src = memref.reinterpret_cast %base to offset: [%off], sizes: [1, 32], strides: [32, 1]
         : memref<?x32xui8> to memref<1x32xui8, strided<[32, 1], offset: ?>>
       %row = memref.subview %dst[%i, 0] [1, 32] [1, 1]
         : memref<4x32xui8> to memref<1x32xui8, strided<[32, 1], offset: ?>>
@@ -740,7 +763,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %dst = memref.alloc() : memref<4x32xui8>
     scf.for %i = %c0 to %c4 step %c1 {
       %off = arith.muli %i, %c32 : index
-      %src = memref.subview %base[%off, 0] [1, 32] [1, 1]
+      %src = memref.reinterpret_cast %base to offset: [%off], sizes: [1, 32], strides: [32, 1]
         : memref<?x32xui8> to memref<1x32xui8, strided<[32, 1], offset: ?>>
       %row = memref.subview %dst[%i, 0] [1, 32] [1, 1]
         : memref<4x32xui8> to memref<1x32xui8, strided<[32, 1], offset: ?>>
