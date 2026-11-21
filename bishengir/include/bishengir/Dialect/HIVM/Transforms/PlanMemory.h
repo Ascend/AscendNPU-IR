@@ -121,6 +121,8 @@ struct BufferInfo {
   /// CV buffer). Used by the cross-scope tightly-coupled CV-buffer reuse
   /// analysis to identify a sharing pair.
   int32_t cvMixId{-1};
+  /// Buffer pool ID of this allocation (-1 for a buffer outside a pool).
+  int32_t bufferPoolId{-1};
 };
 
 /// linear operation info.
@@ -631,6 +633,9 @@ private:
   /// need to run UpdateOpGenInfo manually.
   bool ProcessMarkOpForTightlyCoupledCV(annotation::MarkOp markOp,
                                         memref::AllocOp allocOp);
+
+  /// Record pool membership on the allocation underlying the marked buffer.
+  void UpdateBufferPoolInfo(annotation::MarkOp markOp, memref::AllocOp allocOp);
 
   /// Update bufferInfos for AllocOp which need to plan unique memory.
   void UpdateMemoryUniqueBufferInfo(annotation::MarkOp markOp,
