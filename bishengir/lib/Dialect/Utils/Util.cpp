@@ -28,6 +28,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/DLTI/DLTI.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -39,8 +40,10 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
+#include <limits>
 #include <numeric>
 #include <optional>
 #include <queue>
@@ -233,6 +236,70 @@ getStridesAndOffsetCompat(MemRefType type) {
 #else
   return type.getStridesAndOffset();
 #endif
+}
+
+bool hasStaticUnitStride(MemRefType type) {
+  SmallVector<int64_t> strides;
+  int64_t offset;
+  return succeeded(getStridesAndOffsetCompat(type, strides, offset)) &&
+         strides.size() == 1 && strides.front() == 1;
+}
+
+std::optional<std::pair<Value, int64_t>>
+traceStaticMemRefAccess(Value memrefVal) {
+  auto type = dyn_cast<MemRefType>(memrefVal.getType());
+  if (!type)
+    return std::nullopt;
+
+  int64_t byteBias = 0;
+  Value current = memrefVal;
+  while (Operation *defOp = current.getDefiningOp()) {
+    if (isa<memref::AllocOp>(defOp))
+      break;
+    if (auto viewOp = dyn_cast<memref::ViewOp>(defOp)) {
+      auto shift = getConstantIntValue(viewOp.getByteShift());
+      if (!shift || *shift < 0 ||
+          *shift > std::numeric_limits<int64_t>::max() - byteBias)
+        return std::nullopt;
+      byteBias += *shift;
+      current = viewOp.getSource();
+      continue;
+    }
+    // These operations reset or extract descriptor metadata, so the final
+    // type offset alone cannot describe the access relative to the alloc.
+    if (isa<memref::ReinterpretCastOp, memref::ExtractStridedMetadataOp,
+            memref::MemorySpaceCastOp>(defOp))
+      return std::nullopt;
+    // Only memref views have been checked for this offset calculation.
+    if (!isa<memref::MemRefDialect>(defOp->getDialect()))
+      return std::nullopt;
+    auto view = dyn_cast<ViewLikeOpInterface>(defOp);
+    if (!view)
+      return std::nullopt;
+    current = view.getViewSource();
+  }
+
+  if (!current.getDefiningOp<memref::AllocOp>())
+    return std::nullopt;
+
+  SmallVector<int64_t> strides;
+  int64_t offset;
+  // The final type's static offset includes subview offsets.
+  if (failed(getStridesAndOffsetCompat(type, strides, offset)) ||
+      ShapedType::isDynamic(offset) || offset < 0)
+    return std::nullopt;
+
+  int64_t biasBits;
+  int64_t byteBiasBits;
+  // Convert both offsets to bits and check the arithmetic.
+  if (llvm::MulOverflow(offset,
+                        static_cast<int64_t>(type.getElementTypeBitWidth()),
+                        biasBits) ||
+      llvm::MulOverflow(byteBias, static_cast<int64_t>(kBitsToByte),
+                        byteBiasBits) ||
+      biasBits > std::numeric_limits<int64_t>::max() - byteBiasBits)
+    return std::nullopt;
+  return std::make_pair(current, biasBits + byteBiasBits);
 }
 
 namespace debugger {

@@ -588,6 +588,23 @@ llvm::cl::values(
   }];
 }
 
+def PlanMemoryUBCopyBankMode : HIVMOptimizationControlOptions<
+  "PlanMemory UB-to-UB copy bank conflict avoidance mode.",
+  "mlir::hivm::PlanMemoryUBCopyBankMode",
+  "mlir::hivm::PlanMemoryUBCopyBankMode::OFF"
+> {
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(mlir::hivm::PlanMemoryUBCopyBankMode::OFF, "off",
+             "Disable bank conflict avoidance"),
+  clEnumValN(mlir::hivm::PlanMemoryUBCopyBankMode::PREFER, "prefer",
+             "Avoid bank conflicts when possible"),
+  clEnumValN(mlir::hivm::PlanMemoryUBCopyBankMode::REQUIRE, "require",
+             "Require bank constraints visible during planning")
+)
+  }];
+}
+
 def EnableAutoBindSubBlock : HIVMOptimizationControlOptions<
   "Enable auto bind sub block.",
   "bool",
@@ -1310,11 +1327,27 @@ def EnableFlatten : GeneralOptimizationControlOptions<
 }
 
 def EnableFuseReductionIntoLoop : GeneralOptimizationControlOptions<
-  "Enable fuse post-loop reductions into the loop body",
+  "Fuse post-loop sums into the loop (allows floating-point reassociation)",
   "bool",
   "false"
 > {
   let passGroup = ["HFUSION"];
+}
+
+def FuseReductionIntoLoopMode : GeneralOptimizationControlOptions<
+  "Loop initializer handling when fusion is enabled: zero-only or late",
+  "bishengir::FuseReductionIntoLoopMode",
+  "bishengir::FuseReductionIntoLoopMode::ZeroOnly"
+> {
+  let passGroup = ["HFUSION"];
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(bishengir::FuseReductionIntoLoopMode::ZeroOnly, "zero-only",
+             "Fuse only known-zero initializers"),
+  clEnumValN(bishengir::FuseReductionIntoLoopMode::Late, "late",
+             "Reduce the initializer after the loop")
+)
+  }];
 }
 
 def SimtOptimizationMode : GeneralOptimizationControlOptions<
@@ -1378,6 +1411,14 @@ def EnableLegalizeScalarFP8 : HFusionOptimizationControlOptions<
 //===----------------------------------------------------------------------===//
 // HIVM Optimization Control Options
 //===----------------------------------------------------------------------===//
+
+def EnableHivmUbRowGatherFallbackLoop : HIVMOptimizationControlOptions<
+  "Emit the paired-row fallback as a nested two-lane parallel loop",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
+}
 
 def EnableFusedMultiplyAdd : HIVMOptimizationControlOptions<
   "Enable fused multiply add",

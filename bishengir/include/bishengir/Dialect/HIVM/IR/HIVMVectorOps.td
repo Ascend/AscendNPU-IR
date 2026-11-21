@@ -1245,7 +1245,11 @@ def VSelOp : HIVM_ElementwiseTernaryOp<"vsel",
 def VBrcOp : HIVM_VectorOp<"vbrc",
     [SameOperandsElementType,
      OperElemTypeConstraints<
-         [0], [I8, UI8, I16, F16, UI16, I32, F8E4M3FN, F8E5M2, F32, UI32, BF16, I64, UI64, I1]>,
+         [0], [I8, UI8, I16, F16, UI16, I32
+#ifdef BSPUB_DAVINCI_BISHENGIR
+         , HiF8
+#endif
+         , F8E4M3FN, F8E5M2, F32, UI32, BF16, I64, UI64, I1]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
                                ["getIteratorTypesArray", "getIndexingMaps"]>,
@@ -1435,7 +1439,11 @@ def VReduceOp : HIVM_VectorOp<"vreduce",
 //===----------------------------------------------------------------------===//
 
 def VTransposeOp : HIVM_VectorOp<"vtranspose",
-    [OperElemTypeConstraints<[0], [I1, AnyI8, AnyI16, AnyI32, F16, BF16, F32, I64, UI64, F8E4M3FN, F8E5M2]>,
+    [OperElemTypeConstraints<[0], [I1, AnyI8, AnyI16, AnyI32, F16, BF16, F32, I64, UI64,
+#ifdef BSPUB_DAVINCI_BISHENGIR
+        HiF8,
+#endif
+        F8E4M3FN, F8E5M2]>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray", "setIteratorTypesArray", "getIndexingMaps"]>,
      DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
@@ -1561,7 +1569,11 @@ def VInterleaveOp : HIVM_VectorOp<"vinterleave",
     [SameOperandsElementType, AttrSizedOperandSegments,
      HIVMOpSameOperandsAndResultRank,
      OperElemTypeConstraints<[0],
-       [I8, UI8, I16, F16, UI16, I32, F8E4M3FN, F8E5M2, F32, UI32, BF16, I64, UI64, I1]>,
+       [I8, UI8, I16, F16, UI16, I32
+#ifdef BSPUB_DAVINCI_BISHENGIR
+       , HiF8
+#endif
+       , F8E4M3FN, F8E5M2, F32, UI32, BF16, I64, UI64, I1]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
@@ -1607,7 +1619,11 @@ def VInterleaveOp : HIVM_VectorOp<"vinterleave",
 def VDeinterleaveOp : HIVM_VectorOp<"vdeinterleave",
     [SameOperandsElementType, HIVMOpSameOperandsAndResultRank,
      OperElemTypeConstraints<[0],
-       [I8, UI8, I16, F16, UI16, I32, F8E4M3FN, F8E5M2, F32, UI32, BF16, I64, UI64]>,
+       [I8, UI8, I16, F16, UI16, I32
+#ifdef BSPUB_DAVINCI_BISHENGIR
+       , HiF8
+#endif
+       , F8E4M3FN, F8E5M2, F32, UI32, BF16, I64, UI64]>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
      DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,

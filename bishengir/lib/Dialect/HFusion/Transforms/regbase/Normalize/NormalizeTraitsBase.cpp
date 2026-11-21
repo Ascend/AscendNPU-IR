@@ -81,7 +81,10 @@ Value mlir::hfusion::NormalizeTraitsBase::castScalarThroughTensor(
   auto tensorType = RankedTensorType::get({1}, scalar.getType());
   Value fromElementsOp =
       rewriter.create<tensor::FromElementsOp>(loc, tensorType, scalar);
-  Value castValue = hfusion::castTo(rewriter, fromElementsOp, dstType);
+  auto roundMode =
+      selectRoundMode<hfusion::RoundMode>(scalar.getType(), dstType);
+  Value castValue =
+      hfusion::castTo(rewriter, fromElementsOp, dstType, roundMode);
   auto c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
   return rewriter.create<tensor::ExtractOp>(loc, castValue, ValueRange{c0});
 }

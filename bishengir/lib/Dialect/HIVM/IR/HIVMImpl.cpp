@@ -726,6 +726,10 @@ std::string getTypeName(Location loc, Type type, hivm::TypeFn casting) {
     }
   }
   if (auto fType = dyn_cast<FloatType>(type)) {
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+    if (isa<HiFloat8Type>(fType))
+      return "hifloat8_t";
+#endif
     if (isa<Float8E4M3FNType>(fType))
       return "float8_e4m3_t";
     if (isa<Float8E5M2Type>(fType))

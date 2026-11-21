@@ -69,6 +69,10 @@ namespace mlir {
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
 
 namespace hivm {
+/// Sink row masks and pair regular and indirect AIV row loads.
+std::unique_ptr<Pass>
+createOptimizeRowLoadsPass(const OptimizeRowLoadsOptions &options = {});
+
 /// Create a pass to infer the core type of each function.
 std::unique_ptr<Pass> createInferFuncCoreTypePass();
 

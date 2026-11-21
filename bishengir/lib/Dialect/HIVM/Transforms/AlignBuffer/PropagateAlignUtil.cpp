@@ -1855,11 +1855,49 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
     Location loc = conversion.getLoc();
     Value src = conversion.getInputs()[0];
     Value dst = conversion.getOutputs()[0];
-    // The cast dominates every user, so one buffer inserted here does too.
-    rewriter.setInsertionPoint(conversion);
+    // Delay the shared allocation within the cast's block, before every
+    // failing use or the enclosing operation that contains it.
+    Block *block = conversion->getBlock();
+    Operation *allocBefore = block->getTerminator();
+    for (OpOperand *use : failedUses) {
+      Operation *user = block->findAncestorOpInBlock(*use->getOwner());
+      if (!user) {
+        allocBefore = conversion;
+        break;
+      }
+      if (user->isBeforeInBlock(allocBefore))
+        allocBefore = user;
+    }
+    rewriter.setInsertionPoint(allocBefore);
     Value shared = utils::createEmptyOp(rewriter, loc, dst);
-    Operation *seedCopy =
-        rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, shared);
+
+    // Dominance makes the buffer referable here; it does not make the data
+    // readable here. A write to `src` that this pass can see is paired with a
+    // refresh copy below, which covers a seed taken before it. A
+    // tightly-coupled buffer is written by the other core, from a function
+    // this walk never enters, and the only handle on that write is the
+    // completion handshake - which findWriteOp matches by scanning a single
+    // block linearly, so a producer completing inside a loop or a nested
+    // branch leaves no refresh behind. Seed such a buffer at the consumption
+    // point instead, where the program itself already orders the read after
+    // the write.
+    SmallVector<Operation *> seedCopies;
+    auto seedBefore = [&](Operation *anchor) {
+      rewriter.setInsertionPoint(anchor);
+      seedCopies.push_back(
+          rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, shared));
+    };
+    if (!getTightlyCoupledBufferId(src)) {
+      seedBefore(allocBefore);
+    } else {
+      // One seed per failing op, not per failing operand: an op that names the
+      // cast result twice needs one copy in front of it.
+      DenseSet<Operation *> seeded;
+      for (OpOperand *use : failedUses) {
+        if (seeded.insert(use->getOwner()).second)
+          seedBefore(use->getOwner());
+      }
+    }
     for (OpOperand *use : failedUses)
       rewriter.modifyOpInPlace(use->getOwner(),
                                [use, shared] { use->set(shared); });
@@ -1870,15 +1908,22 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
     findWriteOp(shared, writeShared);
     SmallVector<Operation *> writeSrc;
     findWriteOp(src, writeSrc);
-    DominanceInfo domInfo(seedCopy);
+    DominanceInfo domInfo(seedCopies.front());
+    // A write needs a copy once it can follow a seed. With one seed per
+    // consumption point, any one of them reaching the write is enough.
+    auto followsASeed = [&domInfo, &seedCopies](Operation *writeOp) {
+      return llvm::any_of(seedCopies, [&](Operation *seed) {
+        return seed != writeOp && domInfo.dominates(seed, writeOp);
+      });
+    };
     for (Operation *writeOp : writeShared) {
-      if (writeOp == seedCopy || !domInfo.dominates(seedCopy, writeOp))
+      if (llvm::is_contained(seedCopies, writeOp) || !followsASeed(writeOp))
         continue;
       rewriter.setInsertionPointAfter(writeOp);
       rewriter.create<hivm::CopyOp>(loc, TypeRange{}, shared, src);
     }
     for (Operation *writeOp : writeSrc) {
-      if (!domInfo.dominates(seedCopy, writeOp))
+      if (!followsASeed(writeOp))
         continue;
       rewriter.setInsertionPointAfter(writeOp);
       rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, shared);

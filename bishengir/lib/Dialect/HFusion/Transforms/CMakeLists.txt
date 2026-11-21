@@ -17,6 +17,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   AutoVectorize/AutoVectorizeInterpreter.cpp
   AutoVectorize/FusedNode.cpp
   AutoVectorize/FusionUtils.cpp
+  AutoVectorize/LiftScalarProducer.cpp
   AutoVectorize/PlanContext.cpp
   AutoVectorize/Ordering/OrderingConstraint.cpp
   AutoVectorize/Ordering/Rule/SsaOrderingRule.cpp

@@ -792,7 +792,31 @@ getCustomOpExtraBuffersInfo(CustomOpT op) {
   return res;
 }
 
+/// True when `operand` is an input bound in place to an output by
+/// `kInplaceOutsAttrName`. The kernel reads the incoming value and writes the
+/// result back into the same storage, so the operand is both read and written.
+template <typename CustomOpT>
+static bool isInplaceInputOperand(CustomOpT op, OpOperand &operand) {
+  unsigned operandIdx = operand.getOperandNumber();
+  if (operandIdx >= op.getInputs().size())
+    return false;
+
+  auto argAttrs =
+      op->template getAttrOfType<ArrayAttr>(CustomOpT::kArgAttrsName);
+  if (!argAttrs || operandIdx >= argAttrs.size())
+    return false;
+
+  auto dict = dyn_cast_or_null<DictionaryAttr>(argAttrs[operandIdx]);
+  if (!dict)
+    return false;
+
+  return getInplaceOutputIndexAttr<CustomOpT>(
+             dict.get(CustomOpT::kInplaceOutsAttrName)) != nullptr;
+}
+
+template <typename CustomOpT>
 void getEffectsForCustomOps(
+    CustomOpT op,
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   // `no_side_effect` means that the op only reads its declared inputs and
@@ -803,6 +827,21 @@ void getEffectsForCustomOps(
                        SideEffects::DefaultResource::get());
   effects.emplace_back(MemoryEffects::Read::get(),
                        SideEffects::DefaultResource::get());
+
+  // An inplace_outs input aliases its bound output, so it is read and written
+  // rather than only read. Attach the effects to the operand so consumers such
+  // as canonicalization and dead-store elimination see the write.
+  for (OpOperand &operand : op->getOpOperands()) {
+    if (!isa<MemRefType>(operand.get().getType()))
+      continue;
+    if (!isInplaceInputOperand(op, operand))
+      continue;
+
+    effects.emplace_back(MemoryEffects::Read::get(), &operand,
+                         SideEffects::DefaultResource::get());
+    effects.emplace_back(MemoryEffects::Write::get(), &operand,
+                         SideEffects::DefaultResource::get());
+  }
 }
 
 LogicalResult verifyProtonScopeBoundary(CustomOp op) {
@@ -877,11 +916,11 @@ CustomMacroOp::getInplaceInputIndexForOutput(int64_t outputIndex) {
 void CustomOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-  getEffectsForCustomOps(effects);
+  getEffectsForCustomOps(*this, effects);
 }
 
 void CustomMacroOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-  getEffectsForCustomOps(effects);
+  getEffectsForCustomOps(*this, effects);
 }

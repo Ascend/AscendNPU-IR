@@ -31,17 +31,22 @@
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/CheckedArithmetic.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/WithColor.h"
 #include <algorithm>
+#include <cstdint>
 #include <functional>
+#include <limits>
 
 #define DEBUG_TYPE "hivm-plan-memory"
 #define LDBG(X) LLVM_DEBUG(llvm::dbgs() << X)
@@ -1373,6 +1378,139 @@ void MemLivenessAnalysis::InitializeInplacePairList() {
   }
 }
 
+std::optional<BankBufferKinds>
+MemLivenessAnalysis::getBankBufferKinds(Value root) {
+  auto infoIt = bufferInfos.find(root);
+  if (infoIt == bufferInfos.end() ||
+      infoIt->second.bufferScope != hivm::AddressSpace::UB ||
+      skipMemPlan.contains(root) || !buffer2Life.contains(root))
+    return std::nullopt;
+  // TODO: Support bank planning without changing memory-unique priority.
+  if (infoIt->second.memoryUnique) {
+    LDBG("[bank-copy] skip memory-unique buffer: " << root << "\n");
+    return std::nullopt;
+  }
+  BankBufferKinds kinds;
+  auto multiIt = buffer2MultiNum.find(root);
+  if (multiIt != buffer2MultiNum.end() && multiIt->second > 1)
+    kinds.insert(BankBufferKind::Multi);
+  if (infoIt->second.cvMixId >= 0)
+    kinds.insert(BankBufferKind::TCB);
+  if (IsPreloadBuffer(root))
+    kinds.insert(BankBufferKind::Preload);
+  return kinds;
+}
+
+/// Collect static, contiguous 1D UB-to-UB copy information.
+void MemLivenessAnalysis::collectUBCopyBankCopies(bool preserveTcbRoots) {
+  bankCopies.clear();
+  bankTcbRoots.clear();
+  if (planMemoryUBCopyBankMode == PlanMemoryUBCopyBankMode::OFF ||
+      !isLocalMemPlan()) {
+    LDBG("[bank-copy] skip collection: mode="
+         << getUBCopyBankModeName(planMemoryUBCopyBankMode)
+         << " localMemPlan=" << isLocalMemPlan() << "\n");
+    return;
+  }
+  if (preserveTcbRoots)
+    for (auto &[buffer, info] : bufferInfos)
+      if (info.cvMixId >= 0)
+        bankTcbRoots.insert(buffer);
+
+  // `linearOperation` can visit one operation more than once when control flow
+  // is involved. Keep IR order while recording each copy once.
+  DenseSet<Operation *> visitedCopies;
+  unsigned inspectedCopies = 0;
+  for (const std::unique_ptr<OpInfo> &opInfo : linearOperation) {
+    auto copyOp = dyn_cast_or_null<hivm::CopyOp>(opInfo->operation);
+    if (!copyOp || !visitedCopies.insert(copyOp.getOperation()).second)
+      continue;
+    ++inspectedCopies;
+
+    auto srcScope =
+        hivm::getOptionalHIVMAddressSpace(copyOp.getSrcOperandType());
+    auto dstScope =
+        hivm::getOptionalHIVMAddressSpace(copyOp.getDstOperandType());
+    if (srcScope != hivm::AddressSpace::UB ||
+        dstScope != hivm::AddressSpace::UB) {
+      LDBG("[bank-copy] skip non-UB: " << copyOp << "\n");
+      continue;
+    }
+
+    if (!copyOp.hasPureBufferSemantics() || copyOp.getPadMode() ||
+        copyOp.getPadValue() || copyOp.getCollapseReassociation()) {
+      LDBG("[bank-copy] skip non-pure/padded: " << copyOp << "\n");
+      continue;
+    }
+
+    auto srcType = dyn_cast<MemRefType>(copyOp.getSrcOperandType());
+    auto dstType = dyn_cast<MemRefType>(copyOp.getDstOperandType());
+    if (!srcType || !dstType || srcType.getRank() != 1 ||
+        dstType.getRank() != 1 || !srcType.hasStaticShape() ||
+        !dstType.hasStaticShape() || !utils::hasStaticUnitStride(srcType) ||
+        !utils::hasStaticUnitStride(dstType)) {
+      LDBG("[bank-copy] skip non-1D-static-unit-stride: " << copyOp << "\n");
+      continue;
+    }
+
+    if (srcType.getElementType().isInteger(1)) {
+      LDBG("[bank-copy] skip i1: " << copyOp << "\n");
+      continue;
+    }
+
+    int64_t copyBits;
+    if (llvm::MulOverflow(
+            srcType.getNumElements(),
+            static_cast<int64_t>(srcType.getElementTypeBitWidth()), copyBits) ||
+        copyBits < utils::kUBCopyBankSizeInBits ||
+        copyBits % utils::kUBAlignSizeInBits) {
+      LDBG("[bank-copy] skip invalid size: " << copyOp << "\n");
+      continue;
+    }
+
+    auto srcAccess = utils::traceStaticMemRefAccess(copyOp.getSrc());
+    auto dstAccess = utils::traceStaticMemRefAccess(copyOp.getDst());
+    if (!srcAccess || !dstAccess) {
+      LDBG("[bank-copy] skip untraceable access: " << copyOp << "\n");
+      continue;
+    }
+
+    auto srcKinds = getBankBufferKinds(srcAccess->first);
+    auto dstKinds = getBankBufferKinds(dstAccess->first);
+    if (!srcKinds || !dstKinds) {
+      LDBG("[bank-copy] skip invalid buffer kind: " << copyOp << "\n");
+      continue;
+    }
+
+    if (srcAccess->second % utils::kUBAlignSizeInBits != 0 ||
+        dstAccess->second % utils::kUBAlignSizeInBits != 0) {
+      LDBG("[bank-copy] skip unaligned bias: " << copyOp << "\n");
+      continue;
+    }
+
+    int64_t dstBits;
+    if (llvm::MulOverflow(
+            dstType.getNumElements(),
+            static_cast<int64_t>(dstType.getElementTypeBitWidth()), dstBits) ||
+        copyBits != dstBits) {
+      LDBG("[bank-copy] skip size mismatch: " << copyOp << "\n");
+      continue;
+    }
+
+    LDBG("[bank-copy] collect #"
+         << bankCopies.size() << ": src " << srcAccess->first << " + "
+         << srcAccess->second << " bits -> dst " << dstAccess->first << " + "
+         << dstAccess->second << " bits: " << copyOp << "\n");
+    bankCopies.push_back({copyOp, srcAccess->first, dstAccess->first,
+                          srcAccess->second, dstAccess->second, copyBits,
+                          *srcKinds, *dstKinds});
+  }
+
+  LDBG("[bank-copy] inspected "
+       << inspectedCopies << " copy op(s), collected " << bankCopies.size()
+       << ", skipped " << (inspectedCopies - bankCopies.size()) << "\n");
+}
+
 void MemLivenessAnalysis::GenerateBufferLife() {
   for (size_t i = 0; i < linearOperation.size(); ++i) {
     auto it = genKillMap.find(linearOperation[i].get());
@@ -1850,6 +1988,389 @@ void MemPlan::GenerateStorageEntry() {
   }
 }
 
+void MemPlanPreferUBConflict::buildBankGraph() {
+  // Prefer only constrains copies with at least one normal endpoint.
+  buildEnabledBankGraph();
+}
+
+void MemPlanPreferUBConflict::PlanBuffersWithoutReuse(StorageEntry *root,
+                                                      size_t align) {
+  commitBankNoReuseLayout(root, align);
+}
+
+void MemPlanRequireUBConflict::buildBankGraph() {
+  // Require also includes copies between special buffers.
+  buildEnabledBankGraph();
+  buildBankComponents();
+}
+
+void MemPlanRequireUBConflict::PlanBuffersWithoutReuse(StorageEntry *root,
+                                                       size_t align) {
+  commitBankNoReuseLayout(root, align);
+}
+
+// Find one path while ignoring the specified copy edges.
+static SmallVector<const BankEdge *>
+findBankPath(const BankGraph &graph, StorageEntry *src, StorageEntry *dst,
+             Operation *excluded, Operation *alsoExcluded = nullptr) {
+  DenseMap<StorageEntry *, std::pair<StorageEntry *, const BankEdge *>> parent;
+  SmallVector<StorageEntry *> worklist{src};
+  DenseSet<StorageEntry *> visited{src};
+  while (!worklist.empty() && !visited.contains(dst)) {
+    StorageEntry *node = worklist.pop_back_val();
+    auto it = graph.find(node);
+    if (it == graph.end())
+      continue;
+    for (const BankEdge &edge : it->second) {
+      if (edge.copyOp == excluded ||
+          (alsoExcluded && edge.copyOp == alsoExcluded) ||
+          !visited.insert(edge.peer).second)
+        continue;
+      parent[edge.peer] = {node, &edge};
+      worklist.push_back(edge.peer);
+    }
+  }
+  SmallVector<const BankEdge *> path;
+  if (!visited.contains(dst))
+    return path;
+  for (StorageEntry *node = dst; node != src;) {
+    auto step = parent.find(node);
+    assert(step != parent.end() && "missing bank path predecessor");
+    path.push_back(step->second.second);
+    node = step->second.first;
+  }
+  return path;
+}
+
+void MemPlan::pruneBankCycles() {
+  while (true) {
+    Operation *removed = nullptr;
+    for (BankCopy &copy : llvm::reverse(bankCopies)) {
+      StorageEntry *src = buffer2storageEntry.lookup(copy.srcRoot);
+      StorageEntry *dst = buffer2storageEntry.lookup(copy.dstRoot);
+      auto it = bankGraph.find(src);
+      if (!src || !dst || src == dst || it == bankGraph.end() ||
+          llvm::none_of(it->second, [&copy](const BankEdge &edge) {
+            return edge.copyOp == copy.copyOp.getOperation();
+          }))
+        continue;
+      auto path = findBankPath(bankGraph, src, dst, copy.copyOp.getOperation());
+      if (path.empty())
+        continue;
+      removed = copy.copyOp.getOperation();
+      LDBG("[bank-cycle] found cycle involving " << copy.copyOp << "\n");
+      // A second path plus the current copy forms another cycle.
+      bool multipleCycles = llvm::any_of(path, [&](const BankEdge *edge) {
+        return edge->copyOp &&
+               !findBankPath(bankGraph, src, dst, copy.copyOp.getOperation(),
+                             edge->copyOp)
+                    .empty();
+      });
+      if (multipleCycles) {
+        LDBG("[bank-cycle] multiple cycles; remove shared copy " << copy.copyOp
+                                                                 << "\n");
+      } else {
+        uint64_t smallest = copy.copyBits;
+        for (const BankEdge *edge : path)
+          if (edge->copyOp && edge->copyBits < smallest) {
+            removed = edge->copyOp;
+            smallest = edge->copyBits;
+          }
+        LDBG("[bank-cycle] single cycle; remove smallest copy " << *removed
+                                                                << "\n");
+      }
+      break;
+    }
+    if (!removed)
+      return;
+    removed->emitWarning("ignoring UB copy bank constraint in a cycle");
+    SmallVector<StorageEntry *> emptyNodes;
+    for (auto &node : bankGraph) {
+      llvm::erase_if(node.second, [removed](const BankEdge &edge) {
+        return edge.copyOp == removed;
+      });
+      if (node.second.empty())
+        emptyNodes.push_back(node.first);
+    }
+    for (StorageEntry *node : emptyNodes)
+      bankGraph.erase(node);
+    llvm::erase_if(bankCopies, [removed](BankCopy &copy) {
+      return copy.copyOp.getOperation() == removed;
+    });
+  }
+}
+
+bool MemPlan::isBankMemoryUniqueEntry(const StorageEntry *entry) const {
+  if (entry->bufInfo->memoryUnique)
+    return true;
+  return llvm::any_of(entry->inplaceBuffers, [this](Value buffer) {
+    auto info = bufferInfos.find(buffer);
+    return info != bufferInfos.end() && info->second.memoryUnique;
+  });
+}
+
+void MemPlan::buildEnabledBankGraph() {
+  bankGraph.clear();
+  if (planMemoryUBCopyBankMode == PlanMemoryUBCopyBankMode::OFF) {
+    return;
+  }
+  if (bankCopies.empty()) {
+    LDBG("[bank-graph] skip: no eligible copies\n");
+    return;
+  }
+  for (BankCopy &copy : bankCopies) {
+    auto *srcSE = buffer2storageEntry.lookup(copy.srcRoot);
+    auto *dstSE = buffer2storageEntry.lookup(copy.dstRoot);
+    if (!srcSE || !dstSE) {
+      LDBG("[bank-graph] skip storage entry lookup: src="
+           << copy.srcRoot << ", dst=" << copy.dstRoot << "\n");
+      continue;
+    }
+
+    // Pool and inplace processing can mark a merged entry memory-unique.
+    if (isBankMemoryUniqueEntry(srcSE) || isBankMemoryUniqueEntry(dstSE)) {
+      LDBG("[bank-graph] skip memory-unique copy: " << copy.copyOp << "\n");
+      continue;
+    }
+
+    // TCB pool fallback can clear metadata, so retain the collected kinds.
+    bool srcNormal = copy.srcKinds.empty() && !isBankSpecialEntry(srcSE);
+    bool dstNormal = copy.dstKinds.empty() && !isBankSpecialEntry(dstSE);
+    if (srcSE == dstSE) {
+      // A shared base cannot change the relative access offsets.
+      LDBG("[bank-graph] skip self edge: " << copy.copyOp << "\n");
+      continue;
+    }
+    if (!srcNormal && !dstNormal &&
+        planMemoryUBCopyBankMode == PlanMemoryUBCopyBankMode::PREFER) {
+      LDBG("[bank-graph] skip: both endpoints are special: " << copy.copyOp
+                                                             << "\n");
+      continue;
+    }
+
+    bankGraph[srcSE].push_back({dstSE, static_cast<uint64_t>(copy.srcBiasBits),
+                                static_cast<uint64_t>(copy.dstBiasBits),
+                                static_cast<uint64_t>(copy.copyBits),
+                                copy.copyOp, srcNormal, dstNormal});
+    bankGraph[dstSE].push_back({srcSE, static_cast<uint64_t>(copy.dstBiasBits),
+                                static_cast<uint64_t>(copy.srcBiasBits),
+                                static_cast<uint64_t>(copy.copyBits),
+                                copy.copyOp, dstNormal, srcNormal});
+  }
+  pruneBankCycles();
+  size_t addedEdges = 0;
+  for (const auto &node : bankGraph)
+    addedEdges += node.second.size();
+  LDBG("[bank-graph] built " << bankGraph.size() << " node(s), " << addedEdges
+                             << " edge(s) from " << bankCopies.size()
+                             << " copy(s)\n");
+  return;
+}
+
+// Add one committed address to the accumulated residue constraint.
+static void updateBankResidue(BankResidueResult &result, uint64_t residue) {
+  if (result.status == BankResidueStatus::Unconstrained) {
+    result.status = BankResidueStatus::Known;
+    result.residue = result.preferredResidue = residue;
+  } else if (result.residue != residue) {
+    result.status = BankResidueStatus::Conflict;
+  }
+}
+
+void MemPlan::forEachBankNeighbor(
+    StorageEntry *entry,
+    llvm::function_ref<void(StorageEntry *, uint64_t, uint64_t)> visit) const {
+  auto graphIt = bankGraph.find(entry);
+  if (graphIt != bankGraph.end())
+    for (const BankEdge &edge : graphIt->second)
+      visit(edge.peer, edge.thisBiasBits, edge.peerBiasBits);
+  if (entry->firstBufferRelationEntry)
+    visit(entry->firstBufferRelationEntry, 0, 0);
+  else
+    for (StorageEntry *slot : entry->otherBufferRelationEntries)
+      visit(slot, 0, 0);
+}
+
+size_t MemPlan::getBankDegree(StorageEntry *entry) const {
+  auto graphIt = bankGraph.find(entry);
+  size_t copyDegree = graphIt == bankGraph.end() ? 0 : graphIt->second.size();
+  size_t slotDegree = entry->firstBufferRelationEntry
+                          ? 1
+                          : entry->otherBufferRelationEntries.size();
+  return copyDegree + slotDegree;
+}
+
+bool MemPlan::hasBankConflict() const {
+  return planMemoryUBCopyBankMode == PlanMemoryUBCopyBankMode::REQUIRE
+             ? !bankMember2Anchor.empty()
+             : !bankGraph.empty();
+}
+
+void MemPlan::buildBankComponents() {
+  bankMember2Anchor.clear();
+  bankAnchor2Members.clear();
+  DenseSet<StorageEntry *> visited;
+  for (const auto &entry : StorageEntryVec) {
+    StorageEntry *start = entry.get();
+    if (start->bufInfo->bufferScope != AddressSpace::UB ||
+        isBankMemoryUniqueEntry(start) ||
+        (bankGraph.find(start) == bankGraph.end() &&
+         !start->firstBufferRelationEntry &&
+         start->otherBufferRelationEntries.empty()) ||
+        !visited.insert(start).second)
+      continue;
+    SmallVector<StorageEntry *> members;
+    SmallVector<StorageEntry *> worklist{start};
+    StorageEntry *anchor = start;
+    while (!worklist.empty()) {
+      StorageEntry *current = worklist.pop_back_val();
+      members.push_back(current);
+      size_t currentDegree = getBankDegree(current);
+      size_t anchorDegree = getBankDegree(anchor);
+      if (currentDegree > anchorDegree ||
+          (currentDegree == anchorDegree && current->memoId < anchor->memoId))
+        anchor = current;
+      forEachBankNeighbor(current, [&visited, &worklist](StorageEntry *peer,
+                                                         uint64_t thisBias,
+                                                         uint64_t peerBias) {
+        (void)thisBias;
+        (void)peerBias;
+        if (visited.insert(peer).second)
+          worklist.push_back(peer);
+      });
+    }
+    for (StorageEntry *member : members)
+      bankMember2Anchor[member] = anchor;
+    bankAnchor2Members[anchor] = std::move(members);
+  }
+}
+
+uint64_t MemPlan::bankResidueFromPeer(uint64_t peerOffset, uint64_t thisBias,
+                                      uint64_t peerBias) {
+  // Match the accessed addresses: this base = peer base + peer bias - this
+  // bias.
+  constexpr uint64_t mask = utils::kUBCopyBankSizeInBits - 1;
+  return (peerOffset + peerBias + utils::kUBCopyBankSizeInBits - thisBias) &
+         mask;
+}
+
+BankResidueResult
+MemPlanRequireUBConflict::analyzeBankResidue(const StorageEntry *entry,
+                                             BankOffsetLookup lookupPeerOffset,
+                                             uint64_t placementHint) const {
+  (void)placementHint;
+  auto component = bankMember2Anchor.find(entry);
+  if (component == bankMember2Anchor.end())
+    return {};
+  auto group = bankAnchor2Members.find(component->second);
+  assert(group != bankAnchor2Members.end() && "missing bank component");
+  auto start = llvm::find(group->second, entry);
+  assert(start != group->second.end() && "missing bank component member");
+
+  // Traverse the component during allocation; history supplies only offsets
+  // that remain valid after rollback.
+  DenseMap<StorageEntry *, uint64_t> relative;
+  SmallVector<StorageEntry *> worklist{*start};
+  relative[*start] = 0;
+  while (!worklist.empty()) {
+    StorageEntry *node = worklist.pop_back_val();
+    uint64_t delta = relative.lookup(node);
+    if (auto offset = lookupPeerOffset(node)) {
+      BankResidueResult result;
+      result.status = BankResidueStatus::Known;
+      result.residue = bankResidueFromPeer(*offset, delta, 0);
+      return result;
+    }
+    forEachBankNeighbor(node, [&relative, &worklist, delta](StorageEntry *peer,
+                                                            uint64_t thisBias,
+                                                            uint64_t peerBias) {
+      uint64_t next = bankResidueFromPeer(delta, peerBias, thisBias);
+      if (relative.try_emplace(peer, next).second)
+        worklist.push_back(peer);
+    });
+  }
+  return {};
+}
+
+BankResidueResult MemPlan::analyzeBankResidue(const StorageEntry *entry,
+                                              BankOffsetLookup lookupPeerOffset,
+                                              uint64_t placementHint) const {
+  (void)entry;
+  (void)lookupPeerOffset;
+  (void)placementHint;
+  return {};
+}
+
+BankResidueResult MemPlanPreferUBConflict::analyzeBankResidue(
+    const StorageEntry *e,
+    llvm::function_ref<std::optional<uint64_t>(const StorageEntry *)>
+        lookupPeerOffset,
+    uint64_t placementHint) const {
+  constexpr uint64_t bankMask = utils::kUBCopyBankSizeInBits - 1;
+  auto graphIt = bankGraph.find(e);
+  if (graphIt == bankGraph.end())
+    return {};
+
+  BankResidueResult result;
+  uint64_t preferredCopyBits = 0;
+  for (const BankEdge &edge : graphIt->second) {
+    if (!edge.thisIsNormal) {
+      LDBG("[bank-residue] skip non-normal: " << edge.copyOp << "\n");
+      continue;
+    }
+    auto peerOffset = lookupPeerOffset(edge.peer);
+    if (!peerOffset) {
+      LDBG("[bank-residue] skip unplanned peer: " << edge.copyOp << "\n");
+      continue;
+    }
+
+    // PREFER anchors one slot and leaves other runtime slots unchanged.
+    uint64_t edgeResidue =
+        bankResidueFromPeer(*peerOffset, edge.thisBiasBits, edge.peerBiasBits);
+    uint64_t bestPadding = (edgeResidue - placementHint) & bankMask;
+    // Slot choice is a local padding heuristic; actual allocation still
+    // performs all lifetime, alignment, and capacity checks.
+    for (const StorageEntry *slot : edge.peer->otherBufferRelationEntries) {
+      auto offset = lookupPeerOffset(slot);
+      if (!offset)
+        continue;
+      uint64_t residue =
+          bankResidueFromPeer(*offset, edge.thisBiasBits, edge.peerBiasBits);
+      uint64_t padding = (residue - placementHint) & bankMask;
+      if (padding < bestPadding) {
+        edgeResidue = residue;
+        bestPadding = padding;
+      }
+    }
+    if (result.status == BankResidueStatus::Unconstrained) {
+      LDBG("[bank-residue] anchor: " << edge.copyOp << "\n");
+      result.status = BankResidueStatus::Known;
+      result.residue = edgeResidue;
+      result.preferredResidue = edgeResidue;
+      preferredCopyBits = edge.copyBits;
+      continue;
+    }
+    updateBankResidue(result, edgeResidue);
+    if (edgeResidue != result.residue)
+      LDBG("[bank-residue] conflict: " << edge.copyOp << "\n");
+    else
+      LDBG("[bank-residue] consistent: " << edge.copyOp << "\n");
+
+    // Prefer the largest copy; keep the first constraint on ties.
+    if (edge.copyBits > preferredCopyBits) {
+      result.preferredResidue = edgeResidue;
+      preferredCopyBits = edge.copyBits;
+    }
+  }
+  if (result.status == BankResidueStatus::Conflict)
+    result.residue = result.preferredResidue;
+  // Choose locally among planned peers; this does not solve the global graph.
+  LDBG("[bank-residue] final: status="
+       << static_cast<int>(result.status) << " residue=" << result.residue
+       << " preferredResidue=" << result.preferredResidue << "\n");
+  return result;
+}
+
 void MemPlan::PrintSuccessfulAllocatedMaxBits() {
   // TODO: This print may be merged into the existing debug log output and
   // could be redundant.
@@ -2059,6 +2580,7 @@ PlanStatus MemPlan::PlanLocalMemAddress() {
   // should be called before ExpandMultiBufferStorageEntry.
   GeneratePreloadReuseableSE();
   ExpandMultiBufferStorageEntry();
+  buildBankGraph();
   MergeSameScopeSE();
   return PlanMemAddressOfWholeLocalBuffer();
 }
@@ -2164,6 +2686,43 @@ void MemPlan::ExpandMultiBufferStorageEntry() {
   }
 }
 
+void MemPlan::LayoutNoReuseOffsets(
+    StorageEntry *rootStorageEntry, size_t alignUnit,
+    DenseMap<const StorageEntry *, uint64_t> &offsets, uint64_t &requiredSize) {
+  constexpr uint64_t bankMask = utils::kUBCopyBankSizeInBits - 1;
+  SmallVector<StorageEntry *> entries{rootStorageEntry};
+  entries.append(rootStorageEntry->mergedChildren.begin(),
+                 rootStorageEntry->mergedChildren.end());
+  assert(alignUnit != 0 && "buffer alignment must be nonzero");
+  uint64_t cursor = 0;
+  for (StorageEntry *entry : entries) {
+    uint64_t candidate = AlignUp(cursor, alignUnit);
+    assert(candidate >= cursor && "layout alignment overflows");
+    auto result = analyzeBankResidue(
+        entry,
+        [&offsets](const StorageEntry *peer) -> std::optional<uint64_t> {
+          auto it = offsets.find(peer);
+          return it == offsets.end() ? std::nullopt
+                                     : std::optional<uint64_t>(it->second);
+        },
+        candidate);
+    if (result.status != BankResidueStatus::Unconstrained) {
+      uint64_t residue = result.residue;
+      uint64_t adjustment =
+          (residue + utils::kUBCopyBankSizeInBits - (candidate & bankMask)) &
+          bankMask;
+      assert(candidate <= UINT64_MAX - adjustment && "bank padding overflows");
+      candidate += adjustment;
+      assert(candidate % alignUnit == 0 && "bank residue violates alignment");
+    }
+    assert(candidate <= UINT64_MAX - entry->alignedConstBits &&
+           "no-reuse layout overflows");
+    offsets[entry] = candidate;
+    cursor = candidate + entry->alignedConstBits;
+  }
+  requiredSize = cursor;
+}
+
 void MemPlan::PlanBuffersWithoutReuse(StorageEntry *rootStorageEntry,
                                       size_t alignUnit) {
   uint offset = 0;
@@ -2172,6 +2731,41 @@ void MemPlan::PlanBuffersWithoutReuse(StorageEntry *rootStorageEntry,
   for (StorageEntry *child : rootStorageEntry->mergedChildren) {
     child->bitsOffset = offset;
     offset += child->alignedConstBits;
+  }
+}
+
+void MemPlan::prepareNoReuseLayout() {
+  if (planMemoryUBCopyBankMode == PlanMemoryUBCopyBankMode::OFF ||
+      !hasBankConflict())
+    return;
+  auto it = memscope2rootStorageEntry.find(AddressSpace::UB);
+  if (it == memscope2rootStorageEntry.end())
+    return;
+  auto *root = GetReorderRootStorageEntry(it->second);
+  it->second = root;
+  size_t align = GetBufferSpaceInfo(it->first).first;
+  uint64_t requiredSize = 0;
+  bankNoReuseOffsets.clear();
+  LayoutNoReuseOffsets(root, align, bankNoReuseOffsets, requiredSize);
+  bufferScope2RequiredSize[it->first] = requiredSize;
+}
+
+void MemPlan::commitBankNoReuseLayout(StorageEntry *rootStorageEntry,
+                                      size_t alignUnit) {
+  if (rootStorageEntry->bufInfo->bufferScope != AddressSpace::UB ||
+      !hasBankConflict()) {
+    MemPlan::PlanBuffersWithoutReuse(rootStorageEntry, alignUnit);
+    return;
+  }
+  auto rootOffset = bankNoReuseOffsets.find(rootStorageEntry);
+  assert(rootOffset != bankNoReuseOffsets.end() &&
+         "bank no-reuse layout is missing the root");
+  rootStorageEntry->bitsOffset = rootOffset->second;
+  for (StorageEntry *child : rootStorageEntry->mergedChildren) {
+    auto childOffset = bankNoReuseOffsets.find(child);
+    assert(childOffset != bankNoReuseOffsets.end() &&
+           "bank no-reuse layout is missing a child");
+    child->bitsOffset = childOffset->second;
   }
 }
 
@@ -2201,6 +2795,9 @@ void MemPlan::MergeSameScopeSE() {
     }
     bufferScope2RequiredSize[memScope] = accumulateSize;
   }
+  // Bank-aware planners may add padding before the shared capacity check.
+  // The base implementation keeps the original no-reuse sizes.
+  prepareNoReuseLayout();
 }
 
 uint64_t MemPlan::PlanMemAddressForSingleLevel(StorageEntry *rootStorageEntry,
@@ -2222,7 +2819,19 @@ uint64_t MemPlan::PlanMemAddressForSingleLevel(StorageEntry *rootStorageEntry,
   StorageEntry *curEntry = rootStorageEntry;
   while (si.childIdx < childrenNum) {
     curEntry->childIdx = si.childIdx;
-    (void)MultiSpecPlan(si, outline, history, curEntry);
+    LogicalResult result = MultiSpecPlan(si, outline, history, curEntry);
+    // LEVEL 1 cannot yet split a bound at an interior bank-aligned address.
+    // Use the prepared no-reuse size if the fixed-level search cannot proceed.
+    if (planMemoryUBCopyBankMode != PlanMemoryUBCopyBankMode::OFF &&
+        failed(result)) {
+      auto required =
+          bufferScope2RequiredSize.find(rootStorageEntry->bufInfo->bufferScope);
+      assert(required != bufferScope2RequiredSize.end() &&
+             "missing no-reuse required size");
+      LDBG("[PlanMemAddressForSingleLevel] use no-reuse size after "
+           "fixed-level allocation failed\n");
+      return required->second;
+    }
     if (si.childIdx >= childrenNum) {
       break;
     }
@@ -2375,6 +2984,14 @@ void MemPlan::ReportCurEntryDebugInfo(const StorageEntry *curEntry) const {
   }
 }
 
+static SmallVector<StorageEntry *>
+appendStorageEntries(std::initializer_list<ArrayRef<StorageEntry *>> groups) {
+  SmallVector<StorageEntry *> result;
+  for (ArrayRef<StorageEntry *> group : groups)
+    result.append(group.begin(), group.end());
+  return result;
+}
+
 StorageEntry *
 MemPlan::GetReorderRootStorageEntry(StorageEntry *rootStorageEntry) {
   assert(rootStorageEntry->bufInfo->operation &&
@@ -2437,16 +3054,10 @@ MemPlan::GetReorderRootStorageEntry(StorageEntry *rootStorageEntry) {
     llvm::stable_sort(touchPipeScalarStorageEntryVec, storageEntryVecOrderCmp);
     llvm::stable_sort(otherStorageEntryVec, storageEntryVecOrderCmp);
   }
-  auto reorderedStorageEntryVec = memUniqueStorageEntryVec;
-  reorderedStorageEntryVec.insert(reorderedStorageEntryVec.end(),
-                                  touchDmaStorageEntryVec.begin(),
-                                  touchDmaStorageEntryVec.end());
-  reorderedStorageEntryVec.insert(reorderedStorageEntryVec.end(),
-                                  otherStorageEntryVec.begin(),
-                                  otherStorageEntryVec.end());
-  reorderedStorageEntryVec.insert(reorderedStorageEntryVec.end(),
-                                  touchPipeScalarStorageEntryVec.begin(),
-                                  touchPipeScalarStorageEntryVec.end());
+
+  auto reorderedStorageEntryVec =
+      orderBankEntries(memUniqueStorageEntryVec, touchDmaStorageEntryVec,
+                       otherStorageEntryVec, touchPipeScalarStorageEntryVec);
 
   // Ensure that firstbuffer and otherbuffer are continuously plan mem in the
   // multi buffer.
@@ -2458,6 +3069,71 @@ MemPlan::GetReorderRootStorageEntry(StorageEntry *rootStorageEntry) {
         reorderedStorageEntryVec[j]);
   }
   return reorderedRootStorageEntry;
+}
+
+SmallVector<StorageEntry *>
+MemPlan::orderBankEntries(ArrayRef<StorageEntry *> memUnique,
+                          SmallVectorImpl<StorageEntry *> &dma,
+                          SmallVectorImpl<StorageEntry *> &other,
+                          SmallVectorImpl<StorageEntry *> &scalar) {
+  if (planMemoryUBCopyBankMode == PlanMemoryUBCopyBankMode::REQUIRE)
+    return orderRequiredBankEntries(memUnique, dma, other, scalar);
+  if (planMemoryUBCopyBankMode == PlanMemoryUBCopyBankMode::OFF)
+    return appendStorageEntries({memUnique, dma, other, scalar});
+
+  assert(planMemoryUBCopyBankMode == PlanMemoryUBCopyBankMode::PREFER);
+  SmallVector<StorageEntry *> special;
+  collectBankSpecialEntries(dma, special);
+  collectBankSpecialEntries(other, special);
+  collectBankSpecialEntries(scalar, special);
+  return appendStorageEntries({memUnique, special, dma, other, scalar});
+}
+
+SmallVector<StorageEntry *>
+MemPlan::orderRequiredBankEntries(ArrayRef<StorageEntry *> memUnique,
+                                  SmallVectorImpl<StorageEntry *> &dma,
+                                  SmallVectorImpl<StorageEntry *> &other,
+                                  SmallVectorImpl<StorageEntry *> &scalar) {
+  SmallVector<StorageEntry *> anchors;
+  SmallVector<StorageEntry *> members;
+  collectBankComponentEntries(dma, anchors, members);
+  collectBankComponentEntries(other, anchors, members);
+  collectBankComponentEntries(scalar, anchors, members);
+  llvm::stable_sort(anchors, [this](StorageEntry *lhs, StorageEntry *rhs) {
+    return getBankDegree(lhs) > getBankDegree(rhs);
+  });
+  return appendStorageEntries(
+      {memUnique, anchors, dma, members, other, scalar});
+}
+
+void MemPlan::collectBankComponentEntries(
+    SmallVectorImpl<StorageEntry *> &entries,
+    SmallVectorImpl<StorageEntry *> &anchors,
+    SmallVectorImpl<StorageEntry *> &members) const {
+  SmallVector<StorageEntry *> remaining;
+  for (StorageEntry *entry : entries) {
+    auto info = bankMember2Anchor.find(entry);
+    if (info == bankMember2Anchor.end())
+      remaining.push_back(entry);
+    else if (info->second == entry)
+      anchors.push_back(entry);
+    else
+      members.push_back(entry);
+  }
+  entries.assign(remaining.begin(), remaining.end());
+}
+
+void MemPlan::collectBankSpecialEntries(
+    SmallVectorImpl<StorageEntry *> &entries,
+    SmallVectorImpl<StorageEntry *> &special) const {
+  SmallVector<StorageEntry *> remaining;
+  for (StorageEntry *entry : entries) {
+    if (bankGraph.find(entry) != bankGraph.end() && isBankSpecialEntry(entry))
+      special.push_back(entry);
+    else
+      remaining.push_back(entry);
+  }
+  entries.assign(remaining.begin(), remaining.end());
 }
 
 void MemPlan::ReorderContinuousFirstBufferOtherBufferEntry(
@@ -2541,45 +3217,60 @@ void MemPlan::LocalBufferReusePreloadBuffer(StorageEntry *entry,
   entry->alignedConstBits = 0;
 }
 
-LogicalResult MemPlan::MultiSpecPlan(SpecInfo &si, MemBoundList &outline,
-                                     PlanRecHis &history, StorageEntry *entry) {
-  LogicalResult planResult = failure();
-  // Keep the stage-0 memo entry-scoped: it covers the spec-level retries of
-  // this entry while staying small and cache-hot. (Verdicts would remain
-  // valid attempt-wide, but an attempt-scoped map measurably costs more in
-  // memory and cache misses than it saves.)
-  stage0ConflictMemo.clear();
-  LDBG("[MultiSpecPlan] try entry childIdx="
-       << si.childIdx << " needBytes=" << entry->alignedConstBits / 8
-       << " from level=" << si.specLevel << " down to minLevel=" << si.minLevel
-       << " historySize=" << history.size() << "\n");
-  for (int i = si.specLevel; i >= si.minLevel; i--) {
-    // single local buffer can't be reuse with tcb buffers, so LocalBuffer can't
-    // reuse preloadBuffer when specLevel is SPEC_LEVEL_0.
-    if (i == SPEC_LEVEL_1) {
+LogicalResult MemPlan::trySpecLevels(SpecInfo &si, MemBoundList &outline,
+                                     PlanRecHis &history, StorageEntry *entry,
+                                     UBCopyBankAllocStrategy strategy,
+                                     bool allowPreloadReuse) {
+  for (int level = si.specLevel; level >= si.minLevel; --level) {
+    // TODO: Support cross-bound allocation for LEVEL 1 related slots.
+    if (level == SPEC_LEVEL_1 &&
+        strategy == UBCopyBankAllocStrategy::CrossBoundSplit)
+      continue;
+    // Single local buffers cannot reuse preload buffers at SPEC_LEVEL_0.
+    if (level == SPEC_LEVEL_1 && allowPreloadReuse)
       LocalBufferReusePreloadBuffer(entry, history);
-    }
-    planResult = SpecAlloc(outline, history, entry, si, i);
-    if (succeeded(planResult)) {
+    if (succeeded(SpecAlloc(outline, history, entry, si, level, strategy))) {
       LDBG("[MultiSpecPlan] SUCCESS at level="
-           << i << " offsetByte=" << entry->bitsOffset / 8 << "\n\n");
+           << level << " offsetByte=" << entry->bitsOffset / 8 << "\n\n");
       if (si.childIdx == si.rollBackStopIdx) {
-        // In roll back plan, when the rollBackStopIdx is reached,
-        // the subsequent plan still adopts the maxLevel strategy.
+        // Resume the maximum level after catching up with the rollback.
         LDBG("[MultiSpecPlan] reached rollBackStopIdx="
              << si.rollBackStopIdx
              << ", reset specLevel to maxLevel=" << si.maxLevel << "\n");
         si.specLevel = si.maxLevel;
       }
-      si.childIdx++;
-      break;
+      ++si.childIdx;
+      return success();
     }
-    LDBG("[MultiSpecPlan] FAIL at level=" << i << "\n");
+    LDBG("[MultiSpecPlan] FAIL at level=" << level << "\n");
   }
-  if (failed(planResult)) {
+  return failure();
+}
+
+LogicalResult MemPlan::MultiSpecPlan(SpecInfo &si, MemBoundList &outline,
+                                     PlanRecHis &history, StorageEntry *entry) {
+  // Stage-0 conflict verdicts are reused only while trying this entry.
+  stage0ConflictMemo.clear();
+  LDBG("[MultiSpecPlan] try entry childIdx="
+       << si.childIdx << " needBytes=" << entry->alignedConstBits / 8
+       << " from level=" << si.specLevel << " down to minLevel=" << si.minLevel
+       << " historySize=" << history.size() << "\n");
+  LogicalResult planResult = failure();
+  if (!IsEntryBankConflict(entry)) {
+    planResult = trySpecLevels(si, outline, history, entry,
+                               UBCopyBankAllocStrategy::Normal, true);
+  } else {
+    for (UBCopyBankAllocStrategy strategy :
+         {UBCopyBankAllocStrategy::BoundChange,
+          UBCopyBankAllocStrategy::CrossBoundSplit}) {
+      planResult = trySpecLevels(si, outline, history, entry, strategy, false);
+      if (succeeded(planResult))
+        break;
+    }
+  }
+  if (failed(planResult))
     LDBG("[MultiSpecPlan] ALL levels failed for this entry; "
          "will invoke ApplyFailStrategy\n");
-  }
   return planResult;
 }
 
@@ -2603,80 +3294,227 @@ void MemPlan::RecordAllocatedEntry(const StorageEntry *e) {
 
 LogicalResult MemPlan::SpecAlloc(MemBoundList &outline, PlanRecHis &his,
                                  StorageEntry *e, const SpecInfo &si,
-                                 int localLevel) {
+                                 int localLevel,
+                                 UBCopyBankAllocStrategy strategy) {
   if (std::any_of(his.begin(), his.end(),
-                  [e](PlanRecord &r) { return r.entry && r.entry == e; })) {
-    // If the plan has already been completed, return success directly.
+                  [e](PlanRecord &r) { return r.entry && r.entry == e; }))
     return success();
-  }
   assert(e && "StorageEntry should not be null");
   if (e->alignedConstBits == 0) {
     e->bitsOffset = 0;
     return success();
   }
+
+  std::optional<uint64_t> residue;
+  const bool hasBankConstraint = IsEntryBankConflict(e);
+  if (hasBankConstraint) {
+    // History excludes peers that have been rolled back.
+    auto result = analyzeBankResidue(
+        e,
+        [&his](const StorageEntry *peer) -> std::optional<uint64_t> {
+          auto it = llvm::find_if(his, [peer](const PlanRecord &record) {
+            return record.entry == peer;
+          });
+          if (it == his.end())
+            return std::nullopt;
+          return it->firstMemBound->offset;
+        },
+        outline.empty() ? 0 : outline.front()->offset);
+    if (result.status != BankResidueStatus::Unconstrained)
+      residue = result.residue;
+  }
+  // Without a known peer residue, allocate normally so later peers can use it.
+  if (!residue)
+    return SpecAllocNormal(outline, his, e, si, localLevel);
+
+  switch (strategy) {
+  case UBCopyBankAllocStrategy::Normal:
+    return SpecAllocNormal(outline, his, e, si, localLevel);
+  case UBCopyBankAllocStrategy::BoundChange:
+    return SpecAllocConflictBoundChange(outline, his, e, si, localLevel,
+                                        *residue);
+  case UBCopyBankAllocStrategy::CrossBoundSplit:
+    return SpecAllocConflictCrossBoundSplit(outline, his, e, si, localLevel,
+                                            *residue);
+  }
+  llvm_unreachable("unknown UB copy bank allocation strategy");
+}
+
+MemPlan::SpecAllocStep MemPlan::TrySpecAllocSection(
+    MemBoundList &outline, PlanRecHis &his, StorageEntry *e, const SpecInfo &si,
+    int localLevel, MemBoundListConstIter &start, MemBoundListConstIter end,
+    uint64_t size, std::optional<uint64_t> candidate,
+    SmallVector<ValuePair> &stallPipelineInplacePairs) {
+  const auto &bound = *end;
+  // Stage-0 results are stable for the current entry and bound.
+  auto key = std::make_pair(e->memoId, bound->memoId);
+  auto [it, inserted] = stage0ConflictMemo.try_emplace(key, false);
+  if (inserted)
+    it->second = VerifyConflictStage0(e, bound, stallPipelineInplacePairs);
+
+  const uint64_t offset = candidate.value_or((*start)->offset);
+  // Do not repeat the same entry and address after rollback.
+  if (IsSamePlanAsLastRollBack(offset, e->childIdx, si) || it->second)
+    return SpecAllocStep::SkipCoveredBounds;
+  if (size < e->alignedConstBits)
+    return SpecAllocStep::Continue;
+
+  SmallVector<uint64_t, 3> otherBufferOffsets;
+  OutlineSectionInfo section(start, end, size, false);
+  // Level 1 also allocates the associated other-buffer addresses.
+  if (localLevel == SPEC_LEVEL_1 &&
+      VerifyConflictStage1(outline, his, e, section, otherBufferOffsets))
+    return SpecAllocStep::NextStart;
+  if (VerifyConflictStage2(his, e, localLevel, start, outline, candidate) ||
+      VerifyConflictStage3(his, e, localLevel, start, outline, candidate))
+    return candidate ? SpecAllocStep::NextCandidate : SpecAllocStep::NextStart;
+
+  e->bitsOffset = offset;
+  UpdateOutline(outline, his, e, section, localLevel);
+  if (localLevel == SPEC_LEVEL_1) {
+    // Record the compatible other-buffer addresses in the outline as well.
+    assert(!otherBufferOffsets.empty() &&
+           "otherBufferOffsets should not be empty at SPEC_LEVEL_1");
+    PlanRelationOtherBufferEntryAddress(otherBufferOffsets, e);
+    for (uint64_t otherOffset : otherBufferOffsets)
+      SpecAllocRelationOtherBufferEntry(outline, his, e, otherOffset);
+  }
+  if (localLevel == SPEC_LEVEL_0) {
+    for ([[maybe_unused]] const auto &pair : stallPipelineInplacePairs)
+      LDBG("Store/Load inplace reuse buffer pair: " << pair.first << " and "
+                                                    << pair.second << "\n");
+  }
+  RecordAllocatedEntry(e);
+  return SpecAllocStep::Success;
+}
+
+LogicalResult MemPlan::SpecAllocNormal(MemBoundList &outline, PlanRecHis &his,
+                                       StorageEntry *e, const SpecInfo &si,
+                                       int localLevel) {
   SmallVector<ValuePair> stallPipelineInplacePairs;
   for (MemBoundListConstIter start = outline.begin(); start != outline.end();
        ++start) {
     uint64_t size = 0;
-    uint64_t allocOffset = (*start)->offset;
     for (MemBoundListConstIter end = start; end != outline.end(); ++end) {
       std::shared_ptr<MemoryBound> last = *end;
       size += last->extent;
-      // Stage-0 verdicts are stable per (entry, bound): both life vectors
-      // and the buffer metadata they consult are immutable while planning.
-      auto stage0Key = std::make_pair(e->memoId, last->memoId);
-      auto [stage0It, stage0Inserted] =
-          stage0ConflictMemo.try_emplace(stage0Key, false);
-      if (stage0Inserted) {
-        stage0It->second =
-            VerifyConflictStage0(e, last, stallPipelineInplacePairs);
-      }
-      // if index & addr are as same as last rollback result,
-      // continue to find next result
-      if (IsSamePlanAsLastRollBack(allocOffset, e->childIdx, si) ||
-          stage0It->second) {
+      SpecAllocStep step =
+          TrySpecAllocSection(outline, his, e, si, localLevel, start, end, size,
+                              std::nullopt, stallPipelineInplacePairs);
+      if (step == SpecAllocStep::Continue)
+        continue;
+      if (step == SpecAllocStep::Success)
+        return success();
+      if (step == SpecAllocStep::SkipCoveredBounds)
         start = end;
+      break;
+    }
+  }
+  return failure();
+}
+
+LogicalResult
+MemPlan::SpecAllocConflictBoundChange(MemBoundList &outline, PlanRecHis &his,
+                                      StorageEntry *e, const SpecInfo &si,
+                                      int localLevel, uint64_t residue) {
+  constexpr uint64_t bankMask = utils::kUBCopyBankSizeInBits - 1;
+  SmallVector<ValuePair> stallPipelineInplacePairs;
+  for (MemBoundListConstIter start = outline.begin(); start != outline.end();
+       ++start) {
+    const uint64_t allocOffset = (*start)->offset;
+    if ((allocOffset & bankMask) != residue)
+      continue;
+    uint64_t size = 0;
+    for (MemBoundListConstIter end = start; end != outline.end(); ++end) {
+      std::shared_ptr<MemoryBound> last = *end;
+      if (end == start)
+        size = last->offset + last->extent - allocOffset;
+      else
+        size += last->extent;
+      SpecAllocStep step =
+          TrySpecAllocSection(outline, his, e, si, localLevel, start, end, size,
+                              std::nullopt, stallPipelineInplacePairs);
+      if (step == SpecAllocStep::Continue)
+        continue;
+      if (step == SpecAllocStep::Success)
+        return success();
+      if (step == SpecAllocStep::SkipCoveredBounds)
+        start = end;
+      break;
+    }
+  }
+  return failure();
+}
+
+static std::optional<uint64_t>
+findBankCandidate(const MemoryBound &bound, uint64_t residue, uint64_t align) {
+  constexpr uint64_t bankMask = utils::kUBCopyBankSizeInBits - 1;
+  uint64_t alignedOffset = AlignUp(bound.offset, align);
+  uint64_t adjustment =
+      (residue + utils::kUBCopyBankSizeInBits - (alignedOffset & bankMask)) &
+      bankMask;
+  auto candidate = llvm::checkedAddUnsigned(alignedOffset, adjustment);
+  if (!candidate || *candidate >= bound.offset + bound.extent ||
+      *candidate % align != 0)
+    return std::nullopt;
+  return candidate;
+}
+
+LogicalResult MemPlan::SpecAllocConflictCrossBoundSplit(
+    MemBoundList &outline, PlanRecHis &his, StorageEntry *e, const SpecInfo &si,
+    int localLevel, uint64_t residue) {
+  // Try the first candidate and at most two additional bank periods.
+  constexpr unsigned kMaxAdditionalCandidates = 2;
+  SmallVector<ValuePair> stallPipelineInplacePairs;
+  for (MemBoundListConstIter start = outline.begin(); start != outline.end();
+       ++start) {
+    auto candidate = findBankCandidate(**start, residue, ubAlignSize);
+    if (!candidate)
+      continue;
+
+    for (unsigned attempt = 0; attempt <= kMaxAdditionalCandidates; ++attempt) {
+      if (*candidate < (*start)->offset ||
+          *candidate - (*start)->offset >= (*start)->extent)
         break;
-      }
-      if (size < e->alignedConstBits) {
+      if (!llvm::checkedAddUnsigned(*candidate, e->alignedConstBits))
+        break;
+
+      bool tryNextCandidate =
+          *candidate % ubAlignSize != 0 ||
+          IsSamePlanAsLastRollBack(*candidate, e->childIdx, si);
+      if (tryNextCandidate) {
+        candidate = llvm::checkedAddUnsigned(
+            *candidate, static_cast<uint64_t>(utils::kUBCopyBankSizeInBits));
+        if (!candidate)
+          break;
         continue;
       }
-      // If SPEC_LEVEL_1, then the address of otherbuffer offset needs to be
-      // allocated.
-      SmallVector<uint64_t, 3> otherBufferOffsets;
-      if (localLevel == SPEC_LEVEL_1 &&
-          VerifyConflictStage1(outline, his, e,
-                               OutlineSectionInfo(start, end, size, false),
-                               otherBufferOffsets)) {
+      uint64_t size = 0;
+      for (MemBoundListConstIter end = start; end != outline.end(); ++end) {
+        std::shared_ptr<MemoryBound> last = *end;
+        if (end == start)
+          size = last->offset + last->extent - *candidate;
+        else
+          size += last->extent;
+        SpecAllocStep step =
+            TrySpecAllocSection(outline, his, e, si, localLevel, start, end,
+                                size, *candidate, stallPipelineInplacePairs);
+        if (step == SpecAllocStep::Continue)
+          continue;
+        if (step == SpecAllocStep::Success)
+          return success();
+        if (step == SpecAllocStep::SkipCoveredBounds)
+          start = end;
+        else if (step == SpecAllocStep::NextCandidate)
+          tryNextCandidate = true;
         break;
       }
-      if (VerifyConflictStage2(his, e, localLevel, start, outline)) {
+      if (!tryNextCandidate)
         break;
-      }
-      if (VerifyConflictStage3(his, e, localLevel, start, outline)) {
+      candidate = llvm::checkedAddUnsigned(
+          *candidate, static_cast<uint64_t>(utils::kUBCopyBankSizeInBits));
+      if (!candidate)
         break;
-      }
-      e->bitsOffset = allocOffset;
-      UpdateOutline(outline, his, e,
-                    OutlineSectionInfo(start, end, size, false), localLevel);
-
-      if (localLevel == SPEC_LEVEL_1) {
-        // There is no conflict with the historical plan of buffer life, and
-        // the address of the otherbuffer can be assigned.
-        assert(!otherBufferOffsets.empty() &&
-               "otherBufferOffsets should not be empty at SPEC_LEVEL_1");
-        PlanRelationOtherBufferEntryAddress(otherBufferOffsets, e);
-        for (uint64_t otherBufferOffset : otherBufferOffsets)
-          SpecAllocRelationOtherBufferEntry(outline, his, e, otherBufferOffset);
-      }
-      if (localLevel == SPEC_LEVEL_0) {
-        for ([[maybe_unused]] const auto &pair : stallPipelineInplacePairs) {
-          LDBG("Store/Load inplace reuse buffer pair: " << pair.first << " and "
-                                                        << pair.second << "\n");
-        }
-      }
-      RecordAllocatedEntry(e);
-      return success();
     }
   }
   return failure();
@@ -2894,18 +3732,39 @@ bool MemPlan::VerifyConflictStageCommon(
     PlanRecHis &his, const StorageEntry *e, MemBoundListConstIter &start,
     const MemBoundList &outline,
     std::function<bool(const StorageEntry *, const StorageEntry *)>
-        conflictChecker) {
+        conflictChecker,
+    std::optional<uint64_t> candidate) {
+  // Check the actual proposed range against previously allocated entries.
+  auto hasConflict = [&his, e, &conflictChecker](uint64_t begin, uint64_t end) {
+    return std::any_of(
+        his.begin(), his.end(),
+        [begin, end, e, &conflictChecker](PlanRecord &r) {
+          return (r.firstMemBound->offset + r.allExtent > begin) &&
+                 (r.firstMemBound->offset < end) && conflictChecker(r.entry, e);
+        });
+  };
+  if (candidate) {
+    const uint64_t entryEnd = *candidate + e->alignedConstBits;
+    // Check each covered part of the outline against the planned entries.
+    for (auto iter = start; iter != outline.end(); ++iter) {
+      const uint64_t boundBegin = (*iter)->offset;
+      if (boundBegin >= entryEnd)
+        break;
+      const uint64_t begin = std::max(*candidate, boundBegin);
+      const uint64_t end = std::min(entryEnd, boundBegin + (*iter)->extent);
+      assert(begin < end && "candidate must intersect the outline bound");
+      if (hasConflict(begin, end))
+        return true;
+    }
+    return false;
+  }
+
   bool touchMemCanUse = false;
   MemBoundListConstIter foundMem;
 
   for (auto iter = start; iter != outline.end(); ++iter) {
-    uint64_t offset = (*iter)->offset;
-    bool conflict = std::any_of(
-        his.begin(), his.end(), [offset, e, &conflictChecker](PlanRecord &r) {
-          return (r.firstMemBound->offset + r.allExtent > offset) &&
-                 (r.firstMemBound->offset < offset + e->alignedConstBits) &&
-                 conflictChecker(r.entry, e);
-        });
+    bool conflict =
+        hasConflict((*iter)->offset, (*iter)->offset + e->alignedConstBits);
     // if conflict, continue finding the first bound that has no conflict
     // if last bound do not meet the size, continue
     if (conflict ||
@@ -2928,7 +3787,8 @@ bool MemPlan::VerifyConflictStageCommon(
 
 bool MemPlan::VerifyConflictStage3(PlanRecHis &his, const StorageEntry *e,
                                    int specLevel, MemBoundListConstIter &start,
-                                   const MemBoundList &outline) {
+                                   const MemBoundList &outline,
+                                   std::optional<uint64_t> candidate) {
   if (specLevel != SPEC_LEVEL_3) {
     return false;
   }
@@ -2936,12 +3796,14 @@ bool MemPlan::VerifyConflictStage3(PlanRecHis &his, const StorageEntry *e,
       his, e, start, outline,
       [this](const StorageEntry *e1, const StorageEntry *e2) {
         return this->PipeConflict(e1, e2, this->pipeDmaConflictMap);
-      });
+      },
+      candidate);
 }
 
 bool MemPlan::VerifyConflictStage2(PlanRecHis &his, const StorageEntry *e,
                                    int specLevel, MemBoundListConstIter &start,
-                                   const MemBoundList &outline) {
+                                   const MemBoundList &outline,
+                                   std::optional<uint64_t> candidate) {
   if (specLevel != SPEC_LEVEL_2) {
     return false;
   }
@@ -2949,7 +3811,8 @@ bool MemPlan::VerifyConflictStage2(PlanRecHis &his, const StorageEntry *e,
       his, e, start, outline,
       [this](const StorageEntry *e1, const StorageEntry *e2) {
         return this->PipeConflictInSameLoop(e1, e2);
-      });
+      },
+      candidate);
 }
 
 bool MemPlan::PipeConflict(const StorageEntry *e1, const StorageEntry *e2,
@@ -3002,32 +3865,70 @@ void MemPlan::UpdateOutline(MemBoundList &outline, PlanRecHis &his,
   if (e == nullptr) {
     return;
   }
-  auto start = outlineInfo.mem_start;
+  auto sectionStart = outlineInfo.mem_start;
+  const auto &firstBound = *sectionStart;
   MemBoundListConstIter end = outlineInfo.mem_end;
-  // outline:
-  // |-------start+end-------------|
-  // |--head--|--split e--|--tail--|
-  uint64_t res = outlineInfo.size - e->alignedConstBits;
+  // The selected bounds are [sectionStart, end] (inclusive). The entry may
+  // start inside the first bound and end inside the last bound:
+  //
+  // firstBound->offset   e->bitsOffset           entryEnd        sectionEnd
+  //        |                   |                     |                 |
+  //        v                   v                     v                 v
+  //        |------ head -------|------ entry --------|----- tail ------|
+  //        |---- first bound ----| ... |--------- last bound ---------|
+  //                            |<--------- outlineInfo.size ---------->|
+  //                            |<-- e->alignedConstBits -->|<- tailSize ->|
+  //
+  // The caller computes size from e->bitsOffset, not firstBound->offset.
+  // Thus tailSize == sectionEnd - entryEnd and does not include the head.
+  const uint64_t entryEnd = e->bitsOffset + e->alignedConstBits;
   std::shared_ptr<MemoryBound> last = *end;
+  const uint64_t sectionEnd = last->offset + last->extent;
+  assert(e->bitsOffset >= firstBound->offset && entryEnd >= e->bitsOffset &&
+         entryEnd <= sectionEnd && "split section must contain the entry");
+  assert(outlineInfo.size >= e->alignedConstBits &&
+         "section must be large enough for the entry");
+  assert(outlineInfo.size == sectionEnd - e->bitsOffset &&
+         "section size must start at the entry offset");
+  const uint64_t tailSize = outlineInfo.size - e->alignedConstBits;
   ++end;
   std::shared_ptr<MemoryBound> bound;
   SmallVector<std::shared_ptr<MemoryBound>> splitBound;
   // split e, to get Boundbound
   if (splitOutline) {
     // add splitBound by splitting e to section
-    AddMemBoundInSectionalWay(e, start, end, splitBound);
+    // Each entry part merges E with only the lifetime of the bound it covers:
+    // old:    |-- bound 1: L1 --|-- bound 2: L2 --|
+    // entry:        |------------ E --------|
+    // result: |head |-- E + L1 -|-- E + L2 -| tail|
+    AddMemBoundInSectionalWay(e, sectionStart, end, e->bitsOffset, entryEnd,
+                              splitBound);
   } else {
-    // origin outline
+    // Without sectional splitting, merge all covered lifetimes into one
+    // entry bound (head and tail retain their original lifetimes):
+    // old:    |-- bound 1: L1 --|-- bound 2: L2 --|
+    // entry:        |------------ E --------|
+    // result: |head |---- E + L1 + L2 ------| tail|
     BufferLifeVec life = e->bufferLifeVec;
-    MergeBufferLife(start, end, life);
+    MergeBufferLife(sectionStart, end, life);
     splitBound.emplace_back(std::make_shared<MemoryBound>(
         life, e->bitsOffset, e->alignedConstBits, e, nextBoundMemoId++));
   }
+  assert(!splitBound.empty() && "entry must cover at least one bound");
 
+  // Keep the part of the first bound before e as a head.
+  const uint64_t headSize = e->bitsOffset - firstBound->offset;
+  if (headSize > 0) {
+    LDBG("[UpdateOutline] split head, entry=" << e->memoId << "\n");
+    std::shared_ptr<MemoryBound> head = std::make_shared<MemoryBound>(
+        firstBound->bufferLifeVec, firstBound->offset, headSize,
+        firstBound->lastStorageEntry, nextBoundMemoId++);
+    outline.insert(sectionStart, head);
+  }
   // insert tail memory bound
-  if (res > 0) {
+  if (tailSize > 0) {
     bound = std::make_shared<MemoryBound>(
-        last->bufferLifeVec, last->offset + last->extent - res, res,
+        last->bufferLifeVec, last->offset + last->extent - tailSize, tailSize,
         last->lastStorageEntry, nextBoundMemoId++);
     end = outline.insert(end, bound);
   }
@@ -3038,8 +3939,8 @@ void MemPlan::UpdateOutline(MemBoundList &outline, PlanRecHis &his,
   // record the current plan of first split entry in his
   his.emplace_back(PlanRecord{localLevel,
                               e->childIdx,
-                              res > 0,
-                              false,
+                              tailSize > 0,
+                              headSize > 0,
                               splitBound.size(),
                               e,
                               e->alignedConstBits,
@@ -3048,28 +3949,43 @@ void MemPlan::UpdateOutline(MemBoundList &outline, PlanRecHis &his,
                               outlineInfo.isDirectlyRollback});
   e->appliedSpecLevel = localLevel;
   PlanRecord &r = his.back();
-  r.replaced.splice(r.replaced.begin(), outline, start, end);
+  r.replaced.splice(r.replaced.begin(), outline, sectionStart, end);
 }
 
 void MemPlan::AddMemBoundInSectionalWay(
     StorageEntry *e, MemBoundListConstIter start, MemBoundListConstIter end,
+    uint64_t candidate, uint64_t entryEnd,
     SmallVector<std::shared_ptr<MemoryBound>> &splitBound) const {
-  // |--outline1--|--outline2--|--outline3--|
-  // |---------e------------ |
-  // |--split e1 -|-split e2-|
+  // At the bound start:
+  // old:   |------ bound 1 ------|------ bound 2 ------|
+  // entry: |---------------- e -------------|
+  // parts: |------ e part 1 -----|-- e part 2|  tail   |
+  //        ^                     ^          ^         ^
+  //        begin 1               begin 2    entryEnd  boundEnd 2
+  //                              boundEnd 1 splitEnd 2
+  //                              splitEnd 1
+  //
+  // At an interior candidate:
+  // old:   |------ bound 1 ------|------ bound 2 ------|
+  // entry:        |------------- e ---------|
+  // parts: | head |-- e part 1 --|-- e part 2|  tail   |
+  //               ^              ^          ^         ^
+  //               begin 1       begin 2    entryEnd  boundEnd 2
+  //                              boundEnd 1 splitEnd 2
+  //                              splitEnd 1
   for (auto iter = start; iter != end; ++iter) {
+    // Each covered part retains the original bound's lifetimes.
     BufferLifeVec life = e->bufferLifeVec;
     life.append((*iter)->bufferLifeVec);
-    // get the extent
-    uint64_t size = 0;
-    if (std::distance(start, iter) == std::distance(start, end) - 1) {
-      // deal with the last split e2
-      size = e->bitsOffset + e->alignedConstBits - (*iter)->offset;
-    } else {
-      size = (*iter)->extent;
-    }
+    // Intersect the entry with this bound; head and tail are handled by
+    // UpdateOutline separately.
+    const uint64_t begin = std::max(candidate, (*iter)->offset);
+    const uint64_t boundEnd = (*iter)->offset + (*iter)->extent;
+    const uint64_t splitEnd = std::min(entryEnd, boundEnd);
+    if (begin >= splitEnd)
+      continue;
     splitBound.emplace_back(std::make_shared<MemoryBound>(
-        life, (*iter)->offset, size, e, nextBoundMemoId++));
+        life, begin, splitEnd - begin, e, nextBoundMemoId++));
   }
 }
 
@@ -3376,6 +4292,7 @@ PlanRecord MemPlan::RollbackOutline(PlanRecHis &history,
   // |--head--|--split entry--|--tail--|
   // erase head
   if (r.headed) {
+    LDBG("[RollbackOutline] restore head, entry=" << r.entry->memoId << "\n");
     it--;
     it = outline.erase(it);
   }
@@ -3422,6 +4339,8 @@ public:
   void runOnOperation() override;
 
 private:
+  LogicalResult validateUBCopyBankArch(ModuleOp moduleOp);
+  std::unique_ptr<MemPlan> initPlanner() const;
   void markTempBufForMemoryDisplay(func::FuncOp funcOp);
 
   // Whether the current function uses standalone MMAD L0 planning. Selected
@@ -3568,21 +4487,42 @@ PlanMemoryPass::planMemoryForFuncOp(func::FuncOp &funcOp) {
   return std::nullopt;
 }
 
+std::unique_ptr<MemPlan> PlanMemoryPass::initPlanner() const {
+  std::unique_ptr<MemPlan> planner;
+  if (planMemoryUBCopyBankMode == PlanMemoryUBCopyBankMode::OFF)
+    planner = std::make_unique<MemPlan>(
+        memMode, enableGlobalReuse, enableMemoryDisplay, restrictInplaceAsISA,
+        simtVFDynamicSize, disableVFReachableCheck, planMemoryUBCopyBankMode,
+        planMemoryStrategy, enableMmadL0Planning);
+  else if (planMemoryUBCopyBankMode == PlanMemoryUBCopyBankMode::PREFER)
+    planner = std::make_unique<MemPlanPreferUBConflict>(
+        memMode, enableGlobalReuse, enableMemoryDisplay, restrictInplaceAsISA,
+        simtVFDynamicSize, disableVFReachableCheck, planMemoryUBCopyBankMode,
+        planMemoryStrategy, enableMmadL0Planning);
+  else
+    planner = std::make_unique<MemPlanRequireUBConflict>(
+        memMode, enableGlobalReuse, enableMemoryDisplay, restrictInplaceAsISA,
+        simtVFDynamicSize, disableVFReachableCheck, planMemoryUBCopyBankMode,
+        planMemoryStrategy, enableMmadL0Planning);
+  return planner;
+}
+
 PlanAttemptStatus PlanMemoryPass::planMemoryAttempt(
     func::FuncOp &funcOp, int attempt, int totalAttemptCount,
     TcbPoolPlan &tcbPoolPlan, bool startTcbPoolPlan, PlanResult &planned) {
 
   MemLivenessAnalysis memLiveness(
       funcOp, this->memMode, this->disableTightlyCoupledBufferReuse,
+      this->planMemoryUBCopyBankMode,
       /*randomSeed=*/startTcbPoolPlan ? 0 : attempt, enableMmadL0Planning);
   memLiveness.build();
+  // Preserve copy and TCB metadata before pool fallback changes liveness.
+  memLiveness.collectUBCopyBankCopies(startTcbPoolPlan);
   if (startTcbPoolPlan && failed(tcbPoolPlan.adaptLiveness(memLiveness)))
     return PlanAttemptStatus::EarlyEnd;
 
-  MemPlan memPlan(this->memMode, this->enableGlobalReuse,
-                  this->enableMemoryDisplay, this->restrictInplaceAsISA,
-                  this->simtVFDynamicSize, this->disableVFReachableCheck,
-                  this->planMemoryStrategy, enableMmadL0Planning);
+  std::unique_ptr<MemPlan> planner = initPlanner();
+  MemPlan &memPlan = *planner;
   if (failed(memPlan.InitMemSpecsFromModule(funcOp)))
     return PlanAttemptStatus::EarlyEnd;
   memPlan.func_ = funcOp;
@@ -3594,6 +4534,8 @@ PlanAttemptStatus PlanMemoryPass::planMemoryAttempt(
   memPlan.SetInplacePairList(memLiveness.inplacePairList);
   memPlan.SetVFInplaceReuseInfo(
       vfInplaceReuseAnalysis.getVFCallInplaceReuseInfo(funcOp));
+  memPlan.SetBankCopiesInfo(std::move(memLiveness.bankCopies));
+  memPlan.SetBankTcbRoots(std::move(memLiveness.bankTcbRoots));
   memPlan.SetPreloadBufferReuseableInfo(memLiveness.preloadBufferReuseableInfo);
 
   bool isLastAttempt = attempt == totalAttemptCount - 1;
@@ -3793,10 +4735,21 @@ static LogicalResult validateBufferPoolMarks(ModuleOp module) {
   return success();
 }
 
+LogicalResult PlanMemoryPass::validateUBCopyBankArch(ModuleOp moduleOp) {
+  if (planMemoryUBCopyBankMode != PlanMemoryUBCopyBankMode::OFF &&
+      hacc::utils::isMemBasedArch(moduleOp))
+    return moduleOp.emitError("UB copy bank planning is not supported on "
+                              "memory-based architectures");
+  return success();
+}
+
 void PlanMemoryPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
   if (memMode == MemPlanMode::LOCAL_MEM_PLAN &&
       failed(validateBufferPoolMarks(moduleOp)))
+    return signalPassFailure();
+  if (memMode == MemPlanMode::LOCAL_MEM_PLAN &&
+      failed(validateUBCopyBankArch(moduleOp)))
     return signalPassFailure();
   vfInplaceReuseAnalysis = VFInplaceReuseAnalysis(moduleOp);
   // Cache per-func plan results (buffer2Offsets + preload-local roots) from

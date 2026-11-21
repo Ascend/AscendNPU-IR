@@ -37,6 +37,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <numeric>
+#include <optional>
 
 #define CEIL_FACTOR(x, y) (((x) + ((y) - 1)) / (y) * (y))
 #define CEIL_DIV(x, y) (((x) + ((y) - 1)) / (y))
@@ -82,7 +83,18 @@ LogicalResult getStridesAndOffsetCompat(MemRefType type,
 std::pair<SmallVector<int64_t>, int64_t>
 getStridesAndOffsetCompat(MemRefType type);
 
+/// Return true if `type` is rank-1 with a static unit stride.
+bool hasStaticUnitStride(MemRefType type);
+
+/// Trace a memref to its alloc and return its static access offset in bits.
+std::optional<std::pair<Value, int64_t>>
+traceStaticMemRefAccess(Value memrefVal);
+
 constexpr static int64_t kUBAlignSizeInBits = 32 * 8;
+
+/// UB-to-UB copy bank alignment period (256 bytes).
+constexpr static int64_t kUBCopyBankSizeInBits = 256 * 8;
+
 static constexpr llvm::StringLiteral kEnableAutoMarkBufferSize =
     "enable_auto_mark_buffer_size";
 /// IntegerAttr on an markOp carrying a static buffer size in bytes (an upper

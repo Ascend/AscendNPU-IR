@@ -218,8 +218,8 @@ jobs:
           OBS_ROOT="${OBS_ROOT:-ascendnpu-ir}"
           OBS_ROOT="${OBS_ROOT%/}"
           PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}_linux-${ARCH}"
-          if [ "$EVENT_NAME" = "MR" ]; then
-            # event_name = pull_request/pull_request/pull_request_target
+          if [ "$EVENT_NAME" = "Note" ]; then
+            # Note: pull_request_comment 事件（PR 评论）
             PR_ID="${{ atomgit.event.pull_request.number }}"
             PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}-pr${PR_ID}-${SHA}_linux-${ARCH}"
             OBS_PREFIX="${OBS_ROOT}/snapshots/pr/"
@@ -228,7 +228,7 @@ jobs:
             PKG_NAME="ascendnpu-ir_${PACKAGE_VERSION}-${{ steps.trigger.outputs.build_time }}-${SHA}_linux-${ARCH}"
             OBS_PREFIX="${OBS_ROOT}/snapshots/${BRANCH_NAME}/${{ steps.trigger.outputs.build_date }}/"
           else
-            echo "unsupported event_name: ${EVENT_NAME}, only MR / Scheduler / Push are allowed" >&2
+            echo "unsupported event_name: ${EVENT_NAME}, only Note / Scheduler / Push are allowed" >&2
             exit 1
           fi
           mv "./cicd/CI/ascendnpu-ir_${PACKAGE_VERSION}_linux-${ARCH}.run" "./${PKG_NAME}.run"
@@ -247,7 +247,6 @@ jobs:
           if-no-files-found: error
 
       - name: Upload artifact to OBS
-        if: ${{ atomgit.event_name == 'Scheduler' || atomgit.event_name == 'Push' }}
         uses: obs-upload
         with:
           endpoint: "https://obs.cn-south-1.myhuaweicloud.com"

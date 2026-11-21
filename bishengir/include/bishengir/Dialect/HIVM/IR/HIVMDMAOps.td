@@ -70,9 +70,13 @@ def LoadOp
            UniformReassociationFlattenTrait,
            DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
            // TODO: Use trait to avoid writing duplicate type constraints
-           OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8, I16,
-                                         UI16, F16, BF16, I32, UI32, F32, F64,
-                                         UI64, I64]>,
+           OperElemTypeConstraints<[0], [
+#ifdef BSPUB_DAVINCI_BISHENGIR
+               HiF8,
+#endif
+               F8E4M3FN, F8E5M2, I1, I8, UI8, I16,
+               UI16, F16, BF16, I32, UI32, F32, F64,
+               UI64, I64]>,
            DeclareOpInterfaceMethods<
                BiShengIRAggregatedOpInterface, ["decomposeOperation",
                                                 "getDecomposePhase"]>,
@@ -243,7 +247,11 @@ def StoreOp : HIVM_DmaOp<"store", [
   // Will automatically use the default uniform reassociation impl
   UniformReassociationFlattenTrait,
   DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
-  OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8,
+  OperElemTypeConstraints<[0], [
+#ifdef BSPUB_DAVINCI_BISHENGIR
+      HiF8,
+#endif
+      F8E4M3FN, F8E5M2, I1, I8, UI8,
     I16, UI16, F16, BF16, I32, UI32, F32, UI64, I64]>,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
   DeclareOpInterfaceMethods<StoreLikeOpInterface>,
@@ -290,7 +298,11 @@ def CopyOp : HIVM_DmaOp<"copy", [
   // Will automatically use the default uniform reassociation impl
   UniformReassociationFlattenTrait,
   DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
-  OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8,
+  OperElemTypeConstraints<[0], [
+#ifdef BSPUB_DAVINCI_BISHENGIR
+      HiF8,
+#endif
+      F8E4M3FN, F8E5M2, I1, I8, UI8,
     I16, UI16, F16, BF16, I32, UI32, F32, UI64, I64]>,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
 ]> {

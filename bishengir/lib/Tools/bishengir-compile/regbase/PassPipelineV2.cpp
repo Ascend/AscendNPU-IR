@@ -59,6 +59,7 @@ void setupV2PipelineOptions(const BiShengIRCompileMainConfig &config,
       hivmOptions.enableHIVMInjectBlockAllSync;
   v2Options.enableHIVMUnitFlagSync = hivmOptions.enableHIVMUnitFlagSync;
   v2Options.hivmSyncSolverVersion = hivmOptions.hivmSyncSolverVersion;
+  v2Options.planMemoryUBCopyBankMode = hivmOptions.planMemoryUBCopyBankMode;
 }
 
 bool hasExplicitHfusionVectorizeOption() {

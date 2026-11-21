@@ -30,6 +30,21 @@ def PromoteL1Gather : HIVMPass<"hivm-promote-l1-gather", "func::FuncOp"> {
     "affine::AffineDialect"];
 }
 
+def OptimizeRowLoads : HIVMPass<"hivm-optimize-row-loads", "func::FuncOp",
+                                  [MixKernel, PureAivKernel]> {
+  let summary = "Sink row masks and pair adjacent scalar row loads";
+  let constructor = "mlir::hivm::createOptimizeRowLoadsPass()";
+  let options = [
+    Option<"enabled", "enabled", "bool", "true",
+           "Enable scalar row DMA optimization">,
+    Option<"fallbackLoop", "fallback-loop", "bool", "false",
+           "Emit the paired-row fallback as a nested two-lane parallel loop">
+  ];
+  let dependentDialects = ["affine::AffineDialect", "arith::ArithDialect",
+                           "hivm::HIVMDialect", "memref::MemRefDialect",
+                           "scf::SCFDialect", "tensor::TensorDialect"];
+}
+
 def InferFuncCoreType : HIVMPass<"hivm-infer-func-core-type", "ModuleOp"> {
   let summary = "Infer the core type of each function";
   let constructor = "mlir::hivm::createInferFuncCoreTypePass()";
@@ -350,6 +365,18 @@ def PlanMemory : HIVMPass<"hivm-plan-memory", "ModuleOp"> {
                           "keep original storage entry order without sorting"),
                clEnumValN(mlir::hivm::PlanMemoryStrategy::LARGEST_FIRST, "largest-first",
                           "sort storage entries by const bits descending, allocate larger buffer first"))}]>,
+       Option<"planMemoryUBCopyBankMode", "plan-memory-ub-copy-bank-mode",
+              "::mlir::hivm::PlanMemoryUBCopyBankMode",
+              "mlir::hivm::PlanMemoryUBCopyBankMode::OFF",
+              "PlanMemory UB-to-UB copy bank conflict avoidance mode",
+              [{::llvm::cl::values(
+               clEnumValN(mlir::hivm::PlanMemoryUBCopyBankMode::OFF, "off",
+                          "Disable bank conflict avoidance"),
+               clEnumValN(mlir::hivm::PlanMemoryUBCopyBankMode::PREFER, "prefer",
+                          "Avoid bank conflicts when possible"),
+               clEnumValN(mlir::hivm::PlanMemoryUBCopyBankMode::REQUIRE,
+                          "require",
+                          "Require bank constraints visible during planning"))}]>,
        Option<"disableVFReachableCheck", "disable-vf-reachable-check", "bool",
               /*default=*/"false",
               "Disable VF reachable check, default : false">,

@@ -1142,6 +1142,9 @@ REGISTER_BATCH_MMA_TILE(_ta_hf32, float, float, true, false, true);
 REGISTER_BATCH_MMA_TILE(_tb_hf32, float, float, false, true, true);
 REGISTER_BATCH_MMA_TILE(_ta_tb_hf32, float, float, true, true, true);
 
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTER_MMA_TILE(cbuf, cc, 4, hifloat8_t, float, float);
+#endif
 REGISTER_MMA_TILE(cbuf, cc, 4, float8_e4m3_t, float, float);
 REGISTER_MMA_TILE(cbuf, cc, 4, float8_e5m2_t, float, float);
 REGISTER_MMA_TILE(cbuf, cc, 4, half, float, float);
@@ -1149,6 +1152,9 @@ REGISTER_MMA_TILE(cbuf, cc, 4, bfloat16_t, float, float);
 REGISTER_MMA_TILE(cbuf, cc, 4, float, float, float);
 REGISTER_MMA_TILE_HF32(cbuf, cc, 4, float, float, float);
 REGISTER_MMA_TILE(cbuf, cc, 4, int8_t, int32_t, int32_t);
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTER_MMA_TILE_TA(cbuf, cc, 4, hifloat8_t, float, float);
+#endif
 REGISTER_MMA_TILE_TA(cbuf, cc, 4, float8_e4m3_t, float, float);
 REGISTER_MMA_TILE_TA(cbuf, cc, 4, float8_e5m2_t, float, float);
 REGISTER_MMA_TILE_TA(cbuf, cc, 4, half, float, float);
@@ -1156,6 +1162,9 @@ REGISTER_MMA_TILE_TA(cbuf, cc, 4, bfloat16_t, float, float);
 REGISTER_MMA_TILE_TA(cbuf, cc, 4, float, float, float);
 REGISTER_MMA_TILE_TA_HF32(cbuf, cc, 4, float, float, float);
 REGISTER_MMA_TILE_TA(cbuf, cc, 4, int8_t, int32_t, int32_t);
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTER_MMA_TILE_TB(cbuf, cc, 4, hifloat8_t, float, float);
+#endif
 REGISTER_MMA_TILE_TB(cbuf, cc, 4, float8_e4m3_t, float, float);
 REGISTER_MMA_TILE_TB(cbuf, cc, 4, float8_e5m2_t, float, float);
 REGISTER_MMA_TILE_TB(cbuf, cc, 4, half, float, float);
@@ -1163,6 +1172,9 @@ REGISTER_MMA_TILE_TB(cbuf, cc, 4, bfloat16_t, float, float);
 REGISTER_MMA_TILE_TB(cbuf, cc, 4, float, float, float);
 REGISTER_MMA_TILE_TB_HF32(cbuf, cc, 4, float, float, float);
 REGISTER_MMA_TILE_TB(cbuf, cc, 4, int8_t, int32_t, int32_t);
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTER_MMA_TILE_TA_TB(cbuf, cc, 4, hifloat8_t, float, float);
+#endif
 REGISTER_MMA_TILE_TA_TB(cbuf, cc, 4, float8_e4m3_t, float, float);
 REGISTER_MMA_TILE_TA_TB(cbuf, cc, 4, float8_e5m2_t, float, float);
 REGISTER_MMA_TILE_TA_TB(cbuf, cc, 4, half, float, float);
@@ -1170,47 +1182,71 @@ REGISTER_MMA_TILE_TA_TB(cbuf, cc, 4, bfloat16_t, float, float);
 REGISTER_MMA_TILE_TA_TB(cbuf, cc, 4, float, float, float);
 REGISTER_MMA_TILE_TA_TB_HF32(cbuf, cc, 4, float, float, float);
 REGISTER_MMA_TILE_TA_TB(cbuf, cc, 4, int8_t, int32_t, int32_t);
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTER_MMA_TILE_BIAS(cbuf, cc, 4, hifloat8_t, float, float);
+#endif
 REGISTER_MMA_TILE_BIAS(cbuf, cc, 4, float8_e4m3_t, float, float);
 REGISTER_MMA_TILE_BIAS(cbuf, cc, 4, float8_e5m2_t, float, float);
 REGISTER_MMA_TILE_BIAS(cbuf, cc, 4, half, float, float);
 REGISTER_MMA_TILE_BIAS(cbuf, cc, 4, bfloat16_t, float, float);
 REGISTER_MMA_TILE_BIAS(cbuf, cc, 4, float, float, float);
 REGISTER_MMA_TILE_BIAS(cbuf, cc, 4, int8_t, int32_t, int32_t);
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTER_MMA_TILE_BIAS(cbuf, cc, 4, hifloat8_t, float, half);
+#endif
 REGISTER_MMA_TILE_BIAS(cbuf, cc, 4, float8_e4m3_t, float, half);
 REGISTER_MMA_TILE_BIAS(cbuf, cc, 4, float8_e5m2_t, float, half);
 REGISTER_MMA_TILE_BIAS(cbuf, cc, 4, half, float, half);
 REGISTER_MMA_TILE_BIAS(cbuf, cc, 4, float, float, half);
 REGISTER_MMA_TILE_BIAS(cbuf, cc, 4, bfloat16_t, float, half);
 
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTER_MMA_TILE_BIAS_TA(cbuf, cc, 4, hifloat8_t, float, float);
+#endif
 REGISTER_MMA_TILE_BIAS_TA(cbuf, cc, 4, float8_e4m3_t, float, float);
 REGISTER_MMA_TILE_BIAS_TA(cbuf, cc, 4, float8_e5m2_t, float, float);
 REGISTER_MMA_TILE_BIAS_TA(cbuf, cc, 4, half, float, float);
 REGISTER_MMA_TILE_BIAS_TA(cbuf, cc, 4, bfloat16_t, float, float);
 REGISTER_MMA_TILE_BIAS_TA(cbuf, cc, 4, float, float, float);
 REGISTER_MMA_TILE_BIAS_TA(cbuf, cc, 4, int8_t, int32_t, int32_t);
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTER_MMA_TILE_BIAS_TA(cbuf, cc, 4, hifloat8_t, float, half);
+#endif
 REGISTER_MMA_TILE_BIAS_TA(cbuf, cc, 4, float8_e4m3_t, float, half);
 REGISTER_MMA_TILE_BIAS_TA(cbuf, cc, 4, float8_e5m2_t, float, half);
 REGISTER_MMA_TILE_BIAS_TA(cbuf, cc, 4, half, float, half);
 REGISTER_MMA_TILE_BIAS_TA(cbuf, cc, 4, bfloat16_t, float, half);
 
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTER_MMA_TILE_BIAS_TB(cbuf, cc, 4, hifloat8_t, float, float);
+#endif
 REGISTER_MMA_TILE_BIAS_TB(cbuf, cc, 4, float8_e4m3_t, float, float);
 REGISTER_MMA_TILE_BIAS_TB(cbuf, cc, 4, float8_e5m2_t, float, float);
 REGISTER_MMA_TILE_BIAS_TB(cbuf, cc, 4, half, float, float);
 REGISTER_MMA_TILE_BIAS_TB(cbuf, cc, 4, bfloat16_t, float, float);
 REGISTER_MMA_TILE_BIAS_TB(cbuf, cc, 4, float, float, float);
 REGISTER_MMA_TILE_BIAS_TB(cbuf, cc, 4, int8_t, int32_t, int32_t);
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTER_MMA_TILE_BIAS_TB(cbuf, cc, 4, hifloat8_t, float, half);
+#endif
 REGISTER_MMA_TILE_BIAS_TB(cbuf, cc, 4, float8_e4m3_t, float, half);
 REGISTER_MMA_TILE_BIAS_TB(cbuf, cc, 4, float8_e5m2_t, float, half);
 REGISTER_MMA_TILE_BIAS_TB(cbuf, cc, 4, half, float, half);
 REGISTER_MMA_TILE_BIAS_TB(cbuf, cc, 4, bfloat16_t, float, half);
 REGISTER_MMA_TILE_BIAS_TB(cbuf, cc, 4, float, float, half);
 
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTER_MMA_TILE_BIAS_TA_TB(cbuf, cc, 4, hifloat8_t, float, float);
+#endif
 REGISTER_MMA_TILE_BIAS_TA_TB(cbuf, cc, 4, float8_e4m3_t, float, float);
 REGISTER_MMA_TILE_BIAS_TA_TB(cbuf, cc, 4, float8_e5m2_t, float, float);
 REGISTER_MMA_TILE_BIAS_TA_TB(cbuf, cc, 4, half, float, float);
 REGISTER_MMA_TILE_BIAS_TA_TB(cbuf, cc, 4, bfloat16_t, float, float);
 REGISTER_MMA_TILE_BIAS_TA_TB(cbuf, cc, 4, float, float, float);
 REGISTER_MMA_TILE_BIAS_TA_TB(cbuf, cc, 4, int8_t, int32_t, int32_t);
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTER_MMA_TILE_BIAS_TA_TB(cbuf, cc, 4, hifloat8_t, float, half);
+#endif
 REGISTER_MMA_TILE_BIAS_TA_TB(cbuf, cc, 4, float8_e4m3_t, float, half);
 REGISTER_MMA_TILE_BIAS_TA_TB(cbuf, cc, 4, float8_e5m2_t, float, half);
 REGISTER_MMA_TILE_BIAS_TA_TB(cbuf, cc, 4, half, float, half);

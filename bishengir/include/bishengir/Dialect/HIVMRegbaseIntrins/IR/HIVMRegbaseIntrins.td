@@ -2553,6 +2553,11 @@ class VcvtffTruncInstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
 
 def VcvtffF322F16InstrOp: VcvtffTruncInstrOp<"hivm.vcvtff.f322f16.x">;
 def VcvtffF322BF16InstrOp: VcvtffTruncInstrOp<"hivm.vcvtff.f322bf16.x">;
+#ifdef BSPUB_DAVINCI_BISHENGIR
+def VcvtffF322HiF8InstrOp : VcvtffTruncInstrOp<"hivm.vcvtff.f322hif8.x"> {
+  let results = (outs VectorOfLengthAndType<[256], [HiF8]>:$res);
+}
+#endif
 def VcvtffF322F8E4M3InstrOp: VcvtffTruncInstrOp<"hivm.vcvtff.f322f8e4m3.x">;
 def VcvtffF322F8E5M2InstrOp: VcvtffTruncInstrOp<"hivm.vcvtff.f322f8e5m2.x">;
 
@@ -2573,6 +2578,13 @@ class VcvtffExtInstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
 
 def VcvtffF162F32InstrOp: VcvtffExtInstrOp<"hivm.vcvtff.f162f32.x">;
 def VcvtffBF162F32InstrOp: VcvtffExtInstrOp<"hivm.vcvtff.bf162f32.x">;
+#ifdef BSPUB_DAVINCI_BISHENGIR
+def VcvtffHiF82F32InstrOp : VcvtffExtInstrOp<"hivm.vcvtff.hif82f32.x"> {
+  let arguments = (ins VectorOfLengthAndType<[256], [HiF8]>:$src,
+                       predicateVector:$mask,
+                       I32:$part);
+}
+#endif
 def VcvtffF8E4M32F32InstrOp: VcvtffExtInstrOp<"hivm.vcvtff.f8e4m32f32.x">;
 def VcvtffF8E5M22F32InstrOp: VcvtffExtInstrOp<"hivm.vcvtff.f8e5m22f32.x">;
 
