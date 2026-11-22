@@ -468,11 +468,11 @@ struct MultiBufferInfo {
   // Slot select and the event ids then read that one counter.
   SmallVector<Value> buffers;
 
-  MultiBufferInfo(){};
+  MultiBufferInfo() {};
   explicit MultiBufferInfo(Scope *multibufferScope,
                            ArrayRef<Value> buffers = {})
       : multibufferScope(multibufferScope),
-        buffers(buffers.begin(), buffers.end()){};
+        buffers(buffers.begin(), buffers.end()) {};
 };
 
 struct CVPipeliningInfo {
