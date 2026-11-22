@@ -292,6 +292,8 @@ bool blockEncloses(Block *outer, Block *inner);
 /// The innermost block enclosing every non-mark user.
 /// nested loop between that block and a user => null
 ///   its trip count is not the block's entry count.
+/// preload stage between them or above the block => null
+///   the stages of one iteration share their buffers.
 /// null -> keep the loop counter.
 /// The sync passes and `EnableMultiBuffer` both call this,
 /// so slot select and flags of one pair read one counter by construction.

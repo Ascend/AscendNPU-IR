@@ -1398,6 +1398,21 @@ bool blockEncloses(Block *outer, Block *inner) {
   return false;
 }
 
+/// Whether \p op splits its parent loop into preload stages: a scope or loop
+/// annotated `hivm.preload_num` / `hivm.max_preload_num`, or a guard whose
+/// condition carries a `hivm.preload_num` mark.
+///
+/// The stage copies of one iteration share their physical buffers, so a
+/// counter inside any copy rotates on a phase its siblings do not follow.
+static bool isPreloadStage(Operation *op) {
+  if (op->hasAttr(hivm::MaxPreloadNumAttr::name) ||
+      op->hasAttr(hivm::PreloadNumAttr::name))
+    return true;
+  auto ifOp = dyn_cast<scf::IfOp>(op);
+  return ifOp && utils::getAnnotateOpWithAttr(ifOp.getCondition(),
+                                              hivm::PreloadNumAttr::name);
+}
+
 Block *getMultiBufferConsumerBlock(ArrayRef<Value> buffers) {
   llvm::SmallVector<Operation *> users;
   for (Value buffer : buffers) {
@@ -1421,14 +1436,21 @@ Block *getMultiBufferConsumerBlock(ArrayRef<Value> buffers) {
   // Only scf.if may stand between that block and a user: a guard runs its body
   // once per entry, like the block itself.
   // nested loop -> its own trip count, which breaks the pairing.
+  // preload stage -> fewer entries than the loop has iterations.
   for (Operation *user : users) {
     for (Block *cur = user->getBlock(); cur != common;) {
       Operation *parent = cur->getParentOp();
-      if (!parent || !isa<scf::IfOp>(parent))
+      if (!parent || !isa<scf::IfOp>(parent) || isPreloadStage(parent))
         return nullptr;
       cur = parent->getBlock();
     }
   }
+  // All users may sit inside one stage: the block then never leaves it, so its
+  // own ancestors up to the function are the ones to check.
+  for (Operation *parent = common->getParentOp(); parent;
+       parent = parent->getParentOp())
+    if (isPreloadStage(parent))
+      return nullptr;
   return common;
 }
 
