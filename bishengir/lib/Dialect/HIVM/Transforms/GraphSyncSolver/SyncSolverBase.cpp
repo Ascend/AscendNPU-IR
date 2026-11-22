@@ -1113,29 +1113,27 @@ std::optional<int64_t> SyncSolverBase::getMultiBufferEventIdNum(
   return eventIdNum;
 }
 
-/// Every pointer-like buffer of \p rwOp1 / \p rwOp2, i.e. the pair this
-/// handshake may rotate.
+/// Buffers of the conflicting MemInfo pairs of \p rwOp1 / \p rwOp2, i.e. the
+/// buffers this handshake rotates.
 ///
 /// The multi-buffer mark is not consulted here.
-/// A cast without one only widens the consumer block
-/// => no block owns its counter, so the pair keeps the loop counter
-/// => the two ends never rotate on different counts.
-static SmallVector<Value> collectMultiBufferBuffers(RWOperation *rwOp1,
-                                                    RWOperation *rwOp2) {
+/// An operand that takes no part in the conflict is not rotated with it
+/// => counting it would pull the consumer block above the guard
+/// => the pair would lose the counter it is entitled to.
+static SmallVector<Value> collectMultiBufferBuffers(
+    ArrayRef<std::pair<const MemInfo *, const MemInfo *>> conflicts) {
   // PointerLikeInfo is set only for a pointer_cast or a workspace alloc
   // (MemInfo.cpp). A function argument or reinterpret cast never reaches this
   // loop: such a value is shared across guards and would coarsen every block.
   SmallVector<Value> buffers;
-  for (RWOperation *rwOp : {rwOp1, rwOp2}) {
-    for (const auto *memInfos : {&rwOp->readMemInfo, &rwOp->writeMemInfo}) {
-      for (const MemInfo &memInfo : *memInfos) {
-        if (!memInfo.pointerLikeInfo || !memInfo.pointerLikeInfo->op)
-          continue;
-        Value buffer = memInfo.pointerLikeInfo->op->getResult(0);
-        if (llvm::is_contained(buffers, buffer))
-          continue;
-        buffers.push_back(buffer);
-      }
+  for (auto [memInfo1, memInfo2] : conflicts) {
+    for (const MemInfo *memInfo : {memInfo1, memInfo2}) {
+      if (!memInfo->pointerLikeInfo || !memInfo->pointerLikeInfo->op)
+        continue;
+      Value buffer = memInfo->pointerLikeInfo->op->getResult(0);
+      if (llvm::is_contained(buffers, buffer))
+        continue;
+      buffers.push_back(buffer);
     }
   }
   return buffers;
@@ -1175,7 +1173,8 @@ std::optional<EventIdInfo> SyncSolverBase::getMultiBufferEventIdInfo(
   // The pair travels with the id set: counterBlock comes from its consumers,
   // and EnableMultiBuffer derives the slot from the same value.
   eventIdInfo.multiBufferInfo = MultiBufferInfo(
-      multibufferScope, collectMultiBufferBuffers(rwOp1, rwOp2));
+      multibufferScope,
+      collectMultiBufferBuffers(getMemInfoConflict(rwOp1, rwOp2)));
   return eventIdInfo;
 }
 
