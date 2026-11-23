@@ -743,6 +743,15 @@ struct ForOpLegalization : public OpRewritePattern<scf::ForOp> {
 
 ModuleOp getTopLevelModuleOp(Operation *op);
 
+/// Return true if `before` is before `after` in memory view order.
+///
+/// The ops are compared at the closest level where they share a parent block,
+/// so an op and an op nested in one of its regions (e.g. `scf.for` and a write
+/// in its body) are treated as the same level and compare false.
+///
+/// A false result means "not known to be before" and does not imply "after".
+bool isBeforeInMemoryView(Operation *before, Operation *after);
+
 int64_t getArgumentIndex(Value value);
 
 bool isValidHIVMTileElementType(Type type);
