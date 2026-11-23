@@ -210,6 +210,11 @@ void Flattener::adjustOperations() {
     if (!op || isHeadOperation(op) || isTailOperation(op) ||
         isUnsupportedOp(op))
       continue;
+    // While boundary refs support slice reconstruction inside the regions.
+    // Their signatures retain their ranks and are not rewritten here. In
+    // particular, a boundary ref does not imply that the inits are tracked.
+    if (isa<scf::WhileOp>(op))
+      continue;
     // Whitelist check
     bool allowed = isExplicitlyAllowedCollapseOp(op);
     // Allowed for regbase only
