@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncCommon.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -59,7 +60,7 @@ std::string SyncOperation::TypeName(SyncOperation::TYPE t) {
   if (typeIt != typeNameMap.cend()) {
     return typeIt->second;
   }
-  llvm::report_fatal_error("Not supported sync type");
+  llvm_unreachable("Not supported sync type");
   return "";
 }
 
@@ -73,7 +74,7 @@ std::string SyncOperation::GetCoreTypeName(TCoreType t) const {
   if (typeIt != coreTypeNameMap.cend()) {
     return typeIt->second;
   }
-  llvm::report_fatal_error("Not supported sync type");
+  llvm_unreachable("Not supported sync type");
   return "";
 }
 
@@ -199,6 +200,12 @@ bool PlaceHolderInstanceElement::classof(const InstanceElement *e) {
 
 namespace mlir::hivm {
 
+bool checkMmadl1NeedsPipeMPipeMTE1SyncArg(MmadL1Op mmadL1Op) {
+  auto mod = mmadL1Op->getParentOfType<ModuleOp>();
+  assert(mod != nullptr);
+  return hacc::utils::isMemBasedArch(mod);
+}
+
 bool isBackwardSync(const CompoundInstanceElement *nowCompound,
                     const CompoundInstanceElement *frontCompound) {
   return frontCompound->GetIndex() > nowCompound->GetIndex();
@@ -220,13 +227,13 @@ bool checkAllParentLoopsAreForLoops(Operation *op) {
 
 void checkSyncIRIndex(const SyncIRs &syncIR, int index) {
   if (index < 0 || index >= static_cast<int>(syncIR.size())) {
-    llvm::report_fatal_error("index out of bounds when accessing syncIR");
+    llvm_unreachable("index out of bounds when accessing syncIR");
   }
 }
 
 void checkCondition(bool condition, const std::string &message) {
   if (!condition) {
-    llvm::report_fatal_error(message.c_str());
+    llvm_unreachable(message.c_str());
   }
 }
 

@@ -164,9 +164,9 @@ bool RemoveRedundantSync::CheckBranchBetween(
   return false;
 }
 
-bool RemoveRedundantSync::CheckLoopBetween(LoopInstanceElement *loopElement,
-                                           SyncOperation *setFlag,
-                                           unsigned &i) {
+bool RemoveRedundantSync::CheckLoopBetween(
+    const LoopInstanceElement *loopElement, SyncOperation *setFlag,
+    unsigned &i) {
   i = loopElement->endId;
   return false;
 }

@@ -16,14 +16,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/InjectSync.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
-
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncDebug.h"
+
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Transforms/DialectConversion.h"
 
 #define DEBUG_TYPE "hivm-inject-sync"
@@ -128,7 +128,7 @@ void InjectSyncAnalysis::AutoInjectSync(bool enableUnitFlag,
   LLVM_DEBUG(llvm::dbgs() << "RemoveRedundantSync\n");
   LLVM_DEBUG(SyncDebug(syncIR).PrintSyncIr());
 
-  SyncEventIdAllocation eventIdAllocation(syncIR, syncOperations);
+  SyncEventIdAllocation eventIdAllocation(syncIR, syncOperations, {});
   eventIdAllocation.Allocate();
   LLVM_DEBUG(llvm::dbgs() << "SyncEventIdAllocation\n");
   LLVM_DEBUG(SyncDebug(syncIR).PrintSyncIr());
@@ -141,12 +141,10 @@ void InjectSyncAnalysis::AutoInjectSync(bool enableUnitFlag,
 
 void InjectSyncPass::runOnOperation() {
   auto func = getOperation();
-  auto moduleOp = func->getParentOfType<ModuleOp>();
-  [[maybe_unused]] bool isMemBasedArch = hacc::utils::isMemBasedArch(moduleOp);
-  bool isRegBasedArch = hacc::utils::isRegBasedArch(moduleOp);
-  if (hacc::utils::isHost(func))
+  if (hacc::utils::isHost(func)) {
     return;
-  if (isRegBasedArch && func->hasAttr(hivm::VectorFunctionAttr::name)) {
+  }
+  if (func->hasAttr(hivm::VectorFunctionAttr::name)) {
     return;
   }
   InjectSyncAnalysis injectsyncAnalysis(func);
@@ -155,7 +153,7 @@ void InjectSyncPass::runOnOperation() {
   } else if (syncMode == SyncMode::NORMAL) {
     injectsyncAnalysis.AutoInjectSync(enableUnitFlag, assumeAliveLoops);
   } else {
-    llvm::report_fatal_error("Illegal synchronization mode! ");
+    llvm_unreachable("Illegal synchronization mode! ");
   }
 }
 
