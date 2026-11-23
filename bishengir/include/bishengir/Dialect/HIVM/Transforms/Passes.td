@@ -369,7 +369,8 @@ def TcbPoolOpInsertion : HIVMPass<"hivm-tcb-pool-op-insertion", "ModuleOp"> {
 def InjectSync : HIVMPass<"hivm-inject-sync", "func::FuncOp"> {
   let summary = "auto inject sync ";
   let constructor = "mlir::hivm::createInjectSyncPass()";
-  let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect", ];
+  let dependentDialects = ["affine::AffineDialect", "arith::ArithDialect",
+                           "hivm::HIVMDialect", "memref::MemRefDialect"];
   let options = [Option<"syncMode", "sync-mode", "hivm::SyncMode",
                         "hivm::SyncMode::NORMAL",
                         "injetc sync mode (default is inject normal)",
