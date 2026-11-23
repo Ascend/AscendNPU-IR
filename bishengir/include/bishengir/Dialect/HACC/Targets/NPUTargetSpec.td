@@ -601,9 +601,9 @@ def Ascend960DT_969B6_Spec : Ascend960_BaseSpec<"Ascend960DT_969B6"> {
 }
 
 def Ascend960DT_968B7_Spec : Ascend960_BaseSpec<"Ascend960DT_968B7"> {
-  let AiCoreCount = 36;
-  let CubeCoreCount = 36;
-  let VectorCoreCount = 36;
+  let AiCoreCount = 64;
+  let CubeCoreCount = 64;
+  let VectorCoreCount = 64;
 }
 
 def Ascend960DT_966B7_Spec : Ascend960_BaseSpec<"Ascend960DT_966B7"> {
