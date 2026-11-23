@@ -20,6 +20,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransformOps
   BiShengIRHFusionDialect
   BiShengIRHFusionTransforms
   BiShengIRHFusionUtils
+  BiShengIRTransform
   MLIRIndexDialect
   MLIRLinalgDialect
   MLIRLinalgTransforms

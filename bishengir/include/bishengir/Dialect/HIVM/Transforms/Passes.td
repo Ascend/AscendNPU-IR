@@ -726,7 +726,8 @@ def OutlineCopyInVF : HIVMPass<"hivm-outline-copy-in-VF", "ModuleOp"> {
 }
 
 def NormalizeTmpBufferInVf
-    : HIVMPass<"hivm-normalize-tmp-buffer-in-vf", "func::FuncOp"> {
+    : HIVMPass<"hivm-normalize-tmp-buffer-in-vf", "func::FuncOp",
+               [MixKernel, PureAivKernel]> {
   let summary = "Normalize temporary tensor buffers in vector functions.";
   let description = [{
     For `hivm.vector_function` functions, promote a temporary tensor that is
@@ -2073,7 +2074,7 @@ def FuseOpIntoLoad : HIVMPass<"hivm-fuse-op-into-load", "ModuleOp"> {
 }
 
 def DecomposeAllocTensorCopy
-    : HIVMPass<"hivm-decompose-alloc-tensor-copy", "ModuleOp"> {
+    : HIVMPass<"hivm-decompose-alloc-tensor-copy", "func::FuncOp"> {
   let summary = "Rewrite bufferization.alloc_tensor(copy...) into an "
                 "alloc_tensor + hivm.hir.copy pair";
   let description = [{
@@ -2083,6 +2084,10 @@ def DecomposeAllocTensorCopy
     into a `bufferization.alloc_tensor` + `hivm.hir.copy` pair;
     `hivm.hir.copy` carries an in-place write, keeping the write visible to
     the following conflict analysis.
+
+    On AIC kernels, copies of broadcast results are instead rewritten as a
+    fresh allocation plus a clone of the broadcast writing into it, avoiding
+    hivm::copyOp in AIC kernel.
 
     allocTensorCopyOp should be decomposed before RaW conflict analysis pass
     (TensorCopyInsertion and OneShotBufferize)
