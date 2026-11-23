@@ -243,8 +243,10 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
   localPlanOptions.planMemoryUBCopyBankMode = options.planMemoryUBCopyBankMode;
   pm.addPass(createPlanMemoryPass(localPlanOptions));
 
-  // Expand slots before the split clones the counters.
-  if (options.enableMultiBuffer)
+  // CreatePreload needs the complete address list to rotate each stage.
+  bool expandAfterPreload =
+      options.enablePreload && hacc::utils::isAscend960(options.target);
+  if (options.enableMultiBuffer && !expandAfterPreload)
     addFuncPass(pm, createEnableMultiBufferPass());
 
   // Single-shot cross-core solve on the MIX.
@@ -255,6 +257,8 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
     CreatePreloadOptions preloadOptions;
     preloadOptions.enablePreload = true;
     pm.addPass(createCreatePreloadPass(preloadOptions));
+    if (options.enableMultiBuffer && expandAfterPreload)
+      addFuncPass(pm, createEnableMultiBufferPass());
   }
 
   // Last structural pass.

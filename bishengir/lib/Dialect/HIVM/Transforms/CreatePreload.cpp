@@ -27,6 +27,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Transforms/Passes.h"
 
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -282,7 +283,8 @@ static bool isRematerializableAliasOp(Operation *op) {
     return false;
   // View-like ops, pointer casts, and pure arithmetic ops can be rematerialized
   // as part of a result chain in the preload skip branch.
-  return isa<ViewLikeOpInterface, hivm::PointerCastOp>(op) ||
+  return isa<ViewLikeOpInterface, hivm::PointerCastOp, affine::AffineApplyOp>(
+             op) ||
          isa<arith::ArithDialect>(op->getDialect());
 }
 
