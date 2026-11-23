@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Pipelines/HIVMBufferizationPipeline.h"
 #include "bishengir/Dialect/HIVM/Pipelines/regbase/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/HIVMVectorizeBuffers.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/MemRef/Transforms/Passes.h"
 #include "bishengir/Dialect/SCF/Transforms/Passes.h"
@@ -121,6 +122,7 @@ void buildV2BufferizationPhase(OpPassManager &pm,
 
 static void buildAlignStorage(OpPassManager &pm) {
   pm.addPass(createAlignAllocSizePass());
+  pm.addPass(createHIVMVectorizePhasePass("align"));
   addFuncPass(pm, memref::createFoldAllocReshapePass());
   pm.addPass(createEnableStrideAlignPass());
 }
@@ -164,6 +166,7 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
   addFuncPass(pm, scf::createMapForToForallPass());
   addFuncPass(pm, createHIVMMapForallToBlocksPass());
   addFuncPass(pm, createHIVMDecomposeOpPass());
+  pm.addPass(createHIVMVectorizePhasePass("prepare-buffers"));
   pm.addPass(createNonContiguousReshapeToCopyPass());
   pm.addPass(createInferHIVMMemScopePass());
   addFuncPass(pm, createHIVMDecomposeOpPass());
@@ -204,6 +207,7 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
   canonicalizationHIVMPipeline(pm);
 
   // GLOBAL workspace plan on the unsplit MIX.
+  pm.addPass(createHIVMVectorizePhasePass("buffers"));
   PlanMemoryOptions globalPlanOptions;
   globalPlanOptions.memMode = MemPlanMode::GLOBAL_WORKSPACE_PLAN;
   pm.addPass(createPlanMemoryPass(globalPlanOptions));
@@ -217,6 +221,7 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
 
   // LOCAL plan on the unsplit MIX.
   PlanMemoryOptions localPlanOptions;
+  localPlanOptions.planMemoryUBCopyBankMode = options.planMemoryUBCopyBankMode;
   pm.addPass(createPlanMemoryPass(localPlanOptions));
 
   // Expand slots before the split clones the counters.
@@ -241,6 +246,7 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
 void buildV2PerCoreTail(OpPassManager &pm, const V2PipelineOptions &options) {
   addFuncPass(pm, createHIVMLowerToLoopsPass());
   addFuncPass(pm, createHIVMDecomposeOpPass());
+  pm.addPass(createHIVMVectorizePhasePass("prepare-buffers"));
   pm.addPass(createInferHIVMMemScopePass());
 
   hivmIntraCoreSyncPipeline(pm, options);
@@ -249,6 +255,7 @@ void buildV2PerCoreTail(OpPassManager &pm, const V2PipelineOptions &options) {
   addFuncPass(pm, createLowerMultiBufferCounterPass());
   addFuncPass(pm, createLiftLowestStridePass());
   canonicalizationHIVMPipeline(pm);
+  pm.addPass(createHIVMVectorizePhasePass("tail"));
 }
 
 void buildV2HIVMPipeline(OpPassManager &pm, const V2PipelineOptions &options) {
@@ -265,6 +272,7 @@ void buildV2HIVMPipeline(OpPassManager &pm, const V2PipelineOptions &options) {
 }
 
 void registerV2HIVMPipelines() {
+  registerHIVMVectorizeBuffersPass();
   PassPipelineRegistration<V2PipelineOptions>(
       "hivm-v2-pre-vectorize-pipeline",
       "Prepare HIVM tensor IR up to the v2 vectorization boundary",

@@ -58,6 +58,10 @@ public:
                                Value lhs, Value mid, Value rhs, Value dst,
                                TernaryKind kind);
 
+  static bool getCastEnableSaturate(CastOp op) {
+    return op.getEnableSaturate();
+  }
+
   /// Create a dialect cast preserving the source dialect round mode when one is
   /// already available. If no round mode is provided, the dialect default is
   /// selected by the underlying cast builder.
@@ -65,7 +69,8 @@ public:
                             Value input, Type targetElemType,
                             std::optional<RoundMode> roundMode = std::nullopt,
                             TypeFn castType = TypeFn::cast_signed,
-                            UnsignedMode unsignedMode = UnsignedMode::SI2SI);
+                            UnsignedMode unsignedMode = UnsignedMode::SI2SI,
+                            bool enableSaturate = false);
 
   /// Create a dialect cast from a normalize-template abstract round kind.
   static Value createCastOp(PatternRewriter &rewriter, Location loc,

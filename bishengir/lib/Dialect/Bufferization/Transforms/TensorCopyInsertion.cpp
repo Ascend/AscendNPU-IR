@@ -16,6 +16,14 @@
 // insertion.
 //
 //===----------------------------------------------------------------------===//
+//
+//===----------------------------------------------------------------------===//
+// This file contains code from the LLVM Project.
+// Original License: Apache License v2.0 with LLVM Exceptions
+// Original Copyright: NA
+// Original Source:
+// https://github.com/llvm/llvm-project/blob/main/mlir/lib/Dialect/Bufferization/Transforms/OneShotAnalysis.cpp
+//===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Bufferization/Transforms/Passes.h"
 

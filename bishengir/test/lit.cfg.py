@@ -135,6 +135,10 @@ else:
     config.available_features.add("noasserts")
 
 
+if config.expensive_pattern_api_checks:
+    config.available_features.add("expensive-pattern-api-checks")
+
+
 # The execution-engine feature additionally requires the mlir-cpu-runner tool
 # and the runner runtime libraries to be present in the build tree, so tests
 # using them are skipped (instead of failing) in builds where they are absent.
@@ -354,3 +358,6 @@ if config.shmem_build_template:
 # only when requested, independently of the normal SHMEM compile tests.
 if lit_config.params.get("shmem-transport-wrappers", "0") == "1":
     config.available_features.add("shmem-transport-wrappers")
+
+if config.bishengir_hifloat8:
+    config.available_features.add("bishengir-hifloat8")

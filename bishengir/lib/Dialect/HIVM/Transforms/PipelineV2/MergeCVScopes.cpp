@@ -55,6 +55,7 @@ namespace {
 class ScopeDependenceGraph {
 public:
   explicit ScopeDependenceGraph(scf::ForOp loop, bool withCarriedEdges = true);
+  explicit ScopeDependenceGraph(Block *body);
   unsigned getSize() const { return nodes.size(); }
   Operation *getNode(unsigned i) const { return nodes[i]; }
   std::optional<unsigned> getIndex(Operation *op) const;
@@ -146,7 +147,7 @@ public:
   bool applySmallVectorScopeMergeRule();
 
   // Rule 5: Merge same-core scopes connected by an intra-iteration edge or
-  // sharing a predecessor or successor in the loop body.
+  // sharing a predecessor or successor in the loop body or a nested scope body.
   bool applyGraphSameCoreRule();
 
   // Rule 6: Starting from a Cube-and-Vector scope with an alloca inside,
@@ -208,6 +209,10 @@ ScopeDependenceGraph::ScopeDependenceGraph(scf::ForOp loop,
   buildIntraEdges();
   if (withCarriedEdges)
     buildCarriedEdges();
+}
+
+ScopeDependenceGraph::ScopeDependenceGraph(Block *body) : body(body) {
+  buildIntraEdges();
 }
 
 std::optional<unsigned> ScopeDependenceGraph::getIndex(Operation *op) const {
@@ -490,12 +495,11 @@ SmallVector<SmallVector<Operation *>> ScopeDependenceGraph::formGroups() const {
 /// Ops between the members that depend on a member are moved right after the
 /// new scope, all other ops keep their position.
 static FailureOr<scope::ScopeOp>
-wrapGroupInScope(scf::ForOp loop, ArrayRef<Operation *> members) {
+wrapGroupInScope(Block *body, ArrayRef<Operation *> members) {
   if (members.empty())
     return failure();
 
-  Block *body = loop.getBody();
-  ScopeDependenceGraph g(loop, /*withCarriedEdges=*/false);
+  ScopeDependenceGraph g(body);
 
   SmallVector<unsigned> idx;
   for (Operation *m : members) {
@@ -761,7 +765,7 @@ bool LoopScopeMerger::applyLoopCarriedDepGroupingRule() {
 
   bool changed = false;
   for (SmallVector<Operation *> &group : groups) {
-    if (failed(wrapGroupInScope(loopOp, group)))
+    if (failed(wrapGroupInScope(loopOp.getBody(), group)))
       loopOp->emitWarning("[MergeCVScopes] loop-carried group is not convex; "
                           "left unmerged");
     else
@@ -1070,31 +1074,6 @@ bool LoopScopeMerger::applyMergedScopeSameCoreRule() {
         if (merged != seed)
           changed = true;
       }
-    }
-
-    ScopeOp previous;
-    for (Operation &op :
-         llvm::make_early_inc_range(outerScope.getRegion().front())) {
-      if (op.hasTrait<OpTrait::IsTerminator>())
-        break;
-      auto current = dyn_cast<ScopeOp>(&op);
-      auto currCore = current ? getScopeCoreType(current) : std::nullopt;
-      if (!current || !isEligibleForCoreMerge(current) || !currCore) {
-        previous = ScopeOp();
-        continue;
-      }
-
-      if (previous) {
-        auto prevCore = getScopeCoreType(previous);
-        if (prevCore && areCompatibleCoreTypes(*prevCore, *currCore)) {
-          if (ScopeOp merged = mergeScopes(previous, current, current)) {
-            previous = merged;
-            changed = true;
-            continue;
-          }
-        }
-      }
-      previous = current;
     }
 
     changed |= collapseSingleChildMergedScope(outerScope);
@@ -1533,9 +1512,8 @@ static bool isNormalizedCounterLoad(Operation *op) {
 }
 
 bool LoopScopeMerger::applyGraphSameCoreRule() {
-  bool anyChanged = false;
-  while (true) {
-    ScopeDependenceGraph graph(loopOp, /*withCarriedEdges=*/false);
+  auto mergeInBlock = [&](Block *body) {
+    ScopeDependenceGraph graph(body);
     auto tryMerge = [&](unsigned first, unsigned second) {
       auto firstScope = dyn_cast<ScopeOp>(graph.getNode(first));
       auto secondScope = dyn_cast<ScopeOp>(graph.getNode(second));
@@ -1567,7 +1545,7 @@ bool LoopScopeMerger::applyGraphSameCoreRule() {
         return false;
 
       SmallVector<Operation *> members{firstScope, secondScope};
-      auto wrapper = wrapGroupInScope(loopOp, members);
+      auto wrapper = wrapGroupInScope(body, members);
       if (failed(wrapper))
         return false;
       ScopeOp merged = mergeScopes(firstScope, secondScope, secondScope);
@@ -1575,6 +1553,7 @@ bool LoopScopeMerger::applyGraphSameCoreRule() {
       for (NamedAttribute attr : merged->getAttrs())
         (*wrapper)->setAttr(attr.getName(), attr.getValue());
       collapseSingleChildMergedScope(*wrapper);
+      collapseSingleChildMergedScope(dyn_cast<ScopeOp>(body->getParentOp()));
       return true;
     };
 
@@ -1604,11 +1583,24 @@ bool LoopScopeMerger::applyGraphSameCoreRule() {
         break;
       }
     }
-    if (!changed)
+    return changed;
+  };
+
+  bool anyChanged = false;
+  while (true) {
+    SmallVector<Block *> bodies{loopOp.getBody()};
+    loopOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
+      if (op != loopOp.getOperation() && isa<scf::ForOp>(op))
+        return WalkResult::skip();
+      if (auto scope = dyn_cast<ScopeOp>(op))
+        bodies.push_back(scope.getBody());
+      return WalkResult::advance();
+    });
+    if (!llvm::any_of(bodies, mergeInBlock))
       return anyChanged;
     anyChanged = true;
-    // A successful contraction erases nodes. Rebuild before any further
-    // candidate discovery, including candidates enabled by the last merge.
+    // A contraction or wrapper collapse can erase scopes and their blocks.
+    // Rediscover bodies and rebuild graphs before considering another pair.
   }
 }
 
@@ -1956,7 +1948,8 @@ void LoopScopeMerger::run(ArrayRef<MergeRule> rules) {
 //===----------------------------------------------------------------------===//
 
 void MergeCVScopesPass::runOnOperation() {
-  if (isCVPipelineSnapshot(getOperation()))
+  func::FuncOp funcOp = getOperation();
+  if (isCVPipelineSnapshot(funcOp) || hasLegacyCVPipelinedLoop(funcOp))
     return;
   static constexpr LoopScopeMerger::MergeRule kDefaultRuleOrder[] = {
       {&LoopScopeMerger::applySinkNormalizedCounterInCAVScopeRule,
@@ -1975,11 +1968,8 @@ void MergeCVScopesPass::runOnOperation() {
        "merged.7-sink-alloca"}};
 
   SmallVector<scf::ForOp> targetLoops;
-  getOperation().walk<WalkOrder::PostOrder>([&](scf::ForOp forOp) {
-    // TODO: Temporary transition measure: skip loops already pipelined by
-    // legacy CVPipelining.
-    if (forOp->hasAttr(CVPipelinedLoopAttr::name) &&
-        !forOp->hasAttr(LegacyCVPipelineAttr::name))
+  funcOp.walk<WalkOrder::PostOrder>([&](scf::ForOp forOp) {
+    if (forOp->hasAttr(CVPipelinedLoopAttr::name))
       targetLoops.push_back(forOp);
   });
 

@@ -56,25 +56,36 @@ align_pad_for_load_b64_1d(memref_t<__ubuf__ T, 1> *dst, int64_t pad_value,
 }
 
 #if BISHENG_TPL_REGBASE
-/// Core func of loading GM -> UB, 1D
-///
-/// Implementation is done in such a way that block DMA is more preferrable than
-/// NDDMA and NDDMA is more preferrable than scalar copy.
-///
-/// Currently the semantics of the `left_padding_num` `right_padding_num` args
-/// is in NOT-MUST-WRITE form, i.e. calling code (the kernel, IR) gives the
-/// allowance to write the given pad_value within the specified areas
-/// (even permited to write beyond the right border up to nearest 32B boudary),
-/// but not requires the writes.
-///
-/// UB starting address must be 32B aligned; otherwise, it degrades to NDDMA or
-/// looped scalar transfer.
+#if BISHENG_TPL_920R1
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool canUseNddmaForOrdinaryLoad1d(
+    const memref_t<__gm__ T, 1> *src, const memref_t<__ubuf__ T, 1> *dst,
+    PadMode pad_mode, int64_t left_padding_num, AtomicKind atomic_kind) {
+  const int64_t width = src->sizes[0];
+  return pad_mode == PadMode::Null && left_padding_num == 0 &&
+         atomic_kind == AtomicKind::None && width > 0 && width <= 0xfffff &&
+         width == dst->sizes[0] && width % (128 / sizeof(T)) == 0 &&
+         src->offset >= 0 && dst->offset >= 0 &&
+         src->offset <= INT64_MAX / sizeof(T) - width &&
+         dst->offset <= INT64_MAX / sizeof(T) - width;
+}
+#endif
+
+/// Core func of loading gm -> ub, 1D
+/// UB starting address must be 32B aligned; otherwise, it degrades to looped
+/// scalar transfer: `load_gm_to_ubuf_1d_by_scalar` As long as the UB starting
+/// address is 32B aligned, a single instruction can complete the transfer.
+/// - `UB&GM stride == 1`, then `numBurst = 1, burst_len = size[1] * dtypeBytes`
+///   `load_gm_to_ubuf_1d_core_with_contiguous_last_dim`
+/// - `UB|GM stride != 1`, then `numBurst = size[1], burst_len = 1*dtypeBytes`.
+///   Promote to 2D for unified handling of contiguous scenarios: `offset2D =
+///   offset1D, size2D = [size1D[0], 1], stride2D = [stride2D[0], 1]`
+///   `load_gm_to_ubuf_2d_core_with_contiguous_last_dim`
 template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
     memref_t<__gm__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst, PadMode pad_mode,
     typename PadValueType<T>::type pad_value, int64_t left_padding_num,
-    int64_t right_padding_num, EvictionPolicy eviction_policy,
-    AtomicKind atomic_kind = AtomicKind::None) {
+    EvictionPolicy eviction_policy, AtomicKind atomic_kind = AtomicKind::None) {
   if (is_no_op<1>(src->sizes)) {
     return;
   }
@@ -83,28 +94,42 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
   check_inputs_of_load_gm_to_ubuf_1d_core(src, dst, left_padding_num);
 
   using PadValueT = typename PadValueType<T>::type;
+  // "aicore arch: Ascend910B2"
   if (pad_mode == PadMode::Value) {
     INTRINSIC(set_mov_pad_val, *((uint64_t *)((PadValueT *)(&pad_value))));
   } else if (pad_mode == PadMode::Null) {
     INTRINSIC(set_mov_pad_val, 0);
   }
 
-  const uint8_t l2_cache_ctl = static_cast<uint8_t>(eviction_policy);
-  left_padding_num = correct_left_padding_num(dst, left_padding_num);
-  auto dst_ptr = dst->aligned + dst->offset - left_padding_num;
+  auto dst_ptr = dst->aligned + dst->offset;
   if (!isAddress32ByteAligned(dst_ptr)) {
-    load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 1, DisableDCache>(
-        src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-        l2_cache_ctl);
+    load_gm_to_ubuf_1d_by_scalar<T, DisableDCache>(src, dst);
     return;
   }
 
+  uint8_t l2_cache_ctl = static_cast<uint8_t>(eviction_policy);
   const int64_t stride0_gm = src->strides[0];
   const int64_t stride0_ub = dst->strides[0];
   if (stride0_gm == 1 && stride0_ub == 1) [[likely]] {
+#if BISHENG_TPL_920R1
+    if constexpr (sizeof(T) <= 4) {
+      const int64_t width = src->sizes[0];
+      if (canUseNddmaForOrdinaryLoad1d<T>(src, dst, pad_mode,
+                                          left_padding_num, atomic_kind)) {
+        // A single row uses the existing descriptor emitter and public ABI.
+        memref_t<__gm__ T, 2> gm = {
+            src->allocated, src->aligned, src->offset, {1, width}, {width, 1}};
+        memref_t<__ubuf__ T, 2> ub = {
+            dst->allocated, dst->aligned, dst->offset, {1, width}, {width, 1}};
+        load_gm_to_ubuf_2d_by_nddma<T>(&gm, &ub, pad_mode, pad_value, 0,
+                                       l2_cache_ctl);
+        return;
+      }
+    }
+#endif
     // last dimension is contiguous
     load_gm_to_ubuf_1d_core_with_contiguous_last_dim<T>(
-        src, dst, left_padding_num, right_padding_num, l2_cache_ctl);
+        src, dst, left_padding_num, l2_cache_ctl);
     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
       // No need to add zero padding, it is correct by default for b64 types
       int64_t scalar = static_cast<int64_t>(pad_value);
@@ -123,14 +148,8 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
 
   // last dimension of UB is contiguous but GM is not
   if ((stride0_ub == 1) && (stride0_gm != 1)) {
-    if (left_padding_num != 0 || right_padding_num != 0) {
-      load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 1, DisableDCache>(
-          src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-          l2_cache_ctl);
-      return;
-    }
     load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim<T, DisableDCache>(
-        src, dst, l2_cache_ctl);
+        src, dst, left_padding_num, l2_cache_ctl);
     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
       // No need to fix zero padding, it is correct by default for b64 types
       int64_t scalar = static_cast<int64_t>(pad_value);
@@ -149,9 +168,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
 
   // last dimension is not contiguous,
   if (stride0_ub != 1 && !isStrideAligned<T>(stride0_ub)) {
-    load_gm_to_ubuf_nd_by_nddma_or_scalar<T, 1, DisableDCache>(
-        src, dst, pad_mode, pad_value, left_padding_num, right_padding_num,
-        l2_cache_ctl);
+    load_gm_to_ubuf_1d_by_scalar<T, DisableDCache>(src, dst);
     return;
   }
   // view the src (size) with stride [stride] as viewed_src (size, 1) with
@@ -163,7 +180,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
       dst->allocated, dst->aligned, dst->offset, {size0, 1}, {stride0_ub, 1}};
 
   load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
-      &gm_2d, &ub_2d, left_padding_num, right_padding_num, l2_cache_ctl);
+      &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
 }
 #else
 ///========================================
@@ -174,8 +191,7 @@ template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
     memref_t<__gm__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst, PadMode pad_mode,
     typename PadValueType<T>::type pad_value, int64_t left_padding_num,
-    int64_t right_padding_num, EvictionPolicy eviction_policy,
-    AtomicKind atomic_kind = AtomicKind::None) {
+    EvictionPolicy eviction_policy, AtomicKind atomic_kind = AtomicKind::None) {
   if (is_no_op<1>(src->sizes)) {
     return;
   }
@@ -197,7 +213,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
   if (stride0_gm == 1 && stride0_ub == 1) [[likely]] {
     // last dimension is contiguous
     load_gm_to_ubuf_1d_core_with_contiguous_last_dim<T>(
-        src, dst, left_padding_num, right_padding_num, l2_cache_ctl);
+        src, dst, left_padding_num, l2_cache_ctl);
     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
       if (pad_mode == PadMode::Value) {
         INTRINSIC(set_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
@@ -219,7 +235,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
       dst->allocated, dst->aligned, dst->offset, {size0, 1}, {stride0_ub, 1}};
 
   load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
-      &gm_2d, &ub_2d, left_padding_num, right_padding_num, l2_cache_ctl);
+      &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
 }
 #endif
 
@@ -467,6 +483,9 @@ REGISTE_DMA_LOAD(1, float);
 REGISTE_DMA_LOAD(1, double);
 REGISTE_DMA_LOAD(1, bfloat16_t);
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTE_DMA_LOAD_FP8(1, hifloat8_t);
+#endif
 REGISTE_DMA_LOAD_FP8(1, float8_e4m3_t);
 REGISTE_DMA_LOAD_FP8(1, float8_e5m2_t);
 #endif
@@ -485,6 +504,9 @@ REGISTE_DMA_STORE(1, half);
 REGISTE_DMA_STORE(1, float);
 REGISTE_DMA_STORE(1, bfloat16_t);
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTE_DMA_STORE(1, hifloat8_t);
+#endif
 REGISTE_DMA_STORE(1, float8_e4m3_t);
 REGISTE_DMA_STORE(1, float8_e5m2_t);
 #endif
@@ -504,6 +526,9 @@ REGISTE_DMA_UB_COPY(ubuf, ubuf, 1, half)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 1, float)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 1, bfloat16_t)
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTE_DMA_UB_COPY(ubuf, ubuf, 1, hifloat8_t);
+#endif
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 1, float8_e4m3_t);
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 1, float8_e5m2_t);
 #endif
@@ -533,6 +558,9 @@ REGISTE_DMA_UB_COPY(ubuf, cbuf, 1, int16_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 1, uint16_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 1, int32_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 1, uint32_t)
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTE_DMA_UB_COPY(ubuf, cbuf, 1, hifloat8_t)
+#endif
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 1, float8_e4m3_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 1, float8_e5m2_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 1, half)

@@ -84,7 +84,7 @@ dumpAffineMinmaxBoundsToStderr(const AffineMinMaxValueBoundsCollector &bounds) {
 }
 
 static void eliminateOneIterationScfFor(scf::ForOp forOp,
-                                        IRRewriter &rewriter) {
+                                        RewriterBase &rewriter) {
   Block *bodyPtr = forOp.getBody();
   Block &body = *bodyPtr;
   auto yieldOp = cast<scf::YieldOp>(body.getTerminator());
@@ -103,7 +103,7 @@ static void eliminateOneIterationScfFor(scf::ForOp forOp,
   SmallVector<Value> newResults;
   newResults.reserve(yieldOp.getNumOperands());
   for (Value operand : yieldOp.getOperands())
-    newResults.push_back(mapping.lookup(operand));
+    newResults.push_back(mapping.lookupOrDefault(operand));
 
   if (forOp.getNumResults() == 0) {
     rewriter.eraseOp(forOp);
@@ -112,7 +112,7 @@ static void eliminateOneIterationScfFor(scf::ForOp forOp,
   rewriter.replaceOp(forOp, newResults);
 }
 
-static void foldDominatedAffineMins(func::FuncOp func) {
+static void foldDominatedAffineMins(func::FuncOp func, RewriterBase &rewriter) {
   SmallVector<affine::AffineMinOp> mins;
   func.walk([&](affine::AffineMinOp op) { mins.push_back(op); });
   for (affine::AffineMinOp minOp : mins) {
@@ -155,11 +155,10 @@ static void foldDominatedAffineMins(func::FuncOp func) {
     // canonicalization folds the constant operands away, so the search rarely
     // matched anyway. `createOrFold` still drops the op when the surviving
     // candidate is an identity map or every operand is constant.
-    OpBuilder builder(minOp);
-    Value replacement = builder.createOrFold<affine::AffineApplyOp>(
+    rewriter.setInsertionPoint(minOp);
+    Value replacement = rewriter.createOrFold<affine::AffineApplyOp>(
         minOp.getLoc(), selectedMap, operands);
-    minOp.getResult().replaceAllUsesWith(replacement);
-    minOp.erase();
+    rewriter.replaceOp(minOp, replacement);
   }
 }
 
@@ -167,30 +166,36 @@ struct EliminateSingleIterationScfForPass
     : public impl::EliminateSingleIterationScfForBase<
           EliminateSingleIterationScfForPass> {
   void runOnOperation() override {
-    func::FuncOp func = getOperation();
-    AffineMinMaxValueBoundsCollector bounds;
-    bounds.populate(func);
-
-    if (dumpAffineMinmaxBounds)
-      dumpAffineMinmaxBoundsToStderr(bounds);
-
-    IRRewriter rewriter(func.getContext());
-    SmallVector<scf::ForOp> singleIter;
-
-    func.walk([&](scf::ForOp forOp) {
-      if (bounds.provesSingleIterationScfFor(forOp))
-        singleIter.push_back(forOp);
-    });
-
-    for (scf::ForOp forOp : singleIter)
-      eliminateOneIterationScfFor(forOp, rewriter);
-
-    if (foldDominatedMins)
-      foldDominatedAffineMins(func);
+    IRRewriter rewriter(&getContext());
+    eliminateSingleIterationScfFors(
+        getOperation(), rewriter, {dumpAffineMinmaxBounds, foldDominatedMins});
   }
 };
 
 } // namespace
+
+void eliminateSingleIterationScfFors(
+    func::FuncOp func, RewriterBase &rewriter,
+    const EliminateSingleIterationScfForOptions &options) {
+  AffineMinMaxValueBoundsCollector bounds;
+  bounds.populate(func);
+
+  if (options.dumpAffineMinmaxBounds)
+    dumpAffineMinmaxBoundsToStderr(bounds);
+
+  SmallVector<scf::ForOp> singleIter;
+
+  func.walk([&](scf::ForOp forOp) {
+    if (bounds.provesSingleIterationScfFor(forOp))
+      singleIter.push_back(forOp);
+  });
+
+  for (scf::ForOp forOp : singleIter)
+    eliminateOneIterationScfFor(forOp, rewriter);
+
+  if (options.foldDominatedMins)
+    foldDominatedAffineMins(func, rewriter);
+}
 
 std::unique_ptr<mlir::Pass> createEliminateSingleIterationScfForPass() {
   return std::make_unique<EliminateSingleIterationScfForPass>();

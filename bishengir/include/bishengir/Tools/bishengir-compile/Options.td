@@ -82,6 +82,15 @@ def EnableTlaMode : FeatureControlOptions<
   let passGroup = ["HIVM"];
 }
 
+def EnableBf16 : FeatureControlOptions<
+  "Enable native BF16 arithmetic instructions on Ascend 950.",
+  "bool",
+  "false"
+> {
+  let optionScope = ["A5_ONLY"];
+  let passGroup = ["HFUSION"];
+}
+
 def EnableTlaCvPipelining : FeatureControlOptions<
   "Expand staged TLA loops through native preload in affinity mode.",
   "bool",
@@ -588,6 +597,23 @@ llvm::cl::values(
   }];
 }
 
+def PlanMemoryUBCopyBankMode : HIVMOptimizationControlOptions<
+  "PlanMemory UB-to-UB copy bank conflict avoidance mode.",
+  "mlir::hivm::PlanMemoryUBCopyBankMode",
+  "mlir::hivm::PlanMemoryUBCopyBankMode::OFF"
+> {
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(mlir::hivm::PlanMemoryUBCopyBankMode::OFF, "off",
+             "Disable bank conflict avoidance"),
+  clEnumValN(mlir::hivm::PlanMemoryUBCopyBankMode::PREFER, "prefer",
+             "Avoid bank conflicts when possible"),
+  clEnumValN(mlir::hivm::PlanMemoryUBCopyBankMode::REQUIRE, "require",
+             "Require bank constraints visible during planning")
+)
+  }];
+}
+
 def EnableAutoBindSubBlock : HIVMOptimizationControlOptions<
   "Enable auto bind sub block.",
   "bool",
@@ -682,6 +708,28 @@ llvm::cl::values(
 )
   }];
 }
+
+def EnableSchedulerAlg
+    : HIVMOptimizationControlOptions<
+          "Select the CV-pipelining scheduler algorithm (skew mode only).",
+          "CVSchedulerMode",
+          "CVSchedulerMode::Default"> {
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(CVSchedulerMode::Default, "default",
+             "Default WorklistBuilder-based partitioning"),
+  clEnumValN(CVSchedulerMode::Sms, "sms",
+             "SMS stage-level scheduling partitioning")
+)
+  }];
+}
+
+def SmsFailOnFallback
+    : HIVMOptimizationControlOptions<
+          "When true, treat SMS scheduler failure as a compilation error "
+          "instead of silently falling back to the default scheduler. "
+          "Useful for batch testing SMS enablement rates.",
+          "bool", "false">;
 
 def EnablePreload : BiShengIRCompileOpt<
   "Enable preload (skew mode) for CV-pipelining.",
@@ -1288,16 +1336,32 @@ def EnableFlatten : GeneralOptimizationControlOptions<
 }
 
 def EnableFuseReductionIntoLoop : GeneralOptimizationControlOptions<
-  "Enable fuse post-loop reductions into the loop body",
+  "Fuse post-loop sums into the loop (allows floating-point reassociation)",
   "bool",
   "false"
 > {
   let passGroup = ["HFUSION"];
 }
 
+def FuseReductionIntoLoopMode : GeneralOptimizationControlOptions<
+  "Loop initializer handling when fusion is enabled: zero-only or late",
+  "bishengir::FuseReductionIntoLoopMode",
+  "bishengir::FuseReductionIntoLoopMode::ZeroOnly"
+> {
+  let passGroup = ["HFUSION"];
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(bishengir::FuseReductionIntoLoopMode::ZeroOnly, "zero-only",
+             "Fuse only known-zero initializers"),
+  clEnumValN(bishengir::FuseReductionIntoLoopMode::Late, "late",
+             "Reduce the initializer after the loop")
+)
+  }];
+}
+
 def SimtOptimizationMode : GeneralOptimizationControlOptions<
   "set bishengir simt optimization modes",
-  "int",
+  "uint32_t",
   "900101"
 > {
   bit isSharedWithDownstreamToolchain = 1;
@@ -1346,9 +1410,24 @@ def EnableOptimizeScalarTransfers : HFusionOptimizationControlOptions<
   "true"
 >;
 
+def EnableLegalizeScalarFP8 : HFusionOptimizationControlOptions<
+  "Work around backend FP8 phi limitations after HFusion Normalize. "
+  "Disable to test native backend support.",
+  "bool",
+  "true"
+>;
+
 //===----------------------------------------------------------------------===//
 // HIVM Optimization Control Options
 //===----------------------------------------------------------------------===//
+
+def EnableHivmUbRowGatherFallbackLoop : HIVMOptimizationControlOptions<
+  "Emit the paired-row fallback as a nested two-lane parallel loop",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
+}
 
 def EnableFusedMultiplyAdd : HIVMOptimizationControlOptions<
   "Enable fused multiply add",

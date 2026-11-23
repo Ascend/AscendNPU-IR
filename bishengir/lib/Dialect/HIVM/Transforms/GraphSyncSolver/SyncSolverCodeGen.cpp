@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/PatternMatch.h"
@@ -917,6 +918,31 @@ void CodeGenerator::insertMmadL1SyncArgs(IRRewriter &rewriter) {
   }
 }
 
+// Create the function-scoped L0 ping-pong signal and attach it to MMAD ops.
+void CodeGenerator::insertPingPongSignal(IRRewriter &rewriter) {
+  if (funcOp.isExternal() || funcOp.getBody().empty())
+    return;
+
+  SmallVector<hivm::LocalMatmulLikeOpInterface> mmads;
+  funcOp.walk(
+      [&](hivm::LocalMatmulLikeOpInterface op) { mmads.push_back(op); });
+  if (mmads.empty())
+    return;
+
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointToStart(&funcOp.getBody().front());
+  Location loc = funcOp.getLoc();
+  auto memTy = MemRefType::get({}, rewriter.getI32Type());
+  auto alloca = rewriter.create<memref::AllocaOp>(loc, memTy);
+  alloca->setAttr(PingPongSignalAttr::name, rewriter.getUnitAttr());
+  Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+  rewriter.create<memref::StoreOp>(loc, zero, alloca.getResult(), ValueRange{});
+  Value signal = alloca.getResult();
+
+  for (hivm::LocalMatmulLikeOpInterface op : mmads)
+    op.setPingPongSignal(signal);
+}
+
 // Create and propagate sync args into MmadMxL1 op arguments.
 void CodeGenerator::insertMmadMxL1SyncArgs(IRRewriter &rewriter) {
   for (auto &[mmadMxL1Op, syncArgs] : mmadMxL1SyncArgsMap) {
@@ -1019,6 +1045,7 @@ void CodeGenerator::generateResultOps() {
   if (options.isIntraCoreMode()) {
     insertMmadL1SyncArgs(rewriter);
     insertMmadMxL1SyncArgs(rewriter);
+    insertPingPongSignal(rewriter);
     customMacroCodegen.populateSyncRelatedArgs(funcOp, rewriter);
     bufferPoolSync.eraseBoundaries();
     insertPipeMPipeMte1OuterBwdPairs(rewriter);

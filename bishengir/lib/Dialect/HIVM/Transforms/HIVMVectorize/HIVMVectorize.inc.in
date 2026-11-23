@@ -1,0 +1,3 @@
+"module attributes {transform.with_named_sequence} {\n"
+@HIVM_VECTORIZE_SEQUENCE@
+"}\n"

@@ -93,6 +93,12 @@ template <typename T, size_t Dim> struct memref_t {
   int64_t strides[Dim];
 };
 
+template <typename T> struct memref_t<T, 0> {
+  T *allocated;
+  T *aligned;
+  int64_t offset;
+};
+
 template <typename IntType> struct FpTraits;
 
 // Unit Flag Mode for Synchronization

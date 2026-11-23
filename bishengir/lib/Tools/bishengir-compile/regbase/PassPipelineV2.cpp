@@ -24,6 +24,7 @@
 #include "bishengir/Transforms/Passes.h"
 
 #include "mlir/Pass/PassManager.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
@@ -58,6 +59,21 @@ void setupV2PipelineOptions(const BiShengIRCompileMainConfig &config,
       hivmOptions.enableHIVMInjectBlockAllSync;
   v2Options.enableHIVMUnitFlagSync = hivmOptions.enableHIVMUnitFlagSync;
   v2Options.hivmSyncSolverVersion = hivmOptions.hivmSyncSolverVersion;
+  v2Options.planMemoryUBCopyBankMode = hivmOptions.planMemoryUBCopyBankMode;
+}
+
+bool hasExplicitHfusionVectorizeOption() {
+  auto &registeredOptions = llvm::cl::getRegisteredOptions();
+  auto option = registeredOptions.find("disable-hfusion-vectorize");
+  return option != registeredOptions.end() &&
+         option->second->getNumOccurrences() != 0;
+}
+
+void setupV2HFusionPipelineOptions(hfusion::HFusionPipelineOptions &options,
+                                   const BiShengIRCompileMainConfig &config) {
+  setupHFusionPipelineOptions(options, config);
+  if (!hasExplicitHfusionVectorizeOption())
+    options.disableHfusionVectorize = true;
 }
 
 enum class V2Stage { Tensor, Final };
@@ -112,10 +128,7 @@ void buildV2HIRPipeline(OpPassManager &pm,
 
   if (config.getEnableHfusionCompile()) {
     auto options = std::make_unique<hfusion::HFusionPipelineOptions>();
-    setupHFusionPipelineOptions(*options, config);
-    // HFusion autovectorize owns every op that
-    // is not marked hivm.defer_vectorize.
-    options->disableHfusionVectorize = false;
+    setupV2HFusionPipelineOptions(*options, config);
     hfusion::regbase::buildHFusionPipelines(pm, *options);
   }
 

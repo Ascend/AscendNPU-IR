@@ -11,6 +11,7 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
 namespace mlir {
@@ -28,6 +29,9 @@ constexpr llvm::StringLiteral kCVPipelineSnapshotAttrName =
 inline bool isCVPipelineSnapshot(Operation *op) {
   return op && op->hasAttr(kCVPipelineSnapshotAttrName);
 }
+
+/// Return true if any loop in `funcOp` carries LegacyCVPipelineAttr.
+bool hasLegacyCVPipelinedLoop(func::FuncOp funcOp);
 
 /// Return true if some op on its ancestor chain carries LegacyCVPipelineAttr.
 bool isPipelineReject(Operation *op);

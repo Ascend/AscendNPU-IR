@@ -2,6 +2,29 @@
 // RUN: bishengir-opt --hivm-tile-batchmm-into-loop='keep-regbase-batch=true' %s -split-input-file -verify-diagnostics | FileCheck %s --check-prefix=KEEP
 
 // -----
+// CHECK-LABEL: func.func @test_tile_fractal_batch_mmad(
+// CHECK: scf.for %[[BATCH:.*]] =
+// CHECK: %[[A:.*]] = tensor.extract_slice {{.*}}[%[[BATCH]], 0, 0, 0, 0] [1, 2, 2, 16, 16] [1, 1, 1, 1, 1] : tensor<2x2x2x16x16xbf16> to tensor<2x2x16x16xbf16>
+// CHECK: %[[B:.*]] = tensor.extract_slice {{.*}}[%[[BATCH]], 0, 0, 0, 0] [1, 2, 2, 16, 16] [1, 1, 1, 1, 1] : tensor<2x2x2x16x16xbf16> to tensor<2x2x16x16xbf16>
+// CHECK: hivm.hir.mmadL1 {batch_matmul} ins(%[[A]], %[[B]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @test_tile_fractal_batch_mmad(%dst: memref<2x32x32xf32>) {
+  %a = tensor.empty() : tensor<2x2x2x16x16xbf16>
+  %b = tensor.empty() : tensor<2x2x2x16x16xbf16>
+  %c = tensor.empty() : tensor<2x32x32xf32>
+  %true = arith.constant true
+  %c32 = arith.constant 32 : index
+  %result = hivm.hir.batchMmadL1
+    ins(%a, %b, %true, %c32, %c32, %c32
+        : tensor<2x2x2x16x16xbf16>, tensor<2x2x2x16x16xbf16>, i1, index, index, index)
+    outs(%c : tensor<2x32x32xf32>) -> tensor<2x32x32xf32>
+  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+    ins(%result : tensor<2x32x32xf32>) outs(%dst : memref<2x32x32xf32>)
+  return
+}
+}
+
+// -----
 // CHECK: func.func @test_tile_batchMmadL1(%[[DST:.*]]: memref<2x256x256xf16>)
 func.func @test_tile_batchMmadL1(%dst : memref<2x256x256xf16>) {
   // CHECK-DAG: %[[MA:.*]] = tensor.empty() : tensor<2x256x128xf16>
@@ -29,6 +52,32 @@ func.func @test_tile_batchMmadL1(%dst : memref<2x256x256xf16>) {
   %result = hivm.hir.batchMmadL1 ins(%ma, %mb, %true, %M, %K, %N: tensor<2x256x128xf16>, tensor<2x128x256xf16>, i1, index, index, index)
                               outs(%mc: tensor<2x256x256xf32>) -> tensor<2x256x256xf32>
   hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, enable_nz2nd} ins(%result : tensor<2x256x256xf32>) outs(%dst : memref<2x256x256xf16>)
+  return
+}
+
+// -----
+// CHECK-LABEL: func.func @test_forward_batch_mmad_ping_pong_signal(
+// CHECK-SAME: %[[SIGNAL:[a-zA-Z0-9_]+]]: memref<i32>
+func.func @test_forward_batch_mmad_ping_pong_signal(
+    %signal: memref<i32>, %dst: memref<2x16x16xf16>) {
+  %ma = tensor.empty() : tensor<2x16x32xf16>
+  %mb = tensor.empty() : tensor<2x32x16xf16>
+  %mc = tensor.empty() : tensor<2x16x16xf32>
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  %c32 = arith.constant 32 : index
+  // CHECK: scf.for
+  // CHECK:   %[[RES:[a-zA-Z0-9_]+]] = hivm.hir.mmadL1
+  // CHECK-SAME: ping_pong_signal(%[[SIGNAL]] : memref<i32>)
+  %result = hivm.hir.batchMmadL1
+      ins(%ma, %mb, %true, %c16, %c32, %c16 : tensor<2x16x32xf16>,
+          tensor<2x32x16xf16>, i1, index, index, index)
+      outs(%mc : tensor<2x16x16xf32>)
+      ping_pong_signal(%signal : memref<i32>) -> tensor<2x16x16xf32>
+  // CHECK:   hivm.hir.fixpipe
+  // CHECK-SAME: ins(%[[RES]] : tensor<16x16xf32>)
+  hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, enable_nz2nd}
+      ins(%result : tensor<2x16x16xf32>) outs(%dst : memref<2x16x16xf16>)
   return
 }
 

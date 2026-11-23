@@ -1,8 +1,5 @@
 // RUN: bishengir-opt %s --pass-pipeline="builtin.module(hivm-v2-pipeline{target=Ascend950PR_9579})" | FileCheck %s
 
-// Compile a vector prologue followed by matmul through the full v2 pipeline.
-// Keep the internal data dependencies; completion at the call boundary belongs
-// to the caller, without an unconditional scalar-pipe join on return.
 // CHECK-LABEL: func.func @exported_mix_aic
 // CHECK-SAME: export_device
 // CHECK-NOT: hacc.entry
@@ -13,8 +10,8 @@
 // CHECK-LABEL: func.func @exported_mix_aiv
 // CHECK-SAME: export_device
 // CHECK-NOT: hacc.entry
-// CHECK: hivm.hir.vexp
-// CHECK: hivm.hir.vcast
+// CHECK: call @exported_fused_1
+// CHECK: call @exported_fused_0
 // CHECK: hivm.hir.copy {{.*}}outs({{.*}}#hivm.address_space<cbuf>
 // CHECK-NOT: hivm.hir.sync_block_set[<VECTOR>, <PIPE_S>, <PIPE_S>] flag = 15
 // CHECK-NOT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_S>, <PIPE_S>] flag = 14

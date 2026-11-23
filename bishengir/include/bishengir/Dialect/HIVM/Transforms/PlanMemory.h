@@ -34,7 +34,9 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/SmallVector.h"
 
 #include <list>
 #include <random>
@@ -72,6 +74,22 @@ constexpr const int SPEC_LEVEL_2 = 2;
 /// do not reuse buffer when pipe conflicts and in different pipelined loop.
 constexpr const int SPEC_LEVEL_3 = 3;
 
+enum class UBCopyBankAllocStrategy {
+  Normal,
+  BoundChange,
+  CrossBoundSplit,
+};
+
+inline llvm::StringRef getUBCopyBankModeName(PlanMemoryUBCopyBankMode mode) {
+  if (mode == PlanMemoryUBCopyBankMode::OFF)
+    return "off";
+  if (mode == PlanMemoryUBCopyBankMode::PREFER)
+    return "prefer";
+  if (mode == PlanMemoryUBCopyBankMode::REQUIRE)
+    return "require";
+  return "unknown";
+}
+
 /// plan information of alloc buffer.
 struct BufferInfo {
   /// Alloc operation of buffer.
@@ -103,6 +121,8 @@ struct BufferInfo {
   /// CV buffer). Used by the cross-scope tightly-coupled CV-buffer reuse
   /// analysis to identify a sharing pair.
   int32_t cvMixId{-1};
+  /// Buffer pool ID of this allocation (-1 for a buffer outside a pool).
+  int32_t bufferPoolId{-1};
 };
 
 /// linear operation info.
@@ -344,6 +364,44 @@ struct PreloadBufferReuseableInfo {
   int64_t killScopePreloadNum;
 };
 
+enum class BankBufferKind { Multi, TCB, Preload };
+using BankBufferKinds = llvm::SmallSet<BankBufferKind, 3>;
+
+/// A statically analyzable UB-to-UB copy whose source and destination
+/// addresses must have the same 256-byte residue. `srcRoot` and `dstRoot` are
+/// unique alloc roots; the biases are the accessed-range offsets from those
+/// roots, in bits.
+struct BankCopy {
+  hivm::CopyOp copyOp;
+  Value srcRoot;
+  Value dstRoot;
+  int64_t srcBiasBits{0};
+  int64_t dstBiasBits{0};
+  int64_t copyBits{0};
+  /// Empty means normal; preserve special kinds across TCB pool fallback.
+  BankBufferKinds srcKinds, dstKinds;
+};
+
+/// One copy constraint from a storage entry to its peer.
+struct BankEdge {
+  StorageEntry *peer;
+  uint64_t thisBiasBits, peerBiasBits;
+  uint64_t copyBits;
+  Operation *copyOp;
+  bool thisIsNormal;
+  bool peerIsNormal;
+};
+
+/// Whether planned peers impose no, one, or conflicting residues.
+enum class BankResidueStatus { Unconstrained, Known, Conflict };
+
+/// Residue constraints for an entry.
+struct BankResidueResult {
+  BankResidueStatus status = BankResidueStatus::Unconstrained;
+  uint64_t residue = 0;          // Selected target residue.
+  uint64_t preferredResidue = 0; // Largest copy's residue on conflict.
+};
+
 /// Pair of alias buffer and whether the alias buffer is conditional
 using BufferCondPair = std::pair<Value, bool>;
 
@@ -351,12 +409,14 @@ class MemLivenessAnalysis {
 public:
   MemLivenessAnalysis(func::FuncOp func, MemPlanMode planMode,
                       bool disableTightlyCoupledBufferReuse,
+                      PlanMemoryUBCopyBankMode planMemoryUBCopyBankMode,
                       uint32_t randomSeed = 0,
                       bool enableMmadL0Planning = false)
       : func_(func), planMode(planMode),
         disableTightlyCoupledBufferReuse(disableTightlyCoupledBufferReuse),
-        enableMmadL0Planning(enableMmadL0Planning), randomSeed(randomSeed),
-        randomGenerator(this->randomSeed) {}
+        enableMmadL0Planning(enableMmadL0Planning),
+        planMemoryUBCopyBankMode(planMemoryUBCopyBankMode),
+        randomSeed(randomSeed), randomGenerator(this->randomSeed) {}
 
   void build();
 
@@ -390,13 +450,24 @@ public:
   /// record preload buffers by their enclosing preload loop.
   DenseMap<Operation *, SetVector<Value>> preloadLoop2Buffers;
 
+  /// UB-to-UB copies that participate in bank conflict avoidance.
+  SmallVector<BankCopy> bankCopies;
+  /// TCB roots before pool fallback clears their metadata.
+  DenseSet<Value> bankTcbRoots;
+
   /// now plan mode is LOCAL_MEM_PLAN.
   bool isLocalMemPlan() const;
 
   /// now plan mode is GLOBAL_WORKSPACE_PLAN.
   bool isGlobalWorkSpaceMemPlan() const;
 
+  /// Collect static, contiguous 1D UB-to-UB copy information.
+  void collectUBCopyBankCopies(bool preserveTcbRoots);
+
 private:
+  /// Return the special kinds of an eligible UB copy buffer.
+  std::optional<BankBufferKinds> getBankBufferKinds(Value root);
+
   void RecursionIR(Region *region, const Liveness &live);
 
   /// Get the buffer used within the loop and defined outside the loop.
@@ -563,6 +634,9 @@ private:
   bool ProcessMarkOpForTightlyCoupledCV(annotation::MarkOp markOp,
                                         memref::AllocOp allocOp);
 
+  /// Record pool membership on the allocation underlying the marked buffer.
+  void UpdateBufferPoolInfo(annotation::MarkOp markOp, memref::AllocOp allocOp);
+
   /// Update bufferInfos for AllocOp which need to plan unique memory.
   void UpdateMemoryUniqueBufferInfo(annotation::MarkOp markOp,
                                     memref::AllocOp allocOp);
@@ -600,6 +674,9 @@ private:
   /// Enable explicit A5 cube planning only for functions containing MMAD L0.
   bool enableMmadL0Planning;
 
+  /// UB-to-UB copy bank conflict avoidance mode.
+  PlanMemoryUBCopyBankMode planMemoryUBCopyBankMode;
+
   /// Gen-kill status corresponding to buffer.
   DenseMap<Value, BufferStatus> buffer2status;
 
@@ -629,11 +706,15 @@ using Buffer2Offsets = DenseMap<Value, SmallVector<uint64_t>>;
 /// of preload-local buffers.
 using PlanResult = std::pair<Buffer2Offsets, DenseSet<Value>>;
 
+/// Collect bank conflict SE info into bank graph.
+using BankGraph = DenseMap<StorageEntry *, SmallVector<BankEdge>>;
+
 class MemPlan {
 public:
   MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
           bool enableMemoryDisplay, bool restrictInplaceAsISA,
           int simtVFDynamicSize, bool disableVFReachableCheck,
+          PlanMemoryUBCopyBankMode planMemoryUBCopyBankMode,
           PlanMemoryStrategy planMemoryStrategy = PlanMemoryStrategy::DEFAULT,
           bool enableMmadL0Planning = false)
       : enableMemoryDisplay(enableMemoryDisplay), planMode(planMode),
@@ -641,9 +722,12 @@ public:
         restrictInplaceAsISA(restrictInplaceAsISA),
         simtVFDynamicSize(simtVFDynamicSize),
         disableVFReachableCheck(disableVFReachableCheck),
+        planMemoryUBCopyBankMode(planMemoryUBCopyBankMode),
         planMemoryStrategy(planMemoryStrategy),
         enableMmadL0Planning(enableMmadL0Planning),
         vfInplaceReuseInfo(nullptr) {}
+
+  virtual ~MemPlan() = default;
 
   LogicalResult plan(bool emitErrors = true);
   /// Report whether allocation failed only in UB.
@@ -697,6 +781,14 @@ public:
     preloadBufferReuseableInfo = info;
   }
 
+  inline void SetBankCopiesInfo(SmallVector<BankCopy> vec) {
+    bankCopies = std::move(vec);
+  }
+
+  inline void SetBankTcbRoots(DenseSet<Value> roots) {
+    bankTcbRoots = std::move(roots);
+  }
+
   /// Setup the device's storage specs
   LogicalResult InitMemSpecsFromModule(func::FuncOp funcOp);
 
@@ -725,7 +817,34 @@ public:
     return memscope2rootSuccessStorageEntry;
   }
 
+protected:
+  void prepareNoReuseLayout();
+  virtual void PlanBuffersWithoutReuse(StorageEntry *rootStorageEntry,
+                                       size_t alignUnit);
+  void commitBankNoReuseLayout(StorageEntry *rootStorageEntry,
+                               size_t alignUnit);
+  void buildEnabledBankGraph();
+  /// Visit copy neighbors and slots belonging to the same multi-buffer.
+  void forEachBankNeighbor(
+      StorageEntry *entry,
+      llvm::function_ref<void(StorageEntry *, uint64_t, uint64_t)> visit) const;
+  size_t getBankDegree(StorageEntry *entry) const;
+  bool hasBankConflict() const;
+  void buildBankComponents();
+  LogicalResult MultiSpecPlan(SpecInfo &si, MemBoundList &outline,
+                              PlanRecHis &history, StorageEntry *entry);
+  LogicalResult trySpecLevels(SpecInfo &si, MemBoundList &outline,
+                              PlanRecHis &history, StorageEntry *entry,
+                              UBCopyBankAllocStrategy strategy,
+                              bool allowPreloadReuse);
+  LogicalResult SpecAlloc(MemBoundList &outline, PlanRecHis &history,
+                          StorageEntry *entry, const SpecInfo &si, int level,
+                          UBCopyBankAllocStrategy strategy);
+
 private:
+  friend class MemPlanPreferUBConflict;
+  friend class MemPlanRequireUBConflict;
+
   /// different mode for mem plan.
   MemPlanMode planMode;
 
@@ -740,6 +859,9 @@ private:
 
   /// Disable VF load/store reachability check for inplace reuse.
   bool disableVFReachableCheck;
+
+  /// UB-to-UB copy bank conflict avoidance mode.
+  PlanMemoryUBCopyBankMode planMemoryUBCopyBankMode;
 
   /// Strategy for reordering storage entries during plan memory.
   PlanMemoryStrategy planMemoryStrategy;
@@ -791,38 +913,108 @@ private:
   /// of buffers corresponding to DMA.
   StorageEntry *GetReorderRootStorageEntry(StorageEntry *rootStorageEntry);
 
-  /// Assign addresses without reuse.
-  void PlanBuffersWithoutReuse(StorageEntry *rootStorageEntry,
-                               size_t alignUnit);
+  /// Move special copy endpoints ahead of normal buffers in PREFER.
+  void
+  collectBankSpecialEntries(SmallVectorImpl<StorageEntry *> &entries,
+                            SmallVectorImpl<StorageEntry *> &special) const;
+
+  /// Apply the bank mode's entry ordering after the common classification.
+  SmallVector<StorageEntry *>
+  orderBankEntries(ArrayRef<StorageEntry *> memUnique,
+                   SmallVectorImpl<StorageEntry *> &dma,
+                   SmallVectorImpl<StorageEntry *> &other,
+                   SmallVectorImpl<StorageEntry *> &scalar);
+
+  /// Order REQUIRE anchors and members ahead of other entries.
+  SmallVector<StorageEntry *>
+  orderRequiredBankEntries(ArrayRef<StorageEntry *> memUnique,
+                           SmallVectorImpl<StorageEntry *> &dma,
+                           SmallVectorImpl<StorageEntry *> &other,
+                           SmallVectorImpl<StorageEntry *> &scalar);
+
+  /// Move REQUIRE graph entries into the anchor and member lists.
+  void
+  collectBankComponentEntries(SmallVectorImpl<StorageEntry *> &entries,
+                              SmallVectorImpl<StorageEntry *> &anchors,
+                              SmallVectorImpl<StorageEntry *> &members) const;
+
+  /// Calculate a bank-aware no-reuse layout without modifying entries.
+  void LayoutNoReuseOffsets(StorageEntry *rootStorageEntry, size_t alignUnit,
+                            DenseMap<const StorageEntry *, uint64_t> &offsets,
+                            uint64_t &requiredSize);
 
   /// Obtain buffer space size and alignment information.
   std::pair<size_t, size_t> GetBufferSpaceInfo(hivm::AddressSpace &space) const;
 
-  /// Multi level plan strategy.
-  LogicalResult MultiSpecPlan(SpecInfo &si, MemBoundList &outline,
-                              PlanRecHis &history, StorageEntry *entry);
+  /// Allocate using the original bound-start search.
+  LogicalResult SpecAllocNormal(MemBoundList &outline, PlanRecHis &his,
+                                StorageEntry *e, const SpecInfo &si,
+                                int localLevel);
 
-  /// plan buffer in speculative ways.
-  LogicalResult SpecAlloc(MemBoundList &outline, PlanRecHis &his,
-                          StorageEntry *e, const SpecInfo &si, int localLevel);
+  /// Allocate at an existing bound start with the required bank residue.
+  LogicalResult SpecAllocConflictBoundChange(MemBoundList &outline,
+                                             PlanRecHis &his, StorageEntry *e,
+                                             const SpecInfo &si, int localLevel,
+                                             uint64_t residue);
 
+  /// Split across bounds, allowing the allocation to extend into later bounds.
+  LogicalResult
+  SpecAllocConflictCrossBoundSplit(MemBoundList &outline, PlanRecHis &his,
+                                   StorageEntry *e, const SpecInfo &si,
+                                   int localLevel, uint64_t residue);
+
+  /// Tell the caller how to continue searching after checking a section.
+  enum class SpecAllocStep {
+    Continue,          // Extend the current section.
+    SkipCoveredBounds, // Advance past the checked bounds.
+    NextStart,         // Try the next start bound.
+    NextCandidate,     // Try the next address in the current bound.
+    Success            // The allocation was committed.
+  };
+
+  /// Check and commit one candidate section; callers control traversal.
+  SpecAllocStep
+  TrySpecAllocSection(MemBoundList &outline, PlanRecHis &his, StorageEntry *e,
+                      const SpecInfo &si, int localLevel,
+                      MemBoundListConstIter &start, MemBoundListConstIter end,
+                      uint64_t size, std::optional<uint64_t> candidate,
+                      SmallVector<ValuePair> &stallPipelineInplacePairs);
+
+protected:
+  using BankOffsetLookup =
+      llvm::function_ref<std::optional<uint64_t>(const StorageEntry *)>;
+
+  /// Compute the current entry's residue from a peer's access offset.
+  static uint64_t bankResidueFromPeer(uint64_t peerOffset, uint64_t thisBias,
+                                      uint64_t peerBias);
+
+  /// Analyze residues required by peers with committed offsets.
+  virtual BankResidueResult
+  analyzeBankResidue(const StorageEntry *entry,
+                     BankOffsetLookup lookupPeerOffset,
+                     uint64_t placementHint) const;
+
+private:
   /// Check whether current buffer conflicts with the history buffers.
   bool VerifyConflictStageCommon(
       PlanRecHis &his, const StorageEntry *e, MemBoundListConstIter &start,
       const MemBoundList &outline,
       std::function<bool(const StorageEntry *, const StorageEntry *)>
-          conflictChecker);
+          conflictChecker,
+      std::optional<uint64_t> candidate = std::nullopt);
 
   /// spec_level == SPEC_LEVEL_3, do not reuse buffer when pipe conflicts.
   bool VerifyConflictStage3(PlanRecHis &his, const StorageEntry *e,
                             int specLevel, MemBoundListConstIter &start,
-                            const MemBoundList &outline);
+                            const MemBoundList &outline,
+                            std::optional<uint64_t> candidate = std::nullopt);
 
   /// spec_level == SPEC_LEVEL_2, do not reuse the buffer in same loop when pipe
   /// conflicts between vector and dma.
   bool VerifyConflictStage2(PlanRecHis &his, const StorageEntry *e,
                             int specLevel, MemBoundListConstIter &start,
-                            const MemBoundList &outline);
+                            const MemBoundList &outline,
+                            std::optional<uint64_t> candidate = std::nullopt);
 
   /// spec_level == SPEC_LEVEL_1, pure single can reuse with mb.
   /// otherBufferOffsets will contain multiBufferNum - 1 elements.
@@ -871,6 +1063,7 @@ private:
   /// plan strategy is achieved through split method.
   void AddMemBoundInSectionalWay(
       StorageEntry *e, MemBoundListConstIter start, MemBoundListConstIter end,
+      uint64_t candidate, uint64_t entryEnd,
       SmallVector<std::shared_ptr<MemoryBound>> &splitBound) const;
 
   /// Append buffer lives of bounds in [start, end) onto newLife, then merge.
@@ -1015,6 +1208,48 @@ private:
   /// Check inplaced buffer contained in preloadBuffer2Life
   bool IsPreloadStorageEntry(const StorageEntry *storageEntry);
 
+  /// Build the bank graph and resolve statically incompatible constraints.
+  virtual void buildBankGraph() {}
+
+  /// Break copy cycles before constructing bank components.
+  void pruneBankCycles();
+
+  /// Check whether an entry or any merged member requires unique storage.
+  bool isBankMemoryUniqueEntry(const StorageEntry *entry) const;
+
+  /// Check special attributes of one member of a storage entry.
+  bool isBankSpecialBuffer(Value buffer) const {
+    auto infoIt = bufferInfos.find(buffer);
+    auto multiIt = buffer2MultiNum.find(buffer);
+    return preloadBufferReuseableInfo.contains(buffer) ||
+           (multiIt != buffer2MultiNum.end() && multiIt->second > 1) ||
+           bankTcbRoots.contains(buffer) || infoIt == bufferInfos.end() ||
+           infoIt->second.cvMixId >= 0;
+  }
+
+  /// Return whether the entry or one of its aliases is special.
+  bool isBankSpecialEntry(const StorageEntry *entry) const {
+    return entry->multiBufferNum > 1 ||
+           llvm::any_of(entry->inplaceBuffers, [this](Value buffer) {
+             return isBankSpecialBuffer(buffer);
+           });
+  }
+
+  /// Check whether an entry participates in bank constraints.
+  bool IsEntryBankConflict(StorageEntry *entry) const {
+    if (planMemoryUBCopyBankMode == PlanMemoryUBCopyBankMode::REQUIRE)
+      return bankMember2Anchor.contains(entry);
+    return hasNormalBankEdges(entry);
+  }
+
+  /// Check whether an entry is the normal endpoint of a bank constraint.
+  bool hasNormalBankEdges(StorageEntry *entry) const {
+    auto it = bankGraph.find(entry);
+    return it != bankGraph.end() &&
+           llvm::any_of(it->second,
+                        [](const BankEdge &edge) { return edge.thisIsNormal; });
+  }
+
 private:
   /// The buffer corresponding to each operation.
   SmallVector<std::unique_ptr<OpInfo>> linearOperation;
@@ -1073,6 +1308,23 @@ private:
 
   /// Inplace reuse reachable map for checking if a buffer is used by hivmPipeOp
   InplaceReuseReachableMap reachableMap;
+
+  /// Copies collected for this planning attempt.
+  SmallVector<BankCopy> bankCopies;
+
+  /// TCB roots preserved when pool fallback clears their liveness metadata.
+  DenseSet<Value> bankTcbRoots;
+
+  /// Copy constraints indexed by their storage entry.
+  BankGraph bankGraph;
+
+  /// Static component membership for REQUIRE bank constraints.
+  DenseMap<const StorageEntry *, const StorageEntry *> bankMember2Anchor;
+  DenseMap<const StorageEntry *, SmallVector<StorageEntry *>>
+      bankAnchor2Members;
+
+  /// No-reuse offsets prepared before the capacity check.
+  DenseMap<const StorageEntry *, uint64_t> bankNoReuseOffsets;
 
   /// Per-instance id sources stamped at entry/bound construction and used
   /// as conflict-memo keys instead of pointers. Ids are never reused within
@@ -1148,6 +1400,32 @@ private:
 
   /// The device's work space align size
   int workSpaceAlignSize{32 * 8};
+};
+
+/// Best-effort bank planning with pruned constraints.
+class MemPlanPreferUBConflict final : public MemPlan {
+public:
+  using MemPlan::MemPlan;
+
+protected:
+  BankResidueResult analyzeBankResidue(const StorageEntry *entry,
+                                       BankOffsetLookup lookupPeerOffset,
+                                       uint64_t placementHint) const override;
+  void buildBankGraph() override;
+  void PlanBuffersWithoutReuse(StorageEntry *root, size_t align) override;
+};
+
+/// Bank planning that enforces constraints for normal and special buffers.
+class MemPlanRequireUBConflict final : public MemPlan {
+public:
+  using MemPlan::MemPlan;
+
+protected:
+  BankResidueResult analyzeBankResidue(const StorageEntry *entry,
+                                       BankOffsetLookup lookupPeerOffset,
+                                       uint64_t placementHint) const override;
+  void buildBankGraph() override;
+  void PlanBuffersWithoutReuse(StorageEntry *root, size_t align) override;
 };
 
 } // namespace hivm

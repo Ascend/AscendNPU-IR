@@ -46,6 +46,12 @@ enum class CVPipelineMode {
   Dynamic, // dynamic mode pipeling (developing)
 };
 
+/// CV-pipelining scheduler mode
+enum class CVSchedulerMode {
+  Default, // default WorklistBuilder-based partitioning
+  Sms,     // Swinging Modulo Scheduling stage-level partitioning
+};
+
 namespace mlir {
 
 namespace hivm {
@@ -63,6 +69,10 @@ namespace mlir {
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
 
 namespace hivm {
+/// Sink row masks and pair regular and indirect AIV row loads.
+std::unique_ptr<Pass>
+createOptimizeRowLoadsPass(const OptimizeRowLoadsOptions &options = {});
+
 /// Create a pass to infer the core type of each function.
 std::unique_ptr<Pass> createInferFuncCoreTypePass();
 
@@ -258,6 +268,8 @@ std::unique_ptr<Pass> createHIVMCanonicalizationPipelinePass();
 // run before createSetBufferSizePass, which consumes the inserted marks.
 std::unique_ptr<Pass> createInferBufferSizeFromSlicePass();
 
+std::unique_ptr<Pass> createPromoteL1GatherPass();
+
 // Create a pass to set buffer size
 std::unique_ptr<Pass> createSetBufferSizePass();
 
@@ -393,6 +405,7 @@ std::unique_ptr<Pass> createHIVMBubbleUpExtractSlicePass(
 
 /// Create the tensor-level HIVM vectorization pass.
 std::unique_ptr<Pass> createHIVMVectorizePass();
+std::unique_ptr<Pass> createHIVMVectorizePhasePass(llvm::StringRef phase);
 
 // Create a pass to insert init and finish for debug.
 std::unique_ptr<Pass> createInsertInitAndFinishForDebugPass();
@@ -495,6 +508,9 @@ std::unique_ptr<Pass> createNonContiguousReshapeToCopyPass();
 
 std::unique_ptr<Pass> createSinkOpToConsumerInLoopPass();
 
+/// Create a pass to sink scalar readback chains to their consumers.
+std::unique_ptr<Pass> createSinkScalarReadbackPass();
+
 // Create a pass to flatten nested moduleOp
 std::unique_ptr<Pass> createFlattenModulePass();
 
@@ -536,6 +552,9 @@ std::unique_ptr<Pass> createRemoveCopyOpsPass();
 /// Create a pass to fuse linalg.transpose into hivm.hir.load via DMA
 /// on-the-fly transpose.
 std::unique_ptr<Pass> createFuseTransposeIntoLoadPass();
+
+/// Fuse supported independent operations into A6 loads.
+std::unique_ptr<Pass> createFuseOpIntoLoadPass();
 
 //===----------------------------------------------------------------------===//
 // V2 pipeline passes (see Passes.td)

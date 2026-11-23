@@ -294,6 +294,11 @@ std::string VCastOp::getCastName(bool withMode) {
 }
 
 LogicalResult VCastOp::verify() {
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+  if (getRoundMode() == hivm::RoundMode::HYBRID &&
+      !isa<HiFloat8Type>(getElementTypeOrSelf(getSingleDst().getType())))
+    return emitOpError("HYBRID rounding requires a HiFloat8 result");
+#endif
   /// considering cast f32 to f16 and cast f16 to i8 both support
   /// round/rint/floor/ceil/trunc modes, so cast f32 to i8 supports these
   /// modes.
@@ -363,6 +368,16 @@ LogicalResult VCastOp::verify() {
       "uint32_t_to_uint16_t_truncmode",
       "uint32_t_to_float_rintmode",
       "uint32_t_to_bfloat16_t_rintmode",
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+      "float_to_hifloat8_t_roundmode",
+      "float_to_hifloat8_t_hybridmode",
+      "half_to_hifloat8_t_roundmode",
+      "half_to_hifloat8_t_hybridmode",
+      "hifloat8_t_to_float_roundmode",
+      "hifloat8_t_to_float_rintmode",
+      "hifloat8_t_to_half_roundmode",
+      "hifloat8_t_to_half_rintmode",
+#endif
       "float_to_float8_e4m3_t_rintmode",
       "uint8_t_to_uint16_t_rintmode",
       "uint16_t_to_uint8_t_truncwithoverflowmode",

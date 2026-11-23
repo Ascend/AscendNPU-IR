@@ -398,6 +398,10 @@ func.func @TransposeChain3(%arg0: tensor<1x16x8xf32>) -> tensor<1x16x8xf32> {
 }
 
 // -----
+// The loop carries bf16 around an f32 body. Hoisting the cast pair would
+// drop the per-iteration rounding to bf16 on the back edge and drift against
+// the per-iteration-bf16 reference, so the casts must stay inside the loop.
+//
 // CHECK-LABEL:   func.func @castInLoop(
 // CHECK-SAME:                            %[[VAL_0:.*]]: tensor<1x1x12xbf16>,
 // CHECK-SAME:                            %[[VAL_1:.*]]: tensor<1x1x12xbf16>) -> tensor<1x1x12xbf16> {
@@ -415,15 +419,13 @@ func.func @castInLoop(%arg0: tensor<1x1x12xbf16>, %arg1: tensor<1x1x12xbf16>) ->
   %2 = hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<1x1x12xbf16>) outs(%1 : tensor<1x1x12xf32>) -> tensor<1x1x12xf32>
   %4 = hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%0 : tensor<1x1x12xbf16>) outs(%1 : tensor<1x1x12xf32>) -> tensor<1x1x12xf32>
 
-  // CHECK:           %[[VAL_8:.*]] = tensor.empty() : tensor<1x1x12xf32>
-  // CHECK:           %[[VAL_9:.*]] = hfusion.cast {{.*}} ins(%[[VAL_1]] : tensor<1x1x12xbf16>) outs(%[[VAL_8]] : tensor<1x1x12xf32>) -> tensor<1x1x12xf32>
-  // CHECK:           %[[VAL_10:.*]] = scf.for %[[VAL_11:.*]] = %[[VAL_2]] to %[[VAL_3]] step %[[VAL_2]] iter_args(%[[VAL_12:.*]] = %[[VAL_9]]) -> (tensor<1x1x12xf32>)  : i32 {
-  // CHECK:             %[[VAL_13:.*]] = linalg.elemwise_binary {{.*}} ins(%[[VAL_12]], %[[VAL_6]] : tensor<1x1x12xf32>, tensor<1x1x12xf32>) outs(%[[VAL_7]] : tensor<1x1x12xf32>) -> tensor<1x1x12xf32>
-  // CHECK:             scf.yield %[[VAL_13]] : tensor<1x1x12xf32>
+  // CHECK:           %[[VAL_10:.*]] = scf.for %[[VAL_11:.*]] = %[[VAL_2]] to %[[VAL_3]] step %[[VAL_2]] iter_args(%[[VAL_12:.*]] = %[[VAL_1]]) -> (tensor<1x1x12xbf16>)  : i32 {
+  // CHECK:             %[[VAL_13:.*]] = hfusion.cast {{.*}} ins(%[[VAL_12]] : tensor<1x1x12xbf16>) outs(%[[VAL_5]] : tensor<1x1x12xf32>) -> tensor<1x1x12xf32>
+  // CHECK:             %[[VAL_14:.*]] = linalg.elemwise_binary {{.*}} ins(%[[VAL_13]], %[[VAL_6]] : tensor<1x1x12xf32>, tensor<1x1x12xf32>) outs(%[[VAL_7]] : tensor<1x1x12xf32>) -> tensor<1x1x12xf32>
+  // CHECK:             %[[VAL_15:.*]] = hfusion.cast {{.*}} ins(%[[VAL_14]] : tensor<1x1x12xf32>) outs(%[[VAL_4]] : tensor<1x1x12xbf16>) -> tensor<1x1x12xbf16>
+  // CHECK:             scf.yield %[[VAL_15]] : tensor<1x1x12xbf16>
   // CHECK:           }
-  // CHECK:           %[[VAL_14:.*]] = tensor.empty() : tensor<1x1x12xbf16>
-  // CHECK:           %[[VAL_15:.*]] = hfusion.cast {{.*}} ins(%[[VAL_10]] : tensor<1x1x12xf32>) outs(%[[VAL_14]] : tensor<1x1x12xbf16>) -> tensor<1x1x12xbf16>
-  // CHECK:           return %[[VAL_15]] : tensor<1x1x12xbf16>
+  // CHECK:           return %[[VAL_10]] : tensor<1x1x12xbf16>
   %7 = scf.for %arg2 = %c1_i32 to %c4_i32 step %c1_i32 iter_args(%arg3 = %arg1) -> (tensor<1x1x12xbf16>)  : i32 {
     %8 = hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg3 : tensor<1x1x12xbf16>) outs(%1 : tensor<1x1x12xf32>) -> tensor<1x1x12xf32>
     %9 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%8, %2 : tensor<1x1x12xf32>, tensor<1x1x12xf32>) outs(%4 : tensor<1x1x12xf32>) -> tensor<1x1x12xf32>

@@ -786,6 +786,31 @@ LogicalResult VFVpackOp::verify() {
                      "b16->b8 and b32->b16 narrowing are supported");
 }
 
+LogicalResult VFExtFOp::verify() {
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+  if (isa<HiFloat8Type>(getElementTypeOrSelf(getSrc().getType())) &&
+      !getElementTypeOrSelf(getRes().getType()).isF32())
+    return emitOpError("HiFloat8 extension requires an FP32 result");
+#endif
+  return success();
+}
+
+LogicalResult VFTruncFOp::verify() {
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+  bool toHiFloat8 = isa<HiFloat8Type>(getElementTypeOrSelf(getRes().getType()));
+  auto round = getRnd();
+  if (toHiFloat8) {
+    if (!getElementTypeOrSelf(getSrc().getType()).isF32())
+      return emitOpError("HiFloat8 truncation requires an FP32 input");
+    if (round != hivm::RoundMode::ROUND && round != hivm::RoundMode::HYBRID)
+      return emitOpError("HiFloat8 supports only ROUND or HYBRID");
+  } else if (round == hivm::RoundMode::HYBRID) {
+    return emitOpError("HYBRID rounding requires a HiFloat8 result");
+  }
+#endif
+  return success();
+}
+
 LogicalResult VFFpToSIntOp::verify() {
   Type inType = cast<VectorType>(getSrc().getType()).getElementType();
   Type outType = cast<VectorType>(getRes().getType()).getElementType();

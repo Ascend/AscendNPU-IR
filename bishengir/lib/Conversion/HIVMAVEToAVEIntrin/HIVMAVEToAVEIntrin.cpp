@@ -963,7 +963,11 @@ struct HIVMBroadCastScalarOpLowering : public ConvertOpToLLVMPattern<OpTy> {
       auto i8Type = IntegerType::get(rewriter.getContext(), 8);
       auto i8VecTy =
           VectorType::get(SmallVector<int64_t>{vecTy.getNumElements()}, i8Type);
-      if (isa<Float8E4M3FNType>(elementType) ||
+      if (
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+          isa<HiFloat8Type>(scalar.getType()) ||
+#endif
+          isa<Float8E4M3FNType>(elementType) ||
           isa<Float8E5M2Type>(elementType) ||
           scalar.getType().isFloat8E4M3FN() ||
           scalar.getType().isFloat8E5M2()) {
@@ -1265,6 +1269,16 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
       auto result = rewriter.create<Vldsx1V128BF16InstrOp>(loc, vtype, dataPtr,
                                                            offset, dist, mode);
       rewriter.replaceOp(load, result);
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+    } else if (isa<HiFloat8Type>(elementType)) {
+      // Load raw bytes, then restore the semantic type. This is a bitwise
+      // transfer, not a conversion to an OCP FP8 format.
+      auto bytesTy = VectorType::get({256}, rewriter.getI8Type());
+      Value bytes = rewriter.create<Vldsx1V256S8InstrOp>(loc, bytesTy, dataPtr,
+                                                         offset, dist, mode);
+      Value result = rewriter.create<LLVM::BitcastOp>(loc, vtype, bytes);
+      rewriter.replaceOp(load, result);
+#endif
     } else if (isa<Float8E4M3FNType>(elementType)) {
       auto result = rewriter.create<Vldsx1V256F8E4InstrOp>(loc, vtype, dataPtr,
                                                            offset, dist, mode);
@@ -1445,6 +1459,14 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
     } else if (dElemType.isBF16()) {
       auto result = rewriter.create<Vstsx1V128BF16InstrOp>(
           loc, data, dataPtr, offset, dist, mode, mask);
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+      rewriter.replaceOp(store, result);
+    } else if (isa<HiFloat8Type>(dElemType)) {
+      auto bytesTy = VectorType::get({256}, rewriter.getI8Type());
+      Value bytes = rewriter.create<LLVM::BitcastOp>(loc, bytesTy, data);
+      auto result = rewriter.create<Vstsx1V256S8InstrOp>(
+          loc, bytes, dataPtr, offset, dist, mode, mask);
+#endif
       rewriter.replaceOp(store, result);
     } else if (isa<Float8E4M3FNType>(dElemType)) {
       auto result = rewriter.create<Vstsx1V256F8E4InstrOp>(
@@ -1962,6 +1984,42 @@ struct HIVMSelectOpLowering : public ConvertOpToLLVMPattern<VFSelectOp> {
                    ->getResult(0);
     }
     rewriter.replaceOp(select, result);
+    return success();
+  }
+};
+
+// Lower the byte-mask masked move to vselrv2. The instruction only exists on
+// the Ascend960 (V121) target, so every other target keeps the op untouched
+// and the predicate select (ave.hir.vsel) lowering above is unchanged.
+struct HIVMVselrv2OpLowering : public ConvertOpToLLVMPattern<VFSelectRv2Op> {
+  explicit HIVMVselrv2OpLowering(LLVMTypeConverter &converter)
+      : ConvertOpToLLVMPattern<VFSelectRv2Op>(converter) {}
+  LogicalResult
+  matchAndRewrite(VFSelectRv2Op op, VFSelectRv2Op::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto moduleOp = op->getParentOfType<ModuleOp>();
+    if (!moduleOp || !hacc::utils::isAscend960(moduleOp))
+      return rewriter.notifyMatchFailure(
+          op, "vselrv2 requires the Ascend960 (V121) target");
+
+    auto loc = op.getLoc();
+    VectorType vType = cast<VectorType>(op.getRes().getType());
+    Type elementType = vType.getElementType();
+    if (!elementType.isInteger(8) && !isa<Float8E4M3FNType>(elementType) &&
+        !isa<Float8E5M2Type>(elementType))
+      return rewriter.notifyMatchFailure(op,
+                                         "vselrv2 requires 8-bit or f8 data");
+
+    auto vlType = createVLVectorType(elementType);
+    Value mask = getVLRegValueOrSelf(adaptor.getMask(), rewriter);
+    Value trueValue = getVLRegValueOrSelf(adaptor.getTrueValue(), rewriter);
+    Value result =
+        rewriter.create<Vselrv2InstrOp>(loc, vlType, trueValue, mask);
+    if (vlType != vType) {
+      result = rewriter.create<UnrealizedConversionCastOp>(loc, vType, result)
+                   ->getResult(0);
+    }
+    rewriter.replaceOp(op, result);
     return success();
   }
 };
@@ -2646,7 +2704,11 @@ struct HIVMBroadcastScalarOpLowering
       vbr = rewriter.create<VbrInstrOp>(loc, vlType, src);
     } else if (srcType.isF32()) {
       vbr = rewriter.create<VbrInstrOp>(loc, vlType, src);
-    } else if (srcType.isFloat8E4M3FN() || srcType.isFloat8E5M2()) {
+    } else if (
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+        isa<HiFloat8Type>(srcType) ||
+#endif
+        srcType.isFloat8E4M3FN() || srcType.isFloat8E5M2()) {
       Type i8Type = rewriter.getI8Type();
       VectorType i8VLType = createVLVectorType(i8Type);
       Value i8Src = rewriter.create<LLVM::BitcastOp>(loc, i8Type, src);
@@ -2685,6 +2747,15 @@ static Value vdupLowerToIntrin(VFBroadcastVectorOp vecBrcOp,
   src =
       rewriter.create<UnrealizedConversionCastOp>(loc, srcTy, src).getResult(0);
   Value mask = getVLRegValueOrSelf(vecBrcOp.getMask(), rewriter);
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+  if (isa<HiFloat8Type>(elementType)) {
+    auto bytesTy = VectorType::get({util::VL}, rewriter.getI8Type());
+    Value bytes = rewriter.create<LLVM::BitcastOp>(loc, bytesTy, src);
+    Value broadcast =
+        rewriter.create<IntrOpTy>(loc, bytesTy, bytes, mask, pModeCst);
+    return rewriter.create<LLVM::BitcastOp>(loc, newType, broadcast);
+  }
+#endif
   if (elementType.isUnsignedInteger(8) || elementType.isSignedInteger(8) ||
       elementType.isSignlessInteger(8) || elementType.isUnsignedInteger(16) ||
       elementType.isSignedInteger(16) || elementType.isSignlessInteger(16) ||
@@ -2740,6 +2811,15 @@ struct HIVMTypeConvertionOpLowering
                                                static_cast<uint32_t>(enumVal));
     };
 
+    // mode is optional and only present on the ops that carry it; default to
+    // MERGING (1) to keep the A3/A5 lowering unchanged.
+    auto modeValue = [&](auto op) -> Value {
+      uint32_t mode = static_cast<uint32_t>(hivmave::VCVT_ModeType::MERGING);
+      if (auto modeOpt = op.getMode())
+        mode = static_cast<uint32_t>(*modeOpt);
+      return cstValue(mode);
+    };
+
     auto srcVLVectorTy = hivm_regbaseintrins::createVLVectorType(inElemType);
     auto dstVLVectorTy = hivm_regbaseintrins::createVLVectorType(outElemType);
 
@@ -2757,6 +2837,11 @@ struct HIVMTypeConvertionOpLowering
       if (outElemType.isF32()) {
         if (inElemType.isBF16()) {
           newOp = rewriter.create<VcvtffBF162F32InstrOp>(
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+              loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
+        } else if (isa<HiFloat8Type>(inElemType)) {
+          newOp = rewriter.create<VcvtffHiF82F32InstrOp>(
+#endif
               loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
         } else if (isa<Float8E4M3FNType>(inElemType)) {
           newOp = rewriter.create<VcvtffF8E4M32F32InstrOp>(
@@ -2767,6 +2852,23 @@ struct HIVMTypeConvertionOpLowering
         } else if (inElemType.isF16()) {
           newOp = rewriter.create<VcvtffF162F32InstrOp>(
               loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
+        }
+      } else if (outElemType.isF16() || outElemType.isBF16()) {
+        // V121 (dav-920r1): fp8 -> f16/bf16.
+        if (isa<Float8E4M3FNType>(inElemType)) {
+          if (outElemType.isF16())
+            newOp = rewriter.create<VcvtffF8E4M32F16InstrOp>(
+                loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
+          else
+            newOp = rewriter.create<VcvtffF8E4M32BF16InstrOp>(
+                loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
+        } else if (isa<Float8E5M2Type>(inElemType)) {
+          if (outElemType.isF16())
+            newOp = rewriter.create<VcvtffF8E5M22F16InstrOp>(
+                loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
+          else
+            newOp = rewriter.create<VcvtffF8E5M22BF16InstrOp>(
+                loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
         }
       }
     } else if constexpr (std::is_same_v<OpToBeConverted, VFExtSIOp>) {
@@ -2934,22 +3036,60 @@ struct HIVMTypeConvertionOpLowering
         }
       }
     } else if constexpr (std::is_same_v<OpToBeConverted, VFTruncFOp>) {
-      if (outElemType.isBF16())
-        newOp = rewriter.create<VcvtffF322BF16InstrOp>(
-            loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
-            cstValue(srcOp.getSat()), cstValue(srcOp.getPart()));
-      else if (outElemType.isF16())
-        newOp = rewriter.create<VcvtffF322F16InstrOp>(
-            loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
-            cstValue(srcOp.getSat()), cstValue(srcOp.getPart()));
-      else if (isa<Float8E4M3FNType>(outElemType))
-        newOp = rewriter.create<VcvtffF322F8E4M3InstrOp>(
-            loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
-            cstValue(srcOp.getSat()), cstValue(srcOp.getPart()));
-      else if (isa<Float8E5M2Type>(outElemType))
-        newOp = rewriter.create<VcvtffF322F8E5M2InstrOp>(
-            loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
-            cstValue(srcOp.getSat()), cstValue(srcOp.getPart()));
+      if (inElemType.isF32()) {
+        if (outElemType.isBF16())
+          newOp = rewriter.create<VcvtffF322BF16InstrOp>(
+              loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
+              cstValue(srcOp.getSat()), cstValue(srcOp.getPart()));
+        else if (outElemType.isF16())
+          newOp = rewriter.create<VcvtffF322F16InstrOp>(
+              loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
+              cstValue(srcOp.getSat()), cstValue(srcOp.getPart()));
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+        else if (isa<HiFloat8Type>(outElemType)) {
+          // HIVM HYBRID is 7; CCE ROUND_HYBRID is 6.
+          auto cceRnd = srcOp.getRnd() == hivm::RoundMode::HYBRID ? 6u : 1u;
+          newOp = rewriter.create<VcvtffF322HiF8InstrOp>(
+              loc, dstVLVectorTy, srcCasted, mask, cstValue(cceRnd),
+              cstValue(srcOp.getSat()), cstValue(srcOp.getPart()));
+        }
+#endif
+        else if (isa<Float8E4M3FNType>(outElemType))
+          newOp = rewriter.create<VcvtffF322F8E4M3InstrOp>(
+              loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
+              cstValue(srcOp.getSat()), cstValue(srcOp.getPart()));
+        else if (isa<Float8E5M2Type>(outElemType))
+          newOp = rewriter.create<VcvtffF322F8E5M2InstrOp>(
+              loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
+              cstValue(srcOp.getSat()), cstValue(srcOp.getPart()));
+      } else if ((inElemType.isF16() || inElemType.isBF16()) &&
+                 (isa<Float8E4M3FNType>(outElemType) ||
+                  isa<Float8E5M2Type>(outElemType))) {
+        // V121 (dav-920r1): f16/bf16 -> fp8.
+        if (inElemType.isF16()) {
+          if (isa<Float8E4M3FNType>(outElemType))
+            newOp = rewriter.create<VcvtffF162F8E4M3InstrOp>(
+                loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
+                cstValue(srcOp.getSat()), cstValue(srcOp.getPart()),
+                modeValue(srcOp));
+          else
+            newOp = rewriter.create<VcvtffF162F8E5M2InstrOp>(
+                loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
+                cstValue(srcOp.getSat()), cstValue(srcOp.getPart()),
+                modeValue(srcOp));
+        } else {
+          if (isa<Float8E4M3FNType>(outElemType))
+            newOp = rewriter.create<VcvtffBF162F8E4M3InstrOp>(
+                loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
+                cstValue(srcOp.getSat()), cstValue(srcOp.getPart()),
+                modeValue(srcOp));
+          else
+            newOp = rewriter.create<VcvtffBF162F8E5M2InstrOp>(
+                loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
+                cstValue(srcOp.getSat()), cstValue(srcOp.getPart()),
+                modeValue(srcOp));
+        }
+      }
     } else if constexpr (std::is_same_v<OpToBeConverted, VFFpToSIntOp>) {
       if (srcOp.getRnd() == hivm::RoundMode::TRUNCWITHOVERFLOW) {
         auto rintMode = hivm::RoundMode::TRUNC;
@@ -3015,6 +3155,30 @@ struct HIVMTypeConvertionOpLowering
       if (inElemType.isSignlessInteger(8) && outElemType.isF16())
         newOp = rewriter.create<VcvtifU82F16InstrOp>(
             loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
+    } else if constexpr (std::is_same_v<OpToBeConverted, VFTruncE8M0FOp>) {
+      // V121 (dav-920r1): bf16 -> e8m0.
+      newOp = rewriter.create<VcvtffBF162E8M0InstrOp>(
+          loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
+          cstValue(srcOp.getSat()), cstValue(srcOp.getPart()),
+          modeValue(srcOp));
+    } else if constexpr (std::is_same_v<OpToBeConverted, VFExtE8M0FOp>) {
+      // V121 (dav-920r1): e8m0 -> bf16.
+      newOp = rewriter.create<VcvtffE8M02BF16InstrOp>(
+          loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()),
+          modeValue(srcOp));
+    } else if constexpr (std::is_same_v<OpToBeConverted, VFTruncE6M2FOp>) {
+      // V121 (dav-920r1): bf16 -> e6m2.
+      newOp = rewriter.create<VcvtffBF162E6M2InstrOp>(
+          loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
+          cstValue(srcOp.getPart()), modeValue(srcOp));
+    } else if constexpr (std::is_same_v<OpToBeConverted, VFExtE6M2FOp>) {
+      // V121 (dav-920r1): e6m2 -> bf16.
+      newOp = rewriter.create<VcvtffE6M22BF16InstrOp>(
+          loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
+    } else if constexpr (std::is_same_v<OpToBeConverted, VFExtRcpE6M2FOp>) {
+      // V121 (dav-920r1): rcpe6m2 -> bf16.
+      newOp = rewriter.create<VcvtffRcpe6M22BF16InstrOp>(
+          loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
     }
     if (!newOp)
       llvm::report_fatal_error("Unsupported type conversion op.");
@@ -3693,6 +3857,19 @@ struct HIVMExpdifOpLowering
   }
 };
 
+// The fused multiply-add instruction families only exist on the Ascend960
+// (V121) target; every other regbased target keeps using vmula.
+template <typename OpTy> constexpr bool isAscend960OnlyTenaryOp() {
+  return std::is_same_v<OpTy, hivmave::VFmaOp> ||
+         std::is_same_v<OpTy, hivmave::VFmsOp> ||
+         std::is_same_v<OpTy, hivmave::VFnmaOp> ||
+         std::is_same_v<OpTy, hivmave::VFnmsOp> ||
+         std::is_same_v<OpTy, hivmave::VMaddOp> ||
+         std::is_same_v<OpTy, hivmave::VMsubOp> ||
+         std::is_same_v<OpTy, hivmave::VNmaddOp> ||
+         std::is_same_v<OpTy, hivmave::VNmsubOp>;
+}
+
 template <typename OpTy, typename IntrV256S8OpTy, typename IntrV256U8OpTy,
           typename IntrV128S16OpTy, typename IntrV128U16OpTy,
           typename IntrV64S32OpTy, typename IntrV64U32OpTy,
@@ -3704,6 +3881,13 @@ struct TenaryLowerToIntrinsic : public ConvertOpToLLVMPattern<OpTy> {
   LogicalResult
   matchAndRewrite(OpTy op, typename OpTy::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+
+    if constexpr (isAscend960OnlyTenaryOp<OpTy>()) {
+      auto moduleOp = op->template getParentOfType<ModuleOp>();
+      if (!moduleOp || !hacc::utils::isAscend960(moduleOp))
+        return rewriter.notifyMatchFailure(
+            op, "this instruction requires the Ascend960 (V121) target");
+    }
 
     auto loc = op.getLoc();
     Value src1 = op.getSrc1();
@@ -3813,10 +3997,51 @@ template <typename... Args> struct TenaryRegistryImpl {
   }
 };
 
-using TenaryRegistry = TenaryRegistryImpl<TenaryRegEntry<
-    hivmave::VFMulaOp, VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
-    VmulaSMInstrOp, VmulaUMInstrOp, VmulaSMInstrOp, VmulaUMInstrOp,
-    VmulaSMInstrOp, VmulaSMInstrOp, VmulaSMInstrOp>>;
+using TenaryRegistry = TenaryRegistryImpl<
+    TenaryRegEntry<hivmave::VFMulaOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VmulaSMInstrOp, VmulaUMInstrOp,
+                   VmulaSMInstrOp, VmulaUMInstrOp, VmulaSMInstrOp,
+                   VmulaSMInstrOp, VmulaSMInstrOp>,
+    TenaryRegEntry<hivmave::VFmaOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VfmaInstrOp, VfmaInstrOp,
+                   VfmaInstrOp>,
+    TenaryRegEntry<hivmave::VFmsOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VfmsInstrOp, VfmsInstrOp,
+                   VfmsInstrOp>,
+    TenaryRegEntry<hivmave::VFnmaOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VfnmaInstrOp, VfnmaInstrOp,
+                   VfnmaInstrOp>,
+    TenaryRegEntry<hivmave::VFnmsOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VfnmsInstrOp, VfnmsInstrOp,
+                   VfnmsInstrOp>,
+    TenaryRegEntry<hivmave::VMaddOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VmaddInstrOp, VmaddInstrOp,
+                   VmaddInstrOp>,
+    TenaryRegEntry<hivmave::VMsubOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VmsubInstrOp, VmsubInstrOp,
+                   VmsubInstrOp>,
+    TenaryRegEntry<hivmave::VNmaddOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VnmaddInstrOp, VnmaddInstrOp,
+                   VnmaddInstrOp>,
+    TenaryRegEntry<hivmave::VNmsubOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VunsupportedTenaryInstrOp,
+                   VunsupportedTenaryInstrOp, VnmsubInstrOp, VnmsubInstrOp,
+                   VnmsubInstrOp>>;
 
 template <typename OpToBeConverted>
 struct HIVMPredicateBinaryLogicOpLowering
@@ -4074,7 +4299,8 @@ void populateHIVMAVEToAVEIntrinPatterns(LLVMTypeConverter &converter,
                HIVMGatherOpLowering, HIVMBlockGatherOpLowering, HIVMScatterOpLowering,
                HIVMPgeOpLowering, HIVMPltOpLowering, HIVMPltMOpLowering,
                HIVMVtrcOpLowering, HIVMVSlideOpLowering,
-               HIVMSelectOpLowering, HIVMReductionOpLowering,
+               HIVMSelectOpLowering, HIVMVselrv2OpLowering,
+               HIVMReductionOpLowering,
                HIVMVCIOpLowering, HIVMBroadcastScalarOpLowering,
                HIVMVShiftOpLowering<hivmave::VFShrOp>,
                HIVMVShiftOpLowering<hivmave::VFShrsOp>,
@@ -4085,6 +4311,11 @@ void populateHIVMAVEToAVEIntrinPatterns(LLVMTypeConverter &converter,
                HIVMTypeConvertionOpLowering<VFExtUIOp>,
                HIVMTypeConvertionOpLowering<VFTruncIOp>,
                HIVMTypeConvertionOpLowering<VFTruncFOp>,
+               HIVMTypeConvertionOpLowering<VFTruncE8M0FOp>,
+               HIVMTypeConvertionOpLowering<VFExtE8M0FOp>,
+               HIVMTypeConvertionOpLowering<VFTruncE6M2FOp>,
+               HIVMTypeConvertionOpLowering<VFExtE6M2FOp>,
+               HIVMTypeConvertionOpLowering<VFExtRcpE6M2FOp>,
                HIVMTypeConvertionOpLowering<VFFpToSIntOp>,
                HIVMTypeConvertionOpLowering<VFFpToUIntOp>,
                HIVMTypeConvertionOpLowering<VFSIntToFpOp>,
@@ -4979,9 +5210,55 @@ protected:
 } // namespace
 
 namespace {
+/// Returns true if the type conversion can only be encoded by V121
+/// (dav-920r1 / Ascend960). On other targets these conversions have to be
+/// legalized through f32 before reaching the AVE layer; lowering them here
+/// would emit instructions the target cannot encode.
+bool isV121OnlyTypeConversion(Operation *op) {
+  auto getElementType = [](Value value) {
+    return cast<VectorType>(value.getType()).getElementType();
+  };
+  auto isFP8 = [](Type type) {
+    return isa<Float8E4M3FNType, Float8E5M2Type>(type);
+  };
+  auto is16BitFloat = [](Type type) { return type.isF16() || type.isBF16(); };
+
+  if (isa<VFTruncE8M0FOp, VFExtE8M0FOp, VFTruncE6M2FOp, VFExtE6M2FOp,
+          VFExtRcpE6M2FOp>(op))
+    return true;
+  if (auto extFOp = dyn_cast<VFExtFOp>(op))
+    return isFP8(getElementType(extFOp.getSrc())) &&
+           is16BitFloat(getElementType(extFOp.getResult()));
+  if (auto truncFOp = dyn_cast<VFTruncFOp>(op))
+    return is16BitFloat(getElementType(truncFOp.getSrc())) &&
+           isFP8(getElementType(truncFOp.getResult()));
+  return false;
+}
+
 /// A pass converting MLIR operations into the LLVM IR dialect.
 struct HIVMAVEToAVEIntrinPass
     : public impl::ConvertHIVMAVEToAVEIntrinBase<HIVMAVEToAVEIntrinPass> {
+
+  /// V121-only conversions must never be lowered on other targets. Normalize
+  /// usually legalizes them through f32 before this pass, but IR that bypasses
+  /// Normalize would otherwise select instructions the target cannot encode.
+  LogicalResult checkTargetSpecificTypeConversions(ModuleOp moduleOp) {
+    if (hacc::utils::isAscend960(moduleOp))
+      return success();
+
+    LogicalResult result = success();
+    moduleOp.walk([&](Operation *op) {
+      if (!isV121OnlyTypeConversion(op))
+        return WalkResult::advance();
+      op->emitError()
+          << "type conversion between fp8/e8m0/e6m2 and 16-bit float is only "
+             "supported on Ascend960 (dav-920r1) and must be legalized through "
+             "f32 before the AVE layer";
+      result = failure();
+      return WalkResult::advance();
+    });
+    return result;
+  }
 
   /// Set VF target attr to the global entry func so that bisheng works on
   /// the RegBased arch.
@@ -5016,18 +5293,30 @@ struct HIVMAVEToAVEIntrinPass
 
   /// Run the dialect converter on the module.
   void runOnOperation() override {
+    auto moduleOp = getOperation();
     // A known target is required for these native register operations. Reject
     // unsupported semantics explicitly rather than leaving AVE ops behind in
     // a partial conversion (in particular, do not use 950 groups on 960).
-    auto module = getOperation();
-    auto supported = module.walk([&](Operation *op) {
-      if (isa<GroupReductionOp>(op) && !hacc::utils::isAscend950(module)) {
+    auto supported = moduleOp.walk([&](Operation *op) {
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+      // VFTruncFOp verifies its own result type. The remaining AVE conversions
+      // that share the rounding attribute must not forward HYBRID to CCE.
+      if (auto rnd = op->getAttrOfType<hivm::RoundModeAttr>("rnd");
+          rnd && rnd.getValue() == hivm::RoundMode::HYBRID &&
+          op->getName().getDialectNamespace() ==
+              AVEDialect::getDialectNamespace() &&
+          !isa<VFTruncFOp>(op)) {
+        op->emitOpError("HYBRID rounding requires a HiFloat8 result");
+        return WalkResult::interrupt();
+      }
+#endif
+      if (isa<GroupReductionOp>(op) && !hacc::utils::isAscend950(moduleOp)) {
         op->emitOpError("group reduction currently supports only Ascend950");
         return WalkResult::interrupt();
       }
       if (isa<PregPackOp, PregUnpackOp, PregInterleaveOp, PregDeinterleaveOp,
               VFRegisterGatherOp>(op) &&
-          !hacc::utils::supportsRegBaseVectorLowering(module)) {
+          !hacc::utils::supportsRegBaseVectorLowering(moduleOp)) {
         op->emitOpError(
             "requires a target with register-based vector lowering");
         return WalkResult::interrupt();
@@ -5036,7 +5325,12 @@ struct HIVMAVEToAVEIntrinPass
     });
     if (supported.wasInterrupted())
       return signalPassFailure();
-    mergeUnderfilledStores(getOperation());
+    if (failed(checkTargetSpecificTypeConversions(moduleOp))) {
+      signalPassFailure();
+      return;
+    }
+
+    mergeUnderfilledStores(moduleOp);
     // If applicable, narrow loop ivs to help generate hardware loops.
     narrowSCFForIV();
 
@@ -5053,7 +5347,6 @@ struct HIVMAVEToAVEIntrinPass
     mlir::arith::populateArithToLLVMConversionPatterns(converter, patterns);
     populateHIVMAVEToAVEIntrinPatterns(converter, patterns);
 
-    auto moduleOp = getOperation();
     if (failed(applyPartialConversion(moduleOp, target, std::move(patterns))))
       signalPassFailure();
 

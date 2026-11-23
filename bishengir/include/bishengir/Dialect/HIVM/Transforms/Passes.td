@@ -21,6 +21,30 @@
 include "mlir/Pass/PassBase.td"
 include "bishengir/Dialect/HIVM/Transforms/HIVMPass.td"
 
+def PromoteL1Gather : HIVMPass<"hivm-promote-l1-gather", "func::FuncOp"> {
+  let summary = "Promote explicitly hinted row gathers consumed by matmul to L1";
+  let constructor = "mlir::hivm::createPromoteL1GatherPass()";
+  let dependentDialects = ["annotation::AnnotationDialect", "arith::ArithDialect",
+    "bufferization::BufferizationDialect", "hivm::HIVMDialect",
+    "memref::MemRefDialect", "scf::SCFDialect", "tensor::TensorDialect",
+    "affine::AffineDialect"];
+}
+
+def OptimizeRowLoads : HIVMPass<"hivm-optimize-row-loads", "func::FuncOp",
+                                  [MixKernel, PureAivKernel]> {
+  let summary = "Sink row masks and pair adjacent scalar row loads";
+  let constructor = "mlir::hivm::createOptimizeRowLoadsPass()";
+  let options = [
+    Option<"enabled", "enabled", "bool", "true",
+           "Enable scalar row DMA optimization">,
+    Option<"fallbackLoop", "fallback-loop", "bool", "false",
+           "Emit the paired-row fallback as a nested two-lane parallel loop">
+  ];
+  let dependentDialects = ["affine::AffineDialect", "arith::ArithDialect",
+                           "hivm::HIVMDialect", "memref::MemRefDialect",
+                           "scf::SCFDialect", "tensor::TensorDialect"];
+}
+
 def InferFuncCoreType : HIVMPass<"hivm-infer-func-core-type", "ModuleOp"> {
   let summary = "Infer the core type of each function";
   let constructor = "mlir::hivm::createInferFuncCoreTypePass()";
@@ -341,6 +365,18 @@ def PlanMemory : HIVMPass<"hivm-plan-memory", "ModuleOp"> {
                           "keep original storage entry order without sorting"),
                clEnumValN(mlir::hivm::PlanMemoryStrategy::LARGEST_FIRST, "largest-first",
                           "sort storage entries by const bits descending, allocate larger buffer first"))}]>,
+       Option<"planMemoryUBCopyBankMode", "plan-memory-ub-copy-bank-mode",
+              "::mlir::hivm::PlanMemoryUBCopyBankMode",
+              "mlir::hivm::PlanMemoryUBCopyBankMode::OFF",
+              "PlanMemory UB-to-UB copy bank conflict avoidance mode",
+              [{::llvm::cl::values(
+               clEnumValN(mlir::hivm::PlanMemoryUBCopyBankMode::OFF, "off",
+                          "Disable bank conflict avoidance"),
+               clEnumValN(mlir::hivm::PlanMemoryUBCopyBankMode::PREFER, "prefer",
+                          "Avoid bank conflicts when possible"),
+               clEnumValN(mlir::hivm::PlanMemoryUBCopyBankMode::REQUIRE,
+                          "require",
+                          "Require bank constraints visible during planning"))}]>,
        Option<"disableVFReachableCheck", "disable-vf-reachable-check", "bool",
               /*default=*/"false",
               "Disable VF reachable check, default : false">,
@@ -690,7 +726,8 @@ def OutlineCopyInVF : HIVMPass<"hivm-outline-copy-in-VF", "ModuleOp"> {
 }
 
 def NormalizeTmpBufferInVf
-    : HIVMPass<"hivm-normalize-tmp-buffer-in-vf", "func::FuncOp"> {
+    : HIVMPass<"hivm-normalize-tmp-buffer-in-vf", "func::FuncOp",
+               [MixKernel, PureAivKernel]> {
   let summary = "Normalize temporary tensor buffers in vector functions.";
   let description = [{
     For `hivm.vector_function` functions, promote a temporary tensor that is
@@ -1081,6 +1118,24 @@ def SinkOpToConsumerInLoop
   let summary = "Sink op to consumer in loop.";
   let constructor = "mlir::hivm::createSinkOpToConsumerInLoopPass()";
   let dependentDialects = ["hivm::HIVMDialect"];
+}
+
+def SinkScalarReadback : HIVMPass<"hivm-sink-scalar-readback", "func::FuncOp"> {
+  let summary = "Sink scalar readback chains to their consumers.";
+  let description = [{
+    Move a scalar readback chain (`tensor.extract` of a single element of a
+    tensor produced by a vector function call, plus the pure scalar
+    computation that depends on it) down to its earliest consumer in the same
+    block.
+
+    The chain is memory-effect-free, so no alias analysis is needed.  The pass
+    runs in the tensor/SSA stage, before bufferization and before
+    graph-sync-solver, so the sync solver derives the V->S flags from the
+    consumer position instead of blocking the scalar core right after the
+    producer call.
+  }];
+  let constructor = "mlir::hivm::createSinkScalarReadbackPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "tensor::TensorDialect"];
 }
 
 def AlignAllocSize : HIVMPass<"hivm-align-alloc-size", "mlir::ModuleOp"> {
@@ -1496,9 +1551,13 @@ def HIVMVectorize : HIVMPass<"hivm-vectorize", "ModuleOp"> {
   let summary = "Vectorize tensor-level HIVM computation";
   let description = [{
     Module-level entry point for tensor-level HIVM vectorization.
+    Applies the embedded @hivm_vectorize sequence to the module.
   }];
+  let options = [Option<"phase", "phase", "std::string", [{"tensor"}],
+                        "Vectorizer-owned phase: tensor, buffers, "
+                        "prepare-buffers, align, tail, backend">];
   let constructor = "mlir::hivm::createHIVMVectorizePass()";
-  let dependentDialects = [];
+  let dependentDialects = ["transform::TransformDialect"];
 }
 
 def InsertInitAndFinishForDebug
@@ -1580,7 +1639,20 @@ def CVPipelining
               "CV-pipelining heuristics">,
        Option<"enablePreload", "enable-preload", "bool",
               /*default=*/"false",
-              "Enable registered-kernel CV-pipelining heuristics">];
+              "Enable registered-kernel CV-pipelining heuristics">,
+       Option<"schedulerMode", "scheduler", "CVSchedulerMode",
+              "CVSchedulerMode::Default",
+              "Scheduler mode for CV-pipelining partition.",
+              [{::llvm::cl::values(
+               clEnumValN(CVSchedulerMode::Default, "default",
+                          "Default WorklistBuilder-based partitioning"),
+               clEnumValN(CVSchedulerMode::Sms, "sms",
+                          "SMS stage-level scheduling partitioning"))}]>,
+       Option<"smsFailOnFallback", "sms-fail-on-fallback", "bool",
+              /*default=*/"false",
+              "When true, treat SMS scheduler failure as a compilation error "
+              "instead of silently falling back to the default scheduler. "
+              "Useful for batch testing SMS enablement rates.">];
 }
 
 def NormalizeWorkspaceStore
@@ -1984,8 +2056,25 @@ def FuseTransposeIntoLoad
   ];
 }
 
+def FuseOpIntoLoad : HIVMPass<"hivm-fuse-op-into-load", "ModuleOp"> {
+  let summary = "Fuse proven same-function operations into A6 loads";
+  let description = [{
+    Register the supported static broadcast patterns together.
+    The MLIR pattern driver applies them within the nearest A6 module,
+    without unrelated folding, constant CSE or region simplification. Nested
+    modules are not processed by an outer module invocation. Combined
+    pad-to-broadcast chains remain unsupported.
+  }];
+  let constructor = "mlir::hivm::createFuseOpIntoLoadPass()";
+  let dependentDialects = ["arith::ArithDialect",
+                           "bufferization::BufferizationDialect",
+                           "func::FuncDialect", "hivm::HIVMDialect",
+                           "linalg::LinalgDialect", "memref::MemRefDialect",
+                           "scf::SCFDialect", "tensor::TensorDialect"];
+}
+
 def DecomposeAllocTensorCopy
-    : HIVMPass<"hivm-decompose-alloc-tensor-copy", "ModuleOp"> {
+    : HIVMPass<"hivm-decompose-alloc-tensor-copy", "func::FuncOp"> {
   let summary = "Rewrite bufferization.alloc_tensor(copy...) into an "
                 "alloc_tensor + hivm.hir.copy pair";
   let description = [{
@@ -1995,6 +2084,10 @@ def DecomposeAllocTensorCopy
     into a `bufferization.alloc_tensor` + `hivm.hir.copy` pair;
     `hivm.hir.copy` carries an in-place write, keeping the write visible to
     the following conflict analysis.
+
+    On AIC kernels, copies of broadcast results are instead rewritten as a
+    fresh allocation plus a clone of the broadcast writing into it, avoiding
+    hivm::copyOp in AIC kernel.
 
     allocTensorCopyOp should be decomposed before RaW conflict analysis pass
     (TensorCopyInsertion and OneShotBufferize)

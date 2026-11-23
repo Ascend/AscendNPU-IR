@@ -318,4 +318,20 @@ def ApplyForwardExtractSlicePatternsOp : Op<Transform_Dialect,
   let assemblyFormat = "attr-dict";
 }
 
+def EliminateSingleIterationScfForOp :
+    TransformDialectOp<"hfusion.eliminate_single_iteration_scf_for",
+        [TransformOpInterface, TransformEachOpTrait,
+         FunctionalStyleTransformOpTrait, MemoryEffectsOpInterface]> {
+  let summary = "Promote single-iteration scf.for loops and fold dominated affine.min candidates";
+  let arguments = (ins TransformHandleTypeInterface:$target);
+  let assemblyFormat = "`to` $target attr-dict `:` type($target)";
+  let extraClassDeclaration = [{
+    ::mlir::DiagnosedSilenceableFailure applyToOne(
+        ::mlir::transform::TransformRewriter &rewriter,
+        ::mlir::func::FuncOp target,
+        ::mlir::transform::ApplyToEachResultList &results,
+        ::mlir::transform::TransformState &state);
+  }];
+}
+
 #endif // HFUSION_TRANSFORMOPS_HFUSIONTRANSFORMOPS

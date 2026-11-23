@@ -866,6 +866,11 @@ OpFoldResult FpToFpOp::fold(FoldAdaptor adaptor) {
     return srcVal;
   }
 
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+  if (isa<HiFloat8Type>(getElementTypeOrSelf(getType())) ||
+      isa<HiFloat8Type>(getElementTypeOrSelf(getSrc().getType())))
+    return {};
+#endif
   auto resElemType = cast<FloatType>(getElementTypeOrSelf(getType()));
   const llvm::fltSemantics &semantic = resElemType.getFloatSemantics();
 

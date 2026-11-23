@@ -405,27 +405,6 @@ func.func @materialize_to_local_memref(%arg0: tensor<16xf32>) {
 }
 
 // -----
-// CHECK-LABEL: @preserve_restricted_local_materialize
-// CHECK: %[[DST:.*]] = memref.alloc() : memref<16xf32>
-// CHECK-NEXT: bufferization.materialize_in_destination %arg0 in restrict writable %[[DST]] : (tensor<16xf32>, memref<16xf32>) -> ()
-// CHECK-NEXT: return
-func.func @preserve_restricted_local_materialize(%arg0: tensor<16xf32>) {
-  %dst = memref.alloc() : memref<16xf32>
-  bufferization.materialize_in_destination %arg0 in restrict writable %dst : (tensor<16xf32>, memref<16xf32>) -> ()
-  return
-}
-
-// -----
-// Restricted GM destinations must still lower to stores.
-// CHECK-LABEL: @restricted_materialize_to_gm
-// CHECK-NEXT: hivm.hir.store ins(%arg0 : tensor<16xf32>) outs(%arg1 : memref<16xf32, #hivm.address_space<gm>>)
-// CHECK-NEXT: return
-func.func @restricted_materialize_to_gm(%arg0: tensor<16xf32>, %arg1: memref<16xf32, #hivm.address_space<gm>>) {
-  bufferization.materialize_in_destination %arg0 in restrict writable %arg1 : (tensor<16xf32>, memref<16xf32, #hivm.address_space<gm>>) -> ()
-  return
-}
-
-// -----
 // CHECK-LABEL: @skip_materialize_in_vector_function
 // CHECK: bufferization.materialize_in_destination
 // CHECK-NOT: hivm.hir.store

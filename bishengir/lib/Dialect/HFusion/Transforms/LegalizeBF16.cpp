@@ -39,9 +39,12 @@ using namespace mlir::hfusion;
 
 static thread_local bool isAscend950Arch{false};
 static thread_local bool isRegBasedArch{false};
+static thread_local bool enableNativeBF16{false};
 
 class LegalizeBF16Pass : public impl::LegalizeBF16PassBase<LegalizeBF16Pass> {
 public:
+  explicit LegalizeBF16Pass(const LegalizeBF16PassOptions &options)
+      : LegalizeBF16PassBase(options) {}
   void runOnOperation() override;
 };
 
@@ -101,6 +104,38 @@ static bool shouldLegalizeBF16Op(Operation *op) {
         isExcluded |= funAttr == linalg::UnaryFn::floor;
       }
       isExcluded |= isa<hfusion::GatherOp>(op);
+      if (enableNativeBF16) {
+        // Ascend 950 supports native BF16 for elementwise add/sub/mul and
+        // min/max. Both the hfusion fun variants and the linalg fun variants
+        // must be kept out of the F32 legalization.
+        if (auto hfBinaryOp = dyn_cast<hfusion::ElemwiseBinaryOp>(op)) {
+          auto fun = hfBinaryOp.getFun();
+          isExcluded |= fun == hfusion::BinaryFn::maxf;
+          isExcluded |= fun == hfusion::BinaryFn::minf;
+          isExcluded |= fun == hfusion::BinaryFn::maxnumf;
+          isExcluded |= fun == hfusion::BinaryFn::minnumf;
+        }
+        if (auto linalgBinaryOp = dyn_cast<linalg::ElemwiseBinaryOp>(op)) {
+          auto fun = linalgBinaryOp.getFun();
+          isExcluded |= fun == linalg::BinaryFn::add;
+          isExcluded |= fun == linalg::BinaryFn::sub;
+          isExcluded |= fun == linalg::BinaryFn::mul;
+          isExcluded |= fun == linalg::BinaryFn::max_signed;
+          isExcluded |= fun == linalg::BinaryFn::min_signed;
+          isExcluded |= fun == linalg::BinaryFn::max_unsigned;
+          isExcluded |= fun == linalg::BinaryFn::min_unsigned;
+        }
+        // Ascend 950 supports native BF16 for vector compare and select.
+        // Rank-0 and singleton selects stay on the F32 scalar path; the
+        // select_rank_zero / select_singleton regression tests lock that
+        // behavior in.
+        isExcluded |= isa<hfusion::CompareOp>(op);
+        if (auto selectOp = dyn_cast<hfusion::SelectOp>(op)) {
+          auto initType =
+              dyn_cast<ShapedType>(selectOp->getResult(0).getType());
+          isExcluded |= initType && initType.getNumElements() > 1;
+        }
+      }
     }
     return hasBF16Operand(op) && !isExcluded;
   }
@@ -118,14 +153,24 @@ static bool shouldLegalizeBF16Op(Operation *op) {
 }
 
 template <typename Op>
-static Operation *createNewOp(PatternRewriter &rewriter, Op bf16Op,
-                              SmallVector<Value> &castedOperands) {
-  IRMapping mapper;
+static Operation *
+createNewOp(PatternRewriter &rewriter, Op bf16Op,
+            SmallVector<std::pair<Value, Value>> &mappedOperands,
+            SmallVector<std::pair<unsigned, Value>> &positionalOperands) {
+
   Operation *op = bf16Op.getOperation();
-  for (const auto &[idx, oper] : llvm::enumerate(op->getOperands()))
-    mapper.map(oper, castedOperands[idx]);
+
+  IRMapping mapper;
+  for (auto [original, replacement] : mappedOperands) {
+    mapper.map(original, replacement);
+  }
 
   auto *newOp = rewriter.cloneWithoutRegions(*op, mapper);
+
+  for (auto [index, replacement] : positionalOperands) {
+    newOp->setOperand(index, replacement);
+  }
+
   auto *ctx = op->getContext();
   if (isRegBasedArch) {
     for (const auto &[idx, res] : llvm::enumerate(op->getResults())) {
@@ -249,18 +294,38 @@ static void createF32ElementTypeOp(Op bf16Op, PatternRewriter &rewriter) {
   Type bf16Type = rewriter.getBF16Type();
   Type f32Type = rewriter.getF32Type();
 
-  SmallVector<Value> castedOperands;
-  for (auto oper : op->getOperands()) {
-    Value castedOperand =
-        getElementTypeOrSelf(oper.getType()).isBF16()
-            ? castTo(rewriter, oper, /*targetElemType=*/f32Type)
-            : oper;
+  SmallVector<std::pair<Value, Value>> mappedOperands;
+  SmallVector<std::pair<unsigned, Value>> positionalOperands;
+  for (OpOperand &operand : op->getOpOperands()) {
+    Value oper = operand.get();
+    Value castedOperand = oper;
+    if (getElementTypeOrSelf(oper.getType()).isBF16()) {
+      auto linalgOp = dyn_cast<linalg::LinalgOp>(op);
+
+      // A destination supplies only shape when neither its block argument nor
+      // the tensor itself is used in the payload, including nested regions.
+      if (linalgOp && linalgOp.isDpsInit(&operand) &&
+          !linalgOp.payloadUsesValueFromOperand(&operand) &&
+          !llvm::any_of(oper.getUsers(), [&](Operation *user) {
+            return op->isProperAncestor(user);
+          })) {
+        castedOperand = utils::createEmptyOpWithTargetElemType(
+            rewriter, op->getLoc(), oper, f32Type);
+        positionalOperands.emplace_back(operand.getOperandNumber(),
+                                        castedOperand);
+      } else {
+        castedOperand = castTo(rewriter, oper, f32Type);
+        mappedOperands.emplace_back(oper, castedOperand);
+      }
+    } else {
+      mappedOperands.emplace_back(oper, castedOperand);
+    }
     if (Operation *castOp = castedOperand.getDefiningOp<hfusion::CastOp>())
       setFastMathContractAttr(castOp);
-    castedOperands.push_back(castedOperand);
   }
 
-  auto newOp = createNewOp<Op>(rewriter, bf16Op, castedOperands);
+  auto newOp =
+      createNewOp<Op>(rewriter, bf16Op, mappedOperands, positionalOperands);
   createF32ElementTypeOpRegion(newOp, rewriter);
 
   rewriter.setInsertionPointAfter(newOp);
@@ -331,6 +396,7 @@ void LegalizeBF16Pass::runOnOperation() {
   ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
   isAscend950Arch = moduleOp && hacc::utils::isAscend950(moduleOp);
   isRegBasedArch = moduleOp && hacc::utils::isRegBasedArch(moduleOp);
+  enableNativeBF16 = enableBf16;
   MLIRContext *context = &getContext();
   RewritePatternSet patterns(context);
   populateLegalizeBF16Pattern(patterns);
@@ -338,6 +404,7 @@ void LegalizeBF16Pass::runOnOperation() {
     return signalPassFailure();
 }
 
-std::unique_ptr<Pass> mlir::hfusion::createLegalizeBF16Pass() {
-  return std::make_unique<LegalizeBF16Pass>();
+std::unique_ptr<Pass>
+mlir::hfusion::createLegalizeBF16Pass(const LegalizeBF16PassOptions &options) {
+  return std::make_unique<LegalizeBF16Pass>(options);
 }

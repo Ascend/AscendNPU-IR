@@ -1081,16 +1081,16 @@ func.func @test_NormalizeErf_hfusion_elemwise_erf_f16(%arg0: tensor<1024xf16>) -
 
 // -----
 
-// CHECK-LABEL: func.func @test_NormalizeElemwiseMinMaxNumF_minf
-// CHECK: %[[INFINITY:.*]] : f32
-// CHECK: %[[SRC_0_NAN_MASK:.*]] -> tensor<512xi1>
-// CHECK: %[[EMPTY_0:.*]] = tensor.empty() : tensor<512xf32>
-// CHECK: %[[NEW_SRC_0:.*]] = hfusion.select ins(%[[SRC_0_NAN_MASK:.*]], %[[INFINITY:.*]], %arg0 : tensor<512xi1>, f32, tensor<512xf32>) outs(%[[EMPTY_0:.*]] : tensor<512xf32>) -> tensor<512xf32>
-// CHECK: %[[SRC_1_NAN_MASK:.*]] -> tensor<512xi1>
-// CHECK: %[[EMPTY_1:.*]] = tensor.empty() : tensor<512xf32>
-// CHECK: %[[NEW_SRC_1:.*]] = hfusion.select ins(%[[SRC_1_NAN_MASK:.*]], %[[INFINITY:.*]], %arg1 : tensor<512xi1>, f32, tensor<512xf32>) outs(%[[EMPTY_1:.*]] : tensor<512xf32>) -> tensor<512xf32>
-// CHECK: %[[EMPTY_RES:.*]] = tensor.empty() : tensor<512xf32>
-// CHECK: %[[RET:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<minf>} ins(%[[NEW_SRC_0:.*]], %[[NEW_SRC_1:.*]] : tensor<512xf32>, tensor<512xf32>) outs(%[[EMPTY_RES:.*]] : tensor<512xf32>) -> tensor<512xf32>
+// CHECK-LABEL: func.func @test_NormalizeElemwiseMinMaxNumF_minf(
+// CHECK-SAME: %[[LHS:.*]]: tensor<512xf32>, %[[RHS:.*]]: tensor<512xf32>
+// CHECK: %[[BASE:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<minf>} ins(%[[LHS]], %[[RHS]]
+// CHECK: hfusion.bitcast ins(%[[LHS]] : tensor<512xf32>)
+// CHECK: %[[LHS_NAN:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
+// CHECK: %[[SELECT_LHS:.*]] = hfusion.select ins(%[[LHS_NAN]], %[[RHS]], %[[BASE]]
+// CHECK: hfusion.bitcast ins(%[[RHS]] : tensor<512xf32>)
+// CHECK: %[[RHS_NAN:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
+// CHECK: %[[RESULT:.*]] = hfusion.select ins(%[[RHS_NAN]], %[[LHS]], %[[SELECT_LHS]]
+// CHECK: return %[[RESULT]] : tensor<512xf32>
 func.func @test_NormalizeElemwiseMinMaxNumF_minf(%arg0: tensor<512xf32>, %arg1: tensor<512xf32>) -> tensor<512xf32> {
   %0 = tensor.empty() : tensor<512xf32>
   %1 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<minnumf>} ins(%arg0, %arg1 : tensor<512xf32>, tensor<512xf32>) outs(%0 : tensor<512xf32>) -> tensor<512xf32>
@@ -1099,20 +1099,56 @@ func.func @test_NormalizeElemwiseMinMaxNumF_minf(%arg0: tensor<512xf32>, %arg1: 
 
 // -----
 
-// CHECK-LABEL: func.func @test_NormalizeElemwiseMinMaxNumF_maxf
-// CHECK: %[[INFINITY:.*]] : f32
-// CHECK: %[[SRC_0_NAN_MASK:.*]] -> tensor<512xi1>
-// CHECK: %[[EMPTY_0:.*]] = tensor.empty() : tensor<512xf32>
-// CHECK: %[[NEW_SRC_0:.*]] = hfusion.select ins(%[[SRC_0_NAN_MASK:.*]], %[[INFINITY:.*]], %arg0 : tensor<512xi1>, f32, tensor<512xf32>) outs(%[[EMPTY_0:.*]] : tensor<512xf32>) -> tensor<512xf32>
-// CHECK: %[[SRC_1_NAN_MASK:.*]] -> tensor<512xi1>
-// CHECK: %[[EMPTY_1:.*]] = tensor.empty() : tensor<512xf32>
-// CHECK: %[[NEW_SRC_1:.*]] = hfusion.select ins(%[[SRC_1_NAN_MASK:.*]], %[[INFINITY:.*]], %arg1 : tensor<512xi1>, f32, tensor<512xf32>) outs(%[[EMPTY_1:.*]] : tensor<512xf32>) -> tensor<512xf32>
-// CHECK: %[[EMPTY_RES:.*]] = tensor.empty() : tensor<512xf32>
-// CHECK: %[[RET:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<maxf>} ins(%[[NEW_SRC_0:.*]], %[[NEW_SRC_1:.*]] : tensor<512xf32>, tensor<512xf32>) outs(%[[EMPTY_RES:.*]] : tensor<512xf32>) -> tensor<512xf32>
+// CHECK-LABEL: func.func @test_NormalizeElemwiseMinMaxNumF_maxf(
+// CHECK-SAME: %[[LHS:.*]]: tensor<512xf32>, %[[RHS:.*]]: tensor<512xf32>
+// CHECK: %[[BASE:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<maxf>} ins(%[[LHS]], %[[RHS]]
+// CHECK: hfusion.bitcast ins(%[[LHS]] : tensor<512xf32>)
+// CHECK: %[[LHS_NAN:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
+// CHECK: %[[SELECT_LHS:.*]] = hfusion.select ins(%[[LHS_NAN]], %[[RHS]], %[[BASE]]
+// CHECK: hfusion.bitcast ins(%[[RHS]] : tensor<512xf32>)
+// CHECK: %[[RHS_NAN:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
+// CHECK: %[[RESULT:.*]] = hfusion.select ins(%[[RHS_NAN]], %[[LHS]], %[[SELECT_LHS]]
+// CHECK: return %[[RESULT]] : tensor<512xf32>
 func.func @test_NormalizeElemwiseMinMaxNumF_maxf(%arg0: tensor<512xf32>, %arg1: tensor<512xf32>) -> tensor<512xf32> {
   %0 = tensor.empty() : tensor<512xf32>
   %1 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<maxnumf>} ins(%arg0, %arg1 : tensor<512xf32>, tensor<512xf32>) outs(%0 : tensor<512xf32>) -> tensor<512xf32>
   return %1 : tensor<512xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeElemwiseMinMaxNumF_maxf_f16(
+// CHECK-SAME: %[[LHS:.*]]: tensor<512xf16>, %[[RHS:.*]]: tensor<512xf16>
+// CHECK: %[[BASE:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<maxf>} ins(%[[LHS]], %[[RHS]]
+// CHECK: hfusion.bitcast ins(%[[LHS]] : tensor<512xf16>)
+// CHECK: %[[LHS_NAN:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
+// CHECK: %[[SELECT_LHS:.*]] = hfusion.select ins(%[[LHS_NAN]], %[[RHS]], %[[BASE]]
+// CHECK: hfusion.bitcast ins(%[[RHS]] : tensor<512xf16>)
+// CHECK: %[[RHS_NAN:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
+// CHECK: %[[RESULT:.*]] = hfusion.select ins(%[[RHS_NAN]], %[[LHS]], %[[SELECT_LHS]]
+// CHECK: return %[[RESULT]] : tensor<512xf16>
+func.func @test_NormalizeElemwiseMinMaxNumF_maxf_f16(%arg0: tensor<512xf16>, %arg1: tensor<512xf16>) -> tensor<512xf16> {
+  %0 = tensor.empty() : tensor<512xf16>
+  %1 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<maxnumf>} ins(%arg0, %arg1 : tensor<512xf16>, tensor<512xf16>) outs(%0 : tensor<512xf16>) -> tensor<512xf16>
+  return %1 : tensor<512xf16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeElemwiseMinMaxNumF_minf_bf16(
+// CHECK-SAME: %[[LHS:.*]]: tensor<512xbf16>, %[[RHS:.*]]: tensor<512xbf16>
+// CHECK: %[[BASE:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<minf>} ins(%[[LHS]], %[[RHS]]
+// CHECK: hfusion.bitcast ins(%[[LHS]] : tensor<512xbf16>)
+// CHECK: %[[LHS_NAN:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
+// CHECK: %[[SELECT_LHS:.*]] = hfusion.select ins(%[[LHS_NAN]], %[[RHS]], %[[BASE]]
+// CHECK: hfusion.bitcast ins(%[[RHS]] : tensor<512xbf16>)
+// CHECK: %[[RHS_NAN:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
+// CHECK: %[[RESULT:.*]] = hfusion.select ins(%[[RHS_NAN]], %[[LHS]], %[[SELECT_LHS]]
+// CHECK: return %[[RESULT]] : tensor<512xbf16>
+func.func @test_NormalizeElemwiseMinMaxNumF_minf_bf16(%arg0: tensor<512xbf16>, %arg1: tensor<512xbf16>) -> tensor<512xbf16> {
+  %0 = tensor.empty() : tensor<512xbf16>
+  %1 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<minnumf>} ins(%arg0, %arg1 : tensor<512xbf16>, tensor<512xbf16>) outs(%0 : tensor<512xbf16>) -> tensor<512xbf16>
+  return %1 : tensor<512xbf16>
 }
 
 // -----

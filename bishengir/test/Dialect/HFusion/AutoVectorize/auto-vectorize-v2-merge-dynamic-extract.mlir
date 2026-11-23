@@ -1,4 +1,17 @@
 // RUN: bishengir-opt %s --hfusion-auto-vectorize-v2 -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s --hfusion-auto-vectorize-v2=emit-transform-sequence | FileCheck %s --check-prefix=PLAN
+
+// PLAN: ^bb0(%[[ROOT:[^:]+]]: !transform.any_op):
+// PLAN: transform.structured.fuse_into_containing_op
+// PLAN: transform.hfusion.eliminate_single_iteration_scf_for
+// PLAN-NEXT: %[[LOOPS:[^ ]+]] = transform.structured.match interface{LoopLikeInterface} in %[[ROOT]]
+// PLAN-NEXT: apply_licm_with_slice_boundary to %[[LOOPS]]
+// PLAN-NEXT: %[[LOOP:[^ ]+]] = transform.structured.match attributes
+// PLAN-NEXT: %[[PARENT:[^ ]+]] = get_parent_op %[[LOOP]]
+// PLAN-NEXT: apply_patterns to %[[PARENT]] {
+// PLAN-NEXT: transform.apply_patterns.canonicalization
+// PLAN-NEXT: transform.apply_patterns.tensor.merge_consecutive_insert_extract_slice
+// PLAN-NEXT: } {apply_cse, disable_patterns = ["SimplifyTrivialLoops"]}
 
 #off = affine_map<()[s0] -> (s0 * 510)>
 #sz = affine_map<()[s0] -> (-s0 + 510)>

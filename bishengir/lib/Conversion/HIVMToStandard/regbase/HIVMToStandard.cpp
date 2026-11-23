@@ -824,6 +824,7 @@ private:
     }
 
     auto syncRelatedArgs = op.getSyncRelatedArgs();
+    additionalArgs.push_back(op.getPingPongSignalLibValue(rewriter));
     std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
               std::back_inserter(additionalArgs));
 
@@ -889,6 +890,7 @@ public:
       SmallVector<Value> libParams =
           op.getInputOperands(/*includeSyncRelatedArgs=*/false);
       libParams.push_back(op.getC());
+      libParams.push_back(op.getPingPongSignalLibValue(rewriter));
       SmallVector<Value> syncArgs(op.getSyncRelatedArgs().begin(),
                                   op.getSyncRelatedArgs().end());
       llvm::append_range(libParams, syncArgs);
@@ -929,6 +931,7 @@ public:
     Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
     Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
     Value batch = rewriter.create<memref::DimOp>(loc, op.getA(), 0);
+    Value pingPongSignal = op.getPingPongSignalLibValue(rewriter);
     auto loop = rewriter.create<scf::ForOp>(loc, zero, batch, one);
 
     rewriter.setInsertionPointToStart(loop.getBody());
@@ -943,6 +946,7 @@ public:
         matrixA,       matrixB,       op.getInitCondition(),
         op.getRealM(), op.getRealK(), op.getRealN(),
         matrixC};
+    libParams.push_back(pingPongSignal);
     llvm::append_range(libParams, op.getSyncRelatedArgs());
     libParams.push_back(op.getUnitFlagModeLibValue(rewriter));
     libParams.push_back(op.getUnitFlagGroupIdValue(rewriter));
@@ -1014,6 +1018,7 @@ private:
     }
 
     auto syncRelatedArgs = op.getSyncRelatedArgs();
+    additionalArgs.push_back(op.getPingPongSignalLibValue(rewriter));
     std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
               std::back_inserter(additionalArgs));
   }
@@ -1586,17 +1591,16 @@ private:
       return;
     }
 
-    // Both pad counts are absent-means-zero.
-    Value zero =
-        rewriter.create<arith::ConstantIndexOp>(op->getLoc(), 0).getResult();
+    // calculate left padding num
     Value leftPaddingNum =
-        op.getLeftPaddingNum() ? op.getLeftPaddingNum() : zero;
-    Value rightPaddingNum =
-        op.getRightPaddingNum() ? op.getRightPaddingNum() : zero;
+        op.getLeftPaddingNum()
+            ? op.getLeftPaddingNum()
+            : rewriter.create<arith::ConstantIndexOp>(op->getLoc(), 0)
+                  .getResult();
     inputOperands.push_back(leftPaddingNum);
-    inputOperands.push_back(rightPaddingNum);
+    if (op.isSpanPaddedLoad())
+      inputOperands.push_back(op.getRightPaddingNum());
   }
-
   void addPadOperands(PatternRewriter &rewriter, CopyOpType op,
                       SmallVector<Value> &inputOperands,
                       std::pair<bool, bool> pad) const {
@@ -1617,7 +1621,11 @@ private:
     if (op.getPadValue()) {
       padValue = op.getPadValue();
       Type elemType = getElementTypeOrSelf(op.getSrc().getType());
-      if (isa<Float8E4M3FNType>(elemType) || isa<Float8E5M2Type>(elemType)) {
+      if (
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+          isa<HiFloat8Type>(elemType) ||
+#endif
+          isa<Float8E4M3FNType>(elemType) || isa<Float8E5M2Type>(elemType)) {
         bool isSpan = false;
         if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>)
           isSpan = op.isSpanPaddedLoad();
@@ -1647,7 +1655,11 @@ private:
                                       rewriter.getIntegerType(width));
               })
               .Case([&](FloatType floatType) {
-                if (isa<Float8E4M3FNType>(floatType) ||
+                if (
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+                    isa<HiFloat8Type>(floatType) ||
+#endif
+                    isa<Float8E4M3FNType>(floatType) ||
                     isa<Float8E5M2Type>(floatType)) {
                   auto constantOp = rewriter.create<arith::ConstantOp>(
                       op.getLoc(),
@@ -2143,7 +2155,11 @@ public:
       return rewriter.create<arith::BitcastOp>(val.getLoc(), I8Ty, val);
     };
     auto src = op.getOperand(0);
-    if (src.getType().isFloat8E4M3FN() || src.getType().isFloat8E5M2())
+    if (
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+        isa<HiFloat8Type>(src.getType()) ||
+#endif
+        src.getType().isFloat8E4M3FN() || src.getType().isFloat8E5M2())
       op->setOperand(0, BitCastFp8(src));
     // TODO: Unify the logic with deduceAlignmentForDPSInitOperand
     AlignKind alignKind =
@@ -2711,6 +2727,29 @@ public:
   }
 };
 
+class StrideLoadOpToLibraryCallPattern
+    : public OpRewritePattern<hivm::StrideLoadOp> {
+public:
+  using OpRewritePattern<hivm::StrideLoadOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::StrideLoadOp op,
+                                PatternRewriter &rewriter) const final {
+    SmallVector<Value> operands(op->getOperands());
+    Type elemType = getElementTypeOrSelf(op.getSrc().getType());
+    if (elemType.isFloat8E4M3FN() || elemType.isFloat8E5M2()) {
+      auto otherIndex = op.getOtherMutable().getOperandNumber();
+      operands[otherIndex] = rewriter.create<arith::BitcastOp>(
+          op.getLoc(), rewriter.getI8Type(), op.getOther());
+    }
+
+    replaceWithLibCall(rewriter, op,
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       operands, {});
+    return success();
+  }
+};
+
 void populateHIVMToStandardConversionPatternsRegBase(
     RewritePatternSet &patterns, bool isOpsAligned) {
   // clang-format off
@@ -2780,7 +2819,7 @@ void populateHIVMToStandardConversionPatternsRegBase(
                SyncBlockOpToLibraryCallPattern<hivm::FreeLockVarOp>,
                SIMTOpToLibraryCallPattern<hivm::EmbeddingGatherOp>,
                SIMTOpToLibraryCallPattern<hivm::IndirectLoadOp>,
-               SIMTOpToLibraryCallPattern<hivm::StrideLoadOp>,
+               StrideLoadOpToLibraryCallPattern,
                SIMTOpToLibraryCallPattern<hivm::StrideStoreOp>,
                SIMTOpToLibraryCallPattern<hivm::IndirectStoreOp>,
                SIMTOpToLibraryCallPattern<hivm::GatherTOp>,

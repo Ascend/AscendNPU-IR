@@ -10,6 +10,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/OpInterfaceUtils.h"
+#include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -327,30 +328,33 @@ LogicalResult resolveConflicts(Operation *op, RewriterBase &rewriter,
     if (!allocTensor) {
       continue;
     }
-    assert(allocTensor.getCopy() && " must have a copy if it's yielded");
-    auto scopeResult = allocTensor.getCopy();
-    if (!isa_and_nonnull<scope::ScopeOp>(scopeResult.getDefiningOp()) ||
-        !scopeResult.getDefiningOp()->hasAttr(hivm::PreloadNumAttr::name)) {
+    auto allocTensorVal = allocTensor.getResult();
+    auto copySrc = allocTensor.getCopy();
+    if (!copySrc)
+      utils::reportFatalError(allocTensorVal,
+                              "must have a copy if it's yielded");
+
+    auto scopeOp = dyn_cast_if_present<scope::ScopeOp>(copySrc.getDefiningOp());
+    if (!scopeOp || !scopeOp->hasAttr(hivm::PreloadNumAttr::name)) {
       continue;
     }
-    assert(allocTensor->hasOneUse() && " allocTensor must have one use");
+    if (!allocTensor->hasOneUse())
+      utils::reportFatalError(allocTensorVal, "must only have one use");
     // Move the existing copy into the scope. Erasing it would invalidate
     // values retained by OneShotAnalysisState: the enclosing loop still
     // queries those aliases when resolving its conflicts.
     rewriter.modifyOpInPlace(
-        yieldOp, [&]() { yieldOp.setOperand(pair.index(), scopeResult); });
-    auto scopeOp = cast<scope::ScopeOp>(scopeResult.getDefiningOp());
+        yieldOp, [&]() { yieldOp.setOperand(pair.index(), copySrc); });
     auto *returnOp = scopeOp.getBody()->getTerminator();
     rewriter.moveOpBefore(allocTensor, returnOp);
 
-    auto returnOpIdx = cast<OpResult>(scopeResult).getResultNumber();
+    auto returnOpIdx = cast<OpResult>(copySrc).getResultNumber();
     auto returnValue = returnOp->getOperand(returnOpIdx);
     rewriter.modifyOpInPlace(allocTensor, [&]() {
       allocTensor.getCopyMutable().assign(returnValue);
     });
-    rewriter.modifyOpInPlace(returnOp, [&]() {
-      returnOp->setOperand(returnOpIdx, allocTensor.getResult());
-    });
+    rewriter.modifyOpInPlace(
+        returnOp, [&]() { returnOp->setOperand(returnOpIdx, allocTensorVal); });
   }
   return success();
 }

@@ -76,16 +76,11 @@ void bufferizationPipelineBase(OpPassManager &pm, bool isRegBased) {
       };
   oneShotOptions.analysisHeuristic =
       OneShotBufferizationOptions::AnalysisHeuristic::TopDown;
-  pm.addPass(createDecomposeAllocTensorCopyPass());
-  // Analyze only after normalization and copy decomposition have exposed
-  // memref-level writes as tensor operations. Reuse destination subsets with
-  // the same analysis options as the following tensor copy insertion.
-  pm.addPass(bishengir::bufferization::createEmptyTensorEliminationPass(
-      oneShotOptions));
+  pm.nest<func::FuncOp>().addPass(createDecomposeAllocTensorCopyPass());
   // Run a first round of analysis + tensor copy insertion.
   pm.addPass(
       bishengir::bufferization::createTensorCopyInsertionPass(oneShotOptions));
-  pm.addPass(createDecomposeAllocTensorCopyPass());
+  pm.nest<func::FuncOp>().addPass(createDecomposeAllocTensorCopyPass());
   pm.addPass(
       bishengir::bufferization::createTensorCopyInsertionPass(oneShotOptions));
   // one-shot-bufferize is split into tensor copy insertion and module
@@ -135,19 +130,9 @@ void bufferizationPipeline(OpPassManager &pm,
   }
   canonicalizationHIVMPipeline(pm);
   pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
-  if (hivmPipelineOptions.enableTritonKernelCompile) {
-    // For triton kernels, bufferization will generate `memref.copy` ops,
-    // and they need to be converted to `hivm.copy` ops.
-    pm.addPass(createConvertToHIVMOpPass());
-  }
+  pm.addPass(createConvertToHIVMOpPass());
   canonicalizationHIVMPipeline(pm);
   pm.addPass(createDropEquivalentBufferResultsPass());
-  if (!hivmPipelineOptions.enableTritonKernelCompile) {
-    // For non-triton kernels, there could also be `memref.copy` ops generated
-    // during bufferization. But we want to convert them after canonicalizing
-    // the IR.
-    pm.addPass(createConvertToHIVMOpPass());
-  }
 }
 
 } // namespace hivm

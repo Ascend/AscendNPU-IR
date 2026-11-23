@@ -381,7 +381,9 @@ struct SelectCVPipelinePass
         pipelineMode(options.setCVPipelineMode),
         workspaceMultiBufferNum(options.setWorkspaceMultibuffer),
         maxPipelineMultibuffer(options.setMaxPipelineMultibuffer),
-        simtVFDynamicSize(options.simtVFDynamicSize) {}
+        simtVFDynamicSize(options.simtVFDynamicSize),
+        schedulerMode(options.enableSchedulerAlg),
+        smsFailOnFallback(options.smsFailOnFallback) {}
 
   StringRef getArgument() const override { return "hivm-select-cv-pipeline"; }
   StringRef getDescription() const override {
@@ -404,7 +406,10 @@ struct SelectCVPipelinePass
     if (func->hasAttr("hivm.cv_pipeline_snapshot"))
       return;
     bool registered = isLoopShapeRegistered(func.getName());
-    bool useLegacy = !usePipelineV2;
+    // Listed kernels stay on the legacy CV pipeline and never run PipelineV2
+    // preload, even when --use-pipelinev2 is set.
+    bool keepLegacy = shouldKeepLegacyCVPipeline(func.getName());
+    bool useLegacy = !usePipelineV2 || keepLegacy;
     if (useLegacy && (!enableMixedCV || pipelineMode == CVPipelineMode::Off))
       return;
 
@@ -418,12 +423,15 @@ struct SelectCVPipelinePass
       options.enableLazyLoading = enableLazyLoading;
       options.pipelineMode = pipelineMode;
       options.enablePreload = enablePreload;
+      options.schedulerMode = schedulerMode;
+      options.smsFailOnFallback = smsFailOnFallback;
       nested.addPass(createCVPipeliningPass(options));
     }
     // Explicit v2 takes precedence over the registry. Otherwise registered
     // kernels keep v1 even when it declines a loop, while unregistered kernels
-    // retain the legacy-then-v2 fallback.
-    if (usePipelineV2 || (!registered && enablePreload)) {
+    // retain the legacy-then-v2 fallback. Kernels that stay on the legacy CV
+    // pipeline never take that fallback.
+    if (!keepLegacy && (usePipelineV2 || (!registered && enablePreload))) {
       if (usePipelineV2)
         nested.addPass(createSetBufferSizePass());
       buildCVPipelineV2(nested, maxPipelineMultibuffer, simtVFDynamicSize);
@@ -443,6 +451,8 @@ private:
   unsigned workspaceMultiBufferNum;
   unsigned maxPipelineMultibuffer;
   int simtVFDynamicSize;
+  CVSchedulerMode schedulerMode;
+  bool smsFailOnFallback;
 };
 
 static void hivmPreBufferizationOptimizationPipeline(
@@ -470,6 +480,7 @@ static void hivmPreBufferizationOptimizationPipeline(
         hivmPipelineOptions.inlineQuantScaleInFixpipe;
     pm.addPass(mlir::hivm::createInlineFixpipePass(inlineFixpipeOpts));
   }
+  pm.nest<func::FuncOp>().addPass(createPromoteL1GatherPass());
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
   convertTensorToTightCoupledBuffer(pm);
   if (hivmPipelineOptions.enableLayoutOptimization) {
@@ -561,8 +572,9 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.nest<func::FuncOp>().addPass(
         std::make_unique<SelectCVPipelinePass>(hivmPipelineOptions));
     pm.addPass(createEraseCVPipelineSnapshotsPass());
-    // Reposition only registered kernels on the default v1 route, before
-    // buffer-count marking sees the split scopes. Explicit v2 skips this pass.
+    // Reposition runs on the default v1 route, before buffer-count marking
+    // sees the split scopes. Explicit v2 skips this pass. Inside the pass, a
+    // function whose loop PipelineV2 already marked is left unchanged.
     if (enableRegisteredPreloadHeuristics(hivmPipelineOptions)) {
       RepositionPreloadWorkOptions repositionOpts;
       repositionOpts.enablePreload = true;
@@ -644,6 +656,11 @@ static void hivmPreBufferizationOptimizationPipeline(
     tileOptions.batchMatmul = hivmPipelineOptions.enableHIVMBatchMatmul;
     pm.addPass(createTileAndBindSubBlockPass(tileOptions));
   }
+  // Sink row masks and pair compatible AIV row loads after subblock tiling.
+  OptimizeRowLoadsOptions rowLoadOptions;
+  rowLoadOptions.fallbackLoop =
+      hivmPipelineOptions.enableHivmUbRowGatherFallbackLoop;
+  pm.nest<func::FuncOp>().addPass(createOptimizeRowLoadsPass(rowLoadOptions));
   canonicalizationHIVMPipeline(pm);
   hivmWorkspacePipeline(pm, hivmPipelineOptions);
   pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
@@ -822,6 +839,8 @@ static void hivmPostBufferizationOptimizationPipeline(
       hivmPipelineOptions.disableVFReachableCheck;
   planMemoryOption.enableTLAmode = hivmPipelineOptions.enableTlaMode;
   planMemoryOption.planMemoryStrategy = hivmPipelineOptions.planMemoryStrategy;
+  planMemoryOption.planMemoryUBCopyBankMode =
+      hivmPipelineOptions.planMemoryUBCopyBankMode;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
   pm.addPass(createTcbPoolOpInsertionPass());
 
@@ -875,6 +894,9 @@ void buildHIVMTensorOptimizations(
     pm.nest<func::FuncOp>().addPass(createInitEntryKernelPass());
   pm.nest<func::FuncOp>().addPass(mlir::hivm::createHIVMNormalizeOpsPass());
   hivmPreBufferizationOptimizationPipeline(pm, hivmPipelineOptions);
+  // Scalar readback sinking must run before bufferization and GSS so that the
+  // sync solver derives V->S flags from the final consumer position.
+  pm.nest<func::FuncOp>().addPass(createSinkScalarReadbackPass());
 }
 
 void buildLowerHIVMPipelines(OpPassManager &pm,

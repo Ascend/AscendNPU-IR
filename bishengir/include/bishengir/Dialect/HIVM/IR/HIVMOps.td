@@ -828,7 +828,13 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
                                                        "getIndexingMaps"]>,
                        DeclareOpInterfaceMethods<
                            HIVMInferCoreTypeInterface, ["inferCoreType"]>,
-                       CustomLikeOpInterface],
+                       CustomLikeOpInterface,
+                       // Flattening is driven by the user-declared
+                       // `iterator_types` and `flatten_ranks` /
+                       // `flatten_symbols`. See CustomOpFlatten.cpp.
+                       DeclareOpInterfaceMethods<
+                           FlattenInterface, ["getFlattened", "getLimitedAxes",
+                                              "adjustTargetDimensions"]>],
                       traits)> {
 
   string customOpSummary = [{
@@ -992,6 +998,12 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       static constexpr StringLiteral kMaxRankAttrName = "max_rank";
       static constexpr StringLiteral kInplaceOutsAttrName = "inplace_outs";
       static constexpr StringLiteral kInlineModeAttrName = "hivm.inline_mode";
+      // Implementations for the ranks `hivm-flatten-ops` may collapse the op
+      // to: `flatten_symbols[i]` is called once the operands have been
+      // collapsed to rank `flatten_ranks[i]`. Ranks without an entry are never
+      // produced; the op then keeps its rank and `symbol`.
+      static constexpr StringLiteral kFlattenRanksAttrName = "flatten_ranks";
+      static constexpr StringLiteral kFlattenSymbolsAttrName = "flatten_symbols";
 
       std::optional<int32_t>
       getInplaceInputIndexForOutput(int64_t outputIndex);
@@ -1474,7 +1486,7 @@ class TcbPoolOp<string mnemonic, list<Trait> traits = []>
   let hasVerifier = 1;
 }
 
-def TcbPoolInitOp : TcbPoolOp<"tcb_pool_init", [CubeCoreTypeTrait]> {
+def TcbPoolInitOp : TcbPoolOp<"experimental.tcb_pool_init", [CubeCoreTypeTrait]> {
   let summary = "Initialize the shared TCB pool and reserved synchronization IDs";
   let description = [{
     Initialize the shared pool metadata in SSBUF. slot_bytes specifies the
@@ -1501,7 +1513,7 @@ def TcbPoolInitOp : TcbPoolOp<"tcb_pool_init", [CubeCoreTypeTrait]> {
 
 }
 
-def TcbPoolAllocOp : TcbPoolOp<"tcb_pool_alloc", [CubeCoreTypeTrait]> {
+def TcbPoolAllocOp : TcbPoolOp<"experimental.tcb_pool_alloc", [CubeCoreTypeTrait]> {
   let summary = "Allocate contiguous UB slots and a synchronization ID";
   let description = [{
     Allocate contiguous slots within the search range of segment 0 or 1 and
@@ -1510,10 +1522,10 @@ def TcbPoolAllocOp : TcbPoolOp<"tcb_pool_alloc", [CubeCoreTypeTrait]> {
     {startSlot, id} to the segment's address queue, and advance Cube's index.
 
     pool is a planned contiguous i8 UB pointer_cast. Its slot geometry and
-    queue search ranges are configured by tcb_pool_init. The caller protects
-    each address entry until both AIVs have read it and publishes allocation
-    progress after issuing FIX and the FIX-to-Vector notification with the
-    returned ID.
+    queue search ranges are configured by experimental.tcb_pool_init. The
+    caller protects each address entry until both AIVs have read it and
+    publishes allocation progress after issuing FIX and the FIX-to-Vector
+    notification with the returned ID.
   }];
   let arguments = (ins MemRefRankOf<[I32], [1]>:$metadata,
                        MemRefRankOf<[I8], [1]>:$pool,
@@ -1524,7 +1536,7 @@ def TcbPoolAllocOp : TcbPoolOp<"tcb_pool_alloc", [CubeCoreTypeTrait]> {
   }];
 }
 
-def TcbPoolGetOp : TcbPoolOp<"tcb_pool_get", [VectorCoreTypeTrait]> {
+def TcbPoolGetOp : TcbPoolOp<"experimental.tcb_pool_get", [VectorCoreTypeTrait]> {
   let summary = "Read a TCB descriptor and publish AIV0 issue feedback";
   let description = [{
     Read the next address entry for segment 0 or 1 and return the absolute UB
@@ -1546,7 +1558,7 @@ def TcbPoolGetOp : TcbPoolOp<"tcb_pool_get", [VectorCoreTypeTrait]> {
   }];
 }
 
-def TcbPoolReleaseOp : TcbPoolOp<"tcb_pool_release", [CubeCoreTypeTrait]> {
+def TcbPoolReleaseOp : TcbPoolOp<"experimental.tcb_pool_release", [CubeCoreTypeTrait]> {
   let summary = "Release all remaining TCB allocations";
   let description = [{
     Reclaim all remaining allocations in AIV0 feedback order, including

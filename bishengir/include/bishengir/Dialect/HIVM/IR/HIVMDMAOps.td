@@ -70,9 +70,13 @@ def LoadOp
            UniformReassociationFlattenTrait,
            DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
            // TODO: Use trait to avoid writing duplicate type constraints
-           OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8, I16,
-                                         UI16, F16, BF16, I32, UI32, F32, F64,
-                                         UI64, I64]>,
+           OperElemTypeConstraints<[0], [
+#ifdef BSPUB_DAVINCI_BISHENGIR
+               HiF8,
+#endif
+               F8E4M3FN, F8E5M2, I1, I8, UI8, I16,
+               UI16, F16, BF16, I32, UI32, F32, F64,
+               UI64, I64]>,
            DeclareOpInterfaceMethods<
                BiShengIRAggregatedOpInterface, ["decomposeOperation",
                                                 "getDecomposePhase"]>,
@@ -116,8 +120,9 @@ def LoadOp
     In-row, A6 only: the pad elements are part of the destination row, so
     `D = lp + W + rp`. The row is written exactly as declared and its end does
     not have to fall on a 32-byte boundary. This form is selected when the
-    target is A6 and `right_padding_num` is present with a value that is not
-    zero; a left count that is omitted reads as zero.
+    target is A6 and `right_padding_num` is present, including an explicit
+    zero. Without that operand the legacy form is used. An omitted left count
+    reads as zero; canonicalization preserves the explicit right operand.
 
     ### Attributes
     #### `broadcast_axes`
@@ -242,7 +247,11 @@ def StoreOp : HIVM_DmaOp<"store", [
   // Will automatically use the default uniform reassociation impl
   UniformReassociationFlattenTrait,
   DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
-  OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8,
+  OperElemTypeConstraints<[0], [
+#ifdef BSPUB_DAVINCI_BISHENGIR
+      HiF8,
+#endif
+      F8E4M3FN, F8E5M2, I1, I8, UI8,
     I16, UI16, F16, BF16, I32, UI32, F32, UI64, I64]>,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
   DeclareOpInterfaceMethods<StoreLikeOpInterface>,
@@ -289,7 +298,11 @@ def CopyOp : HIVM_DmaOp<"copy", [
   // Will automatically use the default uniform reassociation impl
   UniformReassociationFlattenTrait,
   DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
-  OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8,
+  OperElemTypeConstraints<[0], [
+#ifdef BSPUB_DAVINCI_BISHENGIR
+      HiF8,
+#endif
+      F8E4M3FN, F8E5M2, I1, I8, UI8,
     I16, UI16, F16, BF16, I32, UI32, F32, UI64, I64]>,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
 ]> {
@@ -726,10 +739,12 @@ def AtomicCasOp : HIVM_Op<"atomic_cas", [
   }];
 }
 
-def AtomicXchgOp : HIVM_Op<"atomic_xchg", [
-  NoLibraryFunctionTrait,
-  OperElemTypeConstraints<[0], [I8, I16, I32, F16, F32, I64, BF16]>
-]> {
+def AtomicXchgOp
+    : HIVM_Op<
+          "atomic_xchg",
+          [NoLibraryFunctionTrait,
+           OperElemTypeConstraints<[0], [I8, I16, I32, F16, F32, I64, BF16]>,
+           DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "Atomic Exchange Op";
   let description = [{
     Atomic exchange is an atomic operation that consists of three steps:

@@ -223,6 +223,8 @@ void buildAffinityPipeline(OpPassManager &pm,
   // TLA mode requires a deterministic local plan: disable the plan-memory
   // retry loop (fallback stages and shuffle-seed retries).
   planMemoryOptions.enableTLAmode = config.getEnableTlaMode();
+  planMemoryOptions.planMemoryUBCopyBankMode =
+      config.getPlanMemoryUBCopyBankMode();
   pm.addPass(hivm::createPlanMemoryPass(planMemoryOptions));
 
   if (!config.getDisableAutoInjectBlockSync()) {
