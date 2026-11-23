@@ -179,6 +179,18 @@ LogicalResult InsertPropagationPattern::insertPropagatorForDMAOp(
 std::optional<LogicalResult>
 InsertPropagationPattern::handleSpecialCase(Operation *op,
                                             PatternRewriter &rewriter) const {
+  // Printing observes the logical tensor in UB, independently of Cube users.
+  if (auto debugOp = dyn_cast<hivm::DebugOp>(op)) {
+    auto coreType = debugOp.getTcoretype();
+    if (debugOp.getDebugtype() != "print" ||
+        !isa<RankedTensorType>(debugOp.getArg().getType()) ||
+        debugOp.getMemscope() ||
+        (coreType && coreType->getTcoretype() != TCoreType::CUBE_OR_VECTOR) ||
+        isPropagatorInserted(op))
+      return failure();
+    return insertPropagatorForVectorOp(op, rewriter);
+  }
+
   // Handle scalar case
   if (auto extractOp = dyn_cast<tensor::ExtractOp>(op)) {
     if (isPropagatorInserted(op)) {

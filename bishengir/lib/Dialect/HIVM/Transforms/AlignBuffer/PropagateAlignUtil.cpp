@@ -22,6 +22,7 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "bishengir/Target/NPU/NPUArchitectureFeatures.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -204,6 +205,29 @@ LogicalResult propagateAlignInfoByCollapse(
         getCollapsedDim(alignDims[i], reassociations, propagateFromShapes,
                         alignDimAttrName, isContiguous);
     if (!mappedDim.has_value()) {
+      // An internal row boundary may disappear in a flat debug view. Keep
+      // constraints on the source when they already require no padding.
+      if (alignDimAttrName == hivm::StrideAlignDimsAttr::name.str() &&
+          isContiguous && propagateFromTy.hasStaticShape()) {
+        auto target = hacc::utils::getTargetDevice(
+            op->template getParentOfType<ModuleOp>());
+        bool isRegBased =
+            target && *target != hacc::TargetDevice::Unknown &&
+            bishengir::npu::getExecutionModel(hacc::getArchitecture(*target)) ==
+                bishengir::npu::ExecutionModel::kRegBased;
+        auto units = utils::collectAlignUnits<MemRefType>(
+            alignDims, alignBytes, propagateFromTy, isRegBased);
+        if (units.size() == propagateFromShapes.size() + 1) {
+          SmallVector<OpFoldResult> shape;
+          for (int64_t size : propagateFromShapes)
+            shape.push_back(rewriter.getIndexAttr(size));
+          auto [aligned, original] =
+              calculateAlignedShape(rewriter, op.getLoc(), shape, units);
+          if (isEqualConstantIntOrValueArray(aligned, original))
+            return rewriter.notifyMatchFailure(
+                op, "source already satisfies stride alignment");
+        }
+      }
       return op.emitError() << "cannot align " << alignDims[i] << " axis for "
                             << propagateFromValue;
     }
