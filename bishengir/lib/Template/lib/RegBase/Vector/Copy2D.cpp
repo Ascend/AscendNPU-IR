@@ -203,7 +203,12 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     INTRINSIC(set_mov_pad_val, 0);
   }
 
-  auto dst_ptr = dst->aligned + dst->offset;
+  // The DMA start is pulled back by the left padding (see
+  // load_gm_to_ubuf_intrin_core), so the alignment gate must check the
+  // pulled-back address, mirroring the m300 path. A raw dst->offset that is
+  // not 32B aligned is still DMA-able when the pull-back restores alignment.
+  auto dst_ptr =
+      dst->aligned + dst->offset - left_padding_num * dst->strides[1];
   if (!isAddress32ByteAligned(dst_ptr)) {
     load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst);
     return;
