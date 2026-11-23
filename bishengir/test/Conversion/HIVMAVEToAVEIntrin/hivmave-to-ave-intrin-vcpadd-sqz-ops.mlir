@@ -80,3 +80,28 @@ func.func @vusqz_i32(%mask: vector<64xi1>) -> vector<64xi32> {
   %res = ave.hir.vusqz %mask : vector<64xi1> -> vector<64xi32>
   return %res : vector<64xi32>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @vsqz_bf16
+// CHECK: %[[STORE:.*]] = llvm.mlir.constant(1 : i32) : i32
+// CHECK-NEXT: %{{.*}} = "hivm_regbaseintrins.intr.hivm.vsqz.x"({{.*}}, {{.*}}, %[[STORE]])
+func.func @vsqz_bf16(%src: vector<128xbf16>, %mask: vector<128xi1>)
+    -> vector<128xbf16> {
+  %res = ave.hir.vsqz %src, %mask : vector<128xbf16>, vector<128xi1>
+  return %res : vector<128xbf16>
+}
+
+// -----
+
+// The ISA provides vmadd on Ascend 950, so the bf16 ternary multiply-add
+// lowers to the vmadd regbase instruction on this target too.
+// CHECK-LABEL: func.func @vmadd_bf16
+// CHECK: "hivm_regbaseintrins.intr.hivm.vmadd.m"
+func.func @vmadd_bf16(%a: vector<128xbf16>, %b: vector<128xbf16>,
+                      %c: vector<128xbf16>, %mask: vector<128xi1>)
+    -> vector<128xbf16> {
+  %res = ave.hir.vmadd %a, %b, %c, %mask
+      : vector<128xbf16>, vector<128xi1>
+  return %res : vector<128xbf16>
+}

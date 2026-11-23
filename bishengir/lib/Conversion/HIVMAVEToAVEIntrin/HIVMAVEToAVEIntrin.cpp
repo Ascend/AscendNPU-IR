@@ -577,8 +577,8 @@ struct HIVMVsqzOpLowering : ConvertOpToLLVMPattern<hivmave::VsqzOp> {
       return rewriter.notifyMatchFailure(op, "expected vector source");
     Type elementType = srcType.getElementType();
     if (!(elementType.isInteger(8) || elementType.isInteger(16) ||
-          elementType.isInteger(32) || elementType.isF16() ||
-          elementType.isF32()))
+          elementType.isInteger(32) || elementType.isBF16() ||
+          elementType.isF16() || elementType.isF32()))
       return rewriter.notifyMatchFailure(op, "unsupported vsqz element type");
     VectorType vlType = createVLVectorType(elementType);
     Value src = castToVLVector(op.getSrc(), elementType, rewriter);
@@ -3858,13 +3858,14 @@ struct HIVMExpdifOpLowering
 };
 
 // The fused multiply-add instruction families only exist on the Ascend960
-// (V121) target; every other regbased target keeps using vmula.
+// (V121) target; every other regbased target keeps using vmula. The ISA
+// confirms vmadd on Ascend 950, so VMaddOp lowers on both targets; vfma and
+// its negated/subtracted variants remain 960-only.
 template <typename OpTy> constexpr bool isAscend960OnlyTenaryOp() {
   return std::is_same_v<OpTy, hivmave::VFmaOp> ||
          std::is_same_v<OpTy, hivmave::VFmsOp> ||
          std::is_same_v<OpTy, hivmave::VFnmaOp> ||
          std::is_same_v<OpTy, hivmave::VFnmsOp> ||
-         std::is_same_v<OpTy, hivmave::VMaddOp> ||
          std::is_same_v<OpTy, hivmave::VMsubOp> ||
          std::is_same_v<OpTy, hivmave::VNmaddOp> ||
          std::is_same_v<OpTy, hivmave::VNmsubOp>;
