@@ -1,3 +1,8 @@
+---
+myst:
+  heading_anchors: 4
+---
+
 # 自定义算子
 
 ## 概述
@@ -33,7 +38,8 @@ AscendNPU IR已为上游模型支持丰富的算子集合。但部分业务场�
 | `sync_event_slots` | Macro自定义算子的同步槽位元信息。`GraphSyncSolver`会据此填充`sync_related_args`，并在macro前后注入`set/wait flag`。 | 列表长度必须与macro实现体内、同一Pipe对上的`set_flag`/`wait_flag`对数一致。详见[Macro sync_event_slots](#macro算子同步槽位sync_event_slots) |
 | `iterator_types` | 各迭代维的迭代器类型，供结构化降级、切分与flatten类Pass使用（`HIVM_IteratorTypeAttr`） | 可选；数组长度为迭代空间的维数，参与子块切分时需与各索引映射的输入维数一致 |
 | `indexing_map` | 逐操作数的仿射索引映射（与Linalg的`indexing_maps`作用相同） | 可选，类型为`ArrayAttr<AffineMapAttr>` |
-| `max_rank` | flatten/布局类Pass支持的最大张量秩 | 可选`i64`属性，默认值5 |
+| `max_rank` | 布局类Pass支持的最大张量秩 | 可选`i64`属性，默认值5 |
+| `flatten_ranks` / `flatten_symbols` | 折叠后各秩的实现符号：`hivm-flatten-ops`把操作数折叠到`flatten_ranks[i]`维后，改为调用`flatten_symbols[i]`；未列出的秩不会被产生，算子保持原秩并继续调用`symbol` | 可选，成对出现；`flatten_ranks`为整数数组属性（互不重复、可无损表示为有符号 64 位整数的正整数），`flatten_symbols`为等长的`ArrayAttr<StringAttr>`。详见[展平属性](#展平属性) |
 | `align_dim` | 逐操作数的维度对齐提示 | 通过`arg_attrs`挂在对应操作数上 |
 | `arg_attrs` | 逐操作数的字典属性数组 | 类型为`ArrayAttr`（例如操作数2上的`{align_dim = 1 : i64}`）。Triton前端根据`align_dim`生成；Cube算子还会写入`data_layout`与`address_space` |
 | `data_layout` | Cube自定义算子逐操作数的数据布局 | 以操作数名或下标为键、`al.DataLayout`为值的字典。仅当`core`为`CUBE`时发出。支持`ND`与`Fractal` |
@@ -82,6 +88,7 @@ AscendNPU IR已为上游模型支持丰富的算子集合。但部分业务场�
 | iterator_types | 切分与flatten所需的各迭代维类型 |
 | indexing_map | 结构化降级的逐操作数仿射映射 |
 | max_rank | 布局Pass支持的最大张量秩（默认5） |
+| flatten_ranks / flatten_symbols | Flatten降秩后按折叠后的秩选择的实现符号 |
 | align_dim / arg_attrs | 对齐调整Pass的逐操作数对齐提示 |
 | extra_buffers_* / tmps | 临时buffer声明与分配 |
 | no_side_effect | 无额外副作用标记，便于优化，仍允许写入声明的输出 |
@@ -146,7 +153,9 @@ Triton自定义算子前端（`triton.language.extra.cann.extension`）接受下
 
 - **Pass交互适配不完善**
 
-  各类自定义算子的变换Pass，包含Flatten优化、对齐调整、内存规划、布局变换等，仍有多项适配逻辑待补充，相关工作正在推进。
+  各类自定义算子的变换Pass，包含对齐调整、内存规划、布局变换等，仍有多项适配逻辑待补充，相关工作正在推进。
+
+  其中展平优化（`hivm-flatten-ops`）已适配：算子声明`iterator_types`并通过`flatten_ranks`/`flatten_symbols`提供折叠后秩的实现后即可参与自动展平，只有全部迭代类型均为`parallel`时才允许折叠，任一其他类型使整个算子保持原样；折叠后`symbol`替换为折叠后秩对应的实现。未声明这些属性、折叠后的秩缺少实现、内建算子、非恒等`indexing_map`、带`align_dim`的算子保持原秩与原`symbol`。`tmps`临时缓冲区不参与展平。详见[自动展平](auto_flatten.md)。
 
 ## MLIR示例
 
@@ -291,6 +300,83 @@ class tiled_custom_op:
             al.affine_map.get_identity(2),
             al.affine_map.get_identity(2),
         ]
+```
+
+#### 展平属性
+
+`hivm-flatten-ops`会把相邻的`parallel`维度折叠为一维（见[自动展平](auto_flatten.md)），折叠后传给设备实现的memref描述符秩随之降低。自定义算子的实现由用户bitcode提供，`symbol`对应的函数签名（如`memref_t<T, 2>`）在编译时已经固定，编译器无法为它改写秩。因此展平自定义算子需要作者显式提供折叠后各秩的实现：
+
+- `flatten_ranks[i]`：一个可能的折叠后秩；
+- `flatten_symbols[i]`：操作数折叠到该秩时改为调用的函数名，与`symbol`来自同一份`bitcode`。
+
+`max_rank` 约束 `LibraryFunctionOpInterface` 推导库函数调用签名时使用的秩上限。展平 Pass 不读取该属性。
+
+对于满足展平条件且迭代类型全为 `parallel` 的算子，Pass 根据操作数的形状和布局确定哪些维度可以合并。如果合并后的秩低于原秩且列在 `flatten_ranks` 中，Pass 会插入 `memref.collapse_shape`，并将 `symbol` 更新为对应的 `flatten_symbols` 表项。否则保留原秩和原符号。部分连续布局可能保留多个维度。含 `reduction`、`cumulative` 或其他非 `parallel` 迭代类型时，也保留原秩和原符号。
+
+声明映射是一项用户契约：对每个表项，作者必须保证该函数在所有会选中它的重关联方式、静态和动态形状、偏移量、步长及别名关系下，与原始函数等价。`parallel` 本身不保证实现不依赖原始坐标或维度分解；依赖这些信息且无法从保留参数恢复的算子不能声明此映射。
+
+目标函数的输入和输出 memref 描述符必须使用目标秩。其元素类型、地址空间、参数次序、标量及临时缓冲区参数、结果与副作用以及 `core`、`pipe`、`VF mode` 必须保持一致；`CustomMacroOp` 还必须保持同步槽位和事件参数契约。部分连续布局不等于稠密缓冲区，设备代码必须处理实际描述符中的偏移量和步长。编译器校验属性结构和折叠条件，不证明 bitcode 内的签名或算法。
+
+按秩映射不能表达一般的轴相关计算：两个原始视图可能折叠成相同描述符，却要求沿不同的轴计算。IR 中更新后的迭代类型不会传给设备函数，因此这类算子保持原样。
+
+MLIR示例：
+
+```mlir
+// 展平前：symbol 对应 2 维实现，同时声明 1 维实现
+hivm.hir.custom
+    {hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+     hivm.pipe = #hivm.pipe<PIPE_V>,
+     hivm.vf_mode = #hivm.vf_mode<SIMD>,
+     symbol = "custom_add_2d",
+     flatten_ranks = [1 : i64],
+     flatten_symbols = ["custom_add_1d"],
+     iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>],
+     bitcode = "/path/to/add.bc"}
+    "add"
+    ins(%a, %b : memref<4x8xi32>, memref<4x8xi32>)
+    outs(%c : memref<4x8xi32>)
+
+// 展平后：操作数折叠为 1 维，symbol 替换为 1 维实现
+%a1 = memref.collapse_shape %a [[0, 1]] : memref<4x8xi32> into memref<32xi32>
+%b1 = memref.collapse_shape %b [[0, 1]] : memref<4x8xi32> into memref<32xi32>
+%c1 = memref.collapse_shape %c [[0, 1]] : memref<4x8xi32> into memref<32xi32>
+hivm.hir.custom
+    {symbol = "custom_add_1d",
+     flatten_ranks = [1 : i64],
+     flatten_symbols = ["custom_add_1d"],
+     iterator_types = [#hivm.iterator_type<parallel>], ...}
+    "add"
+    ins(%a1, %b1 : memref<32xi32>, memref<32xi32>)
+    outs(%c1 : memref<32xi32>)
+```
+
+对应的设备实现需要在同一份bitcode中同时给出两个秩的入口（描述符类型见[标准自定义算子示例](#标准自定义算子示例)）：
+
+```cpp
+extern "C" {
+__aiv__ void _mlir_ciface_custom_add_2d(memref_t<__ubuf__ int32_t, 2> *src0,
+                                        memref_t<__ubuf__ int32_t, 2> *src1,
+                                        memref_t<__ubuf__ int32_t, 2> *dst);
+__aiv__ void _mlir_ciface_custom_add_1d(memref_t<__ubuf__ int32_t, 1> *src0,
+                                        memref_t<__ubuf__ int32_t, 1> *src1,
+                                        memref_t<__ubuf__ int32_t, 1> *dst);
+}
+```
+
+Triton注册示例（在算子类上声明各秩的实现，前端生成上述两个属性）：
+
+```python
+@al.register_custom_op
+class add:
+    core = al.CORE.VECTOR
+    pipe = al.PIPE.PIPE_V
+    mode = al.MODE.SIMD
+    iterator_types = [al.IteratorType.Parallel, al.IteratorType.Parallel]
+
+    def __init__(self, a, b, out=None):
+        self.symbol = "custom_add_2d"
+        self.flatten_symbols = {1: "custom_add_1d"}   # 折叠到 1 维时调用
+        self.bitcode = "add.bc"
 ```
 
 #### 操作数对齐属性（align_dim、arg_attrs）
