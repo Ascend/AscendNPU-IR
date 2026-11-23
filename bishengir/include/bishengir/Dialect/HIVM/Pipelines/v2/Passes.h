@@ -40,6 +40,11 @@ struct V2PipelineOptions : public mlir::PassPipelineOptions<V2PipelineOptions> {
       llvm::cl::desc("Mark/enable multi-buffering on the unsplit MIX"),
       llvm::cl::init(false)};
 
+  PassOptions::Option<bool> enableAutoBlockifyLoop{
+      *this, "enable-auto-blockify-loop",
+      llvm::cl::desc("Loop over logical blocks beyond the physical core count"),
+      llvm::cl::init(false)};
+
   // V2 uses graph solvers except for intra-core barrier-all mode.
   PassOptions::Option<bool> disableHIVMAutoInjectSync{
       *this, "disable-hivm-auto-inject-sync",
