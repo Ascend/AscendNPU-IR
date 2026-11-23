@@ -390,3 +390,18 @@ func.func @nd_to_fractal_from_ub_uninit() -> tensor<12x8x16x16xbf16> {
        : (tensor<128x192xbf16>) -> tensor<12x8x16x16xbf16>
   return %0 : tensor<12x8x16x16xbf16>
 }
+
+// -----
+
+// A live column occupies one lane of the [16, 8] tile.
+// CHECK-LABEL: func.func @nd_to_fractal_live_column(
+// CHECK-SAME:    %[[COL:[^:]+]]: tensor<16x1xf32>
+// CHECK-NOT:     tensor<16x8xf32>
+// CHECK:         tensor.expand_shape %[[COL]]
+// CHECK:         return %{{.*}} : tensor<1x1x16x1xf32>
+func.func @nd_to_fractal_live_column(%col: tensor<16x1xf32>) -> tensor<1x1x16x1xf32> {
+  %live = hivm.hir.convert_layout %col output_shape [1, 1, 16, 1]
+      {srcLayout = #hivm.data_layout<ND>, dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>}
+      : (tensor<16x1xf32>) -> tensor<1x1x16x1xf32>
+  return %live : tensor<1x1x16x1xf32>
+}

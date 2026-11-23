@@ -124,6 +124,7 @@ Value createInverseConvertLayout(PatternRewriter& rewriter,
 /// Mark `op` with specific attribute preventing it to be propagated up.
 void markAsNotPropagatingUp(PatternRewriter &rewriter, ConvertLayoutOp op);
 
+bool isMarkedAsNotPropagatingUp(ConvertLayoutOp op);
 bool isPropagatingUp(ConvertLayoutOp op);
 
 bool isPropagatingDown(ConvertLayoutOp op);

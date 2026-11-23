@@ -109,12 +109,16 @@ void markAsNotPropagatingUp(PatternRewriter &rewriter, ConvertLayoutOp op) {
   op->setAttr(convertLayoutNotToPropagateUp, rewriter.getBoolAttr(true));
 }
 
+bool isMarkedAsNotPropagatingUp(ConvertLayoutOp op) {
+  return op->hasAttr(convertLayoutNotToPropagateUp);
+}
+
 bool isPropagatingUp(ConvertLayoutOp op) {
   auto dstLayout = op.getDstLayout().getDataLayout();
   bool propagatesUp = (dstLayout == DataLayout::Fractal) ||
                       (dstLayout == DataLayout::SCALEA_zZ) ||
                       (dstLayout == DataLayout::SCALEB_nN);
-  return propagatesUp && !(op->getAttr(convertLayoutNotToPropagateUp));
+  return propagatesUp && !isMarkedAsNotPropagatingUp(op);
 }
 
 bool isPropagatingDown(ConvertLayoutOp op) { return !isPropagatingUp(op); }

@@ -212,8 +212,8 @@ struct NDToFractalDecompose : public OpRewritePattern<ConvertLayoutOp> {
 
   /// Create a zero-padded 2D base tensor for ND -> Fractal conversion.
   ///
-  /// The source tensor is padded on M/N dimensions to the nearest multiples of
-  /// `fractalSizes[0]` and `fractalSizes[1]` respectively. Padding values are
+  /// The source tensor is padded to the inner M/N extents of its result.
+  /// A live slice can occupy only part of a hardware tile. Padding values are
   /// initialized to zero using `hivm::VBrcOp`, then the original source is
   /// inserted at offset [0, 0] via `tensor::InsertSliceOp`.
   ///
@@ -224,15 +224,21 @@ struct NDToFractalDecompose : public OpRewritePattern<ConvertLayoutOp> {
                         const LayoutConversionInfo &info) {
     auto fractalSizes = op.getDstLayout().getFractalSizesArray().value_or(
         SmallVector<int64_t>());
-    if (fractalSizes.size() != 2)
+    if (fractalSizes.size() != 2 || fractalSizes[0] <= 0 ||
+        fractalSizes[1] <= 0)
       return rewriter.notifyMatchFailure(op, "invalid fractal size");
 
     Value src = op.getSource();
     auto srcTy = cast<RankedTensorType>(src.getType());
     Type elemTy = srcTy.getElementType();
 
-    int64_t tileM = fractalSizes[0];
-    int64_t tileN = fractalSizes[1];
+    auto resultShape = op.getMixedOutputShape();
+    if (resultShape.size() != 4)
+      return rewriter.notifyMatchFailure(op, "expected a rank-4 fractal shape");
+    int64_t tileM =
+        getConstantIntValue(resultShape[2]).value_or(fractalSizes[0]);
+    int64_t tileN =
+        getConstantIntValue(resultShape[3]).value_or(fractalSizes[1]);
     if (tileM <= 0 || tileN <= 0)
       return rewriter.notifyMatchFailure(op, "fractal sizes must be > 0");
 
