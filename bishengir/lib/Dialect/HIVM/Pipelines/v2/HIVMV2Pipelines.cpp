@@ -159,11 +159,20 @@ static void hivmCrossCoreAutoSyncPipeline(OpPassManager &pm,
   if (options.disableAutoInjectBlockSync)
     return;
 
+  MarkRealCoreTypeOptions markOptions;
+  markOptions.enablePreload = options.enablePreload;
+  markOptions.workspaceMultiBufferNum = options.enableMultiBuffer ? 1 : 0;
+  pm.addPass(createMarkRealCoreTypePass(markOptions));
+
   CrossCoreGSSOptions crossCoreOptions;
   crossCoreOptions.forceIsRegBased = true;
   crossCoreOptions.blockAllSync = options.enableHIVMInjectBlockAllSync;
   crossCoreOptions.solverVersion = options.hivmSyncSolverVersion;
   addFuncPass(pm, createCrossCoreGSSPass(crossCoreOptions));
+
+  MarkRealCoreTypeOptions cleanupOptions = markOptions;
+  cleanupOptions.removeCoreTypeAttrs = true;
+  pm.addPass(createMarkRealCoreTypePass(cleanupOptions));
 }
 
 /// Post-bufferization: both memory plans and the solve see the unsplit MIX.
