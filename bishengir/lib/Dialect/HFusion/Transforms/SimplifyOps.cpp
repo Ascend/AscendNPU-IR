@@ -266,16 +266,24 @@ static bool isRangePreservingCastChain(ArrayRef<CastOp> castChain) {
 // Precision rank of a floating point type (higher == more precision). Returns
 // -1 for non float types so that the float-only checks below skip integer
 // casts.
+//
+// The rank is the significand width, which is what a down/up round trip is
+// about: a narrow significand rounds every value it sees and widening it
+// afterwards cannot restore the lost low bits. Deriving the rank from the type
+// instead of tabulating a few named types keeps every float type on the same
+// scale. A hardcoded table silently falls through to the -1 sentinel for any
+// type it does not list, and hasPrecisionDownUpPattern then treats those hops
+// as "not a float" and skips them -- which is exactly how `f32 -> f8E4M3FN ->
+// f32` used to escape the check: fp8 was missing from the table, both hops were
+// skipped, CastOpPattern folded the pair away and the fp8 quantization
+// disappeared, including its saturation to +-448 and its 3-bit significand
+// rounding. Ranking by width also keeps low precision types such as f6/f4 or
+// the fp8 variants from ever ranking above f64.
 static int getPrecisionRank(Type type) {
-  if (type.isBF16())
-    return 0; // lowest precision
-  if (type.isF16())
-    return 1;
-  if (type.isF32())
-    return 2;
-  if (type.isF64())
-    return 3; // highest precision
-  return -1;  // non-float type
+  auto floatType = dyn_cast<FloatType>(type);
+  if (!floatType)
+    return -1; // non-float type
+  return static_cast<int>(floatType.getFPMantissaWidth());
 }
 
 // Helper to test for fastmath<contract> attribute.

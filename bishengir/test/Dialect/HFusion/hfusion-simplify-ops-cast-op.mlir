@@ -354,3 +354,50 @@ func.func @looped_cast_scalar_iterarg_kept(
   }
   return %r : bf16
 }
+
+
+// -----
+//
+// Regression (#961): `f32 -> f8E4M3FN -> f32` is not the identity. The fp8 hop
+// saturates to +-448 and rounds the significand to 3 bits, so folding the pair
+// away deletes the quantization. getPrecisionRank used to return -1 for fp8,
+// which made hasPrecisionDownUpPattern skip both hops and let CastOpPattern
+// remove the whole chain.
+//
+// CHECK-LABEL: func.func @keep_fp8_roundtrip
+// CHECK: hfusion.cast
+// CHECK-SAME: tensor<16x32xf32>) outs({{.*}} : tensor<16x32xf8E4M3FN>)
+// CHECK: hfusion.cast
+// CHECK-SAME: tensor<16x32xf8E4M3FN>) outs({{.*}} : tensor<16x32xf32>)
+
+func.func @keep_fp8_roundtrip(%src: tensor<16x32xf32>) -> tensor<16x32xf32> {
+  %f8 = tensor.empty() : tensor<16x32xf8E4M3FN>
+  %f32 = tensor.empty() : tensor<16x32xf32>
+  %q = hfusion.cast {cast = #hfusion.type_fn<cast_signed>,
+                     round_mode = #hfusion.round_mode<rint>}
+      ins(%src : tensor<16x32xf32>) outs(%f8 : tensor<16x32xf8E4M3FN>)
+      -> tensor<16x32xf8E4M3FN>
+  %dq = hfusion.cast {cast = #hfusion.type_fn<cast_signed>,
+                      round_mode = #hfusion.round_mode<rint>}
+      ins(%q : tensor<16x32xf8E4M3FN>) outs(%f32 : tensor<16x32xf32>)
+      -> tensor<16x32xf32>
+  return %dq : tensor<16x32xf32>
+}
+
+// -----
+//
+// Counter-case: a single `f32 -> f16` cast is not a round trip and must keep
+// being simplified as before, i.e. this test only guards against over-blocking
+// in getCastChainBlockReason.
+//
+// CHECK-LABEL: func.func @single_downcast_is_not_a_chain
+// CHECK: hfusion.cast
+
+func.func @single_downcast_is_not_a_chain(%src: tensor<16x32xf32>) -> tensor<16x32xf16> {
+  %f16 = tensor.empty() : tensor<16x32xf16>
+  %r = hfusion.cast {cast = #hfusion.type_fn<cast_signed>,
+                     round_mode = #hfusion.round_mode<rint>}
+      ins(%src : tensor<16x32xf32>) outs(%f16 : tensor<16x32xf16>)
+      -> tensor<16x32xf16>
+  return %r : tensor<16x32xf16>
+}
