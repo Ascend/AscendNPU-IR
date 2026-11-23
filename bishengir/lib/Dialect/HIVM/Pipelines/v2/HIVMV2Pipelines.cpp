@@ -110,6 +110,8 @@ void buildV2TensorPhase(OpPassManager &pm, const V2PipelineOptions &options) {
   buildPreVectorizationPhase(pm, options);
 
   pm.addPass(createHIVMVectorizePass());
+  // Fold tensor transfer pairs before bufferization introduces copies.
+  pm.addPass(createCanonicalizerPass());
 }
 
 /// The tensor -> memref anchor.
