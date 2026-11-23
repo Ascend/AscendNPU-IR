@@ -1179,3 +1179,59 @@ func.func @test_clone_for_init_in_resolveConflict(%arg0: i32, %arg1 : tensor<256
   }
   return %2 : tensor<256xf16>
 }
+
+// -----
+
+// The trip count is constant and non-zero, so the loop yields buffer1.
+// buffer1 is written after buffer0, so neither tensor is copied.
+// CHECK-LABEL: func.func @for_yield_other
+// CHECK-DOUBLE-LABEL: func.func @for_yield_other
+func.func @for_yield_other(%src0: tensor<16xf32>, %src1: tensor<16xf32>) -> tensor<16xf32> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %empty0 = tensor.empty() : tensor<16xf32>
+  // CHECK: %[[BUF0:.*]] = memref.alloc()
+  // CHECK: hivm.hir.load ins(%arg0{{.*}}) outs(%[[BUF0]]
+  %buffer0 = hivm.hir.load ins(%src0 : tensor<16xf32>) outs(%empty0 : tensor<16xf32>) -> tensor<16xf32>
+  %empty1 = tensor.empty() : tensor<16xf32>
+  // CHECK: %[[BUF1:.*]] = memref.alloc()
+  // CHECK: hivm.hir.load ins(%arg1{{.*}}) outs(%[[BUF1]]
+  %buffer1 = hivm.hir.load ins(%src1 : tensor<16xf32>) outs(%empty1 : tensor<16xf32>) -> tensor<16xf32>
+  // CHECK: scf.for {{.*}} iter_args(%{{.*}} = %[[BUF0]])
+  // CHECK: scf.yield %[[BUF1]]
+  %r = scf.for %i = %c0 to %c2 step %c1 iter_args(%iter = %buffer0) -> (tensor<16xf32>) {
+    scf.yield %buffer1 : tensor<16xf32>
+  }
+  return %r : tensor<16xf32>
+}
+
+// -----
+
+// The while condition still forwards the init. The after region copies the
+// tensor defined outside the loop.
+// CHECK-LABEL: func.func @while_yield_other
+// CHECK-DOUBLE-LABEL: func.func @while_yield_other
+func.func @while_yield_other(%src0: tensor<16xf32>, %src1: tensor<16xf32>) -> tensor<16xf32> {
+  %true = arith.constant true
+  %false = arith.constant false
+  %empty0 = tensor.empty() : tensor<16xf32>
+  // CHECK: %[[BUF0:.*]] = memref.alloc()
+  // CHECK: hivm.hir.load ins(%arg0{{.*}}) outs(%[[BUF0]]
+  %buffer0 = hivm.hir.load ins(%src0 : tensor<16xf32>) outs(%empty0 : tensor<16xf32>) -> tensor<16xf32>
+  %empty1 = tensor.empty() : tensor<16xf32>
+  // CHECK: %[[BUF1:.*]] = memref.alloc()
+  // CHECK: hivm.hir.load ins(%arg1{{.*}}) outs(%[[BUF1]]
+  %buffer1 = hivm.hir.load ins(%src1 : tensor<16xf32>) outs(%empty1 : tensor<16xf32>) -> tensor<16xf32>
+  // CHECK: scf.while (%[[CARRIED:.*]] = %[[BUF0]]
+  // CHECK: scf.condition(%{{.*}}) %[[CARRIED]]
+  // CHECK: memref.copy %[[BUF1]], %[[COPIED:[^ :,]*]]
+  // CHECK: scf.yield %[[COPIED]]
+  %r = scf.while (%arg = %buffer0, %cond = %true) : (tensor<16xf32>, i1) -> tensor<16xf32> {
+    scf.condition(%cond) %arg : tensor<16xf32>
+  } do {
+  ^bb0(%arg: tensor<16xf32>):
+    scf.yield %buffer1, %false : tensor<16xf32>, i1
+  }
+  return %r : tensor<16xf32>
+}

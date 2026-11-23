@@ -79,6 +79,27 @@ static BufferRelation bufferRelation(Operation *op, OpResult opResult,
                                       : BufferRelation::Unknown;
 }
 
+// The while init is the value at loop entry. Once a yield is tied to that
+// init, the init and a tensor defined inside the loop show up in one alias
+// set. The entry value is not read or written by that inside tensor: the
+// body runs only after the entry read, and an in-place yield of a value
+// produced in the body is the loop-carried update. Reporting a conflict
+// copies the yielded value, or copies the init in front of the loop, and
+// the next tensor-copy-insertion copies that init copy again.
+bool isNotConflicting(Operation *op, OpOperand *uRead, OpOperand *uWrite,
+                      const AnalysisState &state) {
+  auto whileOp = cast<scf::WhileOp>(op);
+  // The while operand is one side. The other side is inside the loop.
+  Operation *insideOp = nullptr;
+  if (uWrite->getOwner() == whileOp)
+    insideOp = uRead->get().getDefiningOp();
+  else if (uRead->getOwner() == whileOp)
+    insideOp = uWrite->getOwner();
+  else
+    return false;
+  return insideOp && whileOp->isProperAncestor(insideOp);
+}
+
 LogicalResult resolveConflicts(Operation *op, RewriterBase &rewriter,
                                const AnalysisState &state) {
   auto bufferizableOp = cast<BufferizableOpInterface>(op);
@@ -199,13 +220,25 @@ LogicalResult resolveConflicts(Operation *op, RewriterBase &rewriter,
       continue;
     }
 
+    // Snapshot the init when a dominating alias is read in the body. An
+    // in-place write of the iter arg on the first iteration updates that
+    // buffer, and ForOp::isNotConflicting hides the conflict when the read
+    // is also inside the loop.
+    //
+    // The yield itself is not such a read. Once the yield is tied to the
+    // init, an external tensor yielded in place shows up in this alias set
+    // and its only use inside the loop is this yield. Treating that use as
+    // a read copies the init in front of the loop, and the next
+    // tensor-copy-insertion sees the same pattern on the fresh copy.
     bool definedOutLoopAndUsedInLoop = false;
     auto initValue = forOp.getInitArgs()[it.index()];
     DominanceInfo domInfo(forOp->getParentOfType<func::FuncOp>());
     oneShotState.applyOnAliases(initValue, [&](Value alias) {
-      if (domInfo.properlyDominates(alias, forOp) &&
-          llvm::any_of(alias.getUsers(), [&](Operation *user) {
-            return forOp->isProperAncestor(user);
+      if (!domInfo.properlyDominates(alias, forOp))
+        return;
+      if (llvm::any_of(alias.getUses(), [&](OpOperand &usedOperand) {
+            return usedOperand != yieldOp->getOpOperand(it.index()) &&
+                   forOp->isProperAncestor(usedOperand.getOwner());
           }))
         definedOutLoopAndUsedInLoop = true;
     });
@@ -238,18 +271,35 @@ AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
   if (isa<scf::IfOp>(op->getParentOp())) {
     aliases.addAlias(AliasingValue(opResult, BufferRelation::Equivalent,
                                    /*isDefinite=*/false));
-  } else if (isa<scf::ForOp>(op->getParentOp())) {
-    auto iterArg = dyn_cast<scf::ForOp>(op->getParentOp())
-                       .getTiedLoopRegionIterArg(opResult);
+  } else if (auto forOp = dyn_cast<scf::ForOp>(op->getParentOp())) {
+    auto iterArg = forOp.getTiedLoopRegionIterArg(opResult);
     aliases.addAlias(AliasingValue(iterArg, BufferRelation::Equivalent,
+                                   /*isDefinite=*/false));
+    // Tie the yield to the init as well as the result. The result is already
+    // tied to the init by ForOp; the init edge makes an outside yielded
+    // tensor show up in the init's alias set.
+    Value initArg = forOp.getTiedLoopInit(opResult)->get();
+    aliases.addAlias(AliasingValue(initArg, BufferRelation::Equivalent,
                                    /*isDefinite=*/false));
     aliases.addAlias(AliasingValue(opResult, BufferRelation::Equivalent,
                                    /*isDefinite=*/false));
-  } else if (isa<scf::WhileOp>(op->getParentOp())) {
-    auto whileOp = dyn_cast<scf::WhileOp>(op->getParentOp());
-    auto beforeArg = whileOp.getBeforeArguments()[opResult.getResultNumber()];
+  } else if (auto whileOp = dyn_cast<scf::WhileOp>(op->getParentOp())) {
+    // Same tying as scf.for: the before arg is the iter arg, and the init
+    // occupies the same slot. WhileOp does not expose loop results through
+    // LoopLikeOpInterface::getLoopResults, so the init is the while operand.
+    unsigned idx = opOperand.getOperandNumber();
+    auto beforeArg = whileOp.getBeforeArguments()[idx];
     aliases.addAlias(AliasingValue(beforeArg, BufferRelation::Equivalent,
                                    /*isDefinite=*/false));
+    Value initArg = whileOp.getInits()[idx];
+    aliases.addAlias(AliasingValue(initArg, BufferRelation::Equivalent,
+                                   /*isDefinite=*/false));
+    // The while result is the value forwarded by scf.condition. Tie the
+    // yield to it as well, matching the scf.for yield.
+    if (idx < whileOp.getNumResults())
+      aliases.addAlias(AliasingValue(whileOp.getResult(idx),
+                                     BufferRelation::Equivalent,
+                                     /*isDefinite=*/false));
   } else if (isa<scf::ExecuteRegionOp>(op->getParentOp())) {
     aliases.addAlias(AliasingValue(opResult, BufferRelation::Equivalent));
   }
@@ -419,6 +469,12 @@ RegisterOpInterfaceOverride(
     /*InterfaceMethod=*/getAliasingOpOperands,
     /*Impl=*/
     &WhileOpInterfaceForOpReuseInPlanMemory::getAliasingOpOperands);
+
+RegisterOpInterfaceOverride(
+    /*Op=*/scf::WhileOp, /*Interface=*/BufferizableOpInterface,
+    /*InterfaceMethod=*/isNotConflicting,
+    /*Impl=*/
+    &WhileOpInterfaceForOpReuseInPlanMemory::isNotConflicting);
 
 RegisterOpInterfaceOverride(
     /*Op=*/scf::WhileOp, /*Interface=*/BufferizableOpInterface,
