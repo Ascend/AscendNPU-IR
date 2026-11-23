@@ -82,6 +82,15 @@ def EnableTlaMode : FeatureControlOptions<
   let passGroup = ["HIVM"];
 }
 
+def EnableBf16 : FeatureControlOptions<
+  "Enable native BF16 arithmetic instructions on Ascend 950.",
+  "bool",
+  "false"
+> {
+  let optionScope = ["A5_ONLY"];
+  let passGroup = ["HFUSION"];
+}
+
 def EnableTlaCvPipelining : FeatureControlOptions<
   "Expand staged TLA loops through native preload in affinity mode.",
   "bool",

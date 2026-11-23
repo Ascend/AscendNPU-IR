@@ -212,7 +212,8 @@ std::unique_ptr<Pass> createLegalizeScalarPass();
 std::unique_ptr<Pass> createOptimizeScalarTransfersPass();
 
 /// Create a pass to legalize bf16 type
-std::unique_ptr<Pass> createLegalizeBF16Pass();
+std::unique_ptr<Pass>
+createLegalizeBF16Pass(const LegalizeBF16PassOptions &options = {});
 
 /// Create a pass to legalize fp8 type
 std::unique_ptr<Pass> createLegalizeFP8Pass();

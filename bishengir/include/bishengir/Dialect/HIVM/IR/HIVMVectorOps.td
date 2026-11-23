@@ -646,7 +646,7 @@ def VAddOp
     : HIVM_ElementwiseBinaryOp<
           "vadd", [SameOperandsElementType,
                    OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32,
-                                                    I64]>,
+                                                    BF16, I64]>,
                    CommutativeOpTrait, VectorOnlyTrait<0>,
                    DeclareOpInterfaceMethods<
                        ExtraBufferOpInterface, ["getExtraBufferSize"]>,
@@ -683,7 +683,7 @@ def VMulOp
     : HIVM_ElementwiseBinaryOp<
           "vmul", [SameOperandsElementType,
                    OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32,
-                                                    I64]>,
+                                                    BF16, I64]>,
                    CommutativeOpTrait, VectorOnlyTrait<0>,
                    DeclareOpInterfaceMethods<
                        ExtraBufferOpInterface, ["getExtraBufferSize"]>,
@@ -756,7 +756,7 @@ def VSubOp
     : HIVM_ElementwiseBinaryOp<
           "vsub", [SameOperandsElementType,
                    OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32,
-                                                    I64]>,
+                                                    BF16, I64]>,
                    DeclareOpInterfaceMethods<
                        ExtraBufferOpInterface, ["getExtraBufferSize"]>,
                    DeclareOpInterfaceMethods<

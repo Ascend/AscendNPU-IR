@@ -191,7 +191,9 @@ static void preProcess(OpPassManager &pm,
   pm.addPass(createCSEPass());
   pm.addPass(createSymbolDCEPass());
   convertAllToHFusion(pm, options);
-  pm.nest<func::FuncOp>().addPass(createLegalizeBF16Pass());
+  LegalizeBF16PassOptions legalizeBF16Options;
+  legalizeBF16Options.enableBf16 = options.enableBf16;
+  pm.nest<func::FuncOp>().addPass(createLegalizeBF16Pass(legalizeBF16Options));
   if (!hacc::utils::isAscend960(options.target))
     pm.nest<func::FuncOp>().addPass(createLegalizeFP8Pass());
   DecomposeOptions decomposeOptions;
