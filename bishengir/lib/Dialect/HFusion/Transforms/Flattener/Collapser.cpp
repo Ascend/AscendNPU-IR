@@ -122,13 +122,18 @@ SmallVector<OpFoldResult> Flattener::getFlattenMixedSizes(Value res) const {
         }
       } else {
         Operation *valueOwner = res.getDefiningOp();
-        if (auto subviewOp =
-                dyn_cast_if_present<memref::SubViewOp>(valueOwner)) {
-          return subviewOp.getMixedSizes();
+        // Replaced slice operations can temporarily have a collapsed result
+        // type but their original slice operands. Reification asserts on that
+        // rank mismatch, so recover original-axis sizes before invoking it.
+        if (auto recovered = tryGetOriginalSliceMixedSizes(res)) {
+          if (recovered->size() == args.size())
+            return *recovered;
         }
         ReifiedRankedShapedTypeDims reifiedDims;
         auto reifyRes = reifyResultShapes(builder, valueOwner, reifiedDims);
-        if (succeeded(reifyRes)) {
+        if (succeeded(reifyRes) &&
+            cast<OpResult>(res).getResultNumber() < reifiedDims.size() &&
+            idx < reifiedDims[cast<OpResult>(res).getResultNumber()].size()) {
           auto reifiedDim =
               reifiedDims[cast<OpResult>(res).getResultNumber()][idx];
           outputShape.push_back(reifiedDim);
@@ -136,23 +141,16 @@ SmallVector<OpFoldResult> Flattener::getFlattenMixedSizes(Value res) const {
         }
         if (valueReplacement.count(res)) {
           OpResult replacementValue = cast<OpResult>(valueReplacement.at(res));
-          if (auto subviewOp =
-                  replacementValue.getDefiningOp<memref::SubViewOp>()) {
-            return subviewOp.getMixedSizes();
-          }
           reifyRes = reifyResultShapes(builder, replacementValue.getOwner(),
                                        reifiedDims);
-          if (succeeded(reifyRes)) {
+          if (succeeded(reifyRes) &&
+              replacementValue.getResultNumber() < reifiedDims.size() &&
+              idx < reifiedDims[replacementValue.getResultNumber()].size()) {
             auto reifiedDim =
                 reifiedDims[replacementValue.getResultNumber()][idx];
             outputShape.push_back(reifiedDim);
             continue;
           }
-        }
-        if (auto recovered = tryGetOriginalSliceMixedSizes(res)) {
-          if (static_cast<int64_t>(recovered->size()) ==
-              static_cast<int64_t>(args.size()))
-            return *recovered;
         }
         LDBG("[Parent not part of args, not reified size] " << res << " "
                                                             << idx);
@@ -193,6 +191,13 @@ void Flattener::collectOperations(Operation *op,
 }
 
 void Flattener::adjustOperations() {
+  // Keep the source-to-result axis mapping while slice types are still intact.
+  op_->walk([&](Operation *op) {
+    if (auto slice = dyn_cast<tensor::ExtractSliceOp>(op))
+      sliceDroppedDims_[op] = slice.getDroppedDims();
+    else if (auto subview = dyn_cast<memref::SubViewOp>(op))
+      sliceDroppedDims_[op] = subview.getDroppedDims();
+  });
   OpBuilder builder(op_);
   LLVM_DEBUG(llvm::dbgs() << "Adjusting block arguments\n");
   for (auto &arg : argumentList_) {
@@ -941,6 +946,7 @@ void Flattener::calculateOffsets(T slicingOp,
 void Flattener::calculateSubviewStrides(
     memref::SubViewOp slicingOp, ReassociationIndices &collapseGroup,
     SmallVector<OpFoldResult> &newMixedStrides, OpBuilder &builder) {
+
   auto src = slicingOp.getSource();
   auto res = slicingOp.getResult();
   auto resMemRefType = res.getType();
@@ -951,6 +957,18 @@ void Flattener::calculateSubviewStrides(
   auto srcStride = Flattener::getConstantStrides(srcMemRefType);
   if (!srcStride.has_value())
     llvm::report_fatal_error("srcStride is expected to have a value here");
+  const auto &droppedDims = sliceDroppedDims_.at(slicingOp.getOperation());
+  bool rankReduced = droppedDims.any();
+  bool allUnit = llvm::all_of(collapseGroup, [&](int64_t axis) {
+    return getConstantIntValue(mixedSizes[axis]) == 1;
+  });
+  int64_t firstRetainedUnit = -1;
+  if (rankReduced && allUnit) {
+    auto retained = llvm::find_if(
+        collapseGroup, [&](int64_t axis) { return !droppedDims[axis]; });
+    if (retained != collapseGroup.end())
+      firstRetainedUnit = *retained;
+  }
   auto contiguousMask =
       mlir::hivm::detail::getContiguousAxesImpl({resMemRefType});
   bool isContinuous = true;
@@ -962,7 +980,10 @@ void Flattener::calculateSubviewStrides(
   int64_t curSize = 1;
   for (int64_t j = groupSize - 1; j >= 0; --j) {
     cumSize[j] = curSize;
-    curSize *= srcShape[collapseGroup[j]];
+    int64_t extent = srcShape[collapseGroup[j]];
+    curSize = ShapedType::isDynamic(curSize) || ShapedType::isDynamic(extent)
+                  ? ShapedType::kDynamic
+                  : curSize * extent;
   }
 
   // Traverse collapseGroup from back to front.
@@ -971,17 +992,29 @@ void Flattener::calculateSubviewStrides(
     auto sizeInt = getConstantIntValue(mixedSizes[idx]);
     auto strideInt = getConstantIntValue(mixedStrides[idx]);
 
-    // Check if it's a non-contiguous unit dim merge.
-    if (sizeInt.has_value() && sizeInt.value() == 1 && i != 0) {
-      if (!contiguousMask[idx]) {
+    // CollapseShapeOp skips trailing unit axes down to the first result
+    // axis in an all-unit group. Map that axis back to its source pivot.
+    if (sizeInt == 1 && i != 0 && idx != firstRetainedUnit) {
+      if (!rankReduced && !contiguousMask[idx]) {
         isContinuous = false;
       }
       continue;
     }
-    if (!strideInt.has_value() ||
+    if (!strideInt.has_value() || ShapedType::isDynamic(cumSize[i]) ||
         ShapedType::isDynamic(srcStride.value()[idx])) {
       if (i != lastGroupIdx) {
         SmallVector<OpFoldResult> flattenMixedSizes = getFlattenMixedSizes(src);
+        if (flattenMixedSizes.size() != mixedStrides.size() &&
+            llvm::none_of(srcShape, [](int64_t size) {
+              return ShapedType::isDynamic(size);
+            })) {
+          flattenMixedSizes = llvm::map_to_vector(srcShape, [&](int64_t size) {
+            return OpFoldResult(builder.getIndexAttr(size));
+          });
+        }
+        if (flattenMixedSizes.size() != mixedStrides.size())
+          llvm::report_fatal_error(
+              "original source extents unavailable for subview stride scaling");
         if (flattenMixedSizes.size() == mixedStrides.size()) {
           OpBuilder::InsertionGuard guard(builder);
           builder.setInsertionPoint(slicingOp);
@@ -1015,7 +1048,7 @@ void Flattener::calculateSubviewStrides(
     // Non-contiguous dim merging: use cumSize within the group rather than
     // the full srcStride, because after collapsing, the stride of the
     // collapsed dim only covers dims inside this group.
-    if (i != lastGroupIdx && !isContinuous) {
+    if (rankReduced || (i != lastGroupIdx && !isContinuous)) {
       newMixedStrides.push_back(
           builder.getI64IntegerAttr(strideInt.value() * cumSize[i]));
       return;
@@ -1074,21 +1107,34 @@ void Flattener::calculateSliceStrides(
   }
 
   // For trailing unit dims absorbed into the collapse group, preserve the
-  // source storage step of the first absorbed unit axis. Example:
+  // pivot slice stride multiplied by the trailing source extents. Example:
   // <a x b x c> -> <a x b x 1> with [[0], [1, 2]] collapses to <a x b>,
   // and the final stride should stay c rather than 1.
   auto previousMixedSizes = getFlattenMixedSizes(src);
   assert(previousMixedSizes.size() == mixedSizes.size() &&
          "previous mixed sizes must match original extract rank");
-  int64_t trailingProduct = 1;
-  while (pivotPos < static_cast<int64_t>(collapseGroup.size()) - 1) {
-    auto axis = collapseGroup[pivotPos + 1];
-    auto trailingSize = getConstantIntValue(previousMixedSizes[axis]);
-    assert(trailingSize.has_value());
-    trailingProduct *= trailingSize.value();
-    ++pivotPos;
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPoint(sliceOp);
+  OpFoldResult stride = collapsedStride;
+  for (int64_t i = pivotPos + 1; i < static_cast<int64_t>(collapseGroup.size());
+       ++i) {
+    OpFoldResult extent = previousMixedSizes[collapseGroup[i]];
+    auto staticStride = getConstantIntValue(stride);
+    auto staticExtent = getConstantIntValue(extent);
+    if (staticStride && staticExtent) {
+      stride = builder.getI64IntegerAttr(*staticStride * *staticExtent);
+    } else {
+      Value strideValue =
+          getValueOrCreateConstantIndexOp(builder, sliceOp.getLoc(), stride);
+      Value extentValue =
+          getValueOrCreateConstantIndexOp(builder, sliceOp.getLoc(), extent);
+      stride =
+          builder
+              .create<arith::MulIOp>(sliceOp.getLoc(), strideValue, extentValue)
+              .getResult();
+    }
   }
-  newMixedStrides.push_back(builder.getI64IntegerAttr(trailingProduct));
+  newMixedStrides.push_back(stride);
 }
 
 template <class T>
@@ -1769,19 +1815,19 @@ Flattener::tryGetOriginalSliceMixedSizes(Value value) const {
       continue;
     }
 
-    if (auto subviewOp = current.getDefiningOp<memref::SubViewOp>()) {
-      SmallVector<OpFoldResult> sizes;
-      llvm::append_range(sizes, subviewOp.getMixedSizes());
-      return sizes;
-    }
-
-    if (auto extractSliceOp = current.getDefiningOp<tensor::ExtractSliceOp>()) {
-      SmallVector<OpFoldResult> sizes;
-      llvm::append_range(sizes, extractSliceOp.getMixedSizes());
-      return sizes;
-    }
-
     Operation *defOp = current.getDefiningOp();
+    auto mask = sliceDroppedDims_.find(defOp);
+    if (mask != sliceDroppedDims_.end()) {
+      // Slice sizes are in source-axis order. Consumers of this result need
+      // one size per retained axis, including any retained singleton axes.
+      auto sizes = cast<OffsetSizeAndStrideOpInterface>(defOp).getMixedSizes();
+      SmallVector<OpFoldResult> resultSizes;
+      for (auto [axis, size] : llvm::enumerate(sizes))
+        if (!mask->second[axis])
+          resultSizes.push_back(size);
+      return resultSizes;
+    }
+
     if (!defOp || defOp->getNumOperands() == 0)
       break;
     if (!isa<memref::CastOp, memref::ReinterpretCastOp, memref::ExpandShapeOp,

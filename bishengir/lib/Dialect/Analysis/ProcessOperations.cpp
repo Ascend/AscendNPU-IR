@@ -674,7 +674,14 @@ void DimensionAnalyzerBase::propagateSliceBoundaries(
     if (previousAxis >= 0) {
       for (int64_t boundary = previousAxis + 1; boundary <= axis; ++boundary) {
         if (!isConnected(superviewRef[boundary - 1], superviewRef[boundary])) {
-          disconnect(subviewRef[resultAxis - 1], subviewRef[resultAxis]);
+          // One disconnected side is enough to separate the result axes.
+          // Their connectivity is shared with the retained source axes, so
+          // disconnecting both sides can also split an otherwise contiguous
+          // source group on the other side of a dropped dimension.
+          if (boundary == axis)
+            disconnect(-1, subviewRef[resultAxis]);
+          else
+            disconnect(subviewRef[resultAxis - 1], -1);
           break;
         }
       }
