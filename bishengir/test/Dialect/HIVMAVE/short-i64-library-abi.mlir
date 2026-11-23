@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_9579 --hivm-vectorize --one-shot-bufferize=bufferize-function-boundaries --hivm-vectorize=phase=prepare-buffers --hivm-infer-mem-scope --normalize-vector --hivm-vectorize=phase=backend --convert-vector-to-hivmave --convert-arith-to-hivmave --analyze-vector-layout --ave-normalize-ops --remove-vector-layout-attr -convert-hivmave-to-std --verify-each | FileCheck %s
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_9579 --hivm-vectorize --one-shot-bufferize="bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map" --hivm-vectorize=phase=prepare-buffers --hivm-infer-mem-scope --normalize-vector --hivm-vectorize=phase=backend --convert-vector-to-hivmave --convert-arith-to-hivmave --analyze-vector-layout --ave-normalize-ops --remove-vector-layout-attr -convert-hivmave-to-std --verify-each | FileCheck %s
 
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: @short_i64_load_fused_0
