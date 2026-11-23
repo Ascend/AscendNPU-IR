@@ -108,7 +108,8 @@ class AVE_TenaryOp<string mnemonic, list<Trait> traits = []> :
   }];
 }
 
-class AVE_VecScalarOp<string mnemonic, list<Trait> traits = []> :
+class AVE_VecScalarOp<string mnemonic, list<Trait> traits = [],
+                       bit supportsBF16 = 0> :
     AVE_LibFnOp<mnemonic, !listconcat(traits, [
       Pure,
       AVEElementwiseOpInterface,
@@ -118,7 +119,8 @@ class AVE_VecScalarOp<string mnemonic, list<Trait> traits = []> :
     ])> {
   let summary = "Ave vector-scalar op " # mnemonic # ".";
   let arguments = (ins AveExtValidVector:$vec,
-      AnyTypeOf<[I8, I16, I32, I64, F16, F32]>:$scalar, AveMaskType:$mask);
+      AnyTypeOf<!if(supportsBF16, [I8, I16, I32, I64, BF16, F16, F32],
+                    [I8, I16, I32, I64, F16, F32])>:$scalar, AveMaskType:$mask);
   let results = (outs AveExtValidVector:$out);
 
   let assemblyFormat = [{
@@ -1212,11 +1214,11 @@ def AVE_VFLRelusOp : AVE_VecScalarOp<"vlrelus", [DeclareOpInterfaceMethods<AVELi
   let extraClassDeclaration = opNameDeclaration;
 }
 
-def AVE_VFMaxsOp : AVE_VecScalarOp<"vmaxs", [DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>]>{
+def AVE_VFMaxsOp : AVE_VecScalarOp<"vmaxs", [DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>], 1>{
   let extraClassDeclaration = opNameDeclaration;
 }
 
-def AVE_VFMinsOp : AVE_VecScalarOp<"vmins", [DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>]>{
+def AVE_VFMinsOp : AVE_VecScalarOp<"vmins", [DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>], 1>{
   let extraClassDeclaration = opNameDeclaration;
 }
 

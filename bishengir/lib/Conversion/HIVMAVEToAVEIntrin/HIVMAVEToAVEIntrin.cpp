@@ -4156,7 +4156,8 @@ struct HIVMVCIOpLowering : public ConvertOpToLLVMPattern<VFVCIOp> {
 template <typename OpTy, typename IntrV128F16OpTy, typename IntrV128S16OpTy,
           typename IntrV128U16OpTy, typename IntrV256S8OpTy,
           typename IntrV256U8OpTy, typename IntrV64F32OpTy,
-          typename IntrV64S32OpTy, typename IntrV64U32OpTy>
+          typename IntrV64S32OpTy, typename IntrV64U32OpTy,
+          typename IntrV128BF16OpTy = VunsupportedBinaryInstrOp>
 struct BinaryVectorScalarLowerToIntrinsic : public OpConversionPattern<OpTy> {
   explicit BinaryVectorScalarLowerToIntrinsic(LLVMTypeConverter &converter)
       : OpConversionPattern<OpTy>(converter, &converter.getContext()) {}
@@ -4188,8 +4189,8 @@ struct BinaryVectorScalarLowerToIntrinsic : public OpConversionPattern<OpTy> {
         createCorrespondingIntr<IntrV128F16OpTy, IntrV128S16OpTy,
                                 IntrV128U16OpTy, IntrV256S8OpTy, IntrV256U8OpTy,
                                 IntrV64F32OpTy, IntrV64S32OpTy, IntrV64U32OpTy,
-                                /*BF16*/ VunsupportedBinaryInstrOp>(
-            rewriter, loc, elementType, vecType, lhs, rhs, mask);
+                                IntrV128BF16OpTy>(rewriter, loc, elementType,
+                                                  vecType, lhs, rhs, mask);
     if (!res) {
       return rewriter.notifyMatchFailure(op, "cannot legalize op");
     }
@@ -4208,7 +4209,8 @@ struct BinaryVectorScalarLowerToIntrinsic : public OpConversionPattern<OpTy> {
 template <typename OpTy, typename IntrV128F16OpTy, typename IntrV128S16OpTy,
           typename IntrV128U16OpTy, typename IntrV256S8OpTy,
           typename IntrV256U8OpTy, typename IntrV64F32OpTy,
-          typename IntrV64S32OpTy, typename IntrV64U32OpTy>
+          typename IntrV64S32OpTy, typename IntrV64U32OpTy,
+          typename IntrV128BF16OpTy = VunsupportedBinaryInstrOp>
 struct BinaryVectorScalarRegEntry {
   using MainOp = OpTy;
   using IntrV128F16Op = IntrV128F16OpTy;
@@ -4219,6 +4221,7 @@ struct BinaryVectorScalarRegEntry {
   using IntrV64F32Op = IntrV64F32OpTy;
   using IntrV64S32Op = IntrV64S32OpTy;
   using IntrV64U32Op = IntrV64U32OpTy;
+  using IntrV128BF16Op = IntrV128BF16OpTy;
 };
 /// A container for op association entries facilitating the configuration of
 /// dialect conversion.
@@ -4230,7 +4233,8 @@ template <typename... Args> struct BinaryVectorScalarRegistryImpl {
         typename Args::IntrV128S16Op, typename Args::IntrV128U16Op,
         typename Args::IntrV256S8Op, typename Args::IntrV256U8Op,
         typename Args::IntrV64F32Op, typename Args::IntrV64S32Op,
-        typename Args::IntrV64U32Op>...>(Converter);
+        typename Args::IntrV64U32Op, typename Args::IntrV128BF16Op>...>(
+        Converter);
   }
 };
 
@@ -4252,13 +4256,13 @@ using BinaryVectorScalarRegistry = BinaryVectorScalarRegistryImpl<
         /*S16*/ VmaxsSXInstrOp, /*U16*/ VmaxsUXInstrOp,
         /*S8*/ VmaxsSXInstrOp, /*U8*/ VmaxsUXInstrOp,
         /*F32*/ VmaxsSXInstrOp, /*S32*/ VmaxsSXInstrOp,
-        /*U32*/ VmaxsUXInstrOp>,
+        /*U32*/ VmaxsUXInstrOp, /*BF16*/ VmaxsSXInstrOp>,
     BinaryVectorScalarRegEntry<
         /*OpTy*/ VFMinsOp, /*F16*/ VminsSXInstrOp,
         /*S16*/ VminsSXInstrOp, /*U16*/ VminsUXInstrOp,
         /*S8*/ VminsSXInstrOp, /*U8*/ VminsUXInstrOp,
         /*F32*/ VminsSXInstrOp, /*S32*/ VminsSXInstrOp,
-        /*U32*/ VminsUXInstrOp>,
+        /*U32*/ VminsUXInstrOp, /*BF16*/ VminsSXInstrOp>,
     BinaryVectorScalarRegEntry<
         /*OpTy*/ VMaxsSIOp, /*F16*/ VunsupportedBinaryInstrOp,
         /*S16*/ VmaxsSXInstrOp, /*U16*/ VunsupportedBinaryInstrOp,
