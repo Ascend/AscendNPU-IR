@@ -18,9 +18,11 @@
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HFusion/Analysis/ReshapeAnalyzer.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -31,6 +33,7 @@
 
 #include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/PatternMatch.h"
 
@@ -126,6 +129,72 @@ Value hfusion::castIndexTo(Value v, Type t, OpBuilder &opBuilder,
                           ->getResult(0)
                     : opBuilder.create<arith::IndexCastOp>(v.getLoc(), t, v)
                           ->getResult(0);
+}
+
+FailureOr<hfusion::CompareFn> utils::selectPredicate(arith::CmpFOp op) {
+  switch (op.getPredicate()) {
+  case arith::CmpFPredicate::OEQ:
+  case arith::CmpFPredicate::UEQ:
+    return hfusion::CompareFn::veq;
+  case arith::CmpFPredicate::ONE:
+  case arith::CmpFPredicate::UNE:
+    return hfusion::CompareFn::vne;
+  case arith::CmpFPredicate::OLE:
+  case arith::CmpFPredicate::ULE:
+    return hfusion::CompareFn::vle;
+  case arith::CmpFPredicate::OLT:
+  case arith::CmpFPredicate::ULT:
+    return hfusion::CompareFn::vlt;
+  case arith::CmpFPredicate::OGE:
+  case arith::CmpFPredicate::UGE:
+    return hfusion::CompareFn::vge;
+  case arith::CmpFPredicate::OGT:
+  case arith::CmpFPredicate::UGT:
+    return hfusion::CompareFn::vgt;
+  default:
+    return failure();
+  }
+}
+
+FailureOr<hfusion::CompareFn> utils::selectPredicate(arith::CmpIOp op) {
+  switch (op.getPredicate()) {
+  case arith::CmpIPredicate::eq:
+    return hfusion::CompareFn::veq;
+  case arith::CmpIPredicate::ne:
+    return hfusion::CompareFn::vne;
+  case arith::CmpIPredicate::slt:
+    return hfusion::CompareFn::vlt;
+  case arith::CmpIPredicate::sgt:
+    return hfusion::CompareFn::vgt;
+  case arith::CmpIPredicate::sle:
+    return hfusion::CompareFn::vle;
+  case arith::CmpIPredicate::sge:
+    return hfusion::CompareFn::vge;
+  case arith::CmpIPredicate::ule:
+    return hfusion::CompareFn::vule;
+  case arith::CmpIPredicate::uge:
+    return hfusion::CompareFn::vuge;
+  case arith::CmpIPredicate::ugt:
+    return hfusion::CompareFn::vugt;
+  case arith::CmpIPredicate::ult:
+    return hfusion::CompareFn::vult;
+  }
+  return failure();
+}
+
+FailureOr<hfusion::CompareFn> utils::selectI1Predicate(arith::CmpIOp op) {
+  switch (op.getPredicate()) {
+  case arith::CmpIPredicate::ult:
+    return hfusion::CompareFn::vlt;
+  case arith::CmpIPredicate::ugt:
+    return hfusion::CompareFn::vgt;
+  case arith::CmpIPredicate::ule:
+    return hfusion::CompareFn::vle;
+  case arith::CmpIPredicate::uge:
+    return hfusion::CompareFn::vge;
+  default:
+    return failure();
+  }
 }
 
 Operation *hfusion::createCmpOp(PatternRewriter &rewriter, Location loc,
@@ -574,6 +643,22 @@ std::optional<FusionKind> hfusion::tryGetFusionKind(func::FuncOp func) {
   return fusionKindAttr.getFusionKind();
 }
 
+bool hfusion::isAICFunc(func::FuncOp func) {
+  auto fusionKind = tryGetFusionKind(func);
+  if (fusionKind && (*fusionKind == FusionKind::ShallowCV ||
+                     *fusionKind == FusionKind::SingleCube))
+    return true;
+
+  auto funcCoreType = hivm::queryFuncCoreType(func);
+  return funcCoreType && *funcCoreType != hivm::TFuncCoreType::AIV;
+}
+
+bool hfusion::isVF(func::FuncOp func) { return hivm::isVF(func); }
+
+bool hfusion::isAIVFunc(func::FuncOp func) {
+  return !isAICFunc(func) && !isVF(func) && !hacc::utils::isHost(func);
+}
+
 void hfusion::trySetFusionKind(func::FuncOp func,
                                const FusionKind &fusionKind) {
   if (func->hasAttr(FusionKindAttr::name)) {
@@ -853,6 +938,13 @@ bool shouldApplyFlattenOpsPass(func::FuncOp func) {
 /// trace value and judge if it is function argument
 bool isFromFunctionArg(mlir::Value v) {
   return utils::tracebackMemRef(v).getDefiningOp() == nullptr;
+}
+
+bool isSIMDVectorFunction(Operation *op) {
+  if (!op->hasAttr(hivm::VectorFunctionAttr::name))
+    return false;
+  auto mode = op->getAttrOfType<hivm::VFModeAttr>(hivm::VFModeAttr::name);
+  return !mode || mode.getValue() == hivm::VFMode::SIMD;
 }
 
 } // namespace util
@@ -1752,6 +1844,13 @@ bool hfusion::isSupportedTreeReductionCandidate(Operation *op) {
   if (!isa<linalg::LinalgOp>(op))
     return false;
   auto linalgOp = cast<linalg::LinalgOp>(op);
+  if (auto genericOp = dyn_cast<linalg::GenericOp>(op)) {
+    // A bug in split_reduction prevents support for linalg.index payloads.
+    WalkResult result =
+        genericOp.walk([](linalg::IndexOp) { return WalkResult::interrupt(); });
+    if (result.wasInterrupted())
+      return false;
+  }
   if (!linalgOp.hasPureTensorSemantics())
     return false;
   if (linalgOp.getNumParallelLoops() == 0)
@@ -1765,6 +1864,14 @@ bool hfusion::isSupportedTreeReductionCandidate(Operation *op) {
 
   SmallVector<unsigned> reductionDims;
   linalgOp.getReductionDims(reductionDims);
+  // Generated fills and combining reductions assume that the
+  // utput preserves the parallel iterator order.
+  AffineMap outputMap =
+      linalgOp.getMatchingIndexingMap(linalgOp.getDpsInitOperand(0));
+  if (outputMap != AffineMap::getMultiDimIdentityMap(linalgOp.getNumLoops(),
+                                                     op->getContext())
+                       .dropResult(reductionDims.front()))
+    return false;
   auto initType = dyn_cast<RankedTensorType>(
       linalgOp.getDpsInitOperand(0)->get().getType());
   if (!initType || reductionDims.front() > initType.getRank())
@@ -1809,6 +1916,11 @@ bool hfusion::isRegisterTreeReductionCandidate(Operation *op) {
   if (!inputType || !initType || inputType.getRank() != 2 ||
       initType.getRank() != 1 || !inputType.hasStaticShape() ||
       !initType.hasStaticShape())
+    return false;
+
+  // Direct register tree reduction requires FP16/BF16/FP32 input type.
+  auto elemType = initType.getElementType();
+  if (!elemType.isF16() && !elemType.isBF16() && !elemType.isF32())
     return false;
 
   SmallVector<unsigned> reductionDims;
@@ -2049,9 +2161,74 @@ bool hfusion::shouldUseLegacyTreeReductionScope(Operation *op) {
   if (!isRegisterTreeReductionCandidate(op))
     return false;
 
-  // Always use the TreeReduceV2 in case when we don's use the tree-reduce
-  // algorithm ion autovectorize-v2.
-  return !shouldUseTreeReduction(op);
+  auto linalgOp = cast<linalg::LinalgOp>(op);
+  SmallVector<unsigned> reductionDims;
+  linalgOp.getReductionDims(reductionDims);
+  int64_t reductionSize = linalgOp.getStaticLoopRanges()[reductionDims.front()];
+  unsigned candidateCount = 0;
+  unsigned totalReductionCount = 0;
+  unsigned cumsumCount = 0;
+  int64_t cost = getRegisterTreeReductionCost(op, candidateCount,
+                                              totalReductionCount, cumsumCount);
+  // This fallback must precede the direct-register cost limit below.  A large
+  // reduction has a correspondingly large direct-tree cost, while the legacy
+  // path selected here uses a bounded hierarchical tree instead of fully
+  // expanding every leaf in registers.
+  bool singleChunkReduction =
+      candidateCount == 1 && totalReductionCount == 1 && cumsumCount == 0;
+  if (singleChunkReduction &&
+      isLoopCarriedF32ChunkedSum(linalgOp, reductionSize))
+    return true;
+
+  constexpr int64_t maxLegacyTreeReductionCost = 128;
+  // A bounded scope with more than one canonical RA reduction cannot use the
+  // single-loop direct rewrite safely. Preserve the established TreeReduceV2
+  // route when every reduction in the scope is such a candidate (the
+  // prepare_wy shape), rather than changing its summation order through
+  // regular fusion. A scope which also contains other reductions must remain
+  // on the regular path: TreeReduceV2 rewrites the surrounding loop and is
+  // not safe for that mixed graph. Retain the original one-candidate mixed
+  // scope behavior for compatibility.
+  bool allReductionsAreRegisterCandidates =
+      candidateCount > 1 && candidateCount == totalReductionCount;
+  bool singleCandidateMixedScope =
+      candidateCount == 1 && totalReductionCount > 1;
+  // A cumsum followed by the block-total reduction is accuracy-sensitive to
+  // the reduction association. Preserve the pre-policy TreeReduceV2 route for
+  // this exact one-scan/one-reduction shape, including its 128-element tile.
+  bool cumsumWithSingleReduction =
+      cumsumCount == 1 && candidateCount == 1 && totalReductionCount == 1;
+  // A single canonical 64-row RA reduction would otherwise use the direct
+  // register tree and exceed VF stack. Keep it on the established
+  // TreeReduceV2 lowering.
+  bool registerPressureFallback =
+      reductionSize == 64 && cumsumCount == 0 && candidateCount == 1 &&
+      totalReductionCount == 1;
+  constexpr int64_t maxLegacyTreeReductionSize = 64;
+  constexpr int64_t maxCumsumTreeReductionSize = 128;
+  bool supportedSize = reductionSize <= maxLegacyTreeReductionSize ||
+                       (cumsumWithSingleReduction &&
+                        reductionSize <= maxCumsumTreeReductionSize);
+  if (supportedSize &&
+      (allReductionsAreRegisterCandidates || singleCandidateMixedScope ||
+       cumsumWithSingleReduction || registerPressureFallback) &&
+      cost <= maxLegacyTreeReductionCost)
+    return true;
+
+  auto hasFusionCandidate = [](linalg::LinalgOp op) {
+    return llvm::any_of(op.getDpsInputOperands(), [](OpOperand *opOpnd) {
+      // Get initial value before reshape\slice.
+      auto init =
+          hfusion::traceReshapeOrSliceSingleProducerOrSelf(opOpnd->get());
+      auto defOp = init.getDefiningOp<linalg::LinalgOp>();
+      return defOp && linalg::isElementwise(defOp);
+    });
+  };
+
+  // Currently, the new tree reduction algorithm can outperform TreeReduceV2
+  // only when it enables fusion with a producer of a reduction input.
+  // Without fusion candidates, TreeReduceV2 is better.
+  return !hasFusionCandidate(linalgOp);
 }
 
 bool hfusion::shouldUseMaterializedTreeReduction(Operation *op) {

@@ -4,6 +4,9 @@
 #include "triton/Conversion/MLIRTypes.h"
 
 namespace mlir::triton {
+#ifdef BSPUB_DAVINCI_BISHENGIR
+class LinearLayout;
+#endif
 enum class ProgramIDDim : uint32_t;
 
 class TargetInfoBase {
@@ -47,6 +50,12 @@ public:
   }
 
 #ifdef BSPUB_DAVINCI_BISHENGIR
+  // Refinements must preserve scratch dimensions, repetitions and the emitted
+  // vector widths so allocation and the transfer schedule remain valid.
+  virtual void refineSharedMemoryLayout(const LinearLayout &src,
+                                        const LinearLayout &dst, int bitwidth,
+                                        LinearLayout &smem) const {}
+
   virtual void storeDGlobal(RewriterBase &rewriter, Location loc, Value ptr,
                             std::optional<Value> ctaId, Value val,
                             Value pred) const {

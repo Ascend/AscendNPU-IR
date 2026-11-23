@@ -21,7 +21,7 @@ static void canonicalizeSelectUsersInSCFIf(ModuleOp input) {
   llvm::MapVector<std::pair<Value, Value>, SmallVector<Operation *>>
       usersNeedreplaced;
   input.walk([&](arith::SelectOp selectOp) {
-    auto *parentBlock = selectOp->getBlock();
+    [[maybe_unused]] auto *parentBlock = selectOp->getBlock();
     Value condition = selectOp.getOperand(0);
     Value trueVal = selectOp.getOperand(1);
     Value falseVal = selectOp.getOperand(2);
@@ -81,7 +81,7 @@ class CombineTensorSelectAndIfPass
           CombineTensorSelectAndIfPass> {
 public:
   void runOnOperation() override {
-    MLIRContext *context = &getContext();
+    [[maybe_unused]] MLIRContext *context = &getContext();
     ModuleOp m = getOperation();
     canonicalizeSelectUsersInSCFIf(m);
 
@@ -133,7 +133,8 @@ public:
         newIfOp.getElseRegion().takeBody(ifOp.getElseRegion());
       } else {
         // Create an empty yield
-        auto yieldOp = newIfOp.getElseBodyBuilder().create<scf::YieldOp>(loc);
+        [[maybe_unused]] auto yieldOp =
+            newIfOp.getElseBodyBuilder().create<scf::YieldOp>(loc);
       }
 
       SmallVector<Value> ifYieldOperands = newIfOp.thenYield().getOperands();

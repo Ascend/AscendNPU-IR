@@ -15,9 +15,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -277,6 +277,14 @@ LogicalResult VCastOp::allocExtraBuffersIfPossible() {
       if (func->hasAttr(hivm::DisableSizeAlignForCastAttr::name)) {
         useExtraScheme = true;
       }
+    }
+    // Per-op attribute set by AlignAllocSize for high-rank VCast.
+    // Only honour it when the current rank is still > 3 — FlattenOps may
+    // have collapsed the shape after the attribute was set.
+    auto curRank = cast<ShapedType>(this->getSrc()[0].getType()).getRank();
+    if (curRank > 3 &&
+        getOperation()->hasAttr(hivm::DisableSizeAlignForCastAttr::name)) {
+      useExtraScheme = true;
     }
 
     SmallVector<int64_t> extraBufSizes;
@@ -620,9 +628,9 @@ static LogicalResult allocCumOpExtraBuffersIfPossible(CumOpWithTemp op) {
     op.emitWarning("already has extra temp buffer");
     return success();
   }
-  auto moduleOp = op.getOperation()-> template getParentOfType<mlir::ModuleOp>();
+  auto moduleOp = op.getOperation()->template getParentOfType<mlir::ModuleOp>();
   if (hacc::utils::isMemBasedArch(moduleOp)) {
-  // TODO: no temp buffer needed for cumsum and cumprod in Membase
+    // TODO: no temp buffer needed for cumsum and cumprod in Membase
     if constexpr (std::is_same_v<CumOpWithTemp, VCumsumOp> ||
                   std::is_same_v<CumOpWithTemp, VCumprodOp>) {
       return success();

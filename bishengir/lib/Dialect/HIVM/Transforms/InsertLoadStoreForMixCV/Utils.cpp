@@ -16,20 +16,17 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/Utils.h"
-#include "bishengir/Dialect/HIVM/IR/CustomOp/CustomOpUtils.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/DMA/Fixpipe/FixpipeCapabilityBinding.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/FixpipeCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Visitors.h"
 
-#include "llvm/ADT/APFloat.h"
-#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/TypeSwitch.h"
 
 #include <utility>
 
@@ -39,8 +36,28 @@
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 using namespace llvm;
+using bishengir::npu::FixpipeCapabilityRequestBuilder;
 
 namespace mlir::hivm {
+
+void ensureAllocInUbAddressSpaceIfNeeded(PatternRewriter &rewriter,
+                                         memref::AllocOp allocOp) {
+  auto oldType = allocOp.getType();
+  if (getOptionalHIVMAddressSpace(oldType))
+    return;
+
+  auto ubSpace = rewriter.getAttr<AddressSpaceAttr>(AddressSpace::UB);
+  auto newType = MemRefType::Builder(oldType).setMemorySpace(ubSpace);
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.modifyOpInPlace(allocOp,
+                           [&]() { allocOp.getMemref().setType(newType); });
+
+  // Preserve view and region-argument types until memory-scope inference.
+  rewriter.setInsertionPointAfter(allocOp);
+  auto cast = rewriter.create<memref::MemorySpaceCastOp>(
+      allocOp.getLoc(), oldType, allocOp.getMemref());
+  rewriter.replaceAllUsesExcept(allocOp.getMemref(), cast.getResult(), cast);
+}
 
 bool isConstZero(Value v) {
   auto type = getElementTypeOrSelf(v);
@@ -66,13 +83,9 @@ bool isConstZero(Value v) {
   return false;
 }
 
-bool isVectorBroadcast(VBrcOp vbrcOp) {
+bool isCubeAndVectorBroadcast(VBrcOp vbrcOp) {
   auto src = vbrcOp.getSrc();
-  if (!utils::isScalarLike(src))
-    return true;
-
-  // TODO: find why broadcast to l1 doesn't work
-  if (!isConstZero(src))
+  if (utils::isScalarLike(src) && isConstZero(src))
     return true;
 
   return false;
@@ -131,6 +144,24 @@ void forEachCustomLikeTempBuffer(Operation *op,
   }
 }
 
+// The address space a custom-like op declares for its operand at `operandIdx`
+// in arg_attrs, if any. Positions are laid out as [inputs..., outputs...],
+// matching operand numbers.
+std::optional<hivm::AddressSpace> getDeclaredAddressSpace(Operation *op,
+                                                          unsigned operandIdx) {
+  auto argAttrs =
+      op->getAttrOfType<ArrayAttr>(CustomLikeOpInterface::kArgAttrsName);
+  if (!argAttrs || operandIdx >= argAttrs.size())
+    return std::nullopt;
+  auto dict = dyn_cast_or_null<DictionaryAttr>(argAttrs[operandIdx]);
+  if (!dict)
+    return std::nullopt;
+  if (auto attr = dyn_cast_or_null<hivm::AddressSpaceAttr>(
+          dict.get(CustomLikeOpInterface::kAddressSpaceName)))
+    return attr.getAddressSpace();
+  return std::nullopt;
+}
+
 } // namespace
 
 std::pair<TCoreType, hivm::AddressSpace>
@@ -184,11 +215,28 @@ void insertPropagatorsForCustomLikeOp(llvm::ArrayRef<hivm::PIPE> pipes,
     tagOperandUp(&tempBuffer, info.inCoreType, info.inAddressSpace);
   });
 
-  // Out-pipe scope: values produced by the kernel.
+  // Out-pipe scope: values produced by the kernel. The pipe only says how an op
+  // moves data, not where it lands: an MTE2 op that writes L1 (the sparse
+  // gather) would be tagged GM from its pipe alone, and ResolvePropagation
+  // would then try to satisfy a local consumer with a GM load of a cbuf value,
+  // which hivm.hir.load rejects. Honor an output address space declared in
+  // arg_attrs over the pipe-derived default.
+  auto outCoreType = info.outCoreType;
+  auto outAddressSpace = info.outAddressSpace;
+  for (auto &init : structuredOp.getDpsInitsMutable()) {
+    auto declared = getDeclaredAddressSpace(op, init.getOperandNumber());
+    if (!declared)
+      continue;
+    auto it = kAddressSpace2CoreType.find(*declared);
+    if (it != kAddressSpace2CoreType.end()) {
+      outCoreType = it->second;
+      outAddressSpace = *declared;
+      break;
+    }
+  }
   for (auto &init : structuredOp.getDpsInitsMutable())
-    tagOperandUp(&init, info.outCoreType, info.outAddressSpace);
-  createPropagatorsDown(structuredOp, info.outCoreType, info.outAddressSpace,
-                        rewriter);
+    tagOperandUp(&init, outCoreType, outAddressSpace);
+  createPropagatorsDown(structuredOp, outCoreType, outAddressSpace, rewriter);
 }
 
 LogicalResult
@@ -452,8 +500,8 @@ static void collectRegionFlowEdges(RegionBranchOpInterface branch,
     branch.getSuccessorRegions(region, successorRegions);
     for (RegionSuccessor &successorRegion : successorRegions) {
       for (Block &block : region) {
-        auto terminator = dyn_cast<RegionBranchTerminatorOpInterface>(
-            block.getTerminator());
+        auto terminator =
+            dyn_cast<RegionBranchTerminatorOpInterface>(block.getTerminator());
         if (!terminator)
           continue;
         appendRegionFlowEdges(terminator.getSuccessorOperands(successorRegion),
@@ -564,16 +612,14 @@ UnrealizedConversionCastOp getUpPropagator(OpOperand *operand) {
 UnrealizedConversionCastOp getDownPropagator(OpResult result) {
   if (!result.hasOneUse())
     return nullptr;
-  auto propagateOp =
-      dyn_cast<UnrealizedConversionCastOp>(*result.user_begin());
+  auto propagateOp = dyn_cast<UnrealizedConversionCastOp>(*result.user_begin());
   if (propagateOp && propagateOp->hasAttr(kPropagateDownAttr))
     return propagateOp;
   return nullptr;
 }
 
 UnrealizedConversionCastOp getDownPropagator(Value value) {
-  if (auto propagateOp =
-          value.getDefiningOp<UnrealizedConversionCastOp>();
+  if (auto propagateOp = value.getDefiningOp<UnrealizedConversionCastOp>();
       propagateOp && propagateOp->hasAttr(kPropagateDownAttr))
     return propagateOp;
   for (Operation *user : value.getUsers()) {
@@ -609,7 +655,8 @@ bool haveSamePropagation(UnrealizedConversionCastOp lhs,
   return extractPropagatorInfo(lhs) == extractPropagatorInfo(rhs);
 }
 
-hivm::StoreOp insertStore(Value value, Location loc, PatternRewriter &rewriter) {
+hivm::StoreOp insertStore(Value value, Location loc,
+                          PatternRewriter &rewriter) {
   Type type = value.getType();
   auto tensorType = dyn_cast<TensorType>(type);
   if (!tensorType) {
@@ -674,26 +721,47 @@ hivm::FixpipeOp insertFixpipe(Value value, Location loc,
   auto fixpipeOp = rewriter.create<hivm::FixpipeOp>(loc, TypeRange(tensorType),
                                                     value, emptyOp);
   auto dmaMode = getInsertedFixpipeDmaMode(value, emptyOp, inferFixpipeDmaMode);
+  std::optional<FixpipeCapabilityRequestBuilder> builder =
+      FixpipeCapabilityRequestBuilder::from(fixpipeOp);
+  bool native = false;
+  if (builder) {
+    builder->dmaMode(dmaMode);
+    builder->srcAddressSpace(AddressSpace::L0C);
+    builder->dstAddressSpace(addressSpace);
+    const ModuleTargetAnalysis *targets = ModuleTargetAnalysisScope::current();
+    std::optional<CachedModuleTarget> cached =
+        targets ? targets->lookup(fixpipeOp) : std::nullopt;
+    if (cached) {
+      auto storage = builder->build();
+      native = bishengir::npu::queryNativeSupport(cached->architecture,
+                                                  storage.getRequest()) ==
+               bishengir::npu::NativeSupport::Native;
+    }
+  }
+  if (!native) {
+    fixpipeOp.emitError("inserted fixpipe is not Native for dma_mode ")
+        << stringifyFixpipeDMAMode(dmaMode);
+    llvm::report_fatal_error("inserted fixpipe is not Native");
+  }
   auto dmaModeAttr = FixpipeDMAModeAttr::get(rewriter.getContext(), dmaMode);
   fixpipeOp.setDmaModeAttr(dmaModeAttr);
   fixpipeOp->setAttr(hivm::kInsertedFixpipeAttr::name, rewriter.getUnitAttr());
   return fixpipeOp;
 }
 
-/// Creates a memref allocation with the specified address space.
+/// Creates a memref allocation with the specified address space. Dynamic
+/// buffer sizes are inferred later by hivm-infer-buffer-size.
 AllocationResult
 createAddressSpaceAllocation(PatternRewriter &rewriter, Location loc,
                              ArrayRef<int64_t> shape, Type elemType,
-                             ValueRange dynamicSizes, AddressSpace addrSpace,
-                             ArrayRef<int64_t> maybeStaticAllocSize) {
+                             ValueRange dynamicSizes, AddressSpace addrSpace) {
   MLIRContext *ctx = rewriter.getContext();
 
   auto spaceAttr = AddressSpaceAttr::get(ctx, addrSpace);
   auto spacedType = MemRefType::get(shape, elemType, nullptr, spaceAttr);
   auto plainType = MemRefType::get(shape, elemType);
 
-  Value alloc = createAllocWithMark(rewriter, loc, spacedType, dynamicSizes,
-                                    maybeStaticAllocSize, elemType);
+  Value alloc = rewriter.create<memref::AllocOp>(loc, spacedType, dynamicSizes);
 
   Value cast =
       rewriter.create<memref::MemorySpaceCastOp>(loc, plainType, alloc);
@@ -704,39 +772,35 @@ createAddressSpaceAllocation(PatternRewriter &rewriter, Location loc,
 /// Creates a UB (Unified Buffer) allocation matching `tensorValue`'s shape,
 /// including dynamic extents.
 AllocationResult createUBAllocation(PatternRewriter &rewriter, Location loc,
-                                    Value tensorValue,
-                                    ArrayRef<int64_t> maybeStaticTotalSize) {
+                                    Value tensorValue) {
   auto tensorType = cast<RankedTensorType>(tensorValue.getType());
   Value shapeSource = peelTensorShapeSourceForAllocSizes(tensorValue);
   SmallVector<Value> dynamicSizes =
       hivm::getTensorDynamicValues(rewriter, loc, shapeSource);
   return createAddressSpaceAllocation(rewriter, loc, tensorType.getShape(),
                                       tensorType.getElementType(), dynamicSizes,
-                                      AddressSpace::UB, maybeStaticTotalSize);
+                                      AddressSpace::UB);
 }
 
 /// Creates an L1 allocation matching `tensorValue`'s shape, including dynamic
 /// extents.
 AllocationResult createL1Allocation(PatternRewriter &rewriter, Location loc,
-                                    Value tensorValue,
-                                    ArrayRef<int64_t> maybeStaticTotalSize) {
+                                    Value tensorValue) {
   auto tensorType = cast<RankedTensorType>(tensorValue.getType());
   Value shapeSource = peelTensorShapeSourceForAllocSizes(tensorValue);
   SmallVector<Value> dynamicSizes =
       hivm::getTensorDynamicValues(rewriter, loc, shapeSource);
   return createAddressSpaceAllocation(rewriter, loc, tensorType.getShape(),
                                       tensorType.getElementType(), dynamicSizes,
-                                      AddressSpace::L1, maybeStaticTotalSize);
+                                      AddressSpace::L1);
 }
 
 std::tuple<AllocationResult, bufferization::ToTensorOp>
 insertTightCoupledBufferToL1(Value value, Location loc,
-                             PatternRewriter &rewriter,
-                             ArrayRef<int64_t> maybeStaticTotalSize) {
+                             PatternRewriter &rewriter) {
   rewriter.setInsertionPointAfterValue(value);
   auto tensorType = cast<RankedTensorType>(value.getType());
-  auto allocationResult =
-      createL1Allocation(rewriter, loc, value, maybeStaticTotalSize);
+  auto allocationResult = createL1Allocation(rewriter, loc, value);
   auto [l1Memref, plainMemref] = allocationResult;
 
   auto toTensorOp = rewriter.create<bufferization::ToTensorOp>(
@@ -747,14 +811,12 @@ insertTightCoupledBufferToL1(Value value, Location loc,
 
 std::tuple<AllocationResult, bufferization::ToTensorOp>
 insertTightCoupledBufferToUB(Value value, Location loc,
-                             PatternRewriter &rewriter,
-                             ArrayRef<int64_t> maybeStaticTotalSize) {
+                             PatternRewriter &rewriter) {
   rewriter.setInsertionPointAfterValue(value);
 
   auto resultType = cast<RankedTensorType>(value.getType());
 
-  auto coupledBuffer =
-      createUBAllocation(rewriter, loc, value, maybeStaticTotalSize);
+  auto coupledBuffer = createUBAllocation(rewriter, loc, value);
   auto [ubMemref, plainMemref] = coupledBuffer;
 
   // Convert memref back to tensor for users

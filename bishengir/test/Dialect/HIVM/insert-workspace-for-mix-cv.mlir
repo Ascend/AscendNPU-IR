@@ -134,7 +134,6 @@ func.func @insert_workspace_for_cv_dynamic(%arg0: i64 {hacc.arg_type = #hacc.arg
     %2 = hivm.hir.mmadL1 ins(%arg2, %arg3, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
     %extracted_slice = tensor.extract_slice %2[0, 0] [%arg6, %arg7] [1, 1] : tensor<16x16xf32> to tensor<?x?xf32>
     // CHECK: %[[WORKSPACE:.*]] = memref_ext.alloc_workspace(%arg6, %arg7) : memref<?x?xf32>
-    // CHECK: annotation.mark %[[WORKSPACE]] {buffer_size_in_byte = 1024 : i64} : memref<?x?xf32>
     // CHECK: %[[OUTPUT_TENSOR:.*]] = bufferization.to_tensor %[[WORKSPACE]] restrict writable : memref<?x?xf32>
     %3 = tensor.empty(%arg6, %arg7) : tensor<?x?xf32>
     %4 = hivm.hir.fixpipe {enable_nz2nd} ins(%extracted_slice : tensor<?x?xf32>) outs(%3 : tensor<?x?xf32>) -> tensor<?x?xf32>

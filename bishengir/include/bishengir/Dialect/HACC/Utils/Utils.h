@@ -25,6 +25,7 @@
 #include "llvm/ADT/SmallSet.h"
 
 #include <type_traits>
+#include <utility>
 
 namespace mlir {
 namespace linalg {
@@ -38,20 +39,15 @@ namespace utils {
 // Utility functions for HACCFunction
 //===----------------------------------------------------------------------===//
 
-template <typename SourceFuncTy, typename TargetFuncTy>
-struct FuncTyMapping;
+template <typename SourceFuncTy, typename TargetFuncTy> struct FuncTyMapping;
 
-template <>
-struct FuncTyMapping<func::FuncOp, hacc::HACCFunction>;
+template <> struct FuncTyMapping<func::FuncOp, hacc::HACCFunction>;
 
-template <>
-struct FuncTyMapping<LLVM::LLVMFuncOp, hacc::HACCFunction>;
+template <> struct FuncTyMapping<LLVM::LLVMFuncOp, hacc::HACCFunction>;
 
-template <>
-struct FuncTyMapping<hacc::HACCFunction, func::FuncOp>;
+template <> struct FuncTyMapping<hacc::HACCFunction, func::FuncOp>;
 
-template <>
-struct FuncTyMapping<hacc::HACCFunction, LLVM::LLVMFuncOp>;
+template <> struct FuncTyMapping<hacc::HACCFunction, LLVM::LLVMFuncOp>;
 
 struct ExternalFuncInfo {
   StringRef funcName;
@@ -80,6 +76,19 @@ bool isDevice(Operation *func);
 
 /// Return if the function is a device entry function.
 bool isDeviceEntry(Operation *func);
+
+/// Marks a separately compiled device function called by another device
+/// function. The caller must supply its arguments and memory region.
+/// The compiler does not allocate any memory for this function.
+/// The caller owns pipeline completion and any cross-core join at call
+/// boundaries; the export does not receive an unconditional exit barrier.
+inline constexpr llvm::StringLiteral kExportDeviceAttrName = "export_device";
+
+bool isExportedDevice(Operation *func);
+
+/// Functions requiring independent op compilation. Device entries are roots;
+/// exported device functions are non-entry roots.
+bool isCompilationRoot(Operation *func);
 
 /// Return if the function inputs/outputs are strictly not alias.
 bool hasNoIOAlias(Operation *func);
@@ -134,11 +143,21 @@ void setNPUTargetSpec(ModuleOp op, HACCTargetDeviceSpecInterface spec);
 /// Get integer value from the spec entry.
 int64_t getIntegerSpecValue(DataLayoutEntryInterface entry);
 
+/// Get the number of UB bank groups defined by the module's target spec.
+/// Returns the default count when the spec entry is absent.
+uint32_t getBankGroupCount(ModuleOp op);
+
 std::optional<llvm::VersionTuple> getHIVMCVersion(ModuleOp op);
 
 bool isAscend910_95(ModuleOp op);
 
 std::optional<TargetDevice> getTargetDevice(ModuleOp op);
+
+/// Default AIC:AIV ratio from the target spec, reduced
+/// (CubeCoreCount : VectorCoreCount). Empty when the spec has no usable
+/// counts.
+std::optional<std::pair<int32_t, int32_t>>
+getDefaultCoreRatio(TargetDevice targetDevice);
 
 void setTargetDevice(ModuleOp op, TargetDevice targetDevice);
 
@@ -153,8 +172,16 @@ bool isAscend310B(TargetDevice targetDevice);
 bool isAscend950(TargetDevice targetDevice);
 bool isAscend950(llvm::StringRef targetDevice);
 
+bool isAscend960(TargetDevice targetDevice);
+bool isAscend960(llvm::StringRef targetDevice);
+
 bool isRegBasedArch(TargetDevice targetDevice);
 bool isRegBasedArch(llvm::StringRef targetDevice);
+
+/// Whether the shared C310/920R1 vector lowering pipeline is supported.
+/// This is narrower than register-based execution: M300 is not included.
+bool supportsRegBaseVectorLowering(TargetDevice targetDevice);
+bool supportsRegBaseVectorLowering(ModuleOp op);
 
 bool isFFTSSupportedArch(TargetDevice targetDevice);
 
@@ -168,14 +195,16 @@ bool isAscend310B(ModuleOp op);
 
 bool isAscend950(ModuleOp op);
 
+bool isAscend960(ModuleOp op);
+
 /// Returns true if the module already has hacc.target set.
 ///
 /// MLIR verifiers are invoked at parse time, before any passes have run.
 /// At that point hacc-append-device-spec hasn't added hacc.target yet, that's
 /// why an additional check is required.
 inline bool hasTargetAttr(mlir::ModuleOp moduleOp) {
-  return moduleOp && moduleOp->getAttrOfType<hacc::TargetAttr>(
-                         hacc::TargetAttr::name);
+  return moduleOp &&
+         moduleOp->getAttrOfType<hacc::TargetAttr>(hacc::TargetAttr::name);
 }
 
 bool isRegBasedArch(ModuleOp op);

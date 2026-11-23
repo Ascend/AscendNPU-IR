@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory -split-input-file -verify-diagnostics | FileCheck %s
 
 // SIMD-only coverage for the "no option" case: the `shared-mem-dynamic-size`
 // option defaults to -1 when unset, and SIMT/MIX functions are then rejected

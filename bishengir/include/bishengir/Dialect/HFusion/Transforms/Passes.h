@@ -55,6 +55,8 @@ namespace hfusion {
 
 constexpr llvm::StringLiteral kFillVFAttrName = "hfusion.has_fill";
 
+std::unique_ptr<Pass> createPrepareL1GatherPass();
+
 class OutlineFuncOptions : public HFusionOpFusionOptions {
 public:
   OutlineFuncOptions(const HFusionOpFusionOptions &options, func::FuncOp funcOp)
@@ -109,6 +111,8 @@ createHFusionAutoSchedulePass(const AutoScheduleOptions &options = {});
 std::unique_ptr<Pass>
 createHFusionAutoVectorizePass(const AutoVectorizeOptions &options = {});
 
+std::unique_ptr<Pass> createSelectHIVMVectorizePass();
+
 /// Create a pass to handle non-vectorizeable linalg.generic cases
 std::unique_ptr<Pass> createGenericUnrollerPass();
 
@@ -120,7 +124,8 @@ std::unique_ptr<Pass>
 createHFusionAutoVectorizeV2Pass(const AutoVectorizeV2Options &options = {});
 
 /// Register Tree Reduce v2 pass
-std::unique_ptr<Pass> createTreeReduceV2Pass(const TreeReduceV2Options &options = {});
+std::unique_ptr<Pass>
+createTreeReduceV2Pass(const TreeReduceV2Options &options = {});
 
 // Create a pass to perform elemwise op fusion before vectorization
 std::unique_ptr<Pass> createPreVectorizationFusionPass(
@@ -152,6 +157,9 @@ std::unique_ptr<Pass> createConvertGenericToNamedOpPass();
 std::unique_ptr<Pass>
 createFlattenOpsPass(const FlattenOpsOptions &options = {});
 
+/// Collapse local tensor regions using compatible reduction dimensions.
+std::unique_ptr<Pass> createFlattenReductionRegionsPass();
+
 /// Create a pass to move output tensor results' tied init operand to function
 /// parameters.
 std::unique_ptr<Pass>
@@ -170,7 +178,8 @@ createHFusionNormalizeOpsPass(const NormalizeOptions &options = {});
 
 /// Run the RegBase normalize.
 LogicalResult runNormalizeRegBase(Operation *op, bool enableHighPrecision,
-                                  bool enableFastDiv);
+                                  bool enableFastDiv, bool enableDivRemPow2,
+                                  bool enableFma);
 
 /// Create a pass to normalize slice operations, including
 /// extract_slice/insert_slice.
@@ -188,8 +197,7 @@ createPackTilingDataPass(const PackTilingDataOptions &options = {});
 std::unique_ptr<Pass> createConstantizeTilingDataPass();
 
 /// Create a pass to label the triton entry kernel
-std::unique_ptr<Pass>
-createAdaptTritonKernelPass();
+std::unique_ptr<Pass> createAdaptTritonKernelPass();
 
 /// Create a pass to infer func fusion kind
 std::unique_ptr<Pass> createInferFuncFusionKind();
@@ -209,9 +217,14 @@ std::unique_ptr<Pass> createLegalizeBF16Pass();
 /// Create a pass to legalize fp8 type
 std::unique_ptr<Pass> createLegalizeFP8Pass();
 
+/// Carry scalar f8 conditional results as i8 to work around backend
+/// limitations.
+std::unique_ptr<Pass> createLegalizeScalarFP8Pass();
+
 /// Create a pass to legalize bool
 std::unique_ptr<Pass> createLegalizeBoolPass();
-std::unique_ptr<Pass> createLegalizeBoolPass(const LegalizeBoolPassOptions &options);
+std::unique_ptr<Pass>
+createLegalizeBoolPass(const LegalizeBoolPassOptions &options);
 
 /// create a pass to reorder hfusion ops by bfs
 std::unique_ptr<Pass> createReorderOpsByBFS();
@@ -246,7 +259,6 @@ createWrapHostFuncPass(const WrapHostFuncOptions &options = {});
 std::unique_ptr<Pass> createFoldSymbolicDimPass();
 std::unique_ptr<Pass> createUnfoldSymbolicDimPass();
 std::unique_ptr<Pass> createDropSymbolsPass();
-std::unique_ptr<Pass> createFoldExtractInsertPairPass();
 
 /// Create a pass to decompose ops that implemented AggregatedOpInterface.
 std::unique_ptr<Pass> createDecomposePass(const DecomposeOptions &options = {});
@@ -258,7 +270,8 @@ std::unique_ptr<Pass> createEliminateDuplicateFuncsPass();
 std::unique_ptr<Pass> createRemoveCacheIO();
 
 /// Create a pass to uplift while loops to for loops.
-std::unique_ptr<Pass> createUpliftWhileToForPass();
+std::unique_ptr<Pass>
+createUpliftWhileToForPass(const UpliftWhileToForOptions &options = {});
 
 /// Create a pass to fold unit dims in linalg ops on tensors
 std::unique_ptr<Pass> createHFusionFoldUnitDimsPass();
@@ -273,10 +286,11 @@ std::unique_ptr<Pass> createPrepareI1Nx1ForVectorizationPass();
 std::unique_ptr<Pass> createSimplifyVFArgsPass();
 
 // Create a pass to Merge VF function
-std::unique_ptr<Pass> createMergeVecScopePass(const MergeVecScopeOptions &options = {});
+std::unique_ptr<Pass>
+createMergeVecScopePass(const MergeVecScopeOptions &options = {});
 
-/// Create a pass to pull slice into vector function.
-std::unique_ptr<Pass> createPullSliceIntoVectorFunctionPass();
+/// Create a pass to pull constant fills into vector function.
+std::unique_ptr<Pass> createPullFillIntoVectorFunctionPass();
 
 // Create a pass to vectorize hfusion ops.
 std::unique_ptr<Pass>
@@ -291,7 +305,6 @@ std::unique_ptr<Pass> createRemoveRedundantWriteAndReadPairPass();
 // Create a pass to unroll small trip-count scf.for in VF and forward
 // transfer_write -> transfer_read so intermediates stay in vector registers.
 std::unique_ptr<Pass> createUnrollAndForwardPass();
-
 
 // Create a pass to hoist loop-carried transfer_read/transfer_write pairs out of
 // scf.for loops, keeping the temporary value in registers across iterations.

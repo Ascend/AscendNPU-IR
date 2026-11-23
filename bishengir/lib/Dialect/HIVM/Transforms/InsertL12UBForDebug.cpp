@@ -131,7 +131,7 @@ public:
       return failure();
     }
 
-    ArrayRef<int64_t> shape = resultTensorType.getShape();
+    [[maybe_unused]] ArrayRef<int64_t> shape = resultTensorType.getShape();
     assert(shape.size() == 2 || shape.size() == 3);
     return insertL12UBForOperand(rewriter, op);
   }

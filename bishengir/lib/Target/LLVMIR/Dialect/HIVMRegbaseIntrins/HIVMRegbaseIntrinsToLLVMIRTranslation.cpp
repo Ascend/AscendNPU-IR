@@ -18,11 +18,58 @@
 #include "mlir/Target/LLVMIR/ModuleTranslation.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicsHIVM.h"
+#include "llvm/Support/Compiler.h"
 
 using namespace mlir;
 using namespace mlir::LLVM;
 
 namespace {
+
+LLVM_ATTRIBUTE_NOINLINE void
+convertHIVMRegbaseIntrinsic(Operation &opInst, llvm::IRBuilderBase &builder,
+                            LLVM::ModuleTranslation &moduleTranslation,
+                            llvm::Intrinsic::ID intrinsic, unsigned numResults,
+                            ArrayRef<unsigned> overloadedResults,
+                            ArrayRef<unsigned> overloadedOperands) {
+  auto *inst = LLVM::detail::createIntrinsicCall(
+      builder, moduleTranslation, &opInst, intrinsic, numResults,
+      overloadedResults, overloadedOperands, /*immArgPositions=*/{},
+      /*immArgAttrNames=*/{});
+  auto function = opInst.getParentOfType<LLVM::LLVMFuncOp>();
+  bool hasScatter =
+      function &&
+      function
+          .walk([](Operation *op) {
+            return isa<hivm_regbaseintrins::VScatterV64S32InstrOp>(op)
+                       ? WalkResult::interrupt()
+                       : WalkResult::advance();
+          })
+          .wasInterrupted();
+  if (hasScatter && inst->onlyReadsMemory()) {
+    // CANN 9.2 can reuse a pre-scatter vector load despite VST_VLD.
+    // Forget pointer invariance for reads in this VF, including loop reads
+    // and aliases. This is a compiler compatibility measure, not a fence;
+    // the AVE program must still provide the required hardware ordering.
+    llvm::IRBuilderBase::InsertPointGuard guard(builder);
+    builder.SetInsertPoint(inst);
+    for (unsigned i = 0; i < inst->arg_size(); ++i)
+      if (auto *type =
+              dyn_cast<llvm::PointerType>(inst->getArgOperand(i)->getType());
+          type && type->getAddressSpace() == 6)
+        inst->setArgOperand(
+            i, builder.CreateLaunderInvariantGroup(inst->getArgOperand(i)));
+  }
+  if (isa<hivm_regbaseintrins::VScatterV64S32InstrOp>(opInst)) {
+    // Older LLVM definitions mark the scatter destination readonly.
+    auto *callee = inst->getCalledFunction();
+    callee->removeParamAttr(1, llvm::Attribute::ReadOnly);
+    callee->addParamAttr(1, llvm::Attribute::WriteOnly);
+    inst->removeParamAttr(1, llvm::Attribute::ReadOnly);
+    inst->addParamAttr(1, llvm::Attribute::WriteOnly);
+  }
+  if (numResults != 0)
+    moduleTranslation.mapValue(opInst.getResult(0), inst);
+}
 
 /// Create metadata nodes as {mdName, value} and attach to func
 void addAnnotationMD(llvm::Function *func, StringRef mdName, uint32_t value) {
@@ -34,8 +81,77 @@ void addAnnotationMD(llvm::Function *func, StringRef mdName, uint32_t value) {
           llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), value))};
 
   llvm::MDNode *mdNode = llvm::MDNode::get(ctx, mdVals);
-  assert(mdNode!=nullptr);
+  assert(mdNode != nullptr);
   func->addMetadata(llvm::LLVMContext::MD_annotation, *mdNode);
+}
+
+LogicalResult convertLaunchFunc(hivm_regbaseintrins::LaunchFuncOp launchOp,
+                                llvm::IRBuilderBase &builder,
+                                LLVM::ModuleTranslation &moduleTranslation) {
+  llvm::Value *blockX =
+      moduleTranslation.lookupValues(launchOp.getBlockSizeX()).front();
+  llvm::Value *blockY =
+      moduleTranslation.lookupValues(launchOp.getBlockSizeY()).front();
+  constexpr uint64_t configValYShift = 16;
+  llvm::Value *blockZ =
+      moduleTranslation.lookupValues(launchOp.getBlockSizeZ()).front();
+  constexpr uint64_t configValZShift = 32;
+  llvm::Value *operand =
+      builder.CreateOr(builder.CreateShl(blockY, configValYShift),
+                       builder.CreateShl(blockZ, configValZShift));
+  operand = builder.CreateOr(operand, blockX);
+  builder.CreateIntrinsic(llvm::Intrinsic::hivm_store_vfsimt_info, {},
+                          {operand});
+
+  llvm::Function *func = moduleTranslation.lookupFunction(launchOp.getKernel());
+  auto funcOperands = moduleTranslation.lookupValues(launchOp.getOpnds());
+  auto *callInst = builder.CreateCall(func, funcOperands);
+  callInst->setCallingConv(llvm::CallingConv::TPE_SIMTEntry);
+  return success();
+}
+
+/// Rewrite a dual-output predicate interleave/de-interleave op into two v2
+/// part-select calls under the dav-920r1 (V121) toolchain, mirroring how
+/// VDintlvInstrOp is split. `isDeintlv` selects pdintlvv2 vs pintlvv2; the
+/// element bit width is taken from the op mnemonic suffix (b8/b16/b32).
+template <bool isDeintlv, typename OpTy>
+LogicalResult
+rewritePredicateInterleaveV2(OpTy op, llvm::IRBuilderBase &builder,
+                             LLVM::ModuleTranslation &moduleTranslation) {
+  auto moduleOp = op->template getParentOfType<mlir::ModuleOp>();
+  if (!moduleOp || !moduleOp->hasAttr(
+                       hivm_regbaseintrins::kDavinciV2IntrinsicsModuleAttrName))
+    return failure();
+
+  auto operands = moduleTranslation.lookupValues(op.getOperands());
+  llvm::Value *src0 = operands[0];
+  llvm::Value *src1 = operands[1];
+
+  llvm::Intrinsic::ID id;
+  if (StringRef(op.getOperationName()).contains(".b8"))
+    id = isDeintlv ? llvm::Intrinsic::HIVMIntrinsics::hivm_pdintlvv2_b8
+                   : llvm::Intrinsic::HIVMIntrinsics::hivm_pintlvv2_b8;
+  else if (StringRef(op.getOperationName()).contains(".b16"))
+    id = isDeintlv ? llvm::Intrinsic::HIVMIntrinsics::hivm_pdintlvv2_b16
+                   : llvm::Intrinsic::HIVMIntrinsics::hivm_pintlvv2_b16;
+  else
+    id = isDeintlv ? llvm::Intrinsic::HIVMIntrinsics::hivm_pdintlvv2_b32
+                   : llvm::Intrinsic::HIVMIntrinsics::hivm_pintlvv2_b32;
+
+  // The predicate interleave intrinsics use the fixed llvm.v256i1 predicate
+  // type (no overloads), so no type list may be passed to getDeclaration.
+  llvm::Function *fn = llvm::Intrinsic::getDeclaration(
+      builder.GetInsertBlock()->getModule(), id, {});
+  llvm::Value *resLo =
+      builder.CreateCall(fn, {src0, src1, builder.getInt32(0)});
+  llvm::Value *resHi =
+      builder.CreateCall(fn, {src0, src1, builder.getInt32(1)});
+  llvm::Type *structType = moduleTranslation.convertType(op.getRes().getType());
+  llvm::Value *structVal = llvm::PoisonValue::get(structType);
+  structVal = builder.CreateInsertValue(structVal, resLo, 0);
+  structVal = builder.CreateInsertValue(structVal, resHi, 1);
+  moduleTranslation.mapValue(op.getRes()) = structVal;
+  return success();
 }
 
 /// Implementation of the dialect interface that converts operations belonging
@@ -51,41 +167,77 @@ public:
   convertOperation(Operation *op, llvm::IRBuilderBase &builder,
                    LLVM::ModuleTranslation &moduleTranslation) const final {
     Operation &opInst = *op;
+
+    // hivm.vdintlv: the default toolchain lowers `llvm.hivm.vdintlv.<vec>`
+    // (2 results) while a toolchain that only provides the v2 form registers
+    // `llvm.hivm.vdintlvv2.<vec>(src0, src1, part) -> <vec>` where
+    // part = 0(LOWER)/1(HIGHER). When the module is flagged with the v2
+    // intrinsics attribute, split the single op into two v2 calls and
+    // reassemble the struct result; otherwise fall through to the generated
+    // conversion below to keep the original behavior.
+    if (auto vdintlvOp = dyn_cast<hivm_regbaseintrins::VDintlvInstrOp>(op)) {
+      auto moduleOp = op->getParentOfType<mlir::ModuleOp>();
+      if (moduleOp &&
+          moduleOp->hasAttr(
+              hivm_regbaseintrins::kDavinciV2IntrinsicsModuleAttrName)) {
+        auto operands = moduleTranslation.lookupValues(vdintlvOp.getOperands());
+        llvm::Value *src0 = operands[0];
+        llvm::Value *src1 = operands[1];
+        llvm::Type *vecType = src0->getType();
+        llvm::Function *fn = llvm::Intrinsic::getDeclaration(
+            builder.GetInsertBlock()->getModule(),
+            llvm::Intrinsic::HIVMIntrinsics::hivm_vdintlvv2, {vecType});
+        llvm::Value *resLo =
+            builder.CreateCall(fn, {src0, src1, builder.getInt32(0)});
+        llvm::Value *resHi =
+            builder.CreateCall(fn, {src0, src1, builder.getInt32(1)});
+        llvm::Type *structType =
+            moduleTranslation.convertType(vdintlvOp.getRes().getType());
+        llvm::Value *structVal = llvm::PoisonValue::get(structType);
+        structVal = builder.CreateInsertValue(structVal, resLo, 0);
+        structVal = builder.CreateInsertValue(structVal, resHi, 1);
+        moduleTranslation.mapValue(vdintlvOp.getRes()) = structVal;
+        return success();
+      }
+    }
+
+    // hivm.pintlv.b<w>/hivm.pdintlv.b<w>: like vdintlv, the v2 toolchain only
+    // provides the part-select single-output forms pintlvv2/pdintlvv2
+    // (src0, src1, part) -> pred with part = 0(LOWER)/1(HIGHER). When the
+    // module is flagged with the v2 intrinsics attribute, split the dual-output
+    // predicate interleave/de-interleave into two v2 calls.
+    if (auto pintlvOp = dyn_cast<hivm_regbaseintrins::PintlvB8InstrOp>(op))
+      if (succeeded(rewritePredicateInterleaveV2<false>(pintlvOp, builder,
+                                                        moduleTranslation)))
+        return success();
+    if (auto pintlvOp = dyn_cast<hivm_regbaseintrins::PintlvB16InstrOp>(op))
+      if (succeeded(rewritePredicateInterleaveV2<false>(pintlvOp, builder,
+                                                        moduleTranslation)))
+        return success();
+    if (auto pintlvOp = dyn_cast<hivm_regbaseintrins::PintlvB32InstrOp>(op))
+      if (succeeded(rewritePredicateInterleaveV2<false>(pintlvOp, builder,
+                                                        moduleTranslation)))
+        return success();
+    if (auto pdintlvOp = dyn_cast<hivm_regbaseintrins::PDintlvB8InstrOp>(op))
+      if (succeeded(rewritePredicateInterleaveV2<true>(pdintlvOp, builder,
+                                                       moduleTranslation)))
+        return success();
+    if (auto pdintlvOp = dyn_cast<hivm_regbaseintrins::PDintlvB16InstrOp>(op))
+      if (succeeded(rewritePredicateInterleaveV2<true>(pdintlvOp, builder,
+                                                       moduleTranslation)))
+        return success();
+    if (auto pdintlvOp = dyn_cast<hivm_regbaseintrins::PDintlvB32InstrOp>(op))
+      if (succeeded(rewritePredicateInterleaveV2<true>(pdintlvOp, builder,
+                                                       moduleTranslation)))
+        return success();
+
 #include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseConversions.inc"
 
     // `hivm_regbaseintrins.launch_func` will emit two instructions:
     // - hivm.store.vfsimt.info
     // - call simt_func @foo
-    if (auto launchOp = dyn_cast<hivm_regbaseintrins::LaunchFuncOp>(op)) {
-      // Firstly setup the configuration for vfsimt.info, verified with
-      // test/CodeGen/HiIPU/V310/simt_entry_args_convert/cast_address_space.ll
-      // | reserve |    z    |    y    |    x    |
-      // 64       48        32        16         0
-      llvm::Value *blockX =
-          moduleTranslation.lookupValues(launchOp.getBlockSizeX()).front();
-      llvm::Value *blockY =
-          moduleTranslation.lookupValues(launchOp.getBlockSizeY()).front();
-      constexpr uint64_t configValYShift = 16;
-      llvm::Value *blockZ =
-          moduleTranslation.lookupValues(launchOp.getBlockSizeZ()).front();
-      constexpr uint64_t configValZShift = 32;
-      llvm::Value *operand =
-          builder.CreateOr(builder.CreateShl(blockY, configValYShift),
-                           builder.CreateShl(blockZ, configValZShift));
-      operand = builder.CreateOr(operand, blockX);
-      // Create the intrinsic with the proper block dimensions
-      builder.CreateIntrinsic(llvm::Intrinsic::hivm_store_vfsimt_info, {},
-                              {operand});
-
-      // Now generate the CallInst
-      llvm::Function *func =
-          moduleTranslation.lookupFunction(launchOp.getKernel());
-      auto funcOperands = moduleTranslation.lookupValues(launchOp.getOpnds());
-      auto *callInst = builder.CreateCall(func, funcOperands);
-      // ... and set the calling convention
-      callInst->setCallingConv(llvm::CallingConv::TPE_SIMTEntry);
-      return success();
-    }
+    if (auto launchOp = dyn_cast<hivm_regbaseintrins::LaunchFuncOp>(op))
+      return convertLaunchFunc(launchOp, builder, moduleTranslation);
     return failure();
   }
 
@@ -94,9 +246,26 @@ public:
                  NamedAttribute attribute,
                  LLVM::ModuleTranslation &moduleTranslation) const final {
 
+    if (isa<LLVM::CallOp>(op) &&
+        attribute.getName() ==
+            hivm_regbaseintrins::kDavinciCallingConvAttrName &&
+        isa<hivm_regbaseintrins::SIMT_CallableAttr>(attribute.getValue())) {
+      if (instructions.size() != 1 ||
+          !llvm::isa<llvm::CallInst>(instructions.front()))
+        return op->emitError("expected a single LLVM call instruction");
+      llvm::cast<llvm::CallInst>(instructions.front())
+          ->setCallingConv(llvm::CallingConv::TPE_SIMTCallable);
+      return success();
+    }
+
     LLVM::LLVMFuncOp func = dyn_cast<LLVM::LLVMFuncOp>(op);
-    if (!func)
+    if (!func) {
+      // Module-level attributes (e.g. hivm_regbaseintrins.v2intrins) do not
+      // need per-function handling.
+      if (isa<mlir::ModuleOp>(op))
+        return success();
       return op->emitError("Attribute not applicable to non-function ops.");
+    }
 
     llvm::Function *llvmFunc = moduleTranslation.lookupFunction(func.getName());
     Attribute baseAttr = attribute.getValue();

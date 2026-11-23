@@ -45,9 +45,12 @@ void HIVMCanonicalizationPipelinePass::runOnOperation() {
   pm.addPass(createCanonicalizerPass(canonicalizerOptions));
   pm.addPass(createSCFForLoopCanonicalizationPass());
   pm.addPass(createCSEPass());
-  pm.addPass(createCanonicalizerPass(canonicalizerOptions));
+  // No canonicalizer between cse and single-point: its folds are subsumed by
+  // the trailing canonicalizer of this cluster.
   pm.addPass(createHIVMOptSinglePointPass());
-  pm.addPass(createCanonicalizerPass(canonicalizerOptions));
+  // No canonicalizer between single-point and dead store elimination:
+  // dead-store matching does not depend on its rewrites, and the trailing
+  // canonicalizer subsumes them.
   pm.addPass(memref::createDeadStoreEliminationPass());
   pm.addPass(createCanonicalizerPass(canonicalizerOptions));
 

@@ -21,7 +21,6 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 
-#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -32,9 +31,7 @@
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Support/LLVM.h"
 
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/Debug.h"
 
 #include <array>
 #include <cassert>
@@ -90,17 +87,14 @@ constexpr llvm::StringLiteral kSimtVFTileLoopAttrName =
     "hivm.simt_vf_tile_loop";
 
 // Attribute names used by the hivm-mark-disable-load pass and consumed by the
-// MemRef-to-LLVM lowering to emit non-cached (ld_dev) load instructions.
+// MemRef-to-LLVM lowering and GM-to-UB templates to emit non-cached
+// (ld_dev) scalar load instructions.
 static constexpr llvm::StringLiteral kDisableDCacheAttr = "disableDCache";
 static constexpr llvm::StringLiteral kMarkDCacheVisitedAttr =
     "markDCacheInvalidatePatternVisited";
 
 static constexpr llvm::StringLiteral kHIVMDataLayoutAttrName =
     "hivm_data_layout";
-
-/// TODO: add into hivm attrs
-static constexpr llvm::StringLiteral kBufferSizeInByteAttr =
-    "buffer_size_in_byte";
 
 static constexpr llvm::StringLiteral kLogicalBlockNumAttr = "logical_block_num";
 
@@ -134,8 +128,11 @@ const std::string Ascend910BDataLayout =
     "e-i1:8:32-i8:8:32-i16:16:32-i64:64-f16:16:32-v16:16-v32:32-n64-S64";
 
 const std::set<hivm::AddressSpace> LocalBufferSpace{
-    hivm::AddressSpace::UB, hivm::AddressSpace::L1, hivm::AddressSpace::L0C,
-    hivm::AddressSpace::SSBUF};
+    hivm::AddressSpace::UB,      hivm::AddressSpace::L1,
+    hivm::AddressSpace::L0A,     hivm::AddressSpace::L0B,
+    hivm::AddressSpace::L0C,     hivm::AddressSpace::SSBUF,
+    hivm::AddressSpace::BiasBUF,
+};
 
 const std::map<TFuncCoreType, TCoreType> kTFuncCoreType2TCoreType = {
     {TFuncCoreType::AIC, TCoreType::CUBE},
@@ -150,7 +147,11 @@ const std::map<std::string, int> membarType = {
     {"SS_ALL", 12}, {"ST_LD", 13},  {"LD_ST", 14},  {"ST_ST", 15},
 };
 
+bool isRemainInL0c(OpOperand &use);
+
 bool isResultInL0C(OpResult result);
+
+bool isResultRemainInL0C(OpResult result);
 
 /// Set the input type's memory scope to the input HIVM Address Space.
 void setBaseMemRefTypeScope(Value val, AddressSpaceAttr targetMemScope);
@@ -203,7 +204,8 @@ bool isOpTouchLocalBuffer(Operation *op);
 
 bool isOpTouchSsbufferOnly(Operation *op);
 
-/// Determine whether there is in ub buffer.
+/// Classify local buffer spaces. Target-specific allocation support is checked
+/// by memory planning, not by this predicate.
 bool isLocalBuffer(std::optional<AddressSpaceAttr> memorySpaceAttr);
 
 /// Determine whether there is in ssbuffer.
@@ -226,6 +228,28 @@ struct ForallRewriteResult {
 DiagnosedSilenceableFailure mapForallToBlocksImpl(
     RewriterBase &rewriter, scf::ForallOp forallOp, ForallRewriteResult &result,
     std::optional<transform::TransformOpInterface> transformOp = std::nullopt);
+
+/// Move a producer-scope dest / src tensor or leftover-memref cluster into
+/// the unique later VECTOR consumer, including MTE2 load through a subview.
+/// Callers must first allow the parent function via `--bypass-shape-registry`
+/// or (`--enable-preload`, non-zero `--set-workspace-multibuffer`, and
+/// `isLoopShapeRegistered`); the pass filters before calling the impl.
+LogicalResult sinkReturnedTensorsToConsumer(scf::ForOp forOp);
+
+/// Append one loop-carried value per entry of `inits`, each initialized to that
+/// value and yielded straight back, and return the index of the first appended
+/// iter-arg. Callers rewrite a new yield operand once they know what their copy
+/// has to advance to.
+///
+/// This gives a second reader of a loop-carried scalar a copy of its own, so
+/// that readers which no longer run in the same iteration stop sharing one
+/// iter-arg. Both CV-Pipelining (for the scalars a lazy load reads) and
+/// preload repositioning (for a cross-stage sink) privatize that way.
+///
+/// `loop` is replaced in place. Its body block is moved rather than cloned, so
+/// `Operation *` collected from the old body stay valid across the call.
+FailureOr<unsigned> appendPassThroughIterArgs(scf::ForOp &loop,
+                                              ValueRange inits);
 
 /// Remove attr from markOp, and remove markOp if no attr left.
 void removeMarkOpAttr(annotation::MarkOp markOp, ::llvm::StringLiteral attrName,
@@ -400,10 +424,6 @@ void getOpUsers(Operation *op, SmallVector<Operation *, 8> &userOps);
 SmallVector<Value> getTensorDynamicValues(OpBuilder &builder, Location loc,
                                           Value src);
 
-Value createAllocWithMark(PatternRewriter &rewriter, Location loc,
-                          MemRefType memrefType, ValueRange dynamicDims,
-                          ArrayRef<int64_t> staticAllocSize, Type elemType);
-
 // Create local workspace of current block (static shape only).
 Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
                                 ArrayRef<int64_t> shape, Type elementType);
@@ -417,18 +437,34 @@ Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
 Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
                               ArrayRef<int64_t> targetShapes, Type elementType);
 
-// Create local workspace and to_tensor ops. When staticAllocShape is provided,
-// add annotation::MarkOp to mark the static buffer size in byte (for dynamic
-// tensor case). When std::nullopt, skip the mark (for static tensor case).
-Value getLocalWorkSpaceTensor(
-    PatternRewriter &rewriter, Location loc, ArrayRef<int64_t> targetShape,
-    ArrayRef<Value> dynamicShape, Type elementType,
-    std::optional<ArrayRef<int64_t>> staticAllocShape = std::nullopt);
+// Create local workspace and to_tensor ops. The buffer_size_in_byte mark for
+// the dynamic tensor case is produced later by hivm-infer-buffer-size.
+Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
+                              ArrayRef<int64_t> targetShape,
+                              ArrayRef<Value> dynamicShape, Type elementType);
 
 // Create local lock var
 hivm::CreateSyncBlockLockOp createSyncBlockLockVar(OpBuilder &builder,
                                                    Location loc);
 
+hivm::SyncBlockLockOp
+createSyncBlockLock(OpBuilder &builder, Location loc, Value lockVar,
+                    hivm::SyncBlockLockOrdering ordering =
+                        hivm::SyncBlockLockOrdering::Ordered);
+
+hivm::SyncBlockUnlockOp
+createSyncBlockUnlock(OpBuilder &builder, Location loc, Value lockVar,
+                      hivm::SyncBlockLockOrdering ordering =
+                          hivm::SyncBlockLockOrdering::Ordered);
+
+/// Resolve ordering on a lock/unlock/free (or create) op.
+/// Recognizes native `$ordering` and legacy unit attr
+/// `hivm.sync_block_lock_unordered`.
+hivm::SyncBlockLockOrdering getSyncBlockLockOpOrdering(Operation *op);
+
+// Resolve sync block lock ordering from lock/unlock/free users of lock memref,
+// falling back to a legacy unordered marker on create_sync_block_lock.
+hivm::SyncBlockLockOrdering getSyncBlockLockOrdering(Value lockVar);
 
 /// get Operation alias pair.
 std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op);
@@ -594,6 +630,13 @@ VectorType trimNonScalableUnitDims(VectorType oldType);
 
 /// check if a vector type is of Vector<dtype> or Vector<1x...xdtype>
 bool isOneDimLikeVecType(VectorType vecType);
+
+/// Check the order of the two operations in memory view. We only care order of
+/// ops which can change memory. For example, forOp can't change memory, but ops
+/// in forOp block(like vbrcOp) can change memory.
+/// VbrcOp and forOp described above are seen as same level and return false.
+/// `!isBeforeInMemoryView` means not before which is not equal to after.
+bool isBeforeInMemoryView(Operation *before, Operation *after);
 } // namespace util
 } // namespace hivm
 } // namespace mlir

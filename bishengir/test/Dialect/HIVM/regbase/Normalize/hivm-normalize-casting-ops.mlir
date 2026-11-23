@@ -1,5 +1,162 @@
 // RUN: bishengir-opt --hivm-normalize-ops %s -split-input-file -verify-diagnostics | FileCheck %s
 
+// CHECK-LABEL: func.func @preserve_saturation_broadcast_true
+// CHECK: %[[CAST:.*]] = hivm.hir.vcast {{.*}}enable_saturate = true
+// CHECK-SAME: -> tensor<1x16xf16>
+// CHECK: hivm.hir.vbrc ins(%[[CAST]] : tensor<1x16xf16>)
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @preserve_saturation_broadcast_true(%src: tensor<1x16xf32>) -> tensor<16x16xf16> {
+    %e = tensor.empty() : tensor<16x16xf32>
+    %x = hivm.hir.vbrc ins(%src : tensor<1x16xf32>) outs(%e : tensor<16x16xf32>) broadcast_dims = [0] -> tensor<16x16xf32>
+    %init = tensor.empty() : tensor<16x16xf16>
+    %r = hivm.hir.vcast {enable_saturate = true} ins(%x : tensor<16x16xf32>) outs(%init : tensor<16x16xf16>) round_mode = <trunc> -> tensor<16x16xf16>
+    return %r : tensor<16x16xf16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @preserve_saturation_fill_true
+// CHECK: %[[CAST:.*]] = hivm.hir.vcast {{.*}}enable_saturate = true
+// CHECK-SAME: -> tensor<1xf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @preserve_saturation_fill_true(%src: f32) -> tensor<16xf16> {
+    %e = tensor.empty() : tensor<16xf32>
+    %x = hivm.hir.vbrc ins(%src : f32) outs(%e : tensor<16xf32>) -> tensor<16xf32>
+    %init = tensor.empty() : tensor<16xf16>
+    %r = hivm.hir.vcast {enable_saturate = true} ins(%x : tensor<16xf32>) outs(%init : tensor<16xf16>) round_mode = <trunc> -> tensor<16xf16>
+    return %r : tensor<16xf16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @preserve_saturation_scalar_default_true
+// CHECK: %[[CAST:.*]] = hivm.hir.vcast {{.*}}enable_saturate = true
+// CHECK-SAME: -> tensor<1xf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @preserve_saturation_scalar_default_true(%src: tensor<f32>) -> tensor<f16> {
+
+    %init = tensor.empty() : tensor<f16>
+    %r = hivm.hir.vcast {enable_saturate = true} ins(%src : tensor<f32>) outs(%init : tensor<f16>) round_mode = <rint> -> tensor<f16>
+    return %r : tensor<f16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @preserve_saturation_scalar_rtz_true
+// CHECK: %[[CAST:.*]] = hivm.hir.vcast {{.*}}enable_saturate = true
+// CHECK-SAME: -> tensor<1xf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @preserve_saturation_scalar_rtz_true(%src: tensor<f32>) -> tensor<f16> {
+
+    %init = tensor.empty() : tensor<f16>
+    %r = hivm.hir.vcast {enable_saturate = true} ins(%src : tensor<f32>) outs(%init : tensor<f16>) round_mode = <trunc> -> tensor<f16>
+    return %r : tensor<f16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @preserve_saturation_decompose_true
+// CHECK: hivm.hir.vcast
+// CHECK-NOT: enable_saturate = true
+// CHECK-SAME: -> tensor<16xf32>
+// CHECK: %[[CAST:.*]] = hivm.hir.vcast {{.*}}enable_saturate = true
+// CHECK-SAME: -> tensor<16xf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @preserve_saturation_decompose_true(%src: tensor<16xi64>) -> tensor<16xf16> {
+
+    %init = tensor.empty() : tensor<16xf16>
+    %r = hivm.hir.vcast {enable_saturate = true} ins(%src : tensor<16xi64>) outs(%init : tensor<16xf16>) round_mode = <trunc> -> tensor<16xf16>
+    return %r : tensor<16xf16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @preserve_saturation_broadcast_false
+// CHECK: %[[CAST:.*]] = hivm.hir.vcast
+// CHECK-NOT: enable_saturate = true
+// CHECK-SAME: -> tensor<1x16xf16>
+// CHECK: hivm.hir.vbrc ins(%[[CAST]] : tensor<1x16xf16>)
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @preserve_saturation_broadcast_false(%src: tensor<1x16xf32>) -> tensor<16x16xf16> {
+    %e = tensor.empty() : tensor<16x16xf32>
+    %x = hivm.hir.vbrc ins(%src : tensor<1x16xf32>) outs(%e : tensor<16x16xf32>) broadcast_dims = [0] -> tensor<16x16xf32>
+    %init = tensor.empty() : tensor<16x16xf16>
+    %r = hivm.hir.vcast {enable_saturate = false} ins(%x : tensor<16x16xf32>) outs(%init : tensor<16x16xf16>) round_mode = <trunc> -> tensor<16x16xf16>
+    return %r : tensor<16x16xf16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @preserve_saturation_fill_false
+// CHECK: %[[CAST:.*]] = hivm.hir.vcast
+// CHECK-NOT: enable_saturate = true
+// CHECK-SAME: -> tensor<1xf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @preserve_saturation_fill_false(%src: f32) -> tensor<16xf16> {
+    %e = tensor.empty() : tensor<16xf32>
+    %x = hivm.hir.vbrc ins(%src : f32) outs(%e : tensor<16xf32>) -> tensor<16xf32>
+    %init = tensor.empty() : tensor<16xf16>
+    %r = hivm.hir.vcast {enable_saturate = false} ins(%x : tensor<16xf32>) outs(%init : tensor<16xf16>) round_mode = <trunc> -> tensor<16xf16>
+    return %r : tensor<16xf16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @preserve_saturation_scalar_default_false
+// CHECK: %[[CAST:.*]] = hivm.hir.vcast
+// CHECK-NOT: enable_saturate = true
+// CHECK-SAME: -> tensor<1xf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @preserve_saturation_scalar_default_false(%src: tensor<f32>) -> tensor<f16> {
+
+    %init = tensor.empty() : tensor<f16>
+    %r = hivm.hir.vcast {enable_saturate = false} ins(%src : tensor<f32>) outs(%init : tensor<f16>) round_mode = <rint> -> tensor<f16>
+    return %r : tensor<f16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @preserve_saturation_scalar_rtz_false
+// CHECK: %[[CAST:.*]] = hivm.hir.vcast
+// CHECK-NOT: enable_saturate = true
+// CHECK-SAME: -> tensor<1xf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @preserve_saturation_scalar_rtz_false(%src: tensor<f32>) -> tensor<f16> {
+
+    %init = tensor.empty() : tensor<f16>
+    %r = hivm.hir.vcast {enable_saturate = false} ins(%src : tensor<f32>) outs(%init : tensor<f16>) round_mode = <trunc> -> tensor<f16>
+    return %r : tensor<f16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @preserve_saturation_decompose_false
+// CHECK: hivm.hir.vcast
+// CHECK-NOT: enable_saturate = true
+// CHECK-SAME: -> tensor<16xf32>
+// CHECK: %[[CAST:.*]] = hivm.hir.vcast
+// CHECK-NOT: enable_saturate = true
+// CHECK-SAME: -> tensor<16xf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @preserve_saturation_decompose_false(%src: tensor<16xi64>) -> tensor<16xf16> {
+
+    %init = tensor.empty() : tensor<16xf16>
+    %r = hivm.hir.vcast {enable_saturate = false} ins(%src : tensor<16xi64>) outs(%init : tensor<16xf16>) round_mode = <trunc> -> tensor<16xf16>
+    return %r : tensor<16xf16>
+  }
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_NormalizeCastLowering_cast_f32_to_i1
 // CHECK-SAME: (%[[ARG0:.*]]: tensor<2x256x12x257xf32>) -> tensor<2x256x12x257xi1>
 // CHECK-DAG: %[[C0:.*]] = arith.constant 0.000000e+00 : f32
@@ -62,7 +219,7 @@ func.func @test_NormalizeCastLowering_cast_f32_to_i16(%arg0: tensor<4x4xf32>) ->
 // CHECK-LABEL: func.func @test_NormalizeCastLowering_cast_i64_to_f16
 // CHECK-SAME: (%[[ARG0:.*]]: tensor<23xi64>) -> tensor<23xf16>
 // CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<23xf32>
-// CHECK: %[[CAST0:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<23xi64>) outs(%[[EMPTY0]] : tensor<23xf32>) round_mode = <trunc> -> tensor<23xf32>
+// CHECK: %[[CAST0:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<23xi64>) outs(%[[EMPTY0]] : tensor<23xf32>) -> tensor<23xf32>
 // CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<23xf16>
 // CHECK: %[[CAST1:.*]] = hivm.hir.vcast ins(%[[CAST0]] : tensor<23xf32>) outs(%[[EMPTY1]] : tensor<23xf16>) -> tensor<23xf16>
 // CHECK: return %[[CAST1]]
@@ -182,7 +339,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<16xf16>
 // CHECK: %[[CAST1:.*]] = hivm.hir.vcast ins(%[[CAST0]] : tensor<16xf32>) outs(%[[EMPTY1]] : tensor<16xf16>) round_mode = <trunc> -> tensor<16xf16>
 // CHECK: %[[EMPTY2:.*]] = tensor.empty() : tensor<16xi16>
-// CHECK: %[[CAST2:.*]] = hivm.hir.vcast ins(%[[CAST1]] : tensor<16xf16>) outs(%[[EMPTY2]] : tensor<16xi16>) round_mode = <trunc> -> tensor<16xi16>
+// CHECK: %[[CAST2:.*]] = hivm.hir.vcast {enable_saturate = true} ins(%[[CAST1]] : tensor<16xf16>) outs(%[[EMPTY2]] : tensor<16xi16>) round_mode = <trunc> -> tensor<16xi16>
 // CHECK: return %[[CAST2]]
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeCastLowering_cast_i64_to_i16_with_overflow_mode(%arg0: tensor<16xi64>) -> tensor<16xi16> {
@@ -197,13 +354,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizefillCastToTensorBrc_opt_cast_IToF_fill
-// CHECK: %[[CST:.*]] = arith.constant 1 : i32
-// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<i32>
-// CHECK: %[[FILL0:.*]] = hivm.hir.vbrc ins(%[[CST]] : i32) outs(%[[EMPTY0]] : tensor<i32>) -> tensor<i32>
-// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<f32>
-// CHECK: %[[CAST:.*]] = hivm.hir.vcast ins(%[[FILL0]] : tensor<i32>) outs(%[[EMPTY1]] : tensor<f32>) -> tensor<f32>
+// CHECK: %[[CST:.*]] = arith.constant dense<1> : tensor<1xi32>
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<1xf32>
+// CHECK: %[[CAST:.*]] = hivm.hir.vcast ins(%[[CST]] : tensor<1xi32>) outs(%[[EMPTY0]] : tensor<1xf32>) -> tensor<1xf32>
+// CHECK: %[[EXTRACT:.*]] = tensor.extract %[[CAST]][%{{.*}}] : tensor<1xf32>
 // CHECK: %[[EMPTY2:.*]] = tensor.empty() : tensor<24x32xf32>
-// CHECK: %[[EXTRACT:.*]] = tensor.extract %[[CAST]][] : tensor<f32>
 // CHECK: %[[BRC:.*]] = hivm.hir.vbrc ins(%[[EXTRACT]] : f32) outs(%[[EMPTY2]] : tensor<24x32xf32>) -> tensor<24x32xf32>
 // CHECK: return %[[BRC]] : tensor<24x32xf32>
 func.func @test_NormalizefillCastToTensorBrc_opt_cast_IToF_fill(%arg0: tensor<24x32xi32>) -> tensor<24x32xf32> {

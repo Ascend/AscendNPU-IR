@@ -306,7 +306,7 @@ loadOpsToIndirectionLevel(scf::ForOp forOp, bool pipelineWithoutDot,
         }
       };
 
-  bool seenDot = false;
+  [[maybe_unused]] bool seenDot = false;
   for (Operation &op : forOp.getBody()->without_terminator()) {
     // Arbitrary heuristic. TMEMStoreOp is included to keep logic consistent
     // with legacy code when we weren't hoisting tmem allocas.

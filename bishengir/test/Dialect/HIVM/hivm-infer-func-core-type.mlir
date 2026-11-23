@@ -269,3 +269,27 @@ module {
     return
   }
 }
+
+// -----
+
+// Regression test: an scf.while can have a different number of before-region
+// arguments (scf.yield operands) than after-region arguments / results
+// (scf.condition operands). Tracing the users of a load destination must map
+// both paths to their own index spaces instead of indexing the loop results
+// with the raw terminator operand number and reading out of bounds.
+
+// CHECK: @while_alias_mismatched_index_spaces{{.*}}hivm.func_core_type = #hivm.func_core_type<AIV>
+module {
+  func.func @while_alias_mismatched_index_spaces(%arg0: memref<128xi64>) {
+    %false = arith.constant false
+    %alloc = memref.alloc() : memref<128xi64>
+    hivm.hir.load ins(%arg0 : memref<128xi64>) outs(%alloc : memref<128xi64>)
+    %0 = scf.while (%a = %alloc, %b = %alloc) : (memref<128xi64>, memref<128xi64>) -> memref<128xi64> {
+      scf.condition(%false) %a : memref<128xi64>
+    } do {
+    ^bb0(%a: memref<128xi64>):
+      scf.yield %alloc, %alloc : memref<128xi64>, memref<128xi64>
+    }
+    return
+  }
+}

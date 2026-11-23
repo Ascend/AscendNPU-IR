@@ -32,12 +32,10 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Tensor/Utils/Utils.h"
-#include "mlir/Dialect/Transform/IR/TransformTypes.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Block.h"
@@ -54,20 +52,15 @@
 #include "mlir/Support/LLVM.h"
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/BitmaskEnum.h"
-#include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cassert>
 #include <cstdint>
-#include <sys/param.h>
 
 #define DEBUG_TYPE "hivm-utils"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -230,31 +223,62 @@ LoopLikeOpInterface getParentLoopImpl(Value val,
 }
 } // namespace
 
-bool isResultInL0C(OpResult result) {
-  Operation *op = result.getOwner();
-
-  auto findValueInArrayAttr = [](ArrayAttr arrayAttr, uint64_t idx) {
-    return llvm::any_of(arrayAttr.getValue(), [idx](Attribute element) {
-      auto intAttr = dyn_cast<IntegerAttr>(element);
-      return intAttr && intAttr.getValue().getZExtValue() == idx;
-    });
-  };
-
-  auto isInL0CBasedOnAttr = [&result, &op,
-                             findValueInArrayAttr](StringRef attrName) {
-    if (auto attr = op->getAttrOfType<UnitAttr>(attrName))
-      return true;
-    if (auto arrayAttr = op->getAttrOfType<ArrayAttr>(attrName))
-      return findValueInArrayAttr(arrayAttr, result.getResultNumber());
+bool isRemainInL0c(OpOperand &use) {
+  OpResult result = dyn_cast<OpResult>(use.get());
+  if (!result)
     return false;
-  };
+  auto *defOp = result.getDefiningOp();
+  if (!defOp)
+    return false;
+  // scf.if is remain only for a result propagateRemainInL0C marked. Walking
+  // the then yield would treat a mixed if as L0C when only that branch's
+  // mmad stays in L0C.
+  if (isa<scf::IfOp>(defOp))
+    return isResultRemainInL0C(result);
+  if (defOp->hasAttr(RemainInL0CAttr::name)) {
+    return true;
+  }
+  auto regionBranchOpInterface = dyn_cast<RegionBranchOpInterface>(defOp);
+  if (!regionBranchOpInterface)
+    return false;
+  auto &region = regionBranchOpInterface->getRegions().front();
+  if (!region.hasOneBlock())
+    return false;
+  auto terminator = region.front().getTerminator();
+  if (!terminator)
+    return false;
+  return isRemainInL0c(terminator->getOpOperand(result.getResultNumber()));
+}
 
-  if (isInL0CBasedOnAttr(RemainInL0CAttr::name))
+static bool findValueInArrayAttr(ArrayAttr arrayAttr, uint64_t idx) {
+  return llvm::any_of(arrayAttr.getValue(), [idx](Attribute element) {
+    auto intAttr = dyn_cast<IntegerAttr>(element);
+    return intAttr && intAttr.getValue().getZExtValue() == idx;
+  });
+}
+
+static bool isInL0CBasedOnAttr(OpResult &result, StringRef attrName) {
+  Operation *op = result.getOwner();
+  if (auto attr = op->getAttrOfType<UnitAttr>(attrName))
+    return true;
+  if (auto arrayAttr = op->getAttrOfType<ArrayAttr>(attrName))
+    return findValueInArrayAttr(arrayAttr, result.getResultNumber());
+  return false;
+}
+
+bool isResultInL0C(OpResult result) {
+  if (isInL0CBasedOnAttr(result, RemainInL0CAttr::name))
     return true;
 
-  if (isInL0CBasedOnAttr(kNormalizedInL0C))
+  if (isInL0CBasedOnAttr(result, kNormalizedInL0C))
     return true;
 
+  return false;
+}
+
+bool isResultRemainInL0C(OpResult result) {
+  if (isInL0CBasedOnAttr(result, RemainInL0CAttr::name))
+    return true;
   return false;
 }
 
@@ -474,7 +498,7 @@ bool isLocalBuffer(std::optional<AddressSpaceAttr> memorySpaceAttr) {
   if (LocalBufferSpace.count(memorySpaceAttr.value().getAddressSpace())) {
     return true;
   }
-  llvm::report_fatal_error("Currently only support (UB | L1 | L0C) allocation");
+  llvm::report_fatal_error("Unsupported local buffer address space");
 }
 
 bool isSsbuffer(std::optional<AddressSpaceAttr> memorySpaceAttr) {
@@ -922,13 +946,20 @@ FailureOr<CoreRatio> CoreRatio::getEffective(func::FuncOp func) {
   if (auto attr = getCoreRatioAttr(func))
     return CoreRatio{attr.getCube(), attr.getVector()};
 
-  // No declared ratio, so the default is the target's.
+  // No declared ratio, so the default is the target spec's
+  // CubeCoreCount : VectorCoreCount. No target in the IR means the 910B
+  // compatibility default, matching isAscend910B(ModuleOp).
   auto moduleOp = func->getParentOfType<ModuleOp>();
-  if (moduleOp && (hacc::utils::isAscend910B(moduleOp) ||
-                   hacc::utils::isAscend910_93(moduleOp) ||
-                   hacc::utils::isAscend910_95(moduleOp) ||
-                   hacc::utils::isAscend950(moduleOp)))
-    return CoreRatio{1, 2};
+  if (moduleOp) {
+    auto targetDevice = hacc::utils::getTargetDevice(moduleOp);
+    if (!targetDevice)
+      targetDevice = hacc::TargetDevice::Ascend910B1;
+    if (auto ratio = hacc::utils::getDefaultCoreRatio(*targetDevice)) {
+      CoreRatio effective{ratio->first, ratio->second};
+      if (isValid(effective))
+        return effective;
+    }
+  }
 
   func->emitError() << "no default hivm.core_ratio for this target; set "
                        "hivm.core_ratio on the function explicitly";
@@ -1032,24 +1063,6 @@ SmallVector<Value> getTensorDynamicValues(OpBuilder &builder, Location loc,
   return dynamicSizes;
 }
 
-Value createAllocWithMark(PatternRewriter &rewriter, Location loc,
-                          MemRefType memrefType, ValueRange dynamicDims,
-                          ArrayRef<int64_t> staticAllocSize, Type elemType) {
-  Value alloc = rewriter.create<memref::AllocOp>(loc, memrefType, dynamicDims);
-  auto maybeStaticTotalSize =
-      utils::getStaticTotalSizeInBits(staticAllocSize, elemType);
-  if (maybeStaticTotalSize.has_value()) {
-    int64_t allocSizeInByte = maybeStaticTotalSize.value() / utils::kBitsToByte;
-    auto markOp = rewriter.create<annotation::MarkOp>(loc, alloc);
-    markOp->setAttr(hivm::kBufferSizeInByteAttr,
-                    rewriter.getI64IntegerAttr(allocSizeInByte));
-  } else {
-    llvm::report_fatal_error(
-        "Warning: Cannot calculate static size from mmadL1 shape\n");
-  }
-  return alloc;
-}
-
 Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
                                 ArrayRef<int64_t> shape, Type elementType) {
   assert(!ShapedType::isDynamicShape(shape) &&
@@ -1067,29 +1080,11 @@ Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
 Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
                               ArrayRef<int64_t> targetShapes,
                               Type elementType) {
-#ifndef NDEBUG
-  std::optional<int64_t> totalStaticSize =
-      utils::getStaticTotalSize(targetShapes);
-  // TODO：support dynamic shape.
-  assert(totalStaticSize.has_value() && "Can only handle static shape");
-#endif
-
-  // 1. Get AllocWorkspaceOp of current block
-  Value localWorkSpace =
-      createAllocLocalWorkSpace(rewriter, loc, targetShapes, elementType);
-
-  // 2. Use bufferization::ToTensorOp to convert current workspace to tensor
-#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
-  auto toTensor = rewriter.create<bufferization::ToTensorOp>(
-      loc, localWorkSpace, true, true);
-#else
-  auto tensorType = RankedTensorType::get(targetShapes, elementType);
-  auto toTensor = rewriter.create<bufferization::ToTensorOp>(
-      loc, tensorType, localWorkSpace,
-      /*restrict=*/mlir::UnitAttr::get(rewriter.getContext()),
-      /*writable=*/mlir::UnitAttr::get(rewriter.getContext()));
-#endif
-  return toTensor;
+  assert(!ShapedType::isDynamicShape(targetShapes) &&
+         "Can only handle static shape");
+  return getLocalWorkSpaceTensor(rewriter, loc, targetShapes,
+                                 /*dynamicShape=*/ArrayRef<Value>(),
+                                 elementType);
 }
 
 Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
@@ -1106,35 +1101,15 @@ Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
   return allocWorkspaceOp.getMemref();
 }
 
-Value getLocalWorkSpaceTensor(
-    PatternRewriter &rewriter, Location loc, ArrayRef<int64_t> targetShape,
-    ArrayRef<Value> dynamicShape, Type elementType,
-    std::optional<ArrayRef<int64_t>> staticAllocShape) {
+Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
+                              ArrayRef<int64_t> targetShape,
+                              ArrayRef<Value> dynamicShape, Type elementType) {
   // 1. Get AllocWorkspaceOp of current block
   Value localWorkSpace = createAllocLocalWorkSpace(
       rewriter, loc, SmallVector<int64_t>(targetShape),
       SmallVector<Value>(dynamicShape), elementType);
 
-  // 2. When staticAllocShape is provided, mark static alloc size for dynamic
-  // tensor case
-  if (staticAllocShape.has_value()) {
-    auto localWorkSpaceOp =
-        localWorkSpace.getDefiningOp<bishengir::memref_ext::AllocWorkspaceOp>();
-    auto maybeStaticTotalSize =
-        utils::getStaticTotalSizeInBits(*staticAllocShape, elementType);
-    if (!maybeStaticTotalSize.has_value()) {
-      emitError(localWorkSpaceOp->getLoc(), "shape has dynamic dimension");
-      llvm::report_fatal_error("shape has dynamic dimension");
-      return nullptr;
-    }
-    int64_t allocSizeInByte = maybeStaticTotalSize.value() / utils::kBitsToByte;
-    auto tmpMarkOp = rewriter.create<annotation::MarkOp>(
-        localWorkSpaceOp->getLoc(), localWorkSpaceOp->getResult(0));
-    tmpMarkOp->setAttr(hivm::kBufferSizeInByteAttr,
-                       rewriter.getI64IntegerAttr(allocSizeInByte));
-  }
-
-  // 3. Use bufferization::ToTensorOp to convert current workspace to tensor
+  // 2. Use bufferization::ToTensorOp to convert current workspace to tensor
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   auto toTensor = rewriter.create<bufferization::ToTensorOp>(
       loc, localWorkSpace, true, true);
@@ -1153,10 +1128,90 @@ hivm::CreateSyncBlockLockOp createSyncBlockLockVar(OpBuilder &builder,
   auto elementType = builder.getI64Type();
   Type memrefType = MemRefType::get(shape, elementType);
 
-  auto createSyncBlockLockOp =
-      builder.create<hivm::CreateSyncBlockLockOp>(loc, memrefType,
-                                                  /*workspaceArg*/ Value());
-  return createSyncBlockLockOp;
+  return builder.create<hivm::CreateSyncBlockLockOp>(loc, memrefType,
+                                                     /*workspaceArg*/ Value());
+}
+
+static hivm::SyncBlockLockOrderingAttr
+getSyncBlockLockOrderingAttr(MLIRContext *ctx,
+                             hivm::SyncBlockLockOrdering ordering) {
+  return hivm::SyncBlockLockOrderingAttr::get(ctx, ordering);
+}
+
+hivm::SyncBlockLockOp
+createSyncBlockLock(OpBuilder &builder, Location loc, Value lockVar,
+                    hivm::SyncBlockLockOrdering ordering) {
+  return builder.create<hivm::SyncBlockLockOp>(
+      loc, lockVar,
+      getSyncBlockLockOrderingAttr(builder.getContext(), ordering));
+}
+
+hivm::SyncBlockUnlockOp
+createSyncBlockUnlock(OpBuilder &builder, Location loc, Value lockVar,
+                      hivm::SyncBlockLockOrdering ordering) {
+  return builder.create<hivm::SyncBlockUnlockOp>(
+      loc, lockVar,
+      getSyncBlockLockOrderingAttr(builder.getContext(), ordering));
+}
+
+hivm::SyncBlockLockOrdering getSyncBlockLockOpOrdering(Operation *op) {
+  assert(op && "expected sync block lock-related op");
+  // Legacy unit attr from older producers (Triton / AscendNPU-IR). Prefer the
+  // native `$ordering` enum for new IR; keep recognizing this until upstream
+  // migrates. Check discardable attrs explicitly: properties-based ops store
+  // this marker outside inherent `$ordering`.
+  if (op->getDiscardableAttr(SyncBlockLockUnorderedAttr::name) ||
+      op->hasAttr(SyncBlockLockUnorderedAttr::name))
+    return hivm::SyncBlockLockOrdering::Unordered;
+
+  if (auto lockOp = dyn_cast<hivm::SyncBlockLockOp>(op))
+    return lockOp.getOrdering();
+  if (auto unlockOp = dyn_cast<hivm::SyncBlockUnlockOp>(op))
+    return unlockOp.getOrdering();
+  if (auto freeOp = dyn_cast<hivm::FreeLockVarOp>(op))
+    return freeOp.getOrdering();
+  return hivm::SyncBlockLockOrdering::Ordered;
+}
+
+static std::optional<hivm::SyncBlockLockOrdering>
+getOrderingFromLockUsers(Value lockVar) {
+  for (Operation *user : lockVar.getUsers()) {
+    if (isa<hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp,
+            hivm::FreeLockVarOp>(user))
+      return getSyncBlockLockOpOrdering(user);
+  }
+  return std::nullopt;
+}
+
+hivm::SyncBlockLockOrdering getSyncBlockLockOrdering(Value lockVar) {
+  Value current = lockVar;
+  while (current) {
+    if (auto orderingFromUsers = getOrderingFromLockUsers(current))
+      return *orderingFromUsers;
+
+    if (auto createOp = current.getDefiningOp<hivm::CreateSyncBlockLockOp>()) {
+      // Legacy: unordered marker on create_sync_block_lock itself.
+      return getSyncBlockLockOpOrdering(createOp);
+    }
+
+    if (auto viewOp = current.getDefiningOp<memref::ViewOp>()) {
+      current = viewOp.getViewSource();
+      continue;
+    }
+
+    if (auto castOp = current.getDefiningOp<memref::CastOp>()) {
+      current = castOp.getSource();
+      continue;
+    }
+
+    if (auto subviewOp = current.getDefiningOp<memref::SubViewOp>()) {
+      current = subviewOp.getSource();
+      continue;
+    }
+
+    break;
+  }
+  return hivm::SyncBlockLockOrdering::Ordered;
 }
 
 std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op) {
@@ -1315,6 +1370,15 @@ LoopLikeOpInterface getParentLoop(Value val) {
 
 BlockArgument getTiedBlockArgument(LoopLikeOpInterface loopOp,
                                    OpOperand &operand) {
+  if (operand.getOwner() != loopOp.getOperation())
+    return nullptr;
+  // While does not expose its init operands through getInitsMutable() on
+  // LoopLikeOpInterface. Its operands initialize the before block directly.
+  if (auto whileOp = dyn_cast<scf::WhileOp>(loopOp.getOperation())) {
+    auto beforeArgs = whileOp.getBeforeArguments();
+    unsigned index = operand.getOperandNumber();
+    return index < beforeArgs.size() ? beforeArgs[index] : BlockArgument{};
+  }
   for (auto barg : loopOp.getRegionIterArgs())
     if (loopOp.getTiedLoopInit(barg) == &operand) {
       return barg;
@@ -1435,6 +1499,23 @@ std::optional<uint32_t> getHWAlignBytes(Type t) {
   return hwAlignBytes;
 }
 
+FailureOr<unsigned> appendPassThroughIterArgs(scf::ForOp &loop,
+                                              ValueRange inits) {
+  unsigned base = loop.getNumRegionIterArgs();
+  if (inits.empty())
+    return base;
+  IRRewriter rewriter(loop.getContext());
+  FailureOr<LoopLikeOpInterface> replaced = loop.replaceWithAdditionalYields(
+      rewriter, inits, /*replaceInitOperandUsesInLoop=*/false,
+      [](OpBuilder &, Location, ArrayRef<BlockArgument> newArgs) {
+        return SmallVector<Value>(newArgs.begin(), newArgs.end());
+      });
+  if (failed(replaced))
+    return failure();
+  loop = cast<scf::ForOp>(*replaced);
+  return base;
+}
+
 namespace util {
 //===----------------------------------------------------------------------===//
 // This file contains code from the LLVM Project.
@@ -1455,11 +1536,7 @@ computeCollapsedLayoutMap(MemRefType srcType,
   int64_t srcOffset;
   SmallVector<int64_t> srcStrides;
   auto srcShape = srcType.getShape();
-#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
-  if (failed(getStridesAndOffset(srcType, srcStrides, srcOffset)))
-#else
-  if (failed(srcType.getStridesAndOffset(srcStrides, srcOffset)))
-#endif
+  if (failed(utils::getStridesAndOffsetCompat(srcType, srcStrides, srcOffset)))
     return failure();
 
   // The result stride of a reassociation group is the stride of the last
@@ -1585,11 +1662,7 @@ bool isLastDimContiguous(Value operand) {
 
   auto mem = cast<MemRefType>(operType);
   auto shape = mem.getShape();
-#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
-  auto [strides, offset] = getStridesAndOffset(mem);
-#else
-  auto [strides, offset] = mem.getStridesAndOffset();
-#endif
+  auto [strides, offset] = utils::getStridesAndOffsetCompat(mem);
   assert(!strides.empty() && "strides should not be empty.");
 
   return *shape.rbegin() == 1 || *strides.rbegin() == 1;
@@ -1663,6 +1736,26 @@ bool isOneDimLikeVecType(VectorType vecType) {
       return false;
   }
   return true;
+}
+
+bool isBeforeInMemoryView(Operation *before, Operation *after) {
+  auto moduleOp = utils::getTopLevelModuleOp(before);
+  // Cache before's parentOps and blocks.
+  DenseMap<Block *, Operation *> block2Op;
+  for (Operation *beforeParentOp = before; beforeParentOp != moduleOp;
+       beforeParentOp = beforeParentOp->getParentOp()) {
+    block2Op.try_emplace(beforeParentOp->getBlock(), beforeParentOp);
+  }
+  for (Operation *afterParentOp = after; afterParentOp != moduleOp;
+       afterParentOp = afterParentOp->getParentOp()) {
+    auto it = block2Op.find(afterParentOp->getBlock());
+    // Check if after and before has same min ParentBlock.
+    if (it != block2Op.end()) {
+      auto *beforeParentOp = it->second;
+      return beforeParentOp->isBeforeInBlock(afterParentOp);
+    }
+  }
+  return false;
 }
 
 static bool canCombineOneSide(const SmallVectorImpl<MemRefType> &memrefTypes,

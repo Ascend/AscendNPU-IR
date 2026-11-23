@@ -15,9 +15,10 @@
  */
 
 #include "DMA/loadMXScale.h"
+#include "ArchDefs.h"
 #include "Vector/VecUtils.h"
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 
 /**
  * Loading Scale Tensor from GM to L1 for `dot_scale` op.
@@ -126,6 +127,19 @@ copy_gm_to_cbuf_load_mx_scale_core(memref_t<__gm__ T, 2> *gm,
       ((uint64_t)(0)) << 48; // Is the destination stride of loop4 in unit of C0
                              // size, loop4 dst stride
   INTRINSIC(set_mte2_nz_para, config);
+#if BISHENG_TPL_HAS_DMA_PRE_ALLOCATION
+  INTRINSIC(
+      copy_gm_to_cbuf_multi_dn2nz, /*dst_ptr*/ (__cbuf__ half *)l1_ptr,
+      /*src_ptr*/ (__gm__ half *)gm_ptr,
+      /*uint8_t sid*/ 0,
+      /*uint64_t loop1_src_stride*/ gm->strides[0],
+      /*uint8_t l2_cache_ctrl_mode*/ 0,
+      /*nValue*/ static_cast<uint16_t>(n_tile_actual / MX_SCALE_COPY_GROUP_NUM),
+      /*dValue*/ static_cast<uint16_t>(d_tile_actual),
+      /* loop4 src stride */ 0,
+      /*bool smallc0_en*/ false,
+      /*bool pre_allocation*/ false);
+#else
   INTRINSIC(
       copy_gm_to_cbuf_multi_dn2nz, /*dst_ptr*/ (__cbuf__ half *)l1_ptr,
       /*src_ptr*/ (__gm__ half *)gm_ptr,
@@ -136,6 +150,7 @@ copy_gm_to_cbuf_load_mx_scale_core(memref_t<__gm__ T, 2> *gm,
       /*dValue*/ static_cast<uint16_t>(d_tile_actual),
       /* loop4 src stride */ 0,
       /*bool smallc0_en*/ false);
+#endif
 }
 
 extern "C" {

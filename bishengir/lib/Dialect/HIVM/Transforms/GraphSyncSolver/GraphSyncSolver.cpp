@@ -58,6 +58,8 @@ void GraphSyncSolverPass::runOnOperation() {
                                     /*isMemBasedArch=*/false,
                                     /*isRegBasedArch=*/false);
     solverOptions.enableSiblingIfSync = this->enableSiblingIfSync;
+    solverOptions.enableNonRecursiveLoopUnrolling =
+        this->enableNonRecursiveLoopUnrolling;
     solverOptions.solverVersion = parseSyncSolverVersion(this->solverVersion);
     SyncTester::runTestMode(testerOptions, solverOptions);
     return;
@@ -84,6 +86,8 @@ void GraphSyncSolverPass::runOnOperation() {
   options.enableSubviewConflictRefinement =
       this->enableSubviewConflictRefinement;
   options.enableSiblingIfSync = this->enableSiblingIfSync;
+  options.enableNonRecursiveLoopUnrolling =
+      this->enableNonRecursiveLoopUnrolling;
   options.solverVersion = parseSyncSolverVersion(this->solverVersion);
 
   auto irTranslator = std::make_unique<IRTranslator>(funcOp, options);
@@ -105,7 +109,15 @@ void GraphSyncSolverPass::runOnOperation() {
     return signalPassFailure();
   }
 
+  auto enableBufferPool =
+      moduleOp->getAttrOfType<BoolAttr>("hivm.load_buffer_pool");
+  if (enableBufferPool && enableBufferPool.getValue() &&
+      failed(solver->prepareBufferPoolSync()))
+    return signalPassFailure();
+
   solver->solve();
+  if (solver->hasBufferPoolSyncFailure())
+    return signalPassFailure();
   DEBUG_WITH_TYPE("hivm-gss-profile", { solver->perfInfo.print(); });
 
   if (solver->hasCustomMacroEventIdConflict()) {

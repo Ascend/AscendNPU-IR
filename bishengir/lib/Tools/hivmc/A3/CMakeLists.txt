@@ -7,3 +7,8 @@ add_bishengir_library(BiShengIRHIVMCLibA3
 
 
 )
+
+# Vendor header (bisheng-llc.h) for the Native bridge.
+if(BISHENG_LLC_INCLUDE_DIR)
+  target_include_directories(BiShengIRHIVMCLibA3 PRIVATE ${BISHENG_LLC_INCLUDE_DIR})
+endif()

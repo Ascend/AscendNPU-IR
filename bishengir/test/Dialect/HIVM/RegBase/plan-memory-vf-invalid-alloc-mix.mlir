@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase=shared-mem-dynamic-size=221184 -split-input-file -verify-diagnostics
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory=shared-mem-dynamic-size=221184 -split-input-file -verify-diagnostics
 
 // MIX ub-overflow with an explicit in-range `shared-mem-dynamic-size`: the
 // option gives 221184 bytes, i.e. 221184 * 8 = 1769472 bits of UB, and two

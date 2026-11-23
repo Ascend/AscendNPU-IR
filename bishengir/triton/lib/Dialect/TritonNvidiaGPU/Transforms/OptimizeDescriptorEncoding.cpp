@@ -51,7 +51,7 @@ Attribute findLoadEncodingFromUsers(Operation *op) {
 
 SmallVector<int64_t> expandToRank(ArrayRef<int64_t> shape, int rank) {
   SmallVector<int64_t> result(rank, 1);
-  assert(shape.size() <= rank);
+  assert(shape.size() <= static_cast<size_t>(rank));
   auto rankDiff = rank - shape.size();
   std::copy(shape.begin(), shape.end(), result.begin() + rankDiff);
   return result;
@@ -150,7 +150,7 @@ EncodingInfo combineEncodings(const EncodingInfo &lhs, const EncodingInfo &rhs,
     assert(lhs.shape.size() == rhs.shape.size());
     auto rank = lhs.shape.size();
     result.shape.reserve(rank);
-    for (int i = 0; i < rank; ++i)
+    for (size_t i = 0; i < rank; ++i)
       result.shape.push_back(std::min(lhs.shape[i], rhs.shape[i]));
   }
 
@@ -366,7 +366,7 @@ public:
   using BaseT::BaseT;
 
   void runOnOperation() override {
-    MLIRContext *context = &getContext();
+    [[maybe_unused]] MLIRContext *context = &getContext();
     ModuleOp m = getOperation();
     assignMemoryLayouts(m);
   }

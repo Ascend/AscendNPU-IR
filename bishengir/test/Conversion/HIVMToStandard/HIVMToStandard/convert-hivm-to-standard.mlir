@@ -31,11 +31,41 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 }
 
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  // CHECK-LABEL: func.func @test_nchw2c1hwnc0
+  func.func @test_nchw2c1hwnc0(
+      %src_f16: memref<30x15x3x3xf16, #hivm.address_space<gm>>,
+      %dst_f16: memref<1x3x3x32x16xf16, #hivm.address_space<cbuf>>,
+      %src_bf16: memref<30x15x3x3xbf16, #hivm.address_space<gm>>,
+      %dst_bf16: memref<1x3x3x32x16xbf16, #hivm.address_space<cbuf>>,
+      %src_f32: memref<30x7x3x3xf32, #hivm.address_space<gm>>,
+      %dst_f32: memref<1x3x3x32x8xf32, #hivm.address_space<cbuf>>) {
+    // CHECK: %[[GROUPS:.*]] = arith.constant 2 : i64
+    // CHECK: call @nchw2c1hwnc0_half({{.*}}, {{.*}}, %[[GROUPS]])
+    hivm.hir.nchw2c1hwnc0 {groups = 2 : i64}
+      ins(%src_f16 : memref<30x15x3x3xf16, #hivm.address_space<gm>>)
+      outs(%dst_f16 : memref<1x3x3x32x16xf16, #hivm.address_space<cbuf>>)
+
+    // CHECK: call @nchw2c1hwnc0_bfloat16_t({{.*}}, {{.*}}, %[[GROUPS]])
+    hivm.hir.nchw2c1hwnc0 {groups = 2 : i64}
+      ins(%src_bf16 : memref<30x15x3x3xbf16, #hivm.address_space<gm>>)
+      outs(%dst_bf16 : memref<1x3x3x32x16xbf16, #hivm.address_space<cbuf>>)
+
+    // CHECK: call @nchw2c1hwnc0_float({{.*}}, {{.*}}, %[[GROUPS]])
+    hivm.hir.nchw2c1hwnc0 {groups = 2 : i64}
+      ins(%src_f32 : memref<30x7x3x3xf32, #hivm.address_space<gm>>)
+      outs(%dst_f32 : memref<1x3x3x32x8xf32, #hivm.address_space<cbuf>>)
+    return
+  }
+}
+
+// -----
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   // CHECK-LABEL: test_mmadL1_with_k_init
-  // CHECK-NOT: hivm
+  // CHECK-NOT: hivm.hir.mmadL1
   func.func @test_mmadL1_with_k_init() {
     // CHECK: %[[C0:.*]] = arith.constant 0 : i8
+    // CHECK: %[[ZERO:.*]] = arith.constant 0 : i64
     // CHECK: %[[C_1:.*]] = arith.constant -1 : i64
     // CHECK: %[[C:.*]] = memref.alloc() : memref<256x256xf32>
     %mc = memref.alloc() : memref<256x256xf32>
@@ -55,12 +85,14 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
       // CHECK: %[[INIT:.*]] = arith.cmpi
       %init_condition = arith.cmpi eq, %arg0, %start : index
 
+      // CHECK: %[[NULL:.*]] = hivm.hir.pointer_cast(%[[ZERO]]) {hivm.ping_pong_signal} : memref<i32>
       // Create dynamic layout memerf
       // CHECK: %[[CASTA:.*]] = memref.cast %[[A]] : memref<256x128xf16> to memref<?x?xf16, strided<[?, ?], offset: ?>>
       // CHECK: %[[CASTB:.*]] = memref.cast %[[B]] : memref<128x256xf16> to memref<?x?xf16, strided<[?, ?], offset: ?>>
       // CHECK: %[[CASTC:.*]] = memref.cast %[[C]] : memref<256x256xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
 
-      // CHECK: func.call @mma_tile_half_to_float(%[[CASTA]], %[[CASTB]], %[[INIT]], {{.*}}, {{.*}}, {{.*}}, %[[CASTC]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C0]]
+      // CHECK: %[[SIGNAL:.*]] = memref.cast %[[NULL]] : memref<i32> to memref<i32, strided<[], offset: ?>>
+      // CHECK: call @mma_tile_half_to_float(%[[CASTA]], %[[CASTB]], %[[INIT]], {{.*}}, {{.*}}, {{.*}}, %[[CASTC]], %[[SIGNAL]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C_1]], %[[C0]]
       // CHECK-SAME:               (memref<?x?xf16, strided<[?, ?], offset: ?>>,
       // CHECK-SAME:                memref<?x?xf16, strided<[?, ?], offset: ?>>,
       // CHECK-SAME:                i1,
@@ -68,6 +100,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
       // CHECK-SAME:                index,
       // CHECK-SAME:                index,
       // CHECK-SAME:                memref<?x?xf32, strided<[?, ?], offset: ?>>,
+      // CHECK-SAME:                memref<i32, strided<[], offset: ?>>,
       // CHECK-SAME:                i64, i64, i64, i64, i64, i64, i64,
       // CHECK-SAME:                i8, i64) -> ()
       hivm.hir.mmadL1 ins(%ma, %mb, %init_condition, %c256, %c128, %c256 :
@@ -82,7 +115,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   // CHECK-LABEL: test_mmadL1
-  // CHECK-NOT: hivm
+  // CHECK-NOT: hivm.hir.mmadL1
   func.func @test_mmadL1() {
     %ma = memref.alloc() : memref<256x128xf16>
     %mb = memref.alloc() : memref<128x256xf16>
@@ -117,7 +150,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   // CHECK-LABEL: test_nd2nz
-  // CHECK-NOT: hivm
+  // CHECK-NOT: hivm.hir
   func.func @test_nd2nz() {
     %gmA = memref.alloc() : memref<1024x2048xf16>
     %gmASubview = memref.subview %gmA[0, 0][256, 128][1, 1]
@@ -138,7 +171,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %gmC = memref.alloc() : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<gm>>
     %l0c = memref.alloc() : memref<2x2x16x16xf32, #hivm.address_space<cc>>
     // CHECK: call @fixpipe_nz2nd_float_to_half_4d_to_2d_gm
-    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>}
       ins(%l0c : memref<2x2x16x16xf32, #hivm.address_space<cc>>)
       outs(%gmC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<gm>>)
     return
@@ -151,7 +184,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %ubC = memref.alloc() : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>
     %l0c = memref.alloc() : memref<2x2x16x16xf32, #hivm.address_space<cc>>
     // CHECK: call @fixpipe_nz2nd_dual_float_to_half_4d_to_2d_ub
-    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, dual_dst_mode = #hivm.fixpipe_dual_dst_mode<ROW_SPLIT>}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>, dual_dst_mode = #hivm.fixpipe_dual_dst_mode<ROW_SPLIT>}
       ins(%l0c : memref<2x2x16x16xf32, #hivm.address_space<cc>>)
       outs(%ubC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>)
     return
@@ -164,7 +197,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %ubC = memref.alloc() : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>
     %l0c = memref.alloc() : memref<2x2x16x16xf32, #hivm.address_space<cc>>
     // CHECK: call @fixpipe_nz2nd_dual_float_to_half_4d_to_2d_ub
-    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, dual_dst_mode = #hivm.fixpipe_dual_dst_mode<COLUMN_SPLIT>}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>, dual_dst_mode = #hivm.fixpipe_dual_dst_mode<COLUMN_SPLIT>}
       ins(%l0c : memref<2x2x16x16xf32, #hivm.address_space<cc>>)
       outs(%ubC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>)
     return
@@ -177,7 +210,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %gmC = memref.alloc() : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<gm>>
     %l0c = memref.alloc() : memref<32x32xf32, #hivm.address_space<cc>>
     // CHECK: call @fixpipe_normal_float_to_half_2d_to_2d_gm
-    hivm.hir.fixpipe {}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
       ins(%l0c : memref<32x32xf32, #hivm.address_space<cc>>)
       outs(%gmC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<gm>>)
     return
@@ -190,7 +223,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %ubC = memref.alloc() : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>
     %l0c = memref.alloc() : memref<32x32xf32, #hivm.address_space<cc>>
     // CHECK: call @fixpipe_normal_dual_float_to_half_2d_to_2d_ub
-    hivm.hir.fixpipe {dual_dst_mode = #hivm.fixpipe_dual_dst_mode<ROW_SPLIT>}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dual_dst_mode = #hivm.fixpipe_dual_dst_mode<ROW_SPLIT>}
       ins(%l0c : memref<32x32xf32, #hivm.address_space<cc>>)
       outs(%ubC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>)
     return
@@ -203,7 +236,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %ubC = memref.alloc() : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>
     %l0c = memref.alloc() : memref<32x32xf32, #hivm.address_space<cc>>
     // CHECK: call @fixpipe_normal_dual_float_to_half_2d_to_2d_ub
-    hivm.hir.fixpipe {dual_dst_mode = #hivm.fixpipe_dual_dst_mode<COLUMN_SPLIT>}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dual_dst_mode = #hivm.fixpipe_dual_dst_mode<COLUMN_SPLIT>}
       ins(%l0c : memref<32x32xf32, #hivm.address_space<cc>>)
       outs(%ubC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>)
     return
@@ -216,7 +249,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %gmC = memref.alloc() : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<gm>>
     %l0c = memref.alloc() : memref<2x2x16x16xf32, #hivm.address_space<cc>>
     // CHECK: call @fixpipe_nz2dn_float_to_half_4d_to_2d_gm
-    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2dn>}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2dn>}
       ins(%l0c : memref<2x2x16x16xf32, #hivm.address_space<cc>>)
       outs(%gmC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<gm>>)
     return
@@ -920,6 +953,22 @@ module {
 
     // CHECK: call @vcast_bool_to_half_1d_with_temp
     // CHECK: call @vcast_bool_to_float_1d_with_temp
+    return
+  }
+}
+
+// -----
+// f64 -> f32 is a software cast provided by the vector template library
+// (the device has no fp64 lanes and no __truncdfsf2).
+module {
+  // CHECK-LABEL: func.func @test_vcast_double_to_float_1d
+  func.func @test_vcast_double_to_float_1d() attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %f64 = memref.alloc() : memref<16xf64>
+    %f32 = memref.alloc() : memref<16xf32>
+
+    // CHECK: call @vcast_double_to_float_1d_with_mode
+    hivm.hir.vcast ins(%f64 : memref<16xf64>) outs(%f32 : memref<16xf32>)
+                   round_mode = #hivm.round_mode<rint>
     return
   }
 }
@@ -2614,6 +2663,20 @@ module {
 }
 
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
+  // CHECK-LABEL: func @test_sync_block_lock_unlock_unordered
+  func.func @test_sync_block_lock_unlock_unordered() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %lock = memref.alloc() : memref<1xi64>
+    // CHECK: call @sync_block_lock_unordered
+    hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%lock : memref<1xi64>)
+    // CHECK: call @sync_block_unlock_unordered
+    hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%lock : memref<1xi64>)
+    // CHECK-NOT: ordering
+    return
+  }
+}
+
+// -----
 module {
   func.func @test_sort_op_check_1d() attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
     // CHECK: @sort_1d_float
@@ -2751,6 +2814,42 @@ module {
 }
 
 // -----
+// F64 indirect loads use the RegBase SIMT templates, which support ranks 1-5.
+// CHECK-LABEL: func @test_f64_indirect_load
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_f64_indirect_load(
+      %src: memref<?xf64>, %indices1: memref<16xi32>,
+      %indices2: memref<4x16xi64>, %mask1: memref<16xi1>,
+      %mask2: memref<4x16xi1>, %other1: memref<16xf32>,
+      %other2: memref<4x16xf32>) {
+    %dst1 = memref.alloc() : memref<16xf64>
+    %dst2 = memref.alloc() : memref<4x16xf64>
+    // CHECK: call @indirect_load_1d_double_int32_t_float
+    hivm.hir.indirect_load ins(%src : memref<?xf64>, %indices1 : memref<16xi32>, %mask1 : memref<16xi1>, %other1 : memref<16xf32>) outs(%dst1 : memref<16xf64>)
+    // CHECK: call @indirect_load_2d_double_int64_t_float
+    hivm.hir.indirect_load ins(%src : memref<?xf64>, %indices2 : memref<4x16xi64>, %mask2 : memref<4x16xi1>, %other2 : memref<4x16xf32>) outs(%dst2 : memref<4x16xf64>)
+    return
+  }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_f64_indirect_load_mixed_fallbacks(
+      %src: memref<?xf64>, %indices: memref<16xi32>, %mask: memref<16xi1>,
+      %other32: memref<16xf32>, %other64: memref<16xf64>,
+      %dst32: memref<16xf64>, %dst64: memref<16xf64>) {
+    // CHECK-DAG: func.func private @indirect_load_1d_double_int32_t_float(memref<?xf64{{.*}}, memref<?xi32{{.*}}, memref<?xf64{{.*}}, memref<?xi1{{.*}}, memref<?xf32
+    // CHECK-DAG: func.func private @indirect_load_1d_double_int32_t(memref<?xf64{{.*}}, memref<?xi32{{.*}}, memref<?xf64{{.*}}, memref<?xi1{{.*}}, memref<?xf64
+    // CHECK-LABEL: func @test_f64_indirect_load_mixed_fallbacks
+    // CHECK: call @indirect_load_1d_double_int32_t_float
+    hivm.hir.indirect_load ins(%src : memref<?xf64>, %indices : memref<16xi32>, %mask : memref<16xi1>, %other32 : memref<16xf32>) outs(%dst32 : memref<16xf64>)
+    // CHECK: call @indirect_load_1d_double_int32_t
+    hivm.hir.indirect_load ins(%src : memref<?xf64>, %indices : memref<16xi32>, %mask : memref<16xi1>, %other64 : memref<16xf64>) outs(%dst64 : memref<16xf64>)
+    return
+  }
+}
+
+// -----
 // CHECK-LABEL: func @test_indirect_load
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   func.func @test_indirect_load(%arg0_f: memref<?xf32>, %arg0_i: memref<?xi32>, %arg1_i32: memref<4x32xi32>, %arg1_i64: memref<4x32xi64>, %arg2: memref<4x32xi1>, %mask_f: memref<4x32xf32>, %mask_i: memref<4x32xi32>) {
@@ -2817,6 +2916,57 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 
 
 // -----
+// CHECK-LABEL: func @test_stride_load_fp8
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func @test_stride_load_fp8(
+      %src_e4m3: memref<?xf8E4M3FN>, %src_e5m2: memref<?xf8E5M2>) {
+    %offset_i64 = arith.constant 0 : i64
+    %stride_i64 = arith.constant 2 : i64
+    %numel_i64 = arith.constant 8 : i64
+    %other_e4m3 = arith.constant 0.000000e+00 : f8E4M3FN
+    %dst_e4m3 = memref.alloc() : memref<8xf8E4M3FN>
+    // CHECK-DAG: arith.constant 0 : i8
+    // CHECK-DAG: arith.constant 60 : i8
+    // CHECK: call @stride_load_1d_float8_e4m3_t_int64_t
+    hivm.hir.stride_load
+      ins(%src_e4m3 : memref<?xf8E4M3FN>)
+      outs(%dst_e4m3 : memref<8xf8E4M3FN>)
+      offset(%offset_i64 : i64)
+      other(%other_e4m3 : f8E4M3FN)
+      strides([%stride_i64 : i64])
+      numels([%numel_i64 : i64])
+
+    %offset_i32 = arith.constant 0 : i32
+    %stride_i32 = arith.constant 3 : i32
+    %numel0_i32 = arith.constant 4 : i32
+    %numel1_i32 = arith.constant 8 : i32
+    %other_e5m2 = arith.constant 1.000000e+00 : f8E5M2
+    %dst_e5m2_2d = memref.alloc() : memref<4x8xf8E5M2>
+    // CHECK: call @stride_load_2d_float8_e5m2_t_int32_t
+    hivm.hir.stride_load
+      ins(%src_e5m2 : memref<?xf8E5M2>)
+      outs(%dst_e5m2_2d : memref<4x8xf8E5M2>)
+      offset(%offset_i32 : i32)
+      other(%other_e5m2 : f8E5M2)
+      strides([%stride_i32, %stride_i32 : i32, i32])
+      numels([%numel0_i32, %numel1_i32 : i32, i32])
+
+    %numel2_i32 = arith.constant 2 : i32
+    %dst_e5m2_3d = memref.alloc() : memref<2x4x8xf8E5M2>
+    // CHECK: call @stride_load_3d_float8_e5m2_t_int32_t
+    hivm.hir.stride_load
+      ins(%src_e5m2 : memref<?xf8E5M2>)
+      outs(%dst_e5m2_3d : memref<2x4x8xf8E5M2>)
+      offset(%offset_i32 : i32)
+      other(%other_e5m2 : f8E5M2)
+      strides([%stride_i32, %stride_i32, %stride_i32 : i32, i32, i32])
+      numels([%numel2_i32, %numel0_i32, %numel1_i32 : i32, i32, i32])
+    return
+  }
+}
+
+
+// -----
 // CHECK-LABEL: func @test_stride_store
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   func.func @test_stride_store(%dst: memref<?xf32>, %src1d: memref<8xf32>, %src2d: memref<4x8xf32>, %src3d: memref<2x4x8xf32>) {
@@ -2846,6 +2996,113 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     hivm.hir.stride_store
       ins(%src3d : memref<2x4x8xf32>)
       outs(%dst : memref<?xf32>)
+      offset(%offset_i32 : i32)
+      strides([%stride_i32, %stride_i32, %stride_i32 : i32, i32, i32])
+      numels([%numel2_i32, %numel0_i32, %numel1_i32 : i32, i32, i32])
+     return
+  }
+}
+
+
+// -----
+// CHECK-LABEL: func @test_stride_store_fp8
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func @test_stride_store_fp8(
+      %dst_e4m3: memref<?xf8E4M3FN>, %src1d_e4m3: memref<8xf8E4M3FN>,
+      %src2d_e4m3: memref<4x8xf8E4M3FN>, %src3d_e4m3: memref<2x4x8xf8E4M3FN>,
+      %dst_e5m2: memref<?xf8E5M2>, %src1d_e5m2: memref<8xf8E5M2>,
+      %src2d_e5m2: memref<4x8xf8E5M2>, %src3d_e5m2: memref<2x4x8xf8E5M2>) {
+    %offset_i64 = arith.constant 0 : i64
+    %stride_i64 = arith.constant 2 : i64
+    %numel0_i64 = arith.constant 4 : i64
+    %numel1_i64 = arith.constant 8 : i64
+    %numel2_i64 = arith.constant 2 : i64
+    // CHECK: call @stride_store_1d_float8_e4m3_t_int64_t
+    hivm.hir.stride_store
+      ins(%src1d_e4m3 : memref<8xf8E4M3FN>)
+      outs(%dst_e4m3 : memref<?xf8E4M3FN>)
+      offset(%offset_i64 : i64)
+      strides([%stride_i64 : i64])
+      numels([%numel1_i64 : i64])
+    // CHECK: call @stride_store_1d_float8_e5m2_t_int64_t
+    hivm.hir.stride_store
+      ins(%src1d_e5m2 : memref<8xf8E5M2>)
+      outs(%dst_e5m2 : memref<?xf8E5M2>)
+      offset(%offset_i64 : i64)
+      strides([%stride_i64 : i64])
+      numels([%numel1_i64 : i64])
+    // CHECK: call @stride_store_2d_float8_e4m3_t_int64_t
+    hivm.hir.stride_store
+      ins(%src2d_e4m3 : memref<4x8xf8E4M3FN>)
+      outs(%dst_e4m3 : memref<?xf8E4M3FN>)
+      offset(%offset_i64 : i64)
+      strides([%stride_i64, %stride_i64 : i64, i64])
+      numels([%numel0_i64, %numel1_i64 : i64, i64])
+    // CHECK: call @stride_store_2d_float8_e5m2_t_int64_t
+    hivm.hir.stride_store
+      ins(%src2d_e5m2 : memref<4x8xf8E5M2>)
+      outs(%dst_e5m2 : memref<?xf8E5M2>)
+      offset(%offset_i64 : i64)
+      strides([%stride_i64, %stride_i64 : i64, i64])
+      numels([%numel0_i64, %numel1_i64 : i64, i64])
+    // CHECK: call @stride_store_3d_float8_e4m3_t_int64_t
+    hivm.hir.stride_store
+      ins(%src3d_e4m3 : memref<2x4x8xf8E4M3FN>)
+      outs(%dst_e4m3 : memref<?xf8E4M3FN>)
+      offset(%offset_i64 : i64)
+      strides([%stride_i64, %stride_i64, %stride_i64 : i64, i64, i64])
+      numels([%numel2_i64, %numel0_i64, %numel1_i64 : i64, i64, i64])
+    // CHECK: call @stride_store_3d_float8_e5m2_t_int64_t
+    hivm.hir.stride_store
+      ins(%src3d_e5m2 : memref<2x4x8xf8E5M2>)
+      outs(%dst_e5m2 : memref<?xf8E5M2>)
+      offset(%offset_i64 : i64)
+      strides([%stride_i64, %stride_i64, %stride_i64 : i64, i64, i64])
+      numels([%numel2_i64, %numel0_i64, %numel1_i64 : i64, i64, i64])
+    %offset_i32 = arith.constant 0 : i32
+    %stride_i32 = arith.constant 2 : i32
+    %numel0_i32 = arith.constant 4 : i32
+    %numel1_i32 = arith.constant 8 : i32
+    %numel2_i32 = arith.constant 2 : i32
+    // CHECK: call @stride_store_1d_float8_e4m3_t_int32_t
+    hivm.hir.stride_store
+      ins(%src1d_e4m3 : memref<8xf8E4M3FN>)
+      outs(%dst_e4m3 : memref<?xf8E4M3FN>)
+      offset(%offset_i32 : i32)
+      strides([%stride_i32 : i32])
+      numels([%numel1_i32 : i32])
+    // CHECK: call @stride_store_1d_float8_e5m2_t_int32_t
+    hivm.hir.stride_store
+      ins(%src1d_e5m2 : memref<8xf8E5M2>)
+      outs(%dst_e5m2 : memref<?xf8E5M2>)
+      offset(%offset_i32 : i32)
+      strides([%stride_i32 : i32])
+      numels([%numel1_i32 : i32])
+    // CHECK: call @stride_store_2d_float8_e4m3_t_int32_t
+    hivm.hir.stride_store
+      ins(%src2d_e4m3 : memref<4x8xf8E4M3FN>)
+      outs(%dst_e4m3 : memref<?xf8E4M3FN>)
+      offset(%offset_i32 : i32)
+      strides([%stride_i32, %stride_i32 : i32, i32])
+      numels([%numel0_i32, %numel1_i32 : i32, i32])
+    // CHECK: call @stride_store_2d_float8_e5m2_t_int32_t
+    hivm.hir.stride_store
+      ins(%src2d_e5m2 : memref<4x8xf8E5M2>)
+      outs(%dst_e5m2 : memref<?xf8E5M2>)
+      offset(%offset_i32 : i32)
+      strides([%stride_i32, %stride_i32 : i32, i32])
+      numels([%numel0_i32, %numel1_i32 : i32, i32])
+    // CHECK: call @stride_store_3d_float8_e4m3_t_int32_t
+    hivm.hir.stride_store
+      ins(%src3d_e4m3 : memref<2x4x8xf8E4M3FN>)
+      outs(%dst_e4m3 : memref<?xf8E4M3FN>)
+      offset(%offset_i32 : i32)
+      strides([%stride_i32, %stride_i32, %stride_i32 : i32, i32, i32])
+      numels([%numel2_i32, %numel0_i32, %numel1_i32 : i32, i32, i32])
+    // CHECK: call @stride_store_3d_float8_e5m2_t_int32_t
+    hivm.hir.stride_store
+      ins(%src3d_e5m2 : memref<2x4x8xf8E5M2>)
+      outs(%dst_e5m2 : memref<?xf8E5M2>)
       offset(%offset_i32 : i32)
       strides([%stride_i32, %stride_i32, %stride_i32 : i32, i32, i32])
       numels([%numel2_i32, %numel0_i32, %numel1_i32 : i32, i32, i32])
@@ -2983,7 +3240,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %l0c = memref.alloc() : memref<2x2x16x16xf32, #hivm.address_space<cc>>
     //   CHECK-DAG: %[[SB1:.*]] = arith.constant true
     //       CHECK: call @fixpipe_nz2nd_float_to_half_4d_to_2d_ubuf({{.*}}, %[[SB1]]) :
-    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, sub_block_idx = #hivm.fixpipe_sub_block<sub_block_1>}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>, sub_block_idx = #hivm.fixpipe_sub_block<sub_block_1>}
       ins(%l0c : memref<2x2x16x16xf32, #hivm.address_space<cc>>)
       outs(%ubC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>)
     return
@@ -2999,7 +3256,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     // c0_pad_en defaults true, so a true constant is expected; sub_block stays false.
     //   CHECK-DAG: %[[SB0:.*]] = arith.constant false
     //       CHECK: call @fixpipe_nz2nd_float_to_half_4d_to_2d_ubuf({{.*}}, %[[SB0]]) :
-    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>}
       ins(%l0c : memref<2x2x16x16xf32, #hivm.address_space<cc>>)
       outs(%ubC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>)
     return

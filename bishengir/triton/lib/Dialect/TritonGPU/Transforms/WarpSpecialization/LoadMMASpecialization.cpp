@@ -502,7 +502,7 @@ static LogicalResult pipelineMMA(scf::ForOp &loop, PipelinedMMA &mma,
   Value firstView = createSingleBufferView(b, allocOp, b.intCst(0));
   b.setInsertionPointAfter(loop);
   Value lastIndex = loop.getResult(index.getArgNumber() - 1);
-  Value lastPhase = loop.getResult(phase.getArgNumber() - 1);
+  [[maybe_unused]] Value lastPhase = loop.getResult(phase.getArgNumber() - 1);
   Value lastView = createSingleBufferView(b, allocOp, lastIndex);
 
   // Find users of the accumulator in the loop and sort them by program order.
@@ -553,12 +553,14 @@ static LogicalResult pipelineMMA(scf::ForOp &loop, PipelinedMMA &mma,
     Value phase;
   };
 
-  SmallVector<Node, 3> nodes{Node{overwriteOp}, Node{mmaOp}, Node{readOp}};
+  SmallVector<Node, 3> nodes{Node{overwriteOp, {}, {}, {}, {}},
+                             Node{mmaOp, {}, {}, {}, {}},
+                             Node{readOp, {}, {}, {}, {}}};
   llvm::sort(nodes, [&](Node &lhs, Node &rhs) {
     return inBody(lhs.op)->isBeforeInBlock(inBody(rhs.op));
   });
 
-  for (int i = 0; i < nodes.size(); ++i) {
+  for (int i = 0; i < static_cast<int>(nodes.size()); ++i) {
     Node &cur = nodes[i];
     Node &next = nodes[(i + 1) % nodes.size()];
     if (schedule.getPartition(inBody(cur.op)) !=
@@ -848,7 +850,7 @@ LogicalResult lowerLoops(scf::ForOp &loop, MutableArrayRef<PipelinedLoad> loads,
   }
   SmallVector<PipelinedLoadGroup> loadGroups;
   for (auto &loads : llvm::make_second_range(liveBeforeGroups))
-    loadGroups.push_back({std::move(loads)});
+    loadGroups.push_back({std::move(loads), {}, {}, {}, {}, {}});
 
   // Multi-buffer and lower the loads.
   for (PipelinedLoadGroup &group : loadGroups)

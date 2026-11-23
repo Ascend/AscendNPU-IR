@@ -20,8 +20,8 @@ using ::mlir::triton::gpu::NVMMASharedEncodingAttr;
 mlir::triton::NVIDIA::DotOpMmaV5TmemLoader::DotOpMmaV5TmemLoader(
     Value tensor, Value base, SmallVector<unsigned int> instrShape,
     bool interleaved, bool trans)
-    : base(base), instrShape(instrShape), interleaved(interleaved),
-      trans(trans) {
+    : base(base), trans(trans), interleaved(interleaved),
+      instrShape(instrShape) {
   auto ty = cast<MemDescType>(tensor.getType());
   auto tmemEncoding = cast<ttng::TensorMemoryEncodingAttr>(ty.getEncoding());
   unpacked = tmemEncoding.getUnpacked();
@@ -79,7 +79,7 @@ inline mxfpKind getMXFPKind(ScaleDotElemType typeA, ScaleDotElemType typeB,
       return mxfpKind::mxf4;
   }
   return mxfpKind::mxf8f6f4;
-};
+}
 
 static Value createInstDescriptor(ConversionPatternRewriter &rewriter,
                                   ttng::TCGen5MMAOp op, int M, int N,
@@ -105,7 +105,7 @@ static Value createInstDescriptor(ConversionPatternRewriter &rewriter,
       uint32_t M : 5;
       uint32_t : 1;
       uint32_t shift : 2;
-    };
+    } fields;
   };
   auto getTypeEncoding = [](Type type) {
     if (type.isF16())
@@ -124,15 +124,15 @@ static Value createInstDescriptor(ConversionPatternRewriter &rewriter,
                 "instruction descriptor size should be 32 bits.");
   TCGen5InstructionDescriptor desc;
   desc.descriptor = 0;
-  desc.transposeA = transposeA;
-  desc.transposeB = transposeB;
-  desc.M = M >> 4;
-  desc.N = N >> 3;
-  desc.aType = getTypeEncoding(op.getA().getType().getElementType());
-  desc.bType = getTypeEncoding(op.getB().getType().getElementType());
+  desc.fields.transposeA = transposeA;
+  desc.fields.transposeB = transposeB;
+  desc.fields.M = M >> 4;
+  desc.fields.N = N >> 3;
+  desc.fields.aType = getTypeEncoding(op.getA().getType().getElementType());
+  desc.fields.bType = getTypeEncoding(op.getB().getType().getElementType());
   Type dstElType = op.getD().getType().getElementType();
   assert(dstElType.isF16() || dstElType.isF32());
-  desc.dType = dstElType.isF16() ? 0 : 1;
+  desc.fields.dType = dstElType.isF16() ? 0 : 1;
   return b.int_val(32, desc.descriptor);
 }
 
@@ -163,7 +163,7 @@ static Value createScaleInstDescriptor(ConversionPatternRewriter &rewriter,
       uint32_t M : 5;
       uint32_t AScaleFactor : 2;
       uint32_t : 1;
-    };
+    } fields;
   };
   auto getTypeEncoding = [](ScaleDotElemType type, bool isMXF4) {
     switch (type) {
@@ -186,40 +186,40 @@ static Value createScaleInstDescriptor(ConversionPatternRewriter &rewriter,
                 "instruction descriptor size should be 32 bits.");
   TCGen5InstructionDescriptor desc;
   desc.descriptor = 0;
-  desc.transposeA = transposeA;
-  desc.transposeB = transposeB;
-  desc.M = M >> 4;
-  desc.N = N >> 3;
-  desc.aType =
+  desc.fields.transposeA = transposeA;
+  desc.fields.transposeB = transposeB;
+  desc.fields.M = M >> 4;
+  desc.fields.N = N >> 3;
+  desc.fields.aType =
       getTypeEncoding(op.getAType(), mxfpInstKind != mxfpKind::mxf8f6f4);
-  desc.bType =
+  desc.fields.bType =
       getTypeEncoding(op.getBType(), mxfpInstKind != mxfpKind::mxf8f6f4);
-  desc.AScaleFactor = scaleFactorsubIdxA;
-  desc.BScaleFactor = scaleFactorsubIdxB;
+  desc.fields.AScaleFactor = scaleFactorsubIdxA;
+  desc.fields.BScaleFactor = scaleFactorsubIdxB;
   // Hardcoded UE8M0 scale type.
-  desc.scaleType = 1;
+  desc.fields.scaleType = 1;
 
   if (mxfpInstKind != mxfpKind::mxf8f6f4) {
-    assert(desc.aType == 1 && desc.bType == 1);
-    assert(desc.AScaleFactor <= 1 && desc.BScaleFactor <= 1);
-    assert(desc.transposeA == 0 &&
+    assert(desc.fields.aType == 1 && desc.fields.bType == 1);
+    assert(desc.fields.AScaleFactor <= 1 && desc.fields.BScaleFactor <= 1);
+    assert(desc.fields.transposeA == 0 &&
            "MMAv5 with kind=mxf4 does not support transpose");
-    assert(desc.transposeB == 0 &&
+    assert(desc.fields.transposeB == 0 &&
            "MMAv5 with kind=mxf4 does not support transpose");
     if (mxfpInstKind == mxfpKind::mxf4) {
-      desc.AScaleFactor *= 2;
-      desc.BScaleFactor *= 2;
-      assert(desc.AScaleFactor == 0 ||
-             desc.AScaleFactor == 2 &&
+      desc.fields.AScaleFactor *= 2;
+      desc.fields.BScaleFactor *= 2;
+      assert(desc.fields.AScaleFactor == 0 ||
+             desc.fields.AScaleFactor == 2 &&
                  "MMAv5 with kind=mxf4 only supports SFA_ID 0 or 2");
-      assert(desc.BScaleFactor == 0 ||
-             desc.BScaleFactor == 2 &&
+      assert(desc.fields.BScaleFactor == 0 ||
+             desc.fields.BScaleFactor == 2 &&
                  "MMAv5 with kind=mxf4 only supports SFB_ID 0 or 2");
     } else if (mxfpInstKind == mxfpKind::mxf4nvf4) {
-      desc.scaleType = 0; // UE4M3
-      assert(desc.AScaleFactor == 0 &&
+      desc.fields.scaleType = 0; // UE4M3
+      assert(desc.fields.AScaleFactor == 0 &&
              "MMAv5 with kind=mxf4nvf4 currently only supports SFA_ID 0");
-      assert(desc.BScaleFactor == 0 &&
+      assert(desc.fields.BScaleFactor == 0 &&
              "MMAv5 with kind=mxf4nvf4 currently only supports SFB_ID 0");
     }
   }
@@ -563,10 +563,9 @@ int getScaleFactorColsPerSet(mxfpKind kind) {
     return 2;
   case mxfpKind::mxf4nvf4:
     return 4;
-  default:
-    llvm_unreachable("Unsupported mxfp kind.");
   }
-};
+  llvm_unreachable("Unsupported mxfp kind.");
+}
 
 void convertScaledDot(const LLVMTypeConverter &typeConverter,
                       ConversionPatternRewriter &rewriter, Location loc,
@@ -664,8 +663,8 @@ struct TCGen5MMAOpConversion
   LogicalResult
   matchAndRewrite(ttng::TCGen5MMAOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    auto AEnc = op.getA().getType().getEncoding();
-    auto BEnc = op.getB().getType().getEncoding();
+    [[maybe_unused]] auto AEnc = op.getA().getType().getEncoding();
+    [[maybe_unused]] auto BEnc = op.getB().getType().getEncoding();
     assert(
         (isa<NVMMASharedEncodingAttr, ttng::TensorMemoryEncodingAttr>(AEnc)) &&
         "Operand A should use Shared or Tensor memory layout.");

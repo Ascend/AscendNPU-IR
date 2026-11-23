@@ -51,7 +51,7 @@ public:
     // Verify CompatibleTypes.
     if (failed(verifyLinalgCompatibleTypes(op, rewriter)))
       return failure();
-    auto loc = op->getLoc();
+    [[maybe_unused]] auto loc = op->getLoc();
     auto input = mlir::dyn_cast<DenseIntOrFPElementsAttr>(op.getValueAttr());
     if (!input) {
       return failure();

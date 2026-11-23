@@ -15,8 +15,11 @@
 #include "llvm/ADT/STLExtras.h" // interleaveComma
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h" // report_fatal_error
 #include "llvm/Support/ManagedStatic.h"
+#include <unordered_map>
+#include <functional>
 
 using namespace bishengir;
 using namespace llvm;
@@ -32,7 +35,7 @@ static cl::OptionCategory
 static cl::OptionCategory hivmOptCategory("HIVMC HIVM Optimization Options");
 static cl::OptionCategory targetCategory("HIVMC Target Options");
 static cl::OptionCategory
-    simtOptCategory("BiShengIR SIMT Optimization Options");
+    simtOptCategory("HIVMC SIMT Optimization Options");
 
 /// This class is intended to manage the handling of command line options for
 /// creating bishengir-compile config. This is a singleton.
@@ -283,11 +286,15 @@ struct HIVMCMainConfigCLOptions : public HIVMCMainConfig {
         cl::location(enableFlattenFlag), cl::init(true),
         cl::cat(generalOptCategory));
 
-    static cl::opt<int, /*ExternalStorage=*/true>
-        enableBishengirSimtOptimization(
+    static cl::opt<int, /*ExternalStorage=*/true> simtOptimizationMode(
+            "simt-optimization-mode",
+            cl::desc("set simt optimiation mode"),
+            cl::location(simtOptimizationModeFlag), cl::init(900101));
+
+    static cl::alias enableBishengirSimtOptimization(
             "enable-bishengir-simt-optimization",
-            cl::desc("enable bishengir simt optimization"),
-            cl::location(enableBishengirSimtOptimizationFlag), cl::init(1900101));
+            cl::desc("alias for simt-optimziation-mode"),
+            cl::aliasopt(simtOptimizationMode));
 
     static cl::opt<int32_t> simtStackLimitOpt(
     "simt-stack-limit",
@@ -553,12 +560,14 @@ struct HIVMCMainConfigCLOptions : public HIVMCMainConfig {
             REGISTER_TARGET(Ascend310B1), REGISTER_TARGET(Ascend310B2),
             REGISTER_TARGET(Ascend310B3), REGISTER_TARGET(Ascend310B4),
             // Ascend950 series
-            REGISTER_TARGET(Ascend910_950z), REGISTER_TARGET(Ascend910_9579),
-            REGISTER_TARGET(Ascend910_957b), REGISTER_TARGET(Ascend910_957d),
-            REGISTER_TARGET(Ascend910_9581), REGISTER_TARGET(Ascend910_9589),
-            REGISTER_TARGET(Ascend910_958a), REGISTER_TARGET(Ascend910_958b),
-            REGISTER_TARGET(Ascend910_9599), REGISTER_TARGET(Ascend950PR_950z),
+            REGISTER_TARGET(Ascend950), REGISTER_TARGET(Ascend910_950z),
+            REGISTER_TARGET(Ascend910_9579), REGISTER_TARGET(Ascend910_957b),
+            REGISTER_TARGET(Ascend910_957d), REGISTER_TARGET(Ascend910_9581),
+            REGISTER_TARGET(Ascend910_9589), REGISTER_TARGET(Ascend910_958a),
+            REGISTER_TARGET(Ascend910_958b), REGISTER_TARGET(Ascend910_9599),
+            REGISTER_TARGET(Ascend950PR_950z),
             REGISTER_TARGET(Ascend950PR_9579),
+            REGISTER_TARGET(Ascend950PR_9579x),
             REGISTER_TARGET(Ascend950PR_957a),
             REGISTER_TARGET(Ascend950PR_957b),
             REGISTER_TARGET(Ascend950PR_957c),
@@ -571,6 +580,8 @@ struct HIVMCMainConfigCLOptions : public HIVMCMainConfig {
             REGISTER_TARGET(Ascend950PR_9599),
             REGISTER_TARGET(Ascend950PR_959a),
             REGISTER_TARGET(Ascend950PR_959b),
+            REGISTER_TARGET(Ascend950PR_957bx),
+            REGISTER_TARGET(Ascend950PR_958bx),
             REGISTER_TARGET(Ascend950DT_950x),
             REGISTER_TARGET(Ascend950DT_950y),
             REGISTER_TARGET(Ascend950DT_9571),
@@ -582,7 +593,9 @@ struct HIVMCMainConfigCLOptions : public HIVMCMainConfig {
             REGISTER_TARGET(Ascend950DT_9577),
             REGISTER_TARGET(Ascend950DT_9578),
             REGISTER_TARGET(Ascend950DT_9581),
+            REGISTER_TARGET(Ascend950DT_9581x),
             REGISTER_TARGET(Ascend950DT_9582),
+            REGISTER_TARGET(Ascend950DT_9582x),
             REGISTER_TARGET(Ascend950DT_9583),
             REGISTER_TARGET(Ascend950DT_9584),
             REGISTER_TARGET(Ascend950DT_9585),
@@ -594,7 +607,20 @@ struct HIVMCMainConfigCLOptions : public HIVMCMainConfig {
             REGISTER_TARGET(Ascend950DT_9595),
             REGISTER_TARGET(Ascend950DT_9596),
             REGISTER_TARGET(Ascend950DT_95A1),
-            REGISTER_TARGET(Ascend950DT_95A2), REGISTER_TARGET(Unknown)
+            REGISTER_TARGET(Ascend950DT_95A2),
+            REGISTER_TARGET(Ascend950DT_9572x),
+            // Ascend960DT series
+            REGISTER_TARGET(Ascend960), REGISTER_TARGET(Ascend960DT_969B5),
+            REGISTER_TARGET(Ascend960DT_969B6),
+            REGISTER_TARGET(Ascend960DT_968B7),
+            REGISTER_TARGET(Ascend960DT_966B7),
+            REGISTER_TARGET(Ascend960DT_966B8),
+            REGISTER_TARGET(Ascend960DT_961BY),
+            REGISTER_TARGET(Ascend960DT_961BZ),
+            // Ascend960PR series
+            REGISTER_TARGET(Ascend960PR_969A1),
+            REGISTER_TARGET(Ascend960PR_964A1),
+            REGISTER_TARGET(Ascend960PR_936A1), REGISTER_TARGET(Unknown)
 #undef REGISTER_TARGET
 #undef TO_STRING
                 ),

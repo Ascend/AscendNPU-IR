@@ -163,7 +163,7 @@ struct DataPartitionScheme {
       for (auto &op : rematerializedOps) {
         op.first->dump();
         LDBG(" along dim ");
-        for (auto &dim : op.second) {
+        for ([[maybe_unused]] auto &dim : op.second) {
           LDBG(dim << " ");
         }
       }
@@ -302,7 +302,7 @@ static bool getBackwardSliceToPartition(Value v,
       // track yield value
       // find result index of v
       unsigned resultIndex = 0;
-      for (int i = 0; i < op->getNumResults(); ++i) {
+      for (int i = 0; i < static_cast<int>(op->getNumResults()); ++i) {
         if (op->getResult(i) == v) {
           resultIndex = i;
           break;
@@ -340,7 +340,7 @@ static bool getBackwardSliceToPartition(Value v,
   }
 
   return true;
-};
+}
 
 // Return false if the partition is not possible.
 static bool getForwardSliceToPartition(Value v,
@@ -457,7 +457,7 @@ static bool getForwardSliceToPartition(Value v,
   }
 
   return true;
-};
+}
 
 // Compute a closure of all ops originated from
 // or being dependent on by the root op.
@@ -499,8 +499,8 @@ static bool getSliceToPartition(Value root,
         accumulator = dotOp.getD();
       }
 
-      if (currentDim == 0 && opndIndx == 0 ||
-          currentDim == 1 && opndIndx == 1) {
+      if ((currentDim == 0 && opndIndx == 0) ||
+          (currentDim == 1 && opndIndx == 1)) {
         // Hanlde accumulator
         if (!getBackwardSliceToPartition(accumulator, partitionScheme,
                                          currentDim))
@@ -541,7 +541,7 @@ static bool computePartitionScheme(triton::FuncOp &funcOp,
     return true;
 
   // Checking if all dots can be partitioned in the same way
-  int numWarps = mlir::triton::gpu::lookupNumWarps(funcOp);
+  [[maybe_unused]] int numWarps = mlir::triton::gpu::lookupNumWarps(funcOp);
   for (auto op : dots) {
     if (partitionScheme.isPartitioned(op) || partitionScheme.isSkipped(op)) {
       continue;
@@ -602,7 +602,7 @@ static bool computePartitionScheme(triton::FuncOp &funcOp,
     }
 
     bool success = false;
-    for (int i = 0; i < partitionDim.size(); ++i) {
+    for (int i = 0; i < static_cast<int>(partitionDim.size()); ++i) {
       // Partition the slice closure
       auto trialPartitionScheme = partitionScheme;
       LLVM_DEBUG(
@@ -706,7 +706,8 @@ static void rewriteRematerializedOps(triton::FuncOp &funcOp,
           assert(partitionScheme.dotPartitionOperand.contains(user) &&
                  "no operand info");
           unsigned opndIndx = partitionScheme.dotPartitionOperand[user];
-          if (userDim == 0 && opndIndx == 1 || userDim == 1 && opndIndx == 0)
+          if ((userDim == 0 && opndIndx == 1) ||
+              (userDim == 1 && opndIndx == 0))
             userDim = DataPartitionScheme::noOpPartitionDim;
         }
 
@@ -782,7 +783,7 @@ static Operation *sliceOp(Operation *op, int offset, IRMapping &mappings,
         assert(partitionScheme.dotPartitionOperand.contains(op) &&
                "no operand info");
         unsigned opndIndx = partitionScheme.dotPartitionOperand[op];
-        if (dim == 0 && opndIndx == 1 || dim == 1 && opndIndx == 0) {
+        if ((dim == 0 && opndIndx == 1) || (dim == 1 && opndIndx == 0)) {
           needRetype = false;
         }
       }
@@ -859,7 +860,7 @@ static Operation *sliceOp(Operation *op, int offset, IRMapping &mappings,
     RankedTensorType oldRetType = tmemLdOp.getType();
     auto retShapePerCTA = getShapePerCTA(oldRetType);
     int numWarps = mlir::triton::gpu::lookupNumWarps(op);
-    auto CTALayout = getCTALayout(oldRetType.getEncoding());
+    [[maybe_unused]] auto CTALayout = getCTALayout(oldRetType.getEncoding());
     builder.setInsertionPoint(op);
     // The source op is already sliced at this point, so srcTy, type, tmem is
     // sliced. We use getTmemCompatibleLayout to get a block layout that is for
@@ -899,7 +900,7 @@ static Operation *sliceOp(Operation *op, int offset, IRMapping &mappings,
       // convert from srcTy to a compatible blocked layout.
       auto retShapePerCTA = getShapePerCTA(srcTy);
       int numWarps = mlir::triton::gpu::lookupNumWarps(op);
-      auto CTALayout = getCTALayout(srcTy.getEncoding());
+      [[maybe_unused]] auto CTALayout = getCTALayout(srcTy.getEncoding());
       builder.setInsertionPoint(op);
 
       // calculate new tmem type.
@@ -1048,7 +1049,7 @@ static Operation *sliceOp(Operation *op, int offset, IRMapping &mappings,
     LDBG("slicing operand " << opndIndx << "\n");
     sliceOp(op->getOperand(opndIndx), offset, mappings, reverseMappings,
             partitionScheme);
-    if (dim == 0 && opndIndx == 1 || dim == 1 && opndIndx == 0) {
+    if ((dim == 0 && opndIndx == 1) || (dim == 1 && opndIndx == 0)) {
       // slice the other operand
       unsigned otherOpndIndx = 1 - opndIndx;
       LDBG("slicing operand " << otherOpndIndx << "\n");
@@ -1088,7 +1089,7 @@ static Operation *sliceOp(Operation *op, int offset, IRMapping &mappings,
         assert(argIndex < parentBlock->getNumArguments() &&
                "new init argment not found");
         Region *parentRegion = parentBlock->getParent();
-        Region &newParentRegion =
+        [[maybe_unused]] Region &newParentRegion =
             newInitArgOp->getRegion(parentRegion->getRegionNumber());
         newInitArg = parentRegion->getArgument(argIndex);
       } else {
@@ -1169,7 +1170,8 @@ static Operation *sliceOp(Operation *op, int offset, IRMapping &mappings,
         int operandIndex = v.getOperandNumber();
         // find the corresponding operand index of newV in newYieldOp
         int newOperandIndex = -1;
-        for (int i = 0; i < newThenYieldOp->getNumOperands(); ++i) {
+        for (int i = 0; i < static_cast<int>(newThenYieldOp->getNumOperands());
+             ++i) {
           if (newThenYieldOp->getOperand(i) == newV) {
             newOperandIndex = i;
             break;
@@ -1318,7 +1320,7 @@ bool doDataPartition(triton::FuncOp &funcOp, unsigned numConsumerGroups) {
   });
 
   // Slice the ops.
-  for (int i = 0; i < partitionScheme.numPartitions; i++) {
+  for (int i = 0; i < static_cast<int>(partitionScheme.numPartitions); i++) {
     IRMapping mappings, reverseMappings;
     LDBG("partitioning op for task " << i + 1 << ":\n");
     int numOps = partitionScheme.ops.size();

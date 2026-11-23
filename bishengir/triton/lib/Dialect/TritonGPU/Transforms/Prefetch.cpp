@@ -97,7 +97,7 @@ void Prefetcher::cloneElementwiseOps(Value &ret, const SmallVector<Value> &vals,
                                      OpBuilder &builder) {
   IRMapping mapping;
   mapping.map(vals[1], ret);
-  for (int i = 2; i < vals.size(); i++) {
+  for (int i = 2; i < static_cast<int>(vals.size()); i++) {
     Value v = vals[i];
     Value curr = builder.clone(*v.getDefiningOp(), mapping)->getResult(0);
     if (isa<RankedTensorType>(curr.getType())) {
@@ -234,7 +234,7 @@ LogicalResult Prefetcher::initialize() {
     auto bEnc =
         mlir::cast<triton::gpu::DotOperandEncodingAttr>(bType.getEncoding());
     int aKWidth = aEnc.getKWidth();
-    int bKWidth = bEnc.getKWidth();
+    [[maybe_unused]] int bKWidth = bEnc.getKWidth();
     assert(aKWidth == bKWidth);
 
     auto kSize = aType.getShape().back();

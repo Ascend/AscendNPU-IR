@@ -16,9 +16,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Contracts/DMA/Fixpipe/FixpipePreQuantContract.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
+#include "bishengir/Dialect/HIVM/Utils/NddmaBroadcastUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRef/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -59,6 +61,7 @@ ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(NZ2NDOp)
 ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(L12UBOp)
 ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(LoadMXScaleOp)
 ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(NCHW2NC1HWC0Op)
+ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(NCHW2C1HWNC0Op)
 #undef ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION
 
 //===----------------------------------------------------------------------===//
@@ -86,7 +89,11 @@ static LogicalResult checkLoadOpMemSpace(LoadOp &op) {
     bool isSrcGm = srcAddrSpace == AddressSpace::GM;
     bool isDstGm = dstAddrSpace == AddressSpace::GM;
 
-    if (!isSrcGm || isDstGm) {
+    // InsertLoadStoreForMixCV inserted tight-coupled loads (e.g. reload of a
+    // fixpipe NZ2ND result inside UB) intentionally have src in UB; keep the
+    // strict src == gm requirement for ordinary loads.
+    bool isInsertedLoad = op->hasAttr(kInsertedLoadAttr::name);
+    if ((!isSrcGm && !isInsertedLoad) || isDstGm) {
       return op.emitOpError("only support src == gm and dst != gm currently!");
     }
   }
@@ -127,7 +134,8 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         /*right_padding_num=*/nullptr,
         /*init_out_buffer=*/false, /*init_condition=*/nullptr,
         /*may_implicit_transpose_with_last_axis=*/false,
-        /*eviction_policy=*/nullptr, /*tcoretype=*/nullptr);
+        /*eviction_policy=*/nullptr, /*broadcast_axes=*/nullptr,
+        /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -138,7 +146,8 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         /*right_padding_num=*/nullptr, /*init_out_buffer=*/false,
         /*init_condition=*/nullptr,
         /*may_implicit_transpose_with_last_axis=*/false,
-        /*eviction_policy=*/nullptr, /*tcoretype=*/nullptr);
+        /*eviction_policy=*/nullptr, /*broadcast_axes=*/nullptr,
+        /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -149,7 +158,8 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         /*right_padding_num=*/nullptr, /*init_out_buffer=*/false,
         /*init_condition=*/nullptr,
         /*may_implicit_transpose_with_last_axis=*/false,
-        /*eviction_policy=*/nullptr, /*tcoretype=*/nullptr);
+        /*eviction_policy=*/nullptr, /*broadcast_axes=*/nullptr,
+        /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -159,7 +169,8 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         left_padding_num, /*right_padding_num=*/nullptr,
         /*init_out_buffer=*/false, /*init_condition=*/nullptr,
         /*may_implicit_transpose_with_last_axis=*/false,
-        /*eviction_policy=*/nullptr, /*tcoretype=*/nullptr);
+        /*eviction_policy=*/nullptr, /*broadcast_axes=*/nullptr,
+        /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -170,7 +181,8 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         left_padding_num, /*right_padding_num=*/nullptr, init_out_buffer,
         /*init_condition=*/nullptr,
         /*may_implicit_transpose_with_last_axis=*/false,
-        /*eviction_policy=*/nullptr, /*tcoretype=*/nullptr);
+        /*eviction_policy=*/nullptr, /*broadcast_axes=*/nullptr,
+        /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -181,7 +193,8 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         left_padding_num, right_padding_num, /*init_out_buffer=*/false,
         /*init_condition=*/nullptr,
         /*may_implicit_transpose_with_last_axis=*/false,
-        /*eviction_policy=*/nullptr, /*tcoretype=*/nullptr);
+        /*eviction_policy=*/nullptr, /*broadcast_axes=*/nullptr,
+        /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -191,7 +204,8 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
   build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
         left_padding_num, /*right_padding_num=*/nullptr, init_out_buffer,
         init_condition, /*may_implicit_transpose_with_last_axis=*/false,
-        /*eviction_policy=*/nullptr, /*tcoretype=*/nullptr);
+        /*eviction_policy=*/nullptr, /*broadcast_axes=*/nullptr,
+        /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -202,6 +216,7 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         /*right_padding_num=*/nullptr,
         /*init_out_buffer=*/false, /*init_condition=*/nullptr,
         /*may_implicit_transpose_with_last_axis=*/false, eviction_policy,
+        /*broadcast_axes=*/nullptr,
         /*tcoretype=*/nullptr);
 }
 
@@ -214,6 +229,7 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         /*right_padding_num=*/nullptr,
         /*init_out_buffer=*/false, /*init_condition=*/nullptr,
         /*may_implicit_transpose_with_last_axis=*/false, eviction_policy,
+        /*broadcast_axes=*/nullptr,
         /*tcoretype=*/nullptr);
 }
 
@@ -227,7 +243,23 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         /*init_condition=*/nullptr,
         /*may_implicit_transpose_with_last_axis=*/
         may_implicit_transpose_with_last_axis,
-        /*eviction_policy=*/nullptr, /*tcoretype=*/nullptr);
+        /*eviction_policy=*/nullptr, /*broadcast_axes=*/nullptr,
+        /*tcoretype=*/nullptr);
+}
+
+/// Pad modes and pad values are paired by contract: PadValue needs a value,
+/// PadFirstElem takes none, and an unpadded load carries none either.
+static LogicalResult verifyPadValueContract(LoadOp op, PadMode mode) {
+  auto padValue = op.getPadValue();
+  if (mode == PadMode::PadValue && !padValue)
+    return op.emitOpError("if padmode is PadValue, pad_value is required!");
+  if (mode == PadMode::PadFirstElem && padValue)
+    return op.emitOpError(
+        "if padmode is PadFirstElem, pad_value should not be set!");
+  if (mode == PadMode::PadNull && padValue)
+    return op.emitOpError(
+        "pad_mode unset or PadNull: pad_value must not be set!");
+  return success();
 }
 
 static LogicalResult verifyPadMode(LoadOp op) {
@@ -235,19 +267,33 @@ static LogicalResult verifyPadMode(LoadOp op) {
   ShapedType dstOperType = op.getDstOperandType();
   auto srcShape = srcOperType.getShape();
   auto dstShape = dstOperType.getShape();
+  // Rank-0 has no last dimension to pad, so the shape checks below cannot run
+  // (they use back() and drop_back()), but the pad mode and pad value stay
+  // paired on every target.
+  if (srcShape.empty() || dstShape.empty()) {
+    auto padModeAttr = op.getPadMode();
+    return verifyPadValueContract(op, padModeAttr ? padModeAttr->getPadmode()
+                                                  : PadMode::PadNull);
+  }
 
   auto padModeAttr = op.getPadMode();
   if (!padModeAttr || padModeAttr->getPadmode() == PadMode::PadNull) {
-    // if not set padmode, means dst/src shape is the same
-    if (failed(verifyCompatibleShape(srcShape, dstShape))) {
+    // if not set padmode, means dst/src shape is the same, except along the
+    // axes declared as broadcast, which verifyBroadcastAxes owns.
+    if (!op.getBroadcastAxesAttr() &&
+        failed(verifyCompatibleShape(srcShape, dstShape))) {
       return op.emitOpError(
-          "if pad_mode is not set, src and dst shape should be the same!");
+          "pad_mode unset or PadNull: src and dst shapes must match!");
     }
 
     if (op.getPadValue()) {
       return op.emitOpError(
-          "if pad_mode is not set, pad_value should not be set!");
+          "pad_mode unset or PadNull: pad_value must not be set!");
     }
+
+    // PadNull and an absent pad_mode mean the same thing, so neither reaches
+    // the padded-shape checks below.
+    return success();
   }
 
   auto padval = op.getPadValue();
@@ -282,6 +328,292 @@ static LogicalResult verifyPadMode(LoadOp op) {
   return success();
 }
 
+/// Verify the no-pad A6 broadcast contract. Descriptor field limits and 128B
+/// row selection belong to the templates, with an equivalent scalar fallback.
+static LogicalResult verifyBroadcastAxes(LoadOp &op) {
+  DenseI64ArrayAttr broadcastAxes = op.getBroadcastAxesAttr();
+  if (!broadcastAxes)
+    return success();
+
+  // The in-row padded form returns from verify() before this function runs,
+  // so reaching here means the legacy templates will be used. They carry
+  // neither an axis mask nor a right count, so the combination cannot lower.
+  auto padMode = op.getPadMode();
+  const bool padded = (padMode && padMode->getPadmode() != PadMode::PadNull) ||
+                      op.getPadValue() || op.getLeftPaddingNum() ||
+                      op.getRightPaddingNum();
+  if (padded)
+    return op.emitOpError(
+        "broadcast_axes cannot be combined with padding in the legacy load "
+        "form");
+
+  if (op.getInitOutBuffer() || op.getInitCondition())
+    return op.emitOpError(
+        "broadcast_axes cannot be combined with initialization yet");
+
+  if (op.getMayImplicitTransposeWithLastAxis())
+    return op.emitOpError(
+        "broadcast_axes does not support the implicit transpose with the "
+        "last axis");
+
+  ShapedType srcOperType = op.getSrcOperandType();
+  ShapedType dstOperType = op.getDstOperandType();
+  ArrayRef<int64_t> srcShape = srcOperType.getShape();
+  ArrayRef<int64_t> dstShape = dstOperType.getShape();
+
+  const int64_t rank = srcOperType.getRank();
+  if (rank != 2 && rank != 3)
+    return op.emitOpError("broadcast_axes only supports rank 2 or 3 loads");
+
+  if (!isa<MemRefType>(srcOperType) || !isa<MemRefType>(dstOperType))
+    return op.emitOpError("broadcast_axes only supports a GM -> UB transfer");
+
+  ArrayRef<int64_t> axes = broadcastAxes.asArrayRef();
+  if (axes.empty())
+    return op.emitOpError("broadcast_axes expects at least one axis");
+
+  // The legacy memref ABI has no allocation length. Admit dynamic extents
+  // only when existing view SSA proves they stay inside a static backing
+  // allocation; the template separately guards descriptor/address arithmetic.
+  if ((!srcOperType.hasStaticShape() &&
+       !nddma::isBoundedBroadcastView(op.getSrc(), false)) ||
+      (!dstOperType.hasStaticShape() &&
+       !nddma::isBoundedBroadcastView(op.getDst(), true)))
+    return op.emitOpError(
+        "dynamic broadcast requires a bounded static-backed "
+        "view; allocation length is unavailable in the legacy ABI");
+
+  SmallVector<bool> isBroadcast(rank, false);
+  for (int64_t axis : axes) {
+    if (axis < 0 || axis >= rank)
+      return op.emitOpError("broadcast axis ")
+             << axis << " is out of range for rank " << rank;
+    if (isBroadcast[axis])
+      return op.emitOpError("broadcast axes must be unique");
+    isBroadcast[axis] = true;
+  }
+  for (int64_t dim = 0; dim < rank; ++dim) {
+    if (isBroadcast[dim]) {
+      if (srcShape[dim] != 1 ||
+          (!ShapedType::isDynamic(dstShape[dim]) && dstShape[dim] <= 1))
+        return op.emitOpError("broadcast axis ")
+               << dim << " needs src extent 1 and dst extent > 1, got src "
+               << srcShape[dim] << " and dst " << dstShape[dim];
+      continue;
+    }
+    // A dynamic extent is compared by the template at run time, which traps
+    // when the two sides disagree; the verifier does not try to prove it.
+    if (ShapedType::isDynamic(srcShape[dim]) ||
+        ShapedType::isDynamic(dstShape[dim]))
+      continue;
+    if (srcShape[dim] != dstShape[dim])
+      return op.emitOpError("non-broadcast axis ")
+             << dim << " must have the same extent on src and dst, got src "
+             << srcShape[dim] << " and dst " << dstShape[dim];
+  }
+
+  Type elementType = srcOperType.getElementType();
+  if (!(elementType.isInteger(8) || elementType.isInteger(16) ||
+        elementType.isInteger(32) || elementType.isF16() ||
+        elementType.isBF16() || elementType.isF32() ||
+        isa<Float8E4M3FNType, Float8E5M2Type>(elementType)))
+    return op.emitOpError("broadcast_axes has an unsupported element type");
+
+  // broadcast_axes only applies to a resolved GM -> UB transfer. Never assert
+  // on an unresolved bufferization space, or reinterpret an unknown tensor as
+  // GM.
+  auto srcMemref = dyn_cast<MemRefType>(srcOperType);
+  auto dstMemref = dyn_cast<MemRefType>(dstOperType);
+  auto srcSpace =
+      srcMemref ? dyn_cast_or_null<AddressSpaceAttr>(srcMemref.getMemorySpace())
+                : AddressSpaceAttr{};
+  auto dstSpace =
+      dstMemref ? dyn_cast_or_null<AddressSpaceAttr>(dstMemref.getMemorySpace())
+                : AddressSpaceAttr{};
+  if (!srcSpace || !dstSpace ||
+      srcSpace.getAddressSpace() != AddressSpace::GM ||
+      dstSpace.getAddressSpace() != AddressSpace::UB)
+    return op.emitOpError("broadcast_axes only supports a GM -> UB transfer");
+  ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
+  if (!moduleOp || !hacc::utils::hasTargetAttr(moduleOp) ||
+      !hacc::utils::isAscend960(moduleOp))
+    return op.emitOpError(
+        "broadcast_axes is only supported on A6 (Ascend960/dav-920r1)");
+
+  return success();
+}
+
+// Span is deliberately dispatched before the legacy pad/broadcast verifiers.
+// Never reinterpret it as an alignment pad when an optimization is unavailable.
+static LogicalResult verifySpanLoad(LoadOp op) {
+  auto src = dyn_cast<MemRefType>(op.getSrc().getType());
+  auto dst = dyn_cast<MemRefType>(op.getDst().getType());
+  auto module = op->getParentOfType<ModuleOp>();
+  if (!module || !hacc::utils::hasTargetAttr(module) ||
+      !hacc::utils::isAscend960(module))
+    return op.emitOpError("span padding requires A6 (Ascend960/dav-920r1)");
+  if (!src || !dst || (src.getRank() != 2 && src.getRank() != 3))
+    return op.emitOpError("span padding requires rank 2 or 3 memrefs");
+  auto ss = dyn_cast_or_null<AddressSpaceAttr>(src.getMemorySpace());
+  auto ds = dyn_cast_or_null<AddressSpaceAttr>(dst.getMemorySpace());
+  if (!ss || !ds || ss.getAddressSpace() != AddressSpace::GM ||
+      ds.getAddressSpace() != AddressSpace::UB)
+    return op.emitOpError("span padding requires GM -> UB");
+  Type elem = src.getElementType();
+  if (!(elem.isInteger(8) || elem.isInteger(16) || elem.isInteger(32) ||
+        elem.isF16() || elem.isBF16() || elem.isF32() ||
+        isa<Float8E4M3FNType, Float8E5M2Type>(elem)))
+    return op.emitOpError("span padding has an unsupported element type");
+  if (!op.getPadMode() ||
+      op.getPadModeAttr().getPadmode() != PadMode::PadValue ||
+      !op.getPadValue() || op.getPadValue().getType() != elem)
+    return op.emitOpError(
+        "span padding requires PadValue and a matching value");
+  // A left count that is absent is the same as zero, so only the right count
+  // has to be present; both are index-typed when they appear.
+  if (!op.getRightPaddingNum() ||
+      !op.getRightPaddingNum().getType().isIndex() ||
+      (op.getLeftPaddingNum() && !op.getLeftPaddingNum().getType().isIndex()))
+    return op.emitOpError(
+        "span padding requires an index right count and an optional index "
+        "left count");
+  if (op.getInitOutBuffer() || op.getInitCondition() ||
+      op.getMayImplicitTransposeWithLastAxis())
+    return op.emitOpError(
+        "span padding does not support initialization or transpose");
+  const int64_t rank = src.getRank();
+  SmallVector<bool> axes(rank, false);
+  if (auto attr = op.getBroadcastAxesAttr()) {
+    if (attr.asArrayRef().empty())
+      return op.emitOpError("broadcast_axes expects at least one axis");
+    for (int64_t axis : attr.asArrayRef()) {
+      if (axis < 0 || axis >= rank - 1 || axes[axis])
+        return op.emitOpError(
+            "span broadcast axes must be unique non-last axes");
+      axes[axis] = true;
+    }
+  }
+  for (int64_t i = 0; i < rank - 1; ++i) {
+    int64_t s = src.getDimSize(i), d = dst.getDimSize(i);
+    if (axes[i]) {
+      if ((!ShapedType::isDynamic(s) && s != 1) ||
+          (!ShapedType::isDynamic(d) && d < 1))
+        return op.emitOpError(
+            "span broadcast requires unit source and positive destination");
+    } else if (!ShapedType::isDynamic(s) && !ShapedType::isDynamic(d) &&
+               s != d) {
+      return op.emitOpError("span non-broadcast dimensions must match");
+    }
+  }
+  auto lp = getConstantIntValue(op.getLeftPaddingNum());
+  if (!op.getLeftPaddingNum())
+    lp = 0; // an absent left count reads as zero
+  auto rp = getConstantIntValue(op.getRightPaddingNum());
+  if ((lp && *lp < 0) || (rp && *rp < 0))
+    return op.emitOpError("span padding counts must be nonnegative");
+  int64_t w = src.getDimSize(rank - 1), d = dst.getDimSize(rank - 1);
+  if (lp && rp && !ShapedType::isDynamic(w) && !ShapedType::isDynamic(d) &&
+      (*lp > d || w > d - *lp || *rp != d - *lp - w))
+    return op.emitOpError("span requires D = lp + W + rp without overflow");
+  for (Value value : {op.getSrc(), op.getDst()}) {
+    auto type = cast<MemRefType>(value.getType());
+    SmallVector<int64_t> strides;
+    int64_t offset;
+    if (failed(utils::getStridesAndOffsetCompat(type, strides, offset)) ||
+        (!ShapedType::isDynamic(strides.back()) && strides.back() != 1) ||
+        (!ShapedType::isDynamic(offset) && offset < 0))
+      return op.emitOpError(
+          "span requires contiguous rows and nonnegative offsets");
+    // Accumulate the exact touched extent, not size*stride (which includes
+    // holes). Unknown components stay unknown, never substituted with one.
+    std::optional<int64_t> span = 1;
+    for (int64_t i = rank - 1; i >= 0; --i) {
+      int64_t n = type.getDimSize(i), st = strides[i];
+      if ((!ShapedType::isDynamic(st) && st < 0) ||
+          (span && !ShapedType::isDynamic(st) && !ShapedType::isDynamic(n) &&
+           i < rank - 1 && st < *span))
+        return op.emitOpError("span rows or planes overlap");
+      if (!span || ShapedType::isDynamic(n) || ShapedType::isDynamic(st)) {
+        span.reset();
+      } else if (n == 0) {
+        span = 0;
+      } else if (n > 1) {
+        if (st > (INT64_MAX - *span) / (n - 1))
+          return op.emitOpError("span address range overflows");
+        *span += (n - 1) * st;
+      }
+    }
+    if (span && !ShapedType::isDynamic(offset) &&
+        offset > INT64_MAX / (elem.getIntOrFloatBitWidth() / 8) - *span)
+      return op.emitOpError("span address range overflows");
+    // Check statically known backing allocations. Dynamic views retain the
+    // original load/copy validity contract, not a new caller capacity ABI.
+    Value root = value;
+    while (true) {
+      if (auto v = root.getDefiningOp<memref::SubViewOp>())
+        root = v.getSource();
+      else if (auto v = root.getDefiningOp<memref::CastOp>())
+        root = v.getSource();
+      else if (auto v = root.getDefiningOp<memref::ReinterpretCastOp>())
+        root = v.getSource();
+      else if (auto v = root.getDefiningOp<memref::ExpandShapeOp>())
+        root = v.getSrc();
+      else if (auto v = root.getDefiningOp<memref::CollapseShapeOp>())
+        root = v.getSrc();
+      else
+        break;
+    }
+    auto rootType = cast<MemRefType>(root.getType());
+    SmallVector<int64_t> rootStrides;
+    int64_t rootOffset;
+    if (span && *span > 0 && !ShapedType::isDynamic(offset) &&
+        rootType.hasStaticShape() &&
+        succeeded(utils::getStridesAndOffsetCompat(rootType, rootStrides,
+                                                   rootOffset)) &&
+        !ShapedType::isDynamic(rootOffset) && rootOffset >= 0) {
+      std::optional<int64_t> bound = rootOffset;
+      bool empty = false;
+      for (auto [n, st] : llvm::zip(rootType.getShape(), rootStrides)) {
+        empty |= n == 0;
+        if (ShapedType::isDynamic(st) || st < 0 ||
+            (n > 1 && st > (INT64_MAX - *bound) / (n - 1))) {
+          bound.reset();
+          break;
+        }
+        if (n > 1)
+          *bound += (n - 1) * st;
+      }
+      if (bound && *bound < INT64_MAX) {
+        *bound = empty ? rootOffset : *bound + 1;
+        if (offset > *bound || *span > *bound - offset)
+          return op.emitOpError("span view exceeds its backing allocation");
+      }
+    }
+  }
+  return success();
+}
+
+bool LoadOp::isSpanPaddedLoad() {
+  // Only A6 has the span templates; the A5 path keeps the legacy padding.
+  auto module = getOperation()->template getParentOfType<ModuleOp>();
+  if (!module || !hacc::utils::isAscend960(module))
+    return false;
+
+  auto isNonDefault = [](Value value) {
+    if (!value)
+      return false;
+    if (auto constant = getConstantIntValue(value))
+      return *constant != 0;
+    // A dynamic count may be zero at run time, but only the span contract
+    // carries a variable padding count, so treat it as span.
+    return true;
+  };
+  // An explicit zero right count is the same as no right count: the in-row
+  // form is selected by a right padding that is actually present, so a
+  // canonicalization that drops the zero operand cannot change the form.
+  return isNonDefault(getRightPaddingNum());
+}
+
 LogicalResult LoadOp::verify() {
   // check element type of src and dst
   ShapedType srcOperType = getSrcOperandType();
@@ -310,7 +642,16 @@ LogicalResult LoadOp::verify() {
     return emitOpError("src and dst should have the same dimensions!");
   }
 
+  // The in-row form owns its whole contract: the legacy padding and
+  // broadcast rules below describe the destination-anchored form and must
+  // not be applied to it.
+  if (isSpanPaddedLoad())
+    return verifySpanLoad(*this);
+
   if (failed(verifyPadMode(*this)))
+    return failure();
+
+  if (failed(verifyBroadcastAxes(*this)))
     return failure();
 
   // check mem space in case of memref
@@ -727,7 +1068,7 @@ LogicalResult NCHW2NC1HWC0Op::verify() {
   if (dstSpace && dstSpace.getAddressSpace() != AddressSpace::L1)
     return emitOpError("expects the destination to be in L1");
 
-  int64_t c0Size = srcType.getElementType().isF32() ? 8 : 16;
+  int64_t c0Size = mlir::utils::getNumPerBlock(srcType.getElementType());
   int64_t dstC0 = dstType.getDimSize(4);
   if (!ShapedType::isDynamic(dstC0) && dstC0 != c0Size)
     return emitOpError("expects the destination C0 dimension to occupy one "
@@ -761,6 +1102,82 @@ LogicalResult NCHW2NC1HWC0Op::verify() {
     if (dstChannelBlocks / groups != expectedC1PerGroup)
       return emitOpError("destination C1 dimension does not match the grouped "
                          "source channels");
+  }
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// NCHW2C1HWNC0Op
+//===----------------------------------------------------------------------===//
+
+void NCHW2C1HWNC0Op::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  detail::getEffectsImpl(effects, cast<HIVMStructuredOp>(getOperation()));
+}
+
+LogicalResult NCHW2C1HWNC0Op::verify() {
+  auto srcType = cast<MemRefType>(getSrc().getType());
+  auto dstType = cast<MemRefType>(getDst().getType());
+  if (srcType.getRank() != 4)
+    return emitOpError("expects a rank-4 NCHW source");
+  if (dstType.getRank() != 5)
+    return emitOpError("expects a rank-5 C1HWNC0 destination");
+  if (srcType.getElementType() != dstType.getElementType())
+    return emitOpError("expects source and destination element types to match");
+
+  auto srcSpace = dyn_cast_or_null<AddressSpaceAttr>(srcType.getMemorySpace());
+  auto dstSpace = dyn_cast_or_null<AddressSpaceAttr>(dstType.getMemorySpace());
+  if (srcSpace && srcSpace.getAddressSpace() != AddressSpace::GM)
+    return emitOpError("expects the source to be in GM");
+  if (dstSpace && dstSpace.getAddressSpace() != AddressSpace::L1)
+    return emitOpError("expects the destination to be in L1");
+
+  int64_t c0Size = mlir::utils::getNumPerBlock(srcType.getElementType());
+  int64_t dstC0 = dstType.getDimSize(4);
+  if (!ShapedType::isDynamic(dstC0) && dstC0 != c0Size)
+    return emitOpError("expects the destination C0 dimension to occupy one "
+                       "32-byte block");
+
+  for (int64_t srcDimIndex : {2, 3}) {
+    int64_t dstDimIndex = srcDimIndex - 1;
+    int64_t srcDim = srcType.getDimSize(srcDimIndex);
+    int64_t dstDim = dstType.getDimSize(dstDimIndex);
+    if (!ShapedType::isDynamic(srcDim) && !ShapedType::isDynamic(dstDim) &&
+        srcDim != dstDim)
+      return emitOpError("expects source and destination H/W dimensions to "
+                         "match");
+  }
+
+  int64_t srcChannels = srcType.getDimSize(1);
+  int64_t dstChannelBlocks = dstType.getDimSize(0);
+  if (!ShapedType::isDynamic(srcChannels) &&
+      !ShapedType::isDynamic(dstChannelBlocks) &&
+      dstChannelBlocks != (srcChannels + c0Size - 1) / c0Size)
+    return emitOpError(
+        "destination C1 dimension does not match source channels");
+
+  int64_t groups = getGroups();
+  if (groups <= 0)
+    return emitOpError("expects groups to be positive");
+  int64_t srcOutputChannels = srcType.getDimSize(0);
+  int64_t dstOutputChannels = dstType.getDimSize(3);
+  if (!ShapedType::isDynamic(srcOutputChannels) &&
+      srcOutputChannels % groups != 0)
+    return emitOpError("expects the source N dimension to be divisible by "
+                       "groups");
+  if (!ShapedType::isDynamic(dstOutputChannels) &&
+      dstOutputChannels % groups != 0)
+    return emitOpError("expects the destination N dimension to be divisible "
+                       "by groups");
+  if (!ShapedType::isDynamic(srcOutputChannels) &&
+      !ShapedType::isDynamic(dstOutputChannels)) {
+    int64_t outputChannelsPerGroup = srcOutputChannels / groups;
+    int64_t expectedOutputChannelsPerGroup =
+        CEIL_FACTOR(outputChannelsPerGroup, utils::FRACTAL_BLOCK_NUM);
+    if (dstOutputChannels / groups != expectedOutputChannelsPerGroup)
+      return emitOpError("destination N dimension does not match the grouped "
+                         "and aligned source N dimension");
   }
   return success();
 }
@@ -803,6 +1220,43 @@ void FixpipeOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   detail::getEffectsImpl(effects, cast<HIVMStructuredOp>(getOperation()));
+}
+
+FixpipeOp FixpipeOp::clone(OpBuilder &builder, FixpipeOp fixpipe, Value src,
+                           Value dst) {
+  return clone(builder, fixpipe, src, dst, {});
+}
+
+FixpipeOp FixpipeOp::clone(OpBuilder &builder, FixpipeOp fixpipe, Value src,
+                           Value dst, ArrayRef<NamedAttribute> attrOverrides) {
+  if (!src)
+    src = fixpipe.getSrc();
+  if (!dst)
+    dst = fixpipe.getDst();
+
+  if (isa<MemRefType>(dst.getType())) {
+    // A memref destination has no result tensor: rebuild through the generic
+    // ODS builder instead of enumerating fields.
+    SmallVector<Value> operands(fixpipe->getOperands());
+    operands[fixpipe.getSrcMutable().getOperandNumber()] = src;
+    operands[fixpipe.getDstMutable().getOperandNumber()] = dst;
+    auto newOp = cast<FixpipeOp>(builder.create<FixpipeOp>(
+        fixpipe.getLoc(), TypeRange{}, operands, fixpipe->getAttrs()));
+    for (NamedAttribute attr : attrOverrides)
+      newOp->setAttr(attr.getName(), attr.getValue());
+    return newOp;
+  }
+
+  // Replace operands by position: src and dst may be the same SSA value.
+  auto clone = cast<FixpipeOp>(builder.clone(*fixpipe));
+  clone.getSrcMutable().set(src);
+  clone.getDstMutable().set(dst);
+  // Keep the copied result type in sync with the new destination.
+  if (auto result = clone.getResultTensor())
+    result.setType(cast<RankedTensorType>(dst.getType()));
+  for (NamedAttribute attr : attrOverrides)
+    clone->setAttr(attr.getName(), attr.getValue());
+  return clone;
 }
 
 enum FixpipeState {
@@ -885,133 +1339,7 @@ inline static bool isDualDstEnabled(FixpipeDualDstMode dualDstMode) {
 }
 
 /*
-FixpipeOp assemblyFormat in HIVMC version < 0.2.0:
-```
-  attr-dict
-  `ins` `(` $src `:` type($src) `)`
-  `outs` `(` $dst `:` type($dst) `)`
-  (`dual_dst_mode` `=` $dual_dst_mode^)?
-  (`unit_flag` `[` $unit_flag_mode^ (`,` $unit_flag_cond^)? `]`)?
-  (`->` type($result_tensor)^)?
-```
-Attribute supported in HIVMC version < 0.2.0:
-```
-OptionalAttr<UnitAttr>:$enable_nz2nd
-```
-*/
-static void printVersion0_1(FixpipeOp &op, OpAsmPrinter &_odsPrinter) {
-  ::llvm::SmallVector<::llvm::StringRef, 2> elidedAttrs;
-  elidedAttrs.push_back("operandSegmentSizes");
-  elidedAttrs.push_back("unit_flag_mode");
-  {
-    ::mlir::Builder odsBuilder(op.getContext());
-    ::mlir::Attribute attr = op.getPreQuantAttr();
-    if (attr &&
-        (attr == ::mlir::hivm::FixpipePreQuantModeAttr::get(
-                     odsBuilder.getContext(), FixpipePreQuantMode::NO_QUANT)))
-      elidedAttrs.push_back("pre_quant");
-  }
-  {
-    ::mlir::Builder odsBuilder(op.getContext());
-    ::mlir::Attribute attr = op.getPreReluAttr();
-    if (attr &&
-        (attr == ::mlir::hivm::FixpipePreReluModeAttr::get(
-                     odsBuilder.getContext(), FixpipePreReluMode::NO_RELU)))
-      elidedAttrs.push_back("pre_relu");
-  }
-  {
-    ::mlir::Builder odsBuilder(op.getContext());
-    ::mlir::Attribute attr = op.getChannelSplitAttr();
-    if (attr && (attr == odsBuilder.getBoolAttr(false)))
-      elidedAttrs.push_back("channel_split");
-  }
-
-  // backward compatibility
-  auto addInterleave = [&](auto idx, auto size) {
-    if (static_cast<int64_t>(idx) < static_cast<int64_t>(size) - 1)
-      _odsPrinter << ", ";
-    return;
-  };
-  auto printFilteredAttrs = [&](auto filteredAttrs) {
-    auto sizeFilteredAttrs =
-        std::distance(filteredAttrs.begin(), filteredAttrs.end());
-    _odsPrinter << " {";
-    for (auto [idx, attr] : llvm::enumerate(filteredAttrs)) {
-      if (attr.getName() == FixpipeDMAModeAttr::getMnemonic()) {
-        _odsPrinter << "enable_nz2nd";
-      } else {
-        _odsPrinter << attr.getName().str();
-        if (!isa<UnitAttr>(attr.getValue())) {
-          _odsPrinter << " = ";
-          _odsPrinter.printAttribute(attr.getValue());
-        }
-      }
-      addInterleave(idx, sizeFilteredAttrs);
-    }
-    _odsPrinter << "}";
-  };
-
-  llvm::SmallDenseSet<StringRef> elidedAttrsSet(elidedAttrs.begin(),
-                                                elidedAttrs.end());
-  auto filteredAttrs =
-      llvm::make_filter_range(op->getAttrs(), [&](NamedAttribute attr) {
-        return !elidedAttrsSet.contains(attr.getName().strref());
-      });
-  if (!filteredAttrs.empty())
-    printFilteredAttrs(filteredAttrs);
-
-  _odsPrinter << ' ' << "ins";
-  _odsPrinter << "(";
-  _odsPrinter << op.getSrc();
-  _odsPrinter << ' ' << ":";
-  _odsPrinter << ' ';
-  {
-    auto type = op.getSrc().getType();
-    if (auto validType = ::llvm::dyn_cast<::mlir::ShapedType>(type))
-      _odsPrinter.printStrippedAttrOrType(validType);
-    else
-      _odsPrinter << type;
-  }
-  _odsPrinter << ")";
-  _odsPrinter << ' ' << "outs";
-  _odsPrinter << "(";
-  _odsPrinter << op.getDst();
-  _odsPrinter << ' ' << ":";
-  _odsPrinter << ' ';
-  {
-    auto type = op.getDst().getType();
-    if (auto validType = ::llvm::dyn_cast<::mlir::ShapedType>(type))
-      _odsPrinter.printStrippedAttrOrType(validType);
-    else
-      _odsPrinter << type;
-  }
-  _odsPrinter << ")";
-  if (op.getUnitFlagModeAttr()) {
-    _odsPrinter << ' ' << "unit_flag";
-    _odsPrinter << "[";
-    _odsPrinter.printStrippedAttrOrType(op.getUnitFlagModeAttr());
-    /*
-    // TODO: latest AscendNPU-IR is not compatible with HIVMC 0.1.0
-    // unit_flag_cond
-    if (op.getUnitFlagCond()) {
-      _odsPrinter << ","; _odsPrinter << ' ';
-      if (::mlir::Value value = op.getUnitFlagCond())
-      _odsPrinter << value;
-    }
-    */
-    _odsPrinter << "]";
-  }
-  if (op.getResultTensor()) {
-    _odsPrinter << ' ' << "->";
-    _odsPrinter << ' ';
-    _odsPrinter << (op.getResultTensor() ? ::llvm::ArrayRef<::mlir::Type>(
-                                               op.getResultTensor().getType())
-                                         : ::llvm::ArrayRef<::mlir::Type>());
-  }
-}
-
-/*
-FixpipeOp assemblyFormat in HIVMC version == 0.2.*
+FixpipeOp assemblyFormat in HIVMC*
 ```
   attr-dict
   `ins` `(` $src `:` type($src) `)`
@@ -1133,17 +1461,6 @@ static void printVersion0_2(FixpipeOp &op, OpAsmPrinter &_odsPrinter) {
 }
 
 void FixpipeOp::print(OpAsmPrinter &p) {
-  auto moduleOp =
-      this->getOperation()->template getParentOfType<mlir::ModuleOp>();
-  auto compatiblePrint =
-      moduleOp->getAttrOfType<BoolAttr>(hacc::HIVMCCompatiblePrintAttr::name);
-  if (!compatiblePrint || !compatiblePrint.getValue()) {
-    printVersion0_2(*this, p);
-    return;
-  }
-  if (hacc::utils::getHIVMCVersion(moduleOp) < llvm::VersionTuple(0, 2, 0))
-    printVersion0_1(*this, p);
-  else
     printVersion0_2(*this, p);
 }
 
@@ -1335,28 +1652,47 @@ ParseResult FixpipeOp::parse(::mlir::OpAsmParser &parser,
   return ::mlir::success();
 }
 
+// NZ2DN is a cube transfer capability, independent of vector lowering.
+static bool supportsFixpipeNZ2DN(ModuleOp moduleOp) {
+  if (!moduleOp)
+    return false;
+  auto targetDevice = hacc::utils::getTargetDevice(moduleOp);
+  if (!targetDevice)
+    return false;
+  auto arch = hacc::getArchitecture(*targetDevice);
+  return arch == bishengir::npu::NPUArchitectureKind::kDavC310 ||
+         arch == bishengir::npu::NPUArchitectureKind::kDav920R1;
+}
+
 LogicalResult FixpipeOp::verify() {
+  // The pre-quant mode's src/dst element-type contract is target-independent
+  // and generated from the typed enum-case metadata. It runs before any
+  // target-aware check.
+  Type srcElementType = getElementTypeOrSelf(getSrc().getType());
+  Type dstElementType = getElementTypeOrSelf(getDst().getType());
+  if (failed(verifyFixpipePreQuantSignature(getPreQuant(), srcElementType,
+                                            dstElementType,
+                                            [&] { return emitOpError(); })))
+    return failure();
+
   auto moduleOp = this->getOperation()->getParentOfType<mlir::ModuleOp>();
   bool isAscend950 = moduleOp && hacc::utils::isAscend950(moduleOp);
-  bool is910_95 = moduleOp && hacc::utils::isAscend910_95(moduleOp);
+  bool isAscend960 = moduleOp && hacc::utils::isAscend960(moduleOp);
   auto dmaMode = getDmaMode();
   auto dstScope = getOptionalHIVMAddressSpace(getDst().getType());
 
-  // NZ2DN DMA mode is only supported on Ascend950.
-  if (dmaMode == FixpipeDMAMode::NZ2DN && !isAscend950) {
-    return emitOpError("NZ2DN is only supported on Ascend950!");
-  }
-  // dst=UB is only supported on Ascend950.
-  if (dstScope.has_value() && dstScope.value() == hivm::AddressSpace::UB &&
-      !isAscend950) {
-    return emitOpError("dst=UB is only supported on Ascend950!");
+  bool supportsNZ2DN = supportsFixpipeNZ2DN(moduleOp);
+  if (dmaMode == FixpipeDMAMode::NZ2DN && !supportsNZ2DN) {
+    return emitOpError("NZ2DN requires dav-c310 or dav-920r1 architecture");
   }
 
-  // For non-910_95 hardware, only NZ2ND and NZ2NZ modes are supported.
-  if (!is910_95) {
-    if (dmaMode != FixpipeDMAMode::NZ2ND && dmaMode != FixpipeDMAMode::NZ2NZ) {
-      return emitOpError(
-          "The current hardware does not support dma mode is nz2nz");
+  // Other modes do not imply support for channel splitting or dual
+  // destinations. Ascend960 reuses the Ascend910_95 fixpipe pipeline, so the
+  // same DMA modes and channel splitting are permitted there.
+  if (!isAscend950 && !isAscend960) {
+    // dst=UB is only supported on Ascend950/Ascend960 (dav-920r1).
+    if (dstScope.has_value() && dstScope.value() == hivm::AddressSpace::UB) {
+      return emitOpError("dst=UB is only supported on Ascend950/Ascend960!");
     }
     if (getChannelSplit())
       return emitOpError("The current hardware does not support channel split");
@@ -1375,9 +1711,10 @@ LogicalResult FixpipeOp::verify() {
   if (!isDualDstEnabled(dualDstMode)) {
     return success();
   }
-  // dual_dst_mode can only be enabled on Ascend950.
-  if (!isAscend950) {
-    return emitOpError("dual_dst_mode is only supported on Ascend950!");
+  // dual_dst_mode can only be enabled on Ascend950/Ascend960.
+  if (!isAscend950 && !isAscend960) {
+    return emitOpError(
+        "dual_dst_mode is only supported on Ascend950/Ascend960!");
   }
 
   auto srcScope = getOptionalHIVMAddressSpace(getSrc().getType());

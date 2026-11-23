@@ -327,111 +327,136 @@ private:
   SmallVector<MemEffects> getMemEffects(Operation *op) {
     SmallVector<MemEffects> effects;
     if (auto copyOp = dyn_cast<ttng::AsyncTMACopyGlobalToLocalOp>(op)) {
-      effects.emplace_back(
-          MemEffects{.rw = MemEffects::RW::Write,
-                     .trackingKind = MemEffects::TrackingKind::Barrier,
-                     .buf = copyOp.getResult(),
-                     .barriersAndPreds = {{copyOp.getBarrier(), nullptr}},
-                     .pred = copyOp.getPred()});
+      effects.emplace_back(MemEffects{MemEffects::RW::Write,
+                                      MemEffects::TrackingKind::Barrier,
+                                      copyOp.getResult(),
+                                      {{copyOp.getBarrier(), nullptr}},
+                                      false,
+                                      copyOp.getPred()});
     }
     if (auto storeOp = dyn_cast<ttng::AsyncTMACopyLocalToGlobalOp>(op)) {
-      effects.emplace_back(MemEffects{
-          .rw = MemEffects::RW::Read,
-          .trackingKind = MemEffects::TrackingKind::None, // async tma writes
-                                                          // not modelled yet
-          .buf = storeOp.getSrc()});
+      effects.emplace_back(
+          MemEffects{MemEffects::RW::Read,
+                     MemEffects::TrackingKind::None, // async tma writes are not
+                                                     // modelled yet
+                     storeOp.getSrc(),
+                     {},
+                     false,
+                     {}});
     }
     if (auto gatherOp = dyn_cast<ttng::AsyncTMAGatherOp>(op)) {
-      effects.emplace_back(
-          MemEffects{.rw = MemEffects::RW::Write,
-                     .trackingKind = MemEffects::TrackingKind::Barrier,
-                     .buf = gatherOp.getResult(),
-                     .barriersAndPreds = {{gatherOp.getBarrier(), nullptr}},
-                     .pred = gatherOp.getPred()});
+      effects.emplace_back(MemEffects{MemEffects::RW::Write,
+                                      MemEffects::TrackingKind::Barrier,
+                                      gatherOp.getResult(),
+                                      {{gatherOp.getBarrier(), nullptr}},
+                                      false,
+                                      gatherOp.getPred()});
     }
     if (auto scatterOp = dyn_cast<ttng::AsyncTMAScatterOp>(op)) {
-      effects.emplace_back(MemEffects{
-          .rw = MemEffects::RW::Read,
-          .trackingKind = MemEffects::TrackingKind::None, // async tma writes
-                                                          // not modelled yet
-          .buf = scatterOp.getSrc(),
-      });
+      effects.emplace_back(
+          MemEffects{MemEffects::RW::Read,
+                     MemEffects::TrackingKind::None, // async tma writes are not
+                                                     // modelled yet
+                     scatterOp.getSrc(),
+                     {},
+                     false,
+                     {}});
     }
     if (auto copyOp = dyn_cast<ttg::AsyncCopyGlobalToLocalOp>(op)) {
-      effects.emplace_back(
-          MemEffects{.rw = MemEffects::RW::Write,
-                     .trackingKind = MemEffects::TrackingKind::asyncCpCommit,
-                     .buf = copyOp.getResult()});
+      effects.emplace_back(MemEffects{MemEffects::RW::Write,
+                                      MemEffects::TrackingKind::asyncCpCommit,
+                                      copyOp.getResult(),
+                                      {},
+                                      false,
+                                      {}});
     }
     if (auto loadOp = dyn_cast<ttg::LocalLoadOp>(op)) {
-      effects.emplace_back(
-          MemEffects{.rw = MemEffects::RW::Read, .buf = loadOp.getSrc()});
+      effects.emplace_back(MemEffects{MemEffects::RW::Read,
+                                      MemEffects::TrackingKind::None,
+                                      loadOp.getSrc(),
+                                      {},
+                                      false,
+                                      {}});
     }
     if (auto storeOp = dyn_cast<ttg::LocalStoreOp>(op)) {
-      effects.emplace_back(
-          MemEffects{.rw = MemEffects::RW::Write, .buf = storeOp.getDst()});
+      effects.emplace_back(MemEffects{MemEffects::RW::Write,
+                                      MemEffects::TrackingKind::None,
+                                      storeOp.getDst(),
+                                      {},
+                                      false,
+                                      {}});
     }
     if (auto allocOp = dyn_cast<ttg::LocalAllocOp>(op)) {
       if (allocOp.getSrc()) {
-        effects.emplace_back(MemEffects{.rw = MemEffects::RW::Write,
-                                        .buf = allocOp.getResult()});
+        effects.emplace_back(MemEffects{MemEffects::RW::Write,
+                                        MemEffects::TrackingKind::None,
+                                        allocOp.getResult(),
+                                        {},
+                                        false,
+                                        {}});
       }
     }
     if (auto loadOp = dyn_cast<ttng::TMEMLoadOp>(op)) {
-      effects.emplace_back(
-          MemEffects{.rw = MemEffects::RW::Read, .buf = loadOp.getSrc()});
+      effects.emplace_back(MemEffects{MemEffects::RW::Read,
+                                      MemEffects::TrackingKind::None,
+                                      loadOp.getSrc(),
+                                      {},
+                                      false,
+                                      {}});
     }
     if (auto storeOp = dyn_cast<ttng::TMEMStoreOp>(op)) {
-      effects.emplace_back(
-          MemEffects{.rw = MemEffects::RW::Write, .buf = storeOp.getDst()});
+      effects.emplace_back(MemEffects{MemEffects::RW::Write,
+                                      MemEffects::TrackingKind::None,
+                                      storeOp.getDst(),
+                                      {},
+                                      false,
+                                      {}});
     }
     if (auto allocOp = dyn_cast<ttng::TMEMAllocOp>(op)) {
       if (allocOp.getSrc()) {
-        effects.emplace_back(MemEffects{.rw = MemEffects::RW::Write,
-                                        .buf = allocOp.getResult()});
+        effects.emplace_back(MemEffects{MemEffects::RW::Write,
+                                        MemEffects::TrackingKind::None,
+                                        allocOp.getResult(),
+                                        {},
+                                        false,
+                                        {}});
       }
     }
     if (auto mmav5Op = dyn_cast<ttng::TCGen5MMAOp>(op)) {
       SmallVector<std::tuple<Value, Value>> barriersAndPreds = llvm::to_vector(
           llvm::zip(mmav5Op.getBarriers(), mmav5Op.getBarrierPreds()));
 
-      effects.emplace_back(
-          MemEffects{.rw = MemEffects::RW::Read,
-                     .trackingKind = MemEffects::TrackingKind::Barrier,
-                     .buf = mmav5Op.getA(),
-                     .barriersAndPreds = barriersAndPreds,
-                     .pred = mmav5Op.getPred()});
+      effects.emplace_back(MemEffects{
+          MemEffects::RW::Read, MemEffects::TrackingKind::Barrier,
+          mmav5Op.getA(), barriersAndPreds, false, mmav5Op.getPred()});
 
-      effects.emplace_back(
-          MemEffects{.rw = MemEffects::RW::Read,
-                     .trackingKind = MemEffects::TrackingKind::Barrier,
-                     .buf = mmav5Op.getB(),
-                     .barriersAndPreds = barriersAndPreds,
-                     .pred = mmav5Op.getPred()});
+      effects.emplace_back(MemEffects{
+          MemEffects::RW::Read, MemEffects::TrackingKind::Barrier,
+          mmav5Op.getB(), barriersAndPreds, false, mmav5Op.getPred()});
 
-      effects.emplace_back(
-          MemEffects{.rw = MemEffects::RW::Write,
-                     .trackingKind = MemEffects::TrackingKind::Barrier,
-                     .buf = mmav5Op.getAccumulator(),
-                     .barriersAndPreds = barriersAndPreds,
-                     .hwPipelined = true,
-                     .pred = mmav5Op.getPred()});
+      effects.emplace_back(MemEffects{
+          MemEffects::RW::Write, MemEffects::TrackingKind::Barrier,
+          mmav5Op.getAccumulator(), barriersAndPreds, true, mmav5Op.getPred()});
     }
     if (auto wgmmaOp = dyn_cast<ttng::WarpGroupDotOp>(op)) {
       if (wgmmaOp.getIsAsync() == true) {
         if (isa<ttg::SharedEncodingTrait>(
                 wgmmaOp.getA().getType().getEncoding())) {
-          effects.emplace_back(
-              MemEffects{.rw = MemEffects::RW::Read,
-                         .trackingKind = MemEffects::TrackingKind::wgmmaCommit,
-                         .buf = wgmmaOp.getA()});
+          effects.emplace_back(MemEffects{MemEffects::RW::Read,
+                                          MemEffects::TrackingKind::wgmmaCommit,
+                                          wgmmaOp.getA(),
+                                          {},
+                                          false,
+                                          {}});
         }
         if (isa<ttg::SharedEncodingTrait>(
                 wgmmaOp.getB().getType().getEncoding())) {
-          effects.emplace_back(
-              MemEffects{.rw = MemEffects::RW::Read,
-                         .trackingKind = MemEffects::TrackingKind::wgmmaCommit,
-                         .buf = wgmmaOp.getB()});
+          effects.emplace_back(MemEffects{MemEffects::RW::Read,
+                                          MemEffects::TrackingKind::wgmmaCommit,
+                                          wgmmaOp.getB(),
+                                          {},
+                                          false,
+                                          {}});
         }
       }
     }
@@ -637,7 +662,8 @@ private:
         {size}, elType, getThreadLocalBlockedEncoding(size));
     SmallVector<APInt> apInts = llvm::to_vector(
         llvm::map_range(values, [](int64_t v) { return APInt(64, v); }));
-    auto denseAttr = DenseElementsAttr::get(tensorType, apInts);
+    [[maybe_unused]] auto denseAttr =
+        DenseElementsAttr::get(tensorType, apInts);
     auto op = builder.create<tti::ExperimentalBufferPointersOp>(
         tensorType, values, memType);
     return op;
@@ -659,7 +685,7 @@ private:
 
   Value createInitializedScratchMemory(ImplicitLocOpBuilder &b,
                                        TypedValue<RankedTensorType> tensor) {
-    auto encoding = tensor.getType().getEncoding();
+    [[maybe_unused]] auto encoding = tensor.getType().getEncoding();
     Type elType = tensor.getType().getElementType();
     int elSize = elType.getIntOrFloatBitWidth() / 8;
     int numEls = product(tensor.getType().getShape());

@@ -184,6 +184,14 @@ void getEffectsImpl(
 
     effects.emplace_back(MemoryEffects::Read::get(), operand,
                          SideEffects::DefaultResource::get());
+    // The MMAD ping-pong signal is a mutable auxiliary input: the template
+    // reads the shared L0 ping-pong id and flips it in place, so it is also
+    // written.
+    if (auto matmulOp =
+            dyn_cast<LocalMatmulLikeOpInterface>(hivmOp.getOperation());
+        matmulOp && matmulOp.isPingPongSignalOperand(operand))
+      effects.emplace_back(MemoryEffects::Write::get(), operand,
+                           SideEffects::DefaultResource::get());
   }
   for (OpOperand &operand : hivmOp.getDpsInitsMutable()) {
     if (!llvm::isa<MemRefType>(operand.get().getType()))
@@ -191,6 +199,10 @@ void getEffectsImpl(
 
     effects.emplace_back(MemoryEffects::Write::get(), &operand,
                          SideEffects::DefaultResource::get());
+    if (auto op = dyn_cast<MmadL0Op>(hivmOp.getOperation());
+        op && op.readsAccumulator())
+      effects.emplace_back(MemoryEffects::Read::get(), &operand,
+                           SideEffects::DefaultResource::get());
   }
 }
 

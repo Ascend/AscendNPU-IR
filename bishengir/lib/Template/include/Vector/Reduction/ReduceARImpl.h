@@ -17,17 +17,15 @@
 #ifndef REDUCE_AR_IMPL_H
 #define REDUCE_AR_IMPL_H
 
+#include "DMA/DMAUtils.h"
 #include "Utils.h"
 #include "Vector/Reduction/ReductionUtils.h"
 #include "Vector/VecUtils.h"
-#include "DMA/DMAUtils.h"
 #include <type_traits>
-
 
 template <ReduceOpTy OP, typename T>
 __aiv__ inline __attribute__((always_inline)) T
-get_scalar_operation_init_value(__ubuf__ T *src0_ptr,
-                                int64_t offset) {
+get_scalar_operation_init_value(__ubuf__ T *src0_ptr, int64_t offset) {
   if constexpr (OP == ReduceOpTy::REDUCE_SUM) {
     return 0;
   } else if constexpr (OP == ReduceOpTy::REDUCE_MAX) {
@@ -49,24 +47,24 @@ get_scalar_operation_init_value(__ubuf__ T *src0_ptr,
 
 // Implementation for SUM (half/float) using pairwise reduction
 // - Small size (< num_per_repeat): pairwise with local buffer
-// - Large size (>= num_per_repeat): dichotomy to num_per_repeat, then pairwise to 1
+// - Large size (>= num_per_repeat): dichotomy to num_per_repeat, then pairwise
+// to 1
 template <ReduceOpTy OP, typename T>
 __aiv__ __attribute__((always_inline))
 std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM &&
-                  (std::is_same<half, T>() || std::is_same<float, T>())), void>
+                  (std::is_same<half, T>() || std::is_same<float, T>())),
+                 void>
 reduce_ar_scalar_core(memref_t<__ubuf__ T, 2> *src,
-                       memref_t<__ubuf__ T, 2> *dst_value,
-                       int64_t size0, int64_t size1,
-                       T initvalue,
-                       bool need_merge,
-                       memref_t<__ubuf__ T, 1> *tmp_buf) {
+                      memref_t<__ubuf__ T, 2> *dst_value, int64_t size0,
+                      int64_t size1, T initvalue, bool need_merge,
+                      memref_t<__ubuf__ T, 1> *tmp_buf) {
 
-  __ubuf__ T* src_ptr       = src->aligned + src->offset;
-  __ubuf__ T* dst_value_ptr = dst_value->aligned + dst_value->offset;
-  __ubuf__ T* tmp_buf_ptr   = tmp_buf->aligned + tmp_buf->offset;
-  const int64_t src_stride0  = src->strides[0];
-  const int64_t src_stride1  = src->strides[1];
-  const int64_t dst_stride0  = dst_value->strides[0];
+  __ubuf__ T *src_ptr = src->aligned + src->offset;
+  __ubuf__ T *dst_value_ptr = dst_value->aligned + dst_value->offset;
+  __ubuf__ T *tmp_buf_ptr = tmp_buf->aligned + tmp_buf->offset;
+  const int64_t src_stride0 = src->strides[0];
+  const int64_t src_stride1 = src->strides[1];
+  const int64_t dst_stride0 = dst_value->strides[0];
   constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
 
   for (int64_t i = 0; i < size0; ++i) {
@@ -76,33 +74,34 @@ reduce_ar_scalar_core(memref_t<__ubuf__ T, 2> *src,
     T result;
     if (size1 < num_per_repeat) {
       T local_buf[(num_per_repeat + 1) / 2];
-      result = scalar_reduce_pairwise<OP, T, T*>(row_ptr, src_stride1, size1, local_buf);
+      result = scalar_reduce_pairwise<OP, T, T *>(row_ptr, src_stride1, size1,
+                                                  local_buf);
     } else {
-      result = scalar_reduce_pairwise<OP, T, __ubuf__ T*>(
-          row_ptr, src_stride1, size1, tmp_buf_ptr);
+      result = scalar_reduce_pairwise<OP, T, __ubuf__ T *>(row_ptr, src_stride1,
+                                                           size1, tmp_buf_ptr);
     }
 
-    *dst_ptr = need_merge ? reduction_scalar_operation<OP, T>(*dst_ptr, result) : result;
+    *dst_ptr = need_merge ? reduction_scalar_operation<OP, T>(*dst_ptr, result)
+                          : result;
   }
 }
 
 template <ReduceOpTy OP, typename T>
 __aiv__ __attribute__((always_inline))
 std::enable_if_t<(OP == ReduceOpTy::REDUCE_PROD ||
-                   (OP == ReduceOpTy::REDUCE_SUM &&
-                    !(std::is_same<half, T>() || std::is_same<float, T>()))), void>
+                  (OP == ReduceOpTy::REDUCE_SUM &&
+                   !(std::is_same<half, T>() || std::is_same<float, T>()))),
+                 void>
 reduce_ar_scalar_core(memref_t<__ubuf__ T, 2> *src,
-                       memref_t<__ubuf__ T, 2> *dst_value,
-                       int64_t size0, int64_t size1,
-                       T initvalue,
-                       bool need_merge,
-                       memref_t<__ubuf__ T, 1> *tmp_buf) {
-  __ubuf__ T* src_ptr       = src->aligned + src->offset;
-  __ubuf__ T* dst_value_ptr = dst_value->aligned + dst_value->offset;
-  __ubuf__ T* tmp_buf_ptr   = tmp_buf->aligned + tmp_buf->offset;
-  const int64_t src_stride0  = src->strides[0];
-  const int64_t src_stride1  = src->strides[1];
-  const int64_t dst_stride0  = dst_value->strides[0];
+                      memref_t<__ubuf__ T, 2> *dst_value, int64_t size0,
+                      int64_t size1, T initvalue, bool need_merge,
+                      memref_t<__ubuf__ T, 1> *tmp_buf) {
+  __ubuf__ T *src_ptr = src->aligned + src->offset;
+  __ubuf__ T *dst_value_ptr = dst_value->aligned + dst_value->offset;
+  __ubuf__ T *tmp_buf_ptr = tmp_buf->aligned + tmp_buf->offset;
+  const int64_t src_stride0 = src->strides[0];
+  const int64_t src_stride1 = src->strides[1];
+  const int64_t dst_stride0 = dst_value->strides[0];
   constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
 
   for (int64_t i = 0; i < size0; ++i) {
@@ -112,35 +111,38 @@ reduce_ar_scalar_core(memref_t<__ubuf__ T, 2> *src,
     T result;
     if (size1 < num_per_repeat) {
       T local_buf[(num_per_repeat + 1) / 2];
-      result = scalar_reduce_dichotomy<OP, T, T*>(row_ptr, src_stride1, size1, local_buf);
+      result = scalar_reduce_dichotomy<OP, T, T *>(row_ptr, src_stride1, size1,
+                                                   local_buf);
     } else {
-      result = scalar_reduce_two_phase<OP, T>(row_ptr, src_stride1, size1, tmp_buf_ptr);
+      result = scalar_reduce_two_phase<OP, T>(row_ptr, src_stride1, size1,
+                                              tmp_buf_ptr);
     }
 
-    *dst_ptr = need_merge ? reduction_scalar_operation<OP, T>(*dst_ptr, result) : result;
+    *dst_ptr = need_merge ? reduction_scalar_operation<OP, T>(*dst_ptr, result)
+                          : result;
   }
 }
 
 // Implementation for other ops using naive sequential reduction
 template <ReduceOpTy OP, typename T>
-__aiv__ __attribute__((always_inline))
-std::enable_if_t<!(OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD), void>
+__aiv__ __attribute__((always_inline)) std::enable_if_t<
+    !(OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD), void>
 reduce_ar_scalar_core(memref_t<__ubuf__ T, 2> *src,
-                       memref_t<__ubuf__ T, 2> *dst_value,
-                       int64_t size0, int64_t size1,
-                       T /*initvalue*/,
-                       bool need_merge,
-                       memref_t<__ubuf__ T, 1> * /*tmp_buf*/) {
+                      memref_t<__ubuf__ T, 2> *dst_value, int64_t size0,
+                      int64_t size1, T /*initvalue*/, bool need_merge,
+                      memref_t<__ubuf__ T, 1> * /*tmp_buf*/) {
 
-  __ubuf__ T* src_ptr       = src->aligned + src->offset;
-  __ubuf__ T* dst_value_ptr = dst_value->aligned + dst_value->offset;
-  const int64_t src_stride0  = src->strides[0];
-  const int64_t src_stride1  = src->strides[1];
-  const int64_t dst_stride0  = dst_value->strides[0];
+  __ubuf__ T *src_ptr = src->aligned + src->offset;
+  __ubuf__ T *dst_value_ptr = dst_value->aligned + dst_value->offset;
+  const int64_t src_stride0 = src->strides[0];
+  const int64_t src_stride1 = src->strides[1];
+  const int64_t dst_stride0 = dst_value->strides[0];
 
   for (int64_t i = 0; i < size0; ++i) {
-    T acc = need_merge ? *(dst_value_ptr + i * dst_stride0) :
-            get_scalar_operation_init_value<OP, T>(src_ptr, i * src_stride0);
+    T acc =
+        need_merge
+            ? *(dst_value_ptr + i * dst_stride0)
+            : get_scalar_operation_init_value<OP, T>(src_ptr, i * src_stride0);
     for (int64_t j = 0; j < size1; ++j) {
       T val = *(src_ptr + i * src_stride0 + j * src_stride1);
       acc = reduction_scalar_operation<OP, T>(acc, val);
@@ -155,7 +157,8 @@ reduce_ar_scalar_core(memref_t<__ubuf__ T, 2> *src,
 ///   src : memref<A x B x T, strided<[M, N], offset: K>>
 ///   dst : memref<C x 1 x T, strided<[U, 1], offset: V>>
 ///
-/// The operation is considered "aligned" if any of the following conditions hold:
+/// The operation is considered "aligned" if any of the following conditions
+/// hold:
 ///
 /// 1. Reduction `op` is "sum", and:
 ///    - N < NUM_PER_BLOCK,
@@ -175,25 +178,27 @@ reduce_ar_scalar_core(memref_t<__ubuf__ T, 2> *src,
 /// 4. For all other cases, alignment requires:
 ///    - A and K are both 32-byte aligned.
 ///
-/// If none of the above aligned conditions are met, this scalar fallback is used.
+/// If none of the above aligned conditions are met, this scalar fallback is
+/// used.
 ///
 /// \param tmp_buf: Temporary buffer for dichotomy reduction.
-///                 Size requirement: for size1 >= num_per_repeat, needs at least num_per_repeat elements.
-///                 For size1 < num_per_repeat, stack-based buffer is used internally.
+///                 Size requirement: for size1 >= num_per_repeat, needs at
+///                 least num_per_repeat elements. For size1 < num_per_repeat,
+///                 stack-based buffer is used internally.
 template <ReduceOpTy OP, typename T>
 __aiv__ void reduce_ar_scalar(memref_t<__ubuf__ T, 2> *src,
-                               memref_t<__ubuf__ T, 2> *dst_value,
-                               int64_t size0, int64_t size1,
-                               T initvalue,
-                               memref_t<__ubuf__ T, 1> *tmp_buf,
-                               bool need_merge = false) {
+                              memref_t<__ubuf__ T, 2> *dst_value, int64_t size0,
+                              int64_t size1, T initvalue,
+                              memref_t<__ubuf__ T, 1> *tmp_buf,
+                              bool need_merge = false) {
 #ifdef ENABLE_CPU_TRACE_INTRINSIC
   WARN_SCALAR_IMPL("reduceAR");
 #endif
 
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
-  reduce_ar_scalar_core<OP, T>(src, dst_value, size0, size1, initvalue, need_merge, tmp_buf);
+  reduce_ar_scalar_core<OP, T>(src, dst_value, size0, size1, initvalue,
+                               need_merge, tmp_buf);
   INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
 }
@@ -201,7 +206,7 @@ __aiv__ void reduce_ar_scalar(memref_t<__ubuf__ T, 2> *src,
 template <ReduceOpTy OP, typename T>
 __aiv__ __attribute__((always_inline)) bool
 is_unaligned_reduce(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
-          memref_t<__ubuf__ T, 1> *tmp_buf, T initvalue) {
+                    memref_t<__ubuf__ T, 1> *tmp_buf, T initvalue) {
   __ubuf__ T *src_ptr = src0->aligned + src0->offset;
   __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
   const int64_t size1 = src0->sizes[1];
@@ -210,20 +215,25 @@ is_unaligned_reduce(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
   const int64_t dst_stride0 = dst->strides[0];
   const int64_t dst_stride1 = dst->strides[1];
 
-  bool is_special_scene_use_vcgadd_vcpadd = (size1 <= num_per_block && src_stride0 == size1 &&
-                                            dst_stride0 == 1 && OP == ReduceOpTy::REDUCE_SUM &&
-                                          (std::is_same<T, half>::value || std::is_same<T, float>::value));
-  bool is_stride_aligned = is32ByteAligned<T>(src_stride0) ||
-                           (is_special_scene_use_vcgadd_vcpadd && (size1 & (size1 - 1)) == 0) ||
-                           ((((OP == ReduceOpTy::REDUCE_XOR || OP == ReduceOpTy::REDUCE_OR ||
-                           OP == ReduceOpTy::REDUCE_AND) && std::is_same<T, int8_t>::value) ||
-                           (OP == ReduceOpTy::REDUCE_OR || OP == ReduceOpTy::REDUCE_AND) &&
-                           std::is_same<T, uint8_t>::value) && size1 < 2);
+  bool is_special_scene_use_vcgadd_vcpadd =
+      (size1 <= num_per_block && src_stride0 == size1 && dst_stride0 == 1 &&
+       OP == ReduceOpTy::REDUCE_SUM &&
+       (std::is_same<T, half>::value || std::is_same<T, float>::value));
+  bool is_stride_aligned =
+      is32ByteAligned<T>(src_stride0) ||
+      (is_special_scene_use_vcgadd_vcpadd && (size1 & (size1 - 1)) == 0) ||
+      ((((OP == ReduceOpTy::REDUCE_XOR || OP == ReduceOpTy::REDUCE_OR ||
+          OP == ReduceOpTy::REDUCE_AND) &&
+         std::is_same<T, int8_t>::value) ||
+        (OP == ReduceOpTy::REDUCE_OR || OP == ReduceOpTy::REDUCE_AND) &&
+            std::is_same<T, uint8_t>::value) &&
+       size1 < 2);
   bool is_offset_aligned = isAddress32ByteAligned<T>(src_ptr) &&
-                           ((is_special_scene_use_vcgadd_vcpadd && isAddress32ByteAligned<T>(dst_ptr)) ||
-                           !is_special_scene_use_vcgadd_vcpadd);
+                           ((is_special_scene_use_vcgadd_vcpadd &&
+                             isAddress32ByteAligned<T>(dst_ptr)) ||
+                            !is_special_scene_use_vcgadd_vcpadd);
   return !is_stride_aligned || !is_offset_aligned ||
-  (is_special_scene_use_vcgadd_vcpadd && !((size1 & (size1 - 1)) == 0));
+         (is_special_scene_use_vcgadd_vcpadd && !((size1 & (size1 - 1)) == 0));
 }
 
 template <typename T>
@@ -436,14 +446,14 @@ reduce_ar_vcg(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
 
   __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
   __ubuf__ T *src_ptr = src0->aligned + src0->offset;
-  __ubuf__ T *tmp_buf_ptr = tmp_buf->aligned + tmp_buf->offset;
 
   constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
 
   bool is_unalign = is_unaligned_reduce<OP, T>(src0, dst, tmp_buf, initvalue);
   if (is_unalign) {
-    reduce_ar_scalar<OP, T>(src0, dst, src0->sizes[0], src0->sizes[1], initvalue, tmp_buf);
+    reduce_ar_scalar<OP, T>(src0, dst, src0->sizes[0], src0->sizes[1],
+                            initvalue, tmp_buf);
     return;
   }
   // stride and offset are all aligned
@@ -556,10 +566,10 @@ reduce_ar_core(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
         tmp_buf_ptr + size0 * num_per_repeat;
 
     memref_t<__ubuf__ T, 2> tmp_buf_2d{tmp_buf->allocated,
-                                      tmp_buf->aligned,
-                                      tmp_offset,
-                                      {size0, num_per_repeat},
-                                      {num_per_repeat, 1}};
+                                       tmp_buf->aligned,
+                                       tmp_offset,
+                                       {size0, num_per_repeat},
+                                       {num_per_repeat, 1}};
     memref_t<__ubuf__ T, 2> subview_src0_2d{src0->allocated,
                                             src0->aligned,
                                             src0->offset,
@@ -569,9 +579,9 @@ reduce_ar_core(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
     // Attach initial value to temp buffer (a, r0), here r0 is the max number
     // per repeat that intrinsic can handles.
     if constexpr (OP == ReduceOpTy::REDUCE_OR) {
-        copy_ubuf_to_ubuf_2d_core(&subview_src0_2d, &tmp_buf_2d);
+      copy_ubuf_to_ubuf_2d_core(&subview_src0_2d, &tmp_buf_2d);
     } else {
-        brc_scalar_core_1d(initvalue, tmp_buf_ptr, size0 * num_per_repeat);
+      brc_scalar_core_1d(initvalue, tmp_buf_ptr, size0 * num_per_repeat);
     }
 
     // reduce src (a,r) to temp buffer (a,r0) by element-wise vector operation,
@@ -947,7 +957,7 @@ reduce_ar_core<ReduceOpTy::REDUCE_AND, uint64_t>(
 template <ReduceOpTy OP, typename T>
 __aiv__ inline __attribute__((always_inline)) void
 vec_reduce_ar(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
-          memref_t<__ubuf__ T, 1> *tmp_buf, T initvalue) {
+              memref_t<__ubuf__ T, 1> *tmp_buf, T initvalue) {
   if constexpr ((OP == ReduceOpTy::REDUCE_XOR || OP == ReduceOpTy::REDUCE_OR ||
                  OP == ReduceOpTy::REDUCE_AND) &&
                 (std::is_same<T, int8_t>::value ||

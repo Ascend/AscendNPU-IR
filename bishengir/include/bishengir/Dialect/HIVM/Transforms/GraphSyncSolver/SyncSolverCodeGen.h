@@ -73,6 +73,9 @@ private:
                  std::map<llvm::SmallVector<int64_t>, Value>>
       bufferSelectedMem;
 
+  llvm::DenseMap<Value, std::map<llvm::SmallVector<int64_t>, Value>>
+      explicitBufferSelectedMem;
+
   // Per-MMAD L1 op arguments collected during sync codegen insertion.
   llvm::MapVector<Operation *, MmadL1SyncArgs> mmadl1SyncArgsMap;
 
@@ -83,6 +86,7 @@ private:
   llvm::DenseMap<LoopLikeOpInterface, Value> loopDBCondMap;
 
   CustomMacroSyncCodegenState customMacroCodegen;
+  BufferPoolSync bufferPoolSync;
 
 public:
   CodeGenerator(const SyncSolverOptions &options) : options(options) {}
@@ -96,6 +100,8 @@ public:
     auto [syncBefore, syncAfter] = solver->getBeforeAfterSyncMaps();
     syncMapBefore = std::move(syncBefore);
     syncMapAfter = std::move(syncAfter);
+    bufferPoolSync = std::move(solver->bufferPoolSync);
+    bufferPoolSync.clearEventIdNodes();
     funcOp = solver->funcOp;
     funcIr = std::move(solver->funcIr);
     syncIr = std::move(solver->syncIr);
@@ -150,6 +156,8 @@ private:
                               LoopLikeOpInterface multibufferLoop, int64_t mod,
                               int64_t offset = 0);
 
+  Value getPoolSlotEventId(IRRewriter &rewriter, SetWaitOp *syncOp);
+
   Value getMultiBufferSelectOp(IRRewriter &rewriter, SetWaitOp *syncOp);
 
   Value getMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
@@ -173,6 +181,9 @@ private:
                                             SyncOp *syncOp);
 
   void insertMmadMxL1SyncArgs(IRRewriter &rewriter);
+
+  // Create the function-scoped L0 ping-pong signal and attach it to MMAD ops.
+  void insertPingPongSignal(IRRewriter &rewriter);
 
   void handleUnitFlagEnabledOps(IRRewriter &rewriter);
 

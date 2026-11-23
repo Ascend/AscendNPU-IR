@@ -20,7 +20,7 @@ union SMEMDescriptor {
     uint64_t matrixBaseOffset : 3;
     uint64_t : 10;
     uint64_t swizzlingMode : 2;
-  };
+  } fields;
 };
 
 struct MemDescOperand {
@@ -89,7 +89,7 @@ public:
 
 private:
   Value base;
-  bool trans;
+  [[maybe_unused]] bool trans;
   bool interleaved;
   bool unpacked;
   SmallVector<unsigned int> instrShape;

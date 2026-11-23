@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
+#include "ArchDefs.h"
 #include "RegBase/ReductionUtils.h"
 #include "RegBase/VecUtils.h"
 #include "Utils.h"
 #include "Vector/VecUtils.h"
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 
 template <typename TIn, typename TOp>
 __aiv__ __attribute__((always_inline)) VectorReg<TIn>

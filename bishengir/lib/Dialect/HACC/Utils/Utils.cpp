@@ -21,6 +21,8 @@
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HACC/Targets/NPUTargetSpecUtils.h"
+#include "bishengir/Target/NPU/NPUArchitectureFeatures.h"
 
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -28,8 +30,10 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/FormatVariadic.h"
 
+#include <numeric>
 #include <optional>
 #include <unordered_set>
 
@@ -70,6 +74,14 @@ bool isDeviceEntry(Operation *func) {
     return false;
 
   return haccFunction.isDeviceEntry();
+}
+
+bool isExportedDevice(Operation *func) {
+  return isDevice(func) && func->hasAttrOfType<UnitAttr>(kExportDeviceAttrName);
+}
+
+bool isCompilationRoot(Operation *func) {
+  return isDeviceEntry(func) || isExportedDevice(func);
 }
 
 bool hasNoIOAlias(Operation *func) {
@@ -195,7 +207,8 @@ void setNPUTargetSpec(ModuleOp op, HACCTargetDeviceSpecInterface spec) {
   entries.push_back({StringAttr::get(ctx, kNPUStr), spec});
 #else
   SmallVector<DataLayoutEntryInterface> entries;
-  entries.push_back(DataLayoutEntryAttr::get(ctx, StringAttr::get(ctx, kNPUStr), spec));
+  entries.push_back(
+      DataLayoutEntryAttr::get(ctx, StringAttr::get(ctx, kNPUStr), spec));
 #endif
   op->setAttr(TargetSystemSpecAttr::name,
               TargetSystemSpecAttr::get(ctx, entries));
@@ -203,6 +216,27 @@ void setNPUTargetSpec(ModuleOp op, HACCTargetDeviceSpecInterface spec) {
 
 int64_t getIntegerSpecValue(DataLayoutEntryInterface entry) {
   return cast<IntegerAttr>(entry.getValue()).getValue().getSExtValue();
+}
+
+uint32_t getBankGroupCount(ModuleOp op) {
+  constexpr uint32_t kDefaultUbBankGroupCount = 16;
+  auto maybeSpecInterface = getNPUTargetSpec(op);
+  if (maybeSpecInterface.has_value()) {
+    DataLayoutEntryInterface entry =
+        maybeSpecInterface.value().getSpecForIdentifierEnum(
+            DeviceSpec::UB_BANK_GROUP_COUNT);
+    if (entry) {
+      if (auto intAttr = dyn_cast<IntegerAttr>(entry.getValue()))
+        return static_cast<uint32_t>(intAttr.getInt());
+    }
+  }
+  // Fall back to the generated target spec table for IR that has no device
+  // spec attached yet (e.g. standalone opt invocations).
+  if (auto target = getTargetDevice(op); target.has_value()) {
+    if (auto spec = lookupTargetSpec(*target); spec.has_value())
+      return static_cast<uint32_t>(spec.value()->UbBankGroupCount);
+  }
+  return kDefaultUbBankGroupCount;
 }
 
 std::optional<llvm::VersionTuple> getHIVMCVersion(ModuleOp op) {
@@ -218,9 +252,26 @@ std::optional<TargetDevice> getTargetDevice(ModuleOp op) {
   return std::nullopt;
 }
 
+std::optional<std::pair<int32_t, int32_t>>
+getDefaultCoreRatio(TargetDevice targetDevice) {
+  auto maybeSpec = lookupTargetSpec(targetDevice);
+  if (!maybeSpec.has_value())
+    return std::nullopt;
+
+  int32_t cube = maybeSpec.value()->CubeCoreCount;
+  int32_t vector = maybeSpec.value()->VectorCoreCount;
+  if (cube <= 0 || vector <= 0)
+    return std::nullopt;
+
+  int32_t gcd = std::gcd(cube, vector);
+  return std::make_pair(cube / gcd, vector / gcd);
+}
+
 // use unordered_set to speedup because this func is frequently called
 bool isAscend910_95(TargetDevice targetDevice) {
   static const std::unordered_set<TargetDevice> ascend910_95Devices = {
+      // Ascend950 generic
+      TargetDevice::Ascend950,
       // Ascend910_95 series
       TargetDevice::Ascend910_950z, TargetDevice::Ascend910_9579,
       TargetDevice::Ascend910_957b, TargetDevice::Ascend910_957d,
@@ -229,25 +280,29 @@ bool isAscend910_95(TargetDevice targetDevice) {
       TargetDevice::Ascend910_9599,
       // Ascend950PR series
       TargetDevice::Ascend950PR_950z, TargetDevice::Ascend950PR_9579,
-      TargetDevice::Ascend950PR_957a, TargetDevice::Ascend950PR_957b,
-      TargetDevice::Ascend950PR_957c, TargetDevice::Ascend950PR_957d,
-      TargetDevice::Ascend950PR_9589, TargetDevice::Ascend950PR_958a,
-      TargetDevice::Ascend950PR_958b, TargetDevice::Ascend950PR_958c,
-      TargetDevice::Ascend950PR_958d, TargetDevice::Ascend950PR_9599,
-      TargetDevice::Ascend950PR_959a, TargetDevice::Ascend950PR_959b,
+      TargetDevice::Ascend950PR_9579x, TargetDevice::Ascend950PR_957a,
+      TargetDevice::Ascend950PR_957b, TargetDevice::Ascend950PR_957c,
+      TargetDevice::Ascend950PR_957d, TargetDevice::Ascend950PR_9589,
+      TargetDevice::Ascend950PR_958a, TargetDevice::Ascend950PR_958b,
+      TargetDevice::Ascend950PR_958c, TargetDevice::Ascend950PR_958d,
+      TargetDevice::Ascend950PR_9599, TargetDevice::Ascend950PR_959a,
+      TargetDevice::Ascend950PR_959b, TargetDevice::Ascend950PR_957bx,
+      TargetDevice::Ascend950PR_958bx,
       // Ascend950DT series
       TargetDevice::Ascend950DT_950x, TargetDevice::Ascend950DT_950y,
       TargetDevice::Ascend950DT_9571, TargetDevice::Ascend950DT_9572,
       TargetDevice::Ascend950DT_9573, TargetDevice::Ascend950DT_9574,
       TargetDevice::Ascend950DT_9575, TargetDevice::Ascend950DT_9576,
       TargetDevice::Ascend950DT_9577, TargetDevice::Ascend950DT_9578,
-      TargetDevice::Ascend950DT_9581, TargetDevice::Ascend950DT_9582,
+      TargetDevice::Ascend950DT_9581, TargetDevice::Ascend950DT_9581x,
+      TargetDevice::Ascend950DT_9582, TargetDevice::Ascend950DT_9582x,
       TargetDevice::Ascend950DT_9583, TargetDevice::Ascend950DT_9584,
       TargetDevice::Ascend950DT_9585, TargetDevice::Ascend950DT_9586,
       TargetDevice::Ascend950DT_9587, TargetDevice::Ascend950DT_9588,
       TargetDevice::Ascend950DT_9591, TargetDevice::Ascend950DT_9592,
       TargetDevice::Ascend950DT_9595, TargetDevice::Ascend950DT_9596,
-      TargetDevice::Ascend950DT_95A1, TargetDevice::Ascend950DT_95A2};
+      TargetDevice::Ascend950DT_95A1, TargetDevice::Ascend950DT_95A2,
+      TargetDevice::Ascend950DT_9572x};
 
   return ascend910_95Devices.find(targetDevice) != ascend910_95Devices.end();
 }
@@ -291,7 +346,12 @@ bool isAscend910_93(TargetDevice targetDevice) {
 }
 
 bool isMemBasedArch(TargetDevice targetDevice) {
-  return isAscend910B(targetDevice) || isAscend910_93(targetDevice);
+  // TargetDevice enumerators are contiguous; preserve the legacy false result
+  // for Unknown and out-of-range values before calling the strict identity API.
+  if (static_cast<unsigned>(targetDevice) >= targetDevices.size())
+    return false;
+  return bishengir::npu::getExecutionModel(getArchitecture(targetDevice)) ==
+         bishengir::npu::ExecutionModel::kMemBased;
 }
 
 bool isAscend310B(TargetDevice targetDevice) {
@@ -304,30 +364,33 @@ bool isAscend310B(TargetDevice targetDevice) {
 // use unordered_set to speedup because this func is frequently called
 bool isAscend950(TargetDevice targetDevice) {
   static const std::unordered_set<TargetDevice> ascend950Devices = {
-      TargetDevice::Ascend910_950z,   TargetDevice::Ascend910_9579,
-      TargetDevice::Ascend910_957b,   TargetDevice::Ascend910_957d,
-      TargetDevice::Ascend910_9581,   TargetDevice::Ascend910_9589,
-      TargetDevice::Ascend910_958a,   TargetDevice::Ascend910_958b,
-      TargetDevice::Ascend910_9599,   TargetDevice::Ascend950PR_950z,
-      TargetDevice::Ascend950PR_9579, TargetDevice::Ascend950PR_957a,
-      TargetDevice::Ascend950PR_957b, TargetDevice::Ascend950PR_957c,
-      TargetDevice::Ascend950PR_957d, TargetDevice::Ascend950PR_9589,
-      TargetDevice::Ascend950PR_958a, TargetDevice::Ascend950PR_958b,
-      TargetDevice::Ascend950PR_958c, TargetDevice::Ascend950PR_958d,
-      TargetDevice::Ascend950PR_9599, TargetDevice::Ascend950PR_959a,
-      TargetDevice::Ascend950PR_959b, TargetDevice::Ascend950DT_950x,
-      TargetDevice::Ascend950DT_950y, TargetDevice::Ascend950DT_9571,
-      TargetDevice::Ascend950DT_9572, TargetDevice::Ascend950DT_9573,
-      TargetDevice::Ascend950DT_9574, TargetDevice::Ascend950DT_9575,
-      TargetDevice::Ascend950DT_9576, TargetDevice::Ascend950DT_9577,
-      TargetDevice::Ascend950DT_9578, TargetDevice::Ascend950DT_9581,
-      TargetDevice::Ascend950DT_9582, TargetDevice::Ascend950DT_9583,
-      TargetDevice::Ascend950DT_9584, TargetDevice::Ascend950DT_9585,
-      TargetDevice::Ascend950DT_9586, TargetDevice::Ascend950DT_9587,
-      TargetDevice::Ascend950DT_9588, TargetDevice::Ascend950DT_9591,
-      TargetDevice::Ascend950DT_9592, TargetDevice::Ascend950DT_9595,
-      TargetDevice::Ascend950DT_9596, TargetDevice::Ascend950DT_95A1,
-      TargetDevice::Ascend950DT_95A2};
+      TargetDevice::Ascend950,         TargetDevice::Ascend910_950z,
+      TargetDevice::Ascend910_9579,    TargetDevice::Ascend910_957b,
+      TargetDevice::Ascend910_957d,    TargetDevice::Ascend910_9581,
+      TargetDevice::Ascend910_9589,    TargetDevice::Ascend910_958a,
+      TargetDevice::Ascend910_958b,    TargetDevice::Ascend910_9599,
+      TargetDevice::Ascend950PR_950z,  TargetDevice::Ascend950PR_9579,
+      TargetDevice::Ascend950PR_9579x, TargetDevice::Ascend950PR_957a,
+      TargetDevice::Ascend950PR_957b,  TargetDevice::Ascend950PR_957c,
+      TargetDevice::Ascend950PR_957d,  TargetDevice::Ascend950PR_9589,
+      TargetDevice::Ascend950PR_958a,  TargetDevice::Ascend950PR_958b,
+      TargetDevice::Ascend950PR_958c,  TargetDevice::Ascend950PR_958d,
+      TargetDevice::Ascend950PR_9599,  TargetDevice::Ascend950PR_959a,
+      TargetDevice::Ascend950PR_959b,  TargetDevice::Ascend950PR_957bx,
+      TargetDevice::Ascend950PR_958bx, TargetDevice::Ascend950DT_950x,
+      TargetDevice::Ascend950DT_950y,  TargetDevice::Ascend950DT_9571,
+      TargetDevice::Ascend950DT_9572,  TargetDevice::Ascend950DT_9573,
+      TargetDevice::Ascend950DT_9574,  TargetDevice::Ascend950DT_9575,
+      TargetDevice::Ascend950DT_9576,  TargetDevice::Ascend950DT_9577,
+      TargetDevice::Ascend950DT_9578,  TargetDevice::Ascend950DT_9581,
+      TargetDevice::Ascend950DT_9581x, TargetDevice::Ascend950DT_9582,
+      TargetDevice::Ascend950DT_9582x, TargetDevice::Ascend950DT_9583,
+      TargetDevice::Ascend950DT_9584,  TargetDevice::Ascend950DT_9585,
+      TargetDevice::Ascend950DT_9586,  TargetDevice::Ascend950DT_9587,
+      TargetDevice::Ascend950DT_9588,  TargetDevice::Ascend950DT_9591,
+      TargetDevice::Ascend950DT_9592,  TargetDevice::Ascend950DT_9595,
+      TargetDevice::Ascend950DT_9596,  TargetDevice::Ascend950DT_95A1,
+      TargetDevice::Ascend950DT_95A2,  TargetDevice::Ascend950DT_9572x};
 
   return ascend950Devices.find(targetDevice) != ascend950Devices.end();
 }
@@ -336,17 +399,51 @@ bool isAscend950(llvm::StringRef targetDevice) {
   return isAscend950(symbolizeTargetDeviceEnum(targetDevice));
 }
 
+bool isAscend960(TargetDevice targetDevice) {
+  static const std::unordered_set<TargetDevice> ascend960Devices = {
+      TargetDevice::Ascend960,         TargetDevice::Ascend960DT_969B5,
+      TargetDevice::Ascend960DT_969B6, TargetDevice::Ascend960DT_968B7,
+      TargetDevice::Ascend960DT_966B7, TargetDevice::Ascend960DT_966B8,
+      TargetDevice::Ascend960DT_961BY, TargetDevice::Ascend960DT_961BZ,
+      TargetDevice::Ascend960PR_969A1, TargetDevice::Ascend960PR_964A1,
+      TargetDevice::Ascend960PR_936A1};
+
+  return ascend960Devices.find(targetDevice) != ascend960Devices.end();
+}
+
+bool isAscend960(llvm::StringRef targetDevice) {
+  return isAscend960(symbolizeTargetDeviceEnum(targetDevice));
+}
+
 bool isRegBasedArch(TargetDevice targetDevice) {
-  return isAscend310B(targetDevice) || isAscend950(targetDevice);
+  if (static_cast<unsigned>(targetDevice) >= targetDevices.size())
+    return false;
+  return bishengir::npu::getExecutionModel(getArchitecture(targetDevice)) ==
+         bishengir::npu::ExecutionModel::kRegBased;
 }
 
 bool isRegBasedArch(llvm::StringRef targetDevice) {
   return isRegBasedArch(symbolizeTargetDeviceEnum(targetDevice));
 }
 
+bool supportsRegBaseVectorLowering(TargetDevice targetDevice) {
+  if (static_cast<unsigned>(targetDevice) >= targetDevices.size())
+    return false;
+  auto arch = getArchitecture(targetDevice);
+  return arch == bishengir::npu::NPUArchitectureKind::kDavC310 ||
+         arch == bishengir::npu::NPUArchitectureKind::kDav920R1;
+}
+
+bool supportsRegBaseVectorLowering(ModuleOp op) {
+  if (!op)
+    return false;
+  auto targetDevice = getTargetDevice(op);
+  return targetDevice && supportsRegBaseVectorLowering(*targetDevice);
+}
+
 bool isFFTSSupportedArch(TargetDevice targetDevice) {
   return isAscend910B(targetDevice) || isAscend910_93(targetDevice) ||
-         isAscend950(targetDevice);
+         isAscend950(targetDevice) || isAscend960(targetDevice);
 }
 
 bool isAscend910B(ModuleOp op) {
@@ -394,6 +491,15 @@ bool isAscend950(ModuleOp op) {
   return isAscend950(maybeTargetDevice.value());
 }
 
+bool isAscend960(ModuleOp op) {
+  auto maybeTargetDevice = getTargetDevice(op);
+  if (!maybeTargetDevice.has_value())
+    // Default is 910B. To ensure compatibility, return false
+    // if no target device exists in the IR.
+    return false;
+  return isAscend960(maybeTargetDevice.value());
+}
+
 bool isRegBasedArch(ModuleOp op) {
   auto maybeTargetDevice = getTargetDevice(op);
   if (!maybeTargetDevice.has_value())
@@ -424,13 +530,29 @@ resetDeclFuncLoc(LLVM::LLVMFuncOp /* don't need reference */ llvmFunc) {
   /// empty.
   if (auto originalLoc =
           llvm::dyn_cast_if_present<FusedLoc>(llvmFunc.getLoc())) {
-    auto originalAttr = cast<LLVM::DISubprogramAttr>(originalLoc.getMetadata());
-#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__)
+
+    // This check and dyn_cast were added after merging hivmc binary into
+    // bishengir-compile binary Before the merge hivmc would be called from a
+    // separate file (e.g. loc("/path/test/tmp/module.hivm.opt.mlir":2:3)) After
+    // the merge the location is already FUSED (e.g.
+    // loc(fused["y"("/path/softcap_npu.py":104:27),
+    // "/path/softcap_npu.py":83:0])) So it can't be directly casted via
+    // llvm::cast, and we need to use dyn_cast to exclude exceptions. If the
+    // merge will become stable, this function can be moved to exclude redundant
+    // dyn_cast (the location is already fused) this can increase compile-time
+    // perf a bit.
+    auto originalAttr = llvm::dyn_cast_if_present<LLVM::DISubprogramAttr>(
+        originalLoc.getMetadata());
+    if (!originalAttr)
+      return;
+#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) ||                           \
+    defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__)
     auto newAttr = LLVM::DISubprogramAttr::get(
         llvmFunc->getContext(), DistinctAttr(), LLVM::DICompileUnitAttr(),
         originalAttr.getScope(), originalAttr.getName(),
         originalAttr.getLinkageName(), originalAttr.getFile(), unsigned(),
-        unsigned(), LLVM::DISubprogramFlags::Optimized, originalAttr.getType(), {}, {});
+        unsigned(), LLVM::DISubprogramFlags::Optimized, originalAttr.getType(),
+        {}, {});
 #else
     auto newAttr = LLVM::DISubprogramAttr::get(
         llvmFunc->getContext(), DistinctAttr(), LLVM::DICompileUnitAttr(),

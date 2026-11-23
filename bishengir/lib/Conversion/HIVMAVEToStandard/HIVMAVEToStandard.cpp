@@ -849,7 +849,7 @@ void ConvertHIVMAVEToStandardPass::runOnOperation() {
   auto *context = &getContext();
 
   ConversionTarget target(getContext());
-  if (!hacc::utils::isAscend950(module)) {
+  if (!hacc::utils::supportsRegBaseVectorLowering(module)) {
     return;
   }
 

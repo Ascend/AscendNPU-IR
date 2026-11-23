@@ -82,7 +82,7 @@ def ExecutionEngineHIVMToUpstreamConversion : Pass<"execution-engine-convert-hiv
   let summary = "Convert HIVM operations to upstream dialect's equivalent";
   let description = [{
     Convert selected HIVM operations into upstream dialects mostly using Linalg.
-    The main goal is to use dialects that can be lowered to LLVMIR using
+    The main goal is to use dialects that can be lowered to LLVM IR using
     upstream passes instead of internal ones.
 
     Modifications made:

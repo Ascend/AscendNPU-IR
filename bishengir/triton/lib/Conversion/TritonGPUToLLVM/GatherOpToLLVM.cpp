@@ -263,7 +263,8 @@ void GatherOpConversion::emitWarpLocalGather(
   auto [laneId, warpId] = getLaneAndWarpId(rewriter, loc);
   Value blockId = targetInfo.getClusterCTAId(rewriter, loc);
 
-  unsigned /*N=*/srcRegsPerThread = srcLayout.getInDimSize(kRegister);
+  [[maybe_unused]] unsigned srcRegsPerThread =
+      srcLayout.getInDimSize(kRegister);
   assert(srcRegsPerThread == srcValues.size());
 
   // Given a index value, we need to know which sources register values it could

@@ -15,7 +15,7 @@ void peelLoopEpilogue(
   SmallVector<Operation *> loopBodyOps;
   IRRewriter rewriter(forOp);
   Location loc = forOp.getLoc();
-  Type type = forOp.getStep().getType();
+  [[maybe_unused]] Type type = forOp.getStep().getType();
 
   // Fetch loop bounds and step
   Value lowerBound = forOp.getLowerBound();

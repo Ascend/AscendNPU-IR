@@ -49,8 +49,9 @@ struct SplatOpConversion : public ConvertOpToLLVMPattern<triton::SplatOp> {
     llvm::SmallVector<Value> elems(elemsPerThread, llSrc);
     return packLLElements(loc, typeConverter, elems, rewriter, resType);
   }
-  LogicalResult matchAndRewrite(triton::SplatOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const {
+  LogicalResult
+  matchAndRewrite(triton::SplatOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
     auto loc = op->getLoc();
     auto src = adaptor.getSrc();
     auto typeConverter = getTypeConverter();
@@ -63,8 +64,9 @@ struct SplatOpConversion : public ConvertOpToLLVMPattern<triton::SplatOp> {
 
 struct UnsplatOpConversion : public ConvertOpToLLVMPattern<triton::UnsplatOp> {
   using ConvertOpToLLVMPattern<triton::UnsplatOp>::ConvertOpToLLVMPattern;
-  LogicalResult matchAndRewrite(triton::UnsplatOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const {
+  LogicalResult
+  matchAndRewrite(triton::UnsplatOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
     auto loc = op->getLoc();
     auto scrVals = unpackLLElements(loc, adaptor.getSrc(), rewriter);
     rewriter.replaceOp(op, scrVals[0]);
@@ -204,7 +206,7 @@ struct JoinOpConversion : public ConvertOpToLLVMPattern<JoinOp> {
     const auto &bases = ll.getBases();
     const auto &regs = bases.find(kReg)->second;
     int numContiguousValues = 1;
-    bool found = false;
+    [[maybe_unused]] bool found = false;
     for (const auto &reg : regs) {
       if (reg[splitDim] == 1) {
         found = true;
@@ -220,7 +222,8 @@ struct JoinOpConversion : public ConvertOpToLLVMPattern<JoinOp> {
     assert(lhsVals.size() == rhsVals.size());
     SmallVector<Value> joinedVals;
     joinedVals.resize(lhsVals.size() * 2);
-    for (int i = 0; i < lhsVals.size(); i += numContiguousValues) {
+    for (int i = 0; i < static_cast<int>(lhsVals.size());
+         i += numContiguousValues) {
       for (int j = 0; j < numContiguousValues; j++) {
         joinedVals[2 * i + j] = lhsVals[i + j];
         joinedVals[2 * i + numContiguousValues + j] = rhsVals[i + j];
@@ -255,7 +258,7 @@ struct SplitOpConversion : public ConvertOpToLLVMPattern<SplitOp> {
     const auto &bases = ll.getBases();
     const auto &regs = bases.find(kReg)->second;
     int numContiguousValues = 1;
-    bool found = false;
+    [[maybe_unused]] bool found = false;
     for (const auto &reg : regs) {
       if (reg[splitDim] == 1) {
         found = true;
@@ -271,7 +274,8 @@ struct SplitOpConversion : public ConvertOpToLLVMPattern<SplitOp> {
     assert(srcVals.size() % 2 == 0);
     SmallVector<Value> outLhsVals;
     SmallVector<Value> outRhsVals;
-    for (int i = 0; i < srcVals.size(); i += 2 * numContiguousValues) {
+    for (int i = 0; i < static_cast<int>(srcVals.size());
+         i += 2 * numContiguousValues) {
       for (int j = 0; j < numContiguousValues; j++) {
         outLhsVals.push_back(srcVals[i + j]);
         outRhsVals.push_back(srcVals[i + numContiguousValues + j]);
@@ -300,7 +304,7 @@ struct ReshapeOpConversion : public ConvertOpToLLVMPattern<ReshapeOp> {
                                "expensive view not supported on reshape op");
     }
     auto resultTy = cast<RankedTensorType>(op.getType());
-    auto srcTy = cast<RankedTensorType>(op.getSrc().getType());
+    [[maybe_unused]] auto srcTy = cast<RankedTensorType>(op.getSrc().getType());
     auto typeConverter = getTypeConverter();
     auto vals = unpackLLElements(loc, adaptor.getSrc(), rewriter);
     Value ret = packLLElements(loc, typeConverter, vals, rewriter, resultTy);
@@ -439,8 +443,8 @@ struct BroadcastOpConversion
     auto srcLayout = srcTy.getEncoding();
     auto resultLayout = resultTy.getEncoding();
     auto srcShape = srcTy.getShape();
-    auto resultShape = resultTy.getShape();
-    unsigned rank = srcTy.getRank();
+    [[maybe_unused]] auto resultShape = resultTy.getShape();
+    [[maybe_unused]] unsigned rank = srcTy.getRank();
     auto typeConverter = getTypeConverter();
     assert(rank == resultTy.getRank());
     auto srcOffsets = emitOffsetForLayout(srcLayout, srcTy);
@@ -474,10 +478,10 @@ struct MemDescIndexOpConversion
   matchAndRewrite(triton::gpu::MemDescIndexOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op->getLoc();
-    auto *ctx = op->getContext();
+    [[maybe_unused]] auto *ctx = op->getContext();
     auto b = TritonLLVMOpBuilder(loc, rewriter);
     auto srcTy = op.getSrc().getType();
-    auto dstTy = op.getResult().getType();
+    [[maybe_unused]] auto dstTy = op.getResult().getType();
     auto llvmElemTy = getTypeConverter()->convertType(srcTy.getElementType());
 
     // getAllocationShapePerCTA returns the correct number fp4 elements that we
@@ -520,20 +524,20 @@ struct MemDescSubsliceOpConversion
   matchAndRewrite(triton::gpu::MemDescSubsliceOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op->getLoc();
-    auto *ctx = op->getContext();
+    [[maybe_unused]] auto *ctx = op->getContext();
     auto b = TritonLLVMOpBuilder(loc, rewriter);
     auto srcTy = op.getSrc().getType();
-    auto destTy = op.getResult().getType();
+    [[maybe_unused]] auto destTy = op.getResult().getType();
     auto llvmElemTy = getTypeConverter()->convertType(srcTy.getElementType());
     auto layoutOrder = getOrder(srcTy);
-    auto enc = srcTy.getEncoding();
+    [[maybe_unused]] auto enc = srcTy.getEncoding();
 
     auto smemObj = getSharedMemoryObjectFromStruct(loc, adaptor.getSrc(),
                                                    llvmElemTy, rewriter);
     auto opOffsetVals = op.getOffsets();
 
     auto base = smemObj.getBase();
-    auto elemPtrTy = base.getType();
+    [[maybe_unused]] auto elemPtrTy = base.getType();
     // Accumulate the logical offsets
     SmallVector<Value> offsetVals;
     for (auto [oldOffVal, opOff] :

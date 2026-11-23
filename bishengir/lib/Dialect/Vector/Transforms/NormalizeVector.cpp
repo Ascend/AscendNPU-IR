@@ -12,6 +12,7 @@
 #include "bishengir/Dialect/Vector/Transforms/Passes.h"
 #include "bishengir/Dialect/Vector/Transforms/Transforms.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Dialect/Vector/Transforms/LoweringPatterns.h"
 #include "mlir/Dialect/Vector/Transforms/VectorRewritePatterns.h"
@@ -19,6 +20,7 @@
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -58,12 +60,13 @@ getDenseAttrForSelect(VectorType srcType, PatternRewriter &rewriter,
   Type elemTy = srcType.getElementType();
   DenseElementsAttr denseAttr;
   if (elemTy.isF32() || elemTy.isF16()) {
-    const llvm::fltSemantics &semantics = mlir::cast<FloatType>(elemTy).getFloatSemantics();
+    const llvm::fltSemantics &semantics =
+        mlir::cast<FloatType>(elemTy).getFloatSemantics();
     llvm::APFloat initVal(semantics);
     switch (reduceKind) {
     case vector::CombiningKind::MAXNUMF:
     case vector::CombiningKind::MAXIMUMF:
-      initVal = llvm::APFloat::getInf(semantics, /*Negative*/true);
+      initVal = llvm::APFloat::getInf(semantics, /*Negative*/ true);
       break;
     case vector::CombiningKind::MINNUMF:
     case vector::CombiningKind::MINIMUMF:
@@ -147,8 +150,8 @@ createMaskDropNonScalableUnitDims(PatternRewriter &rewriter, Location loc,
       .getResult();
 }
 
-static SmallVector<int64_t>
-getNonOneReductionShape(ArrayAttr reductionDimsAttr, VectorType vecType) {
+static SmallVector<int64_t> getNonOneReductionShape(ArrayAttr reductionDimsAttr,
+                                                    VectorType vecType) {
   auto vecShape = vecType.getShape();
   auto values = reductionDimsAttr.getAsRange<IntegerAttr>();
   SmallVector<int64_t> reductionDims;
@@ -247,7 +250,8 @@ struct OneDimAccMultiReductionToReduction
     Location loc = multiReductionOp.getLoc();
     Type elemType = srcType.getElementType();
 
-    VectorType castedSrcType = VectorType::get({srcType.getNumElements()}, elemType);
+    VectorType castedSrcType =
+        VectorType::get({srcType.getNumElements()}, elemType);
     Value castedSrc =
         rewriter.create<vector::ShapeCastOp>(loc, castedSrcType, src);
     Value castedAcc =
@@ -524,9 +528,9 @@ struct UnitDimMultiReductionToReduction
           rewriter, loc);
       res = mlir::vector::maskOperation(rewriter, reductionOp, vectorMask);
     }
-    if(utils::isScalarLike(dstBrc)){
+    if (utils::isScalarLike(dstBrc)) {
       auto dstUcc = rewriter.create<UnrealizedConversionCastOp>(
-        loc, dstBrc.getResultVectorType(), res->getResult(0));
+          loc, dstBrc.getResultVectorType(), res->getResult(0));
       rewriter.replaceAllUsesWith(dstBrc.getResult(), dstUcc->getResult(0));
     } else {
       auto dstUcc = rewriter.create<UnrealizedConversionCastOp>(
@@ -799,6 +803,73 @@ struct DropUnitDimFromMulExtendedOp : public OpRewritePattern<MulExtendedOp> {
 ///  vector<1x1x64xf32>
 /// Pattern to convert multi-dimensional create_mask operations to 1D and cast
 /// back
+/// Clamp a `create_mask` bound into `[0, extent]`.
+///
+/// `create_mask` clamps its own bound when it builds the mask, but a bound
+/// that feeds arithmetic has to be clamped before it is used, or an
+/// out-of-range value changes the result of that arithmetic rather than being
+/// capped at the end.
+static Value clampBoundToExtent(PatternRewriter &rewriter, Location loc,
+                                Value bound, int64_t extent) {
+  Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value cap = rewriter.create<arith::ConstantIndexOp>(loc, extent);
+  bound = rewriter.create<arith::MaxSIOp>(loc, bound, zero);
+  return rewriter.create<arith::MinSIOp>(loc, bound, cap);
+}
+
+/// Decide whether a mask with per-dim `bounds` over a vector of `shape` has an
+/// active region that is a prefix of the row-major lane order, and if so which
+/// dim decides the prefix length.
+///
+/// A lane at coordinate (c0, ..., cn-1) is active iff `cd < bounds[d]` for
+/// every d.  That set is a row-major prefix exactly when the bounds look like
+///
+///     [1, ..., 1, b_k, extent_k+1, ..., extent_n-1]
+///      ~~~~~~~~~   |   ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+///       pinned     |        fully covered
+///                  `-- the only dim that may be partial or dynamic
+///
+/// because the active lanes are then exactly the first
+/// `b_k * extent_k+1 * ... * extent_n-1` of them.  Any other shape *moves*
+/// active lanes instead of truncating them, so no single prefix length
+/// describes it: bounds [2, 16] over <2x32> activate lanes 0..15 and 32..47.
+///
+/// `bounds[d] == std::nullopt` marks a bound that is not a compile-time
+/// constant.  A leading dim of extent 1 may still have such a bound: that dim
+/// holds a single slice, so a non-empty mask pins its coordinate to 0 no matter
+/// what the bound turns out to be, and an empty one is covered by the factor
+/// the caller multiplies in.  A leading dim of larger extent needs a constant
+/// 1, because only that proves its coordinate cannot advance.
+///
+/// Returns the pivot index, or nullopt when the region is not a prefix.
+/// `ConvertConstantMaskTo1D` below checks the same condition directly on its
+/// constant bounds; keep the two in step.
+static std::optional<unsigned>
+maskPrefixPivotDim(ArrayRef<std::optional<int64_t>> bounds,
+                   ArrayRef<int64_t> shape) {
+  // A bound that activates nothing empties the mask, which is the empty
+  // prefix.  Report it as the pivot so the length computed from it works out
+  // to zero.
+  for (unsigned d = 0; d < bounds.size(); ++d)
+    if (bounds[d] && *bounds[d] <= 0)
+      return d;
+
+  unsigned pivot = 0;
+  while (pivot < bounds.size() &&
+         (shape[pivot] == 1 || (bounds[pivot] && *bounds[pivot] == 1)))
+    ++pivot;
+  // Every bound is 1: a single active lane, the prefix of length 1.
+  if (pivot == bounds.size())
+    return bounds.size() - 1;
+
+  // Everything inside the pivot must be covered in full, or the pivot's
+  // coordinate would not advance the lane index contiguously.
+  for (unsigned d = pivot + 1; d < bounds.size(); ++d)
+    if (!bounds[d] || *bounds[d] < shape[d])
+      return std::nullopt;
+  return pivot;
+}
+
 struct ConvertCreateMaskTo1D : public OpRewritePattern<vector::CreateMaskOp> {
   using OpRewritePattern<vector::CreateMaskOp>::OpRewritePattern;
 
@@ -808,21 +879,75 @@ struct ConvertCreateMaskTo1D : public OpRewritePattern<vector::CreateMaskOp> {
     if (!maskType || maskType.getRank() <= 1)
       return failure();
     Location loc = op.getLoc();
-    // calculate the product of all dimensions for the 1D mask size
-    Value totalSize = nullptr;
-    for (unsigned i = 0; i < op->getNumOperands(); i++) {
-      Value dimSize = op->getOperand(i);
-      if (!totalSize) {
-        totalSize = dimSize;
-      } else {
-        totalSize = rewriter.create<arith::MulIOp>(loc, totalSize, dimSize);
-      }
+    auto shape = maskType.getShape();
+    if (op->getNumOperands() != shape.size())
+      return failure();
+
+    // Flattening to a 1-D `create_mask` only keeps the active lanes in place
+    // when the active region is a row-major prefix; `maskPrefixPivotDim`
+    // decides that and names the dim whose bound sets the prefix length.
+    //
+    // TODO: a mask with two dynamic bounds on dims of extent > 1, or a
+    // constant inner bound that does not cover its dim, stays
+    // multi-dimensional.  Proving those a prefix needs a runtime comparison
+    // rather than a static check.
+    SmallVector<std::optional<int64_t>> bounds;
+    bounds.reserve(shape.size());
+    for (Value bound : op->getOperands()) {
+      APInt constBound;
+      bounds.push_back(matchPattern(bound, m_ConstantInt(&constBound))
+                           ? std::optional<int64_t>(constBound.getSExtValue())
+                           : std::nullopt);
     }
-    // create 1D mask type
-    int64_t returnTotalElements = 1;
-    for (int64_t dim : maskType.getShape()) {
-      returnTotalElements *= dim;
+    std::optional<unsigned> pivot = maskPrefixPivotDim(bounds, shape);
+    if (!pivot)
+      return rewriter.notifyMatchFailure(
+          op, "multi-dim mask active region is not a row-major prefix");
+
+    // The dims inside the pivot are fully covered, so each step of the pivot's
+    // coordinate advances the lane index by their combined extent.
+    int64_t innerExtent = 1;
+    for (unsigned d = *pivot + 1; d < shape.size(); ++d)
+      innerExtent *= shape[d];
+
+    // The pivot's bound has to be capped at the pivot dim's own extent.
+    // `create_mask` does cap the bound it is handed, but only against the
+    // length of the vector it builds, and after flattening that length is the
+    // product of every extent rather than the pivot dim's extent.  A bound
+    // between the two -- say 100 on the pivot dim of a <2x64xi1> mask, whose
+    // flat length is 128 -- would activate lanes that the multi-dim mask
+    // leaves inactive.  Capping also keeps the multiply below from scaling an
+    // out-of-range bound into a different range.
+    Value totalSize = op->getOperand(*pivot);
+    if (std::optional<int64_t> constBound = bounds[*pivot]) {
+      // Capping a constant needs no arithmetic, so an in-range bound (the
+      // common case) reuses the operand and leaves the IR as it was.
+      if (*constBound > shape[*pivot])
+        totalSize = rewriter.create<arith::ConstantIndexOp>(loc, shape[*pivot]);
+    } else {
+      totalSize = clampBoundToExtent(rewriter, loc, totalSize, shape[*pivot]);
     }
+    if (innerExtent != 1) {
+      Value scale = rewriter.create<arith::ConstantIndexOp>(loc, innerExtent);
+      totalSize = rewriter.create<arith::MulIOp>(loc, totalSize, scale);
+    }
+
+    // A leading dim of extent 1 contributes a factor of 1 once its bound
+    // activates that single slice, and 0 when it does not.  Only a dynamic
+    // bound needs the factor emitted: a constant one is known to activate the
+    // slice, since the pivot walk above already returned for every bound that
+    // activates nothing.  Clamping to the extent first is what keeps a bound
+    // of, say, 5 on a unit dim from scaling the length instead of contributing
+    // a plain 1.
+    for (unsigned d = 0; d < *pivot; ++d) {
+      if (bounds[d])
+        continue;
+      Value factor =
+          clampBoundToExtent(rewriter, loc, op->getOperand(d), shape[d]);
+      totalSize = rewriter.create<arith::MulIOp>(loc, totalSize, factor);
+    }
+
+    int64_t returnTotalElements = maskType.getNumElements();
     VectorType flatMaskType =
         VectorType::get({returnTotalElements}, rewriter.getI1Type());
     // create the 1D mask with a single operand
@@ -850,26 +975,61 @@ struct ConvertConstantMaskTo1D
     auto maskDimSizesAttr = op.getMaskDimSizes();
     if (!maskDimSizesAttr)
       return failure();
-    // calculate return shape
-    int64_t returnTotalElements = 1;
-    for (int64_t dim : maskType.getShape())
-      returnTotalElements *= dim;
-    // calculate the product of all dimensions for the 1D mask size active
-    int64_t totalActiveElements = 1;
+    auto shape = maskType.getShape();
+    if (maskDimSizesAttr.size() != shape.size())
+      return failure();
+
+    SmallVector<int64_t> maskBounds;
     for (Attribute attr : maskDimSizesAttr.getValue()) {
       auto intAttr = mlir::dyn_cast<IntegerAttr>(attr);
       if (!intAttr)
         return failure();
-      int64_t numElements = static_cast<int64_t>(intAttr.getValue().getZExtValue());
-      totalActiveElements *= numElements;
+      maskBounds.push_back(
+          static_cast<int64_t>(intAttr.getValue().getZExtValue()));
     }
+
+    // Flattening a multi-dim mask to `constant_mask [N]` (a prefix of N true
+    // lanes) is only valid when the active region really is a prefix of the
+    // row-major lane order.  That holds iff every dim that keeps more than
+    // one active slice has all of its inner dims fully active:
+    //
+    //   mask [2, 32] on <2x32>  -> lanes 0..63   true   (prefix, OK)
+    //   mask [1, 16] on <2x32>  -> lanes 0..15   true   (prefix, OK)
+    //   mask [2, 16] on <2x32>  -> [T16, F16, T16, F16] (NOT a prefix)
+    //
+    // Multiplying the bounds of a non-prefix mask (2 * 16 = 32 ->
+    // `constant_mask [32]`) keeps the active lane *count* but moves the
+    // active lane *positions*: lanes 16..31 flipped to true and 32..47 to
+    // false.  Bail out instead of silently changing semantics; the mask then
+    // stays multi-dimensional for the consumer to handle.
+    //
+    // This is the same condition `maskPrefixPivotDim` above states for
+    // `create_mask`, phrased directly on the constant bounds; keep the two in
+    // step.  It is deliberately not routed through that helper: the helper
+    // also accepts a zero bound behind a partial one (bounds [2, 0]), which
+    // this check rejects, and widening the constant path is out of scope here.
+    for (int64_t d = 0; d < static_cast<int64_t>(shape.size()); ++d) {
+      if (maskBounds[d] <= 1)
+        continue;
+      for (int64_t inner = d + 1; inner < static_cast<int64_t>(shape.size());
+           ++inner) {
+        if (maskBounds[inner] != shape[inner])
+          return rewriter.notifyMatchFailure(
+              op, "multi-dim mask active region is not a row-major prefix");
+      }
+    }
+
+    // The active region is a prefix, so its length is simply the product of
+    // the per-dim bounds.
+    int64_t returnTotalElements = maskType.getNumElements();
+    int64_t activeLanes = 1;
+    for (int64_t d = 0; d < static_cast<int64_t>(shape.size()); ++d)
+      activeLanes *= maskBounds[d];
+
     // create 1D mask type (flat)
     VectorType flatMaskType =
         VectorType::get({returnTotalElements}, rewriter.getI1Type());
-    // new 1D mask_dim_sizes attribute
-    SmallVector<int64_t, 1> flatMaskDims;
-    flatMaskDims.push_back(totalActiveElements);
-    auto flatMaskDimSizesAttr = rewriter.getI64ArrayAttr(flatMaskDims);
+    auto flatMaskDimSizesAttr = rewriter.getI64ArrayAttr({activeLanes});
     // create the 1D constant_mask and cast back to original shape
     Value flatMask = rewriter.create<vector::ConstantMaskOp>(
         loc, flatMaskType, flatMaskDimSizesAttr);
@@ -897,10 +1057,11 @@ struct FixBitTypeBroadcastTransferReadPattern
   //   %sel    = arith.select %read, %one, %zero0 : vector<...xf16>
   //   %bcast  = vector.broadcast %sel : vector<...xf16> to vector<...xf16>
   //   %zero   = arith.constant dense<0.0> : vector<...xf16>
-  //   %r      = arith.cmpf une %bcast, %zero : vector<...xf16> -> vector<...xi1>
+  //   %r      = arith.cmpf une %bcast, %zero : vector<...xf16> ->
+  //   vector<...xi1>
   LogicalResult matchAndRewrite(vector::TransferReadOp op,
                                 PatternRewriter &rewriter) const override {
-    // Skip transfer_reads inside vector.mask — replacing a single op with
+    // Skip transfer_reads inside vector.mask 鈥?replacing a single op with
     // a chain would break the mask (which requires exactly one body op).
     if (isa<vector::MaskOp>(op->getParentOp()))
       return failure();
@@ -940,34 +1101,34 @@ struct FixBitTypeBroadcastTransferReadPattern
       if (isNonBroadcastDim[i])
         intermediateShape[i] = resultVecType.getDimSize(i);
 
-    auto intermediateVecType =
-        VectorType::get(intermediateShape, elemType);
+    auto intermediateVecType = VectorType::get(intermediateShape, elemType);
     auto intermediateVecTypeF16 =
         VectorType::get(intermediateShape, rewriter.getF16Type());
     auto targetVecTypeF16 =
         VectorType::get(resultVecType.getShape(), rewriter.getF16Type());
 
     auto read = rewriter.create<vector::TransferReadOp>(
-        op.getLoc(), intermediateVecType, op.getSource(),
-        op.getIndices(), map, op.getPadding(),
+        op.getLoc(), intermediateVecType, op.getSource(), op.getIndices(), map,
+        op.getPadding(),
         /*mask=*/Value(), op.getInBoundsAttr());
 
     auto oneVec = rewriter.create<arith::ConstantOp>(
         op.getLoc(), intermediateVecTypeF16,
-        DenseElementsAttr::get(intermediateVecTypeF16,
-                               rewriter.getFloatAttr(rewriter.getF16Type(), 1.0)));
+        DenseElementsAttr::get(
+            intermediateVecTypeF16,
+            rewriter.getFloatAttr(rewriter.getF16Type(), 1.0)));
     auto zeroVec = rewriter.create<arith::ConstantOp>(
         op.getLoc(), intermediateVecTypeF16,
         rewriter.getZeroAttr(intermediateVecTypeF16));
 
-    auto sel = rewriter.create<arith::SelectOp>(op.getLoc(), read, oneVec, zeroVec);
+    auto sel =
+        rewriter.create<arith::SelectOp>(op.getLoc(), read, oneVec, zeroVec);
 
-    auto bcast = rewriter.create<vector::BroadcastOp>(
-        op.getLoc(), targetVecTypeF16, sel);
+    auto bcast = rewriter.create<vector::BroadcastOp>(op.getLoc(),
+                                                      targetVecTypeF16, sel);
 
     auto zero = rewriter.create<arith::ConstantOp>(
-        op.getLoc(), targetVecTypeF16,
-        rewriter.getZeroAttr(targetVecTypeF16));
+        op.getLoc(), targetVecTypeF16, rewriter.getZeroAttr(targetVecTypeF16));
 
     auto cmp = rewriter.create<arith::CmpFOp>(
         op.getLoc(), arith::CmpFPredicate::UNE, bcast, zero);
@@ -981,6 +1142,13 @@ class TransferReadToGatheringLoadPattern
     : public OpRewritePattern<vector::TransferReadOp> {
   using OpRewritePattern::OpRewritePattern;
 
+  /// Decide whether `readop` can be rewritten as a gather and, if so, collect
+  /// what the rewrite needs: the source and destination types, the physical
+  /// `strides`, and the mask description (`isFullMask`, `constantMaskBounds`).
+  ///
+  /// None of the `analyze*` helpers creates IR, so each one is free to bail
+  /// out -- see `matchAndRewrite` for why every rejecting check has to run
+  /// before the first `rewriter.create`.
   LogicalResult analyzeTransferRead(vector::TransferReadOp readop,
                                     PatternRewriter &rewriter,
                                     AffineMap &permMap, MemRefType &memrefType,
@@ -991,8 +1159,8 @@ class TransferReadToGatheringLoadPattern
     if (!permMap.isPermutation())
       return rewriter.notifyMatchFailure(readop, "unsupported permutation map");
 
-    // we don't touch the ones with (1) identity, (2) broadcast (constant)
-    if (permMap.isIdentity() || permMap.isConstant())
+    // Broadcasts are handled by the existing broadcast lowering.
+    if (permMap.isConstant())
       return failure();
 
     memrefType = dyn_cast<MemRefType>(readop.getSource().getType());
@@ -1002,6 +1170,130 @@ class TransferReadToGatheringLoadPattern
     if (!destType || !destType.hasStaticShape())
       return failure();
 
+    if (permMap.isIdentity()) {
+      if (failed(analyzeIdentityLayout(readop, memrefType, destType, strides)))
+        return failure();
+      return analyzeIdentityMask(readop, memrefType, isFullMask,
+                                 constantMaskBounds);
+    }
+
+    return analyzePermutedRead(readop, permMap, memrefType, isFullMask,
+                               constantMaskBounds, strides);
+  }
+
+  /// Identity path, layout half: accept only a read whose tile is laid out
+  /// with a gap, which is what makes a contiguous load wrong, and fill in
+  /// `strides`.
+  LogicalResult analyzeIdentityLayout(vector::TransferReadOp readop,
+                                      MemRefType memrefType,
+                                      VectorType destType,
+                                      SmallVector<int64_t, 4> &strides) const {
+    // Out-of-bounds reads need the transfer_read padding semantics, which
+    // the gather path does not reproduce for partially in-bounds dims.
+    if (readop.hasOutOfBoundsDim())
+      return failure();
+    int64_t offset;
+    if (failed(getStridesAndOffset(memrefType, strides, offset)))
+      return failure();
+    // A negative or dynamic stride cannot be turned into a static index
+    // vector.
+    if (llvm::any_of(strides, [](int64_t stride) {
+          return ShapedType::isDynamic(stride) || stride < 1;
+        }))
+      return failure();
+
+    int64_t rank = memrefType.getRank();
+    if (rank == 1) {
+      // For a 1-D view, unit stride is contiguous even with a dynamic
+      // extent, so only a real stride needs the gather path.
+      if (memrefType.getDimSize(0) == 1 || strides.front() <= 1)
+        return failure();
+      return success();
+    }
+
+    // For rank > 1 the index vector is materialized from the static
+    // extents, so every dim must be static.
+    if (!memrefType.hasStaticShape())
+      return failure();
+    if (memrefType.getNumElements() == 1)
+      return failure();
+    // Detect whether the *tile being read* is densely packed.  Contiguity
+    // follows the tile extents, not the source extents: reading
+    // vector<2x32> out of memref<2x64, strided<[32, 1]>> touches lanes
+    // 0..63 and is contiguous, while the same tile out of a packed
+    // memref<2x64> (strides [64, 1]) touches 0..31 and 64..95 and is not.
+    // Note: identity permutation alone does not imply contiguity, and
+    // checking only the innermost stride is not enough either.
+    //
+    // A dim whose tile extent is 1 is never stepped through, so its source
+    // stride cannot separate anything and must not be compared: reading
+    // vector<1x32> out of memref<2x64> touches 0..31 and is contiguous even
+    // though the row stride 64 does not match. Its extent still multiplies
+    // into `expectedStride` (by one), keeping the accumulated inner size right.
+    auto tileShape = destType.getShape();
+    bool isPacked = true;
+    int64_t expectedStride = 1;
+    for (int64_t d = rank - 1; d >= 0; --d) {
+      if (tileShape[d] != 1 && strides[d] != expectedStride) {
+        isPacked = false;
+        break;
+      }
+      expectedStride *= tileShape[d];
+    }
+    if (isPacked)
+      return failure();
+
+    return success();
+  }
+
+  /// Identity path, mask half: classify the mask as full, or record its
+  /// per-dim bounds in `constantMaskBounds`.
+  LogicalResult
+  analyzeIdentityMask(vector::TransferReadOp readop, MemRefType memrefType,
+                      bool &isFullMask,
+                      SmallVector<int64_t, 4> &constantMaskBounds) const {
+    isFullMask = true;
+    if (auto mask = readop.getMask()) {
+      auto constantMask = mask.getDefiningOp<vector::ConstantMaskOp>();
+      if (!constantMask) {
+        // A non-constant mask cannot be flattened per lane at compile time.
+        // A rank-1 mask, however, already matches the flattened gather lane
+        // order and is reused as-is by the rewrite, so it needs no
+        // flattening (dynamic tail masks from loop peeling hit this path).
+        //
+        // FIXME: a multi-dim runtime mask on a strided source is not
+        // supported.  Rejecting it here falls back to the contiguous
+        // VFLoad, which loses the stride semantics -- a match failure is
+        // not a correctness guarantee.  A stride-aware runtime mask path is
+        // needed; this is a pre-existing gap, not a regression.
+        if (cast<VectorType>(mask.getType()).getRank() != 1)
+          return failure();
+      } else if (!constantMask.isAllOnesMask()) {
+        // Keep inactive indices zero, as on the existing constant-mask path,
+        // so that a large stride does not overflow unused gather indices.
+        for (auto v : constantMask.getMaskDimSizes())
+          constantMaskBounds.push_back(
+              cast<IntegerAttr>(v).getValue().getSExtValue());
+        // `computeGatherIndicesAndMasks` indexes `constantMaskBounds` with
+        // the source dim, so a mask that does not cover every dim would read
+        // out of bounds.
+        if (constantMaskBounds.size() !=
+            static_cast<size_t>(memrefType.getRank()))
+          return failure();
+        isFullMask = false;
+      }
+    }
+    return success();
+  }
+
+  /// Permuted (transposing) path: check the shape and the mask, fill in
+  /// `strides`, and decline a transpose whose permuted dims are masked down
+  /// to a single element, which needs no gather.
+  LogicalResult analyzePermutedRead(vector::TransferReadOp readop,
+                                    AffineMap permMap, MemRefType memrefType,
+                                    bool &isFullMask,
+                                    SmallVector<int64_t, 4> &constantMaskBounds,
+                                    SmallVector<int64_t, 4> &strides) const {
     // must have static shape
     // dynamic shape size is represented by a large negative number
     auto shape = memrefType.getShape();
@@ -1009,62 +1301,44 @@ class TransferReadToGatheringLoadPattern
       if (dim < 1) {
         return failure();
       }
-      // make sure the mask is a vector.constant_mask or a full mask
-      // (we currently cannot handle non-constant mask because we cannot
-      // apply inverse affine transform to them for now.)
-      auto originalMask = readop.getMask();
-      if (!originalMask) {
-        isFullMask = true;
-      } else {
-        auto constmask =
-            dyn_cast<vector::ConstantMaskOp>(originalMask.getDefiningOp());
-        if (!constmask)
-          return failure();
-        if (constmask.isAllOnesMask()) {
-          isFullMask = true;
-        } else {
-          for (auto v : constmask.getMaskDimSizes()) {
-            constantMaskBounds.push_back(
-                cast<IntegerAttr>(v).getValue().getSExtValue());
-          }
-        }
-      }
     }
-    // must have static stride (if strided)
-    auto memrefLayout = memrefType.getLayout();
-    if (auto strided = dyn_cast<StridedLayoutAttr>(memrefLayout)) {
-      for (auto v : strided.getStrides()) {
-        if (v < 1)
-          return failure();
-        strides.push_back(v);
-      }
-
-    } else {
-      // not strided; compute the strides from the dimensions
-      strides.resize(shape.size(), 1);
-      if (shape.size() > 1) {
-        for (unsigned i = shape.size() - 1; i >= 1; --i) {
-          strides[i - 1] = strides[i] * shape[i];
-        }
-      }
+    // make sure the mask is a vector.constant_mask or a full mask
+    // (we currently cannot handle non-constant mask because we cannot
+    // apply inverse affine transform to them for now.)
+    auto originalMask = readop.getMask();
+    isFullMask = !originalMask;
+    if (originalMask) {
+      auto constMask = originalMask.getDefiningOp<vector::ConstantMaskOp>();
+      if (!constMask)
+        return failure();
+      isFullMask = constMask.isAllOnesMask();
+      if (!isFullMask)
+        for (Attribute bound : constMask.getMaskDimSizes())
+          constantMaskBounds.push_back(cast<IntegerAttr>(bound).getInt());
     }
+    // Extract physical strides from both strided and affine layouts.
+    int64_t offset;
+    if (failed(getStridesAndOffset(memrefType, strides, offset)) ||
+        llvm::any_of(strides, [](int64_t stride) { return stride < 1; }))
+      return failure();
 
     // if transpose dim with 1 mask value
     // no need to change transfer_read to gather
     bool permDimWithOneMask = true;
     if (!constantMaskBounds.empty()) {
-    for(unsigned int i = 0; i < permMap.getNumResults(); i++) {
-      unsigned int targetDim = permMap.getDimPosition(i);
-      if (i != targetDim) {
-        if (constantMaskBounds[i] != 1 || constantMaskBounds[targetDim] != 1) {
-          permDimWithOneMask = false;
-          break;
+      for (unsigned int i = 0; i < permMap.getNumResults(); i++) {
+        unsigned int targetDim = permMap.getDimPosition(i);
+        if (i != targetDim) {
+          if (constantMaskBounds[i] != 1 ||
+              constantMaskBounds[targetDim] != 1) {
+            permDimWithOneMask = false;
+            break;
+          }
         }
       }
+      if (permDimWithOneMask)
+        return failure();
     }
-    if (permDimWithOneMask)
-      return failure();
-  }
 
     return success();
   }
@@ -1136,6 +1410,18 @@ class TransferReadToGatheringLoadPattern
       // compute the gather index
       // we only compute it when the mask enables this element
       // because large strides can make the index overflow
+      //
+      // The zeroed tail must stay: a masked-off lane often maps to a
+      // coordinate outside the source (that is what the mask is for -- see
+      // @transpose_2d_outlined_vf_0 in normalize_vector.mlir, where 112 of 128
+      // lanes are out of a 16x1 source), so computing its "real" index would
+      // address past the end of the memref.
+      //
+      // The flat tail this leaves is not a staircase, which used to make the
+      // index constant unlowerable.  `ConstantOpToHivmSegmentedVCILowering`
+      // now fits its closed form to the active prefix and writes the tail back
+      // with a prefix predicate, so the convention is honoured on the consumer
+      // side (see `emitActivePrefixSelect` in ArithToHIVMAVE.cpp).
       int64_t index = 0;
       if (isFullMask || isEnabled) {
         for (unsigned dim = 0; dim < strides.size(); ++dim)
@@ -1162,12 +1448,21 @@ class TransferReadToGatheringLoadPattern
                                           int64_t totalDestSize) const {
     SmallVector<Value, 2> indexVecValues;
 
-    IntegerType indexVecElementType = IntegerType::get(
-        rewriter.getContext(), memrefType.getElementTypeBitWidth());
+    // B8 gather indices are computed as 16-bit values because an 8-bit
+    // element type cannot represent the full range of memref-relative byte
+    // offsets a gather may need to index. A single HIVM AVE tile register
+    // can hold at most 128 16-bit indices so only a B8 gather wider than
+    // that needs its index vector split across two registers. A narrower B8
+    // gather fits a single native gather directly.
+    bool isB8 = memrefType.getElementTypeBitWidth() == 8;
+    unsigned indexBitWidth = isB8 ? 16 : memrefType.getElementTypeBitWidth();
+    IntegerType indexVecElementType =
+        IntegerType::get(rewriter.getContext(), indexBitWidth);
     auto indexVecType = VectorType::get(totalDestSize, indexVecElementType);
 
-    bool is256xi8 = (indexVecType.getNumElements() == 256) &&
-                    (indexVecElementType.getWidth() == 8);
+    int64_t subIndexLanes =
+        mlir::utils::getHIVMTileSliceMinNumElts(indexVecElementType);
+    bool isDualGather = isB8 && totalDestSize > subIndexLanes;
 
     auto checkIndex = [](const SmallVector<APInt, 0> &src,
                          const DenseElementsAttr &attr) {
@@ -1179,16 +1474,20 @@ class TransferReadToGatheringLoadPattern
       }
     };
 
-    if (is256xi8) {
+    if (isDualGather) {
       SmallVector<APInt, 0> gatherIndices1, gatherIndices2;
       for (unsigned i = 0; i < gatherIndices.size(); ++i) {
         (i % 2 == 0) ? gatherIndices1.push_back(gatherIndices[i])
                      : gatherIndices2.push_back(gatherIndices[i]);
       }
+      // Below the full VL width each half holds fewer than subIndexLanes
+      // real indices. Fill the rest with offset 0
+      gatherIndices1.resize(subIndexLanes, APInt(indexBitWidth, 0));
+      gatherIndices2.resize(subIndexLanes, APInt(indexBitWidth, 0));
 
       IntegerType i16Type = IntegerType::get(
           rewriter.getContext(), 16, indexVecElementType.getSignedness());
-      VectorType subIndexVecType = VectorType::get(128, i16Type);
+      VectorType subIndexVecType = VectorType::get(subIndexLanes, i16Type);
 
       auto processIndexVec =
           [&indexVecElementType, &i16Type, &subIndexVecType, &rewriter,
@@ -1256,16 +1555,17 @@ class TransferReadToGatheringLoadPattern
       padding = rewriter.create<arith::ConstantOp>(padding.getLoc(), resultType,
                                                    passthru);
     } else {
-      llvm::report_fatal_error("TODO support non-constant padding value for "
-                       "vector.transfer_read -> vector.gather transform");
+      llvm::report_fatal_error(
+          "TODO support non-constant padding value for "
+          "vector.transfer_read -> vector.gather transform");
     }
     return padding;
   }
 
   LogicalResult matchAndRewrite(vector::TransferReadOp readop,
                                 PatternRewriter &rewriter) const override {
-    // convert vector.transfer_read with non-identity permutation map
-    // to vector.gather and index computations doing the same operations
+    // Convert permuted or 1-D identity-strided reads using the existing
+    // physical offset computation and gather lowering.
     auto permMap = readop.getPermutationMap();
     MemRefType memrefType;
     VectorType destType;
@@ -1282,54 +1582,60 @@ class TransferReadToGatheringLoadPattern
         lastDisabledBit{-1};
     int64_t totalDestSize = 1;
     bool indexOverflow = false;
-    computeGatherIndicesAndMasks(
-        readop, permMap, memrefType, destType, strides, isFullMask,
-        constantMaskBounds, gatherIndices, gatherMasks, firstEnabledBit,
-        lastEnabledBit, firstDisabledBit, lastDisabledBit,
-        totalDestSize, indexOverflow);
+    computeGatherIndicesAndMasks(readop, permMap, memrefType, destType, strides,
+                                 isFullMask, constantMaskBounds, gatherIndices,
+                                 gatherMasks, firstEnabledBit, lastEnabledBit,
+                                 firstDisabledBit, lastDisabledBit,
+                                 totalDestSize, indexOverflow);
     // Not support gather index overflow.
     // Such as, gather B8/B16 type date with 65537 index.
     // Todo: Use template lib to extend scenarios.
     if (indexOverflow)
       return failure();
-    // Not support gather B8 with data size not equal 256
-    // Todo: createIndexVector need enhance.
-    if (memrefType.getElementTypeBitWidth() == 8 && totalDestSize != 256)
+    // A B8 gather wider than one native gather (128 16-bit indices) is split
+    // into two sub-gathers by index parity. Two sub-gathers cover at most VL
+    // elements; nothing wider is supported.
+    if (memrefType.getElementTypeBitWidth() == hivm::util::BITS_PER_BYTE &&
+        totalDestSize > hivm::util::VL) {
+      return readop.emitError()
+             << "unsupported B8 transpose gather width " << totalDestSize
+             << ": expected <= " << hivm::util::VL;
+    }
+
+    // A rank-1 identity mask already matches the flattened gather lane order,
+    // so it can be reused as is.
+    bool reuseOriginalMask =
+        permMap.isIdentity() && readop.getMask() &&
+        cast<VectorType>(readop.getMask().getType()).getRank() == 1;
+    // Validate rebuilt masks before creating IR. Only rank-1 identity masks
+    // can be reused directly without rebuilding them as a prefix.
+    // A prefix has no enabled lanes after the first disabled lane. This also
+    // accepts empty and one-lane masks without special-casing their endpoints.
+    bool hasDisabledLanes = firstDisabledBit != -1;
+    int64_t enabledPrefix =
+        (!isFullMask && hasDisabledLanes) ? firstDisabledBit : totalDestSize;
+
+    if (!reuseOriginalMask && !isFullMask && lastEnabledBit >= enabledPrefix)
       return failure();
+    if (!readop.getPadding().getDefiningOp<arith::ConstantOp>())
+      return rewriter.notifyMatchFailure(readop, "requires constant padding");
 
     auto indexVecValues = createIndexVector(readop, rewriter, memrefType,
                                             gatherIndices, totalDestSize);
     Value finalResult;
-    decltype(readop.getMask()) newMask;
+    Value newMask;
     VectorType maskType =
         VectorType::get({totalDestSize}, rewriter.getI1Type());
-    if (!isFullMask) {
-      // check if we can convert the constant mask to something simple
-      // currently we only try to create another constant mask
-      // if there are more patterns we can support, update them here
-      // for 1D vector.constant_mask, check if there exists N
-      // such that gatherMasks[0...N-1]==true && gatherMasks[N...]==false
-      if (firstEnabledBit < lastEnabledBit &&
-          lastEnabledBit + 1 == firstDisabledBit &&
-          firstDisabledBit <= lastDisabledBit) {
-        ArrayAttr maskDimSizes = rewriter.getI64ArrayAttr({firstDisabledBit});
-        auto newConstMask = rewriter.create<vector::ConstantMaskOp>(
-            readop.getLoc(), maskType, maskDimSizes);
-        newMask = newConstMask;
-      } else
-        return failure();
+    if (reuseOriginalMask) {
+      newMask = readop.getMask();
     } else {
-      // create a mask for full vector size
-      ArrayAttr maskDimSizes = rewriter.getI64ArrayAttr({totalDestSize});
-      auto newConstMask = rewriter.create<vector::ConstantMaskOp>(
-          readop.getLoc(), maskType, maskDimSizes);
-      newMask = newConstMask;
+      newMask = rewriter.create<vector::ConstantMaskOp>(
+          readop.getLoc(), maskType, rewriter.getI64ArrayAttr({enabledPrefix}));
     }
 
     if (indexVecValues.size() == 2) {
       auto eltType = destType.getElementType();
-      VectorType subDestType =
-        VectorType::get({totalDestSize}, eltType);
+      VectorType subDestType = VectorType::get({totalDestSize}, eltType);
       Value padding =
           createPaddingValue(readop, rewriter, subDestType, totalDestSize);
 
@@ -1354,9 +1660,8 @@ class TransferReadToGatheringLoadPattern
     }
 
     if (destType.getRank() > 1) {
-      finalResult =
-          rewriter.create<vector::ShapeCastOp>(readop.getLoc(), destType,
-                                               finalResult);
+      finalResult = rewriter.create<vector::ShapeCastOp>(readop.getLoc(),
+                                                         destType, finalResult);
     }
     rewriter.replaceOp(readop, finalResult);
     return success();
@@ -1372,22 +1677,22 @@ struct TruncfScalarToVector : public OpRewritePattern<arith::TruncFOp> {
       return failure();
     auto *user = *truncResult.user_begin();
     auto broadcastOp = dyn_cast<vector::BroadcastOp>(user);
-    if(!broadcastOp)
+    if (!broadcastOp)
       return failure();
     Value truncInput = op.getOperand();
     Type truncInputType = truncInput.getType();
     if (isa<ShapedType>(truncInputType))
       return failure();
     VectorType broadcastResultType = broadcastOp.getResultVectorType();
-    if(!broadcastResultType.getElementType().isBF16())
+    if (!broadcastResultType.getElementType().isBF16())
       return failure();
     Location loc = op.getLoc();
-    VectorType intermediateType = VectorType::get(
-      broadcastResultType.getShape(),truncInputType);
-    Value broadcastScalar = rewriter.create<vector::BroadcastOp>(
-      loc, intermediateType, truncInput);
-    Value newTrunc = rewriter.create<arith::TruncFOp>(
-      loc, broadcastResultType, broadcastScalar);
+    VectorType intermediateType =
+        VectorType::get(broadcastResultType.getShape(), truncInputType);
+    Value broadcastScalar =
+        rewriter.create<vector::BroadcastOp>(loc, intermediateType, truncInput);
+    Value newTrunc = rewriter.create<arith::TruncFOp>(loc, broadcastResultType,
+                                                      broadcastScalar);
     rewriter.replaceOp(broadcastOp, newTrunc);
     if (op->use_empty()) {
       rewriter.eraseOp(op);
@@ -1395,6 +1700,20 @@ struct TruncfScalarToVector : public OpRewritePattern<arith::TruncFOp> {
     return success();
   }
 };
+
+/// Materialize `scalar` as a vector of type `vecType` for the scalar-to-vector
+/// patterns below. Block arguments and `arith.constant`s have no vector
+/// producer for a conversion cast to fold with, so they are broadcast
+/// (a constant broadcast folds to a splat constant). Any other scalar is the
+/// cast-back of an already vectorized op, and a conversion cast folds with it.
+static Value materializeScalarAsVector(PatternRewriter &rewriter, Location loc,
+                                       Value scalar, VectorType vecType) {
+  if (isa<BlockArgument>(scalar) ||
+      isa_and_nonnull<arith::ConstantOp>(scalar.getDefiningOp()))
+    return rewriter.create<vector::BroadcastOp>(loc, vecType, scalar);
+  return rewriter.create<UnrealizedConversionCastOp>(loc, vecType, scalar)
+      .getResult(0);
+}
 
 /// Before conversion:
 /// ```mlir
@@ -1409,7 +1728,8 @@ struct TruncfScalarToVector : public OpRewritePattern<arith::TruncFOp> {
 template <typename BinaryOpType>
 struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
   using OpRewritePattern<BinaryOpType>::OpRewritePattern;
-  LogicalResult matchAndRewrite(BinaryOpType op, PatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(BinaryOpType op,
+                                PatternRewriter &rewriter) const override {
     if (isa<VectorType>(op.getResult().getType()))
       return failure();
     auto lhs = op.getLhs();
@@ -1417,7 +1737,8 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
     Type lhsType = lhs.getType();
     Type rhsType = rhs.getType();
     Type resultType = op.getType();
-    if (!((lhsType.isF32() && rhsType.isF32()) || (lhsType.isInteger(1) && rhsType.isInteger(1))))
+    if (!((lhsType.isF32() && rhsType.isF32()) ||
+          (lhsType.isInteger(1) && rhsType.isInteger(1))))
       return failure();
     int numOperands = static_cast<int>(op.getNumOperands());
     if (numOperands != 2)
@@ -1433,13 +1754,13 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
       VectorType cmpVecType = VectorType::get({64}, rewriter.getF32Type());
       if constexpr (std::is_same_v<BinaryOpType, arith::CmpFOp>) {
         arith::CmpFPredicate predicate = op.getPredicate();
-        auto lhsVec =
-            rewriter.create<UnrealizedConversionCastOp>(loc, cmpVecType, lhs);
+        Value lhsVec =
+            materializeScalarAsVector(rewriter, loc, lhs, cmpVecType);
         auto rhsVec =
             rewriter.create<vector::BroadcastOp>(loc, cmpVecType, rhs);
         auto vectorCmp = rewriter.create<BinaryOpType>(
-            loc, cmpVecType.clone(rewriter.getI1Type()), predicate,
-            lhsVec.getResult(0), rhsVec.getResult());
+            loc, cmpVecType.clone(rewriter.getI1Type()), predicate, lhsVec,
+            rhsVec.getResult());
         rewriter.replaceOp(op, vectorCmp);
         return success();
       } else if constexpr (std::is_same_v<BinaryOpType, mathExt::DivFHPOp> ||
@@ -1447,11 +1768,10 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
                            std::is_same_v<BinaryOpType, arith::XOrIOp> ||
                            std::is_same_v<BinaryOpType, arith::MulFOp> ||
                            std::is_same_v<BinaryOpType, arith::SubFOp>) {
-        auto lhsVec =
-          rewriter.create<UnrealizedConversionCastOp>(loc, vecType, lhs);
+        Value lhsVec = materializeScalarAsVector(rewriter, loc, lhs, vecType);
         auto rhsVec = rewriter.create<vector::BroadcastOp>(loc, vecType, rhs);
-        auto vecResult = rewriter.create<BinaryOpType>(
-            loc, vecType, lhsVec.getResult(0), rhsVec.getResult());
+        auto vecResult = rewriter.create<BinaryOpType>(loc, vecType, lhsVec,
+                                                       rhsVec.getResult());
         rewriter.replaceOp(op, vecResult);
         return success();
       }
@@ -1459,13 +1779,13 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
       if constexpr (std::is_same_v<BinaryOpType, arith::CmpFOp>) {
         VectorType cmpVecType = VectorType::get({64}, rewriter.getF32Type());
         arith::CmpFPredicate predicate = op.getPredicate();
-        auto rhsVec =
-            rewriter.create<UnrealizedConversionCastOp>(loc, cmpVecType, rhs);
+        Value rhsVec =
+            materializeScalarAsVector(rewriter, loc, rhs, cmpVecType);
         auto lhsVec =
             rewriter.create<vector::BroadcastOp>(loc, cmpVecType, lhs);
         auto vectorCmp = rewriter.create<BinaryOpType>(
             loc, cmpVecType.clone(rewriter.getI1Type()), predicate,
-            lhsVec.getResult(), rhsVec.getResult(0));
+            lhsVec.getResult(), rhsVec);
         rewriter.replaceOp(op, vectorCmp);
         return success();
       } else if constexpr (std::is_same_v<BinaryOpType, mathExt::DivFHPOp> ||
@@ -1473,40 +1793,37 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
                            std::is_same_v<BinaryOpType, arith::XOrIOp> ||
                            std::is_same_v<BinaryOpType, arith::MulFOp> ||
                            std::is_same_v<BinaryOpType, arith::SubFOp>) {
-        auto rhsVec =
-            rewriter.create<UnrealizedConversionCastOp>(loc, vecType, rhs);
+        Value rhsVec = materializeScalarAsVector(rewriter, loc, rhs, vecType);
         auto lhsVec = rewriter.create<vector::BroadcastOp>(loc, vecType, lhs);
         auto vecResult = rewriter.create<BinaryOpType>(
-            loc, vecType, lhsVec.getResult(), rhsVec.getResult(0));
+            loc, vecType, lhsVec.getResult(), rhsVec);
         rewriter.replaceOp(op, vecResult);
         return success();
-    }
+      }
     } else if (!leftBlockArg && !rightBlockArg) {
       if constexpr (std::is_same_v<BinaryOpType, arith::CmpFOp>) {
         VectorType cmpVecType = VectorType::get({64}, rewriter.getF32Type());
         arith::CmpFPredicate predicate = op.getPredicate();
-        auto lhsVec =
-              rewriter.create<UnrealizedConversionCastOp>(loc, cmpVecType, lhs);
-        auto rhsVec =
-              rewriter.create<UnrealizedConversionCastOp>(loc, cmpVecType, rhs);
+        Value lhsVec =
+            materializeScalarAsVector(rewriter, loc, lhs, cmpVecType);
+        Value rhsVec =
+            materializeScalarAsVector(rewriter, loc, rhs, cmpVecType);
         auto vectorCmp = rewriter.create<BinaryOpType>(
-              loc, cmpVecType.clone(rewriter.getI1Type()), predicate,
-              lhsVec.getResult(0), rhsVec.getResult(0));
+            loc, cmpVecType.clone(rewriter.getI1Type()), predicate, lhsVec,
+            rhsVec);
         rewriter.replaceOp(op, vectorCmp);
         return success();
       } else if constexpr (std::is_same_v<BinaryOpType, mathExt::DivFHPOp> ||
-                            std::is_same_v<BinaryOpType, arith::AndIOp> ||
-                            std::is_same_v<BinaryOpType, arith::XOrIOp> ||
-                            std::is_same_v<BinaryOpType, arith::MulFOp> ||
-                            std::is_same_v<BinaryOpType, arith::SubFOp>) {
-      auto lhsVec =
-          rewriter.create<UnrealizedConversionCastOp>(loc, vecType, lhs);
-      auto rhsVec =
-            rewriter.create<UnrealizedConversionCastOp>(loc, vecType, rhs);
-      auto vecResult = rewriter.create<BinaryOpType>(
-            loc, vecType, lhsVec.getResult(0), rhsVec.getResult(0));
-      rewriter.replaceOp(op, vecResult);
-      return success();
+                           std::is_same_v<BinaryOpType, arith::AndIOp> ||
+                           std::is_same_v<BinaryOpType, arith::XOrIOp> ||
+                           std::is_same_v<BinaryOpType, arith::MulFOp> ||
+                           std::is_same_v<BinaryOpType, arith::SubFOp>) {
+        Value lhsVec = materializeScalarAsVector(rewriter, loc, lhs, vecType);
+        Value rhsVec = materializeScalarAsVector(rewriter, loc, rhs, vecType);
+        auto vecResult =
+            rewriter.create<BinaryOpType>(loc, vecType, lhsVec, rhsVec);
+        rewriter.replaceOp(op, vecResult);
+        return success();
       }
     } else {
       if constexpr (std::is_same_v<BinaryOpType, arith::CmpFOp>) {
@@ -1532,7 +1849,7 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
             loc, vecType, lhsVec.getResult(), rhsVec.getResult());
         rewriter.replaceOp(op, vecResult);
         return success();
-       }
+      }
     }
     return failure();
   }
@@ -1562,7 +1879,6 @@ struct UnaryScalarOpToVectorPattern : public OpRewritePattern<UnaryOpType> {
     }
     VectorType vectorType = VectorType::get({64}, operandType);
     Location loc = op.getLoc();
-    auto blockArg = dyn_cast<BlockArgument>(operand);
 
     // Reject if any user is neither a broadcast, a conversion cast inserted
     // by sibling patterns, nor an op this pass will vectorize: the cast-back
@@ -1581,15 +1897,8 @@ struct UnaryScalarOpToVectorPattern : public OpRewritePattern<UnaryOpType> {
     }
 
     // Create vector operand
-    Value vecOperand;
-    if (blockArg) {
-      vecOperand =
-          rewriter.create<vector::BroadcastOp>(loc, vectorType, operand);
-    } else {
-      vecOperand =
-          rewriter.create<UnrealizedConversionCastOp>(loc, vectorType, operand)
-              .getResult(0);
-    }
+    Value vecOperand =
+        materializeScalarAsVector(rewriter, loc, operand, vectorType);
 
     // Create vector unary op
     auto vecOp = rewriter.create<UnaryOpType>(loc, vecOperand);
@@ -1610,7 +1919,8 @@ struct UnaryScalarOpToVectorPattern : public OpRewritePattern<UnaryOpType> {
   }
 
   // Whether `user` is rewritten to vector form by this pass, so the cast-back
-  // feeding it folds. Mirrors the op list in NormalizeVectorPass::runOnOperation.
+  // feeding it folds. Mirrors the op list in
+  // NormalizeVectorPass::runOnOperation.
   static bool isVectorizableByThisPass(Operation *user) {
     if (isa<math::AbsFOp, math::LogOp, math::RoundOp>(user))
       return true;
@@ -1646,9 +1956,8 @@ struct FmaOpScalarToVectorPattern : public OpRewritePattern<math::FmaOp> {
                                 PatternRewriter &rewriter) const override {
     auto opTypes = op.getOperandTypes();
 
-    bool nonVecArgsAreF32 = std::all_of(opTypes.begin(), opTypes.end(), [](Type t) {
-        return t.isF32();
-    });
+    bool nonVecArgsAreF32 = std::all_of(opTypes.begin(), opTypes.end(),
+                                        [](Type t) { return t.isF32(); });
 
     if (!nonVecArgsAreF32) {
       return failure();
@@ -1659,21 +1968,16 @@ struct FmaOpScalarToVectorPattern : public OpRewritePattern<math::FmaOp> {
     auto vectorType = VectorType::get({64}, operandType);
 
     SmallVector<vector::BroadcastOp, 4> broadCastUsers;
-    for (auto user: op->getUsers()) {
+    for (auto user : op->getUsers()) {
       if (auto bcUser = dyn_cast<vector::BroadcastOp>(user)) {
         broadCastUsers.push_back(bcUser);
       }
     }
 
     SmallVector<Value, 3> vOperands;
-    for (auto operand: op->getOperands()) {
-      Value vOperand;
-      if (isa<BlockArgument>(operand)) {
-        vOperand = rewriter.create<vector::BroadcastOp>(loc, vectorType, operand);
-      } else {
-        vOperand = rewriter.create<UnrealizedConversionCastOp>(
-            loc, vectorType, operand).getResult(0);
-      }
+    for (auto operand : op->getOperands()) {
+      Value vOperand =
+          materializeScalarAsVector(rewriter, loc, operand, vectorType);
       vOperands.push_back(vOperand);
     }
 
@@ -1734,18 +2038,11 @@ struct ScalarChainBroadcastToVectorPattern
 
     Location loc = brcOp.getLoc();
     VectorType rootVecType = VectorType::get({64}, cur.getType());
-    Value curVec = isa<BlockArgument>(cur)
-                       ? (Value)rewriter.create<vector::BroadcastOp>(
-                             loc, rootVecType, cur)
-                       : rewriter
-                             .create<UnrealizedConversionCastOp>(
-                                 loc, rootVecType, cur)
-                             .getResult(0);
+    Value curVec = materializeScalarAsVector(rewriter, loc, cur, rootVecType);
 
     for (auto it = chain.rbegin(), e = chain.rend(); it != e; ++it) {
       Operation *op = *it;
-      VectorType opVecType =
-          VectorType::get({64}, op->getResult(0).getType());
+      VectorType opVecType = VectorType::get({64}, op->getResult(0).getType());
       if (auto bc = dyn_cast<arith::BitcastOp>(op)) {
         curVec = rewriter.create<arith::BitcastOp>(loc, opVecType, curVec);
       } else if (auto andi = dyn_cast<arith::AndIOp>(op)) {
@@ -1779,9 +2076,8 @@ struct ScalarChainBroadcastToVectorPattern
         VectorType cmpOperandVecType =
             VectorType::get({64}, cmpi.getLhs().getType());
         curVec = rewriter.create<arith::CmpIOp>(
-            loc, opVecType, cmpi.getPredicate(),
-            curVec, broadcastOrCast(rewriter, loc, cmpi.getRhs(),
-                                     cmpOperandVecType));
+            loc, opVecType, cmpi.getPredicate(), curVec,
+            broadcastOrCast(rewriter, loc, cmpi.getRhs(), cmpOperandVecType));
       } else if (auto select = dyn_cast<arith::SelectOp>(op)) {
         // Select is a fork: spine continues on the condition (operand 0);
         // true_val/false_val are side inputs broadcast/cast to the result
@@ -1812,10 +2108,7 @@ private:
 
   static Value broadcastOrCast(PatternRewriter &rewriter, Location loc,
                                Value scalar, VectorType vecType) {
-    if (isa<BlockArgument>(scalar))
-      return rewriter.create<vector::BroadcastOp>(loc, vecType, scalar);
-    return rewriter.create<UnrealizedConversionCastOp>(loc, vecType, scalar)
-        .getResult(0);
+    return materializeScalarAsVector(rewriter, loc, scalar, vecType);
   }
 };
 
@@ -1841,29 +2134,28 @@ void NormalizeVectorPass::runOnOperation() {
   vector::populateVectorTransferDropUnitDimsPatterns(patterns);
   vector::populateFlattenVectorOpsPattern(patterns);
 
-  patterns
-      .add<OneDimAccMultiReductionToReduction,
-           DropUnitDimFromMulExtendedOp<arith::MulSIExtendedOp>,
-           DropUnitDimFromMulExtendedOp<arith::MulUIExtendedOp>,
-           ShapeCastDropUnitDimsForMultiDimVectorPattern,
-           UnitDimMultiReductionToReduction, utils::ForOpLegalization<true>,
-           ShapeCastUnitDimsForBrc, UnitDimsVecTransposeNormalize,
-           ConvertCreateMaskTo1D, ConvertConstantMaskTo1D, TruncfScalarToVector,
-           FixBitTypeBroadcastTransferReadPattern>(
-          patterns.getContext());
+  patterns.add<OneDimAccMultiReductionToReduction,
+               DropUnitDimFromMulExtendedOp<arith::MulSIExtendedOp>,
+               DropUnitDimFromMulExtendedOp<arith::MulUIExtendedOp>,
+               ShapeCastDropUnitDimsForMultiDimVectorPattern,
+               UnitDimMultiReductionToReduction, utils::ForOpLegalization<true>,
+               ShapeCastUnitDimsForBrc, UnitDimsVecTransposeNormalize,
+               ConvertCreateMaskTo1D, ConvertConstantMaskTo1D,
+               TruncfScalarToVector, FixBitTypeBroadcastTransferReadPattern>(
+      patterns.getContext());
   if (funcOp->hasAttr(hivm::VectorFunctionAttr::name))
-    patterns.add<UnaryScalarOpToVectorPattern<math::AbsFOp>,
-                 UnaryScalarOpToVectorPattern<math::LogOp>,
-                 UnaryScalarOpToVectorPattern<math::RoundOp>,
-                 BinaryScalarOpToVectorPattern<mathExt::DivFHPOp>,
-                 BinaryScalarOpToVectorPattern<arith::AndIOp>,
-                 BinaryScalarOpToVectorPattern<arith::XOrIOp>,
-                 BinaryScalarOpToVectorPattern<arith::MulFOp>,
-                 BinaryScalarOpToVectorPattern<arith::SubFOp>,
-                 BinaryScalarOpToVectorPattern<arith::CmpFOp>,
-                 FmaOpScalarToVectorPattern,
-                 ScalarChainBroadcastToVectorPattern>(
-        patterns.getContext());
+    patterns
+        .add<UnaryScalarOpToVectorPattern<math::AbsFOp>,
+             UnaryScalarOpToVectorPattern<math::LogOp>,
+             UnaryScalarOpToVectorPattern<math::RoundOp>,
+             BinaryScalarOpToVectorPattern<mathExt::DivFHPOp>,
+             BinaryScalarOpToVectorPattern<arith::AndIOp>,
+             BinaryScalarOpToVectorPattern<arith::XOrIOp>,
+             BinaryScalarOpToVectorPattern<arith::MulFOp>,
+             BinaryScalarOpToVectorPattern<arith::SubFOp>,
+             BinaryScalarOpToVectorPattern<arith::CmpFOp>,
+             FmaOpScalarToVectorPattern, ScalarChainBroadcastToVectorPattern>(
+            patterns.getContext());
   patterns.add<TransferReadToGatheringLoadPattern>(patterns.getContext());
   vector::ExtractOp::getCanonicalizationPatterns(patterns, ctx);
   vector::ShapeCastOp::getCanonicalizationPatterns(patterns, ctx);

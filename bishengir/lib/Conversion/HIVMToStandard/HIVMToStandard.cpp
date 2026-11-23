@@ -144,7 +144,8 @@ static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
     // type of original op.
     std::optional<hivm::TFuncCoreType> funcCoreType;
     if (llvm::StringRef(libCallName).starts_with("_mlir_ciface_init_debug") ||
-        llvm::StringRef(libCallName).starts_with("_mlir_ciface_finish_debug")) {
+        llvm::StringRef(libCallName).starts_with("_mlir_ciface_finish_debug") ||
+        llvm::StringRef(libCallName).starts_with("proton_scope_boundary")) {
       funcCoreType = hivm::TFuncCoreType::AIC_OR_AIV;
     } else if (auto infer = dyn_cast<CoreTypeInterface>(op)) {
       auto coreTypeMaybe = infer.getCoreType();
@@ -171,15 +172,18 @@ static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
           hivm::TFuncCoreTypeAttr::get(op->getContext(), *funcCoreType));
 
     // Only mark AIV lib calls as noinline by default; other lib calls are
-    // always inlined. HIVM custom ops default to noinline unless explicitly
-    // marked always_inline with hivm.inline_mode.
+    // always inlined. Custom ops use their explicit or builtin inline policy,
+    // falling back to noinline.
     bool markNoInline = hivm::detail::getMarkLibCallNoInline() &&
                         funcCoreType == hivm::TFuncCoreType::AIV;
     std::optional<hivm::InlineMode> inlineMode;
-    if (auto customOp = dyn_cast<hivm::CustomOp>(op))
-      inlineMode =
-          customOp.getInlineMode().value_or(hivm::InlineMode::NoInline);
-    else if (auto customMacroOp = dyn_cast<hivm::CustomMacroOp>(op))
+    if (auto customOp = dyn_cast<hivm::CustomOp>(op)) {
+      auto builtin = hivm::CustomOp::kBuiltins.find(customOp.getName());
+      auto defaultMode = hivm::InlineMode::NoInline;
+      if (builtin != hivm::CustomOp::kBuiltins.end())
+        defaultMode = builtin->second.inlineMode.value_or(defaultMode);
+      inlineMode = customOp.getInlineMode().value_or(defaultMode);
+    } else if (auto customMacroOp = dyn_cast<hivm::CustomMacroOp>(op))
       inlineMode =
           customMacroOp.getInlineMode().value_or(hivm::InlineMode::NoInline);
     if (inlineMode) {
@@ -420,6 +424,7 @@ private:
     }
 
     auto syncRelatedArgs = op.getSyncRelatedArgs();
+    additionalArgs.push_back(op.getPingPongSignalLibValue(rewriter));
     std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
               std::back_inserter(additionalArgs));
 
@@ -899,6 +904,15 @@ public:
     auto opWithLibCall = cast<OpWithLibraryFunction>(op.getOperation());
     assert(op.hasPureBufferSemantics() &&
            "Operating on tensor, please bufferize.");
+    if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>) {
+      if (op.getBroadcastAxesAttr() &&
+          ((op.getPadMode() &&
+            op.getPadModeAttr().getPadmode() != PadMode::PadNull) ||
+           op.getPadValue() || op.getLeftPaddingNum() ||
+           op.getRightPaddingNum()))
+        return op.emitOpError("broadcast_axes cannot be combined with padding "
+                              "in the legacy load form");
+    }
     MemRefType srcType = dyn_cast<MemRefType>(op.getSrcOperandType());
 
     int64_t rank = srcType.getRank();
@@ -938,9 +952,10 @@ private:
     if (dstAddrSpace == AddressSpace::L1) {
       // Load GM->L1, supported by load_gm_to_cbuf_{1,2,3}d templates.
       MemRefType mem = cast<MemRefType>(op.getSrc().getType());
-      int maxOpRank = cast<OpWithLibraryFunction>(op.getOperation())
-                          .getOpLibraryMaxRank()
-                          .value();
+      [[maybe_unused]] int maxOpRank =
+          cast<OpWithLibraryFunction>(op.getOperation())
+              .getOpLibraryMaxRank()
+              .value();
       assert((mem.getRank() >= 1 && mem.getRank() <= maxOpRank) &&
              "when Load GM->L1, only support up to 3D copy");
       return true;
@@ -1882,7 +1897,7 @@ class PlainOpToLibraryCallPattern : public OpRewritePattern<T> {
     replaceWithLibCall(rewriter, op,
                        cast<OpWithLibraryFunction>(op.getOperation())
                            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       /*inputOperands=*/{}, {});
+                       op->getOperands(), op->getResultTypes());
     return success();
   }
 };
@@ -1896,12 +1911,10 @@ public:
                                 PatternRewriter &rewriter) const final {
     ModuleOp mod = op->template getParentOfType<ModuleOp>();
     std::string libCallName = op.getOpName().str();
-    if (op->hasAttr(SyncBlockLockUnorderedAttr::name)) {
+    if (getSyncBlockLockOpOrdering(op) == SyncBlockLockOrdering::Unordered)
       libCallName += "_unordered";
-    }
-    if (op->hasAttr(SyncBlockLockWithSubblockAttr::name)) {
+    if (op->hasAttr(SyncBlockLockWithSubblockAttr::name))
       libCallName += "_with_subblock";
-    }
     createLibCall(rewriter, op, mod, libCallName, op->getOperands(), {});
     rewriter.eraseOp(op);
     return success();

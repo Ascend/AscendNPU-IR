@@ -283,18 +283,15 @@ def TTG_MemDescReshapeOp : TTG_Op<"memdesc_reshape", [Pure,
 
   let arguments = (ins TTG_MemDescType:$src);
 
-  let builders = [
-    OpBuilder<(ins "Value":$src, "ArrayRef<int64_t>":$shape),
-              [{
+  let builders = [OpBuilder<(ins "Value":$src, "ArrayRef<int64_t>":$shape), [{
                 MemDescType dstTy;
                 auto srcTy = cast<MemDescType>(src.getType());
-                auto result = inferReturnTypes($_builder.getContext(),
+                [[maybe_unused]] auto result = inferReturnTypes($_builder.getContext(),
                                            $_builder.getUnknownLoc(),
                                            srcTy, shape, dstTy);
                 assert(succeeded(result) && "failed to infer return types");
                 build($_builder, $_state, dstTy, src);
-              }]>
-  ];
+              }]>];
   let extraClassDeclaration = [{
       static LogicalResult inferReturnTypes(MLIRContext *context,
                                         std::optional<Location> loc,

@@ -125,6 +125,45 @@ func.func @propagate_down_from_for_yield(
 
 // -----
 
+// Preserve a yielded conversion for its side users while propagating the
+// loop-carried value in the source layout.
+// CHECK-LABEL: func.func @propagate_multi_use_for_yield(
+// CHECK:         %[[INIT_UP:.*]] = hivm.hir.convert_layout %{{[^ ]+}}
+// CHECK-SAME:      -> tensor<1x1x16x16xf16>
+// CHECK:         %[[R:.*]]:2 = scf.for
+// CHECK-SAME:      iter_args(%{{.*}} = %[[INIT_UP]]
+// CHECK-SAME:      -> (tensor<1x1x16x16xf16>, f16)
+// CHECK:           %[[EXPANDED:.*]] = tensor.expand_shape
+// CHECK:           %[[SIDE_DOWN:.*]] = hivm.hir.convert_layout %[[EXPANDED]]
+// CHECK-SAME:        -> tensor<16x16xf16>
+// CHECK:           %[[ELEM:.*]] = tensor.extract %[[SIDE_DOWN]]
+// CHECK:           scf.yield %[[EXPANDED]], %[[ELEM]] : tensor<1x1x16x16xf16>, f16
+// CHECK:         %[[RESULT_DOWN:.*]] = hivm.hir.convert_layout %[[R]]#0
+// CHECK-SAME:      -> tensor<16x16xf16>
+// CHECK:         return %[[RESULT_DOWN]], %[[R]]#1
+func.func @propagate_multi_use_for_yield(
+  %init: tensor<16x16xf16>, %init_elem: f16,
+  %lb: index, %ub: index, %step: index
+) -> (tensor<16x16xf16>, f16) {
+  %c0 = arith.constant 0 : index
+  %r:2 = scf.for %iv = %lb to %ub step %step
+      iter_args(%arg = %init, %elem = %init_elem)
+      -> (tensor<16x16xf16>, f16) {
+    %arg2 = tensor.expand_shape %arg [[0, 1, 2], [3]]
+        output_shape [1, 1, 16, 16]
+        : tensor<16x16xf16> into tensor<1x1x16x16xf16>
+    %down = hivm.hir.convert_layout %arg2 output_shape [16, 16]
+      {dstLayout = #hivm.data_layout<ND>,
+       srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+      : (tensor<1x1x16x16xf16>) -> tensor<16x16xf16>
+    %next_elem = tensor.extract %down[%c0, %c0] : tensor<16x16xf16>
+    scf.yield %down, %next_elem : tensor<16x16xf16>, f16
+  }
+  return %r#0, %r#1 : tensor<16x16xf16>, f16
+}
+
+// -----
+
 // CHECK-LABEL: func.func @propagate_down_from_if_yields(
 // CHECK-SAME: %[[C:.*]]: i1
 // CHECK:      %[[IFR:.*]] = scf.if %[[C]] -> (tensor<1x1x16x16xf16>)

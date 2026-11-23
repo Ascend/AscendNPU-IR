@@ -21,6 +21,7 @@
 #include "bishengir/Tools/Utils/Utils.h"
 #include "bishengir/Tools/bishengir-compile/regbase/PassPipeline.h"
 #include "bishengir/Tools/bishengir-compile/regbase/Utility.h"
+#include "bishengir/Tools/hivmc/BishengAsyncRuntime.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
@@ -34,7 +35,8 @@ namespace bishengir {
 namespace regbase {
 namespace {
 
-bool shouldUseDirectRegBasePipeline(const BiShengIRCompileMainConfig &config) {
+[[maybe_unused]] bool
+shouldUseDirectRegBasePipeline(const BiShengIRCompileMainConfig &config) {
   if (config.getPureSimt())
     return false;
 #if defined(BISHENGIR_ENABLE_TRITON_COMPILE) && BISHENGIR_ENABLE_TRITON_COMPILE
@@ -44,7 +46,8 @@ bool shouldUseDirectRegBasePipeline(const BiShengIRCompileMainConfig &config) {
   return true;
 }
 
-int runExternalRegBaseCompile(ArrayRef<std::string> originalCLArgs) {
+[[maybe_unused]] int
+runExternalRegBaseCompile(ArrayRef<std::string> originalCLArgs) {
   SmallVector<StringRef> arguments;
   arguments.push_back(""); // placeholder, replaced by execute with full path
   for (const auto &arg : originalCLArgs)
@@ -59,7 +62,8 @@ int runExternalRegBaseCompile(ArrayRef<std::string> originalCLArgs) {
 } // namespace
 
 int runRegBaseCompile(ModuleOp module, BiShengIRCompileMainConfig config,
-                      ArrayRef<std::string> originalCLArgs) {
+                      ArrayRef<std::string> originalCLArgs,
+                      BishengAsyncRuntime *runtime) {
   // if (!shouldUseDirectRegBasePipeline(config))
   //   return runExternalRegBaseCompile(originalCLArgs);
 
@@ -76,7 +80,7 @@ int runRegBaseCompile(ModuleOp module, BiShengIRCompileMainConfig config,
 
   config.setClArgs(filterRegBaseForwardedHIVMCOptions(originalCLArgs));
 
-  if (failed(runRegBasePipeline(module, config))) {
+  if (failed(runRegBasePipeline(module, config, runtime))) {
     llvm::errs() << "[ERROR] Failed to run BiShengIR regbase pipeline\n";
     return EXIT_FAILURE;
   }

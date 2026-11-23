@@ -14,6 +14,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransformOps
   BiShengIRAnnotationDialect
   BiShengIRMathExtDialect
   MLIRAffineDialect
+  MLIRAffineUtils
   MLIRArithDialect
   MLIRFuncDialect
   BiShengIRHFusionDialect
@@ -24,6 +25,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransformOps
   MLIRLinalgTransforms
   MLIRLinalgTransformOps
   MLIRSideEffectInterfaces
+  MLIRDialectUtils
   MLIRTensorDialect
   MLIRTransformDialect
   MLIRTransformDialectUtils

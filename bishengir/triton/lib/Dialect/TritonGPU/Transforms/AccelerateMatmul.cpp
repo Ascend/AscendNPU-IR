@@ -83,7 +83,7 @@ SmallVector<unsigned> warpsPerTileV2(DotOp dotOp, const ArrayRef<int64_t> shape,
     if (isa<DotOp>(op) && (op != dotOp)) {
       auto chainedDot = cast<DotOp>(op);
       auto resTy = chainedDot.getResult().getType();
-      if (resTy.getRank() != rank) {
+      if (resTy.getRank() != static_cast<int64_t>(rank)) {
         continue;
       }
       if (auto mmaEncoding =
@@ -147,7 +147,7 @@ warpsPerTileV3(DotOp dotOp, const ArrayRef<int64_t> shape, int numWarps,
   SmallVector<unsigned, 2> ret = {4, 1};
   SmallVector<int64_t, 2> shapePerWarp = {16, instrShape[1]};
   do {
-    if (ret[0] * ret[1] >= numWarps)
+    if (ret[0] * ret[1] >= static_cast<unsigned>(numWarps))
       break;
     if (shape[0] > shapePerWarp[0] * ret[0]) {
       ret[0] *= 2;
@@ -324,7 +324,7 @@ public:
       return failure();
 
     bool aFromLoad = comesFromLoadOrBlockArg(dotOp.getA());
-    bool bFromLoad = comesFromLoadOrBlockArg(dotOp.getB());
+    [[maybe_unused]] bool bFromLoad = comesFromLoadOrBlockArg(dotOp.getB());
     auto origDotOp = dotOp;
 
     Value a = dotOp.getA();
@@ -518,7 +518,7 @@ public:
         dotOp.getInputPrecision() != InputPrecision::TF32)
       return failure();
     auto oldAType = dotOp.getA().getType();
-    auto oldBType = dotOp.getB().getType();
+    [[maybe_unused]] auto oldBType = dotOp.getB().getType();
     bool useTwoCTAs = canUseTwoCTAs(dotOp);
     if (useTwoCTAs) {
       b = splitBOperand(b, rewriter);
@@ -653,8 +653,8 @@ public:
     // operands
     Value a = dotOp.getA();
     Value b = dotOp.getB();
-    auto oldAType = a.getType();
-    auto oldBType = b.getType();
+    [[maybe_unused]] auto oldAType = a.getType();
+    [[maybe_unused]] auto oldBType = b.getType();
 
     bool IsAMixedPrecFp4 = false;
     bool IsBMixedPrecFp4 = false;

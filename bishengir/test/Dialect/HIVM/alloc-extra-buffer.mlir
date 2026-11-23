@@ -2653,6 +2653,41 @@ func.func @test_cast_s162s8_1d_extra() attributes {hivm.disable_size_align_for_c
 
 // -----
 
+// 4D i32->i8 VCast with per-op disable_size_align_for_cast attribute
+// (set by AlignAllocSize for rank > 3). Uses the ×3 extra buffer scheme.
+// alignedSrcSize = 2 * 2 * ceil(2,32) * ceil(2,8) * i32 = 2*2*32*8 = 1024
+// extraBufSize = 1024 * 3 = 3072
+func.func @test_cast_s322s8_4d_extra() {
+  %src = memref.alloc() : memref<2x2x2x2xi32, #hivm.address_space<ub>>
+  %dst = memref.alloc() : memref<2x2x2x2xi8, #hivm.address_space<ub>>
+
+  // CHECK: memref.alloc() : memref<3072xi32>
+  // CHECK: hivm.hir.vcast{{.*}}temp_buffer({{.*}}memref<3072xi32>)
+  hivm.hir.vcast {hivm.disable_size_align_for_cast} ins(%src : memref<2x2x2x2xi32, #hivm.address_space<ub>>)
+                 outs(%dst : memref<2x2x2x2xi8, #hivm.address_space<ub>>)
+                 round_mode = <truncwithoverflow>
+  return
+}
+
+// -----
+
+// 4D i16->i8 VCast with per-op disable_size_align_for_cast attribute.
+// alignedSrcSize = 2 * 2 * ceil(2,32) * ceil(2,16) * i16 = 2*2*32*16 = 2048
+// extraBufSize = 2048 * 3 = 6144
+func.func @test_cast_s162s8_4d_extra() {
+  %src = memref.alloc() : memref<2x2x2x2xi16, #hivm.address_space<ub>>
+  %dst = memref.alloc() : memref<2x2x2x2xi8, #hivm.address_space<ub>>
+
+  // CHECK: memref.alloc() : memref<6144xi16>
+  // CHECK: hivm.hir.vcast{{.*}}temp_buffer({{.*}}memref<6144xi16>)
+  hivm.hir.vcast {hivm.disable_size_align_for_cast} ins(%src : memref<2x2x2x2xi16, #hivm.address_space<ub>>)
+                 outs(%dst : memref<2x2x2x2xi8, #hivm.address_space<ub>>)
+                 round_mode = <truncwithoverflow>
+  return
+}
+
+// -----
+
 //===----------------------------------------------------------------------===//
 // AAR (3D last-axis reduce) tests
 //===----------------------------------------------------------------------===//

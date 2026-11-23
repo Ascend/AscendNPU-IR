@@ -214,9 +214,9 @@ struct LoadOpConversion : public ConvertOpToLLVMPattern<triton::LoadOp>,
     bool isVolatile = op.getIsVolatile();
     bool bypassCache = mod == triton::CacheModifier::CG ||
                        mod == triton::CacheModifier::CV || isVolatile;
-    auto cacheOption = bypassCache
-                           ? ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_NCA
-                           : ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_CA;
+    auto cacheOption =
+        bypassCache ? ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_NCA
+                    : ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_CA;
 
     auto volatileOption =
         (isVolatile || mod == triton::CacheModifier::CV)
@@ -349,13 +349,13 @@ struct StoreOpConversion : public ConvertOpToLLVMPattern<triton::StoreOp>,
     }();
 
     triton::CacheModifier mod = op.getCache();
-    bool bypassCache = mod == triton::CacheModifier::CG ||
-                       mod == triton::CacheModifier::CV;
-    auto cacheOption = bypassCache
-                           ? ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_NCA
-                           : ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_CA;
+    bool bypassCache =
+        mod == triton::CacheModifier::CG || mod == triton::CacheModifier::CV;
+    auto cacheOption =
+        bypassCache ? ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_NCA
+                    : ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_CA;
 
-    const int numVecs = static_cast<int>(elemsPerThread / vec);
+    [[maybe_unused]] const int numVecs = static_cast<int>(elemsPerThread / vec);
     for (size_t vecStart = 0; vecStart < elemsPerThread; vecStart += vec) {
       if ((vecStart & regMask) != 0) {
         continue;
@@ -593,13 +593,12 @@ struct AtomicRMWOpConversion
             b.and_(laneId, b.i32_val(static_cast<int32_t>(~laneFreeMask)));
         Value canonicalWarp =
             b.and_(warpId, b.i32_val(static_cast<int32_t>(~warpFreeMask)));
-        unsigned threadsPerWarp = static_cast<unsigned>(
-            ttg::TritonGPUDialect::getThreadsPerWarp(
+        unsigned threadsPerWarp =
+            static_cast<unsigned>(ttg::TritonGPUDialect::getThreadsPerWarp(
                 op->getParentOfType<ModuleOp>()));
         unsigned threadsPerWarpLog2 = llvm::Log2_32(threadsPerWarp);
         Value canonicalTid = b.or_(
-            canonicalLane,
-            b.shl(canonicalWarp, b.i32_val(threadsPerWarpLog2)));
+            canonicalLane, b.shl(canonicalWarp, b.i32_val(threadsPerWarpLog2)));
         Value slot = canonicalTid;
         if (elemsPerThread > 1) {
           slot = b.add(b.mul(canonicalTid, b.i32_val(elemsPerThread)),

@@ -48,8 +48,8 @@ struct LegalizeBoolForSimtVFPass
 };
 
 // Get VCastOp with empty tensor.
-Value getVCastOpWithEmpty(
-    Type typeToCast, Value valToCast, OpBuilder &builder) {
+Value getVCastOpWithEmpty(Type typeToCast, Value valToCast,
+                          OpBuilder &builder) {
   Value dstEmpty = utils::createEmptyOpWithTargetElemType(
       builder, valToCast.getLoc(), valToCast, typeToCast);
   auto roundModeAttr =

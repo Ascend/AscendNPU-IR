@@ -1,9 +1,11 @@
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Transforms/Transforms.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/AsmState.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Diagnostics.h"
@@ -14,8 +16,10 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Support/ErrorHandling.h"
 #include <utility>
 namespace mlir {
 #define GEN_PASS_DEF_ANALYZEVECTORLAYOUT
@@ -33,6 +37,86 @@ namespace {
 
 using State = hivmave::VecMemType;
 using FunctionType = hivmave::FunctionDistType;
+
+/// Returns the number of bits one logical lane of \p elemBitWidth occupies in a
+/// vector register when the value is laid out as \p state.
+///
+/// The packed layouts replicate a lane over 2 (B*_2VL) or 4 (B8_4VL) slots, so
+/// their per-lane footprint doubles/quadruples. Dense layouts keep the natural
+/// element width.
+static unsigned getLayoutLaneBitWidth(State state, unsigned elemBitWidth) {
+  switch (state) {
+  case State::B8_2VL:
+  case State::B16_2VL:
+    return elemBitWidth * 2;
+  case State::B8_4VL:
+    return elemBitWidth * 4;
+  default:
+    return elemBitWidth;
+  }
+}
+
+/// Returns the number of lanes one store instruction can move when the value is
+/// laid out as \p state, i.e. how long a single write under that layout is.
+///
+/// A masked store is lowered to a single VSTS that consumes exactly one vector
+/// register (see AVENormalizeOps::changeStoreVectorType), so it covers the
+/// register capacity of the selected layout: dense layouts move one element per
+/// lane, while the packed ones replicate a lane over 2 or 4 slots and therefore
+/// cover fewer elements.
+static int64_t getLayoutCoveredLanes(State state, unsigned elemBitWidth) {
+  // A predicate lane is one bit of the predicate register, so its footprint
+  // does not depend on the predication granularity the layout selects.
+  if (elemBitWidth == 1)
+    return static_cast<int64_t>(hivm::util::PREDICATE_BITS);
+
+  // 64-bit lanes are served by two 32-bit passes (see elemBitwidthOf).
+  if (elemBitWidth == 64)
+    elemBitWidth = 32;
+
+  return static_cast<int64_t>(hivm::util::VL_BITS /
+                              getLayoutLaneBitWidth(state, elemBitWidth));
+}
+
+/// Returns the number of elements a masked store writes into its destination,
+/// or std::nullopt when that cannot be bounded statically.
+///
+/// A store value is built for a whole vector register, so it can be wider than
+/// the region actually stored: the padded tail is dead, because the mask only
+/// selects the destination. The write is therefore bounded by the innermost
+/// static dimension of the destination.
+///
+/// A dynamic destination extent is not bounded at all: an unknown extent cannot
+/// prove a truncation, and rejecting every packed layout there would turn
+/// otherwise valid IR into "No Solve".
+static std::optional<int64_t>
+getStoredElementCount(hivmave::VFMaskedStoreOp store) {
+  auto vecType = dyn_cast<VectorType>(store.getVal().getType());
+  if (!vecType || !vecType.hasStaticShape())
+    return std::nullopt;
+
+  ArrayRef<int64_t> shape = store.getMemRefType().getShape();
+  if (shape.empty() || ShapedType::isDynamic(shape.back()))
+    return std::nullopt;
+
+  int64_t numElements = vecType.getNumElements();
+  return shape.back() < numElements ? shape.back() : numElements;
+}
+
+/// Returns true when writing \p value under \p state covers the
+/// \p storedElements lanes the destination needs.
+static bool isLayoutWritableFor(Value value, State state,
+                                int64_t storedElements) {
+  auto vecType = dyn_cast<VectorType>(value.getType());
+  if (!vecType || !vecType.hasStaticShape())
+    return true;
+
+  int64_t requiredLanes = vecType.getNumElements();
+  if (storedElements < requiredLanes)
+    requiredLanes = storedElements;
+  return getLayoutCoveredLanes(state, vecType.getElementTypeBitWidth()) >=
+         requiredLanes;
+}
 
 template <typename S1, typename S2> constexpr uint32_t COMB_CASE(S1 s1, S2 s2) {
   return (static_cast<uint32_t>(s1) << 8) | static_cast<uint32_t>(s2);
@@ -177,7 +261,7 @@ void legalizeCallOp(func::CallOp callOp, IRRewriter &rewriter) {
         s = State::B32;
         break;
       default:
-        assert(0);
+        llvm::report_fatal_error("unsupported vector element bit width");
       }
       auto newRes = rewriter.create<hivmave::VectorLayoutCastOp>(
           newCallOp.getLoc(),
@@ -343,12 +427,32 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
                 [&](auto op) { return solveProblem(op); })
             .Case<hivmave::VFPregTypeCastOp>(
                 [&](auto op) { return solveProblem(op); })
+            .Case<hivmave::PregPackOp>(
+                [&](auto op) { return inferPregPackLayout(op); })
+            .Case<hivmave::PregUnpackOp>(
+                [&](auto op) { return inferPregUnpackLayout(op); })
+            .Case<hivmave::PregInterleaveOp>(
+                [&](auto op) { return inferPregInterleaveLayout(op); })
+            .Case<hivmave::PregDeinterleaveOp>(
+                [&](auto op) { return inferPregInterleaveLayout(op); })
+            .Case<hivmave::VFRegisterGatherOp>(
+                [&](auto op) { return inferRegisterGatherLayout(op); })
+            .Case<hivmave::VFBlockGatherOp>([&](auto op) {
+              if (getState(op.getRes()) != State::B32)
+                return TreeSolves{};
+              return TreeSolves{
+                  wrapThis(FunctionType::NONE, {{op.getIndexVec(), State::B32},
+                                                {op.getMask(), State::B32}})};
+            })
+            .Case<hivmave::GroupReductionOp>(
+                [&](auto op) { return inferGroupReductionLayout(op); })
             .Case<hivmave::VFPltOp>(
                 [&](auto op) { return solvePregGenProblem(op); })
-            .Case<hivmave::VFSelectOp, hivmave::VFAddsOp, hivmave::VFExpOp,
-                  hivmave::VFMulsOp, hivmave::PregXorOp, hivmave::PregOrOp,
-                  hivmave::PregAndOp, hivmave::PregNotOp, hivmave::VFMulOp,
-                  hivmave::VFAddOp, hivmave::VFSubOp, hivmave::VFDivOp,
+            .Case<hivmave::VFSelectOp, hivmave::VFSelectRv2Op,
+                  hivmave::VFAddsOp, hivmave::VFExpOp, hivmave::VFMulsOp,
+                  hivmave::PregXorOp, hivmave::PregOrOp, hivmave::PregAndOp,
+                  hivmave::PregNotOp, hivmave::VFMulOp, hivmave::VFAddOp,
+                  hivmave::VFSubOp, hivmave::VFDivOp,
                   hivmave::VFBroadcastVectorOp, hivmave::VFXorOp,
                   hivmave::VFAndOp, hivmave::VFOrOp, hivmave::ReductionOp,
                   hivmave::VFModOp, hivmave::VFModUIOp, hivmave::VFExpOp,
@@ -363,7 +467,10 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
                   hivmave::VFExpdifOp, hivmave::VFVMULLOp, hivmave::VFMulaOp,
                   hivmave::VMaxUIOp, hivmave::VMinUIOp, hivmave::VFLRelusOp,
                   hivmave::VMaxsSIOp, hivmave::VMinsSIOp, hivmave::VMaxsUIOp,
-                  hivmave::VMinsUIOp, hivmave::VFCmpS, hivmave::VFVtrcOp>(
+                  hivmave::VMinsUIOp, hivmave::VFCmpS, hivmave::VFVtrcOp,
+                  hivmave::VFmaOp, hivmave::VFmsOp, hivmave::VFnmaOp,
+                  hivmave::VFnmsOp, hivmave::VMaddOp, hivmave::VMsubOp,
+                  hivmave::VNmaddOp, hivmave::VNmsubOp>(
                 [&](auto op) { return solveMaskProblem(op); })
             .Case<hivmave::VFCmpOp>([&](auto op) { return solveProblem(op); })
             .Case<hivmave::VFStoreWithStrideOp>(
@@ -378,6 +485,7 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
             .Case<func::CallOp>([&](auto op) { return solveProblem(op); })
             .Case<hivmave::VFGatherOp>(
                 [&](auto op) { return solveProblem(op); })
+            .Case<hivmave::VFVpackOp>([&](auto op) { return solveProblem(op); })
             .Case<hivmave::VFDeInterleaveOp, hivmave::VFInterleaveOp>(
                 [&](auto op) { return solveLayoutChangeProblem(op); })
             .Case<hivmave::VFVCIOp>([&](auto op) { return solveProblem(op); })
@@ -593,6 +701,75 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
     default:
       return {};
     }
+  }
+
+  TreeSolves inferPregPackLayout(hivmave::PregPackOp op) {
+    auto src = op.getSrc();
+    auto srcType = cast<VectorType>(src.getType());
+    switch (COMB_CASE(srcType.getNumElements(), getState(op.getRes()))) {
+    case COMB_CASE(64, State::B16):
+      return {wrapThis(FunctionType::NONE, {{src, State::B32}})};
+    case COMB_CASE(128, State::B8):
+      return {wrapThis(FunctionType::NONE, {{src, State::B16}})};
+    default:
+      return {};
+    }
+  }
+
+  TreeSolves inferPregUnpackLayout(hivmave::PregUnpackOp op) {
+    auto src = op.getSrc();
+    auto srcType = cast<VectorType>(src.getType());
+    switch (COMB_CASE(srcType.getNumElements(), getState(op.getRes()))) {
+    case COMB_CASE(128, State::B32):
+      return {wrapThis(FunctionType::NONE, {{src, State::B16}})};
+    case COMB_CASE(256, State::B16):
+      return {wrapThis(FunctionType::NONE, {{src, State::B8}})};
+    default:
+      return {};
+    }
+  }
+
+  template <typename OpTy> TreeSolves inferPregInterleaveLayout(OpTy op) {
+    auto src0 = op.getSrc0();
+    auto src1 = op.getSrc1();
+    auto srcType = cast<VectorType>(src0.getType());
+    if (getState(op.getRes0()) != getState(op.getRes1()))
+      return {};
+    switch (COMB_CASE(srcType.getNumElements(), getState(op.getRes0()))) {
+    case COMB_CASE(64, State::B32):
+      return {wrapThis(FunctionType::NONE,
+                       {{src0, State::B32}, {src1, State::B32}})};
+    case COMB_CASE(128, State::B16):
+      return {wrapThis(FunctionType::NONE,
+                       {{src0, State::B16}, {src1, State::B16}})};
+    case COMB_CASE(256, State::B8):
+      return {
+          wrapThis(FunctionType::NONE, {{src0, State::B8}, {src1, State::B8}})};
+    default:
+      return {};
+    }
+  }
+
+  TreeSolves inferRegisterGatherLayout(hivmave::VFRegisterGatherOp op) {
+    State natural = elemBitwidthOf(op.getSrc()) == 8    ? State::B8
+                    : elemBitwidthOf(op.getSrc()) == 16 ? State::B16
+                                                        : State::B32;
+    if (getState(op.getRes()) != natural)
+      return {};
+    return {wrapThis(FunctionType::NONE, {{op.getSrc(), natural},
+                                          {op.getIndex(), natural},
+                                          {op.getMask(), natural}})};
+  }
+
+  TreeSolves inferGroupReductionLayout(hivmave::GroupReductionOp op) {
+    State srcState =
+        elemBitwidthOf(op.getSrc()) == 16 ? State::B16 : State::B32;
+    State resState =
+        elemBitwidthOf(op.getRes()) == 16 ? State::B16 : State::B32;
+    if (getState(op.getRes()) != resState)
+      return {};
+    return {wrapThis(FunctionType::NONE, {{op.getSrc(), srcState}},
+                     {{op.getMask(), srcState}})};
   }
 
   template <typename MaskOp> TreeSolves solveMaskProblem(MaskOp op) {
@@ -817,9 +994,18 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
               wrapThis(FunctionType::NONE,
                        {{mask, State::B16}, {index, State::B16}})};
     case COMB_CASE(16, State::B16):
+      // A split B8 gather uses one logical predicate per 16-bit result slot.
+      // Encode these 128-lane predicates at B16 granularity.
+      if (op.getMemRefType().getElementTypeBitWidth() == 8 &&
+          cast<VectorType>(mask.getType()).getNumElements() != 128)
+        return {wrapThis(FunctionType::NONE,
+                         {{mask, State::B16}, {index, State::B16}}),
+                wrapThis(FunctionType::NONE,
+                         {{mask, State::B8}, {index, State::B16}})};
       return {wrapThis(FunctionType::NONE,
                        {{mask, State::B16}, {index, State::B16}})};
     case COMB_CASE(16, State::B16_2VL):
+    case COMB_CASE(16, State::B8_4VL):
       return {wrapThis(FunctionType::INTLV2,
                        {{mask, State::B16}, {index, State::B16}}),
               wrapThis(FunctionType::NONE,
@@ -830,6 +1016,19 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
     case COMB_CASE(32, State::B32):
       return {wrapThis(FunctionType::NONE,
                        {{mask, State::B32}, {index, State::B32}})};
+    default:
+      return {};
+    }
+  }
+
+  TreeSolves solveProblem(hivmave::VFVpackOp op) {
+    auto src = op.getSrc();
+    auto res = op.getRes();
+    switch (COMB_CASE(elemBitwidthOf(src), getState(res))) {
+    case COMB_CASE(16, State::B8):
+      return {wrapThis(FunctionType::NONE, {{src, State::B16}})};
+    case COMB_CASE(32, State::B16):
+      return {wrapThis(FunctionType::NONE, {{src, State::B32}})};
     default:
       return {};
     }
@@ -938,8 +1137,7 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
     // on a null/absent Attribute triggers an assertion in llvm::dyn_cast,
     // so we must verify the layout is present before casting.
     if (auto layout = resVecType.getLayout()) {
-      if (auto layoutAttr =
-              dyn_cast<hivmave::VectorLayoutAttr>(layout)) {
+      if (auto layoutAttr = dyn_cast<hivmave::VectorLayoutAttr>(layout)) {
         auto memTypeAttr =
             dyn_cast<hivmave::VecMemTypeAttr>(layoutAttr.getMem());
         if (memTypeAttr) {
@@ -947,8 +1145,8 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
           // Converge: both result and source are constrained to the
           // type-encoded layout. If downstream resolved to a different
           // state, wrapThis will detect the conflict and prune.
-          return {wrapThis(FunctionType::NONE,
-                          {{res, resState}, {src, resState}})};
+          return {
+              wrapThis(FunctionType::NONE, {{res, resState}, {src, resState}})};
         }
       }
     }
@@ -961,8 +1159,7 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
     // FunctionType. No constraint propagation to src.
     auto srcVecType = cast<VectorType>(src.getType());
     if (auto srcLayout = srcVecType.getLayout()) {
-      if (auto srcLayoutAttr =
-              dyn_cast<hivmave::VectorLayoutAttr>(srcLayout)) {
+      if (auto srcLayoutAttr = dyn_cast<hivmave::VectorLayoutAttr>(srcLayout)) {
         auto srcMemTypeAttr =
             dyn_cast<hivmave::VecMemTypeAttr>(srcLayoutAttr.getMem());
         if (srcMemTypeAttr) {
@@ -1122,7 +1319,14 @@ public:
       os << "Location: ";
       failedOp->getLoc().print(os);
       os << "\n";
-      os << "Operation: " << *failedOp << "\n";
+      // Function passes may run alongside mutations of sibling functions.
+      // Keep SSA numbering local and avoid implicit verification while printing
+      // a failed operation, which may itself be invalid.
+      AsmState asmState(getOperation(),
+                        OpPrintingFlags().useLocalScope().printGenericOpForm());
+      os << "Operation: ";
+      failedOp->print(os, asmState);
+      os << "\n";
       os << "Opcode: " << failedOp->getName() << "\n";
       os << "Operand types:\n";
       for (Value operand : failedOp->getOperands())
@@ -1134,7 +1338,9 @@ public:
       for (Value result : failedOp->getResults()) {
         if (!isa<VectorType>(result.getType()))
           continue;
-        os << "  Result: " << result << "  State: ";
+        os << "  Result: ";
+        result.printAsOperand(os, asmState);
+        os << "  State: ";
         auto state = failure.solve->inputs.find(result);
         if (state == failure.solve->inputs.end())
           os << "<unassigned>\n";
@@ -1144,7 +1350,9 @@ public:
       for (Value operand : failedOp->getOperands()) {
         if (!isa<VectorType>(operand.getType()))
           continue;
-        os << "  Operand: " << operand << "  State: ";
+        os << "  Operand: ";
+        operand.printAsOperand(os, asmState);
+        os << "  State: ";
         auto state = failure.solve->inputs.find(operand);
         if (state == failure.solve->inputs.end())
           os << "<unassigned>\n";
@@ -1380,7 +1588,7 @@ public:
   }
 
   bool tryChronologicalBacktrack(Operation *failedOp, SearchCursor &search) {
-    size_t poppedFrames = 0;
+    [[maybe_unused]] size_t poppedFrames = 0;
     while (!search.searchStack.empty()) {
       SearchFrame &frame = search.searchStack.back();
       if (frame.nextAlternative < frame.alternatives.size()) {
@@ -1484,9 +1692,55 @@ public:
     return {};
   }
 
+  /// Prunes solutions in which a masked store can only write part of its
+  /// destination.
+  ///
+  /// `VFMaskedStoreOp` is lowered by a single VSTS that consumes exactly one
+  /// vector register: `changeStoreVectorType` re-casts the stored value to one
+  /// register worth of lanes and `AVEStorePattern` rewrites NORM_B* to PK/PK4
+  /// for the packed layouts, so the dist mode always processes one register.
+  /// How many lanes that write covers is a property of the layout (see
+  /// getLayoutCoveredLanes), so a layout covering fewer lanes than the
+  /// destination needs silently leaves the rest of it untouched, e.g. B8_4VL
+  /// for a 128 element i8 row is stored by PK4, which only fills 64 of the 128
+  /// bytes.
+  ///
+  /// Deliberately restricted to masked stores: VFStoreWithStrideOp densifies a
+  /// multi-register value with dintlv before storing it, and element-wise /
+  /// cast ops legitimately process several registers, so a blanket limit would
+  /// make valid IR unsolvable.
+  TreeSolves dropTruncatingStoreLayouts(Operation *op,
+                                        TreeSolves candidates) const {
+    auto store = dyn_cast<hivmave::VFMaskedStoreOp>(op);
+    if (!store)
+      return candidates;
+
+    std::optional<int64_t> storedElements = getStoredElementCount(store);
+    if (!storedElements)
+      return candidates;
+
+    SmallVector<Value> accessValues{store.getVal(), store.getMask()};
+    llvm::erase_if(candidates, [&](const TreeSolvePtr &candidate) {
+      return llvm::any_of(accessValues, [&](Value value) {
+        auto state = candidate->inputs.find(value);
+        return state != candidate->inputs.end() &&
+               !isLayoutWritableFor(value, state->second, *storedElements);
+      });
+    });
+    return candidates;
+  }
+
   TreeSolves getSolveSpace(Operation *op, const TreeSolvePtr &solve) {
     DBG(llvm::dbgs() << "Solving problem of: " << *op;);
     TreeSolves candidates = solve->solveProblem(op);
+    size_t candidateCount = candidates.size();
+    candidates = dropTruncatingStoreLayouts(op, std::move(candidates));
+    DBG(if (candidates.size() != candidateCount) {
+      llvm::dbgs()
+          << "Dropped " << candidateCount - candidates.size()
+          << " candidate(s) whose store layout covers only part of the "
+             "destination";
+    };);
     DBG(llvm::dbgs() << "Current path produced " << candidates.size()
                      << " candidate(s)";);
     return candidates;

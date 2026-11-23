@@ -18,11 +18,11 @@
 
   在本项目中发现某些Bug，希望对其进行修复，可新建Issue反馈与跟踪。
 
-  可新建[Bug-Report|缺陷反馈](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=Bug-Report|%E7%BC%BA%E9%99%B7%E5%8F%8D%E9%A6%88&template=.gitcode%252FISSUE_TEMPLATE%252Fbug-report.yml)类Issue描述Bug，然后在评论框中输入“/assign”或“/assign @yourself”，认领该Issue开展处理。
+  可新建[Bug-Report|缺陷反馈](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=Bug-Report|%E7%BC%BA%E9%99%B7%E5%8F%8D%E9%A6%88&template=.gitcode%252FISSUE_TEMPLATE%252F400-bug-report.yml)类Issue描述Bug，然后在评论框中输入“/assign”或“/assign @yourself”，认领该Issue开展处理。
 
 - 贡献代码
 
-  可新建[Requirement|需求建议](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=%E6%96%B0%E9%9C%80%E6%B1%82&template=.gitcode%252FISSUE_TEMPLATE%252Ffeature.yml)类Issue对新的样例算子予以说明，并提供设计方案，然后在评论框中输入“/assign”或“/assign @yourself”，认领该Issue开展处理。
+  可新建[Requirement|需求建议](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=%E6%96%B0%E9%9C%80%E6%B1%82&template=.gitcode%252FISSUE_TEMPLATE%252F500-feature-request.yml)类Issue对新的样例算子予以说明，并提供设计方案，然后在评论框中输入“/assign”或“/assign @yourself”，认领该Issue开展处理。
 
   浏览其他Issue时遵循以下要求：
     - 计划解决对应问题，请在问题下评论说明负责处理。
@@ -33,7 +33,7 @@
 
   使用本项目过程中存在疑问，可新建Issue进行反馈和咨询。
 
-  可通过新建[Question|问题咨询](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=Question|%E9%97%AE%E9%A2%98%E5%92%A8%E8%AF%A2&template=.gitcode%252FISSUE_TEMPLATE%252Fquestion.yml)类Issue提出疑问。
+  可通过新建[Question|问题咨询](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=Question|%E9%97%AE%E9%A2%98%E5%92%A8%E8%AF%A2&template=.gitcode%252FISSUE_TEMPLATE%252F300-usage.yml)类Issue提出疑问。
 
 - 帮助解决他人Issue
 

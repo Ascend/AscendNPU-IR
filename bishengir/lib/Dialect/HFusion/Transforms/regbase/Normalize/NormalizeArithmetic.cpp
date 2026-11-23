@@ -75,6 +75,18 @@ struct HFusionNormalizeMulExtTraits : public hfusion::NormalizeTraitsBase {
   }
 };
 
+struct HFusionNormalizeMulExtUiTraits : public hfusion::NormalizeTraitsBase {
+  static bool shouldNormalizeMulExt(hfusion::MulExtUiOp) { return true; }
+
+  static Value getMulExtLhs(hfusion::MulExtUiOp op) { return op.getLhs(); }
+
+  static Value getMulExtRhs(hfusion::MulExtUiOp op) { return op.getRhs(); }
+
+  static Type getMulExtExtendedType(PatternRewriter &rewriter, Type inputType) {
+    return inputType.isInteger(8) ? rewriter.getI16Type() : Type();
+  }
+};
+
 /// normalize VSUB(s, v) to VADD(s,VMULS(v, -1)).
 struct HFusionNormalizeSubVSToVMulAndVAddTraits
     : public hfusion::NormalizeTraitsBase {
@@ -382,6 +394,8 @@ using NormalizeVPowiToPowfRegBase =
                                  HFusionNormalizeVPowiToPowfTraits>;
 using NormalizeMulExtOpRegBase =
     NormalizeMulExtOpTemplate<hfusion::MulExtOp, HFusionNormalizeMulExtTraits>;
+using NormalizeMulExtUiOpRegBase = NormalizeMulExtOpTemplate<
+    hfusion::MulExtUiOp, HFusionNormalizeMulExtUiTraits, /*IsUnsigned=*/true>;
 using NormalizeSubVSToVMulAndVAddRegBase =
     NormalizeSubVSToVMulAndVAddTemplate<linalg::ElemwiseBinaryOp,
                                         HFusionNormalizeSubVSToVMulAndVAddTraits>;
@@ -409,6 +423,7 @@ void populateNormalizePreFinalArithmeticPatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
   patterns.add<NormalizeCDivandFloorDivIntOpRegBase>(ctx);
   patterns.add<NormalizeMulExtOpRegBase>(ctx);
+  patterns.add<NormalizeMulExtUiOpRegBase>(ctx);
 }
 
 void populateNormalizeFinalArithmeticPatterns(RewritePatternSet &patterns) {

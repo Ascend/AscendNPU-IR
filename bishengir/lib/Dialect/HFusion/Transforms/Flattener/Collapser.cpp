@@ -76,8 +76,7 @@ CollapseGroup Flattener::getCollapseGroup(Value res) const {
   assert(!currentIndices.empty());
   indices.push_back(currentIndices);
 
-  LLVM_DEBUG(for (auto a
-                  : indices) {
+  LLVM_DEBUG(for (auto a : indices) {
     for (auto b : a) {
       llvm::dbgs() << b << " ";
     }
@@ -122,21 +121,43 @@ SmallVector<OpFoldResult> Flattener::getFlattenMixedSizes(Value res) const {
                                    inferrableArg, minParent.second));
         }
       } else {
-        assert(valueReplacement.count(res));
-        OpResult replacementValue = cast<OpResult>(valueReplacement.at(res));
+        Operation *valueOwner = res.getDefiningOp();
         if (auto subviewOp =
-                replacementValue.getDefiningOp<memref::SubViewOp>()) {
+                dyn_cast_if_present<memref::SubViewOp>(valueOwner)) {
           return subviewOp.getMixedSizes();
         }
-        LDBG("[Parent not part of args] " << res << " " << idx);
         ReifiedRankedShapedTypeDims reifiedDims;
-        auto reifyRes = reifyResultShapes(builder, replacementValue.getOwner(),
-                                          reifiedDims);
-        if (failed(reifyRes)) {
-          report_fatal_error("Cant get shape of mixed size");
+        auto reifyRes = reifyResultShapes(builder, valueOwner, reifiedDims);
+        if (succeeded(reifyRes)) {
+          auto reifiedDim =
+              reifiedDims[cast<OpResult>(res).getResultNumber()][idx];
+          outputShape.push_back(reifiedDim);
+          continue;
         }
-        auto reifiedDim = reifiedDims[replacementValue.getResultNumber()][idx];
-        outputShape.push_back(reifiedDim);
+        if (valueReplacement.count(res)) {
+          OpResult replacementValue = cast<OpResult>(valueReplacement.at(res));
+          if (auto subviewOp =
+                  replacementValue.getDefiningOp<memref::SubViewOp>()) {
+            return subviewOp.getMixedSizes();
+          }
+          reifyRes = reifyResultShapes(builder, replacementValue.getOwner(),
+                                       reifiedDims);
+          if (succeeded(reifyRes)) {
+            auto reifiedDim =
+                reifiedDims[replacementValue.getResultNumber()][idx];
+            outputShape.push_back(reifiedDim);
+            continue;
+          }
+        }
+        if (auto recovered = tryGetOriginalSliceMixedSizes(res)) {
+          if (static_cast<int64_t>(recovered->size()) ==
+              static_cast<int64_t>(args.size()))
+            return *recovered;
+        }
+        LDBG("[Parent not part of args, not reified size] " << res << " "
+                                                            << idx);
+        report_fatal_error(
+            "Flattener::getFlattenMixedSizes Cant get shape of mixed size");
       }
     }
   }
@@ -280,7 +301,8 @@ void Flattener::collapseMemrefArg(Value arg, OpBuilder &builder) {
     LLVM_DEBUG(llvm::dbgs() << "checking *defOp: " << *defOp << "\n";);
     if (defOp == collapseOp)
       return false;
-    if (isa<memref::DimOp>(defOp) || isa<memref::ExtractStridedMetadataOp>(defOp))
+    if (isa<memref::DimOp>(defOp) ||
+        isa<memref::ExtractStridedMetadataOp>(defOp))
       return false;
     // If this arg is directly returned, no need to reshape
     if (isTailOperation(defOp) || isHeadOperation(defOp)) {
@@ -729,8 +751,7 @@ void Flattener::adjustTransposeOp(linalg::TransposeOp transposeOp,
   transposeOp.setPermutationAttr(builder.getDenseI64ArrayAttr(newPerm));
 }
 
-template <class T>
-void Flattener::adjustReduceLikeOpBody(T reduceOp) const {
+template <class T> void Flattener::adjustReduceLikeOpBody(T reduceOp) const {
   auto collapseGroup = getCollapseGroup(reduceOp.getDpsInputs()[0]);
   auto newDimensions = adjustCollapseDimensions(reduceOp, collapseGroup);
   reduceOp.setDimensionsAttr(
@@ -748,8 +769,7 @@ void Flattener::adjustReduceLikeOpBody(T reduceOp) const {
   });
 }
 
-template <class T>
-void Flattener::adjustCumOp(T cumOp, OpBuilder &builder) {
+template <class T> void Flattener::adjustCumOp(T cumOp, OpBuilder &builder) {
   auto collapseGroups = getCollapseGroup(cumOp.getODSOperands(0)[0]);
   int64_t tmpCumDim = cumOp.getCumDims()[0];
   int64_t newCumDim = 0;
@@ -809,10 +829,13 @@ void Flattener::calculateOffsets(T slicingOp,
                                  SmallVector<OpFoldResult> &newMixedOffsets,
                                  OpBuilder &builder) {
   ShapedType srcMemRefType;
+  Value srcValue;
   if (std::is_same_v<T, tensor::InsertSliceOp>) {
     srcMemRefType = dyn_cast<ShapedType>(slicingOp.getResult().getType());
+    srcValue = slicingOp.getResult();
   } else {
     srcMemRefType = dyn_cast<ShapedType>(previousType_[slicingOp.getSource()]);
+    srcValue = slicingOp.getSource();
   }
   if (!srcMemRefType)
     llvm::report_fatal_error("srcMemRefType is NULL");
@@ -827,6 +850,15 @@ void Flattener::calculateOffsets(T slicingOp,
     cumSize[i] = curSize;
     curSize *= srcShape[idx];
   }
+
+  SmallVector<bool> cumSizeDynamic(groupSize, false);
+  bool suffixHasDynamic = false;
+  for (int64_t i = groupSize - 1; i >= 0; --i) {
+    cumSizeDynamic[i] = suffixHasDynamic;
+    if (ShapedType::isDynamic(srcShape[collapseGroup[i]]))
+      suffixHasDynamic = true;
+  }
+
   int64_t realVal = 0;
   bool isStatic = true;
   for (int64_t i = 0; i < groupSize; ++i) {
@@ -840,19 +872,58 @@ void Flattener::calculateOffsets(T slicingOp,
       auto offsetInt = getConstantIntValue(ofr);
       if (!offsetInt.has_value())
         continue;
+      if (cumSizeDynamic[i]) {
+        if (offsetInt.value() != 0)
+          isStatic = false;
+        continue;
+      }
       realVal += offsetInt.value() * cumSize[i];
     }
   }
   if (!isStatic) {
     builder.setInsertionPoint(slicingOp);
     Value adder = builder.create<arith::ConstantIndexOp>(loc, realVal);
+
+    auto flattenMixedSizes = getFlattenMixedSizes(srcValue);
+    SmallVector<Value> runtimeCumSize(groupSize, Value());
+    auto getRuntimeCumSize = [&](int64_t i) -> Value {
+      if (runtimeCumSize[i])
+        return runtimeCumSize[i];
+      Value acc = builder.create<arith::ConstantIndexOp>(loc, 1);
+      for (int64_t j = i + 1; j < groupSize; ++j) {
+        int64_t dimIdx = collapseGroup[j];
+        OpFoldResult sizeOfr = flattenMixedSizes[dimIdx];
+        Value dimVal;
+        if (auto constSize = getConstantIntValue(sizeOfr))
+          dimVal =
+              builder.create<arith::ConstantIndexOp>(loc, constSize.value());
+        else
+          dimVal = cast<Value>(sizeOfr);
+        acc = builder.create<arith::MulIOp>(loc, acc, dimVal);
+      }
+      runtimeCumSize[i] = acc;
+      return acc;
+    };
     for (int64_t i = 0; i < groupSize; ++i) {
       auto idx = collapseGroup[i];
       if (mixedOffsets[idx].template is<Value>()) {
         auto val = mixedOffsets[idx].template get<Value>();
-        Value constVal =
-            builder.create<arith::ConstantIndexOp>(loc, cumSize[i]);
-        Value product = builder.create<arith::MulIOp>(loc, val, constVal);
+        Value multiplier =
+            cumSizeDynamic[i]
+                ? getRuntimeCumSize(i)
+                : builder.create<arith::ConstantIndexOp>(loc, cumSize[i]);
+        Value product = builder.create<arith::MulIOp>(loc, val, multiplier);
+        adder = builder.create<arith::AddIOp>(loc, adder, product);
+      } else if (cumSizeDynamic[i]) {
+        auto offsetInt = getConstantIntValue(mixedOffsets[idx]);
+        if (!offsetInt.has_value())
+          continue;
+        if (offsetInt.value() == 0)
+          continue;
+        Value constOffset =
+            builder.create<arith::ConstantIndexOp>(loc, offsetInt.value());
+        Value product = builder.create<arith::MulIOp>(loc, constOffset,
+                                                      getRuntimeCumSize(i));
         adder = builder.create<arith::AddIOp>(loc, adder, product);
       }
     }
@@ -902,11 +973,36 @@ void Flattener::calculateSubviewStrides(
       }
       continue;
     }
-    // Process cases with dynamic values
-    // size of a collapse group for the dynamical stride  must be 1
-    // so just pass the old mixedStrides values.
     if (!strideInt.has_value() ||
         ShapedType::isDynamic(srcStride.value()[idx])) {
+      if (i != lastGroupIdx) {
+        SmallVector<OpFoldResult> flattenMixedSizes = getFlattenMixedSizes(src);
+        if (flattenMixedSizes.size() == mixedStrides.size()) {
+          OpBuilder::InsertionGuard guard(builder);
+          builder.setInsertionPoint(slicingOp);
+          Value acc;
+          if (auto constStride = getConstantIntValue(mixedStrides[idx]))
+            acc = builder.create<arith::ConstantIndexOp>(slicingOp.getLoc(),
+                                                         constStride.value());
+          else
+            acc = cast<Value>(mixedStrides[idx]);
+          for (int64_t j = i + 1; j < groupSize; ++j) {
+            int64_t dimIdx = collapseGroup[j];
+            OpFoldResult sizeOfr = flattenMixedSizes[dimIdx];
+            if (auto constSize = getConstantIntValue(sizeOfr)) {
+              acc = builder.create<arith::MulIOp>(
+                  slicingOp.getLoc(), acc,
+                  builder.create<arith::ConstantIndexOp>(slicingOp.getLoc(),
+                                                         constSize.value()));
+            } else {
+              acc = builder.create<arith::MulIOp>(slicingOp.getLoc(), acc,
+                                                  cast<Value>(sizeOfr));
+            }
+          }
+          newMixedStrides.push_back(acc);
+          return;
+        }
+      }
       newMixedStrides.push_back(mixedStrides[idx]);
       return;
     }
@@ -944,7 +1040,8 @@ void Flattener::calculateSliceStrides(
   Value src = sliceOp.getSource();
   if (std::is_same_v<T, tensor::InsertSliceOp>)
     src = sliceOp.getResult();
-  auto previousTy = dyn_cast<RankedTensorType>(previousType_[src]);
+  [[maybe_unused]] auto previousTy =
+      dyn_cast<RankedTensorType>(previousType_[src]);
   assert(previousTy &&
          "extract_slice source must have previous ranked tensor type");
 
@@ -1223,10 +1320,25 @@ void Flattener::adjustToTensorOp(bufferization::ToTensorOp op,
 void Flattener::adjustToMemrefOp(bufferization::ToMemrefOp op,
                                  mlir::OpBuilder &builder) {
   auto oldType = cast<MemRefType>(op.getMemref().getType());
-  // TODO: adjust the layout instead of using identity
-  MemRefType newType = MemRefType::Builder(oldType)
-                           .setShape(utils::getShape(op.getOperand().getType()))
-                           .setLayout(MemRefLayoutAttrInterface());
+  // The shape is collapsed by the flattener, so the layout has to be collapsed
+  // together with it.
+  auto collapseGroup = getCollapseGroup(op.getMemref());
+  bool guaranteedCollapsible =
+      !collapseGroup.empty() &&
+      memref::CollapseShapeOp::isGuaranteedCollapsible(oldType, collapseGroup);
+  MemRefType newType;
+  if (guaranteedCollapsible) {
+    // The shape is collapsed by the flattener, so the layout has to be
+    // collapsed together with it.
+    newType =
+        memref::CollapseShapeOp::computeCollapsedType(oldType, collapseGroup);
+  } else {
+    MemRefType::Builder typeBuilder(oldType);
+    typeBuilder.setShape(utils::getShape(op.getOperand().getType()));
+    if (!collapseGroup.empty())
+      typeBuilder.setLayout(MemRefLayoutAttrInterface());
+    newType = typeBuilder;
+  }
   LDBG("operation result " << op << " " << newType << "\n");
   op.getMemref().setType(newType);
 }
@@ -1234,10 +1346,21 @@ void Flattener::adjustToMemrefOp(bufferization::ToMemrefOp op,
 void Flattener::adjustToBufferOp(bufferization::ToBufferOp op,
                                  mlir::OpBuilder &builder) {
   auto oldType = cast<MemRefType>(op.getBuffer().getType());
-  // TODO: adjust the layout instead of using identity
-  MemRefType newType = MemRefType::Builder(oldType)
-                           .setShape(utils::getShape(op.getOperand().getType()))
-                           .setLayout(MemRefLayoutAttrInterface());
+  auto collapseGroup = getCollapseGroup(op.getBuffer());
+  bool guaranteedCollapsible =
+      !collapseGroup.empty() &&
+      memref::CollapseShapeOp::isGuaranteedCollapsible(oldType, collapseGroup);
+  MemRefType newType;
+  if (guaranteedCollapsible) {
+    newType =
+        memref::CollapseShapeOp::computeCollapsedType(oldType, collapseGroup);
+  } else {
+    MemRefType::Builder typeBuilder(oldType);
+    typeBuilder.setShape(utils::getShape(op.getOperand().getType()));
+    if (!collapseGroup.empty())
+      typeBuilder.setLayout(MemRefLayoutAttrInterface());
+    newType = typeBuilder;
+  }
   LDBG("operation result " << op << " " << newType << "\n");
   op.getBuffer().setType(newType);
 }
@@ -1259,16 +1382,16 @@ void Flattener::adjustCastOp(memref::CastOp castOp, mlir::OpBuilder &builder) {
   int64_t srcOffset, oldResOffset;
 
   MemRefType newResType;
-  #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   if (succeeded(getStridesAndOffset(srcType, srcStrides, srcOffset)) &&
-  #else
+#else
   if (succeeded(srcType.getStridesAndOffset(srcStrides, srcOffset)) &&
-  #endif
-      #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+#endif
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
       succeeded(getStridesAndOffset(oldResType, oldResStrides, oldResOffset))) {
-      #else
+#else
       succeeded(oldResType.getStridesAndOffset(oldResStrides, oldResOffset))) {
-      #endif
+#endif
     auto newLayout =
         StridedLayoutAttr::get(castOp->getContext(), oldResOffset, srcStrides);
     newResType = MemRefType::get(srcType.getShape(), srcType.getElementType(),
@@ -1630,26 +1753,39 @@ Flattener::tryGetOriginalSliceMixedSizes(Value value) const {
 
   // Walk back through replacement chain:
   // new collapsed value -> old pre-flatten value
-  for (auto it = valueReplacement.find(current); it != valueReplacement.end();
-       it = valueReplacement.find(current)) {
-    Value prev = it->second;
-    if (!visited.insert(prev).second) {
-      break;
+
+  while (true) {
+    if (auto replIt = valueReplacement.find(current);
+        replIt != valueReplacement.end()) {
+      Value prev = replIt->second;
+      if (!visited.insert(prev).second)
+        break;
+      current = prev;
+      continue;
     }
 
-    current = prev;
-  }
+    if (auto subviewOp = current.getDefiningOp<memref::SubViewOp>()) {
+      SmallVector<OpFoldResult> sizes;
+      llvm::append_range(sizes, subviewOp.getMixedSizes());
+      return sizes;
+    }
 
-  if (auto subviewOp = current.getDefiningOp<memref::SubViewOp>()) {
-    SmallVector<OpFoldResult> sizes;
-    llvm::append_range(sizes, subviewOp.getMixedSizes());
-    return sizes;
-  }
+    if (auto extractSliceOp = current.getDefiningOp<tensor::ExtractSliceOp>()) {
+      SmallVector<OpFoldResult> sizes;
+      llvm::append_range(sizes, extractSliceOp.getMixedSizes());
+      return sizes;
+    }
 
-  if (auto extractSliceOp = current.getDefiningOp<tensor::ExtractSliceOp>()) {
-    SmallVector<OpFoldResult> sizes;
-    llvm::append_range(sizes, extractSliceOp.getMixedSizes());
-    return sizes;
+    Operation *defOp = current.getDefiningOp();
+    if (!defOp || defOp->getNumOperands() == 0)
+      break;
+    if (!isa<memref::CastOp, memref::ReinterpretCastOp, memref::ExpandShapeOp,
+             memref::CollapseShapeOp>(defOp))
+      break;
+    Value operand = defOp->getOperand(0);
+    if (!visited.insert(operand).second)
+      break;
+    current = operand;
   }
 
   return std::nullopt;
@@ -1719,13 +1855,15 @@ FailureOr<Operation *> Flattener::expandForTail(OpTy &tensorOutOp,
   LLVM_DEBUG(llvm::dbgs() << "\nCollapsing " << collapsedVal << "\n";);
   if (!previousType_.contains(collapsedVal)) {
     LLVM_DEBUG(llvm::dbgs()
-               << "Source is not expandable, previousType_ not found" << "\n");
+               << "Source is not expandable, previousType_ not found"
+               << "\n");
     return failure();
   }
 
   CollapseGroup collapseGroup = getCollapseGroup(collapsedVal);
   if (collapseGroup.empty()) {
-    LLVM_DEBUG(llvm::dbgs() << "Collapse group invalid" << "\n");
+    LLVM_DEBUG(llvm::dbgs() << "Collapse group invalid"
+                            << "\n");
     return failure();
   }
 
@@ -1765,11 +1903,11 @@ FailureOr<Operation *> Flattener::expandForTail(OpTy &tensorOutOp,
     }
     SmallVector<int64_t> targetStrides;
     int64_t targetOffset;
-    #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     if (failed(getStridesAndOffset(cast<MemRefType>(expandedType),
-    #else
+#else
     if (failed(cast<MemRefType>(expandedType.getStridesAndOffset(),
-    #endif
+#endif
                                    targetStrides, targetOffset))) {
       return failure();
     }

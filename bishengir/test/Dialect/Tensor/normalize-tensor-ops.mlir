@@ -24,6 +24,22 @@ func.func @fold_insert_pad_fill(%arg0 : tensor<1x1x2047xf32>) -> tensor<4093xf32
 
 // -----
 
+// CHECK-LABEL: func.func @normalize_rank8_insert_slice_interleave
+// CHECK-NOT: tensor.expand_shape
+// CHECK-NOT: tensor.collapse_shape
+// CHECK: hfusion.interleave %[[LHS:.*]], %[[RHS:.*]] : tensor<2x2x2x1x2x2x2x1xf32>, tensor<2x2x2x1x2x2x2x1xf32> -> tensor<2x2x2x1x2x2x2x2xf32>
+func.func @normalize_rank8_insert_slice_interleave(
+    %lhs: tensor<2x2x2x1x2x2x2x1xf32>,
+    %rhs: tensor<2x2x2x1x2x2x2x1xf32>) -> tensor<2x2x2x1x2x2x2x2xf32> {
+  %lhs_expanded = tensor.expand_shape %lhs [[0], [1], [2], [3], [4], [5], [6], [7, 8]] output_shape [2, 2, 2, 1, 2, 2, 2, 1, 1] : tensor<2x2x2x1x2x2x2x1xf32> into tensor<2x2x2x1x2x2x2x1x1xf32>
+  %rhs_expanded = tensor.expand_shape %rhs [[0], [1], [2], [3], [4], [5], [6], [7, 8]] output_shape [2, 2, 2, 1, 2, 2, 2, 1, 1] : tensor<2x2x2x1x2x2x2x1xf32> into tensor<2x2x2x1x2x2x2x1x1xf32>
+  %interleave = hfusion.interleave %lhs_expanded, %rhs_expanded : tensor<2x2x2x1x2x2x2x1x1xf32>, tensor<2x2x2x1x2x2x2x1x1xf32> -> tensor<2x2x2x1x2x2x2x1x2xf32>
+  %collapsed = tensor.collapse_shape %interleave [[0], [1], [2], [3], [4], [5], [6], [7, 8]] : tensor<2x2x2x1x2x2x2x1x2xf32> into tensor<2x2x2x1x2x2x2x2xf32>
+  return %collapsed : tensor<2x2x2x1x2x2x2x2xf32>
+}
+
+// -----
+
 func.func @fold_insert_pad_cst(%arg0 : tensor<1x1x2047xf32>) -> tensor<4093xf32> {
   //CHECK-LABEL : @fold_insert_pad_cst
   //CHECK-DAG: %[[cst_0:.*]] = arith.constant 0.000000e+00 : f32

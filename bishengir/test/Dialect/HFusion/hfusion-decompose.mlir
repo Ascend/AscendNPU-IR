@@ -394,3 +394,53 @@ func.func @histogram_mask_i8(%arg0: tensor<8xi32>, %mask: tensor<8xi8>)
          : tensor<8xi32>, tensor<8xi8> -> tensor<4xi32>
   return %res : tensor<4xi32>
 }
+
+// -----
+
+// 4D transpose special cases are regbase (A5)-only: permutations whose moved
+// axes are {0,1,2} or {1,2,3} stay whole, while [3,0,1,2] (all axes moved)
+// is decomposed into binary transposes.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+// CHECK-LABEL: func.func @test_linalg_decompose_transpose_regbase
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16x1x15x17xf16>)
+func.func @test_linalg_decompose_transpose_regbase(
+    %arg0: tensor<16x1x15x17xf16>)
+    -> (tensor<15x16x1x17xf16>, tensor<16x17x1x15xf16>,
+        tensor<17x16x1x15xf16>) {
+  %0 = tensor.empty() : tensor<15x16x1x17xf16>
+  // CHECK: %[[T0:.*]] = linalg.transpose ins(%[[ARG0]] : tensor<16x1x15x17xf16>) outs({{.*}} : tensor<15x16x1x17xf16>) permutation = [2, 0, 1, 3]
+  %t0 = linalg.transpose ins(%arg0 : tensor<16x1x15x17xf16>) outs(%0 : tensor<15x16x1x17xf16>) permutation = [2, 0, 1, 3]
+  %1 = tensor.empty() : tensor<16x17x1x15xf16>
+  // CHECK: %[[T1:.*]] = linalg.transpose ins(%[[ARG0]] : tensor<16x1x15x17xf16>) outs({{.*}} : tensor<16x17x1x15xf16>) permutation = [0, 3, 1, 2]
+  %t1 = linalg.transpose ins(%arg0 : tensor<16x1x15x17xf16>) outs(%1 : tensor<16x17x1x15xf16>) permutation = [0, 3, 1, 2]
+  %2 = tensor.empty() : tensor<17x16x1x15xf16>
+  // CHECK: %[[EMPTY_A:.*]] = tensor.empty() : tensor<1x16x15x17xf16>
+  // CHECK: %[[TA:.*]] = linalg.transpose ins(%[[ARG0]] : tensor<16x1x15x17xf16>) outs(%[[EMPTY_A]] : tensor<1x16x15x17xf16>) permutation = [1, 0, 2, 3]
+  // CHECK: %[[EMPTY_B:.*]] = tensor.empty() : tensor<15x16x1x17xf16>
+  // CHECK: %[[TB:.*]] = linalg.transpose ins(%[[TA]] : tensor<1x16x15x17xf16>) outs(%[[EMPTY_B]] : tensor<15x16x1x17xf16>) permutation = [2, 1, 0, 3]
+  // CHECK: %[[EMPTY_C:.*]] = tensor.empty() : tensor<17x16x1x15xf16>
+  // CHECK: %[[TC:.*]] = linalg.transpose ins(%[[TB]] : tensor<15x16x1x17xf16>) outs(%[[EMPTY_C]] : tensor<17x16x1x15xf16>) permutation = [3, 1, 2, 0]
+  // CHECK: return %[[T0]], %[[T1]], %[[TC]] : tensor<15x16x1x17xf16>, tensor<16x17x1x15xf16>, tensor<17x16x1x15xf16>
+  %t2 = linalg.transpose ins(%arg0 : tensor<16x1x15x17xf16>) outs(%2 : tensor<17x16x1x15xf16>) permutation = [3, 0, 1, 2]
+  return %t0, %t1, %t2 : tensor<15x16x1x17xf16>, tensor<16x17x1x15xf16>, tensor<17x16x1x15xf16>
+}
+} // module
+
+// -----
+
+// On A3 (membase, no hacc.target), the same 4D permutation [2,0,1,3] must be
+// decomposed into binary transposes; membase cannot lower whole 4D
+// transposes yet.
+// CHECK-LABEL: func.func @test_linalg_decompose_transpose_membase
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16x1x15x17xf16>)
+func.func @test_linalg_decompose_transpose_membase(
+    %arg0: tensor<16x1x15x17xf16>) -> tensor<15x16x1x17xf16> {
+  %0 = tensor.empty() : tensor<15x16x1x17xf16>
+  // CHECK: %[[EMPTY_A:.*]] = tensor.empty() : tensor<1x16x15x17xf16>
+  // CHECK: %[[TA:.*]] = linalg.transpose ins(%[[ARG0]] : tensor<16x1x15x17xf16>) outs(%[[EMPTY_A]] : tensor<1x16x15x17xf16>) permutation = [1, 0, 2, 3]
+  // CHECK: %[[EMPTY_B:.*]] = tensor.empty() : tensor<15x16x1x17xf16>
+  // CHECK: %[[TB:.*]] = linalg.transpose ins(%[[TA]] : tensor<1x16x15x17xf16>) outs(%[[EMPTY_B]] : tensor<15x16x1x17xf16>) permutation = [2, 1, 0, 3]
+  // CHECK: return %[[TB]] : tensor<15x16x1x17xf16>
+  %t0 = linalg.transpose ins(%arg0 : tensor<16x1x15x17xf16>) outs(%0 : tensor<15x16x1x17xf16>) permutation = [2, 0, 1, 3]
+  return %t0 : tensor<15x16x1x17xf16>
+}

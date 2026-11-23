@@ -1,5 +1,4 @@
 /**
-  copy_ubuf_to_ubuf_1d_core(src, dst_value);
  * Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "DMA/DMAUtils.h"
+#include "RegBase/DMAUtils.h"
 #include "Vector/Broadcast/BrcUtils.h"
 #include "Vector/Sort/SortUtils.h"
 

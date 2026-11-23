@@ -13,10 +13,15 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   AdaptTritonKernel.cpp
   AddFFTSAddr.cpp
   AutoVectorize.cpp
+  SelectHIVMVectorize.cpp
   AutoVectorize/AutoVectorizeInterpreter.cpp
   AutoVectorize/FusedNode.cpp
   AutoVectorize/FusionUtils.cpp
+  AutoVectorize/LiftScalarProducer.cpp
   AutoVectorize/PlanContext.cpp
+  AutoVectorize/Ordering/OrderingConstraint.cpp
+  AutoVectorize/Ordering/Rule/SsaOrderingRule.cpp
+  AutoVectorize/Ordering/Rule/MemrefValueFlowOrderingRule.cpp
   AutoVectorize/Verify.cpp
   AutoVectorizeV2.cpp
   AutoVectorizeVerifier.cpp
@@ -32,8 +37,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   DropSymbols.cpp
   EliminateDuplicateFuncs.cpp
   FlattenOps.cpp
-  FoldExtractInsertPair.cpp
-  FoldExtractInsertPair.cpp
+  FlattenReductionRegions.cpp
   FoldUnitDims.cpp
   FoldSymbolicDim.cpp
   GenericUnroller.cpp
@@ -51,8 +55,9 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   OutlineVectorFunction.cpp
   PackTilingData.cpp
   PrepareI1Nx1ForVectorization.cpp
+  PrepareL1Gather.cpp
   PreVectorizationFusion.cpp
-  PullSliceIntoVectorFunction.cpp
+  PullFillIntoVectorFunction.cpp
   ReCacheIO.cpp
   RemoveCacheIO.cpp
   RemoveMaskFromUnalignedReductionLoop.cpp
@@ -72,6 +77,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   VectorizeOps.cpp
   LegalizeBF16.cpp
   LegalizeFP8.cpp
+  LegalizeScalarFP8.cpp
   LegalizeBool.cpp
   DowngradeFP64CstOp.cpp
   WrapHostFunc.cpp
@@ -82,15 +88,21 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   DEPENDS
   BiShengIRHFusionTransformsIncGen
 
+  LINK_COMPONENTS
+  Support
+
   LINK_LIBS PUBLIC
   BiShengIRDialectUtils
   BiShengIRSchedule
   BiShengIRSCFTransformOps
+  BiShengIRSCFUtils
   BiShengIRTensorTransforms
   BiShengIRTransform
   BiShengIRHACCDialect
   BiShengIRHACCUtils
   BiShengIRHIVMDialect
+  BiShengIRHIVMTransforms
+  BiShengIRTensorViewDialect
   BiShengIRHFusionAnalysis
   BiShengIRMathExtDialect
   BiShengIRAnnotationDialect

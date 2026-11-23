@@ -111,6 +111,9 @@ static void preProcess(OpPassManager &pm,
   NormalizeOptions normalizeOptions;
   normalizeOptions.enableHighPrecision = options.enableHighPrecision;
   normalizeOptions.enableFastDiv = options.enableFastDiv;
+  normalizeOptions.enableDivRemPow2 = options.enableDivRemPow2;
+  normalizeOptions.enableFma =
+      !options.disableHfusionVectorize && !options.enableMixedCV;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
   pm.addPass(createLegalizeBoolPass());
@@ -118,7 +121,8 @@ static void preProcess(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(createHFusionInlineBrcPass());
   // normalize should be called after inline-brc pass:
   //  a) convert scalar-vector ops to vector-scalar ops
-  pm.nest<func::FuncOp>().addPass(createHFusionNormalizeOpsPass());
+  pm.nest<func::FuncOp>().addPass(
+      createHFusionNormalizeOpsPass(normalizeOptions));
 }
 
 static void preFlattenPass(OpPassManager &pm,
@@ -269,6 +273,9 @@ static void postProcess(OpPassManager &pm,
   NormalizeOptions normalizeOptions;
   normalizeOptions.enableHighPrecision = options.enableHighPrecision;
   normalizeOptions.enableFastDiv = options.enableFastDiv;
+  normalizeOptions.enableDivRemPow2 = options.enableDivRemPow2;
+  normalizeOptions.enableFma =
+      !options.disableHfusionVectorize && !options.enableMixedCV;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
   AddFFTSAddrOptions addFFTSAddrOpt;

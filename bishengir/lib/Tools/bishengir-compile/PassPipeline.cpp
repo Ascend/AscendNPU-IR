@@ -37,6 +37,8 @@
 #include "mlir/Pass/PassRegistry.h"
 #include "llvm/Support/CommandLine.h"
 
+#include <memory>
+
 using namespace mlir;
 using namespace mlir::triton;
 
@@ -61,8 +63,9 @@ void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &options,
 #include "bishengir/Tools/bishengir-compile/ConfigUtils.cpp.inc"
   // Options.td defaults EnableLayoutOptimization=true for Ascend950
   // (A5-630/v4). Keep the A3 mem-based path historically off unless the target
-  // is Ascend950.
-  if (!mlir::hacc::utils::isAscend950(config.getTarget()))
+  // is Ascend950/960.
+  if (!(mlir::hacc::utils::isAscend950(config.getTarget()) ||
+        mlir::hacc::utils::isAscend960(config.getTarget())))
     options.enableLayoutOptimization = false;
 }
 
@@ -76,31 +79,33 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
 
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
   if (config.getEnableTorchCompile()) {
-    TorchToNamedOpPipelineOptions torchToNamedOpOptions;
-    torchToNamedOpOptions.ensureNoImplicitBroadcast =
+    auto torchToNamedOpOptions =
+        std::make_unique<TorchToNamedOpPipelineOptions>();
+    torchToNamedOpOptions->ensureNoImplicitBroadcast =
         config.getEnsureNoImplicitBroadcast();
-    createTorchBackendToNamedOpBackendPipeline(pm, torchToNamedOpOptions);
+    createTorchBackendToNamedOpBackendPipeline(pm, *torchToNamedOpOptions);
   }
 #endif
 
   if (config.getEnableHfusionCompile()) {
-    hfusion::HFusionPipelineOptions hfusionPipelineOptions;
-    setupHFusionPipelineOptions(hfusionPipelineOptions, config);
-    hfusion::buildHFusionPipelines(pm, hfusionPipelineOptions);
+    auto options = std::make_unique<hfusion::HFusionPipelineOptions>();
+    setupHFusionPipelineOptions(*options, config);
+    hfusion::buildHFusionPipelines(pm, *options);
   }
 
   if (config.getEnableHIVMCompile()) {
     // Build convert to HIVM Dialect pipeline.
-    hivm::ConvertToHIVMPipelineOptions convertToHIVMOptions;
-    convertToHIVMOptions.enableTritonKernelCompile =
+    auto convertOptions =
+        std::make_unique<hivm::ConvertToHIVMPipelineOptions>();
+    convertOptions->enableTritonKernelCompile =
         config.getEnableTritonKernelCompile();
-    convertToHIVMOptions.enableUbufSaving = config.getEnableUbufSaving();
-    convertToHIVMOptions.disableSizeAlignForCast =
+    convertOptions->enableUbufSaving = config.getEnableUbufSaving();
+    convertOptions->disableSizeAlignForCast =
         config.getDisableSizeAlignForCast();
-    hivm::buildConvertToHIVMPipeline(pm, convertToHIVMOptions);
-    hivm::HIVMPipelineOptions options;
-    setupHIVMPipelineOptions(options, config);
-    hivm::buildOptimizeHIVMPipeline(pm, options);
+    hivm::buildConvertToHIVMPipeline(pm, *convertOptions);
+    auto options = std::make_unique<hivm::HIVMPipelineOptions>();
+    setupHIVMPipelineOptions(*options, config);
+    hivm::buildOptimizeHIVMPipeline(pm, *options);
   }
 }
 

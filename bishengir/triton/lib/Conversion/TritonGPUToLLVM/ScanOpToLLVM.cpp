@@ -377,8 +377,10 @@ static void AddPartialReduceOneWarp(SmallVector<SmallVector<Value>> &srcValues,
   unsigned parallelElementsPerThread = helper.getNonAxisNumElementsPerThread();
   unsigned elementStride = helper.getAxisElementStride();
   unsigned threadStride = helper.getAxisThreadStride();
-  unsigned axisNumWarps = helper.getAxisNumWarpsWithUniqueData();
-  unsigned numParallelLane = helper.getNonAxisNumThreadsPerCTA();
+  [[maybe_unused]] unsigned axisNumWarps =
+      helper.getAxisNumWarpsWithUniqueData();
+  [[maybe_unused]] unsigned numParallelLane =
+      helper.getNonAxisNumThreadsPerCTA();
   unsigned scanDim = helper.getAxisNumThreadsPerWarpWithUniqueData();
   Value maskFirstWarp = b.icmp_eq(warpId, b.i32_val(0));
   Value maskFirstLane = b.icmp_eq(laneIdAxis, b.i32_val(0));
@@ -570,7 +572,7 @@ flipSrcValues(Location loc, triton::ScanOp op,
               const TargetInfoBase &targetInfo,
               SmallVector<SmallVector<Value>> srcValues, int iWarpSize) {
   SmallVector<SmallVector<Value>> values(srcValues.size());
-  for (int i = 0; i < srcValues.size(); ++i) {
+  for (int i = 0; i < static_cast<int>(srcValues.size()); ++i) {
     int revIndex = srcValues.size() - i - 1;
     for (unsigned j = 0; j < op.getNumOperands(); ++j) {
       for (unsigned k = iWarpSize / 2; k >= 1; k = k / 2) {
@@ -671,8 +673,8 @@ ScanOpConversion::emitFastScan(triton::ScanOp op, triton::ScanOpAdaptor adaptor,
     assert(v.size() > 0 && v[0].size() > 0);
     auto ret = SmallVector<SmallVector<Value>>(v[0].size(),
                                                SmallVector<Value>(v.size()));
-    for (int i = 0; i < v.size(); ++i) {
-      for (int j = 0; j < v[0].size(); ++j) {
+    for (int i = 0; i < static_cast<int>(v.size()); ++i) {
+      for (int j = 0; j < static_cast<int>(v[0].size()); ++j) {
         ret[j][i] = v[i][j];
       }
     }

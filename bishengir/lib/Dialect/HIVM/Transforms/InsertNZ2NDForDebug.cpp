@@ -118,14 +118,15 @@ public:
       return failure();
     }
 
-    ArrayRef<int64_t> shape = resultTensorType.getShape();
+    [[maybe_unused]] ArrayRef<int64_t> shape = resultTensorType.getShape();
     assert(shape.size() == 2 || shape.size() == 3);
     return insertNZ2NDForOperand(rewriter, op);
   }
 };
 
 /// Insert nz2nd for the inputs of hivm::MmadL1Op.
-struct InsertNZ2NDForA5DebugOpPattern : public OpRewritePattern<hivm::MmadL1Op> {
+struct InsertNZ2NDForA5DebugOpPattern
+    : public OpRewritePattern<hivm::MmadL1Op> {
 public:
   using OpRewritePattern<hivm::MmadL1Op>::OpRewritePattern;
   LogicalResult matchAndRewrite(hivm::MmadL1Op op,

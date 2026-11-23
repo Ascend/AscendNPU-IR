@@ -103,14 +103,10 @@ LogicalResult markAlignedDim(OpBuilder &builder, Operation *markedOp, Value arg,
   return success();
 }
 
-// Return "true" if the stride of the sub-low dimension is UB aligned.
-// Such as memref<3x13xi8, strided<[32, 1]>>
-// Note: a tightly packed layout (dimSize == stride) with a non-aligned row
-// stride still needs alignment, so only the aligned-stride check applies
-// unless "alignPackedUnaligned" is disabled, which restores the legacy
-// packed-skip behavior.
-static bool isNotTailJumpOrStrideAlign(MemRefType type,
-                                       bool alignPackedUnaligned) {
+// Return "true", if the size of lowest dimension equal with the stride of
+// sub-low dimension or the stride of sub-low dimension is UB align.
+// Such as memref<3x13xi8, strided<[16, 1]>>
+static bool isNotTailJumpOrStrideAlign(MemRefType type) {
   int64_t offset;
   SmallVector<int64_t> strides;
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
@@ -125,12 +121,9 @@ static bool isNotTailJumpOrStrideAlign(MemRefType type,
   if (dim == 1)
     return true;
   if (succeeded(successStrides) && !strides.empty() &&
-      !type.isDynamicDim(dim - 1)) {
-    if (strides[dim - 2] * dataWidth % hwAlignBits == 0)
-      return true;
-    return !alignPackedUnaligned &&
-           type.getDimSize(dim - 1) == strides[dim - 2];
-  }
+      !type.isDynamicDim(dim - 1))
+    return (type.getDimSize(dim - 1) == strides[dim - 2]) ||
+           (strides[dim - 2] * dataWidth % hwAlignBits == 0);
   return false;
 }
 
@@ -140,11 +133,11 @@ static bool isNotTailJumpOrStrideAlign(MemRefType type,
 static bool isSubLowDimStrideAlign(MemRefType type) {
   int64_t offset;
   SmallVector<int64_t> strides;
-#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+  #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   auto successStrides = getStridesAndOffset(type, strides, offset);
-#else
+  #else
   auto successStrides = type.getStridesAndOffset(strides, offset);
-#endif
+  #endif
   int64_t dim = type.getRank();
   int64_t hwAlignBits =
       static_cast<int64_t>(util::getHWAlignBytes(type.getMemorySpace()) * 8);
@@ -161,8 +154,7 @@ std::optional<int> getLastDiscontinuousDim(
     const SmallVectorImpl<MemRefType> &memRefTypes,
     const SmallVectorImpl<MemRefType> &origMemRefTypes,
     const SmallVector<ReassociationIndices> &continuousReassociations,
-    bool isUBDMAOp, bool archIsRegbased, bool archIs950,
-    bool alignPackedUnaligned) {
+    bool isUBDMAOp, bool archIsRegbased, bool archIs950) {
   LLVM_DEBUG(llvm::dbgs() << "memRefTypes ";
              dumpMemRefTypes(llvm::dbgs(), memRefTypes); llvm::dbgs() << "\n";
              llvm::dbgs() << "origMemRefTypes ";
@@ -204,7 +196,7 @@ std::optional<int> getLastDiscontinuousDim(
               dyn_cast<hivm::AddressSpaceAttr>(memRefType.getMemorySpace());
           if (hivmSpace.getAddressSpace() == hivm::AddressSpace::UB)
             return isSubLowDimStrideAlign(memRefType) &&
-                   isNotTailJumpOrStrideAlign(memRefType, alignPackedUnaligned);
+                   isNotTailJumpOrStrideAlign(memRefType);
           else
             return false;
         })) {
@@ -231,8 +223,7 @@ std::optional<int> getLastDiscontinuousDim(
 /// get last discontinuous dim
 std::optional<int> getLastDiscontinuousDimRegBased(
     const SmallVectorImpl<MemRefType> &memRefTypes,
-    const ReassociationIndices &continuousReassociations, bool isUBDMAOp,
-    bool alignPackedUnaligned) {
+    const ReassociationIndices &continuousReassociations, bool isUBDMAOp) {
   LLVM_DEBUG(llvm::dbgs() << "memRefTypes ";
              dumpMemRefTypes(llvm::dbgs(), memRefTypes); llvm::dbgs() << "\n";);
   // 1. if any memref contains non-unit stride at the last dim,
@@ -253,7 +244,7 @@ std::optional<int> getLastDiscontinuousDimRegBased(
               dyn_cast<hivm::AddressSpaceAttr>(memRefType.getMemorySpace());
           if (hivmSpace.getAddressSpace() == hivm::AddressSpace::UB)
             return isSubLowDimStrideAlign(memRefType) &&
-                   isNotTailJumpOrStrideAlign(memRefType, alignPackedUnaligned);
+                   isNotTailJumpOrStrideAlign(memRefType);
           else
             return false;
         })) {
@@ -500,23 +491,24 @@ static int findArgNeedMark(vector::TransferWriteOp writeOp) {
   return res;
 }
 
-// Davinci recommends the vsstb stride align to (512*N + 32) Byte.
-// In isTransferWriteSuitForStoreWithStride, the memref last dim has been
-// guaranteed always 32 Byte (256 bit / element bit width).
-// So the alignment of the sub-tail dim is derived as (16*N + 1) elements,
-// where 16 = 512 Byte / 32 Byte (the ratio of alignment to last-dim size).
-static constexpr int32_t kVsstbBankConflictAlignUnit = 16;
+// Davinci recommends the vsstb stride align to (32*bankGroupCount*N + 32)
+// Byte, i.e. (512*N + 32) Byte with 16 bank groups and (1024*N + 32) Byte
+// with 32 bank groups. In isTransferWriteSuitForStoreWithStride, the memref
+// last dim has been guaranteed always 32 Byte (256 bit / element bit width).
+// So the alignment of the sub-tail dim is derived as
+// (bankGroupCount*N + 1) elements, where bankGroupCount is the ratio of
+// alignment to last-dim size.
 static constexpr int32_t kVsstbSubTailDimOffset = 2;
 
 // calculate align size to avoid bank conflict
-static int32_t alignSizeForBankConflict(MemRefType memrefTy) {
+static int32_t alignSizeForBankConflict(MemRefType memrefTy,
+                                        int32_t bankGroupCount) {
   ArrayRef<int64_t> shape = memrefTy.getShape();
   int32_t alignDim =
       static_cast<int32_t>(memrefTy.getRank()) - kVsstbSubTailDimOffset;
-  int32_t alignSize =
-      shape[alignDim] * kVsstbBankConflictAlignUnit /
-          std::gcd(shape[alignDim], kVsstbBankConflictAlignUnit) +
-      1;
+  int32_t alignSize = shape[alignDim] * bankGroupCount /
+                          std::gcd(shape[alignDim], bankGroupCount) +
+                      1;
   // In enable-stride-align, the alignSize will be divided by type width.
   // So the marked align size will be multiplied by type width.
   int64_t dataWidth = memrefTy.getElementTypeBitWidth() / utils::kBitsToByte;
@@ -538,7 +530,11 @@ static void markForVsstb(OpBuilder &builder, func::CallOp &callOp,
                          ModuleOp moduleOp) {
   StringRef callee = callOp.getCallee();
   if (auto func = moduleOp.lookupSymbol<func::FuncOp>(callee)) {
-    func->walk([&builder, &callOp](vector::TransferWriteOp writeOp) {
+    int32_t bankGroupCount =
+        static_cast<int32_t>(hacc::utils::getBankGroupCount(moduleOp));
+    const bool archIs960 = hacc::utils::isAscend960(moduleOp);
+    func->walk([&builder, &callOp, bankGroupCount,
+                archIs960](vector::TransferWriteOp writeOp) {
       if (!utils::isTransferWriteSuitForStoreWithStride(writeOp))
         return WalkResult::skip();
       int argIdx = findArgNeedMark(writeOp);
@@ -551,6 +547,25 @@ static void markForVsstb(OpBuilder &builder, func::CallOp &callOp,
       auto memrefTy = dyn_cast<MemRefType>(operand.getType());
       if (!memrefTy)
         return WalkResult::skip();
+      // Conservative guards for the newly enabled Ascend960 path. They are
+      // gated to Ascend960 so Ascend950 behavior is left untouched.
+      if (archIs960) {
+        // A rank-reducing subview between the call operand and the write
+        // invalidates the rank-2 based dim mapping (findArgNeedMark only
+        // recovers the argument number). Skip rather than pad a wrong
+        // dimension.
+        auto writeMemrefTy =
+            dyn_cast<MemRefType>(writeOp.getSource().getType());
+        if (!writeMemrefTy || writeMemrefTy.getRank() != memrefTy.getRank())
+          return WalkResult::skip();
+        // A sub-tail dim already of the form (bankGroupCount*N + 1) needs no
+        // padding; applying the lcm formula would inflate the allocation by
+        // up to bankGroupCount times.
+        int32_t subTailDim =
+            static_cast<int32_t>(memrefTy.getRank()) - kVsstbSubTailDimOffset;
+        if (memrefTy.getShape()[subTailDim] % bankGroupCount == 1)
+          return WalkResult::skip();
+      }
       // TODO: Currently vsstb can make continuous shape into discontinous
       // shape, which may cause reshape & collaspse operation users that not
       // correct, because these operation relys on continous shape feature. So
@@ -566,7 +581,7 @@ static void markForVsstb(OpBuilder &builder, func::CallOp &callOp,
       int32_t alignDim =
           static_cast<int32_t>(memrefTy.getRank()) - kVsstbSubTailDimOffset;
       createAlignMarkOp(builder, callOp->getLoc(), operand, {alignDim},
-                        {alignSizeForBankConflict(memrefTy)});
+                        {alignSizeForBankConflict(memrefTy, bankGroupCount)});
       return WalkResult::advance();
     });
   }
@@ -858,13 +873,28 @@ void MarkStrideAlignPass::runOnOperation() {
   auto moduleOp = funcOp->getParentOfType<ModuleOp>();
   bool archIsRegbased = hacc::utils::isRegBasedArch(moduleOp);
   bool archIs950 = hacc::utils::isAscend950(moduleOp);
-  WalkResult result = funcOp->walk([&builder, this, archIsRegbased,
+  // Ascend960 shares the regbased UB bank-group layout of the A5 family, so
+  // UB call operands whose element width is not 1 must skip the plain
+  // stride-align pre-marking here as well. Otherwise the operand is already
+  // marked when markForVsstb runs and the bank-conflict aware align size
+  // computed by alignSizeForBankConflict is never applied.
+  bool skipUbCallPreMark = archIs950 || hacc::utils::isAscend960(moduleOp);
+  WalkResult result = funcOp->walk([&builder, archIsRegbased,
                                     archIs950](Operation *op) {
     LDBG("Walk operation : " << *op);
     if (!isa<HIVMStructuredOp>(op)) {
       return WalkResult::advance();
     }
     if (noNeedAlign(op)) {
+      return WalkResult::advance();
+    }
+
+    // IndirectLoad performs gather-style access: `src` is indexed by the
+    // runtime `offsets` tensor rather than a linear stride pattern, and its
+    // dst/offsets/mask/other operands do not benefit from stride alignment.
+    // Marking them would only trigger unnecessary UB alloc padding in
+    // EnableStrideAlign. Skip early to preserve the original alloc shape.
+    if (isa<hivm::IndirectLoadOp>(op)) {
       return WalkResult::advance();
     }
 
@@ -947,8 +977,8 @@ void MarkStrideAlignPass::runOnOperation() {
         identityReassoc[i] = i;
       }
       // In A5, memrefTypes is already the result of flattening.
-      alignDim = getLastDiscontinuousDimRegBased(
-          filterMemrefTypes, identityReassoc, isUBDMAOp, alignPackedUnaligned);
+      alignDim = getLastDiscontinuousDimRegBased(filterMemrefTypes,
+                                                 identityReassoc, isUBDMAOp);
       if (isa<FixpipeOp>(op)) {
         auto fixpipeOp = dyn_cast<FixpipeOp>(op);
         auto alignDimAlignBytes = getLastDiscontinuousDimRegBasedForFixcctoub(
@@ -1012,9 +1042,9 @@ void MarkStrideAlignPass::runOnOperation() {
               << "mark-stride-align: non-reg-based path, flattenedMemrefTypes=";
           dumpMemRefTypes(llvm::dbgs(), flattenedMemrefTypes);
           llvm::dbgs() << "\n";);
-      alignDim = getLastDiscontinuousDim(
-          flattenedMemrefTypes, memrefTypes, flattenedAssociations, isUBDMAOp,
-          archIsRegbased, archIs950, alignPackedUnaligned);
+      alignDim = getLastDiscontinuousDim(flattenedMemrefTypes, memrefTypes,
+                                         flattenedAssociations, isUBDMAOp,
+                                         archIsRegbased, archIs950);
     }
     LDBG("getLastDiscontinuousDim " << alignDim.value_or(-1) << "\n");
     auto ubOperands = hivmOp.getTargetSpaceOperands(hivm::AddressSpace::UB,
@@ -1068,11 +1098,18 @@ void MarkStrideAlignPass::runOnOperation() {
   });
 
   if (archIsRegbased) {
-    WalkResult resultVF = funcOp->walk([&builder, &moduleOp, this,
-                                        archIsRegbased,
-                                        archIs950](func::CallOp callOp) {
+    WalkResult resultVF = funcOp->walk([&builder, &moduleOp, archIsRegbased,
+                                        archIs950, skipUbCallPreMark](
+                                           func::CallOp callOp) {
       for (Value operand : callOp.getArgOperands()) {
         if (isMarked(operand))
+          continue;
+        // Explicit cube buffers follow their own packed layouts. The call
+        // operand alignment below is not a layout rule for L0A/L0B/BT.
+        auto space = GetBufferSpaceAttr(operand);
+        if (space && (space->getAddressSpace() == AddressSpace::L0A ||
+                      space->getAddressSpace() == AddressSpace::L0B ||
+                      space->getAddressSpace() == AddressSpace::BiasBUF))
           continue;
         auto type = operand.getType();
         auto memrefTypes = util::getMemRefTypes({type});
@@ -1080,7 +1117,7 @@ void MarkStrideAlignPass::runOnOperation() {
           continue;
         if (!isAnyOfLocalBuffer(memrefTypes))
           continue;
-        if (archIs950) {
+        if (skipUbCallPreMark) {
           if (llvm::any_of(memrefTypes, [](MemRefType mtype) {
                 auto elemWidth = mtype.getElementType().getIntOrFloatBitWidth();
                 return elemWidth != 1;
@@ -1095,9 +1132,9 @@ void MarkStrideAlignPass::runOnOperation() {
         auto continuousAssociations = util::getContinuousReassociation(
             memrefTypes, ArrayRef<int64_t>(reshapeDims),
             ArrayRef<int64_t>(permutations));
-        auto alignDim = getLastDiscontinuousDim(
-            memrefTypes, memrefTypes, continuousAssociations, false,
-            archIsRegbased, archIs950, alignPackedUnaligned);
+        auto alignDim = getLastDiscontinuousDim(memrefTypes, memrefTypes,
+                                                continuousAssociations, false,
+                                                archIsRegbased, archIs950);
         LDBG("getLastDiscontinuousDim " << alignDim.value_or(-1) << "\n");
 
         // Skip stride-alignment for allocs pre-marked by PreMarkStrideAlign

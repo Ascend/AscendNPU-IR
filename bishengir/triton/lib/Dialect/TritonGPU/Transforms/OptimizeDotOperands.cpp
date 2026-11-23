@@ -163,11 +163,11 @@ public:
       return failure();
 
     MemDescType allocType = allocOp.getType();
-    auto allocEncoding = allocType.getEncoding();
+    [[maybe_unused]] auto allocEncoding = allocType.getEncoding();
 
     RankedTensorType srcTy = reshapeOp.getSrc().getType();
     auto srcShape = srcTy.getShape();
-    auto dstShape = allocType.getShape();
+    [[maybe_unused]] auto dstShape = allocType.getShape();
 
     // We use the fact that forward and backward inference are the same for
     // MemDescReshapeOp to infer the source MemDescType that would produce

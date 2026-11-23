@@ -59,19 +59,25 @@ class HIVM_DmaOp<string mnemonic, list<Trait> traits = []> :
   }] # opNameDeclaration;
 }
 
-def LoadOp : HIVM_DmaOp<"load", [
-  AttrSizedOperandSegments,
-  SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_MTE2">,
-  DeclareOpInterfaceMethods<HIVMInferCoreTypeInterface, ["inferCoreType"]>,
-  // Will automatically use the default uniform reassociation impl
-  UniformReassociationFlattenTrait,
-  DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
-  // TODO: Use trait to avoid writing duplicate type constraints
-  OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8,
-    I16, UI16, F16, BF16, I32, UI32, F32, UI64, I64]>,
-  DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
-    ["decomposeOperation", "getDecomposePhase"]>,
-  DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
+def LoadOp
+    : HIVM_DmaOp<
+          "load",
+          [AttrSizedOperandSegments, SinglePipeOpTrait,
+           OpPipeTrait<"PIPE::PIPE_MTE2">,
+           DeclareOpInterfaceMethods<
+               HIVMInferCoreTypeInterface, ["inferCoreType"]>,
+           // Will automatically use the default uniform reassociation impl
+           UniformReassociationFlattenTrait,
+           DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
+           // TODO: Use trait to avoid writing duplicate type constraints
+           OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8, I16,
+                                         UI16, F16, BF16, I32, UI32, F32, F64,
+                                         UI64, I64]>,
+           DeclareOpInterfaceMethods<
+               BiShengIRAggregatedOpInterface, ["decomposeOperation",
+                                                "getDecomposePhase"]>,
+           DeclareOpInterfaceMethods<
+               HIVMStructuredOpInterface, ["getIndexingMaps"]>,
 ]> {
   let summary = "HIVM data load operation";
   let description = [{
@@ -84,10 +90,78 @@ def LoadOp : HIVM_DmaOp<"load", [
     ```
 
     Constraints:
-    - `src` and `dst` are expected to have the same element type.
-    - If `pad_mode` is not set, `src` and `dst` shape should be the same.
-    - Supports both left and right padding.
-    - `pad_value` should have the same element type as `src` and `dst`.
+    - `src` and `dst` have the same element type and the same rank.
+    - `pad_value`, if set, has the same element type as `src` and `dst`.
+    - `src` and `dst` agree on every axis that is neither listed in
+      `broadcast_axes` nor the padded last destination axis.
+    - A listed `broadcast_axes` axis has extent 1 in `src` and may be larger
+      in `dst`.
+    - `left_padding_num` and `right_padding_num` are nonnegative; in the
+      in-row form `lp + W + rp` must equal the last destination extent.
+    - Padding written inside the row is only lowered by the A6 templates;
+      every other padded load keeps the legacy destination-anchored form.
+
+    ### Padding forms
+    The two forms differ in where the pad elements go and in who decides the
+    counts.
+
+    Legacy, any architecture: the pad elements are written outside the
+    destination view. `left_padding_num` moves the write origin back to
+    `dst.offset - lp`, so it also has to pull that origin onto a 32-byte block,
+    and the right padding is derived from the alignment of the row end. The
+    destination extent does not include either pad, so it may stay equal to the
+    source extent or be wider; the side without an operand absorbs the
+    difference.
+
+    In-row, A6 only: the pad elements are part of the destination row, so
+    `D = lp + W + rp`. The row is written exactly as declared and its end does
+    not have to fall on a 32-byte boundary. This form is selected when the
+    target is A6 and `right_padding_num` is present, including an explicit
+    zero. Without that operand the legacy form is used. An omitted left count
+    reads as zero; canonicalization preserves the explicit right operand.
+
+    ### Attributes
+    #### `broadcast_axes`
+    Fuses the "load the unit source, then replicate it" pair into one
+    transfer: `src` has extent 1 on every listed axis and `dst` is larger
+    there, all other axes match. It is a descriptor property, not a shape
+    relaxation, so `src` keeps a legal layout and no zero stride is built.
+    Rank-2/3 memref GM->UB transfers; i8/i16/i32, f16/bf16/f32 and the FP8
+    carriers. Rows and planes must not overlap, the last axis is contiguous,
+    offsets are nonnegative, and dynamic extents need bounded static-backed
+    views.
+
+    #### `left_padding_num`
+    Legacy form: the distance the write origin is moved back,
+    `dst.offset - lp`, so the pad lands outside the view and the origin stays
+    block aligned. In-row form: the number of pad elements at the start of the
+    row. Both accept a nonnegative index operand, and an omitted left count
+    reads as zero in the in-row form.
+
+    #### `right_padding_num`
+    Only the in-row form uses it, where it closes the row,
+    `D = lp + W + rp`. A padded load without this operand is lowered by the
+    legacy templates and derives its right padding from the row-end alignment.
+
+    ```mlir
+    // legacy: lp moves the origin back, right padding is derived
+    hivm.hir.load ins(%src : memref<1x16xf32, #hivm.address_space<gm>>)
+                  outs(%dst : memref<1x16xf32, #hivm.address_space<ub>>)
+                  pad_mode = <PadValue> pad_value = %pad : f32
+                  left_padding_num = %lp : index
+    ```
+
+    ```mlir
+    // in-row on A6: D = lp + W + rp
+    hivm.hir.load ins(%src : memref<1x3xf32, #hivm.address_space<gm>>)
+                  outs(%dst : memref<1x6xf32, #hivm.address_space<ub>>)
+                  pad_mode = <PadValue> pad_value = %pad : f32
+                  left_padding_num = %lp : index
+                  right_padding_num = %rp : index
+    ```
+
+    With lp = 2, rp = 1 and W = 3 the destination row becomes
+    `[pad pad a0 a1 a2 pad]`, because `D = 2 + 3 + 1 = 6`.
   }];
   let arguments = (ins TensorOrMemref:$src,
                        TensorOrMemref:$dst,
@@ -99,6 +173,7 @@ def LoadOp : HIVM_DmaOp<"load", [
                        Optional<AnyType>:$init_condition,
                        DefaultValuedOptionalAttr<BoolAttr, "false">:$may_implicit_transpose_with_last_axis,
                        OptionalAttr<HIVM_EvictionPolicyAttr>:$eviction_policy,
+                       OptionalAttr<DenseI64ArrayAttr>:$broadcast_axes,
                        DefaultValuedOptionalAttr<HIVM_TCoreTypeAttr, "::mlir::hivm::TCoreType::CUBE_OR_VECTOR">:$tcoretype
   );
   let results = (outs Optional<AnyRankedTensor>:$result_tensor);
@@ -145,13 +220,21 @@ def LoadOp : HIVM_DmaOp<"load", [
     (`init_condition` `=` $init_condition^ `:` type($init_condition))?
     (`may_implicit_transpose_with_last_axis` `=` $may_implicit_transpose_with_last_axis^ )?
     (`eviction_policy` `=` $eviction_policy^)?
+    (`broadcast_axes` `=` $broadcast_axes^)?
     (`core_type` `=` $tcoretype^ )?
     (`->` type($result_tensor)^)?
   }];
   let hasFolder = 1;
   let hasCanonicalizer = 1;
   let hasVerifier = 1; // verify parameter according to hardware version
-  let extraClassDeclaration = DmaOpBaseDecl;
+  let extraClassDeclaration = DmaOpBaseDecl # [{
+    /// True when the load pads inside the destination row, which is what the
+    /// A6 templates implement. That form is selected on A6 when
+    /// `right_padding_num` is present and not zero; an omitted left count
+    /// reads as zero, and every other padded load uses the legacy
+    /// destination-anchored form.
+    bool isSpanPaddedLoad();
+  }];
 }
 
 def StoreOp : HIVM_DmaOp<"store", [
@@ -307,7 +390,10 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
     Enable hardware C0 padding for the destination fractal layout (used with int8 channel merge when an odd
     number of C0 blocks would otherwise leave an unmerged tail). Defaults to true (padding enabled).
   }];
-  let arguments = (ins AnyShaped:$src,
+  // Fixpipe source element type is permanently constrained to f32/i32
+  // (target-independent IR semantics; the destination may still be f16,
+  // bf16 or i8 through the pre-quant modes).
+  let arguments = (ins ShapedTypeOf<[F32, I32]>:$src,
                        AnyShaped:$dst,
                        Arg<Variadic<I1>, [{
                         An optional condition to enable unit-flag mode,
@@ -360,6 +446,15 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
     int getFixpipeState();
     int needFixpipePreFuse();
     bool hasStore();
+
+    /// Clone this fixpipe, replacing only the operands that are passed and
+    /// keeping every attribute. A memref destination produces the buffer form
+    /// without a result.
+    static FixpipeOp clone(OpBuilder &builder, FixpipeOp fixpipe,
+                           Value src = nullptr, Value dst = nullptr);
+    /// Same as above, additionally overriding the given attributes.
+    static FixpipeOp clone(OpBuilder &builder, FixpipeOp fixpipe, Value src,
+                           Value dst, ArrayRef<NamedAttribute> attrOverrides);
   }];
 }
 
@@ -546,6 +641,37 @@ def NCHW2NC1HWC0Op : HIVM_DmaOp<"nchw2nc1hwc0", [
     Only `f16`, `bf16`, and `f32` element types are supported. The `groups`
     attribute specifies the number of groups for grouped channel
     transformation.
+  }];
+  let arguments = (ins AnyMemRef:$src,
+                       AnyMemRef:$dst,
+                       DefaultValuedAttr<I64Attr, "1">:$groups);
+  let results = (outs);
+  let assemblyFormat = [{
+    attr-dict
+    `ins` `(` $src `:` type($src) `)`
+    `outs` `(` $dst `:` type($dst) `)`
+  }];
+  let hasVerifier = 1;
+  let extraClassDeclaration = DmaOpBaseDecl;
+}
+
+def NCHW2C1HWNC0Op : HIVM_DmaOp<"nchw2c1hwnc0", [
+  SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_MTE2">,
+  HIVMCoreTypeInterface, CubeCoreTypeTrait, NoMaxRankTrait,
+  OperElemTypeConstraints<[0, 1], [F16, BF16, F32]>,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Convert grouped NCHW weights from GM to C1HWNC0 in L1";
+  let description = [{
+    Converts a contiguous convolution weight with shape `[N, C, H, W]` in
+    global memory to a contiguous destination with shape
+    `[C1, H, W, G*align(N/G, 16), C0]` in L1, where
+    `C1 = ceil(C / C0)` and `C0 * sizeof(element_type) = 32` bytes. `C` is
+    already the number of input channels per group. Unwritten padding in the
+    aligned N dimension is allowed to retain its previous L1 contents.
+
+    Only `f16`, `bf16`, and `f32` element types are supported. The `groups`
+    attribute specifies how the output-channel dimension is partitioned.
   }];
   let arguments = (ins AnyMemRef:$src,
                        AnyMemRef:$dst,

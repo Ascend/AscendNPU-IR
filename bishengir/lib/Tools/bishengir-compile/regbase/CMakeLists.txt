@@ -24,6 +24,7 @@ endif()
 
 add_bishengir_library(BiShengIRRegBaseCompileLib
   PassPipeline.cpp
+  PassPipelineV2.cpp
   BiShengIRCompileMain.cpp
   Driver.cpp
   Utility.cpp
@@ -51,3 +52,11 @@ add_bishengir_library(BiShengIRRegBaseCompileLib
   MLIRHIVMAVEPipelines
   ${triton_libs}
 )
+
+# regbase/BiShengIRCompileMain.cpp and Driver.cpp include
+# BishengAsyncRuntime.h (for the LoadInit submission at runRegBasePipeline
+# entry and runtime forwarding) which in turn includes BishengLlcBridge.h ->
+# bisheng-llc.h.  The vendor header is needed at compile time of this target.
+if(BISHENG_LLC_INCLUDE_DIR)
+  target_include_directories(BiShengIRRegBaseCompileLib PRIVATE ${BISHENG_LLC_INCLUDE_DIR})
+endif()

@@ -26,12 +26,14 @@ func.func @vmax_to_vrelu_f16(%arg0: tensor<4x64x32xf16>, %arg1: tensor<4x64x32xf
   %cst = arith.constant 0.000000e+00 : f16
   %false = arith.constant false
   %c0 = arith.constant 0 : index
+  %mmad_out = tensor.empty() : tensor<4x64x32xf32>
+  %mmad = hivm.hir.mmadL1 ins(%arg0, %arg1, %false, %c0, %c0, %c0 : tensor<4x64x32xf16>, tensor<4x64x32xf16>, i1, index, index, index) outs(%mmad_out : tensor<4x64x32xf32>) -> tensor<4x64x32xf32>
+  %cast_out = tensor.empty() : tensor<4x64x32xf16>
+  %cast = hivm.hir.vcast ins(%mmad : tensor<4x64x32xf32>) outs(%cast_out : tensor<4x64x32xf16>) round_mode = <rint> -> tensor<4x64x32xf16>
   %empty = tensor.empty() : tensor<4x64x32xf16>
   %zero = linalg.fill ins(%cst : f16) outs(%empty : tensor<4x64x32xf16>) -> tensor<4x64x32xf16>
-  %mmad_out = tensor.empty() : tensor<4x64x32xf16>
-  %mmad = hivm.hir.mmadL1 ins(%arg0, %arg1, %false, %c0, %c0, %c0 : tensor<4x64x32xf16>, tensor<4x64x32xf16>, i1, index, index, index) outs(%mmad_out : tensor<4x64x32xf16>) -> tensor<4x64x32xf16>
   %out = tensor.empty() : tensor<4x64x32xf16>
-  %result = hivm.hir.vmax ins(%mmad, %zero : tensor<4x64x32xf16>, tensor<4x64x32xf16>)
+  %result = hivm.hir.vmax ins(%cast, %zero : tensor<4x64x32xf16>, tensor<4x64x32xf16>)
       outs(%out : tensor<4x64x32xf16>) -> tensor<4x64x32xf16>
   return %result : tensor<4x64x32xf16>
 }
@@ -117,16 +119,12 @@ func.func @vmax_no_convert_nonzero(%arg0: tensor<64x64xf16>, %arg1: tensor<64x64
 // CHECK-LABEL: @vmax_no_convert_unsupported_type
 // CHECK: hivm.hir.vmax
 // CHECK-NOT: hivm.hir.vrelu
-func.func @vmax_no_convert_unsupported_type(%arg0: tensor<64x64xf16>, %arg1: tensor<64x64xf16>) -> tensor<64x64xbf16> {
+func.func @vmax_no_convert_unsupported_type(%arg0: tensor<64x64xbf16>) -> tensor<64x64xbf16> {
   %cst = arith.constant 0.000000e+00 : bf16
-  %false = arith.constant false
-  %c0 = arith.constant 0 : index
-  %mmad_out = tensor.empty() : tensor<64x64xbf16>
-  %mmad = hivm.hir.mmadL1 ins(%arg0, %arg1, %false, %c0, %c0, %c0 : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index) outs(%mmad_out : tensor<64x64xbf16>) -> tensor<64x64xbf16>
   %empty = tensor.empty() : tensor<64x64xbf16>
   %zero = linalg.fill ins(%cst : bf16) outs(%empty : tensor<64x64xbf16>) -> tensor<64x64xbf16>
   %out = tensor.empty() : tensor<64x64xbf16>
-  %result = hivm.hir.vmax ins(%mmad, %zero : tensor<64x64xbf16>, tensor<64x64xbf16>)
+  %result = hivm.hir.vmax ins(%arg0, %zero : tensor<64x64xbf16>, tensor<64x64xbf16>)
       outs(%out : tensor<64x64xbf16>) -> tensor<64x64xbf16>
   return %result : tensor<64x64xbf16>
 }

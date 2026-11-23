@@ -52,6 +52,9 @@ def AVE_LoadDist : I32EnumAttr<"LoadDist",
       I32EnumAttrCase<"SPLT4CHN_B8",  21>,
       I32EnumAttrCase<"SPLT2CHN_B8",  22>,
       I32EnumAttrCase<"SPLT2CHN_B16", 23>,
+      // Mask / plds patterns. Enum ordinals are 24/25, but convert-hivmave-to-
+      // ave-intrin must map them to CCE MaskDist encodings US=1 / DS=2 for
+      // hivm.plds.b8 (see mapLoadDistToPldsMaskDist). Do not pass 24/25 through.
       I32EnumAttrCase<"US",           24>,
       I32EnumAttrCase<"DS",           25>,
       I32EnumAttrCase<"PK",           26>,
@@ -230,6 +233,20 @@ def AVE_VCVT_PartType : I32EnumAttr<"VCVT_PartType",
 }
 
 def AVE_VCVT_PartTypeAttr : EnumAttr<AVE_Dialect, AVE_VCVT_PartType, "vcvt_part_type"> {
+  let assemblyFormat = [{`<` $value `>`}];
+}
+
+def AVE_VCVT_MODE_UNKNOWN : I32EnumAttrCase<"UNKNOWN", 0, "unknown">;
+def AVE_VCVT_MODE_MERGING : I32EnumAttrCase<"MERGING", 1, "merging">;
+def AVE_VCVT_MODE_ZEROING : I32EnumAttrCase<"ZEROING", 2, "zeroing">;
+def AVE_VCVT_ModeType : I32EnumAttr<"VCVT_ModeType",
+    "Mode patterns for the #mode option in AVE VCVT operation",
+    [AVE_VCVT_MODE_UNKNOWN, AVE_VCVT_MODE_MERGING, AVE_VCVT_MODE_ZEROING]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "mlir::hivmave";
+}
+
+def AVE_VCVT_ModeTypeAttr : EnumAttr<AVE_Dialect, AVE_VCVT_ModeType, "vcvt_mode_type"> {
   let assemblyFormat = [{`<` $value `>`}];
 }
 
@@ -423,6 +440,21 @@ def AVE_PregCastMode : I32EnumAttr<"PregCastMode",
 }
 
 def AVE_PregCastModeAttr : EnumAttr<AVE_Dialect, AVE_PregCastMode, "preg_cast_mode"> {
+  let assemblyFormat = [{`<` $value `>`}];
+}
+
+def AVE_SqueezeStore_STORED : I32EnumAttrCase<"STORED", 0, "stored">;
+def AVE_SqueezeStore_NO_STORED : I32EnumAttrCase<"NO_STORED", 1, "no_stored">;
+
+def AVE_SqueezeStoreMode : I32EnumAttr<"SqueezeStoreMode",
+    "Store mode for AVE squeeze operation",
+    [AVE_SqueezeStore_STORED, AVE_SqueezeStore_NO_STORED]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "mlir::hivmave";
+}
+
+def AVE_SqueezeStoreModeAttr
+    : EnumAttr<AVE_Dialect, AVE_SqueezeStoreMode, "squeeze_store"> {
   let assemblyFormat = [{`<` $value `>`}];
 }
 

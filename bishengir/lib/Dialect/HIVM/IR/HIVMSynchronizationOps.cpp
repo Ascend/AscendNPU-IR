@@ -86,9 +86,9 @@ void hivm::printFlagID(OpAsmPrinter &printer, Operation *op,
 //===----------------------------------------------------------------------===//
 // Printing/parsing for SyncID
 //===----------------------------------------------------------------------===//
-ParseResult hivm::parseSyncID(
-    OpAsmParser &parser, IntegerAttr &syncIDAttr,
-    std::optional<OpAsmParser::UnresolvedOperand> &syncIDValue) {
+ParseResult
+hivm::parseSyncID(OpAsmParser &parser, IntegerAttr &syncIDAttr,
+                  std::optional<OpAsmParser::UnresolvedOperand> &syncIDValue) {
   OpAsmParser::UnresolvedOperand operand;
   auto res = parser.parseOptionalOperand(operand);
   if (res.has_value() && succeeded(res.value())) {
@@ -103,7 +103,7 @@ ParseResult hivm::parseSyncID(
 }
 
 void hivm::printSyncID(OpAsmPrinter &printer, Operation *op,
-                        IntegerAttr syncIDAttr, Value syncIDValue) {
+                       IntegerAttr syncIDAttr, Value syncIDValue) {
   if (syncIDAttr) {
     printer << syncIDAttr.getValue();
     return;
@@ -142,6 +142,156 @@ LogicalResult WaitFlagOp::verify() {
     return emitOpError("Event ID is needed!");
   }
   return success();
+}
+
+//===----------------------------------------------------------------------===//
+// TryWaitOp
+//===----------------------------------------------------------------------===//
+
+OpFoldResult TryWaitOp::getFlagId() {
+  if (auto attr = getStaticFlagId())
+    return *attr;
+  return getDynamicFlagId();
+}
+
+LogicalResult TryWaitOp::verify() {
+  auto flagIdAttr = getStaticFlagId();
+  Value flagId = getDynamicFlagId();
+  if (flagIdAttr.has_value() && flagId)
+    return emitOpError("only one flag ID is supported");
+  if (!flagIdAttr.has_value() && !flagId)
+    return emitOpError("flag ID is needed");
+  if (flagIdAttr &&
+      (flagIdAttr->getValue().isNegative() || flagIdAttr->getValue().ugt(31)))
+    return emitOpError("static flag ID must fit the 5-bit Xt field (0..31)");
+  return success();
+}
+
+void TryWaitOp::build(OpBuilder &builder, OperationState &state,
+                      OpFoldResult flagId, TryWaitSyncMode syncMode) {
+  auto syncModeAttr = TryWaitSyncModeAttr::get(builder.getContext(), syncMode);
+  if (auto attr = dyn_cast_if_present<Attribute>(flagId)) {
+    build(builder, state, builder.getI64Type(), cast<IntegerAttr>(attr),
+          nullptr, syncModeAttr);
+    return;
+  }
+  build(builder, state, builder.getI64Type(), nullptr, cast<Value>(flagId),
+        syncModeAttr);
+}
+
+//===----------------------------------------------------------------------===//
+// Individual intra-block synchronization
+//===----------------------------------------------------------------------===//
+
+template <typename Op> static LogicalResult verifyBufferSync(Op op) {
+  auto id = op.getStaticBufId();
+  Value dynamic = op.getDynamicBufId();
+  if (id.has_value() == static_cast<bool>(dynamic))
+    return op.emitOpError(
+        "exactly one static or dynamic buffer ID is required");
+  if (!id && dynamic)
+    if (auto constant = dynamic.getDefiningOp<arith::ConstantIntOp>())
+      id = cast<IntegerAttr>(constant.getValue());
+  if (id && (id->getValue().isNegative() || id->getValue().ugt(31)))
+    return op.emitOpError("buffer ID must be in [0, 31]");
+  auto pipe = op.getPipe().getPipe();
+  bool valid = pipe == PIPE::PIPE_S || pipe == PIPE::PIPE_MTE2 ||
+               pipe == PIPE::PIPE_M || pipe == PIPE::PIPE_MTE1 ||
+               pipe == PIPE::PIPE_FIX || pipe == PIPE::PIPE_V ||
+               pipe == PIPE::PIPE_MTE3;
+  if (!valid)
+    return op.emitOpError("unsupported buffer synchronization pipe");
+  return success();
+}
+
+LogicalResult GetBufOp::verify() { return verifyBufferSync(*this); }
+LogicalResult RlsBufOp::verify() { return verifyBufferSync(*this); }
+
+OpFoldResult GetBufOp::getBufId() {
+  if (auto attr = getStaticBufId())
+    return *attr;
+  return getDynamicBufId();
+}
+
+OpFoldResult RlsBufOp::getBufId() {
+  if (auto attr = getStaticBufId())
+    return *attr;
+  return getDynamicBufId();
+}
+
+void GetBufOp::build(OpBuilder &builder, OperationState &state, PipeAttr pipe,
+                     OpFoldResult id, BoolAttr mode) {
+  if (auto attr = dyn_cast_if_present<Attribute>(id))
+    build(builder, state, pipe, cast<IntegerAttr>(attr), Value{}, mode);
+  else
+    build(builder, state, pipe, IntegerAttr{}, cast<Value>(id), mode);
+}
+
+void RlsBufOp::build(OpBuilder &builder, OperationState &state, PipeAttr pipe,
+                     OpFoldResult id, BoolAttr mode) {
+  if (auto attr = dyn_cast_if_present<Attribute>(id))
+    build(builder, state, pipe, cast<IntegerAttr>(attr), Value{}, mode);
+  else
+    build(builder, state, pipe, IntegerAttr{}, cast<Value>(id), mode);
+}
+
+template <typename Op> static LogicalResult verifyIntraBlockSync(Op op) {
+  auto attr = op.getStaticSyncId();
+  Value value = op.getDynamicSyncId();
+  if (attr.has_value() == static_cast<bool>(value))
+    return op.emitOpError("exactly one static or dynamic sync ID is required");
+  if (!attr && value)
+    if (auto constant = value.getDefiningOp<arith::ConstantIntOp>())
+      attr = cast<IntegerAttr>(constant.getValue());
+  auto core = op.getTcoreType().getTcoretype();
+  if (core != TCoreType::CUBE && core != TCoreType::VECTOR)
+    return op.emitOpError("requires an explicit CUBE or VECTOR core type");
+  if (op.getPipe().getPipe() == PIPE::PIPE_ALL ||
+      !checkPipeInferredCoreType(op.getPipe().getPipe(), core))
+    return op.emitOpError(
+        "pipe must match the core type and cannot be PIPE_ALL");
+  unsigned maximum = core == TCoreType::CUBE ? 31 : 15;
+  if (attr && (attr->getValue().isNegative() || attr->getValue().ugt(maximum)))
+    return op.emitOpError("sync ID out of range for the core type");
+  return success();
+}
+
+OpFoldResult SyncIntraBlockSetOp::getSyncId() {
+  if (auto attr = getStaticSyncId())
+    return *attr;
+  return getDynamicSyncId();
+}
+
+LogicalResult SyncIntraBlockSetOp::verify() {
+  return verifyIntraBlockSync(*this);
+}
+
+void SyncIntraBlockSetOp::build(OpBuilder &builder, OperationState &state,
+                                TCoreTypeAttr core, PipeAttr pipe,
+                                OpFoldResult id) {
+  if (auto attr = dyn_cast_if_present<Attribute>(id))
+    build(builder, state, core, pipe, cast<IntegerAttr>(attr), Value{});
+  else
+    build(builder, state, core, pipe, IntegerAttr{}, cast<Value>(id));
+}
+
+OpFoldResult SyncIntraBlockWaitOp::getSyncId() {
+  if (auto attr = getStaticSyncId())
+    return *attr;
+  return getDynamicSyncId();
+}
+
+LogicalResult SyncIntraBlockWaitOp::verify() {
+  return verifyIntraBlockSync(*this);
+}
+
+void SyncIntraBlockWaitOp::build(OpBuilder &builder, OperationState &state,
+                                 TCoreTypeAttr core, PipeAttr pipe,
+                                 OpFoldResult id) {
+  if (auto attr = dyn_cast_if_present<Attribute>(id))
+    build(builder, state, core, pipe, cast<IntegerAttr>(attr), Value{});
+  else
+    build(builder, state, core, pipe, IntegerAttr{}, cast<Value>(id));
 }
 
 //===----------------------------------------------------------------------===//
@@ -232,9 +382,9 @@ void SyncBlockWaitOp::build(OpBuilder &odsBuilder, OperationState &odsState,
 }
 
 void SyncBlockWaitOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                           TCoreTypeAttr tcore_type, PipeAttr tpipe,
-                           PipeAttr pipe, OpFoldResult flag_id,
-                           hivm::SyncBlockInstrModeAttr tsync_instr_mode) {
+                            TCoreTypeAttr tcore_type, PipeAttr tpipe,
+                            PipeAttr pipe, OpFoldResult flag_id,
+                            hivm::SyncBlockInstrModeAttr tsync_instr_mode) {
   if (auto attr = dyn_cast_if_present<Attribute>(flag_id)) {
     build(odsBuilder, odsState, tcore_type, tpipe, pipe,
           cast<IntegerAttr>(attr), nullptr, tsync_instr_mode);

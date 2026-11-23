@@ -1,0 +1,41 @@
+name: 📦️ Installation
+description: 反馈安装问题
+title: "[Installation]: "
+labels: ["installation"]
+
+body:
+- type: markdown
+  attributes:
+    value: >
+      **在提交新问题之前，请确保您已经在社区中搜索过相关问题，并使用了社区中提供的资源/工具后，仍未找到满意的解决方式。**
+- type: textarea
+  attributes:
+    label: 环境信息
+    description: |
+      请粘贴您当前的环境信息。
+    value: |
+      ```
+      例如：
+      - 操作系统
+      - 昇腾硬件信息
+      - CANN软件版本
+      - 安装的对应软件版本
+      ```
+  validations:
+    required: true
+- type: textarea
+  attributes:
+    label: 您是如何安装操作的
+    description: |
+      请粘贴您尝试执行的完整命令，以及安装过程中的完整报错信息。
+    value: |
+      ```sh
+      # 示例：
+      pip install ... # 以及其他完整的安装命令
+      ```
+  validations:
+    required: true
+- type: markdown
+  attributes:
+    value: >
+      欢迎加入社区，感谢您对社区的贡献 🎉!

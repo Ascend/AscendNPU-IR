@@ -40,12 +40,14 @@ namespace mlir {
 
 using namespace mlir;
 
+#ifndef NDEBUG
 static void printKeepMask(raw_ostream &os, const llvm::SmallBitVector &keep) {
   os << '[';
   for (unsigned i = 0, e = keep.size(); i != e; ++i)
     os << (keep.test(i) ? '1' : '0');
   os << ']';
 }
+#endif
 
 static void
 debugUnexpectedBuilderFailure(StringRef where, Operation *op,
@@ -380,7 +382,8 @@ public:
   matchAndRewrite(scope::ScopeOp scopeOp,
                   mlir::PatternRewriter &rewriter) const override {
     const unsigned numResults = scopeOp.getNumResults();
-    if (numResults == 0 || !scopeOp->getNumRegions() || scopeOp.getRegion().empty())
+    if (numResults == 0 || !scopeOp->getNumRegions() ||
+        scopeOp.getRegion().empty())
       return failure();
 
     Block *body = scopeOp.getBody();
@@ -421,7 +424,8 @@ public:
     }
 
     rewriter.setInsertionPoint(scopeOp);
-    auto newScope = rewriter.create<scope::ScopeOp>(scopeOp.getLoc(), newResultTypes);
+    auto newScope =
+        rewriter.create<scope::ScopeOp>(scopeOp.getLoc(), newResultTypes);
     newScope->setAttrs(scopeOp->getAttrs());
     rewriter.createBlock(&newScope.getRegion());
     Block *newBody = newScope.getBody();
@@ -708,7 +712,8 @@ static void tracebackMemVals(const SmallVectorImpl<Value> &rootVals,
                              VisitStepT &&onVisitStep) {
   std::queue<Value> que;
   llvm::DenseSet<Value> visitedVals;
-  auto printTracebackValue = [&](const char *label, Value value) {
+  [[maybe_unused]] auto printTracebackValue = [&](const char *label,
+                                                  Value value) {
     if (auto opResult = dyn_cast<OpResult>(value)) {
       llvm::dbgs() << label << "result#" << opResult.getResultNumber()
                    << " of ";

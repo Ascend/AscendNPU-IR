@@ -24,6 +24,7 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/FixpipeCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/InsertPropagation.h"
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/PropagateOp.h"
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/ResolvePropagation.h"
@@ -53,6 +54,8 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
 
+#include <optional>
+
 namespace mlir {
 #define GEN_PASS_DEF_INSERTLOADSTOREFORMIXCV
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
@@ -70,39 +73,6 @@ namespace {
 static const llvm::StringLiteral kConvertLayoutOperand =
     "converted-layout-operand";
 
-llvm::SmallVector<size_t> getIntegersOfArrayAttr(Operation *op,
-                                                 llvm::StringLiteral attrName) {
-  ArrayAttr arr = op->getAttrOfType<ArrayAttr>(attrName);
-  llvm::SmallVector<size_t> result;
-  if (!arr)
-    return result;
-  result.reserve(arr.size());
-  for (Attribute attr : arr) {
-    auto intAttr = dyn_cast<IntegerAttr>(attr);
-    // In production you may want to assert or handle errors.
-    assert(intAttr && "ArrayAttr element is not an IntegerAttr");
-    // Use getValue().getZExtValue() to interpret as unsigned.
-    result.push_back(intAttr.getValue().getZExtValue());
-  }
-  return result;
-}
-
-void insertToIntegerAttrOfArrayAttr(Operation *op, llvm::StringLiteral attrName,
-                                    size_t value, PatternRewriter &rewriter) {
-  auto arr = getIntegersOfArrayAttr(op, attrName);
-  if (std::find(arr.begin(), arr.end(), value) != arr.end())
-    return;
-  arr.push_back(value);
-  std::sort(arr.begin(), arr.end());
-
-  SmallVector<Attribute> newAttrs;
-  for (auto idx : arr) {
-    newAttrs.push_back(
-        rewriter.getIntegerAttr(rewriter.getIntegerType(64), idx));
-  }
-  op->setAttr(attrName, rewriter.getArrayAttr(newAttrs));
-}
-
 struct InsertLoadStoreForMixCVPass
     : public impl::InsertLoadStoreForMixCVBase<InsertLoadStoreForMixCVPass> {
 public:
@@ -111,7 +81,7 @@ public:
 
 private:
   void runLegacyInsertLoadStoreForMixCV();
-  bool isA5Target();
+  bool supportsRegBaseMixedCV();
   bool isEnabledTightCoupledBuffer();
   SmallVector<PropagationStep> getPropagationSteps();
   LogicalResult insertPropagationOp(func::FuncOp funcOp);
@@ -120,21 +90,38 @@ private:
                                        PropagationStep step);
   LogicalResult ensureAllocInUbAddressSpace(func::FuncOp funcOp);
   LogicalResult addConvertLayoutUBToL1(func::FuncOp funcOp);
+  /// Write core types from the propagator result. The AIV substitute stamps
+  /// VECTOR itself and does not call this.
   LogicalResult setOperationsCoreType(OpBuilder builder, func::FuncOp funcOp);
 };
 
-bool InsertLoadStoreForMixCVPass::isA5Target() {
+bool InsertLoadStoreForMixCVPass::supportsRegBaseMixedCV() {
   auto moduleOp = getOperation()->getParentOfType<ModuleOp>();
   auto moduleTarget = hacc::utils::getTargetDevice(moduleOp);
   if (moduleTarget.has_value())
-    return hacc::utils::isAscend950(moduleTarget.value());
-  return hacc::utils::isAscend950(this->target);
+    return hacc::utils::supportsRegBaseVectorLowering(moduleTarget.value());
+  return hacc::utils::supportsRegBaseVectorLowering(
+      hacc::symbolizeTargetDeviceEnum(this->target));
 }
 
 bool InsertLoadStoreForMixCVPass::isEnabledTightCoupledBuffer() {
   if (disableTightCoupledBuffer)
     return false;
-  return isA5Target();
+  auto moduleOp = getOperation()->getParentOfType<ModuleOp>();
+  auto moduleTarget = hacc::utils::getTargetDevice(moduleOp);
+  auto targetDevice =
+      moduleTarget.value_or(hacc::symbolizeTargetDeviceEnum(this->target));
+  auto arch = hacc::getArchitecture(targetDevice);
+  auto ratio = getCoreRatioAttr(getOperation());
+  // Enable only the explicit 1:1 pairing for A6 coupled transfers.
+  if (arch == bishengir::npu::NPUArchitectureKind::kDav920R1)
+    return ratio && ratio.getCube() == 1 && ratio.getVector() == 1;
+  if (arch != bishengir::npu::NPUArchitectureKind::kDavC310)
+    return false;
+  // Preserve the C310 policy: explicit CV11 uses GM staging.
+  if (ratio)
+    return ratio.getCube() != 1 || ratio.getVector() != 1;
+  return true;
 }
 
 // TODO: change certain places to trace
@@ -1046,7 +1033,8 @@ InsertLoadStoreForMixCVPass::runPropagateOpPatterns(func::FuncOp funcOp,
                                                     PropagationStep step) {
   RewritePatternSet patterns(funcOp.getContext());
   GreedyRewriteConfig rewriteConfig;
-  patterns.add<PropagateUpPattern>(patterns.getContext(), step, isA5Target());
+  patterns.add<PropagateUpPattern>(patterns.getContext(), step,
+                                   supportsRegBaseMixedCV());
   patterns.add<PropagateDownPattern>(patterns.getContext(), step);
   if (step != PropagationStep::LOCAL && step != PropagationStep::ALL)
     patterns.add<ControlFlowPropagatePattern>(patterns.getContext(), step);
@@ -1083,7 +1071,7 @@ InsertLoadStoreForMixCVPass::insertPropagationOp(func::FuncOp funcOp) {
   RewritePatternSet patterns(funcOp.getContext());
   GreedyRewriteConfig rewriteConfig;
   patterns.add<InsertPropagationPattern>(patterns.getContext());
-  if (isA5Target())
+  if (supportsRegBaseMixedCV())
     patterns.add<A5InsertionPattern>(patterns.getContext());
   if (isEnabledTightCoupledBuffer()) {
     patterns.add<TightCoupledBufferInsertionPattern>(patterns.getContext());
@@ -1167,39 +1155,6 @@ static FailureOr<uint64_t> getBlockElemsFor32BAlign(Type elemType) {
   return kAlignBytes / elemBytes;
 }
 
-static void ensureAllocInUbAddressSpaceIfNeeded(PatternRewriter &rewriter,
-                                                memref::AllocOp allocOp) {
-  auto oldType = dyn_cast<MemRefType>(allocOp.getMemref().getType());
-  if (!oldType)
-    return;
-  auto maybeSpace = mlir::hivm::getOptionalHIVMAddressSpace(oldType);
-  if (maybeSpace.has_value())
-    return;
-
-  MLIRContext *ctx = rewriter.getContext();
-  auto ubSpaceAttr = hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::UB);
-  auto newType =
-      mlir::MemRefType::get(oldType.getShape(), oldType.getElementType(),
-                            oldType.getLayout(), ubSpaceAttr);
-
-  SmallVector<OpOperand *> originalUses;
-  for (OpOperand &use : allocOp.getMemref().getUses())
-    originalUses.push_back(&use);
-
-  OpBuilder::InsertionGuard guard(rewriter);
-  rewriter.modifyOpInPlace(allocOp,
-                           [&]() { allocOp.getMemref().setType(newType); });
-
-  rewriter.setInsertionPointAfter(allocOp);
-  Value replacement = allocOp.getMemref();
-  if (replacement.getType() != oldType) {
-    replacement = rewriter.create<memref::MemorySpaceCastOp>(
-        allocOp.getLoc(), oldType, replacement);
-  }
-  for (OpOperand *use : originalUses)
-    use->set(replacement);
-}
-
 /// pattern2
 /// %53 = hivm.hir.vcast ins(%42 : tensor<16x16xf32>) outs(%19 : ...) -> ...
 /// %54 = tensor.empty() : tensor<16x16xf32>
@@ -1216,8 +1171,9 @@ static void ensureAllocInUbAddressSpaceIfNeeded(PatternRewriter &rewriter,
 /// %54 = tensor.empty() : tensor<16x16xf32>
 /// %55 = hivm.hir.mmadL1 ins(%copy, %52, %true, %c16, %c16, %c16 : ...
 
+template <typename MmadOpType>
 LogicalResult
-insertConvertLayout(PatternRewriter &rewriter, hivm::MmadL1Op mmadOp,
+insertConvertLayout(PatternRewriter &rewriter, MmadOpType mmadOp,
                     const llvm::SmallVector<OpOperand *> &consumerOperands) {
   if (consumerOperands.empty()) {
     return failure();
@@ -1236,8 +1192,9 @@ insertConvertLayout(PatternRewriter &rewriter, hivm::MmadL1Op mmadOp,
     rewriter.setInsertionPoint(consumerOp);
 
     // TODO: Consider encapsulating it as an nd2dz function
-    int64_t M = tensorType.getDimSize(0);
-    int64_t N = tensorType.getDimSize(1);
+    int64_t rank = tensorType.getRank();
+    int64_t M = tensorType.getDimSize(rank - 2);
+    int64_t N = tensorType.getDimSize(rank - 1);
     bool isA = (origTensor == mmadOp.getA());
     bool isTranspose = isA ? mmadOp.getATranspose().has_value()
                            : mmadOp.getBTranspose().has_value();
@@ -1250,7 +1207,10 @@ insertConvertLayout(PatternRewriter &rewriter, hivm::MmadL1Op mmadOp,
     if ((M != ShapedType::kDynamic && (M % alignM)) || (newN != N)) {
       int64_t newM = static_cast<int64_t>(
           AlignUp(static_cast<uint64_t>(M), static_cast<uint64_t>(alignM)));
-      auto paddedType = RankedTensorType::get({newM, newN}, elemType);
+      SmallVector<int64_t> paddedShape(tensorType.getShape());
+      paddedShape[rank - 2] = newM;
+      paddedShape[rank - 1] = newN;
+      auto paddedType = RankedTensorType::get(paddedShape, elemType);
       Value zeroConst = rewriter.create<arith::ConstantOp>(
           loc, elemType, rewriter.getZeroAttr(elemType));
 
@@ -1259,12 +1219,11 @@ insertConvertLayout(PatternRewriter &rewriter, hivm::MmadL1Op mmadOp,
       auto vbrcOp = rewriter.create<hivm::VBrcOp>(loc, paddedType, zeroConst,
                                                   emptyForVbrc);
       Value initializedMatrix = vbrcOp->getResult(0);
-      SmallVector<OpFoldResult> offsets = {rewriter.getIndexAttr(0),
-                                           rewriter.getIndexAttr(0)};
-      SmallVector<OpFoldResult> sizes = {rewriter.getIndexAttr(M),
-                                         rewriter.getIndexAttr(N)};
-      SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1),
-                                           rewriter.getIndexAttr(1)};
+      SmallVector<OpFoldResult> offsets(rank, rewriter.getIndexAttr(0));
+      SmallVector<OpFoldResult> sizes;
+      SmallVector<OpFoldResult> strides(rank, rewriter.getIndexAttr(1));
+      for (int64_t dim : tensorType.getShape())
+        sizes.push_back(rewriter.getIndexAttr(dim));
       origTensor = rewriter.create<tensor::InsertSliceOp>(
           loc, origTensor, initializedMatrix, offsets, sizes, strides);
       tensorType = mlir::cast<RankedTensorType>(origTensor.getType());
@@ -1272,7 +1231,6 @@ insertConvertLayout(PatternRewriter &rewriter, hivm::MmadL1Op mmadOp,
       N = newN;
     }
 
-    SmallVector<ReassociationIndices> reassociation = {{0}, {1, 2}};
     auto blkOr = getBlockElemsFor32BAlign(elemType);
     if (failed(blkOr)) {
       return consumerOp->emitOpError()
@@ -1284,18 +1242,36 @@ insertConvertLayout(PatternRewriter &rewriter, hivm::MmadL1Op mmadOp,
     int64_t M1 = M / alignM;
     // TODO: enhance UB alignment
     int64_t N1 = N / blk;
-    auto dstTy = RankedTensorType::get({M, N1, blk}, elemType);
+    SmallVector<int64_t> batchShape(tensorType.getShape().drop_back(2));
+    SmallVector<int64_t> expandedShape(batchShape);
+    expandedShape.append({M, N1, blk});
+    SmallVector<ReassociationIndices> reassociation;
+    for (int64_t i = 0; i < rank - 1; ++i)
+      reassociation.push_back({i});
+    reassociation.push_back({rank - 1, rank});
+    auto dstTy = RankedTensorType::get(expandedShape, elemType);
     auto expandOp = rewriter.create<tensor::ExpandShapeOp>(
         loc, dstTy, origTensor, reassociation);
-    auto emptyTensorType = RankedTensorType::get({N1, M, blk}, elemType);
+    SmallVector<int64_t> transposedShape(batchShape);
+    transposedShape.append({N1, M, blk});
+    auto emptyTensorType = RankedTensorType::get(transposedShape, elemType);
     auto emptyTransposed = rewriter.create<tensor::EmptyOp>(
         loc, emptyTensorType.getShape(), emptyTensorType.getElementType());
-    SmallVector<int64_t> premVec = {1, 0, 2};
+    SmallVector<int64_t> premVec;
+    for (int64_t i = 0; i < rank - 2; ++i)
+      premVec.push_back(i);
+    premVec.append({rank - 1, rank - 2, rank});
     auto transposed = rewriter.create<hivm::VTransposeOp>(
         loc, emptyTransposed->getResultTypes(), expandOp.getResult(),
         emptyTransposed.getResult(), rewriter.getDenseI64ArrayAttr(premVec));
-    auto nzTy = RankedTensorType::get({N1, M1, alignM, blk}, elemType);
-    SmallVector<ReassociationIndices> nzReassoc = {{0}, {1, 2}, {3}};
+    SmallVector<int64_t> nzShape(batchShape);
+    nzShape.append({N1, M1, alignM, blk});
+    auto nzTy = RankedTensorType::get(nzShape, elemType);
+    SmallVector<ReassociationIndices> nzReassoc;
+    for (int64_t i = 0; i < rank - 1; ++i)
+      nzReassoc.push_back({i});
+    nzReassoc.push_back({rank - 1, rank});
+    nzReassoc.push_back({rank + 1});
     auto nzOp = rewriter.create<tensor::ExpandShapeOp>(
         loc, nzTy, transposed->getResult(0), nzReassoc);
     rewriter.modifyOpInPlace(consumerOp, [&]() { consumerOperand->set(nzOp); });
@@ -1318,17 +1294,17 @@ template <typename... OpTypes> static bool traceVector(Value v) {
           ...);
 }
 
-template <typename OpType>
-struct AddConvertLayoutUBToL1 : public OpRewritePattern<hivm::MmadL1Op> {
-  using OpRewritePattern<hivm::MmadL1Op>::OpRewritePattern;
+template <typename OpType, typename MmadOpType = hivm::MmadL1Op>
+struct AddConvertLayoutUBToL1 : public OpRewritePattern<MmadOpType> {
+  using OpRewritePattern<MmadOpType>::OpRewritePattern;
   ~AddConvertLayoutUBToL1() override = default;
-  LogicalResult matchAndRewrite(hivm::MmadL1Op op,
+  LogicalResult matchAndRewrite(MmadOpType op,
                                 PatternRewriter &rewriter) const override {
     bool changed = false;
     for (OpOperand *operand : op.getDpsInputOperands()) {
       Value beforeValue = operand->get();
       auto operandIdx = operand->getOperandNumber();
-      auto inserted = getIntegersOfArrayAttr(op, kConvertLayoutOperand);
+      auto inserted = utils::getIntegersOfArrayAttr(op, kConvertLayoutOperand);
       if (std::find(inserted.begin(), inserted.end(), operandIdx) !=
           inserted.end())
         continue;
@@ -1404,18 +1380,19 @@ struct AddConvertLayoutUBToL1 : public OpRewritePattern<hivm::MmadL1Op> {
       llvm::SmallVector<OpOperand *> consumerOperands{operand};
       bool isBiasOperand = (beforeValue == op.getPerChannelBias());
       auto tensorType = mlir::dyn_cast<RankedTensorType>(beforeValue.getType());
-      // Only rank-2 tensors (original ND format) need to be transposed.
-      // After ND2NZ conversion the tensor becomes rank-4 (NZ format), so
-      // transposition is not required.
-      bool needTransposed = (tensorType.getRank() == 2);
+      // A matrix is rank-2, while a batched matrix is rank-3. Their converted
+      // fractal layouts are rank-4 and rank-5 respectively.
+      int64_t expectedNDRank =
+          std::is_same_v<MmadOpType, hivm::BatchMmadL1Op> ? 3 : 2;
+      bool needTransposed = tensorType.getRank() == expectedNDRank;
       if (isBiasOperand || !needTransposed)
         continue;
       LogicalResult result =
           insertConvertLayout(rewriter, op, consumerOperands);
       if (failed(result))
         continue;
-      insertToIntegerAttrOfArrayAttr(op, kConvertLayoutOperand, operandIdx,
-                                     rewriter);
+      utils::insertIntegerAttrToArrayAttr(op, kConvertLayoutOperand, operandIdx,
+                                          rewriter);
 
       // Handle case where multiple operands of `op` are same SSA value.
       // e.g., `hivm.hir.mmadL1 ins(%vec, %vec, ...)` where both operands are
@@ -1430,8 +1407,8 @@ struct AddConvertLayoutUBToL1 : public OpRewritePattern<hivm::MmadL1Op> {
           if (operand->get() != beforeValue)
             continue;
           op->setOperand(operand->getOperandNumber(), converted);
-          insertToIntegerAttrOfArrayAttr(op, kConvertLayoutOperand,
-                                         operand->getOperandNumber(), rewriter);
+          utils::insertIntegerAttrToArrayAttr(
+              op, kConvertLayoutOperand, operand->getOperandNumber(), rewriter);
         }
       });
 
@@ -1456,7 +1433,7 @@ struct AddConvertLayoutUBToL1<hivm::FixpipeOp>
 
     for (OpOperand &operand : op->getOpOperands()) {
       auto operandIdx = operand.getOperandNumber();
-      auto inserted = getIntegersOfArrayAttr(op, kConvertLayoutOperand);
+      auto inserted = utils::getIntegersOfArrayAttr(op, kConvertLayoutOperand);
       if (std::find(inserted.begin(), inserted.end(), operandIdx) !=
           inserted.end())
         continue;
@@ -1486,8 +1463,9 @@ struct AddConvertLayoutUBToL1<hivm::FixpipeOp>
           insertConvertLayout(rewriter, op, consumerOperands);
       if (failed(l1Result))
         continue;
-      insertToIntegerAttrOfArrayAttr(op.getOperation(), kConvertLayoutOperand,
-                                     operand.getOperandNumber(), rewriter);
+      utils::insertIntegerAttrToArrayAttr(op.getOperation(),
+                                          kConvertLayoutOperand,
+                                          operand.getOperandNumber(), rewriter);
 
       Value convertedToL1 = operand.get();
       if (valueAfterUb != convertedToL1) {
@@ -1521,12 +1499,27 @@ void populateAddConvertLayoutUBToL1(RewritePatternSet &patterns) {
   (patterns.add<AddConvertLayoutUBToL1<OpTypes>>(patterns.getContext()), ...);
 }
 
+template <typename... OpTypes>
+void populateBatchAddConvertLayoutUBToL1(RewritePatternSet &patterns) {
+  (patterns.add<AddConvertLayoutUBToL1<OpTypes, hivm::BatchMmadL1Op>>(
+       patterns.getContext()),
+   ...);
+}
+
 LogicalResult
 InsertLoadStoreForMixCVPass::addConvertLayoutUBToL1(func::FuncOp funcOp) {
   RewritePatternSet patterns(funcOp.getContext());
   GreedyRewriteConfig rewriteConfig;
   populateAddConvertLayoutUBToL1<
       tensor::InsertSliceOp, hivm::FixpipeOp, func::CallOp, mlir::scf::ForOp,
+      hivm::IndirectLoadOp, hivm::StrideLoadOp, mlir::hivm::GatherLoadOp,
+      mlir::scope::ScopeOp, tensor::CollapseShapeOp, bufferization::ToTensorOp,
+      memref::AllocOp,
+#define GET_OP_LIST
+#include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
+      >(patterns);
+  populateBatchAddConvertLayoutUBToL1<
+      tensor::InsertSliceOp, func::CallOp, mlir::scf::ForOp,
       hivm::IndirectLoadOp, hivm::StrideLoadOp, mlir::hivm::GatherLoadOp,
       mlir::scope::ScopeOp, tensor::CollapseShapeOp, bufferization::ToTensorOp,
       memref::AllocOp,
@@ -1541,6 +1534,9 @@ InsertLoadStoreForMixCVPass::addConvertLayoutUBToL1(func::FuncOp funcOp) {
 
   funcOp->walk(
       [](hivm::MmadL1Op op) -> void { op->removeAttr(kConvertLayoutOperand); });
+  funcOp->walk([](hivm::BatchMmadL1Op op) -> void {
+    op->removeAttr(kConvertLayoutOperand);
+  });
   return success();
 }
 
@@ -1627,7 +1623,8 @@ static LogicalResult setOperationsCoreTypeForA5(OpBuilder builder,
           auto inferNewCoreType =
               [&vbrcOp](UnrealizedConversionCastOp upProp) -> TCoreTypeAttr {
             auto coreType = PropagatorUtil::getCoreType(upProp);
-            if (coreType != TCoreType::CUBE_AND_VECTOR && coreType != TCoreType::CUBE_OR_VECTOR) {
+            if (coreType != TCoreType::CUBE_AND_VECTOR &&
+                coreType != TCoreType::CUBE_OR_VECTOR) {
               return TCoreTypeAttr::get(vbrcOp.getContext(), coreType);
             } else {
               auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
@@ -1742,27 +1739,60 @@ static LogicalResult setOperationsCoreTypeForA3(OpBuilder builder,
   return success();
 }
 
+static bool hasExplicitCoreType(TCoreTypeAttr attr) {
+  return attr && attr.getTcoretype() != TCoreType::CUBE_OR_VECTOR;
+}
+
+/// Attribute that stores the core type for an op the propagator path updates.
+/// `DebugOp` and `LoadOp` use their ODS `tcoretype` argument. `VBrcOp` and
+/// `tensor.extract` carry the free `tcore_type` attribute.
+static std::optional<StringRef> forcedCoreTypeAttrName(Operation *op) {
+  if (auto debugOp = dyn_cast<hivm::DebugOp>(op))
+    return debugOp.getTcoretypeAttrName().getValue();
+  if (auto loadOp = dyn_cast<hivm::LoadOp>(op))
+    return loadOp.getTcoretypeAttrName().getValue();
+  if (isa<hivm::VBrcOp, tensor::ExtractOp>(op))
+    return TCoreTypeAttr::name;
+  return std::nullopt;
+}
+
+/// Stamp `coreType` on the ops the propagator path would update. Existing
+/// explicit core types are left unchanged.
+static void setForcedOperationsCoreType(func::FuncOp funcOp,
+                                        TCoreType coreType) {
+  auto forcedAttr = TCoreTypeAttr::get(funcOp.getContext(), coreType);
+  funcOp->walk([&](Operation *op) {
+    auto attrName = forcedCoreTypeAttrName(op);
+    if (!attrName ||
+        hasExplicitCoreType(op->getAttrOfType<TCoreTypeAttr>(*attrName)))
+      return;
+    op->setAttr(*attrName, forcedAttr);
+  });
+}
+
 LogicalResult
 InsertLoadStoreForMixCVPass::setOperationsCoreType(OpBuilder builder,
                                                    func::FuncOp funcOp) {
-  if (isA5Target()) {
+  if (supportsRegBaseMixedCV())
     return setOperationsCoreTypeForA5(builder, funcOp);
-  }
   return setOperationsCoreTypeForA3(builder, funcOp);
 }
 
 void InsertLoadStoreForMixCVPass::runOnOperation() {
+  ModuleTargetAnalysis &targets = getAnalysis<ModuleTargetAnalysis>();
+  ModuleTargetAnalysisScope targetScope(targets);
+  markAnalysesPreserved<ModuleTargetAnalysis>();
   OpBuilder builder(&getContext());
   auto *ctx = &getContext();
   auto funcOp = getOperation();
 
   if (enableLegacy)
     return runLegacyInsertLoadStoreForMixCV();
-  if (!hacc::utils::isDeviceEntry(funcOp))
+  if (!hacc::utils::isCompilationRoot(funcOp))
     return;
 
   PassManager pm(ctx);
-  if (!isA5Target())
+  if (!supportsRegBaseMixedCV())
     pm.addPass(tensor::createReplicateOutEmptyTensorPass());
 
   if (isEnabledTightCoupledBuffer() && failed(addConvertLayoutUBToL1(funcOp))) {
@@ -1809,4 +1839,13 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
 std::unique_ptr<Pass> mlir::hivm::createInsertLoadStoreForMixCVPass(
     const InsertLoadStoreForMixCVOptions &options) {
   return std::make_unique<InsertLoadStoreForMixCVPass>(options);
+}
+
+LogicalResult mlir::hivm::substituteInsertLoadStoreForMixCV(Operation *op,
+                                                            const Pass &) {
+  auto func = dyn_cast<func::FuncOp>(op);
+  if (!func)
+    return success();
+  setForcedOperationsCoreType(func, TCoreType::VECTOR);
+  return success();
 }

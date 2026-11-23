@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
@@ -27,15 +28,21 @@
 #include "bishengir/Transforms/Passes.h"
 
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include <cstdint>
 
 namespace mlir {
-#define GEN_PASS_DECL_CREATEPRELOAD
 #define GEN_PASS_DEF_CREATEPRELOAD
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
 
@@ -53,6 +60,7 @@ struct PreloadInfo {
   // Preload info
   size_t preloadNum;
   size_t maxPreloadNum;
+  bool elideInactiveTail = false;
   Value maxPreloadValue;
   // Loop info
   Value indVar;
@@ -66,9 +74,13 @@ struct PreloadInfo {
   DenseMap<Value, size_t> preloadLocalBuffers;
   // IRMapping for rewriting
   SmallVector<IRMapping> mappings;
+  DenseSet<Value> carriedResults;
+  IRMapping carriedYields;
 };
 
 struct CreatePreloadPass : public impl::CreatePreloadBase<CreatePreloadPass> {
+  using Base = impl::CreatePreloadBase<CreatePreloadPass>;
+  using Base::Base;
   void runOnOperation() override;
 };
 
@@ -219,24 +231,34 @@ static Value
 preprocessLoopArgs(scf::ForOp forOp, SmallVector<Value> &newInitArgs,
                    DenseMap<Value, hivm::PointerCastOp> &valueToAdapt,
                    const PreloadInfo &info, OpBuilder &b) {
-  for (auto [initArg, iterArg] :
-       llvm::zip_equal(forOp.getInitArgs(), forOp.getRegionIterArgs())) {
+  for (auto [initArg, iterArg, yielded] :
+       llvm::zip_equal(forOp.getInitArgs(), forOp.getRegionIterArgs(),
+                       forOp.getYieldedValues())) {
     if (auto pointerCastOp = initArg.getDefiningOp<hivm::PointerCastOp>();
-        pointerCastOp && getPreloadLocalBufferNum(pointerCastOp, info)) {
+        pointerCastOp && getPreloadLocalBufferNum(pointerCastOp, info) &&
+        !info.carriedResults.contains(yielded) && yielded != iterArg) {
       valueToAdapt[iterArg] = pointerCastOp;
     } else {
       newInitArgs.push_back(initArg);
     }
   }
-  Value newUpperbound = b.create<arith::MulIOp>(
-      info.ub.getLoc(), info.maxPreloadValue, info.step);
-  newUpperbound =
-      b.create<arith::AddIOp>(info.ub.getLoc(), info.ub, newUpperbound);
-  return newUpperbound;
+  if (info.elideInactiveTail)
+    return info.ub;
+  Value extraIters = b.create<arith::MulIOp>(info.ub.getLoc(),
+                                             info.maxPreloadValue, info.step);
+  Value expandedUb =
+      b.create<arith::AddIOp>(info.ub.getLoc(), info.ub, extraIters);
+  // Keep empty loops empty: extra drain IVs would still run cloned SET/WAIT.
+  Value nonempty = b.create<arith::CmpIOp>(
+      info.ub.getLoc(), arith::CmpIPredicate::slt, info.lb, info.ub);
+  return b.create<arith::SelectOp>(info.ub.getLoc(), nonempty, expandedUb,
+                                   info.lb);
 }
 
 static Value getPreloadCondition(const PreloadInfo &info, Location loc,
                                  OpBuilder &b) {
+  if (info.elideInactiveTail)
+    return b.create<arith::ConstantIntOp>(loc, 1, 1);
   auto &mapping = info.mappings[info.preloadNum];
 
   Value indVar = mapping.lookup(info.indVar);
@@ -248,21 +270,35 @@ static Value getPreloadCondition(const PreloadInfo &info, Location loc,
   Value upperCond =
       b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, indVar, ub);
 
-  return b.create<arith::AndIOp>(loc, lowerCond, upperCond);
+  auto andOp = b.create<arith::AndIOp>(loc, lowerCond, upperCond);
+  auto markOp = b.create<annotation::MarkOp>(loc, andOp.getResult());
+  markOp->setAttr(hivm::PreloadNumAttr::name,
+                  b.getI32IntegerAttr(info.preloadNum));
+  return andOp;
 }
 
 static bool isRematerializableAliasOp(Operation *op) {
-  // PointerCastOp is not ViewLikeOpInterface because it creates a memref from
-  // raw addresses, but it can still be cloned as the root of a view chain.
-  return isa_and_nonnull<ViewLikeOpInterface, hivm::PointerCastOp>(op);
+  if (!op)
+    return false;
+  // View-like ops, pointer casts, and pure arithmetic ops can be rematerialized
+  // as part of a result chain in the preload skip branch.
+  return isa<ViewLikeOpInterface, hivm::PointerCastOp>(op) ||
+         isa<arith::ArithDialect>(op->getDialect());
 }
 
-static void rewriteScopeReturnOp(ValueRange returnResults,
+static bool keepScopeResult(Value result, Value returned,
+                            const PreloadInfo &info) {
+  return !getLocalBuffer(returned) || info.carriedResults.contains(result);
+}
+
+static void rewriteScopeReturnOp(scope::ScopeOp scopeOp,
+                                 ValueRange returnResults,
                                  const PreloadInfo &info, Location loc,
                                  OpBuilder &b) {
   SmallVector<Value> newReturns;
-  for (auto res : returnResults) {
-    if (!getLocalBuffer(res)) {
+  for (auto [result, res] :
+       llvm::zip_equal(scopeOp->getResults(), returnResults)) {
+    if (keepScopeResult(result, res, info)) {
       res = info.mappings[info.preloadNum].lookupOrDefault(res);
       newReturns.push_back(res);
     }
@@ -372,8 +408,8 @@ rematerializeViewLikeResult(Value value, scope::ScopeOp scopeOp,
 }
 
 static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
-                                PreloadInfo &info, ValueRange loopArgs,
-                                Location loc, OpBuilder &builder) {
+                                PreloadInfo &info, Location loc,
+                                OpBuilder &builder) {
   auto &scopeBody = scopeOp.getRegion().front();
   auto returnResults =
       cast<scope::ReturnOp>(scopeBody.getTerminator()).getResults();
@@ -381,8 +417,9 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
       loc, cond,
       [&](OpBuilder &b, Location loc) {
         SmallVector<Type> newScopeResultTypes;
-        for (auto res : returnResults) {
-          if (!getLocalBuffer(res))
+        for (auto [result, res] :
+             llvm::zip_equal(scopeOp->getResults(), returnResults)) {
+          if (keepScopeResult(result, res, info))
             newScopeResultTypes.push_back(res.getType());
         }
         auto newOp =
@@ -395,7 +432,7 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
 
         b.setInsertionPointToEnd(bodyBlock);
         rewriteBody(&scopeBody, info, b);
-        rewriteScopeReturnOp(returnResults, info, loc, b);
+        rewriteScopeReturnOp(scopeOp, returnResults, info, loc, b);
         b.setInsertionPointAfter(newOp);
         b.create<scf::YieldOp>(loc, newOp->getResults());
       },
@@ -404,10 +441,15 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
         IRMapping viewMapping;
         for (auto [res, retRes] :
              llvm::zip_equal(scopeOp->getResults(), returnResults)) {
-          if (!getLocalBuffer(retRes)) {
-            if (res.hasOneUse() && isa<scf::YieldOp>(*res.user_begin())) {
-              auto oprNum = res.use_begin()->getOperandNumber();
-              newYields.push_back(loopArgs[oprNum]);
+          if (keepScopeResult(res, retRes, info)) {
+            auto yieldUse = llvm::find_if(res.getUses(), [](OpOperand &use) {
+              return isa<scf::YieldOp>(use.getOwner());
+            });
+            if (yieldUse != res.use_end()) {
+              auto oprNum = yieldUse->getOperandNumber();
+              auto loop = cast<scf::ForOp>(scopeOp->getParentOp());
+              newYields.push_back(info.mappings[info.preloadNum].lookup(
+                  loop.getRegionIterArgs()[oprNum]));
             } else if (auto pointerCastOp =
                            retRes.getDefiningOp<hivm::PointerCastOp>()) {
               auto newRes = b.clone(*pointerCastOp)->getResult(0);
@@ -428,14 +470,34 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
 }
 
 static bool isSynchronizationOp(Operation *op) {
-  return isa<hivm::SetFlagOp, hivm::WaitFlagOp, hivm::PipeBarrierOp,
-             hivm::SyncBlockOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp>(
-      op);
+  return op->hasTrait<OpTrait::HIVMSyncOpTrait>();
+}
+
+// A single stage needs no fill/drain iteration. Retain the guarded expansion
+// if the otherwise inactive tail would execute effects outside stage scopes,
+// including synchronization. Pointer construction and marks are metadata.
+static bool
+canElideInactiveTail(scf::ForOp loop,
+                     const DenseMap<Operation *, size_t> &scopeToIdx,
+                     size_t maxPreloadNum) {
+  // An unguarded scalar counter would advance even on the inactive tick.
+  for (auto [arg, yielded] :
+       llvm::zip(loop.getRegionIterArgs(), loop.getYieldedValues()))
+    if (yielded != arg && !scopeToIdx.contains(yielded.getDefiningOp()))
+      return false;
+  return maxPreloadNum == 1 &&
+         llvm::all_of(scopeToIdx,
+                      [](const auto &entry) { return entry.second == 0; }) &&
+         llvm::all_of(loop.getBody()->without_terminator(), [&](Operation &op) {
+           return scopeToIdx.contains(&op) ||
+                  isa<hivm::PointerCastOp, annotation::MarkOp>(op) ||
+                  (op.getNumRegions() == 0 && isMemoryEffectFree(&op));
+         });
 }
 
 static void rewritePreloadLoop(scf::ForOp forOp,
-                               SmallVector<scope::ScopeOp, 4> scopes,
-                               size_t maxPreloadNum) {
+                               const DenseMap<Operation *, size_t> &scopeToIdx,
+                               size_t maxPreloadNum, bool elideInactiveTail) {
   IRRewriter rewriter(forOp.getContext());
   PreloadInfo info;
   info.funcCoreType = queryFuncCoreType(forOp->getParentOfType<func::FuncOp>())
@@ -444,25 +506,22 @@ static void rewritePreloadLoop(scf::ForOp forOp,
   info.ub = forOp.getUpperBound();
   info.step = forOp.getStep();
   info.maxPreloadNum = maxPreloadNum;
+  info.elideInactiveTail = elideInactiveTail;
   rewriter.setInsertionPoint(forOp);
   info.maxPreloadValue = rewriter.create<arith::ConstantOp>(
       info.ub.getLoc(),
       rewriter.getIntegerAttr(info.ub.getType(), info.maxPreloadNum));
   info.mappings.resize(maxPreloadNum);
+  for (Value yielded : forOp.getYieldedValues())
+    if (auto scopeOp = yielded.getDefiningOp<scope::ScopeOp>();
+        scopeOp && isa<MemRefType>(yielded.getType()))
+      info.carriedResults.insert(yielded);
   collectPreloadLocalBuffers(forOp->getParentOfType<func::FuncOp>(), info);
 
   SmallVector<Value> newInitArgs;
   DenseMap<Value, hivm::PointerCastOp> valueToAdapt;
   Value newUpperbound =
       preprocessLoopArgs(forOp, newInitArgs, valueToAdapt, info, rewriter);
-
-  DenseMap<Operation *, size_t> scopeToIdx;
-  for (size_t preloadNum = 0; preloadNum < scopes.size(); preloadNum++) {
-    auto scopeOp = scopes[preloadNum];
-    if (!scopeOp)
-      continue;
-    scopeToIdx[scopeOp] = preloadNum;
-  }
 
   auto newForOp = rewriter.create<scf::ForOp>(
       forOp.getLoc(), info.lb, newUpperbound, info.step, newInitArgs,
@@ -521,25 +580,24 @@ static void rewritePreloadLoop(scf::ForOp forOp,
           auto loc = scopeOp.getLoc();
           Value cond = getPreloadCondition(info, loc, b);
 
-          auto newOp = rewriteScopeOp(cond, scopeOp, info, args, loc, b);
+          auto newOp = rewriteScopeOp(cond, scopeOp, info, loc, b);
           auto returnResults =
               cast<scope::ReturnOp>(scopeOp.getRegion().front().getTerminator())
                   .getResults();
-          auto scopeResIter = scopeOp.result_begin();
+          auto newResIter = newOp.result_begin();
           SmallVector<IRMapping> viewMappings(info.mappings.size());
-          for (auto newRes : newOp->getResults()) {
-            auto maybeLocalBuffer = getLocalBuffer(*scopeResIter);
-            while (maybeLocalBuffer.has_value()) {
+          for (auto [scopeRes, returnResult] :
+               llvm::zip_equal(scopeOp->getResults(), returnResults)) {
+            if (auto localBuffer = getLocalBuffer(scopeRes)) {
               for (auto &mapping : info.mappings)
-                mapping.map(*scopeResIter,
-                            mapping.lookup(maybeLocalBuffer.value()));
-              ++scopeResIter;
-              maybeLocalBuffer = getLocalBuffer(*scopeResIter);
+                mapping.map(scopeRes, mapping.lookup(localBuffer->getResult()));
+              if (info.carriedResults.contains(scopeRes))
+                info.carriedYields.map(scopeRes, *newResIter++);
+              continue;
             }
-
-            Value scopeRes = *scopeResIter;
-            auto resultNumber = cast<OpResult>(scopeRes).getResultNumber();
-            Value returnResult = returnResults[resultNumber];
+            Value newRes = *newResIter++;
+            if (info.carriedResults.contains(scopeRes))
+              info.carriedYields.map(scopeRes, newRes);
             Value source = lookThroughScopeResult(returnResult);
             if (!isa_and_nonnull<ViewLikeOpInterface>(source.getDefiningOp())) {
               for (auto &mapping : info.mappings)
@@ -554,38 +612,55 @@ static void rewritePreloadLoop(scf::ForOp forOp,
                 mapping.map(scopeRes, *rematerialized);
               }
             }
-            ++scopeResIter;
-          }
-          for (; scopeResIter != scopeOp.result_end(); ++scopeResIter) {
-            auto maybeLocalBuffer = getLocalBuffer(*scopeResIter);
-            for (auto &mapping : info.mappings)
-              mapping.map(*scopeResIter,
-                          mapping.lookup(maybeLocalBuffer.value()));
           }
         }
 
         SmallVector<Value> newYields;
-        if (!newInitArgs.empty()) {
-          newYields =
-              llvm::map_to_vector(forOp.getYieldedValues(), [&](Value yield) {
-                return info.mappings[maxPreloadNum - 1].lookupOrDefault(yield);
-              });
+        for (auto [arg, yielded] : llvm::zip_equal(forOp.getRegionIterArgs(),
+                                                   forOp.getYieldedValues())) {
+          if (valueToAdapt.contains(arg))
+            continue;
+          newYields.push_back(
+              info.carriedYields.contains(yielded)
+                  ? info.carriedYields.lookup(yielded)
+                  : info.mappings[maxPreloadNum - 1].lookupOrDefault(yielded));
         }
         b.create<scf::YieldOp>(loc, newYields);
       });
 
   LDBG("New for loop:\n" << newForOp);
 
+  // Preserve the original result order, including aliases elided from the loop.
+  // Keep actual loop results for carried or unchanged state so post-loop uses
+  // retain the final buffer selection; rematerialize only other local aliases.
   SmallVector<Value> newRes;
-  for (auto [res, yield] :
-       llvm::zip_equal(newForOp->getResults(), newForOp.getYieldedValues())) {
-    if (auto maybeLocalBuffer = getLocalBuffer(yield);
-        maybeLocalBuffer.has_value()) {
-      newRes.push_back(maybeLocalBuffer.value());
-    } else {
-      newRes.push_back(res);
+  newRes.reserve(forOp.getNumResults());
+  auto newResIt = newForOp->result_begin();
+  auto newYieldIt = newForOp.getYieldedValues().begin();
+  for (auto [initArg, iterArg] :
+       llvm::zip_equal(forOp.getInitArgs(), forOp.getRegionIterArgs())) {
+    if (valueToAdapt.contains(iterArg)) {
+      newRes.push_back(initArg);
+      continue;
     }
+    Value oldYield = forOp.getYieldedValues()[iterArg.getArgNumber() - 1];
+    if (auto maybeLocalBuffer = getLocalBuffer(*newYieldIt);
+        maybeLocalBuffer.has_value() && oldYield != iterArg &&
+        !info.carriedResults.contains(oldYield)) {
+      IRRewriter::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointAfter(newForOp);
+      hivm::PointerCastOp src = *maybeLocalBuffer;
+      newRes.push_back(rewriter.create<hivm::PointerCastOp>(
+          src.getLoc(), src.getType(), src.getAddrs()));
+    } else {
+      newRes.push_back(*newResIt);
+    }
+    ++newResIt;
+    ++newYieldIt;
   }
+  // Mark for hivm-peel-preload (runs after GraphSyncSolver).
+  newForOp->setAttr(hivm::MaxPreloadNumAttr::name,
+                    rewriter.getI32IntegerAttr(maxPreloadNum));
   rewriter.replaceOp(forOp, newRes);
 }
 
@@ -651,41 +726,914 @@ static void cleanupPreloadWorkspaceMarks(Operation &op) {
   });
 }
 
+struct PointerCastTraceResult {
+  SmallVector<hivm::PointerCastOp> pointerCasts;
+  SmallVector<arith::SelectOp> selectOps;
+  SmallVector<Value> ifResults;
+  SmallVector<Value> scopeResults;
+};
+
+static LogicalResult collectRootPointerCasts(ArrayRef<Value> roots,
+                                             PointerCastTraceResult &result) {
+  SmallVector<Value> worklist(roots.begin(), roots.end());
+  DenseSet<Value> visited;
+  DenseSet<Operation *> visitedSelects;
+  DenseSet<Value> visitedIfs;
+  DenseSet<Value> visitedScopes;
+  DenseSet<Operation *> visitedPointerCasts;
+
+  while (!worklist.empty()) {
+    Value curr = worklist.pop_back_val();
+    if (!curr || !visited.insert(curr).second)
+      continue;
+    if (!isa<MemRefType>(curr.getType()))
+      return failure();
+
+    if (auto pcOp = curr.getDefiningOp<hivm::PointerCastOp>()) {
+      if (visitedPointerCasts.insert(pcOp).second)
+        result.pointerCasts.push_back(pcOp);
+      continue;
+    }
+
+    if (auto scopeOp = curr.getDefiningOp<scope::ScopeOp>()) {
+      if (visitedScopes.insert(curr).second)
+        result.scopeResults.push_back(curr);
+      auto &scopeBody = scopeOp.getRegion().front();
+      auto returnOp = cast<scope::ReturnOp>(scopeBody.getTerminator());
+      auto resIdx = cast<OpResult>(curr).getResultNumber();
+      worklist.push_back(returnOp.getResults()[resIdx]);
+      continue;
+    }
+
+    if (auto ifOp = curr.getDefiningOp<scf::IfOp>()) {
+      if (visitedIfs.insert(curr).second)
+        result.ifResults.push_back(curr);
+      if (ifOp.getElseRegion().empty())
+        return failure();
+      auto resIdx = cast<OpResult>(curr).getResultNumber();
+      worklist.push_back(ifOp.thenYield().getResults()[resIdx]);
+      worklist.push_back(ifOp.elseYield().getResults()[resIdx]);
+      continue;
+    }
+
+    if (auto selectOp = curr.getDefiningOp<arith::SelectOp>()) {
+      if (visitedSelects.insert(selectOp).second)
+        result.selectOps.push_back(selectOp);
+      worklist.push_back(selectOp.getTrueValue());
+      worklist.push_back(selectOp.getFalseValue());
+      continue;
+    }
+
+    if (auto blockArg = dyn_cast<BlockArgument>(curr)) {
+      auto forOp = dyn_cast<scf::ForOp>(blockArg.getOwner()->getParentOp());
+      if (!forOp || blockArg == forOp.getInductionVar())
+        return failure();
+      unsigned idx = blockArg.getArgNumber() - 1;
+      worklist.push_back(forOp.getInitArgs()[idx]);
+      worklist.push_back(forOp.getYieldedValues()[idx]);
+      continue;
+    }
+
+    if (auto forOp = curr.getDefiningOp<scf::ForOp>()) {
+      auto resIdx = cast<OpResult>(curr).getResultNumber();
+      worklist.push_back(forOp.getInitArgs()[resIdx]);
+      worklist.push_back(forOp.getYieldedValues()[resIdx]);
+      continue;
+    }
+
+    if (auto castOp = curr.getDefiningOp<memref::CastOp>()) {
+      worklist.push_back(castOp.getSource());
+      continue;
+    }
+    if (auto bitcastOp = curr.getDefiningOp<hivm::BitcastOp>()) {
+      worklist.push_back(bitcastOp.getSrc());
+      continue;
+    }
+    if (auto convertLayoutOp = curr.getDefiningOp<hivm::ConvertLayoutOp>()) {
+      worklist.push_back(convertLayoutOp.getSource());
+      continue;
+    }
+    if (auto unrealizedCast =
+            curr.getDefiningOp<UnrealizedConversionCastOp>()) {
+      if (unrealizedCast.getInputs().size() != 1)
+        return failure();
+      worklist.push_back(unrealizedCast.getInputs().front());
+      continue;
+    }
+    if (auto transposeOp = curr.getDefiningOp<memref::TransposeOp>()) {
+      worklist.push_back(transposeOp.getIn());
+      continue;
+    }
+    if (auto collapseOp = curr.getDefiningOp<memref::CollapseShapeOp>()) {
+      worklist.push_back(collapseOp.getSrc());
+      continue;
+    }
+    if (auto expandOp = curr.getDefiningOp<memref::ExpandShapeOp>()) {
+      worklist.push_back(expandOp.getSrc());
+      continue;
+    }
+
+    return failure();
+  }
+
+  if (result.pointerCasts.empty())
+    return failure();
+
+  hivm::PointerCastOp first = result.pointerCasts.front();
+  if (first.getAddrs().empty())
+    return failure();
+  for (hivm::PointerCastOp pc : llvm::drop_begin(result.pointerCasts)) {
+    if (pc.getAddrs() != first.getAddrs() ||
+        pc.getDynamicSizes() != first.getDynamicSizes())
+      return failure();
+  }
+  return success();
+}
+
+static Value clonePointerCastForType(hivm::PointerCastOp srcOp, Type targetType,
+                                     OpBuilder &builder) {
+  if (srcOp.getType() == targetType)
+    return builder.create<hivm::PointerCastOp>(srcOp.getLoc(), srcOp.getType(),
+                                               srcOp.getAddrs(),
+                                               srcOp.getDynamicSizes());
+  auto targetMemRefType = cast<MemRefType>(targetType);
+  if (targetMemRefType.hasStaticShape())
+    return builder.create<hivm::PointerCastOp>(srcOp.getLoc(), targetType,
+                                               srcOp.getAddrs());
+  Value cloned = builder.create<hivm::PointerCastOp>(
+      srcOp.getLoc(), srcOp.getType(), srcOp.getAddrs(),
+      srcOp.getDynamicSizes());
+  if (memref::CastOp::areCastCompatible(cloned.getType(), targetType))
+    return builder.create<memref::CastOp>(srcOp.getLoc(), targetType, cloned);
+  return builder
+      .create<UnrealizedConversionCastOp>(srcOp.getLoc(), targetType, cloned)
+      .getResult(0);
+}
+
+static void pruneUnusedScopeResultsInLoop(scf::ForOp forOp) {
+  SmallVector<scope::ScopeOp> scopeOps;
+  forOp.walk([&](scope::ScopeOp scopeOp) { scopeOps.push_back(scopeOp); });
+
+  for (scope::ScopeOp scopeOp : scopeOps) {
+    if (scopeOp.getNumResults() == 0)
+      continue;
+    llvm::BitVector keepResult(scopeOp.getNumResults(), false);
+    for (unsigned i = 0, e = scopeOp.getNumResults(); i < e; ++i) {
+      if (!scopeOp.getResult(i).use_empty())
+        keepResult.set(i);
+    }
+    if (keepResult.all())
+      continue;
+
+    auto &scopeBody = scopeOp.getRegion().front();
+    auto returnOp = cast<scope::ReturnOp>(scopeBody.getTerminator());
+    SmallVector<Type> newResultTypes;
+    SmallVector<Value> newReturnVals;
+    SmallVector<Value> deadReturnVals;
+    for (unsigned i = 0, e = scopeOp.getNumResults(); i < e; ++i) {
+      if (keepResult.test(i)) {
+        newResultTypes.push_back(scopeOp.getResult(i).getType());
+        newReturnVals.push_back(returnOp.getResults()[i]);
+      } else {
+        deadReturnVals.push_back(returnOp.getResults()[i]);
+      }
+    }
+
+    OpBuilder builder(scopeOp);
+    auto newScopeOp =
+        builder.create<scope::ScopeOp>(scopeOp.getLoc(), newResultTypes);
+    newScopeOp->setAttrs(scopeOp->getAttrs());
+    Region &newRegion = newScopeOp.getRegion();
+    newRegion.takeBody(scopeOp.getRegion());
+    Block &newBody = newRegion.front();
+    auto oldReturnOp = cast<scope::ReturnOp>(newBody.getTerminator());
+    builder.setInsertionPoint(oldReturnOp);
+    builder.create<scope::ReturnOp>(oldReturnOp.getLoc(), newReturnVals);
+    oldReturnOp.erase();
+
+    unsigned newIdx = 0;
+    for (unsigned i = 0, e = scopeOp.getNumResults(); i < e; ++i) {
+      if (keepResult.test(i))
+        scopeOp.getResult(i).replaceAllUsesWith(newScopeOp.getResult(newIdx++));
+    }
+    scopeOp.erase();
+
+    for (Value deadVal : deadReturnVals) {
+      if (Operation *defOp = deadVal.getDefiningOp()) {
+        if (defOp->use_empty() &&
+            isa<hivm::PointerCastOp, arith::SelectOp>(defOp) &&
+            !utils::getAnnotateOpWithAttr(deadVal,
+                                          hivm::PreloadLocalBufferAttr::name)
+                 .has_value()) {
+          defOp->erase();
+        }
+      }
+    }
+  }
+}
+
+static bool isMemRefAliasOp(Operation *op) {
+  return isa_and_nonnull<ViewLikeOpInterface, memref::TransposeOp,
+                         memref::CollapseShapeOp, memref::ExpandShapeOp,
+                         hivm::BitcastOp, hivm::ConvertLayoutOp,
+                         UnrealizedConversionCastOp>(op);
+}
+
+static bool doesCallWriteToOperand(func::CallOp callOp, unsigned operandIdx,
+                                   DenseSet<Value> &visited);
+
+static bool doesOpWriteToValue(Operation *user, Value val, unsigned operandIdx,
+                               DenseSet<Value> &visited) {
+  if (isa<annotation::MarkOp>(user))
+    return false;
+  if (auto effects = dyn_cast<MemoryEffectOpInterface>(user))
+    return effects.getEffectOnValue<MemoryEffects::Write>(val).has_value();
+  if (auto callOp = dyn_cast<func::CallOp>(user))
+    return doesCallWriteToOperand(callOp, operandIdx, visited);
+  return false;
+}
+
+static bool doesValueHaveWriteEffect(Value rootVal, DenseSet<Value> &visited) {
+  SmallVector<Value> worklist = {rootVal};
+  while (!worklist.empty()) {
+    Value curr = worklist.pop_back_val();
+    if (!visited.insert(curr).second)
+      continue;
+    for (OpOperand &use : curr.getUses()) {
+      Operation *user = use.getOwner();
+      if (isMemRefAliasOp(user)) {
+        llvm::append_range(worklist, user->getResults());
+        continue;
+      }
+      if (auto forOp = dyn_cast<scf::ForOp>(user)) {
+        unsigned opNum = use.getOperandNumber();
+        unsigned numCtrl = forOp.getNumControlOperands();
+        if (opNum >= numCtrl)
+          worklist.push_back(forOp.getRegionIterArgs()[opNum - numCtrl]);
+        continue;
+      }
+      if (doesOpWriteToValue(user, curr, use.getOperandNumber(), visited))
+        return true;
+    }
+  }
+  return false;
+}
+
+static bool doesCallWriteToOperand(func::CallOp callOp, unsigned operandIdx,
+                                   DenseSet<Value> &visited) {
+  auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
+      callOp, callOp.getCalleeAttr());
+  if (!callee || operandIdx >= callee.getNumArguments())
+    return false;
+  if (auto memEffectAttr = callee.getArgAttrOfType<hivm::MemoryEffectAttr>(
+          operandIdx, hivm::MemoryEffectAttr::name)) {
+    hivm::MemoryEffect effect = memEffectAttr.getEffect();
+    return effect == hivm::MemoryEffect::WRITE ||
+           effect == hivm::MemoryEffect::READ_WRITE;
+  }
+  if (callee.isExternal())
+    return false;
+  return doesValueHaveWriteEffect(callee.getArgument(operandIdx), visited);
+}
+
+static LogicalResult exportCarriedLocalBuffers(scf::ForOp forOp) {
+  for (OpOperand &yield : forOp.getBody()->getTerminator()->getOpOperands()) {
+    unsigned index = yield.getOperandNumber();
+    if (yield.get() == forOp.getRegionIterArgs()[index] ||
+        (forOp.getRegionIterArgs()[index].use_empty() &&
+         forOp.getResult(index).use_empty()))
+      continue;
+    auto local = getLocalBuffer(yield.get());
+    if (!local || (*local).getAddrs().size() < 2 ||
+        yield.get().getDefiningOp<scope::ScopeOp>())
+      continue;
+    scope::ScopeOp writer;
+    SmallVector<Value> worklist = {(*local).getResult()};
+    DenseSet<Value> visited;
+    while (!worklist.empty()) {
+      Value curr = worklist.pop_back_val();
+      if (!visited.insert(curr).second)
+        continue;
+      for (OpOperand &use : curr.getUses()) {
+        Operation *user = use.getOwner();
+        if (isMemRefAliasOp(user)) {
+          llvm::append_range(worklist, user->getResults());
+          continue;
+        }
+        if (!doesOpWriteToValue(user, curr, use.getOperandNumber(), visited))
+          continue;
+        auto scope = user->getParentOfType<scope::ScopeOp>();
+        if (!scope || scope->getParentOp() != forOp ||
+            (writer && writer != scope))
+          return forOp.emitError(
+              "expected one scope writing a carried preload buffer");
+        writer = scope;
+      }
+    }
+    if (!writer)
+      return forOp.emitError("missing writer of a carried preload buffer");
+    auto returned =
+        cast<scope::ReturnOp>(writer.getRegion().front().getTerminator());
+    OpBuilder builder(writer);
+    SmallVector<Type> types(writer.getResultTypes());
+    types.push_back(yield.get().getType());
+    auto replacement = builder.create<scope::ScopeOp>(writer.getLoc(), types);
+    replacement->setAttrs(writer->getAttrs());
+    replacement.getRegion().takeBody(writer.getRegion());
+    returned->insertOperands(returned.getNumOperands(), yield.get());
+    writer.replaceAllUsesWith(replacement->getResults().drop_back());
+    writer.erase();
+    yield.set(replacement->getResults().back());
+  }
+  return success();
+}
+
+static scf::ForOp preprocessPreloadLoop(scf::ForOp forOp) {
+  auto isPointerCast = [](Value value) {
+    return static_cast<bool>(value.getDefiningOp<hivm::PointerCastOp>());
+  };
+
+  // Ensure any preload-local PointerCastOp marked inside `forOp` but defined
+  // outside `forOp` is cloned into the top of `forOp.getBody()` so
+  // `rewritePreloadLoop` rotates it per preload stage.
+  DenseMap<Operation *, hivm::PointerCastOp> externalLocalBuffers;
+  DenseSet<Operation *> localBufferOps;
+  forOp.walk([&](annotation::MarkOp markOp) {
+    if (!utils::isAnnotationWithAttr(markOp,
+                                     hivm::PreloadLocalBufferAttr::name))
+      return;
+    auto roots =
+        utils::tracebackMemRefVecByTargetFn(markOp.getSrc(), isPointerCast);
+    if (roots.size() != 1)
+      return;
+    auto pcOp = roots.front().getDefiningOp<hivm::PointerCastOp>();
+    if (!pcOp || pcOp.getAddrs().empty())
+      return;
+    localBufferOps.insert(pcOp);
+    if (!forOp.getBodyRegion().isAncestor(pcOp->getParentRegion()))
+      externalLocalBuffers.try_emplace(pcOp, pcOp);
+  });
+
+  if (!externalLocalBuffers.empty()) {
+    OpBuilder bodyBuilder = OpBuilder::atBlockBegin(forOp.getBody());
+    for (auto &[opPtr, pcOp] : externalLocalBuffers) {
+      auto clonedPC = bodyBuilder.create<hivm::PointerCastOp>(
+          pcOp.getLoc(), pcOp.getType(), pcOp.getAddrs(),
+          pcOp.getDynamicSizes());
+      pcOp.getResult().replaceUsesWithIf(
+          clonedPC.getResult(), [&](OpOperand &use) {
+            return forOp.getBodyRegion().isAncestor(
+                use.getOwner()->getParentRegion());
+          });
+      localBufferOps.erase(pcOp);
+      localBufferOps.insert(clonedPC);
+    }
+  }
+
+  auto findMarkedLocalBuffer =
+      [&](ArrayRef<hivm::PointerCastOp> pcs) -> hivm::PointerCastOp {
+    for (hivm::PointerCastOp pc : pcs) {
+      if (localBufferOps.contains(pc) ||
+          pc->hasAttr(hivm::PreloadLocalBufferAttr::name) ||
+          utils::getAnnotateOpWithAttr(pc.getResult(),
+                                       hivm::PreloadLocalBufferAttr::name)
+              .has_value())
+        return pc;
+    }
+    return nullptr;
+  };
+
+  unsigned numIterArgs = forOp.getRegionIterArgs().size();
+  llvm::BitVector keepIterArg(numIterArgs, true);
+  OpBuilder builder(forOp);
+
+  for (unsigned idx = 0; idx < numIterArgs; ++idx) {
+    Value initArg = forOp.getInitArgs()[idx];
+    Value iterArg = forOp.getRegionIterArgs()[idx];
+    Value yieldVal = forOp.getYieldedValues()[idx];
+    Value forResult = forOp.getResult(idx);
+
+    if (!isa<MemRefType>(yieldVal.getType()))
+      continue;
+
+    // An invariant memref already has the correct buffer selection. In
+    // particular, cloning an outer-loop multi-buffer pointer_cast into this
+    // loop would rotate its reads with this loop while its writes still use
+    // the outer-loop buffer.
+    if (initArg == yieldVal) {
+      iterArg.replaceAllUsesWith(initArg);
+      forResult.replaceAllUsesWith(initArg);
+      keepIterArg.reset(idx);
+      continue;
+    }
+
+    PointerCastTraceResult traceResult;
+    if (failed(collectRootPointerCasts({yieldVal, initArg}, traceResult)) ||
+        traceResult.pointerCasts.front().getAddrs().size() > 1)
+      continue;
+
+    hivm::PointerCastOp firstPC = traceResult.pointerCasts.front();
+    hivm::PointerCastOp markedLocalPC =
+        findMarkedLocalBuffer(traceResult.pointerCasts);
+    keepIterArg.reset(idx);
+
+    if (!forResult.use_empty()) {
+      OpBuilder::InsertionGuard guard(builder);
+      builder.setInsertionPointAfter(forOp);
+      Value replacement =
+          clonePointerCastForType(firstPC, forResult.getType(), builder);
+      forResult.replaceAllUsesWith(replacement);
+    }
+
+    if (!iterArg.use_empty()) {
+      Value replacement;
+      if (markedLocalPC && markedLocalPC->getBlock() == forOp.getBody() &&
+          markedLocalPC.getType() == iterArg.getType()) {
+        replacement = markedLocalPC.getResult();
+      } else {
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPointToStart(forOp.getBody());
+        replacement =
+            clonePointerCastForType(firstPC, iterArg.getType(), builder);
+      }
+      iterArg.replaceAllUsesWith(replacement);
+    }
+
+    for (arith::SelectOp selectOp : traceResult.selectOps) {
+      if (!selectOp.use_empty()) {
+        Value replacement;
+        if (markedLocalPC && markedLocalPC->getBlock() == forOp.getBody() &&
+            markedLocalPC.getType() == selectOp.getType()) {
+          replacement = markedLocalPC.getResult();
+        } else {
+          OpBuilder::InsertionGuard guard(builder);
+          builder.setInsertionPoint(selectOp);
+          replacement =
+              clonePointerCastForType(firstPC, selectOp.getType(), builder);
+        }
+        selectOp.replaceAllUsesWith(replacement);
+      }
+      selectOp.erase();
+    }
+
+    for (Value ifRes : traceResult.ifResults) {
+      if (!ifRes.use_empty()) {
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPoint(ifRes.getDefiningOp());
+        Value replacement =
+            clonePointerCastForType(firstPC, ifRes.getType(), builder);
+        ifRes.replaceAllUsesWith(replacement);
+      }
+    }
+
+    for (Value scopeRes : traceResult.scopeResults) {
+      if (llvm::any_of(scopeRes.getUses(), [&](OpOperand &use) {
+            return use.getOwner() != forOp.getBody()->getTerminator();
+          })) {
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPoint(scopeRes.getDefiningOp());
+        Value replacement =
+            clonePointerCastForType(firstPC, scopeRes.getType(), builder);
+        scopeRes.replaceUsesWithIf(replacement, [&](OpOperand &use) {
+          return use.getOwner() != forOp.getBody()->getTerminator();
+        });
+      }
+    }
+  }
+
+  // Also preprocess any remaining arith.select of memrefs inside `forOp` whose
+  // branches trace to root PointerCastOps with identical address lists.
+  SmallVector<arith::SelectOp> remainingSelects;
+  forOp.walk([&](arith::SelectOp selectOp) {
+    if (isa<MemRefType>(selectOp.getType()))
+      remainingSelects.push_back(selectOp);
+  });
+  for (arith::SelectOp selectOp : remainingSelects) {
+    PointerCastTraceResult traceResult;
+    if (failed(collectRootPointerCasts({selectOp.getResult()}, traceResult)))
+      continue;
+    hivm::PointerCastOp firstPC = traceResult.pointerCasts.front();
+    hivm::PointerCastOp markedLocalPC =
+        findMarkedLocalBuffer(traceResult.pointerCasts);
+    if (!selectOp.use_empty()) {
+      Value replacement;
+      if (markedLocalPC && markedLocalPC->getBlock() == forOp.getBody() &&
+          markedLocalPC.getType() == selectOp.getType()) {
+        replacement = markedLocalPC.getResult();
+      } else {
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPoint(selectOp);
+        replacement =
+            clonePointerCastForType(firstPC, selectOp.getType(), builder);
+      }
+      selectOp.replaceAllUsesWith(replacement);
+    }
+    selectOp.erase();
+  }
+
+  scf::ForOp activeForOp = forOp;
+  if (!keepIterArg.all()) {
+    SmallVector<Value> newInitArgs;
+    SmallVector<Value> newYieldVals;
+    for (unsigned idx = 0; idx < numIterArgs; ++idx) {
+      if (keepIterArg.test(idx)) {
+        newInitArgs.push_back(forOp.getInitArgs()[idx]);
+        newYieldVals.push_back(forOp.getYieldedValues()[idx]);
+      }
+    }
+
+    builder.setInsertionPoint(forOp);
+    auto newForOp = builder.create<scf::ForOp>(
+        forOp.getLoc(), forOp.getLowerBound(), forOp.getUpperBound(),
+        forOp.getStep(), newInitArgs);
+    newForOp->setAttrs(forOp->getAttrs());
+
+    Block *oldBody = forOp.getBody();
+    Block *newBody = newForOp.getBody();
+    if (newBody->mightHaveTerminator())
+      newBody->getTerminator()->erase();
+
+    auto oldTermIt = std::prev(oldBody->end());
+    newBody->getOperations().splice(newBody->end(), oldBody->getOperations(),
+                                    oldBody->begin(), oldTermIt);
+
+    forOp.getInductionVar().replaceAllUsesWith(newForOp.getInductionVar());
+    unsigned newIdx = 0;
+    for (unsigned idx = 0; idx < numIterArgs; ++idx) {
+      if (keepIterArg.test(idx)) {
+        forOp.getRegionIterArgs()[idx].replaceAllUsesWith(
+            newForOp.getRegionIterArgs()[newIdx]);
+        forOp.getResult(idx).replaceAllUsesWith(newForOp.getResult(newIdx));
+        ++newIdx;
+      }
+    }
+
+    builder.setInsertionPointToEnd(newBody);
+    builder.create<scf::YieldOp>(oldTermIt->getLoc(), newYieldVals);
+    forOp.erase();
+    activeForOp = newForOp;
+  }
+
+  pruneUnusedScopeResultsInLoop(activeForOp);
+  return activeForOp;
+}
+
+static void getUserScopes(Value source,
+                          llvm::SmallSet<scope::ScopeOp, 16> &userScopes) {
+  Block *sourceBlock = source.getDefiningOp()->getBlock();
+  for (Operation *user : source.getUsers()) {
+    auto *ancestor = sourceBlock->findAncestorOpInBlock(*user);
+    auto parentScope = dyn_cast_if_present<scope::ScopeOp>(ancestor);
+    if (parentScope)
+      userScopes.insert(parentScope);
+  }
+}
+
+static void cloneCounterOps(Block *body,
+                            const DenseSet<Operation *> &opsToClone,
+                            OpBuilder &builder, IRMapping &mapping) {
+  for (Operation &op : body->without_terminator()) {
+    if (!opsToClone.contains(&op))
+      continue;
+    if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
+      auto clonedIf = builder.create<scf::IfOp>(
+          ifOp.getLoc(), mapping.lookupOrDefault(ifOp.getCondition()),
+          !ifOp.getElseRegion().empty());
+      clonedIf->setAttrs(ifOp->getAttrs());
+      OpBuilder::InsertionGuard guard(builder);
+      builder.setInsertionPointToStart(clonedIf.thenBlock());
+      cloneCounterOps(ifOp.thenBlock(), opsToClone, builder, mapping);
+      if (!ifOp.getElseRegion().empty()) {
+        builder.setInsertionPointToStart(clonedIf.elseBlock());
+        cloneCounterOps(ifOp.elseBlock(), opsToClone, builder, mapping);
+      }
+      continue;
+    }
+    auto loop = dyn_cast<scf::ForOp>(op);
+    if (!loop) {
+      builder.clone(op, mapping);
+      continue;
+    }
+
+    // Only the counter update is needed; do not carry unrelated loop results.
+    auto clonedLoop = builder.create<scf::ForOp>(
+        loop.getLoc(), mapping.lookupOrDefault(loop.getLowerBound()),
+        mapping.lookupOrDefault(loop.getUpperBound()),
+        mapping.lookupOrDefault(loop.getStep()));
+    clonedLoop->setAttrs(loop->getAttrs());
+    mapping.map(loop.getInductionVar(), clonedLoop.getInductionVar());
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(clonedLoop.getBody());
+    cloneCounterOps(loop.getBody(), opsToClone, builder, mapping);
+  }
+}
+
+static bool hasOnlyPrivateMemoryEffects(scope::ScopeOp scopeOp) {
+  auto effects = getEffectsRecursively(scopeOp);
+  if (!effects)
+    return false;
+  return llvm::all_of(
+      *effects, [&](const MemoryEffects::EffectInstance &effect) {
+        Value root = effect.getValue();
+        if (!root ||
+            !isa<MemoryEffects::Allocate, MemoryEffects::Free,
+                 MemoryEffects::Read, MemoryEffects::Write>(effect.getEffect()))
+          return false;
+        while (auto view = root.getDefiningOp<ViewLikeOpInterface>())
+          root = view.getViewSource();
+        Operation *allocation = root.getDefiningOp();
+        return isa_and_nonnull<memref::AllocOp, memref::AllocaOp>(allocation) &&
+               scopeOp->isProperAncestor(allocation);
+      });
+}
+
+static std::optional<unsigned>
+findNormalizeMatmulCounterResult(scope::ReturnOp returnOp) {
+  for (auto [idx, retVal] : llvm::enumerate(returnOp.getResults())) {
+    if (auto defOp = retVal.getDefiningOp<memref::AllocaOp>();
+        defOp && defOp->hasAttr(kNormalizeMatmulCounterAttr))
+      return idx;
+  }
+  return std::nullopt;
+}
+
+static void cloneCounterLoopIntoUserScope(scf::ForOp forOp) {
+  for (scope::ScopeOp scopeOp : forOp.getOps<scope::ScopeOp>()) {
+    auto returnOp = cast<scope::ReturnOp>(scopeOp.getBody()->getTerminator());
+
+    std::optional<unsigned> counterResultIdx =
+        findNormalizeMatmulCounterResult(returnOp);
+    if (!counterResultIdx)
+      continue;
+    unsigned counterIdx = *counterResultIdx;
+
+    // An empty mark carries no metadata, but keeps a private counter result
+    // artificially live across the stage boundary.
+    for (Operation *user :
+         llvm::make_early_inc_range(scopeOp.getResult(counterIdx).getUsers()))
+      if (auto mark = dyn_cast<annotation::MarkOp>(user);
+          mark && mark.isAttrEmpty())
+        user->erase();
+
+    llvm::SmallSet<scope::ScopeOp, 16> dstScopes;
+    getUserScopes(scopeOp.getResult(counterIdx), dstScopes);
+    if (dstScopes.empty())
+      continue;
+
+    DenseSet<Operation *> opsToClone;
+    SmallVector<Operation *> worklist;
+    auto collectOp = [&](Operation *op) {
+      if (!op || !scopeOp->isProperAncestor(op) ||
+          op == returnOp.getOperation())
+        return;
+      for (; op != scopeOp.getOperation(); op = op->getParentOp())
+        if (opsToClone.insert(op).second)
+          worklist.push_back(op);
+    };
+
+    // Start from writes to this counter, not all users of its loads. This keeps
+    // the load/addi/store increment without pulling in the matmul or other
+    // work.
+    Value counter = returnOp.getResults()[counterIdx];
+    collectOp(counter.getDefiningOp());
+    for (Operation *user : counter.getUsers())
+      if (auto store = dyn_cast<memref::StoreOp>(user);
+          store && store.getMemRef() == counter)
+        collectOp(store);
+
+    // Collect only dependencies of the selected operations and loop bounds.
+    // Rebuilding the loops without iter_args is safe only when the counter
+    // update does not depend on those arguments or on nested loop results.
+    bool canClone = true;
+    while (!worklist.empty()) {
+      Operation *op = worklist.pop_back_val();
+      auto loop = dyn_cast<scf::ForOp>(op);
+      auto ifOp = dyn_cast<scf::IfOp>(op);
+      if (op->getNumRegions() && !loop &&
+          !(ifOp && ifOp.getNumResults() == 0)) {
+        canClone = false;
+        break;
+      }
+      ValueRange operands = loop ? ValueRange(op->getOperands().take_front(3))
+                                 : ValueRange(op->getOperands());
+      for (Value operand : operands) {
+        if (auto arg = dyn_cast<BlockArgument>(operand)) {
+          auto owner = dyn_cast<scf::ForOp>(arg.getOwner()->getParentOp());
+          if (owner && scopeOp->isProperAncestor(owner) &&
+              arg != owner.getInductionVar())
+            canClone = false;
+        }
+        Operation *def = operand.getDefiningOp();
+        if (def && scopeOp->isProperAncestor(def) && def->getNumRegions())
+          canClone = false;
+        collectOp(def);
+      }
+    }
+    if (!canClone)
+      continue;
+
+    for (scope::ScopeOp dstScope : dstScopes) {
+      Block *dstBody = dstScope.getBody();
+      OpBuilder builder(dstBody, dstBody->begin());
+      IRMapping mapping;
+      cloneCounterOps(scopeOp.getBody(), opsToClone, builder, mapping);
+
+      scopeOp->getResult(counterIdx)
+          .replaceUsesWithIf(mapping.lookup(counter), [&](OpOperand &use) {
+            return dstScope->isAncestor(use.getOwner());
+          });
+    }
+  }
+}
+
+static void eraseDeadScopesAndReStage(scf::ForOp forOp,
+                                      DenseSet<int64_t> &erasedScopeNums) {
+  for (scope::ScopeOp scopeOp :
+       llvm::make_early_inc_range(forOp.getOps<scope::ScopeOp>())) {
+    if (scopeOp->use_empty() && hasOnlyPrivateMemoryEffects(scopeOp))
+      scopeOp.erase();
+  }
+
+  // Split MIX kernels share a schedule and already have cross-core sync.
+  // A stage that is dead on one core may still be live on the other. Keep both
+  // the original stage numbers and max_preload_num so scope guards and the
+  // number of unconditional SET/WAIT iterations remain aligned.
+  if (forOp->getParentOfType<func::FuncOp>()->hasAttr(
+          hivm::TPartOfMixAttr::name))
+    return;
+
+  for (scope::ScopeOp scopeOp : forOp.getOps<scope::ScopeOp>()) {
+    if (auto preloadNumAttr =
+            scopeOp->getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name))
+      erasedScopeNums.erase(preloadNumAttr.getInt());
+  }
+  if (erasedScopeNums.empty())
+    return;
+
+  int64_t maxPreloadNum = 0;
+  for (scope::ScopeOp scopeOp : forOp.getOps<scope::ScopeOp>()) {
+    auto preloadNumAttr =
+        scopeOp->getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name);
+    if (!preloadNumAttr)
+      continue;
+
+    // Shift past erased stages only, preserving any pre-existing gaps.
+    int64_t preloadNum = preloadNumAttr.getInt();
+    int64_t newPreloadNum =
+        preloadNum - llvm::count_if(erasedScopeNums, [&](int64_t erasedNum) {
+          return erasedNum < preloadNum;
+        });
+    scopeOp->setAttr(hivm::PreloadNumAttr::name,
+                     IntegerAttr::get(preloadNumAttr.getType(), newPreloadNum));
+    maxPreloadNum = std::max(maxPreloadNum, newPreloadNum + 1);
+  }
+  for (scope::ScopeOp scopeOp : forOp.getOps<scope::ScopeOp>()) {
+    if (auto maxPreloadNumAttr =
+            scopeOp->getAttrOfType<IntegerAttr>(hivm::MaxPreloadNumAttr::name))
+      scopeOp->setAttr(
+          hivm::MaxPreloadNumAttr::name,
+          IntegerAttr::get(maxPreloadNumAttr.getType(), maxPreloadNum));
+  }
+}
+
+static LogicalResult mergeCounterLoops(func::FuncOp funcOp) {
+  SmallVector<scf::ForOp> loops;
+  funcOp.walk<WalkOrder::PreOrder>([&](scf::ForOp loopOp) -> WalkResult {
+    if (loopOp->hasAttr(hivm::CVPipelinedLoopAttr::name)) {
+      loops.push_back(loopOp);
+      return WalkResult::skip();
+    }
+    return WalkResult::advance();
+  });
+
+  if (loops.empty())
+    return success();
+
+  DenseMap<scf::ForOp, DenseSet<int64_t>> originalPreloadNums;
+  for (scf::ForOp forOp : loops) {
+    cloneCounterLoopIntoUserScope(forOp);
+    auto &preloadNums = originalPreloadNums[forOp];
+    for (scope::ScopeOp scopeOp : forOp.getOps<scope::ScopeOp>()) {
+      if (auto preloadNumAttr =
+              scopeOp->getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name))
+        preloadNums.insert(preloadNumAttr.getInt());
+    }
+  }
+
+  RewritePatternSet patterns(funcOp.getContext());
+  scope::ScopeOp::getCanonicalizationPatterns(patterns, funcOp.getContext());
+  if (failed(applyPatternsGreedily(funcOp, std::move(patterns))))
+    return failure();
+
+  loops.clear();
+  funcOp.walk<WalkOrder::PreOrder>([&](scf::ForOp loopOp) -> WalkResult {
+    if (loopOp->hasAttr(hivm::CVPipelinedLoopAttr::name)) {
+      loops.push_back(loopOp);
+      return WalkResult::skip();
+    }
+    return WalkResult::advance();
+  });
+
+  for (scf::ForOp forOp : loops) {
+    auto erasedScopeNums = originalPreloadNums.lookup(forOp);
+    eraseDeadScopesAndReStage(forOp, erasedScopeNums);
+  }
+
+  LLVM_DEBUG({
+    for (scf::ForOp forOp : loops)
+      DBGS() << "After merge:" << forOp << "\n";
+  });
+  return success();
+}
+
 void CreatePreloadPass::runOnOperation() {
-  auto moduleOp = getOperation();
-  DenseMap<scf::ForOp, SmallVector<scope::ScopeOp, 4>> preload;
+  auto *moduleOp = getOperation();
+  WalkResult result = moduleOp->walk([](func::FuncOp funcOp) {
+    return failed(mergeCounterLoops(funcOp)) ? WalkResult::interrupt()
+                                             : WalkResult::advance();
+  });
+  if (result.wasInterrupted()) {
+    signalPassFailure();
+    return;
+  }
+
+  SmallVector<scf::ForOp> candidateLoops;
+  DenseSet<Operation *> seenCandidateLoops;
   moduleOp->walk([&](scope::ScopeOp scopeOp) {
+    if (!scopeOp->hasAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name) &&
+        !scopeOp->hasAttrOfType<IntegerAttr>(hivm::MaxPreloadNumAttr::name))
+      return;
+    if (auto parentForOp = dyn_cast<scf::ForOp>(scopeOp->getParentOp())) {
+      if (seenCandidateLoops.insert(parentForOp).second)
+        candidateLoops.push_back(parentForOp);
+    }
+  });
+  for (scf::ForOp forOp : candidateLoops) {
+    forOp = preprocessPreloadLoop(forOp);
+    if (failed(exportCarriedLocalBuffers(forOp))) {
+      signalPassFailure();
+      return;
+    }
+  }
+
+  DenseMap<scf::ForOp, DenseMap<Operation *, size_t>> loopToScopes;
+  DenseMap<scf::ForOp, size_t> loopToMaxPreloadNum;
+  DenseMap<scf::ForOp, SmallVector<scope::ScopeOp, 4>> uniqueSlots;
+  moduleOp->walk([&](scope::ScopeOp scopeOp) {
+    auto parentForOp = dyn_cast<scf::ForOp>(scopeOp->getParentOp());
+    if (!parentForOp)
+      return;
+    auto parentFunc = parentForOp->getParentOfType<func::FuncOp>();
+    bool allow =
+        parentFunc && allowLoopShapeHeuristics(
+                          this->bypassShapeRegistry, parentFunc.getName(),
+                          this->enablePreload, this->workspaceMultiBufferNum);
     if (auto maxPreloadNumAttr = scopeOp->getAttrOfType<IntegerAttr>(
             hivm::MaxPreloadNumAttr::name)) {
-      auto parentForOp = cast<scf::ForOp>(scopeOp->getParentOp());
-      preload[parentForOp].resize(maxPreloadNumAttr.getInt(), nullptr);
+      if (allow) {
+        loopToMaxPreloadNum[parentForOp] =
+            std::max(loopToMaxPreloadNum[parentForOp],
+                     static_cast<size_t>(maxPreloadNumAttr.getInt()));
+      } else {
+        uniqueSlots[parentForOp].resize(maxPreloadNumAttr.getInt(), nullptr);
+        loopToMaxPreloadNum[parentForOp] = uniqueSlots[parentForOp].size();
+      }
     }
     if (auto preloadNumAttr =
             scopeOp->getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name)) {
-      auto parentForOp = cast<scf::ForOp>(scopeOp->getParentOp());
       auto preloadNum = preloadNumAttr.getInt();
-      auto &preloadVec = preload[parentForOp];
       assert(preloadNum >= 0 && "PreloadNum must be non-negative integer");
-      assert(preloadNum < static_cast<int64_t>(preloadVec.size()) &&
-             "MaxPreloadNumAttr must be set");
-      preloadVec[preloadNum] = scopeOp;
+      if (allow) {
+        loopToScopes[parentForOp][scopeOp] = static_cast<size_t>(preloadNum);
+      } else {
+        auto &preloadVec = uniqueSlots[parentForOp];
+        assert(preloadNum < static_cast<int64_t>(preloadVec.size()) &&
+               "MaxPreloadNumAttr must be set");
+        preloadVec[preloadNum] = scopeOp;
+      }
     }
   });
+  for (auto &[forOp, scopes] : uniqueSlots) {
+    for (size_t i = 0, e = scopes.size(); i < e; ++i) {
+      if (scopes[i])
+        loopToScopes[forOp][scopes[i]] = i;
+    }
+  }
 
-  if (preload.empty())
+  if (loopToScopes.empty())
     return;
 
-  for (auto &[forOp, scopes] : preload) {
+  for (auto &[forOp, scopeToIdx] : loopToScopes) {
     LDBG("Processing preload:\n" << forOp);
-    auto scopeIt = llvm::find_if(scopes, [](scope::ScopeOp scopeOp) {
-      return static_cast<bool>(scopeOp);
-    });
-    assert(scopeIt != scopes.end() && "Expected at least one preload scope");
-    auto maxPreloadNumAttr =
-        (*scopeIt)->getAttrOfType<IntegerAttr>(hivm::MaxPreloadNumAttr::name);
-    assert(maxPreloadNumAttr && "MaxPreloadNumAttr must be set");
-    rewritePreloadLoop(forOp, scopes,
-                       static_cast<size_t>(maxPreloadNumAttr.getInt()));
+    assert(loopToMaxPreloadNum.contains(forOp) &&
+           "MaxPreloadNumAttr must be set");
+    size_t maxPreloadNum = loopToMaxPreloadNum[forOp];
+    assert(maxPreloadNum > 0 && "MaxPreloadNum must be positive");
+    // Loops in uniqueSlots did not pass the shared heuristic gate.
+    rewritePreloadLoop(
+        forOp, scopeToIdx, maxPreloadNum,
+        !uniqueSlots.contains(forOp) &&
+            canElideInactiveTail(forOp, scopeToIdx, maxPreloadNum));
   }
 
   cleanupPreloadWorkspaceMarks(*moduleOp);
@@ -708,6 +1656,7 @@ void CreatePreloadPass::runOnOperation() {
   }
 }
 
-std::unique_ptr<Pass> mlir::hivm::createCreatePreloadPass() {
-  return std::make_unique<CreatePreloadPass>();
+std::unique_ptr<Pass>
+mlir::hivm::createCreatePreloadPass(const CreatePreloadOptions &options) {
+  return std::make_unique<CreatePreloadPass>(options);
 }

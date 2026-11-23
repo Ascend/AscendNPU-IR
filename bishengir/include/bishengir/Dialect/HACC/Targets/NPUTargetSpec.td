@@ -18,6 +18,8 @@
 #ifndef BISHENGIR_DIALECT_HACC_TARGETS_NPUTARGETSPEC_TD
 #define BISHENGIR_DIALECT_HACC_TARGETS_NPUTARGETSPEC_TD
 
+include "bishengir/Target/NPU/NPUArchitecture.td"
+
 /// Base class for the Target Specification info.
 class TargetSpec <string name> {
   // The target device's name.
@@ -56,14 +58,17 @@ class TargetSpec <string name> {
   // Align size of UB buffer in bits.
   int UbAlignSize = ?;
 
+  // The number of UB bank groups.
+  int UbBankGroupCount = 16;
+
   // Align size of L1 buffer in bits.
   int L1AlignSize = ?;
 
   // Align size of L0c buffer in bits.
   int L0cAlignSize = ?;
 
-  // Arch
-  string Arch = ?;
+  // Instruction architecture shared by all SKUs in this TargetSpec family.
+  NPUArchitecture Arch = ?;
 }
 
 //===----------------------------------------------------------------------===//
@@ -79,7 +84,7 @@ class Ascend910B_BaseSpec <string name> : TargetSpec<name> {
   let UbAlignSize = 256; // bits = 32B
   let L1AlignSize = 256; // bits = 32B
   let L0cAlignSize = 4096; // bits = 512B
-  let Arch = "dav-c220";
+  let Arch = Dav_C220;
 }
 
 def Ascend910B1Spec : Ascend910B_BaseSpec<"Ascend910B1"> {
@@ -131,7 +136,7 @@ class Ascend310B_BaseSpec <string name> : TargetSpec<name> {
   let UbAlignSize = 256; // bits = 32B
   let L1AlignSize = 256; // bits = 32B
   let L0cAlignSize = 4096; // bits = 512B
-  let Arch = "dav-m300";
+  let Arch = Dav_M300;
 }
 
 def Ascend310B1Spec : Ascend310B_BaseSpec<"Ascend310B1"> {
@@ -171,7 +176,7 @@ class Ascend910_93_BaseSpec <string name> : TargetSpec<name> {
   let UbAlignSize = 256; // bits = 32B
   let L1AlignSize = 256; // bits = 32B
   let L0cAlignSize = 4096; // bits = 512B
-  let Arch = "dav-c220";
+  let Arch = Dav_C220;
 }
 
 def Ascend910_9362_Spec : Ascend910_93_BaseSpec<"Ascend910_9362"> {
@@ -231,7 +236,13 @@ class Ascend950_BaseSpec <string name> : TargetSpec<name> {
   let UbAlignSize = 256; // bits = 32B
   let L1AlignSize = 256; // bits = 32B
   let L0cAlignSize = 4096; // bits = 512B
-  let Arch = "dav-c310";
+  let Arch = Dav_C310;
+}
+
+def Ascend950_Spec : Ascend950_BaseSpec<"Ascend950"> {
+  let AiCoreCount = 0;
+  let CubeCoreCount = 0;
+  let VectorCoreCount = 0;
 }
 
 def Ascend910_950z_Spec : Ascend950_BaseSpec<"Ascend910_950z"> {
@@ -295,6 +306,12 @@ def Ascend950PR_950z_Spec : Ascend950_BaseSpec<"Ascend950PR_950z"> {
 }
 
 def Ascend950PR_9579_Spec : Ascend950_BaseSpec<"Ascend950PR_9579"> {
+  let AiCoreCount = 28;
+  let CubeCoreCount = 28;
+  let VectorCoreCount = 56;
+}
+
+def Ascend950PR_9579x_Spec : Ascend950_BaseSpec<"Ascend950PR_9579x"> {
   let AiCoreCount = 28;
   let CubeCoreCount = 28;
   let VectorCoreCount = 56;
@@ -372,6 +389,18 @@ def Ascend950PR_959b_Spec : Ascend950_BaseSpec<"Ascend950PR_959b"> {
   let VectorCoreCount = 72;
 }
 
+def Ascend950PR_957bx_Spec : Ascend950_BaseSpec<"Ascend950PR_957bx"> {
+  let AiCoreCount = 28;
+  let CubeCoreCount = 28;
+  let VectorCoreCount = 56;
+}
+
+def Ascend950PR_958bx_Spec : Ascend950_BaseSpec<"Ascend950PR_958bx"> {
+  let AiCoreCount = 32;
+  let CubeCoreCount = 32;
+  let VectorCoreCount = 64;
+}
+
 def Ascend950DT_950x_Spec : Ascend950_BaseSpec<"Ascend950DT_950x"> {
   let AiCoreCount = 8;
   let CubeCoreCount = 8;
@@ -391,6 +420,12 @@ def Ascend950DT_9571_Spec : Ascend950_BaseSpec<"Ascend950DT_9571"> {
 }
 
 def Ascend950DT_9572_Spec : Ascend950_BaseSpec<"Ascend950DT_9572"> {
+  let AiCoreCount = 28;
+  let CubeCoreCount = 28;
+  let VectorCoreCount = 56;
+}
+
+def Ascend950DT_9572x_Spec : Ascend950_BaseSpec<"Ascend950DT_9572x"> {
   let AiCoreCount = 28;
   let CubeCoreCount = 28;
   let VectorCoreCount = 56;
@@ -438,7 +473,19 @@ def Ascend950DT_9581_Spec : Ascend950_BaseSpec<"Ascend950DT_9581"> {
   let VectorCoreCount = 64;
 }
 
+def Ascend950DT_9581x_Spec : Ascend950_BaseSpec<"Ascend950DT_9581x"> {
+  let AiCoreCount = 32;
+  let CubeCoreCount = 32;
+  let VectorCoreCount = 64;
+}
+
 def Ascend950DT_9582_Spec : Ascend950_BaseSpec<"Ascend950DT_9582"> {
+  let AiCoreCount = 32;
+  let CubeCoreCount = 32;
+  let VectorCoreCount = 64;
+}
+
+def Ascend950DT_9582x_Spec : Ascend950_BaseSpec<"Ascend950DT_9582x"> {
   let AiCoreCount = 32;
   let CubeCoreCount = 32;
   let VectorCoreCount = 64;
@@ -514,6 +561,91 @@ def Ascend950DT_95A2_Spec : Ascend950_BaseSpec<"Ascend950DT_95A2"> {
   let AiCoreCount = 36;
   let CubeCoreCount = 36;
   let VectorCoreCount = 72;
+}
+
+//===----------------------------------------------------------------------===//
+// Ascend960 (dav-920r1, RegBase lineage)
+//===----------------------------------------------------------------------===//
+
+class Ascend960_BaseSpec<string name> : TargetSpec<name> {
+  let UbSize = 2555904; // bits = 312KB, reserve 8KB for compiler
+  let MinimalDCacheSize = 262144; // bits = 32KB
+  let MaximumDCacheSize = 983040; // bits = 120KB
+  let L1Size = 4194304;           // bits = 512KB
+  let L0aSize = 524288;           // bits = 64KB
+  let L0bSize = 524288;           // bits = 64KB
+  let L0cSize = 2097152;          // bits = 256KB
+  let UbAlignSize = 256;          // bits = 32B
+  let UbBankGroupCount = 32;
+  let L1AlignSize = 256;          // bits = 32B
+  let L0cAlignSize = 4096;        // bits = 512B
+  let Arch = Dav_920R1;
+}
+
+def Ascend960_Spec : Ascend960_BaseSpec<"Ascend960"> {
+  let AiCoreCount = 32;
+  let CubeCoreCount = 32;
+  let VectorCoreCount = 64;
+}
+
+def Ascend960DT_969B5_Spec : Ascend960_BaseSpec<"Ascend960DT_969B5"> {
+  let AiCoreCount = 32;
+  let CubeCoreCount = 32;
+  let VectorCoreCount = 32;
+}
+
+def Ascend960DT_969B6_Spec : Ascend960_BaseSpec<"Ascend960DT_969B6"> {
+  let AiCoreCount = 32;
+  let CubeCoreCount = 32;
+  let VectorCoreCount = 32;
+}
+
+def Ascend960DT_968B7_Spec : Ascend960_BaseSpec<"Ascend960DT_968B7"> {
+  let AiCoreCount = 36;
+  let CubeCoreCount = 36;
+  let VectorCoreCount = 36;
+}
+
+def Ascend960DT_966B7_Spec : Ascend960_BaseSpec<"Ascend960DT_966B7"> {
+  let AiCoreCount = 36;
+  let CubeCoreCount = 36;
+  let VectorCoreCount = 36;
+}
+
+def Ascend960DT_966B8_Spec : Ascend960_BaseSpec<"Ascend960DT_966B8"> {
+  let AiCoreCount = 36;
+  let CubeCoreCount = 36;
+  let VectorCoreCount = 36;
+}
+
+def Ascend960DT_961BY_Spec : Ascend960_BaseSpec<"Ascend960DT_961BY"> {
+  let AiCoreCount = 48;
+  let CubeCoreCount = 48;
+  let VectorCoreCount = 48;
+}
+
+def Ascend960DT_961BZ_Spec : Ascend960_BaseSpec<"Ascend960DT_961BZ"> {
+  let AiCoreCount = 48;
+  let CubeCoreCount = 48;
+  let VectorCoreCount = 48;
+}
+
+def Ascend960PR_969A1_Spec : Ascend960_BaseSpec<"Ascend960PR_969A1"> {
+  let AiCoreCount = 48;
+  let CubeCoreCount = 48;
+  let VectorCoreCount = 48;
+}
+
+def Ascend960PR_964A1_Spec : Ascend960_BaseSpec<"Ascend960PR_964A1"> {
+  let AiCoreCount = 48;
+  let CubeCoreCount = 48;
+  let VectorCoreCount = 48;
+}
+
+def Ascend960PR_936A1_Spec : Ascend960_BaseSpec<"Ascend960PR_936A1"> {
+  let AiCoreCount = 48;
+  let CubeCoreCount = 48;
+  let VectorCoreCount = 48;
 }
 
 #endif // BISHENGIR_DIALECT_HACC_TARGETS_NPUTARGETSPEC_TD

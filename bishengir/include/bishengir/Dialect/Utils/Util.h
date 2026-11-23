@@ -23,12 +23,14 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
@@ -64,14 +66,38 @@ constexpr static unsigned int INTR_BYTES_PER_BLOCK = 32;
 constexpr static unsigned int INTR_BYTES_PER_REPEAT = 256;
 constexpr static unsigned int FRACTAL_BLOCK_NUM = 16;
 
+llvm::SmallVector<size_t> getIntegersOfArrayAttr(Operation *op,
+                                                 llvm::StringLiteral attrName);
+
+void insertIntegerAttrToArrayAttr(Operation *op, llvm::StringLiteral attrName,
+                                  size_t value, Builder &builder);
+
 /// Number of elements that fit in one DMA/UB align block for type `t`.
 int64_t getNumPerBlock(Type t);
+
+/// Compatibility wrappers for the LLVM 21 MemRefType stride API change.
+LogicalResult getStridesAndOffsetCompat(MemRefType type,
+                                        SmallVectorImpl<int64_t> &strides,
+                                        int64_t &offset);
+std::pair<SmallVector<int64_t>, int64_t>
+getStridesAndOffsetCompat(MemRefType type);
+
 constexpr static int64_t kUBAlignSizeInBits = 32 * 8;
 static constexpr llvm::StringLiteral kEnableAutoMarkBufferSize =
     "enable_auto_mark_buffer_size";
+/// IntegerAttr on an markOp carrying a static buffer size in bytes (an upper
+/// bound for dynamically shaped buffers). Produced by the buffer size
+/// inference passes (hivm-infer-buffer-size-from-slice,
+/// hivm-auto-infer-buffer-size) and consumed by hivm-set-buffer-size /
+/// hivm-constantize-buffer-size when rewriting dynamic allocs into static
+/// ones.
+constexpr llvm::StringLiteral kBufferSizeInByteAttr = "buffer_size_in_byte";
 static constexpr llvm::StringLiteral kMemrefAsPtr = "memref.memref_as_ptr";
-static constexpr llvm::StringLiteral maskOpIdx = "mask_op_idx";
-static constexpr llvm::StringLiteral reachedMaskOpsIdx = "reached_mask_ops_idx";
+inline constexpr llvm::StringLiteral maskOpIdx = "mask_op_idx";
+inline constexpr llvm::StringLiteral reachedMaskOpsIdx = "reached_mask_ops_idx";
+/// Dynamic annotation key carrying the selected mask SSA value from mask
+/// analysis to Arith/Vector lowering.
+inline constexpr llvm::StringLiteral reachedMaskValue = "reached_mask_value";
 static constexpr llvm::StringLiteral maskBitWidth = "mask_bit_width";
 static const llvm::StringLiteral simtVFSuffix = "_vf_simt";
 static const llvm::StringLiteral kMapForToForallAttrName = "map_for_to_forall";
@@ -81,7 +107,6 @@ inline constexpr llvm::StringLiteral kInlinableQuantScaleAttr =
 inline constexpr llvm::StringLiteral kInlinedQuantScaleAttr =
     "inlined_fast_tf32_mul";
 
-constexpr llvm::StringLiteral KFoldOffsetMarker = "fold_offset_into_ptr";
 namespace debugger {
 
 // Type trait to check if T is an LLVM-style container
@@ -176,21 +201,23 @@ std::string getPrettyOpName(Operation *op);
 } // namespace debugger
 
 // Currently dtype cast rules:
-// (1-RINT ) f32 -> f16/bf16/f32
-// (2-RINT ) f16/bf16 -> f32
+// (1-RINT ) f32 -> f16/bf16/f32/fp8
+// (2-RINT ) f16/bf16/fp8 -> f32
 // (3-RINT ) i8 -> f16
 // (4-TRUNC) float -> int
 // (5-RINT ) int -> float
 // (6-RINT ) int -> int
 template <typename T> T selectRoundMode(Type inType, Type outType) {
   if (inType.isF32()) {
-    if (outType.isF16() || outType.isBF16() || outType.isF32()) {
+    if (outType.isF16() || outType.isBF16() || outType.isF32() ||
+        isa<Float8E4M3FNType>(outType) || isa<Float8E5M2Type>(outType)) {
       return T::RINT;
     }
   }
 
   if (outType.isF32()) {
-    if (inType.isF16() || inType.isBF16()) {
+    if (inType.isF16() || inType.isBF16() || isa<Float8E4M3FNType>(inType) ||
+        isa<Float8E5M2Type>(inType)) {
       return T::RINT;
     }
   }
@@ -339,6 +366,15 @@ std::optional<Operation *> getAnnotateOpWithAttr(Value v, StringRef name);
 /// Search the users of value v to find all the annotation ops with attr `name`.
 SmallVector<Operation *> getAllAnnotateOpsWithAttr(Value v, StringRef name);
 
+/// Return the annotation ops whose src operand is v.
+SmallVector<Operation *> getAnnotateOpUsers(Value v);
+
+/// Clone every annotation.mark on `src` that carries the attr `name` onto
+/// `dst`, preserving the mark's attributes. The rewriter's insertion point
+/// must be set by the caller. Returns true when a mark was cloned.
+bool cloneAnnotateOpWithAttr(RewriterBase &rewriter, Value src, Value dst,
+                             StringRef name);
+
 /// Search the users of each operand to find the annotation op with attr `name`.
 SmallVector<std::optional<Operation *>>
 getAnnotateOpWithAttrForEachOperand(const SmallVectorImpl<Value> &operands,
@@ -366,8 +402,9 @@ memref::StoreOp createSinglePointStore(
 Value createEmptyOp(OpBuilder &builder, Location loc, Value source);
 
 /// Create bufferization.alloc_tensor op with the same type as source
-Value createAllocTensorOp(OpBuilder &builder, Location loc, Value source,
-                          bool copy = false);
+bufferization::AllocTensorOp createAllocTensorOp(OpBuilder &builder,
+                                                 Location loc, Value source,
+                                                 bool copy = false);
 
 ///  Create tensor.empty or memref.alloc op with the same shape as source
 ///  but with element type targetElemType
@@ -703,6 +740,9 @@ bool isValidTwoDimVectorType(VectorType vType);
 /// Return true if transfer write op suits for change to StoreWithStride
 bool isTransferWriteSuitForStoreWithStride(Operation *op);
 
+/// Does the pointer value come from GM?
+bool isFromGMSpace(Value v);
+
 } // namespace utils
 
 namespace reshape_utils {
@@ -917,8 +957,7 @@ namespace mlir {
 
 namespace triton {
 
-inline const char AttrSimtOptimizationModeName[] =
-    "ttg.simt-optimization-mode";
+inline const char AttrSimtOptimizationModeName[] = "ttg.simt-optimization-mode";
 inline const char AttrEnableGlobalScratchAllocationName[] =
     "ttg.enable-global-scratch-allocation";
 

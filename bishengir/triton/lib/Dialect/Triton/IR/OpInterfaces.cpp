@@ -20,8 +20,8 @@ LogicalResult verifyTransposeOpInterface(Operation *op) {
 
   SmallVector<int32_t, 8> sortedOrder(order);
   llvm::sort(sortedOrder);
-  for (int32_t i = 0; i < sortedOrder.size(); i++) {
-    if (sortedOrder[i] != i) {
+  for (size_t i = 0; i < sortedOrder.size(); i++) {
+    if (sortedOrder[i] != static_cast<int32_t>(i)) {
       return op->emitError("order must be a permutation of [0, ..., rank - 1]");
     }
   }

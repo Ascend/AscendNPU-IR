@@ -817,7 +817,7 @@ public:
   ColumnAction() = default;
   ColumnAction(ArrayRef<size_t> action, StringAttr inDim, size_t inSizeLog2)
       : action(action), inDim(inDim), inSizeLog2(inSizeLog2) {
-    auto it = llvm::max_element(action);
+    [[maybe_unused]] auto it = llvm::max_element(action);
     // Assert in the constructor... ugh
     assert(it == action.end() || *it < inSizeLog2);
     // In many cases the action will be the identity, so we save that as an

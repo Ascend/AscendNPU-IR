@@ -1091,20 +1091,17 @@ struct HIVMToArithRecOp: public OpRewritePattern<hivm::VRecOp> {
 };
 
 /*
-* vmulext -> arith.mulsi_extended
+* vmulext/vmulextui -> arith.mulsi_extended/arith.mului_extended
 * The type of all operand are tensor or vector.
 * The attribute of broadcast is empty.
 * The attribute of transpose is empty.
-* At present, it is not possible to distinguish the symbolic information of hivm.hir.vmulext,
-* and it can only be uniformly converted to arith.mulsi_extended.
-* In the Triton DSL, there is only one interface umulhi; after TA conversion,
-* it generates arith.mulsi_extended, and no usage scenarios for arith.mului_extended have been identified.
-* arith.mului_extended is only generated after the execution of the arith-emulate-wide-int pass;
-* this pass has not been found to be invoked in SIMD pipelines.
+* Signedness is represented by distinct HIVM operations and is preserved by
+* selecting the corresponding Arith extended multiplication operation.
 */
-struct HIVMToArithMulExtOp: public OpRewritePattern<hivm::VMulExtOp> {
-    using OpRewritePattern<hivm::VMulExtOp>::OpRewritePattern;
-    LogicalResult matchAndRewrite(hivm::VMulExtOp op,
+template <typename HIVMMulExtOp, typename ArithMulExtOp>
+struct HIVMToArithMulExtOp : public OpRewritePattern<HIVMMulExtOp> {
+    using OpRewritePattern<HIVMMulExtOp>::OpRewritePattern;
+    LogicalResult matchAndRewrite(HIVMMulExtOp op,
                                 PatternRewriter &rewriter) const final {
         if (!operateOnTensorOrScalar(op)) {
             return failure();
@@ -1114,7 +1111,7 @@ struct HIVMToArithMulExtOp: public OpRewritePattern<hivm::VMulExtOp> {
             return failure();
         }
         // split broadcast attribute into vbrc op.
-        if (!broadcast_split<hivm::VMulExtOp>(rewriter, op)) {
+        if (!broadcast_split<HIVMMulExtOp>(rewriter, op)) {
             return failure();
         }
         SmallVector<Value> hivmOperands = getHIVMVectorOperands(op);
@@ -1123,7 +1120,7 @@ struct HIVMToArithMulExtOp: public OpRewritePattern<hivm::VMulExtOp> {
         Type resultType = op->getResult(0).getType();
         lhs = splatScalarOperand(rewriter, op.getLoc(), lhs, resultType);
         rhs = splatScalarOperand(rewriter, op.getLoc(), rhs, resultType);
-        auto result = rewriter.create<arith::MulSIExtendedOp>(
+        auto result = rewriter.create<ArithMulExtOp>(
             op.getLoc(),
             op.getResult().getType()[0],
             op.getResult().getType()[1],
@@ -1135,7 +1132,8 @@ struct HIVMToArithMulExtOp: public OpRewritePattern<hivm::VMulExtOp> {
     }
 };
 
-void mlir::hivm::populateHIVMToArithConversionPatterns(RewritePatternSet &patterns) {
+void mlir::hivm::populateHIVMToArithConversionPatterns(
+    RewritePatternSet &patterns) {
   patterns.add<VectorOpToArithBinary<arith::ShLIOp, hivm::VShLOp, true, false,
                                      IntegerType::Signless, IntegerType>,
                VectorOpToArithBinary<arith::AndIOp, hivm::VAndOp, true, false,
@@ -1178,6 +1176,8 @@ void mlir::hivm::populateHIVMToArithConversionPatterns(RewritePatternSet &patter
                                      IntegerType::Signless, FloatType>,
                HIVMToArithNotOp, HIVMToArithCastOp, HIVMToArithCmpOp,
                HIVMToArithBitcastOp, HIVMToArithSelOp, HIVMToArithRecOp,
-               HIVMToArithReluOp, HIVMToArithMulExtOp, HIVMToArithShROp>(
-      patterns.getContext());
+               HIVMToArithReluOp,
+               HIVMToArithMulExtOp<hivm::VMulExtOp, arith::MulSIExtendedOp>,
+               HIVMToArithMulExtOp<hivm::VMulExtUiOp, arith::MulUIExtendedOp>,
+               HIVMToArithShROp>(patterns.getContext());
 }

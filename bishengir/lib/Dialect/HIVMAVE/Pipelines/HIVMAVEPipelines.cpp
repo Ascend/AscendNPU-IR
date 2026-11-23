@@ -54,9 +54,8 @@ static void hivmAVEOptimizationPipeline(
     // Vsstb packing depends on adjacent store order; reduction splitting may
     // pair non-adjacent IVs (e.g. i and i + half) and hide that pattern.
     pm.nest<func::FuncOp>().addPass(hivmave::createProcessVsstbPass());
-    pm.nest<func::FuncOp>().addPass(
-        hivmave::createOptimizeReductionLoopHIVMAVEPass(
-            optimizeReductionLoopOptions));
+    pm.addPass(hivmave::createOptimizeReductionLoopHIVMAVEPass(
+        optimizeReductionLoopOptions));
     if (hivmAVEPipelineOptions.enableAveLoopOptimize)
       pm.nest<func::FuncOp>().addPass(hivmave::createAveLoopOptimizePass());
     pm.nest<func::FuncOp>().addPass(hivmave::createLegalizeOptHIVMAVEPass());
@@ -74,11 +73,13 @@ static void hivmAVEOptimizationPipeline(
     pm.nest<func::FuncOp>().addPass(hivmave::createPLTToPGEPass());
     pm.nest<func::FuncOp>().addPass(hivmave::createPLTToPLTMPass());
     pm.nest<func::FuncOp>().addPass(scf::createLegalizeLoopIterArgsPass());
-    pm.nest<func::FuncOp>().addPass(hivmave::createDuplicateUnitMaskBroadcastPass());
+    pm.nest<func::FuncOp>().addPass(
+        hivmave::createDuplicateUnitMaskBroadcastPass());
     pm.nest<func::FuncOp>().addPass(hivmave::createAnalyzeVectorLayoutPass());
     pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
     pm.nest<func::FuncOp>().addPass(hivmave::createAVENormalizeOpsPass());
-    pm.nest<func::FuncOp>().addPass(hivmave::createRemoveVectorLayoutAttrPass());
+    pm.nest<func::FuncOp>().addPass(
+        hivmave::createRemoveVectorLayoutAttrPass());
   }
 }
 

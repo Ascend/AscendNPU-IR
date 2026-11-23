@@ -165,6 +165,11 @@ def TransposableOTF :
 
 def SinglePipeOpTrait : NativeOpTrait<"SinglePipeOpTrait">;
 
+/// Marker trait for all HIVM synchronization operations. Analyses that must
+/// not move or merge operations across a synchronization boundary should use
+/// this trait instead of enumerating concrete sync ops.
+def HIVMSyncOpTrait : NativeOpTrait<"HIVMSyncOpTrait">;
+
 /// Op Trait for operation with single pipe information.
 class OpPipeTrait<string Pipe>
     : ParamNativeOpTrait<"OpPipeTrait", Pipe, [SinglePipeOpTrait]>;

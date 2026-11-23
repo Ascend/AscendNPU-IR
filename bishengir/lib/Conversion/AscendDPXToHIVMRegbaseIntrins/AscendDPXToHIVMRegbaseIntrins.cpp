@@ -74,7 +74,8 @@ static Value buildSingleLoad(ConversionPatternRewriter &rewriter, Location loc,
   auto addrSpace = ptrType.getAddressSpace();
   if (addrSpace == SHARED_ADDR_SPACE || cacheHint == 0 || volatileOption) {
     // cache hints not supported
-    return rewriter.create<LLVM::LoadOp>(loc, resultType, ptr, 0, volatileOption);
+    return rewriter.create<LLVM::LoadOp>(loc, resultType, ptr, 0,
+                                         volatileOption);
   } else if (addrSpace == GLOBAL_ADDR_SPACE) {
     std::string optionString = cacheOption ? "cache" : "uncache";
     std::string opName =
@@ -104,8 +105,9 @@ static Value buildSingleLoad(ConversionPatternRewriter &rewriter, Location loc,
 
     return loadResult;
   }
-  llvm::report_fatal_error("ERROR: matchAndRewrite should have given match failure "
-                   "before reaching this point!");
+  llvm::report_fatal_error(
+      "ERROR: matchAndRewrite should have given match failure "
+      "before reaching this point!");
 }
 
 // forward declaration
@@ -312,8 +314,9 @@ static void buildSingleStore(ConversionPatternRewriter &rewriter, Location loc,
     rewriter.create<LLVM::CallIntrinsicOp>(
         loc, LLVM::LLVMVoidType(), rewriter.getStringAttr(opName), args);
   } else {
-    llvm::report_fatal_error("ERROR: matchAndRewrite should have given match failure "
-                     "before reaching this point!");
+    llvm::report_fatal_error(
+        "ERROR: matchAndRewrite should have given match failure "
+        "before reaching this point!");
   }
 }
 
@@ -712,7 +715,7 @@ struct AscendDPXPermuteOpLowering
   matchAndRewrite(ascend_dpx::PermuteOp op,
                   ascend_dpx::PermuteOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
+    [[maybe_unused]] auto loc = op.getLoc();
     rewriter.replaceOpWithNewOp<hivm_regbaseintrins::PermuteOp>(
         op, op.getResult().getType(), adaptor.getSrc1(), adaptor.getSrc2(),
         adaptor.getSelector());

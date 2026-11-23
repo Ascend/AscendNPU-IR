@@ -1,5 +1,17 @@
 # Debugging and Tuning
 
+**Applicable products:**
+
+<!-- npu="950" id1 -->
+- Ascend 950PR/Ascend 950DT
+<!-- end id1 -->
+<!-- npu="A3" id2 -->
+- Atlas A3 training products/Atlas A3 inference products
+<!-- end id2 -->
+<!-- npu="910b" id3 -->
+- Atlas A2 training products/Atlas A2 inference products
+<!-- end id3 -->
+
 ## Debugging: DEBUG OP Class
 
 During operator development and porting based on AscendNPU IR (for example, writing operators based on the Triton frontend and compiling and executing them based on AscendNPU IR), debugging is an indispensable step. To help developers locate issues at different abstraction levels, AscendNPU IR defines two types of core debugging operators:
@@ -19,15 +31,15 @@ On the AscendNPU IR side, printing relies on the `cce::printf` interface provide
 
 #### hfusion Layer Debugging: PrintOp
 
-**Interface Description**:
+**Interface description**:
 
 ```mlir
-// hex: Whether to print all values in hexadecimal instead of decimal.
-// %0: The tensor to be printed has a one-dimensional shape of size 8 and dtype=int64.
+// hex: whether to print all values in hexadecimal instead of decimal
+// %0: tensor to be printed, with a one-dimensional shape of size 8 and dtype=int64
 hfusion.print " x: " {hex = xxx} %0 : tensor<8xi64>
 ```
 
-**Usage Description**:
+**Usage description**:
 
 You can explicitly add a `PrintOp` node during the hfusion Pass stage or when manually constructing the IR.
 
@@ -46,18 +58,18 @@ func.func @vector_kernel(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<syn
 
 #### hivm Layer Debugging: DebugOp
 
-**Interface Description**:
+**Interface description**:
 
 ```mlir
-// debugtype: Indicates whether the current scenario is a print scenario or an assert scenario.
+// debugtype: Indicate whether the current scenario is print or assert.
 // hex: Whether to print all values in hexadecimal instead of decimal.
-// prefix: The prefix printed before the values.
-// tcoretype: Indicates whether the current debug op is executed on the cube core or the vector core.
-// %0: The tensor to be printed, with a one-dimensional shape of size 8 and dtype=int64.
+// prefix: The prefix printed before the value.
+// tcoretype: Indicate whether the current debug op is executed on the cube core or the vector core.
+// %0: The tensor to be printed has a one-dimensional shape of size 8 and dtype=int64.
 hivm.hir.debug {debugtype = "xxx", hex = xxx, prefix = " xxx: ", tcoretype = #hivm.tcore_type<xxx>} %0 : tensor<8xi64>
 ```
 
-**Usage Description**:
+**Usage description**:
 
 You can explicitly add a Debug Op node during the hivm Pass phase or when manually constructing the IR.
 
@@ -90,15 +102,18 @@ Currently, the Triton OPs related to debugging and tuning are mainly the followi
 
 #### static_assert
 
-**Interface Description**:
+**Interface description**:
 
 ```python
-# condition: bool - Boolean expression that can be evaluated at compile time.
-# message: str - Optional. Message displayed when the assertion fails.
-triton.language.static_assert(condition: bool, message: str = "") -> None
+# condition: bool - compile-time evaluable boolean expression, must be a constexpr constant
+# message: str - optional, message displayed when the assertion fails, must be a string literal
+# _semantic: internal parameter, semantic processing handle, no need for the user to pass it in
+
+# Triton language interface
+triton.language.static_assert(condition, message="", _semantic=None) -> None
 ```
 
-**Usage Example**:
+**Usage example**:
 
 You can run `python3 <file>.py` to verify the correctness of the function.
 
@@ -109,7 +124,7 @@ import triton.language as tl
 
 @triton.jit
 def kernel_name(x_ptr, y_ptr, n_elements, BLOCK: tl.constexpr):
-    tl.static_assert(BLOCK < 0, "BLOCK must > 0")
+    tl.static_assert(BLOCK > 0, "BLOCK must > 0")
     pid = tl.program_id(0)
     offsets = pid * BLOCK + tl.arange(0, BLOCK)
     mask = offsets < n_elements
@@ -127,20 +142,27 @@ if __name__ == "__main__":
     vector(x, y)
 ```
 
-**Assertion Effect**:
+**Assertion effect**:
 
 ![image](../../images/user_guide/debug_option1.png)
 
 #### static_print
 
-**Interface Description**:
+**Interface description**:
 
 ```python
-# message: str - Message to print, which can contain compile-time constants.
-triton.language.static_print(message: str) -> None
+# *values - Values to print. The parameters are the same as those of the Python built-in print.
+# sep: str - Separator, defaults to a space.
+# end: str - Terminator, defaults to a newline character.
+# file - Output stream, defaults to None.
+# flush: bool - Whether to flush the output stream immediately, defaults to False.
+# _semantic: Internal parameter, the semantic processing handle. Users do not need to pass it.
+
+# Triton language interface
+triton.language.static_print(*values, sep=' ', end='\n', file=None, flush=False, _semantic=None) -> None
 ```
 
-**Usage Example**:
+**Usage example**:
 
 You can run `python3 <file>.py` to verify the correctness of the function.
 
@@ -169,7 +191,7 @@ if __name__ == "__main__":
     vector(x, y)
 ```
 
-**Print Effect**:
+**Printing effect**:
 
 ```text
 [warning]: tiling struct [GMMTilingData] is conflict with one in tiling grating tiling
@@ -186,17 +208,19 @@ export TRITON_DEBUG=1
 export TRITON_DEVICE_PRINT=1
 ```
 
-**Interface Description**:
+**Interface description**:
 
 ```python
 # condition: bool - The condition to assert, which must be a boolean tensor.
-# message: str - Optional. The message displayed when the assertion fails.
+# message: str - Optional. The message displayed when the assertion fails, which must be a string literal.
+# mask: Optional. The mask. The assertion is performed only on elements whose mask is true.
+# _semantic: Internal parameter. The semantic processing handle. Users do not need to pass it.
 
 # Triton language interface.
-triton.language.device_assert(condition: bool, message: str = "") -> None
+triton.language.device_assert(condition, message="", mask=None, _semantic=None) -> None
 ```
 
-**Usage Example**:
+**Usage example**:
 
 You can run `python3 <file>.py` to verify the correctness of the function.
 
@@ -228,7 +252,7 @@ if __name__ == "__main__":
     test_assert()
 ```
 
-**Assertion Effect**:
+**Assertion effect**:
 
 ![image](../../images/user_guide/debug_option3.png)
 
@@ -236,18 +260,19 @@ if __name__ == "__main__":
 
 Note: Before using this feature, set the environment variable `export TRITON_DEVICE_PRINT=1`.
 
-**Interface Description**:
+**Interface description**:
 
 ```python
-# prefix: str - Prefix printed before the value. It must be a string.
-# *args - Values to print. They can be any tensors or scalars.
+# prefix: str - Prefix printed before the value. Must be a string literal.
+# *args - Values to print. Can be any tensor or scalar.
 # hex: bool - Whether to print all values in hexadecimal instead of decimal.
+# _semantic: Internal parameter, the semantic processing handle. Users do not need to pass it.
 
 # Triton language interface.
-triton.language.device_print(prefix, *args, hex=False) -> None
+triton.language.device_print(prefix, *args, hex=False, _semantic=None) -> None
 ```
 
-**Usage Example**:
+**Usage example**:
 
 You can run `python3 <file>.py` to verify the correctness of the function.
 
@@ -276,11 +301,11 @@ if __name__ == "__main__":
     test_print()
 ```
 
-**Printing Effect**:
+**Printing effect**:
 
 ![image](../../images/user_guide/debug_option4.png)
 
-## Debugging: Tool Classes
+## Debugging: Tools
 
 ### mssanitizer
 
@@ -289,11 +314,11 @@ The command-line anomaly detection tool is used for Triton operator memory detec
 **Usage**:
 
 ```bash
-# Directly launch the triton operator to run it.
+# Directly launch the triton operator to run.
 mssanitizer python test.py
 ```
 
-**Effect Demonstration**:
+**Effect demonstration**:
 
 The following `triton add` example (in which `offsets` is incorrectly computed) demonstrates the detection effect of mssanitizer.
 
@@ -353,31 +378,31 @@ The command-line model tuning tool is used to collect and parse performance data
 
 ```bash
 # Whole-network on-board tuning
-# --output - Storage path of the collected performance data. By default, the performance data is saved in the current directory.
+# --output - Storage path for the collected performance data. By default, the performance data is saved in the current directory.
 # --application - Whole-network execution command
 msprof --output=xxx --application=""
 
 # Single-operator on-board tuning
-# --output - Storage path of the collected performance data. By default, the performance data is saved in the current directory.
+# --output - Storage path for the collected performance data. By default, the performance data is saved in the current directory.
 # --application - Single-operator execution command
-# --kernel-name - Specifies the name of the operator to be collected. Fuzzy matching by operator name prefix is supported.
-# --aic-metrics - Enables the collection of operator performance metrics and operator collection capability metrics (Roofline/Occupancy/MemoryDetail, etc.)
+# --kernel-name - Specify the name of the operator to be collected. Fuzzy matching by operator name prefix is supported.
+# --aic-metrics - Enable the collection of operator performance metrics and operator collection capability metrics (Roofline/Occupancy/MemoryDetail, etc.)
 msprof op --output=xxx --application="" --kernel-name=xxx --aic-metrics=xxx
 
 # Single-operator simulation tuning
-# --core-id - Specifies the IDs of some logical cores to parse the simulation data of these cores
-# --kernel-name - Specifies the name of the operator to be collected. Fuzzy matching by operator name prefix is supported.
-# --soc-version - Specifies the simulator type
+# --core-id - Specify the IDs of some logical cores to parse the simulation data of these cores.
+# --kernel-name - Specify the name of the operator to be collected. Fuzzy matching by operator name prefix is supported.
+# --soc-version - Specify the simulator type.
 # --output - Storage path of the collected performance data. By default, the performance data is saved in the current directory.
 msprof op simulator --core-id=xxx --kernel-name=xxx --soc-version=Ascendxxx --output=xxx
 ```
 
 **Common performance analysis charts**:
 
-- `trace.json`: Supports generating an instruction pipeline diagram on `chrome://tracing/`
+- `trace.json`: supports generating the instruction pipeline diagram on `chrome://tracing/`.
     ![image](../../images/user_guide/debug_option6.png)
 
-- `visualize_data.bin`: Supports visualizing the execution of instructions on the Ascend AI Processor in Mind Studio Insight
+- `visualize_data.bin`: supports visually presenting the running status of instructions on Ascend AI Processors in Mind Studio Insight.
     ![image](../../images/user_guide/debug_option7.png)
 
 Note: For more performance analysis charts, see [MindStudio Operator Development Tools](https://www.hiascend.com/document/detail/en/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0136.html)

@@ -4,6 +4,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     AdaptTritonIRKernel.cpp
     AdaptGPUKernel.cpp
     ConvertNonPowerTwoTensors.cpp
+    ConvertZeroDimTensors.cpp
     DecomposeReduction.cpp
     DumpFractalLayout.cpp
     ExpandGatherOpSourcesPass.cpp
@@ -11,6 +12,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     GetTritonMetadata.cpp
     LegalizeF16ForTriton.cpp
     SIMTInsertInitAndFinishForDebug.cpp
+    OptimizeAtomicReduction.cpp
     OptimizeLayouts.cpp
     OptimizeLayoutsAnalysis.cpp
     OptimizeLoads.cpp
@@ -31,6 +33,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     TileDotLoads.cpp
     DotTilingCostModel.cpp
     OptimizeMath.cpp
+    OptimizeSIMTExpressions.cpp
     HoistAndFuseDotChains.cpp
     GroupDotChainsForOverlap.cpp
   )

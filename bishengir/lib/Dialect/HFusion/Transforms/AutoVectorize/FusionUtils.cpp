@@ -106,6 +106,10 @@ bool isNonVectorizableOp(Operation *op) {
     return false;
   }
 
+  if (op->hasTrait<OpTrait::HIVMSyncOpTrait>() ||
+      isa<hivm::CreateSyncBlockLockOp>(op))
+    return true;
+
   return isa<hfusion::LoadOp, hfusion::StoreOp, hfusion::ReduceWithIndexOp,
              hfusion::GatherOp, hfusion::MulExtOp, hfusion::MulExtUiOp,
              hfusion::CumsumOp, hfusion::CumprodOp, hfusion::CummaxOp,
@@ -115,131 +119,21 @@ bool isNonVectorizableOp(Operation *op) {
              tensor::ExtractSliceOp, tensor::CastOp, tensor::CollapseShapeOp,
              tensor::ExpandShapeOp, tensor::ConcatOp, hivm::CopyOp,
              hivm::CustomOp, hivm::CustomMacroOp, hivm::DebugOp, hivm::StoreOp,
-             hivm::BitcastOp, hivm::VGatherOp, hivm::SyncBlockOp, hivm::VSortOp,
-             hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
-             hivm::CreateSyncBlockLockOp, hivm::SyncBlockLockOp,
-             hivm::SyncBlockUnlockOp, scf::WhileOp, scf::ForOp, scf::IfOp,
-             scope::ScopeOp, func::CallOp, memref::CopyOp,
-             bufferization::MaterializeInDestinationOp>(op);
+             hivm::BitcastOp, hivm::VGatherOp, hivm::VSortOp, scf::WhileOp,
+             scf::ForOp, scf::IfOp, scope::ScopeOp, func::CallOp,
+             memref::CopyOp, bufferization::MaterializeInDestinationOp>(op);
 }
 
 bool isFusableOp(Operation *op) {
   if (!op)
+    return false;
+  if (op->hasAttr("hivm.defer_vectorize"))
     return false;
   if (analysis::isExpandShapeOpCanFuseIntoVsstbPatternTranspose(op))
     return true;
   return !isNonVectorizableOp(op) &&
          isa<linalg::LinalgOp, hfusion::InterleaveOp, hfusion::DeinterleaveOp>(
              op);
-}
-
-//===----------------------------------------------------------------------===//
-// Graph traversal helpers
-//===----------------------------------------------------------------------===//
-
-void findDownstreamFusableOpOf(Operation *op, Block *block,
-                               DenseSet<Operation *> &downstreamFusableOps,
-                               DenseSet<Operation *> &visitedOps) {
-  if (visitedOps.contains(op))
-    return;
-  visitedOps.insert(op);
-  if (auto copyOp = dyn_cast<memref::CopyOp>(op)) {
-    Value target = copyOp.getTarget();
-    for (Operation *targetUser : target.getUsers()) {
-      if (isOpInBlock(targetUser, block) && isFusableOp(targetUser))
-        downstreamFusableOps.insert(targetUser);
-      findDownstreamFusableOpOf(targetUser, block, downstreamFusableOps,
-                                visitedOps);
-    }
-  }
-  if (auto toTensorOp = dyn_cast<bufferization::ToTensorOp>(op)) {
-    Value tensor = toTensorOp.getResult();
-    for (Operation *tensorUser : tensor.getUsers()) {
-      if (isOpInBlock(tensorUser, block) && isFusableOp(tensorUser))
-        downstreamFusableOps.insert(tensorUser);
-      findDownstreamFusableOpOf(tensorUser, block, downstreamFusableOps,
-                                visitedOps);
-    }
-  }
-  if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
-    Value memref = storeOp.getMemref();
-    for (Operation *memUser : memref.getUsers()) {
-      if (isOpInBlock(memUser, block) && isFusableOp(memUser))
-        downstreamFusableOps.insert(memUser);
-      findDownstreamFusableOpOf(memUser, block, downstreamFusableOps,
-                                visitedOps);
-    }
-  }
-  for (Operation *user : op->getUsers()) {
-    if (isOpInBlock(user, block) && isFusableOp(user)) {
-      downstreamFusableOps.insert(user);
-    }
-    if (!isOpInBlock(user, block) &&
-        isa<scf::ForOp, scf::IfOp, scf::WhileOp, scope::ScopeOp>(
-            user->getParentOp())) {
-      user = user->getParentOp();
-    }
-    findDownstreamFusableOpOf(user, block, downstreamFusableOps, visitedOps);
-  }
-}
-
-void findUpstreamFusableOpOf(Operation *op, Block *block,
-                             DenseSet<Operation *> &upstreamFusableOps,
-                             DenseSet<Operation *> &visitedOps) {
-  if (visitedOps.contains(op))
-    return;
-  visitedOps.insert(op);
-  if (auto copyOp = dyn_cast<memref::CopyOp>(op)) {
-    Value source = copyOp.getSource();
-    if (Operation *sourceOp = source.getDefiningOp()) {
-      if (isOpInBlock(sourceOp, block) && isFusableOp(sourceOp))
-        upstreamFusableOps.insert(sourceOp);
-      findUpstreamFusableOpOf(sourceOp, block, upstreamFusableOps, visitedOps);
-    }
-    for (Operation *sourceUser : source.getUsers()) {
-      if (sourceUser != op && isOpInBlock(sourceUser, block))
-        findUpstreamFusableOpOf(sourceUser, block, upstreamFusableOps,
-                                visitedOps);
-    }
-  }
-  for (Value operand : op->getOperands()) {
-    Operation *operandOp = operand.getDefiningOp();
-    if (operandOp) {
-      if (isOpInBlock(operandOp, block) && isFusableOp(operandOp)) {
-        upstreamFusableOps.insert(operandOp);
-      }
-      findUpstreamFusableOpOf(operandOp, block, upstreamFusableOps, visitedOps);
-    }
-  }
-  if (auto forOp = dyn_cast<scf::ForOp>(op)) {
-    for (auto &childOp : forOp.getBody()->getOperations()) {
-      findUpstreamFusableOpOf(&childOp, block, upstreamFusableOps, visitedOps);
-    }
-  } else if (auto whileOp = dyn_cast<scf::WhileOp>(op)) {
-    for (auto &childOp : whileOp.getBeforeBody()->getOperations()) {
-      findUpstreamFusableOpOf(&childOp, block, upstreamFusableOps, visitedOps);
-    }
-    for (auto &childOp : whileOp.getAfterBody()->getOperations()) {
-      findUpstreamFusableOpOf(&childOp, block, upstreamFusableOps, visitedOps);
-    }
-  } else if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
-    for (auto &childOp : scopeOp.getBody()->getOperations()) {
-      findUpstreamFusableOpOf(&childOp, block, upstreamFusableOps, visitedOps);
-    }
-  } else if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
-    // Traverse the then block.
-    for (auto &childOp : ifOp.getBody()->getOperations()) {
-      findUpstreamFusableOpOf(&childOp, block, upstreamFusableOps, visitedOps);
-    }
-    // Also traverse the else block so that fusable ops referenced there
-    // are correctly identified as upstream of this scf.if.
-    if (Block *elseBlock = ifOp.elseBlock()) {
-      for (auto &childOp : elseBlock->getOperations()) {
-        findUpstreamFusableOpOf(&childOp, block, upstreamFusableOps,
-                                visitedOps);
-      }
-    }
-  }
 }
 
 } // namespace hfusion

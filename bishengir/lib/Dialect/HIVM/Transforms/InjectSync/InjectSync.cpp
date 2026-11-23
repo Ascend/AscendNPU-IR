@@ -48,8 +48,7 @@ public:
 
 void InjectSyncAnalysis::InjectSyncAll() {
   auto shouldInsertBarrierBefore = [](Operation *op) {
-    if (op->getDialect()->getNamespace() ==
-        HIVMDialect::getDialectNamespace())
+    if (op->getDialect()->getNamespace() == HIVMDialect::getDialectNamespace())
       return true;
     if (isa<memref::LoadOp, memref::StoreOp, affine::AffineLoadOp,
             affine::AffineStoreOp, tensor::ExtractOp, tensor::InsertOp>(op))
@@ -83,10 +82,8 @@ void InjectSyncAnalysis::InjectSetWaitPipeMPipeMTE1ForAllMmadL1() {
     auto waitPipe = PipeAttr::get(ctx, hivm::PIPE::PIPE_MTE1);
 
     rewriter.setInsertionPoint(op);
-    rewriter.create<hivm::SetFlagOp>(loc, setPipe, waitPipe, eventId0,
-                                     Value{});
-    rewriter.create<hivm::SetFlagOp>(loc, setPipe, waitPipe, eventId1,
-                                     Value{});
+    rewriter.create<hivm::SetFlagOp>(loc, setPipe, waitPipe, eventId0, Value{});
+    rewriter.create<hivm::SetFlagOp>(loc, setPipe, waitPipe, eventId1, Value{});
     rewriter.setInsertionPointAfter(op);
     rewriter.create<hivm::WaitFlagOp>(loc, setPipe, waitPipe, eventId0,
                                       Value{});
@@ -145,7 +142,7 @@ void InjectSyncAnalysis::AutoInjectSync(bool enableUnitFlag,
 void InjectSyncPass::runOnOperation() {
   auto func = getOperation();
   auto moduleOp = func->getParentOfType<ModuleOp>();
-  bool isMemBasedArch = hacc::utils::isMemBasedArch(moduleOp);
+  [[maybe_unused]] bool isMemBasedArch = hacc::utils::isMemBasedArch(moduleOp);
   bool isRegBasedArch = hacc::utils::isRegBasedArch(moduleOp);
   if (hacc::utils::isHost(func))
     return;

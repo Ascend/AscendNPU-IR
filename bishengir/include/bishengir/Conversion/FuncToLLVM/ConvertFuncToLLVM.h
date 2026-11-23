@@ -46,6 +46,11 @@ convertFuncOpToLLVMFuncOp(mlir::FunctionOpInterface funcOp,
 void populateFuncToLLVMFuncOpConversionPattern(
     mlir::LLVMTypeConverter &converter, mlir::RewritePatternSet &patterns);
 
+/// Populate patterns that pass scalar FP8 arguments to internal vector
+/// functions as raw i8 payloads.
+void populateLegalizeFP8ScalarCallABIPatterns(
+    mlir::RewritePatternSet &patterns);
+
 } // namespace bishengir
 
 #endif // BISHENGIR_CONVERSION_FUNCTOLLVM_CONVERTFUNCTOLLVM_H

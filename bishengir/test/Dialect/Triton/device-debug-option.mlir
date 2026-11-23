@@ -1,6 +1,6 @@
 // RUN: bishengir-opt %s --erase-triton-debug-ops | FileCheck %s --check-prefix=ERASED
-// RUN: bishengir-opt %s -lower-triton-pipeline | FileCheck %s --check-prefix=DISABLED
-// RUN: bishengir-opt %s "-lower-triton-pipeline=enable-simt-device-debug=true" | FileCheck %s --check-prefix=ENABLED
+// RUN: bishengir-opt %s -lower-triton-pipeline | FileCheck %s --check-prefix=ENABLED
+// RUN: bishengir-opt %s "-lower-triton-pipeline=enable-simt-device-debug=false" | FileCheck %s --check-prefix=DISABLED
 
 // ERASED-LABEL: tt.func public @debug_ops
 // ERASED-NOT: tt.print

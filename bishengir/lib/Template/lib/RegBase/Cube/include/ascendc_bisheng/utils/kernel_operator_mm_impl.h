@@ -547,6 +547,102 @@ __aicore__ inline void MmadCal(
 #endif
     }
 }
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+// Ascend960 (920r1): MMAD_MX keeps the m operand and the
+// cmatrixSource/cmatrixInitVal pair.  hif4 is selected by passing
+// hifloat4x2_t as the operand type; there is no separate mode control bit.
+// dav-920r1 also has no bias-address operand form, so the bias overload packs
+// the bias table address into Xd[63:32].
+template <typename DstT, typename Src0T, typename Src1T>
+__aicore__ inline void MmadCal(__cc__ DstT *c, __ca__ Src0T *a, __cb__ Src1T *b,
+                               const MmadParams &mmadParams) {
+  if ASCEND_IS_AIC {
+    bool cmatrixInitVal = mmadParams.cmatrixInitVal && (!mmadParams.isBias);
+    constexpr bool isMx = SupportType<
+        Tuple<DstT, Src0T, Src1T>, Tuple<float, mx_fp8_e4m3_t, mx_fp8_e4m3_t>,
+        Tuple<float, mx_fp8_e4m3_t, mx_fp8_e5m2_t>,
+        Tuple<float, mx_fp8_e5m2_t, mx_fp8_e4m3_t>,
+        Tuple<float, mx_fp8_e5m2_t, mx_fp8_e5m2_t>,
+        Tuple<float, float8_e4m3_t, float8_e4m3_t>,
+        Tuple<float, float8_e4m3_t, float8_e5m2_t>,
+        Tuple<float, float8_e5m2_t, float8_e4m3_t>,
+        Tuple<float, float8_e5m2_t, float8_e5m2_t>,
+        Tuple<float, float8_e4m3_t, fp4x2_e2m1_t>,
+        Tuple<float, fp4x2_e2m1_t, fp4x2_e2m1_t>,
+        Tuple<float, float8_e4m3_t, hifloat4x2_t>,
+        Tuple<float, half, fp4x2_e2m1_t>, Tuple<float, half, hifloat4x2_t>,
+        Tuple<float, bfloat16_t, fp4x2_e2m1_t>,
+        Tuple<float, bfloat16_t, hifloat4x2_t>,
+        Tuple<float, hifloat4x2_t, hifloat4x2_t>>();
+    if constexpr (isMx) {
+      // Normalize the 3510-style placeholder mx_fp8_* element types to
+      // the real fp8 types expected by the intrinsic; identity otherwise.
+      using AType = typename GetDstType<Src0T>::Type;
+      using BType = typename GetDstType<Src1T>::Type;
+      mad_mx(c, (__ca__ AType *)a, (__cb__ BType *)b, mmadParams.m,
+             mmadParams.k, mmadParams.n, mmadParams.unitFlag,
+             mmadParams.disableGemv, mmadParams.cmatrixSource, cmatrixInitVal);
+    } else {
+      mad(c, a, b, mmadParams.m, mmadParams.k, mmadParams.n,
+          mmadParams.unitFlag, mmadParams.disableGemv, mmadParams.cmatrixSource,
+          cmatrixInitVal);
+    }
+  }
+}
+
+template <typename DstT, typename Src0T, typename Src1T>
+__aicore__ inline void MmadCal(__cc__ DstT *c, __ca__ Src0T *a, __cb__ Src1T *b,
+                               uint64_t bias, const MmadParams &mmadParams,
+                               bool cmatrixSource) {
+  if ASCEND_IS_AIC {
+    bool cmatrixInitVal = mmadParams.cmatrixInitVal && (!mmadParams.isBias);
+    constexpr bool isMx = SupportType<
+        Tuple<DstT, Src0T, Src1T>, Tuple<float, mx_fp8_e4m3_t, mx_fp8_e4m3_t>,
+        Tuple<float, mx_fp8_e4m3_t, mx_fp8_e5m2_t>,
+        Tuple<float, mx_fp8_e5m2_t, mx_fp8_e4m3_t>,
+        Tuple<float, mx_fp8_e5m2_t, mx_fp8_e5m2_t>,
+        Tuple<float, float8_e4m3_t, float8_e4m3_t>,
+        Tuple<float, float8_e4m3_t, float8_e5m2_t>,
+        Tuple<float, float8_e5m2_t, float8_e4m3_t>,
+        Tuple<float, float8_e5m2_t, float8_e5m2_t>,
+        Tuple<float, float8_e4m3_t, fp4x2_e2m1_t>,
+        Tuple<float, fp4x2_e2m1_t, fp4x2_e2m1_t>,
+        Tuple<float, float8_e4m3_t, hifloat4x2_t>,
+        Tuple<float, half, fp4x2_e2m1_t>, Tuple<float, half, hifloat4x2_t>,
+        Tuple<float, bfloat16_t, fp4x2_e2m1_t>,
+        Tuple<float, bfloat16_t, hifloat4x2_t>,
+        Tuple<float, hifloat4x2_t, hifloat4x2_t>>();
+#if defined(ASCENDC_CPU_DEBUG) && ASCENDC_CPU_DEBUG == 1
+    if constexpr (isMx) {
+      using AType = typename GetDstType<Src0T>::Type;
+      using BType = typename GetDstType<Src1T>::Type;
+      mad_mx((__cc__ DstT *)c, (__ca__ AType *)a, (__cb__ BType *)b, bias,
+             mmadParams.m, mmadParams.k, mmadParams.n, mmadParams.unitFlag,
+             mmadParams.disableGemv, cmatrixSource, cmatrixInitVal);
+    } else {
+      mad(c, a, b, bias, mmadParams.m, mmadParams.k, mmadParams.n,
+          mmadParams.unitFlag, mmadParams.disableGemv, cmatrixSource,
+          cmatrixInitVal);
+    }
+#else
+    // Xd[31:0]: matrix c addr in L0C, Xd[63:32]: bias addr in bias table
+    // buffer;
+    uint64_t xd =
+        ((uint64_t)c) & 0xffffffffULL | ((bias & 0xffffffffULL) << 32);
+    if constexpr (isMx) {
+      using AType = typename GetDstType<Src0T>::Type;
+      using BType = typename GetDstType<Src1T>::Type;
+      mad_mx((__cc__ DstT *)xd, (__ca__ AType *)a, (__cb__ BType *)b,
+             mmadParams.m, mmadParams.k, mmadParams.n, mmadParams.unitFlag,
+             mmadParams.disableGemv, cmatrixSource, cmatrixInitVal);
+    } else {
+      mad((__cc__ DstT *)xd, a, b, mmadParams.m, mmadParams.k, mmadParams.n,
+          mmadParams.unitFlag, mmadParams.disableGemv, cmatrixSource,
+          cmatrixInitVal);
+    }
+#endif
+  }
+}
 #endif
 
 /* **************************************************************************************************

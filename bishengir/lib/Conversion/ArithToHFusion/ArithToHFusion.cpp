@@ -18,6 +18,7 @@
 #include "bishengir/Conversion/ArithToHFusion/ArithToHFusion.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
+#include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -204,19 +205,28 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
         return hfusion::RoundMode::RINT;
       if (inType.isF32() && outType.isF32())
         return hfusion::RoundMode::RINT;
-      if (isRegBasedArch && (inType.isF32() || inType.isF16() || inType.isBF16())
-          && (isa<Float8E4M3FNType>(outType) || isa<Float8E5M2Type>(outType)))
+      if (isRegBasedArch &&
+          (inType.isF32() || inType.isF16() || inType.isBF16()) &&
+          (isa<Float8E4M3FNType>(outType) || isa<Float8E5M2Type>(outType)))
         return hfusion::RoundMode::RINT;
-      llvm::report_fatal_error("unsupported datatype for arith::TruncFOp to hfusion");
+      // A5 has no fp64 vector conversion instruction. This pair is lowered to
+      // hivm.hir.vcast and implemented by the scalar software template.
+      bool isF64ToF32Cast = inType.isF64() && outType.isF32();
+      if (isRegBasedArch && isF64ToF32Cast)
+        return hfusion::RoundMode::RINT;
+      llvm::report_fatal_error(
+          "unsupported datatype for arith::TruncFOp to hfusion");
     } else if (isa<arith::ExtFOp>(op)) {
       if (inType.isF16() && outType.isF32())
         return hfusion::RoundMode::RINT;
       if (inType.isBF16() && outType.isF32())
         return hfusion::RoundMode::RINT;
-      if (isRegBasedArch && (isa<Float8E4M3FNType>(inType) || isa<Float8E5M2Type>(inType))
-          && (outType.isF32() || outType.isF16() || outType.isBF16()))
+      if (isRegBasedArch &&
+          (isa<Float8E4M3FNType>(inType) || isa<Float8E5M2Type>(inType)) &&
+          (outType.isF32() || outType.isF16() || outType.isBF16()))
         return hfusion::RoundMode::RINT;
-      llvm::report_fatal_error("unsupported datatype for arith::ExtFOp to hfusion");
+      llvm::report_fatal_error(
+          "unsupported datatype for arith::ExtFOp to hfusion");
     } else if (isa<arith::TruncIOp>(op)) {
       if (isOverFlowMode(inType, outType)) {
         return hfusion::RoundMode::TRUNCWITHOVERFLOW;
@@ -240,6 +250,7 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
       auto inType = getElementTypeOrSelf(concreteOp.getIn().getType());
       auto outType = getElementTypeOrSelf(concreteOp.getOut().getType());
 
+      const bool isI1ToI8 = inType.isInteger(1) && outType.isInteger(8);
       const bool isI1ToI16 = inType.isInteger(1) && outType.isInteger(16);
       const bool isI1ToI32 = inType.isInteger(1) && outType.isInteger(32);
       const bool isI1ToI64 = inType.isInteger(1) && outType.isInteger(64);
@@ -249,9 +260,12 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
       const bool isI8ToI64 = inType.isInteger(8) && outType.isInteger(64);
       const bool isI16ToI32 = inType.isInteger(16) && outType.isInteger(32);
       const bool isI16ToI64 = inType.isInteger(16) && outType.isInteger(64);
-      const bool isI32ToI64 = inType.isInteger(32) && outType.isInteger(64);
-      const bool isInTypeI1 = isI1ToI16 || isI1ToI32 || isI1ToI64 || isI1ToFloat;
-      const bool isInTypeI8  = isI8ToI16 || isI8ToI32 || isI8ToI64;
+      [[maybe_unused]] const bool isI32ToI64 =
+          inType.isInteger(32) && outType.isInteger(64);
+      const bool isInTypeI1 =
+          isI1ToI8 || isI1ToI16 || isI1ToI32 || isI1ToI64 || isI1ToFloat;
+      [[maybe_unused]] const bool isInTypeI8 =
+          isI8ToI16 || isI8ToI32 || isI8ToI64;
       const bool isInTypeI16 = isI16ToI32 || isI16ToI64;
       const bool isInTypeI32 = inType.isInteger(32) && outType.isInteger(64);
       // Now we support unsigned casts only from uint8
@@ -305,69 +319,27 @@ struct ElementwiseOpToHFusionCompare : public OpRewritePattern<CompareOp> {
   using OpRewritePattern<CompareOp>::OpRewritePattern;
 
   static hfusion::CompareFn selectPredicate(arith::CmpFOp op) {
-    switch (op.getPredicate()) {
-    case arith::CmpFPredicate::OEQ:
-    case arith::CmpFPredicate::UEQ:
-      return CompareFn::veq;
-    case arith::CmpFPredicate::ONE:
-    case arith::CmpFPredicate::UNE:
-      return CompareFn::vne;
-    case arith::CmpFPredicate::OLE:
-    case arith::CmpFPredicate::ULE:
-      return CompareFn::vle;
-    case arith::CmpFPredicate::OLT:
-    case arith::CmpFPredicate::ULT:
-      return CompareFn::vlt;
-    case arith::CmpFPredicate::OGE:
-    case arith::CmpFPredicate::UGE:
-      return CompareFn::vge;
-    case arith::CmpFPredicate::OGT:
-    case arith::CmpFPredicate::UGT:
-      return CompareFn::vgt;
-    default:
+    auto predicate = utils::selectPredicate(op);
+    if (failed(predicate)) {
       llvm::report_fatal_error("unsupported arith cmp predicate to hfusion");
     }
+    return *predicate;
   }
 
   static hfusion::CompareFn selectPredicate(arith::CmpIOp op) {
-    switch (op.getPredicate()) {
-    case arith::CmpIPredicate::eq:
-      return CompareFn::veq;
-    case arith::CmpIPredicate::ne:
-      return CompareFn::vne;
-    case arith::CmpIPredicate::slt:
-      return CompareFn::vlt;
-    case arith::CmpIPredicate::sgt:
-      return CompareFn::vgt;
-    case arith::CmpIPredicate::sle:
-      return CompareFn::vle;
-    case arith::CmpIPredicate::sge:
-      return CompareFn::vge;
-    case arith::CmpIPredicate::ule:
-      return CompareFn::vule;
-    case arith::CmpIPredicate::uge:
-      return CompareFn::vuge;
-    case arith::CmpIPredicate::ugt:
-      return CompareFn::vugt;
-    case arith::CmpIPredicate::ult:
-      return CompareFn::vult;
+    auto predicate = utils::selectPredicate(op);
+    if (failed(predicate)) {
+      llvm::report_fatal_error("unsupported arith cmp predicate to hfusion");
     }
-    llvm::report_fatal_error("unsupported arith cmp predicate to hfusion");
+    return *predicate;
   }
 
   static hfusion::CompareFn selectI1Predicate(arith::CmpIOp op) {
-    switch (op.getPredicate()) {
-    case arith::CmpIPredicate::ult:
-      return CompareFn::vlt;
-    case arith::CmpIPredicate::ugt:
-      return CompareFn::vgt;
-    case arith::CmpIPredicate::ule:
-      return CompareFn::vle;
-    case arith::CmpIPredicate::uge:
-      return CompareFn::vge;
-    default:
+    auto predicate = utils::selectI1Predicate(op);
+    if (failed(predicate)) {
       llvm::report_fatal_error("i1 type cannot have signness information");
     }
+    return *predicate;
   }
 
   LogicalResult matchAndRewrite(CompareOp op,
@@ -387,8 +359,8 @@ struct ElementwiseOpToHFusionCompare : public OpRewritePattern<CompareOp> {
         auto width = elemType.getIntOrFloatBitWidth();
         if (width == 1 && op.getPredicate() != arith::CmpIPredicate::eq &&
             op.getPredicate() != arith::CmpIPredicate::ne) {
-          auto targetType =
-              RankedTensorType::get(tensorType.getShape(), rewriter.getI8Type());
+          auto targetType = RankedTensorType::get(tensorType.getShape(),
+                                                  rewriter.getI8Type());
           lhs = rewriter.create<arith::ExtUIOp>(lhs.getLoc(), targetType, lhs);
           rhs = rewriter.create<arith::ExtUIOp>(rhs.getLoc(), targetType, rhs);
           hfusion::CompareFn predicate = selectI1Predicate(op);
@@ -399,7 +371,7 @@ struct ElementwiseOpToHFusionCompare : public OpRewritePattern<CompareOp> {
           rewriter.replaceOpWithNewOp<hfusion::CompareOp>(
               op, ValueRange{lhs, rhs}, ValueRange{dsts}, ArrayRef{modeAttr});
           return success();
-            }
+        }
       }
     }
     hfusion::CompareFn predicate = selectPredicate(op);

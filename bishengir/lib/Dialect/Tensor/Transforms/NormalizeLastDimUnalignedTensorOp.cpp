@@ -32,7 +32,6 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
-#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include <cstdint>
@@ -303,7 +302,7 @@ public:
       if (!utils::isFullyStatic(operandShape) && bufferSizeByte.has_value()) {
         auto markOp = rewriter.create<annotation::MarkOp>(concatOp.getLoc(),
                                                           newInit.getResult());
-        markOp->setAttr(hivm::kBufferSizeInByteAttr,
+        markOp->setAttr(utils::kBufferSizeInByteAttr,
                         rewriter.getI64IntegerAttr(bufferSizeByte.value()));
       }
 

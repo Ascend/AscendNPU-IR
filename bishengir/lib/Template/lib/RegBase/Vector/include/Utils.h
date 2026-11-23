@@ -17,6 +17,7 @@
 #ifndef HIVM_MLIR_TEMPLATE_UTILS_H
 #define HIVM_MLIR_TEMPLATE_UTILS_H
 
+#include "ArchDefs.h"
 #include <CPUDebug/CPUDebugUtils.h>
 
 #if ENABLE_CPU_TRACE_INTRINSIC
@@ -25,15 +26,21 @@
 #include <CL/sycl.hpp>
 namespace sycl = cl::sycl;
 using namespace cl::sycl;
+#ifndef __aiv__
 #define __aiv__ SYCL_EXTERNAL __aivector__[aicore]
+#endif
 #else
+#ifndef __aiv__
 #define __aiv__ [aicore]
 #endif
+#endif
 
+#ifndef __aicore__
 #ifdef __CCE_KT_TEST__
 #define __aicore__
 #else
 #define __aicore__ [aicore]
+#endif
 #endif
 #endif
 
@@ -86,6 +93,12 @@ template <typename T, size_t Dim> struct memref_t {
   int64_t strides[Dim];
 };
 
+template <typename T> struct memref_t<T, 0> {
+  T *allocated;
+  T *aligned;
+  int64_t offset;
+};
+
 template <typename IntType> struct FpTraits;
 
 // Unit Flag Mode for Synchronization
@@ -108,16 +121,13 @@ __aiv__ __attribute__((always_inline)) constexpr int bitwidthOf() {
 
 // Determine whether the starting address is 32byte aligned.
 template <typename T>
-#if defined(__DAV_C310__)
-__simd_callee__
-#endif
 __aiv__ __attribute__((always_inline)) bool
 isAddress32ByteAligned(__ubuf__ T *ptr) {
   auto address = reinterpret_cast<uintptr_t>(ptr);
   return (address & 0x1F) == 0;
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 template <typename T>
 __simt_callee__ __aiv__ __attribute__((always_inline)) T UintDivImpl(T dividend,
                                                                      T magic,

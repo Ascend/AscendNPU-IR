@@ -47,7 +47,9 @@ def ConvertArithToHFusion : Pass<"convert-arith-to-hfusion"> {
 def ConvertMathToHFusion : Pass<"convert-math-to-hfusion"> {
   let summary = "Convert math ops to HFusion ops";
   let constructor = "mlir::createMathToHFusionConversionPass()";
-  let dependentDialects = ["linalg::LinalgDialect", "hfusion::HFusionDialect"];
+  let dependentDialects = ["linalg::LinalgDialect", "hfusion::HFusionDialect",
+                           "hivm::HIVMDialect", "memref::MemRefDialect",
+                           "bufferization::BufferizationDialect"];
   let options = [
     Option<"enableFma", "enable-fma", "bool", /*default=*/"false",
            "Preserve supported FMA operations for vector lowering">
@@ -243,6 +245,10 @@ def ConvertTritonAscendGPUToLLVM : Pass<"convert-triton-ascend-gpu-to-llvm", "ml
     Option<"enableCGroupingDotTileLowering", "enable-c-grouping-dot-tile-lowering",
            "bool", /*default*/"false",
            "enable grouped dot tile lowering during LLVM conversion">,
+    Option<"enableA5BankAwareSwizzle", "enable-a5-bank-aware-swizzle", "bool",
+           /*default=*/"false",
+           "Experimentally refine 32-bit UB scratch layouts using the A5 "
+           "bank-word model. Address-calculation profitability is not modeled.">
   ];
 
   let dependentDialects = [
@@ -294,6 +300,35 @@ def AllocateProtonAscendGlobalScratchBufferPass :
     "mlir::triton::proton::ProtonDialect",
     "mlir::triton::proton::gpu::ProtonGPUDialect"
   ];
+}
+
+def ConvertProtonToHIVM : Pass<"convert-proton-to-hivm", "mlir::ModuleOp"> {
+  let summary = "Convert Proton scope records to A5 HIVM boundaries.";
+  let description = [{
+    Validate structured Proton scope pairs, allocate 12-bit DFX region IDs
+    (bits [9:0] = logical id, bit 10 = 1, bit 11 = start/end), preserve scope
+    metadata, and replace each `proton.record` with an atomic HIVM profiling
+    boundary for Ascend A5 targets.
+  }];
+  let constructor =
+      "bishengir::triton::proton::a5::createConvertProtonToHIVMPass()";
+  let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "mlir::triton::proton::ProtonDialect",
+                           "mlir::hivm::HIVMDialect"];
+}
+
+def GetProtonMetadata : Pass<"get-proton-metadata", "mlir::ModuleOp"> {
+  let summary = "Write A5 Proton scope metadata.";
+  let description = [{
+    Dump Proton's metadata as JSON. Each scope entry has `name`, `parent_id`,
+    `start_region_id`, and `end_region_id`. Host tools should map hardware
+    trace region ids using these fields.
+  }];
+  let constructor =
+      "bishengir::triton::proton::a5::createGetProtonMetadataPass()";
+  let options = [Option<"protonMetadataOutput", "proton-metadata-output",
+                        "std::string", "",
+                        "File to write Proton metadata. -- means stdout">];
 }
 
 //===----------------------------------------------------------------------===//
@@ -399,6 +434,19 @@ def FixCallUnknownLoc : Pass<"fix-call-unknown-loc", "func::FuncOp"> {
   let summary = "Fix UnknownLoc on call ops by inheriting location from users or parent ops";
   let constructor = "mlir::createFixCallUnknownLocPass()";
   let dependentDialects = ["func::FuncDialect", "LLVM::LLVMDialect"];
+
+  let options = [
+      Option<"assumeDebugInfo", "assume-debug-info", "bool",
+             /*default*/"false",
+             "Assume a DISubprogram will be attached to every function "
+             "regardless of whether any op carries a location. Set this "
+             "whenever DIScopeForLLVMFuncOpPass runs, i.e. when any of "
+             "--enable-sanitizer, --enable-debug-info or "
+             "--enable-debug-variables is on: that pass attaches a subprogram "
+             "unconditionally, so a function whose ops are all unknown-loc "
+             "still needs its calls fixed, and a synthetic location is used "
+             "when no location can be inherited.">
+  ];
 }
 
 //===----------------------------------------------------------------------===//
@@ -482,6 +530,14 @@ def AppendSanitizerData : Pass<"append-sanitizer-data"> {
                 "mssanitizer could use it";
   let constructor = "mlir::createAppendSanitizerDataPass()";
   let dependentDialects = ["LLVM::LLVMDialect"];
+}
+
+def ConvertTensorViewToHIVM : Pass<"convert-tensor-view-to-hivm", "ModuleOp"> {
+  let summary = "Convert bufferized TensorView accesses to HIVM";
+  let constructor = "mlir::createTensorViewToHIVMConversionPass()";
+  let dependentDialects = ["tv::TensorViewDialect", "hivm::HIVMDialect",
+                           "arith::ArithDialect", "memref::MemRefDialect",
+                           "scf::SCFDialect", "func::FuncDialect"];
 }
 
 #endif // BISHENGIR_CONVERSION_PASSES_H

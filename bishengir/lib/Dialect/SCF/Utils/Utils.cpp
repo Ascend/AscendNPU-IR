@@ -16,9 +16,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/SCF/Utils/Utils.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Transform/Utils/DiagnosedSilenceableFailure.h"
+#include "mlir/IR/IRMapping.h"
+#include "llvm/ADT/APInt.h"
 #include "llvm/Support/Debug.h"
 
 #define DEBUG_TYPE "bishengir-scf-utils"
@@ -28,6 +31,83 @@
 namespace mlir {
 namespace scf {
 namespace utils {
+
+LogicalResult splitForOpByTripCount(OpBuilder &builder, scf::ForOp forOp,
+                                    int64_t lb, int64_t ub, int64_t step,
+                                    uint64_t maxTripCount) {
+  if (step <= 0 || maxTripCount == 0)
+    return failure();
+
+  llvm::APInt lower(128, lb, true), upper(128, ub, true);
+  llvm::APInt stride(128, step, true);
+  if (upper.sle(lower))
+    return success();
+
+  const llvm::APInt tripWide = (upper - lower + stride - 1).udiv(stride);
+  if (tripWide.getActiveBits() > 64)
+    return failure();
+  const uint64_t trip = tripWide.getZExtValue();
+  if (trip <= maxTripCount)
+    return success();
+
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPoint(forOp);
+  Location loc = forOp.getLoc();
+  scf::YieldOp origYield = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
+
+  Type boundType = forOp.getLowerBound().getType();
+  auto createBound = [&](int64_t value) -> Value {
+    if (isa<IndexType>(boundType))
+      return builder.create<arith::ConstantIndexOp>(loc, value);
+    return builder.create<arith::ConstantOp>(
+        loc, builder.getIntegerAttr(boundType, value));
+  };
+
+  SmallVector<std::pair<int64_t, int64_t>> bounds;
+  for (uint64_t loIt = 0; loIt < trip;) {
+    const uint64_t hiIt = loIt + std::min(maxTripCount, trip - loIt);
+    const int64_t lo = (lower + llvm::APInt(128, loIt) * stride).getSExtValue();
+    const int64_t hi =
+        hiIt == trip ? ub
+                     : (lower + llvm::APInt(128, hiIt) * stride).getSExtValue();
+    bounds.emplace_back(lo, hi);
+    loIt = hiIt;
+  }
+
+  SmallVector<Value> inits(forOp.getInitArgs());
+  scf::ForOp lastChunk = nullptr;
+  Value constantStep = createBound(step);
+  for (auto [lo, hi] : bounds) {
+    Value loValue = createBound(lo);
+    Value hiValue = createBound(hi);
+    scf::ForOp chunk = builder.create<scf::ForOp>(
+        loc, loValue, hiValue, constantStep, inits,
+        [&](OpBuilder &b, Location bodyLoc, Value iv, ValueRange iterArgs) {
+          IRMapping mapping;
+          mapping.map(forOp.getStep(), constantStep);
+          mapping.map(forOp.getInductionVar(), iv);
+          for (auto [oldArg, newArg] :
+               llvm::zip(forOp.getRegionIterArgs(), iterArgs))
+            mapping.map(oldArg, newArg);
+          for (Operation &op : forOp.getBody()->without_terminator())
+            b.clone(op, mapping);
+          SmallVector<Value> mappedYields;
+          for (Value value : origYield.getOperands())
+            mappedYields.push_back(mapping.lookupOrDefault(value));
+          b.create<scf::YieldOp>(bodyLoc, mappedYields);
+        });
+    for (NamedAttribute attr : forOp->getAttrs())
+      chunk->setAttr(attr.getName(), attr.getValue());
+    lastChunk = chunk;
+    inits = SmallVector<Value>(chunk.getResults());
+  }
+
+  for (auto [oldResult, newResult] :
+       llvm::zip(forOp.getResults(), lastChunk.getResults()))
+    oldResult.replaceAllUsesWith(newResult);
+  forOp.erase();
+  return success();
+}
 
 DiagnosedSilenceableFailure verifyMapForToForallCondition(
     scf::ForOp forOp, DenseSet<Operation *> &insertSliceOps, Location loc) {

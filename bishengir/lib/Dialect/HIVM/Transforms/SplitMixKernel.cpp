@@ -19,8 +19,9 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
-#include "bishengir/Dialect/HIVM/Transforms/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/SplitKernelUtils.h"
+#include "bishengir/Dialect/HIVM/Transforms/TightlyCoupledBufferUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
@@ -55,82 +56,6 @@ FailureOr<bool> isCoreTypeOp(Operation *op, enum TCoreType coreType) {
   if (failed(res))
     return {};
   return res == coreType;
-}
-
-FailureOr<bool> hasRequiredCoreWork(func::FuncOp func,
-                                    hivm::TCoreType requiredCore) {
-  bool foundWork = false;
-  bool hasFailed = false;
-
-  func.walk([&](Operation *op) {
-    if (op == func.getOperation())
-      return WalkResult::advance();
-
-    FailureOr<hivm::TCoreType> coreType = hivm::getCoreType(op);
-    if (failed(coreType)) {
-      hasFailed = true;
-      return WalkResult::interrupt();
-    }
-
-    if (*coreType == requiredCore ||
-        *coreType == hivm::TCoreType::CUBE_AND_VECTOR) {
-      foundWork = true;
-      return WalkResult::interrupt();
-    }
-
-    return WalkResult::advance();
-  });
-
-  if (hasFailed)
-    return failure();
-
-  return foundWork;
-}
-
-/// Verify that a mixed function or split core half has no required work when
-/// its core_ratio reserves zero instances of that core.
-LogicalResult verifyCoreRatio(func::FuncOp func) {
-  auto ratio = hivm::getCoreRatioAttr(func);
-  auto coreType = func->getAttrOfType<hivm::TFuncCoreTypeAttr>(
-      hivm::TFuncCoreTypeAttr::name);
-  if (!ratio || !coreType)
-    return success();
-
-  TFuncCoreType funcCoreType = coreType.getFuncCoreType();
-  if ((funcCoreType == TFuncCoreType::MIX ||
-       funcCoreType == TFuncCoreType::AIC) &&
-      ratio.getCube() == 0) {
-    auto hasCube = hasRequiredCoreWork(func, hivm::TCoreType::CUBE);
-    if (failed(hasCube)) {
-      return failure();
-    }
-    if (*hasCube) {
-      return func->emitError()
-             << "hivm.core_ratio<0, " << ratio.getVector()
-             << "> reserves no cube core, but the kernel has cube work";
-    }
-  }
-
-  if ((funcCoreType == TFuncCoreType::MIX ||
-       funcCoreType == TFuncCoreType::AIV) &&
-      ratio.getVector() == 0) {
-    auto hasVec = hasRequiredCoreWork(func, hivm::TCoreType::VECTOR);
-    if (failed(hasVec)) {
-      return failure();
-    }
-    if (*hasVec) {
-      return func->emitError()
-             << "hivm.core_ratio<" << ratio.getCube()
-             << ", 0> reserves no vector core, but the kernel has vector work";
-    }
-  }
-
-  return success();
-}
-
-bool isSingleCoreRatio(hivm::TCoreRatioAttr ratio) {
-  return ratio && ((ratio.getCube() == 0 && ratio.getVector() == 1) ||
-                   (ratio.getCube() == 1 && ratio.getVector() == 0));
 }
 
 // mark the operands if the defining op is of given core type
@@ -202,6 +127,9 @@ static Value createZeroOrEmptyStub(OpBuilder &builder, Location loc,
         return builder.create<arith::ConstantOp>(loc, t,
                                                  builder.getIntegerAttr(t, 0));
       })
+      .Case<IndexType>([&](IndexType t) {
+        return builder.create<arith::ConstantIndexOp>(loc, 0);
+      })
       .Case<FloatType>([&](FloatType t) {
         return builder.create<arith::ConstantOp>(loc, t,
                                                  builder.getFloatAttr(t, 0.0));
@@ -222,17 +150,31 @@ static bool shouldKeepScalarResult(bool opIsPreserved, Value result) {
   return opIsPreserved && !isa<ShapedType>(result.getType());
 }
 
+/// Tightly coupled buffers are shared across cube and vector. A preserved cube
+/// preload scope still returns that buffer on AIV; replacing the result with
+/// tensor.empty leaves vector ops reading an uninitialized stub.
+static bool shouldKeepScopeResult(bool opIsPreserved, scope::ScopeOp scopeOp,
+                                  unsigned index) {
+  Value result = scopeOp.getResult(index);
+  if (shouldKeepScalarResult(opIsPreserved, result))
+    return true;
+  if (!opIsPreserved)
+    return false;
+  Value yielded = scopeOp.getBody()->getTerminator()->getOperand(index);
+  return isTightlyCoupledValue(yielded);
+}
+
 static SmallVector<Value> getOutOperands(Operation *op, bool opIsPreserved) {
   if (op->getResults().empty()) {
     return {};
   }
 
-  // Distributed custom ops (e.g. dist.aclshmem_ptr_*) may carry results without
+  // Custom ops (e.g. dist.aclshmem_ptr_*) may carry results without
   // any "outputs"/init operands, so the DPS path below would yield zero inits
   // for a result-bearing op. Derive a replacement per result: unused results
   // need no replacement (sentinel), used results reuse a type-matching input
   // operand when available, otherwise fall back to a zero/empty stub.
-  if (hivm::isDistributedTypeCustomOp(op)) {
+  if (isa<hivm::CustomOp, hivm::CustomMacroOp>(op)) {
     auto dpsOp = dyn_cast_if_present<DestinationStyleOpInterface>(op);
     // If the op already provides matching init operands, use them directly.
     if (dpsOp && dpsOp.getDpsInits().size() == op->getNumResults()) {
@@ -259,7 +201,7 @@ static SmallVector<Value> getOutOperands(Operation *op, bool opIsPreserved) {
             createZeroOrEmptyStub(localBuilder, op->getLoc(), result.getType());
         if (!replacement)
           op->emitError() << "Failed to create replacement stub for "
-                             "distributed custom op result #"
+                             "custom op result #"
                           << result.getResultNumber()
                           << " with unsupported type: " << result.getType();
       }
@@ -351,11 +293,14 @@ static SmallVector<Value> getOutOperands(Operation *op, bool opIsPreserved) {
   // For scope ops: derive replacement values from the terminator's operands.
   // Values defined outside the scope are used directly; values defined inside
   // are replaced with zero/empty stubs created immediately before the scope op.
+  // Preserved scopes keep scalar results and tightly coupled buffer results so
+  // AIV still consumes the cube-produced TCB instead of an empty stub.
   if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
     Operation *terminator = scopeOp.getBody()->getTerminator();
     SmallVector<Value> outVals;
     for (auto [index, result] : llvm::enumerate(scopeOp.getResults())) {
-      if (result.use_empty() || shouldKeepScalarResult(opIsPreserved, result)) {
+      if (result.use_empty() ||
+          shouldKeepScopeResult(opIsPreserved, scopeOp, index)) {
         // Sentinel: no replacement needed.
         outVals.push_back(Value());
         continue;
@@ -436,8 +381,15 @@ LogicalResult replaceResultWithInitOperand(Operation *op,
     OpResult res = op->getResult(i);
     if (!outOperands[i]) {
       // Null sentinel is only valid when the result needs no replacement.
-      if (!res.use_empty() && !shouldKeepScalarResult(opIsPreserved, res))
-        return failure();
+      if (!res.use_empty()) {
+        bool keep;
+        if (auto scopeOp = dyn_cast<scope::ScopeOp>(op))
+          keep = shouldKeepScopeResult(opIsPreserved, scopeOp, i);
+        else
+          keep = shouldKeepScalarResult(opIsPreserved, res);
+        if (!keep)
+          return failure();
+      }
       continue;
     }
     res.replaceAllUsesWith(outOperands[i]);
@@ -453,7 +405,6 @@ struct SplitMixKernelPass
                                      hivm::TCoreRatioAttr coreRatio);
   void splitMixKernel(func::FuncOp &funcOp);
   void runOnOperation() override;
-  void generateMixKernelDecl(func::FuncOp &funcOp);
 };
 
 struct PostCubeReplacement : public OpRewritePattern<tensor::ExtractOp> {
@@ -604,7 +555,8 @@ static bool isLoopOfCoreType(scf::ForOp forOp, TCoreType coreType) {
 
 static bool isPreloadScope(scope::ScopeOp scopeOp) {
   return scopeOp->hasAttr(hivm::PreloadNumAttr::name) ||
-         scopeOp->hasAttr(hivm::MaxPreloadNumAttr::name);
+         scopeOp->hasAttr(hivm::MaxPreloadNumAttr::name) ||
+         scopeOp->hasAttr(hivm::kPipelinedLoopCoreTypeAttrName);
 }
 
 static bool shouldPreserveForSplit(Operation *op) {
@@ -617,29 +569,6 @@ static bool shouldPreserveForSplit(Operation *op) {
   if (auto scopeOp = dyn_cast<scope::ScopeOp>(op))
     return isPreloadScope(scopeOp);
   return false;
-}
-
-static void inferDistributedCoreType(func::FuncOp mixedFunc) {
-  auto rectifyCoreType = [mixedFunc](hivm::TCoreType &cur) {
-    auto funcCoreType = mixedFunc
-                            ->getAttrOfType<hivm::TFuncCoreTypeAttr>(
-                                hivm::TFuncCoreTypeAttr::name)
-                            .getFuncCoreType();
-    if (cur == TCoreType::CUBE_AND_VECTOR) {
-      return kTFuncCoreType2TCoreType.at(funcCoreType);
-    }
-    return cur;
-  };
-  mixedFunc->walk([&rectifyCoreType](Operation *op) {
-    if (isDistributedTypeCustomOp(op)) {
-      if (auto res = hivm::detail::queryCoreTypeHelper(op)) {
-        auto coreType = rectifyCoreType(res.value());
-        auto coreTypeAttr =
-            hivm::TCoreTypeAttr::get(op->getContext(), coreType);
-        op->setAttr(hivm::TCoreTypeAttr::name, coreTypeAttr);
-      }
-    }
-  });
 }
 
 /// Tag SIMT scopes as VECTOR and erase empty scopes belonging to the filtered
@@ -688,8 +617,8 @@ void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
   const enum TCoreType coreType =
       filterCoreType == TCoreType::CUBE ? TCoreType::VECTOR : TCoreType::CUBE;
 
-  // Distributed CustomOps need a concrete core type before erase walks.
-  inferDistributedCoreType(mixedFunc);
+  // Resolve annotated operations before the core-specific erase walks.
+  resolveFlexibleCoreTypes(mixedFunc, /*specializeBoth=*/true);
   filterEmptyScopesPreOrder(builder, mixedFunc, coreType);
 
   mixedFunc.walk<WalkOrder::PostOrder>([&](Operation *op) {
@@ -753,44 +682,6 @@ void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
   });
 }
 
-void SplitMixKernelPass::generateMixKernelDecl(func::FuncOp &funcOp) {
-  auto module = funcOp->getParentOfType<ModuleOp>();
-  std::optional<SymbolTable::UseRange> maybeUses = funcOp.getSymbolUses(module);
-  if (!maybeUses || maybeUses.value().empty()) {
-    // only generate decl if there exists at least one caller
-    return;
-  }
-
-  if (!llvm::all_of(maybeUses.value(), [&](SymbolTable::SymbolUse use) {
-        auto call = cast<func::CallOp>(use.getUser());
-        auto caller = call->getParentOfType<hacc::HACCFunction>();
-        return caller.isHost();
-      })) {
-    funcOp.emitError()
-        << "Currently, MIX kernels can only be called by host functions!";
-    return signalPassFailure();
-  }
-
-  OpBuilder builder(module);
-  builder.setInsertionPointToStart(module.getBody());
-  auto funcDeclOp = builder.create<func::FuncOp>(
-      funcOp->getLoc(), funcOp.getSymName(), funcOp.getFunctionType());
-  funcDeclOp.setPrivate();
-  funcDeclOp->setAttr(
-      hacc::HACCFuncTypeAttr::name,
-      hacc::HACCFuncTypeAttr::get(&getContext(), hacc::HACCFuncType::DEVICE));
-  funcDeclOp->setAttr(
-      hivm::TFuncCoreTypeAttr::name,
-      hivm::TFuncCoreTypeAttr::get(&getContext(), hivm::TFuncCoreType::MIX));
-  // Clone the core_ratio
-  if (auto coreRatio = hivm::getCoreRatioAttr(funcOp))
-    funcDeclOp->setAttr(hivm::TCoreRatioAttr::name, coreRatio);
-  if (hacc::utils::isDeviceEntry(funcOp))
-    funcDeclOp->setAttr(
-        hacc::stringifyEnum(hacc::HACCToLLVMIRTranslateAttr::MIX_ENTRY),
-        UnitAttr::get(&getContext()));
-}
-
 /// Lower Ascend950 MIX ratios 0:1 and 1:0 to one unsuffixed AIV/AIC function.
 LogicalResult
 SplitMixKernelPass::lowerSingleCoreRatio(func::FuncOp func,
@@ -822,12 +713,20 @@ SplitMixKernelPass::lowerSingleCoreRatio(func::FuncOp func,
 }
 
 void SplitMixKernelPass::splitMixKernel(func::FuncOp &func) {
-  StringRef funcName = func.getSymName();
   auto funcCoreTypeAttr = func->getAttrOfType<hivm::TFuncCoreTypeAttr>(
       hivm::TFuncCoreTypeAttr::name);
-  if (!funcCoreTypeAttr ||
-      funcCoreTypeAttr.getFuncCoreType() != TFuncCoreType::MIX)
+  if (!funcCoreTypeAttr)
     return;
+  if (funcCoreTypeAttr.getFuncCoreType() != TFuncCoreType::MIX) {
+    if (funcCoreTypeAttr.getFuncCoreType() == TFuncCoreType::AIC ||
+        funcCoreTypeAttr.getFuncCoreType() == TFuncCoreType::AIV)
+      resolveFlexibleCoreTypes(func, /*specializeBoth=*/true);
+    return;
+  }
+
+  // Freeze operation-specific choices against the intact MIX body before
+  // cloning or filtering can change notify/load/debug inference.
+  resolveFlexibleCoreTypes(func, /*specializeBoth=*/true);
 
   // On Ascend950, MIX ratios 0:1 and 1:0 use a standalone vector/cube entry
   // inside a MIX module.
@@ -839,31 +738,18 @@ void SplitMixKernelPass::splitMixKernel(func::FuncOp &func) {
     return;
   }
 
-  // generate a Mix function declaration for host callers
-  generateMixKernelDecl(func);
-
-  // clone the function and add mix-aic / mix-aiv post-fix name
+  auto splitFuncs = createSplitMixFunctions(func);
+  if (failed(splitFuncs)) {
+    signalPassFailure();
+    return;
+  }
+  auto [cubeFunc, vecFunc] = *splitFuncs;
   OpBuilder builder(func);
-  builder.setInsertionPointAfter(func.getOperation());
-  auto vecFunc = cast<func::FuncOp>(builder.clone(*func.getOperation()));
-
-  func.setSymNameAttr(builder.getStringAttr(funcName + kMixFuncAicSuffix));
-  vecFunc.setSymNameAttr(builder.getStringAttr(funcName + kMixFuncAivSuffix));
-
-  func->setAttr(hivm::TPartOfMixAttr::name, builder.getUnitAttr());
-  vecFunc->setAttr(hivm::TPartOfMixAttr::name, builder.getUnitAttr());
-
-  func->setAttr(hivm::TFuncCoreTypeAttr::name,
-                hivm::TFuncCoreTypeAttr::get(func->getContext(),
-                                             hivm::TFuncCoreType::AIC));
-  vecFunc->setAttr(hivm::TFuncCoreTypeAttr::name,
-                   hivm::TFuncCoreTypeAttr::get(vecFunc->getContext(),
-                                                hivm::TFuncCoreType::AIV));
 
   // filter vector ops from AIC kernel, and cube ops from AIV kernel
-  filterMixFunc(builder, func, TCoreType::VECTOR);
-  LDBG("New aic:\n" << func);
-  postProcessCubeFunc(func);
+  filterMixFunc(builder, cubeFunc, TCoreType::VECTOR);
+  LDBG("New aic:\n" << cubeFunc);
+  postProcessCubeFunc(cubeFunc);
   filterMixFunc(builder, vecFunc, TCoreType::CUBE);
   LDBG("New aiv:\n" << vecFunc);
   postProcessVectorFunc(vecFunc);

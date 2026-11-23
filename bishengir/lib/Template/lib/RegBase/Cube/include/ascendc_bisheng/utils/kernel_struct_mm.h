@@ -739,7 +739,9 @@ struct LoadDataPaddingParam {
 };
 #endif // Kirin versions
 
-#if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102))
+#if defined(__NPU_ARCH__) &&                                                   \
+    ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102) ||                       \
+     (__NPU_ARCH__ == 9201))
 struct LoadData2DMxParams {
     __aicore__ LoadData2DMxParams() {}
 
@@ -763,7 +765,9 @@ struct LoadData2DMxParams {
 };
 #endif
 
-#if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102))
+#if defined(__NPU_ARCH__) &&                                                   \
+    ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102) ||                       \
+     (__NPU_ARCH__ == 9201))
 template <typename TYPE>
 struct LoadData3DParamsV1 {
     using T = typename GetPadValueType<TYPE>::Type;
@@ -829,7 +833,9 @@ struct LoadData3DParamsV1 {
     int16_t leftTopH = 0;
 };
 
-#if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102))
+#if defined(__NPU_ARCH__) &&                                                   \
+    ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102) ||                       \
+     (__NPU_ARCH__ == 9201))
 template <typename TYPE>
 struct LoadData3DParamsV2 {
     using T = typename GetPadValueType<TYPE>::Type;
@@ -2385,7 +2391,9 @@ struct LoadDataRepeatParam {
 };
 #endif
 #else
-#if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 3102) || (__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102))
+#if defined(__NPU_ARCH__) &&                                                   \
+    ((__NPU_ARCH__ == 3102) || (__NPU_ARCH__ == 3510) ||                       \
+     (__NPU_ARCH__ == 5102) || (__NPU_ARCH__ == 9201))
 struct LoadDataRepeatParam {
     __aicore__ LoadDataRepeatParam() {}
 

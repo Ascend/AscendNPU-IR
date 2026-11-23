@@ -314,10 +314,10 @@ struct RedudantVReduceInitOp : public OpRewritePattern<VReduceOp> {
 
   LogicalResult matchAndRewrite(VReduceOp reduceOp,
                                 PatternRewriter &rewriter) const final {
-    // Ascend950 lowering still depends on explicit identity init in the
-    // outs buffer; do not replace it with tensor.empty on this target.
+    // C310/920R1 lowering reads the explicit reduction identity from the
+    // outs buffer; preserve its initialization on these architectures.
     auto moduleOp = reduceOp->getParentOfType<ModuleOp>();
-    if (mlir::hacc::utils::isAscend950(moduleOp)) {
+    if (mlir::hacc::utils::supportsRegBaseVectorLowering(moduleOp)) {
       return failure();
     }
     bool isValueInitErased = eraseRedundantInitOp(reduceOp, rewriter, 0, true);

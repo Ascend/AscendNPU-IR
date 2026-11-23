@@ -16,15 +16,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/ResolvePropagation.h"
-#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/Utils.h"
-#include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "bishengir/Dialect/Scope/IR/Scope.h"
+
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
+
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/LogicalResult.h"
 
@@ -132,8 +129,8 @@ static LogicalResult resolveGMtoLocal(UnrealizedConversionCastOp downPropOp,
 static LogicalResult resolveLocaltoGM(UnrealizedConversionCastOp downPropOp,
                                       UnrealizedConversionCastOp upPropOp,
                                       PatternRewriter &rewriter) {
-  auto storeOp = PropagatorUtil::insertStore(
-      downPropOp->getResult(0), downPropOp.getLoc(), rewriter);
+  auto storeOp = PropagatorUtil::insertStore(downPropOp->getResult(0),
+                                             downPropOp.getLoc(), rewriter);
   Value loadedValue;
   if (isa<RankedTensorType>(storeOp.getDstOperandType())) {
     loadedValue = storeOp.getResult(0);
@@ -180,31 +177,16 @@ static LogicalResult ensureFixpipeToUB(UnrealizedConversionCastOp downPropOp,
   auto fixpipeOp = downPropOp.getInputs()[0].getDefiningOp<FixpipeOp>();
   if (!fixpipeOp)
     return failure();
-  ArrayRef<int64_t> maybeStaticTotalSize =
-      fixpipeOp.getDstOperandType().getShape();
-  // Replicate InsertCVTightCoupledBuffer.cpp: Trace fixpipe src to Mmad and use
-  // Mmad type as static shaped type
-  if (!fixpipeOp.getDstOperandType().hasStaticShape()) {
-    if (auto mmadOps = traceDefOps<hivm::MmadL1Op>(fixpipeOp.getSrc());
-        !mmadOps.empty()) {
-      assert(mmadOps.size() == 1 && "expected single mmad op");
-      LDBG("traced to mmad op " << mmadOps[0]);
-      mlir::Type mmadType = dyn_cast<MmadL1Op>(mmadOps[0])->getResultTypes()[0];
-      if (auto shapedMmadType = dyn_cast<ShapedType>(mmadType))
-        maybeStaticTotalSize = shapedMmadType.getShape();
-    }
-  }
+  // The coupled buffer keeps the fixpipe dst's dynamic extents; its static
+  // buffer size upper bound is inferred later from the fixpipe src chain
+  // (mmadL1's static result) by hivm-infer-buffer-size.
   auto [coupledBuffer, toTensorOp] =
       PropagatorUtil::insertTightCoupledBufferToUB(
-          fixpipeOp.getDst(), downPropOp.getLoc(), rewriter,
-          maybeStaticTotalSize);
+          fixpipeOp.getDst(), downPropOp.getLoc(), rewriter);
   Value bufferizedValue = toTensorOp.getResult();
-  // Create new fixpipe writing to UB memref (returns void)
-  SmallVector<Value> oprs({fixpipeOp.getSrc(), coupledBuffer.spacedMemref});
-  if (auto quantScale = fixpipeOp.getQuantScale())
-    oprs.push_back(quantScale);
-  rewriter.create<FixpipeOp>(downPropOp.getLoc(), TypeRange{}, oprs,
-                             fixpipeOp->getAttrs());
+  rewriter.setInsertionPointAfter(fixpipeOp);
+  FixpipeOp::clone(rewriter, fixpipeOp, fixpipeOp.getSrc(),
+                   coupledBuffer.spacedMemref);
   rewriter.replaceOp(fixpipeOp, toTensorOp.getResult());
 
   rewriter.modifyOpInPlace(
@@ -212,6 +194,41 @@ static LogicalResult ensureFixpipeToUB(UnrealizedConversionCastOp downPropOp,
   PropagatorUtil::createPropagatorUp(&toTensorOp.getMemrefMutable(), downPropOp,
                                      rewriter);
   PropagatorUtil::createPropagatorsDown(toTensorOp, upPropOp, rewriter);
+  return success();
+}
+
+static LogicalResult resolveL0CToUB(UnrealizedConversionCastOp downPropOp,
+                                    UnrealizedConversionCastOp upPropOp,
+                                    PatternRewriter &rewriter) {
+  // L0C->UB is not a direct DMA path on mem-based architectures.
+  // Stage through GM: L0C->GM (fixpipe) then GM->UB (load).
+  Value srcValue = downPropOp->getResult(0);
+  Location loc = downPropOp.getLoc();
+
+  rewriter.setInsertionPointAfter(downPropOp);
+  auto fixpipeOp = PropagatorUtil::insertFixpipe(srcValue, loc, rewriter,
+                                                 hivm::AddressSpace::GM,
+                                                 /*inferFixpipeDmaMode=*/false);
+  Value fixpipeResult = fixpipeOp.getResult(0);
+  auto loadOp = PropagatorUtil::insertLoad(fixpipeResult, loc, rewriter);
+
+  bool isBufferized = isa<MemRefType>(loadOp.getDstOperandType());
+  Value loadedValue = isBufferized ? loadOp.getDst() : loadOp.getResult(0);
+
+  rewriter.modifyOpInPlace(
+      upPropOp, [&]() { upPropOp.getInputsMutable()[0].set(loadedValue); });
+
+  PropagatorUtil::createPropagatorUp(&fixpipeOp.getSrcMutable(), downPropOp,
+                                     rewriter);
+  PropagatorUtil::createPropagatorUp(&fixpipeOp.getDstMutable(),
+                                     hivm::AddressSpace::GM, rewriter);
+  PropagatorUtil::createPropagatorsDown(fixpipeOp, hivm::AddressSpace::GM,
+                                        rewriter);
+  PropagatorUtil::createPropagatorUp(&loadOp.getSrcMutable(),
+                                     hivm::AddressSpace::GM, rewriter);
+  PropagatorUtil::createPropagatorUp(&loadOp.getDstMutable(), upPropOp,
+                                     rewriter);
+  PropagatorUtil::createPropagatorsDown(loadOp, upPropOp, rewriter);
   return success();
 }
 
@@ -224,12 +241,11 @@ static LogicalResult resolveL1ToUB(UnrealizedConversionCastOp downPropOp,
   Location loc = downPropOp.getLoc();
 
   rewriter.setInsertionPointAfter(downPropOp);
-  auto [storeOp, loadOp] = PropagatorUtil::insertStoreAndLoad(
-      srcValue, loc, rewriter);
+  auto [storeOp, loadOp] =
+      PropagatorUtil::insertStoreAndLoad(srcValue, loc, rewriter);
 
   bool isBufferized = isa<MemRefType>(loadOp.getDstOperandType());
-  Value loadedValue =
-      isBufferized ? loadOp.getDst() : loadOp.getResult(0);
+  Value loadedValue = isBufferized ? loadOp.getDst() : loadOp.getResult(0);
 
   rewriter.modifyOpInPlace(
       upPropOp, [&]() { upPropOp.getInputsMutable()[0].set(loadedValue); });
@@ -241,13 +257,12 @@ static LogicalResult resolveL1ToUB(UnrealizedConversionCastOp downPropOp,
   PropagatorUtil::createPropagatorsDown(storeOp, hivm::AddressSpace::GM,
                                         rewriter);
   PropagatorUtil::createPropagatorUp(&loadOp.getSrcMutable(),
-                                      hivm::AddressSpace::GM, rewriter);
+                                     hivm::AddressSpace::GM, rewriter);
   PropagatorUtil::createPropagatorUp(&loadOp.getDstMutable(), upPropOp,
                                      rewriter);
   PropagatorUtil::createPropagatorsDown(loadOp, upPropOp, rewriter);
   return success();
 }
-
 
 //===----------------------------------------------------------------------===//
 // TightCoupledBufferResolvePropagationPattern
@@ -307,6 +322,19 @@ LogicalResult TightCoupledBufferResolvePropagationPattern::matchAndRewrite(
   auto [upCoreType, upAddressSpace] =
       PropagatorUtil::extractPropagatorInfo(upPropOp);
   rewriter.setInsertionPointAfter(downPropOp);
+  if (downCoreType == TCoreType::CUBE_AND_VECTOR &&
+      llvm::find(upAddressSpace, hivm::AddressSpace::UB) !=
+          upAddressSpace.end() &&
+      downPropOp.getInputs()[0].getDefiningOp<FixpipeOp>()) {
+    LDBG("Ensuring Fixpipe to UB: " << downPropOp << "\n" << upPropOp << "\n");
+    return ensureFixpipeToUB(downPropOp, upPropOp, rewriter);
+  }
+  if (upCoreType == TCoreType::CUBE_AND_VECTOR ||
+      downCoreType == TCoreType::CUBE_AND_VECTOR) {
+    LDBG("Resolving Local to Local: " << downPropOp << "\n"
+                                      << upPropOp << "\n");
+    return failure();
+  }
   if (llvm::find(downAddressSpace, hivm::AddressSpace::L0C) !=
           downAddressSpace.end() &&
       llvm::find(upAddressSpace, hivm::AddressSpace::L1) !=
@@ -321,30 +349,14 @@ LogicalResult TightCoupledBufferResolvePropagationPattern::matchAndRewrite(
     LDBG("Resolving CC to UB: " << downPropOp << "\n" << upPropOp << "\n");
     return resolveL0CToUB(downPropOp, upPropOp, rewriter);
   }
-  if (downCoreType == TCoreType::CUBE_AND_VECTOR &&
-      llvm::find(upAddressSpace, hivm::AddressSpace::UB) !=
-          upAddressSpace.end()) {
-    LDBG("Ensuring Fixpipe to UB: " << downPropOp << "\n" << upPropOp << "\n");
-    return ensureFixpipeToUB(downPropOp, upPropOp, rewriter);
-  }
-  if (downCoreType == TCoreType::CUBE_OR_VECTOR &&
-      llvm::find(upAddressSpace, hivm::AddressSpace::GM) ==
-          upAddressSpace.end()) {
-    LDBG("Resolving Local to UB: " << downPropOp << "\n" << upPropOp << "\n");
-    return resolveGMtoLocal(downPropOp, upPropOp, rewriter);
-  }
-  if (downCoreType != TCoreType::CUBE_AND_VECTOR &&
-      upCoreType != TCoreType::CUBE_AND_VECTOR &&
-      llvm::find(downAddressSpace, hivm::AddressSpace::UB) !=
+  if (llvm::find(downAddressSpace, hivm::AddressSpace::UB) !=
           downAddressSpace.end() &&
       llvm::find(upAddressSpace, hivm::AddressSpace::L1) !=
           upAddressSpace.end()) {
     LDBG("Resolving UB to L1: " << downPropOp << "\n" << upPropOp << "\n");
     return resolveUBToL1(downPropOp, upPropOp, rewriter);
   }
-  if (downCoreType != TCoreType::CUBE_AND_VECTOR &&
-      upCoreType != TCoreType::CUBE_AND_VECTOR &&
-      llvm::find(downAddressSpace, hivm::AddressSpace::L1) !=
+  if (llvm::find(downAddressSpace, hivm::AddressSpace::L1) !=
           downAddressSpace.end() &&
       llvm::find(upAddressSpace, hivm::AddressSpace::UB) !=
           upAddressSpace.end()) {
@@ -431,6 +443,13 @@ ResolvePropagationPattern::matchAndRewrite(UnrealizedConversionCastOp upPropOp,
           upAddressSpace.end()) {
     LDBG("Resolving L1 to GM: " << downPropOp << "\n" << upPropOp << "\n");
     return resolveLocaltoGM(downPropOp, upPropOp, rewriter);
+  }
+  if (llvm::find(downAddressSpace, hivm::AddressSpace::L0C) !=
+          downAddressSpace.end() &&
+      llvm::find(upAddressSpace, hivm::AddressSpace::UB) !=
+          upAddressSpace.end()) {
+    LDBG("Resolving L0C to UB: " << downPropOp << "\n" << upPropOp << "\n");
+    return resolveL0CToUB(downPropOp, upPropOp, rewriter);
   }
   return failure();
 }

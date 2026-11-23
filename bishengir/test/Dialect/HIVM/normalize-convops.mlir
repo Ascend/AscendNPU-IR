@@ -35,7 +35,41 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
+// CHECK-LABEL: func.func @a5_conv2d_weight_stays_nchw(
+// CHECK: %[[WEIGHT_ALLOC:.*]] = memref.alloc() : memref<30x15x3x3xf16, #hivm.address_space<cbuf>>
+// CHECK: hivm.hir.load ins(%{{.*}} : memref<30x15x3x3xf16, {{.*}}#hivm.address_space<gm>>) outs(%[[WEIGHT_ALLOC]] : memref<30x15x3x3xf16, #hivm.address_space<cbuf>>)
+// CHECK: %[[WEIGHT:.*]] = bufferization.to_tensor %[[WEIGHT_ALLOC]] restrict writable
+// CHECK: hivm.hir.Conv2dL1
+// CHECK-SAME: ins(%{{.*}}, %[[WEIGHT]],
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @a5_conv2d_weight_stays_nchw(
+      %input: tensor<1x30x8x8xf16>,
+      %weight_src: memref<30x15x3x3xf16, strided<[135, 9, 3, 1]>,
+                          #hivm.address_space<gm>>) -> tensor<64x32xf32> {
+    %weight_alloc = memref.alloc() : memref<30x15x3x3xf16,
+                                            #hivm.address_space<cbuf>>
+    hivm.hir.load
+        ins(%weight_src : memref<30x15x3x3xf16,
+                                  strided<[135, 9, 3, 1]>,
+                                  #hivm.address_space<gm>>)
+        outs(%weight_alloc : memref<30x15x3x3xf16,
+                                     #hivm.address_space<cbuf>>)
+    %weight = bufferization.to_tensor %weight_alloc restrict writable
+        : memref<30x15x3x3xf16, #hivm.address_space<cbuf>>
+    %true = arith.constant true
+    %init = tensor.empty() : tensor<64x32xf32>
+    %conv = hivm.hir.Conv2dL1
+        {dilation = [1, 1], groups = 2 : i32, padding = [1, 1],
+         stride = [1, 1]}
+        ins(%input, %weight, %true
+            : tensor<1x30x8x8xf16>, tensor<30x15x3x3xf16>, i1)
+        outs(%init : tensor<64x32xf32>) -> tensor<64x32xf32>
+    return %conv : tensor<64x32xf32>
+  }
+}
+
 // -----
+
 // CHECK-LABEL:   func.func @triton_conv1d_2d_fp16_nobias_ocaligned(
 // CHECK:           %{{.*}} = arith.constant true
 // CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [1, 32, 128] : tensor<32x128xf16> into tensor<1x32x128xf16>

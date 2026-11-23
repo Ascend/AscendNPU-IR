@@ -138,13 +138,13 @@ addition, if there's only one CTA per CGA, then Triton canonicalizes CTAOrder to
   // This is a little weird because if you write textual IR with a one order and
   // then print it back out, you might get a different order.  But it seems this
   // is the best way to canonicalize an attribute in MLIR.
-  let builders = [
-    AttrBuilder<(ins "ArrayRef<unsigned>":$CTAsPerCGA,
-                     "ArrayRef<unsigned>":$CTASplitNum,
-                     "ArrayRef<unsigned>":$CTAOrder), [{
+  let builders = [AttrBuilder<(ins "ArrayRef<unsigned>":$CTAsPerCGA,
+                                  "ArrayRef<unsigned>":$CTASplitNum,
+                                  "ArrayRef<unsigned>":$CTAOrder),
+                              [{
         if (llvm::all_of(CTAsPerCGA, [](unsigned x) { return x == 1; })) {
           SmallVector<unsigned> order;
-          for (int i = CTAsPerCGA.size() - 1; i >= 0; --i)
+          for (int i = static_cast<int>(CTAsPerCGA.size()) - 1; i >= 0; --i)
             order.push_back(i);
           return $_get(context, CTAsPerCGA, CTASplitNum, order);
         }
@@ -263,25 +263,23 @@ When vec=2, elements are swizzled in pairs of 2.  In other words, the element at
     "CTALayoutAttr":$CTALayout
   );
 
-  let builders = [
-    AttrBuilder<(ins "DotOperandEncodingAttr":$dotOpEnc,
-                     "ArrayRef<int64_t>":$shape,
-                     "ArrayRef<unsigned>":$order,
-                     "CTALayoutAttr":$CTALayout,
-                     "unsigned":$typeWidthInBit), [{
+  let builders =
+      [AttrBuilder<(ins "DotOperandEncodingAttr":$dotOpEnc,
+                       "ArrayRef<int64_t>":$shape, "ArrayRef<unsigned>":$order,
+                       "CTALayoutAttr":$CTALayout, "unsigned":$typeWidthInBit),
+                   [{
         bool needTrans = false; // default value
         return get(context, dotOpEnc, shape, order, CTALayout, typeWidthInBit, needTrans);
     }]>,
 
-    // TODO(jlebar): This should not be an overload of
-    // SwizzledSharedEncodingAttr::get().  It's misleading, because it does a bunch of
-    // nontrivial work based on the given dotOpEnc.
-    AttrBuilder<(ins "DotOperandEncodingAttr":$dotOpEnc,
-                     "ArrayRef<int64_t>":$shape,
-                     "ArrayRef<unsigned>":$order,
-                     "CTALayoutAttr":$CTALayout,
-                     "unsigned":$typeWidthInBit,
-                     "bool":$needTrans), [{
+       // TODO(jlebar): This should not be an overload of
+       // SwizzledSharedEncodingAttr::get().  It's misleading, because it does a
+       // bunch of nontrivial work based on the given dotOpEnc.
+       AttrBuilder<(ins "DotOperandEncodingAttr":$dotOpEnc,
+                       "ArrayRef<int64_t>":$shape, "ArrayRef<unsigned>":$order,
+                       "CTALayoutAttr":$CTALayout, "unsigned":$typeWidthInBit,
+                       "bool":$needTrans),
+                   [{
 
         // ---- begin MFMA ----
         if (auto mfmaEnc = mlir::dyn_cast<AMDMfmaEncodingAttr>(dotOpEnc.getParent())) {
@@ -312,15 +310,13 @@ When vec=2, elements are swizzled in pairs of 2.  In other words, the element at
         llvm_unreachable("unsupported swizzling for provided MMA version");
     }]>,
 
-    // NVIDIA constructor!
-    // TODO(lezcano): We should totally get rid of all these constructors...
-    AttrBuilder<(ins "int":$opIdx,
-                     "unsigned":$kWidth,
-                     "ArrayRef<int64_t>":$shape,
-                     "ArrayRef<unsigned>":$order,
-                     "CTALayoutAttr":$CTALayout,
-                     "unsigned":$bitwidth,
-                     "bool":$needTrans), [{
+       // NVIDIA constructor!
+       // TODO(lezcano): We should totally get rid of all these constructors...
+       AttrBuilder<(ins "int":$opIdx, "unsigned":$kWidth,
+                       "ArrayRef<int64_t>":$shape, "ArrayRef<unsigned>":$order,
+                       "CTALayoutAttr":$CTALayout, "unsigned":$bitwidth,
+                       "bool":$needTrans),
+                   [{
         int K =  getShapePerCTA(CTALayout.getCTASplitNum(), shape)[order[0]];
         // Elems necessary to cover all the banks divided by the inner dimension
         // This packs a few rows together for small K
@@ -334,7 +330,7 @@ When vec=2, elements are swizzled in pairs of 2.  In other words, the element at
         assert(opIdx == 0 || opIdx == 1);
         int rank = order.size();
         int kDim = opIdx == 0 ? rank-1 : rank-2;
-        if (order[0] != kDim)
+        if (order[0] != static_cast<unsigned>(kDim))
           std::swap(vec, mmaStride);
         // Count how many vec elements are needed to cover all the banks
         int maxPhase = std::max(std::min<int>(mmaStride, 1024 / (vec * bitwidth)), 1);
@@ -343,21 +339,19 @@ When vec=2, elements are swizzled in pairs of 2.  In other words, the element at
         return get(context, vec, perPhase, maxPhase, order, CTALayout);
     }]>,
 
-    AttrBuilder<(ins "DotOperandEncodingAttr":$dotOpEnc,
-                     "ArrayRef<int64_t>":$shape,
-                     "ArrayRef<unsigned>":$order,
-                     "CTALayoutAttr":$CTALayout,
-                     "Type":$eltTy), [{
+       AttrBuilder<(ins "DotOperandEncodingAttr":$dotOpEnc,
+                       "ArrayRef<int64_t>":$shape, "ArrayRef<unsigned>":$order,
+                       "CTALayoutAttr":$CTALayout, "Type":$eltTy),
+                   [{
       unsigned bitwidth = eltTy.getIntOrFloatBitWidth();
       return get(context, dotOpEnc, shape, order, CTALayout, bitwidth);
     }]>,
 
-    AttrBuilder<(ins "DotOperandEncodingAttr":$dotOpEnc,
-                     "ArrayRef<int64_t>":$shape,
-                     "ArrayRef<unsigned>":$order,
-                     "CTALayoutAttr":$CTALayout,
-                     "Type":$eltTy,
-                     "bool":$needTrans), [{
+       AttrBuilder<(ins "DotOperandEncodingAttr":$dotOpEnc,
+                       "ArrayRef<int64_t>":$shape, "ArrayRef<unsigned>":$order,
+                       "CTALayoutAttr":$CTALayout, "Type":$eltTy,
+                       "bool":$needTrans),
+                   [{
       unsigned bitwidth = eltTy.getIntOrFloatBitWidth();
       return get(context, dotOpEnc, shape, order, CTALayout, bitwidth, needTrans);
     }]>,
@@ -466,12 +460,10 @@ def NVMMASharedEncodingAttr : TritonGPU_Attr<"NVMMASharedEncoding", "nvmma_share
     "CTALayoutAttr":$CTALayout
   );
 
-  let builders = [
-    AttrBuilder<(ins "ArrayRef<int64_t>":$shape,
-                     "ArrayRef<unsigned>":$order,
-                     "CTALayoutAttr":$CTALayout,
-                     "Type":$eltTy,
-                     "bool": $fp4Padded), [{
+  let builders = [AttrBuilder<
+      (ins "ArrayRef<int64_t>":$shape, "ArrayRef<unsigned>":$order,
+          "CTALayoutAttr":$CTALayout, "Type":$eltTy, "bool":$fp4Padded),
+      [{
         auto shapePerCTA = getShapePerCTA(CTALayout.getCTASplitNum(), shape);
         int32_t swizzlingByteWidth = 0;
         unsigned eleBitWidth = eltTy.getIntOrFloatBitWidth();
@@ -490,7 +482,7 @@ def NVMMASharedEncodingAttr : TritonGPU_Attr<"NVMMASharedEncoding", "nvmma_share
           swizzlingByteWidth = 0;
         }
         int flattenOutterDim = 1;
-        for (int i = 1; i < shapePerCTA.size(); i++) {
+        for (int i = 1; i < static_cast<int>(shapePerCTA.size()); i++) {
           flattenOutterDim *= shapePerCTA[order[i]];
         }
         if (shapePerCTA.size() < 2 || flattenOutterDim < 8) {
@@ -498,8 +490,7 @@ def NVMMASharedEncodingAttr : TritonGPU_Attr<"NVMMASharedEncoding", "nvmma_share
         }
         bool transposed = order[0] == 0;
         return $_get(context, swizzlingByteWidth, transposed, eleBitWidth, fp4Padded, CTALayout);
-    }]>
-  ];
+    }]>];
 
   let extraClassDeclaration = extraBaseClassDeclaration # [{
     int getPerPhase() const;

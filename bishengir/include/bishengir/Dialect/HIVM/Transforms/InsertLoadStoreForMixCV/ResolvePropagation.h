@@ -55,8 +55,9 @@ enum PipePriority : uint8_t {
 /// ```
 ///
 /// This pattern turns such conflicts into `hivm.hir.load`, `hivm.hir.store`,
-/// or a store/load pair for local-to-local transfers, then recreates the
-/// remaining propagation markers around the inserted operation.
+/// a store/load pair for local-to-local transfers, or a fixpipe to GM followed
+/// by a load into UB for an L0C-to-UB transfer, then recreates the remaining
+/// propagation markers around the inserted operation.
 class ResolvePropagationPattern
     : public OpRewritePattern<UnrealizedConversionCastOp> {
 public:

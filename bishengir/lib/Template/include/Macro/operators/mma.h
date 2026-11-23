@@ -19,10 +19,12 @@
 #include "Macro/common.h"
 #include "Macro/functional.h"
 
+#ifndef __aicore__
 #ifdef __CCE_KT_TEST__
 #define __aicore__
 #else
 #define __aicore__ [aicore]
+#endif
 #endif
 
 template <ArchType ArchTag, typename ElementA, typename ElementB,
@@ -31,12 +33,12 @@ struct mmad {
   __aicore__ __attribute__((always_inline))
   mmad(__cc__ AccDTypeC *l0cAddr, __ca__ ElementA *l0aAddr,
        __cb__ ElementB *l0bAddr, uint32_t mTileActual, uint32_t nTileActual,
-       uint32_t kPartActual, bool initC){};
+       uint32_t kPartActual, bool initC) {};
 
   __aicore__ __attribute__((always_inline))
   mmad(__cc__ AccDTypeC *l0cAddr, __ca__ ElementA *l0aAddr,
        __cb__ ElementB *l0bAddr, uint64_t biasBt, uint32_t mTileActual,
-       uint32_t nTileActual, uint32_t kPartActual, bool initC){};
+       uint32_t nTileActual, uint32_t kPartActual, bool initC) {};
 };
 
 template <typename ElementA, typename ElementB, typename AccDTypeC,

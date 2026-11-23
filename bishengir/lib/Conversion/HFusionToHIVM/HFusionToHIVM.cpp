@@ -153,9 +153,25 @@ public:
       }
 
     } else {
-      if constexpr (std::is_base_of_v<
-                        mlir::hivm::detail::ExtraBufferOpInterfaceTrait<opType>,
-                        opType>) {
+      if constexpr (std::is_same_v<opType, VShROp>) {
+        // Propagate the logical/arithmetic right-shift semantics of hfusion
+        // shrui/shrsi through VShROp::is_signed; the template name and the
+        // scalar-loop lowering are selected from this attribute.
+        bool isSigned = true;
+        if (isa<hfusion::ElemwiseBinaryOp>(op)) {
+          isSigned = cast<hfusion::ElemwiseBinaryOp>(op).getFun() !=
+                     hfusion::BinaryFn::shrui;
+        }
+        hivmOp = b.create<opType>(loc, resultTypes, inputs, inits,
+                                  /*temp_buffer=*/Value(), isSigned);
+        // HFusion shrui/shrsi do not round. Although A3 templates already
+        // disable rounding, explicitly override HIVM's default true value
+        // so the IR preserves the source operation's semantics.
+        hivmOp->setAttr("round", b.getBoolAttr(false));
+      } else if constexpr (std::is_base_of_v<
+                               mlir::hivm::detail::ExtraBufferOpInterfaceTrait<
+                                   opType>,
+                               opType>) {
         // don't need temp buffer, but need to pass extra operand to create op
         hivmOp = b.create<opType>(loc, resultTypes, inputs, inits,
                                   /*temp_buffer=*/Value());
@@ -199,10 +215,9 @@ hivm::CompareMode mapCompareModeHFusionToHiVM(hfusion::CompareFn hsCmpMode) {
     return hivm::CompareMode::GT;
   case hfusion::CompareFn::vult:
     return hivm::CompareMode::LT;
-  default:
-    llvm::report_fatal_error(
-        "mapCompareModeHFusionToHiVM: unsupported hfusion::CompareFn");
   }
+  llvm::report_fatal_error(
+      "mapCompareModeHFusionToHiVM: unsupported hfusion::CompareFn");
 }
 
 bool isSignedCompareMode(hfusion::CompareFn hsCmpMode) {
@@ -252,6 +267,7 @@ static hivm::RoundMode mapRoundModeHFusionToHiVM(hfusion::RoundMode hsRndMode) {
   case (hfusion::RoundMode::TRUNCWITHOVERFLOW):
     return hivm::RoundMode::TRUNCWITHOVERFLOW;
   }
+  llvm::report_fatal_error("unsupported hfusion::RoundMode");
 }
 
 hivm::TypeFn mapCastHFusionToHiVM(hfusion::TypeFn casting) {
@@ -497,9 +513,9 @@ Value brcOperand(OpBuilder &b, Location loc, Value scalarVal,
 bool isScalarOperand(Value val) {
   auto const &type = val.getType();
   return type.isIntOrFloat() ||
-         isRegBasedArch &&
-             (isa<IndexType>(type) ||
-              (isa<ShapedType>(type) && cast<ShapedType>(type).getRank() == 0));
+         (isRegBasedArch &&
+          (isa<IndexType>(type) ||
+           (isa<ShapedType>(type) && cast<ShapedType>(type).getRank() == 0)));
 }
 
 void getInvalidScalarOperands(HIVMStructuredOp *hivmOp,
@@ -933,63 +949,45 @@ struct HFusionLoadOpToHIVMLoadOp : public OpRewritePattern<hfusion::LoadOp> {
 //===----------------------------------------------------------------------===//
 
 hivm::AtomicKind mapAtomicKindHFusionToHiVM(hfusion::AtomicKind hsAtKind) {
-  hivm::AtomicKind hvAtKind;
   switch (hsAtKind) {
   case (hfusion::AtomicKind::NONE):
-    hvAtKind = hivm::AtomicKind::NONE;
-    break;
+    return hivm::AtomicKind::NONE;
   case (hfusion::AtomicKind::ADD):
-    hvAtKind = hivm::AtomicKind::ADD;
-    break;
+    return hivm::AtomicKind::ADD;
   case (hfusion::AtomicKind::MAX):
-    hvAtKind = hivm::AtomicKind::MAX;
-    break;
+    return hivm::AtomicKind::MAX;
   case (hfusion::AtomicKind::MIN):
-    hvAtKind = hivm::AtomicKind::MIN;
-    break;
+    return hivm::AtomicKind::MIN;
   case (hfusion::AtomicKind::AND):
-    hvAtKind = hivm::AtomicKind::AND;
-    break;
+    return hivm::AtomicKind::AND;
   case (hfusion::AtomicKind::OR):
-    hvAtKind = hivm::AtomicKind::OR;
-    break;
+    return hivm::AtomicKind::OR;
   case (hfusion::AtomicKind::XOR):
-    hvAtKind = hivm::AtomicKind::XOR;
-    break;
+    return hivm::AtomicKind::XOR;
   case (hfusion::AtomicKind::UMAX):
     if (isRegBasedArch) {
       // In A5, it should never reach here
-      hvAtKind = hivm::AtomicKind::MAX;
-    } else {
-      hvAtKind = hivm::AtomicKind::UMAX;
+      return hivm::AtomicKind::MAX;
     }
-    break;
+    return hivm::AtomicKind::UMAX;
   case (hfusion::AtomicKind::UMIN):
     if (isRegBasedArch) {
       // In A5, it should never reach here
-      hvAtKind = hivm::AtomicKind::MIN;
-    } else {
-      hvAtKind = hivm::AtomicKind::UMIN;
+      return hivm::AtomicKind::MIN;
     }
-    break;
+    return hivm::AtomicKind::UMIN;
   case (hfusion::AtomicKind::CAS):
     if (isRegBasedArch) {
-      hvAtKind = hivm::AtomicKind::CAS;
-    } else {
-      llvm::report_fatal_error("Unsupported atomic kind");
+      return hivm::AtomicKind::CAS;
     }
-    break;
+    llvm::report_fatal_error("Unsupported atomic kind");
   case (hfusion::AtomicKind::XCHG):
     if (isRegBasedArch) {
-      hvAtKind = hivm::AtomicKind::XCHG;
-    } else {
-      llvm::report_fatal_error("Unsupported atomic kind");
+      return hivm::AtomicKind::XCHG;
     }
-    break;
-  default:
     llvm::report_fatal_error("Unsupported atomic kind");
   }
-  return hvAtKind;
+  llvm::report_fatal_error("Unsupported atomic kind");
 }
 
 struct HFusionStoreOpToHIVMStoreOp : public OpRewritePattern<hfusion::StoreOp> {
@@ -1228,6 +1226,19 @@ struct HFusionToHIVMFlipOp : public OpRewritePattern<hfusion::FlipOp> {
 //===----------------------------------------------------------------------===//
 // HFusionToHIVMCumOp
 //===----------------------------------------------------------------------===//
+
+static bool mayUseSimtCumsumTemplate(hfusion::CumsumOp op) {
+  auto srcType = cast<ShapedType>(op.getInput().getType());
+  auto cumDims = op.getCumDims();
+  if (cumDims.size() != 1)
+    return false;
+  for (auto [dim, size] : llvm::enumerate(srcType.getShape())) {
+    if (static_cast<int64_t>(dim) != cumDims[0] && size != 1)
+      return false;
+  }
+  return true;
+}
+
 template <typename HFUSIONOP, typename HIVMOP>
 struct HFusionToHIVMCumOp : public OpRewritePattern<HFUSIONOP> {
   using OpRewritePattern<HFUSIONOP>::OpRewritePattern;
@@ -1243,6 +1254,11 @@ struct HFusionToHIVMCumOp : public OpRewritePattern<HFUSIONOP> {
       auto newOp = rewriter.create<HIVMOP>(op.getLoc(), op->getResultTypes(),
                                            op.getInput(), dsts[0],
                                            op.getCumDims(), op.getReverse());
+      if constexpr (std::is_same_v<HFUSIONOP, hfusion::CumsumOp>) {
+        if (mayUseSimtCumsumTemplate(op))
+          newOp->setAttr(VFModeAttr::name,
+                         VFModeAttr::get(op->getContext(), VFMode::SIMT));
+      }
       // cummax/cummin carry a NaN-propagation flag (max/minimum vs max/minnum).
       // Forward it; cumsum/cumprod have no such attribute.
       if constexpr (std::is_same_v<HFUSIONOP, hfusion::CummaxOp> ||
@@ -1346,10 +1362,9 @@ struct HFusionToHIVMConv1DOp : public OpRewritePattern<hfusion::Conv1DOp> {
     Value initCondition =
         rewriter.create<arith::ConstantIntOp>(op->getLoc(), int1Type, 1);
 #endif
-    rewriter.replaceOpWithNewOp<hivm::Conv1DL1Op>(op, resType, input, weight,
-                                                  bias, init, initCondition,
-                                                  ValueRange{}, stride, padding,
-                                                  dilation, group);
+    rewriter.replaceOpWithNewOp<hivm::Conv1DL1Op>(
+        op, resType, input, weight, bias, init, initCondition, ValueRange{},
+        stride, padding, dilation, group);
     return success();
   }
 };
@@ -1378,10 +1393,9 @@ struct HFusionToHIVMConv2DOp : public OpRewritePattern<hfusion::Conv2DOp> {
     Value initCondition =
         rewriter.create<arith::ConstantIntOp>(op->getLoc(), int1Type, 1);
 #endif
-    rewriter.replaceOpWithNewOp<hivm::Conv2DL1Op>(op, resType, input, weight,
-                                                  bias, init, initCondition,
-                                                  ValueRange{}, stride, padding,
-                                                  dilation, group);
+    rewriter.replaceOpWithNewOp<hivm::Conv2DL1Op>(
+        op, resType, input, weight, bias, init, initCondition, ValueRange{},
+        stride, padding, dilation, group);
     return success();
   }
 };
@@ -1410,10 +1424,9 @@ struct HFusionToHIVMConv3DOp : public OpRewritePattern<hfusion::Conv3DOp> {
     Value initCondition =
         rewriter.create<arith::ConstantIntOp>(op->getLoc(), int1Type, 1);
 #endif
-    rewriter.replaceOpWithNewOp<hivm::Conv3DL1Op>(op, resType, input, weight,
-                                                  bias, init, initCondition,
-                                                  ValueRange{}, stride, padding,
-                                                  dilation, group);
+    rewriter.replaceOpWithNewOp<hivm::Conv3DL1Op>(
+        op, resType, input, weight, bias, init, initCondition, ValueRange{},
+        stride, padding, dilation, group);
     return success();
   }
 };

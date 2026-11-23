@@ -133,16 +133,16 @@ getConvIntArrayAttrElement(Attribute attr, StringRef attrName, Dim dim,
   return (*values)[static_cast<size_t>(dim)];
 }
 
-FailureOr<int64_t> getConvPaddingAttrElement(
-    Attribute attr, size_t spatialRank, size_t symmetricDim,
-    size_t explicitSide, function_ref<InFlightDiagnostic()> emitError) {
+FailureOr<int64_t>
+getConvPaddingAttrElement(Attribute attr, size_t spatialRank,
+                          size_t symmetricDim, size_t explicitSide,
+                          function_ref<InFlightDiagnostic()> emitError) {
   if (auto intAttr = dyn_cast<IntegerAttr>(attr))
     return intAttr.getInt();
 
   SmallVector<int64_t, 6> values;
   if (auto denseAttr = dyn_cast<DenseI64ArrayAttr>(attr)) {
-    values.append(denseAttr.asArrayRef().begin(),
-                  denseAttr.asArrayRef().end());
+    values.append(denseAttr.asArrayRef().begin(), denseAttr.asArrayRef().end());
   } else if (auto arrayAttr = dyn_cast<ArrayAttr>(attr)) {
     values.reserve(arrayAttr.size());
     for (Attribute element : arrayAttr) {
@@ -288,7 +288,7 @@ bool sourceCarriesFractalLayoutHint(Value val, hivm::DataLayout layout) {
   return false;
 }
 
-llvm::SmallVector<int64_t> getBlockSizes(mlir::Value oper) {
+[[maybe_unused]] llvm::SmallVector<int64_t> getBlockSizes(mlir::Value oper) {
   llvm::SmallVector<int64_t> kBlockSizes;
   auto elementType = getElementTypeOrSelf(oper.getType());
   size_t kBlockSize =
@@ -372,9 +372,8 @@ getLocalMatmulOperandALayoutImpl(Operation *operation) {
     return DataLayoutAttr::get(
         op->getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN,
         BoolAttr(),
-        mlir::DenseI64ArrayAttr::get(op->getContext(),
-                                     ArrayRef({shape[*rank - 2],
-                                               shape[*rank - 1]})));
+        mlir::DenseI64ArrayAttr::get(
+            op->getContext(), ArrayRef({shape[*rank - 2], shape[*rank - 1]})));
   }
   default:
     return failure();
@@ -404,9 +403,8 @@ getLocalMatmulOperandBLayoutImpl(Operation *operation) {
     return DataLayoutAttr::get(
         op->getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN,
         BoolAttr(),
-        mlir::DenseI64ArrayAttr::get(op->getContext(),
-                                     ArrayRef({shape[*rank - 2],
-                                               shape[*rank - 1]})));
+        mlir::DenseI64ArrayAttr::get(
+            op->getContext(), ArrayRef({shape[*rank - 2], shape[*rank - 1]})));
   }
   default:
     return failure();
@@ -485,6 +483,21 @@ getLocalMatmulOperandsTargetLayoutImpl(Operation *operation) {
   valLayoutMap[op.getMatmulC()] = mCLayoutAttr;
 
   return valLayoutMap;
+}
+
+// Keep the library signature identical for present and absent signals. The
+// templates recognize a null aligned pointer as the full-L0 fallback.
+Value getLocalMatmulPingPongSignalLibValueImpl(Operation *operation,
+                                               OpBuilder &builder) {
+  auto op = cast<LocalMatmulLikeOpInterface>(operation);
+  if (Value signal = op.getMatmulPingPongSignal())
+    return signal;
+  Value zero = builder.create<arith::ConstantIntOp>(operation->getLoc(), 0, 64);
+  auto type = MemRefType::get({}, builder.getI32Type());
+  auto nullSignal =
+      builder.create<hivm::PointerCastOp>(operation->getLoc(), type, zero);
+  nullSignal->setAttr(hivm::PingPongSignalAttr::name, builder.getUnitAttr());
+  return nullSignal;
 }
 
 } // namespace detail
@@ -586,10 +599,10 @@ void MmadL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
                      UnitAttr a_transpose, UnitAttr b_transpose,
                      UnitAttr enable_HF32, UnitAttr enable_i4) {
   build(odsBuilder, odsState, result_tensors, a, b, init_condition, real_m,
-        real_k, real_n, c, /*sync_related_args*/ ValueRange{},
-        /*unit_flag_cond*/ ValueRange{}, per_channel_bias, a_transpose,
-        b_transpose, enable_HF32, enable_i4, /*unit_flag_mode*/ ArrayAttr{},
-        /*unit_flag_group_id*/ IntegerAttr{});
+        real_k, real_n, /*ping_pong_signal*/ Value{}, c,
+        /*sync_related_args*/ ValueRange{}, /*unit_flag_cond*/ ValueRange{},
+        per_channel_bias, a_transpose, b_transpose, enable_HF32, enable_i4,
+        /*unit_flag_mode*/ ArrayAttr{}, /*unit_flag_group_id*/ IntegerAttr{});
 }
 
 int MmadL1Op::getNumSyncRelatedArgs() { return 7; }
@@ -1043,8 +1056,9 @@ void MmadL1Op::setInitCondition(Value init) {
 
 llvm::SmallVector<int64_t>
 MmadL1Op::getBlockSizesTile(Value oper, bool isTranspose, bool isA) {
-  bool isA5 = hacc::utils::isAscend950(
-      this->getOperation()->getParentOfType<ModuleOp>());
+  ModuleOp moduleOp = this->getOperation()->getParentOfType<ModuleOp>();
+  bool isA5 =
+      hacc::utils::isAscend950(moduleOp) || hacc::utils::isAscend960(moduleOp);
   return ::getBlockSizesTile(oper, isTranspose, isA, isA5);
 }
 
@@ -1089,10 +1103,10 @@ void BatchMmadL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
                           UnitAttr a_transpose, UnitAttr b_transpose,
                           UnitAttr enable_HF32, UnitAttr enable_i4) {
   build(odsBuilder, odsState, result_tensors, a, b, init_condition, real_m,
-        real_k, real_n, c, /*sync_related_args*/ ValueRange{},
-        /*unit_flag_cond*/ ValueRange{}, per_channel_bias, a_transpose,
-        b_transpose, enable_HF32, enable_i4, /*unit_flag_mode*/ ArrayAttr{},
-        /*unit_flag_group_id*/ IntegerAttr{});
+        real_k, real_n, /*ping_pong_signal*/ Value{}, c,
+        /*sync_related_args*/ ValueRange{}, /*unit_flag_cond*/ ValueRange{},
+        per_channel_bias, a_transpose, b_transpose, enable_HF32, enable_i4,
+        /*unit_flag_mode*/ ArrayAttr{}, /*unit_flag_group_id*/ IntegerAttr{});
 }
 
 int BatchMmadL1Op::getNumSyncRelatedArgs() { return 7; }
@@ -1166,8 +1180,9 @@ FailureOr<DataLayoutAttr> BatchMmadL1Op::getOperandBiasLayout() {
 
 llvm::SmallVector<int64_t>
 BatchMmadL1Op::getBlockSizesTile(Value oper, bool isTranspose, bool isA) {
-  bool isA5 = hacc::utils::isAscend950(
-      this->getOperation()->getParentOfType<ModuleOp>());
+  ModuleOp moduleOp = this->getOperation()->getParentOfType<ModuleOp>();
+  bool isA5 =
+      hacc::utils::isAscend950(moduleOp) || hacc::utils::isAscend960(moduleOp);
   return ::getBlockSizesTile(oper, isTranspose, isA, isA5);
 }
 
@@ -1177,8 +1192,9 @@ MatmulBiasMode BatchMmadL1Op::getMatmulBiasMode() {
 
 llvm::SmallVector<int64_t>
 BatchMmadL1Op::getMatmulBlockSizesTile(Value oper, bool isTranspose, bool isA) {
-  bool isA5 = hacc::utils::isAscend950(
-      this->getOperation()->getParentOfType<ModuleOp>());
+  ModuleOp moduleOp = this->getOperation()->getParentOfType<ModuleOp>();
+  bool isA5 =
+      hacc::utils::isAscend950(moduleOp) || hacc::utils::isAscend960(moduleOp);
   return ::getBlockSizesTile(oper, isTranspose, isA, isA5);
 }
 
@@ -1299,7 +1315,7 @@ void MmadMxL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
                        UnitAttr a_transpose, UnitAttr b_transpose,
                        Value per_channel_bias) {
   build(odsBuilder, odsState, result_tensors, a, b, scaleA, scaleB,
-        init_condition, real_m, real_k, real_n, c,
+        init_condition, real_m, real_k, real_n, /*ping_pong_signal*/ Value{}, c,
         /*sync_related_args*/ ValueRange{}, per_channel_bias, lhsFormat,
         rhsFormat, a_transpose, b_transpose);
 }
@@ -1581,6 +1597,8 @@ FailureOr<DataLayoutAttr> Conv1DL1Op::getWeightLayout() {
   switch (*rank) {
   case kDimThree:
     return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
+  case kDimFour:
+    return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
   case kDimFive:
     return DataLayoutAttr::get(getContext(), DataLayout::C1HWNC0);
   default:
@@ -1651,15 +1669,15 @@ Conv1DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
          "Conv1DL1Op padding must be verified");
   int64_t strideW = getStrideW();
   int64_t dilationW = getDilationW();
-  libParams.push_back(makeI64(0));        // padT
-  libParams.push_back(makeI64(0));        // padB
+  libParams.push_back(makeI64(0));         // padT
+  libParams.push_back(makeI64(0));         // padB
   libParams.push_back(makeI64(*paddingL)); // padL
   libParams.push_back(makeI64(*paddingR)); // padR
 
-  libParams.push_back(makeI64(1));      // strideH
+  libParams.push_back(makeI64(1));       // strideH
   libParams.push_back(makeI64(strideW)); // strideW
 
-  libParams.push_back(makeI64(1));          // dilationH
+  libParams.push_back(makeI64(1));         // dilationH
   libParams.push_back(makeI64(dilationW)); // dilationW
 
   // additional sync arguments
@@ -1682,15 +1700,13 @@ Conv1DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
 //===----------------------------------------------------------------------===//
 
 FailureOr<int64_t> Conv2DL1Op::getStrideH() {
-  return getConvIntArrayAttrElement<2>(
-      getStrideAttr(), "stride", Conv2DDim::H,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<2>(getStrideAttr(), "stride", Conv2DDim::H,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv2DL1Op::getStrideW() {
-  return getConvIntArrayAttrElement<2>(
-      getStrideAttr(), "stride", Conv2DDim::W,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<2>(getStrideAttr(), "stride", Conv2DDim::W,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv2DL1Op::getPaddingT() {
@@ -1718,15 +1734,15 @@ FailureOr<int64_t> Conv2DL1Op::getPaddingR() {
 }
 
 FailureOr<int64_t> Conv2DL1Op::getDilationH() {
-  return getConvIntArrayAttrElement<2>(
-      getDilationAttr(), "dilation", Conv2DDim::H,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<2>(getDilationAttr(), "dilation",
+                                       Conv2DDim::H,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv2DL1Op::getDilationW() {
-  return getConvIntArrayAttrElement<2>(
-      getDilationAttr(), "dilation", Conv2DDim::W,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<2>(getDilationAttr(), "dilation",
+                                       Conv2DDim::W,
+                                       [&]() { return emitOpError(); });
 }
 
 LogicalResult Conv2DL1Op::verify() {
@@ -1736,8 +1752,8 @@ LogicalResult Conv2DL1Op::verify() {
   auto strideW = getStrideW();
   if (failed(strideW))
     return failure();
-  if (failed(getPaddingT()) || failed(getPaddingB()) ||
-      failed(getPaddingL()) || failed(getPaddingR()))
+  if (failed(getPaddingT()) || failed(getPaddingB()) || failed(getPaddingL()) ||
+      failed(getPaddingR()))
     return failure();
   auto dilationH = getDilationH();
   if (failed(dilationH))
@@ -1896,21 +1912,18 @@ Conv2DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
 //===----------------------------------------------------------------------===//
 
 FailureOr<int64_t> Conv3DL1Op::getStrideD() {
-  return getConvIntArrayAttrElement<3>(
-      getStrideAttr(), "stride", Conv3DDim::D,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getStrideAttr(), "stride", Conv3DDim::D,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DL1Op::getStrideH() {
-  return getConvIntArrayAttrElement<3>(
-      getStrideAttr(), "stride", Conv3DDim::H,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getStrideAttr(), "stride", Conv3DDim::H,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DL1Op::getStrideW() {
-  return getConvIntArrayAttrElement<3>(
-      getStrideAttr(), "stride", Conv3DDim::W,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getStrideAttr(), "stride", Conv3DDim::W,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DL1Op::getPaddingFront() {
@@ -1950,21 +1963,21 @@ FailureOr<int64_t> Conv3DL1Op::getPaddingR() {
 }
 
 FailureOr<int64_t> Conv3DL1Op::getDilationD() {
-  return getConvIntArrayAttrElement<3>(
-      getDilationAttr(), "dilation", Conv3DDim::D,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getDilationAttr(), "dilation",
+                                       Conv3DDim::D,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DL1Op::getDilationH() {
-  return getConvIntArrayAttrElement<3>(
-      getDilationAttr(), "dilation", Conv3DDim::H,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getDilationAttr(), "dilation",
+                                       Conv3DDim::H,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DL1Op::getDilationW() {
-  return getConvIntArrayAttrElement<3>(
-      getDilationAttr(), "dilation", Conv3DDim::W,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getDilationAttr(), "dilation",
+                                       Conv3DDim::W,
+                                       [&]() { return emitOpError(); });
 }
 
 LogicalResult Conv3DL1Op::verify() {
@@ -1984,8 +1997,8 @@ LogicalResult Conv3DL1Op::verify() {
            << "requires strideH and strideW to be in the range [1, 255]";
 
   if (failed(getPaddingFront()) || failed(getPaddingBack()) ||
-      failed(getPaddingT()) || failed(getPaddingB()) ||
-      failed(getPaddingL()) || failed(getPaddingR()))
+      failed(getPaddingT()) || failed(getPaddingB()) || failed(getPaddingL()) ||
+      failed(getPaddingR()))
     return failure();
   auto dilationD = getDilationD();
   if (failed(dilationD))
@@ -2019,18 +2032,53 @@ void Conv3DL1Op::setInitCondition(Value init) {
 
 void MmadL0Op::build(OpBuilder &odsBuilder, OperationState &odsState,
                      TypeRange result_tensors, Value a, Value b, Value real_m,
-                     Value real_k, Value real_n, Value c, Value k_direction_align,
-                     Value is_with_bias, Value init_condition, UnitAttr enable_HF32,
-                     UnitAttr enable_I4) {
+                     Value real_k, Value real_n, Value c,
+                     Value k_direction_align, Value is_with_bias,
+                     Value init_condition, UnitAttr enable_HF32,
+                     UnitAttr enable_I4, Value bias, BoolAttr disable_gemv) {
   build(odsBuilder, odsState, result_tensors, a, b, real_m, real_k, real_n, c,
-        k_direction_align, is_with_bias, init_condition,
+        k_direction_align, is_with_bias, init_condition, bias,
         /*unit_flag_cond*/ ValueRange{}, enable_HF32, enable_I4,
-        /*unit_flag_mode*/ ArrayAttr{}, /*unit_flag_group_id*/ IntegerAttr{});
+        /*unit_flag_mode*/ ArrayAttr{}, /*unit_flag_group_id*/ IntegerAttr{},
+        disable_gemv ? disable_gemv : odsBuilder.getBoolAttr(true));
 }
 
 SmallVector<IteratorType> MmadL0Op::getIteratorTypesArray() {
+  if (cast<ShapedType>(getA().getType()).getRank() == 4) {
+    // M1, N1, M0, N0, K1, K0. Keep the physical fractals intact.
+    return {IteratorType::kParallel,  IteratorType::kParallel,
+            IteratorType::kParallel,  IteratorType::kParallel,
+            IteratorType::kReduction, IteratorType::kReduction};
+  }
   return {IteratorType::kParallel, IteratorType::kParallel,
           IteratorType::kReduction};
+}
+
+ArrayAttr MmadL0Op::getIndexingMaps() {
+  auto *ctx = getContext();
+  bool physical = cast<ShapedType>(getA().getType()).getRank() == 4;
+  unsigned loops = physical ? 6 : 3;
+  SmallVector<AffineMap> maps(getNumOperands(), AffineMap::get(loops, 0, ctx));
+  auto d = [&](unsigned i) { return getAffineDimExpr(i, ctx); };
+  auto map = [&](ArrayRef<AffineExpr> exprs) {
+    return AffineMap::get(loops, 0, exprs, ctx);
+  };
+  maps[getAMutable().getOperandNumber()] =
+      physical ? map({d(4), d(0), d(2), d(5)}) : map({d(0), d(2)});
+  maps[getBMutable().getOperandNumber()] =
+      physical ? map({d(4), d(1), d(3), d(5)}) : map({d(2), d(1)});
+  maps[getCMutable().getOperandNumber()] =
+      physical ? map({d(1), d(0), d(2), d(3)}) : map({d(0), d(1)});
+  if (getBias()) {
+    // The optional bias segment immediately follows init_condition.
+    unsigned biasIndex = getInitConditionMutable().getOperandNumber() + 1;
+    maps[biasIndex] = physical ? map({d(1) * 16 + d(3)}) : map({d(1)});
+  }
+  return Builder(ctx).getAffineMapArrayAttr(maps);
+}
+
+bool MmadL0Op::readsAccumulator() {
+  return !getBias() && !matchPattern(getInitCondition(), m_One());
 }
 
 LogicalResult MmadL0Op::verify() {
@@ -2051,6 +2099,17 @@ LogicalResult MmadL0Op::verify() {
   if (failed(verifySpace(getC().getType(), AddressSpace::L0C,
                          "c must have L0C (cc) address space")))
     return failure();
+  if (getBias()) {
+    if (failed(verifySpace(getBias().getType(), AddressSpace::BiasBUF,
+                           "bias must have BiasBUF (biasbuf) address space")))
+      return failure();
+    if (cast<ShapedType>(getBias().getType()).getRank() != 1)
+      return emitOpError("bias must be a rank-1 BT vector");
+    if (!matchPattern(getIsWithBias(), m_One()))
+      return emitOpError("bias requires constant is_with_bias = true");
+    if (!matchPattern(getInitCondition(), m_Zero()))
+      return emitOpError("BT bias requires constant init_condition = false");
+  }
   return success();
 }
 
@@ -2068,13 +2127,9 @@ SmallVector<IteratorType> L12BTOp::getIteratorTypesArray() {
   return iteratorTypes;
 }
 
-Value L12BTOp::getSource() {
-  return getSrc();
-}
+Value L12BTOp::getSource() { return getSrc(); }
 
-Value L12BTOp::getTarget() {
-  return getDst();
-}
+Value L12BTOp::getTarget() { return getDst(); }
 
 LogicalResult L12BTOp::verify() {
   auto srcSpace = getOptionalHIVMAddressSpace(getSrc().getType());
@@ -2099,13 +2154,9 @@ SmallVector<IteratorType> L12L0Op::getIteratorTypesArray() {
   return iteratorTypes;
 }
 
-Value L12L0Op::getSource() {
-  return getSrc();
-}
+Value L12L0Op::getSource() { return getSrc(); }
 
-Value L12L0Op::getTarget() {
-  return getDst();
-}
+Value L12L0Op::getTarget() { return getDst(); }
 
 bool L12L0Op::isToL0A() {
   auto dstSpace = getOptionalHIVMAddressSpace(getDst().getType());

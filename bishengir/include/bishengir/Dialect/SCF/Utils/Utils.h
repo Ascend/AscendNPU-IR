@@ -21,10 +21,21 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Transform/Utils/DiagnosedSilenceableFailure.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
+#include "mlir/Support/LogicalResult.h"
 
 namespace mlir {
 namespace scf {
 namespace utils {
+
+/// Splits `forOp` into consecutive chunks of at most `maxTripCount`
+/// iterations each, chained via iter-args to preserve loop semantics.
+/// Succeeds with the loop unchanged when its trip count does not exceed
+/// `maxTripCount`. Fails when the loop cannot be legalized: non-positive
+/// step, zero `maxTripCount`, or a trip count not representable in 64
+/// bits; the caller is expected to diagnose such loops.
+LogicalResult splitForOpByTripCount(OpBuilder &builder, scf::ForOp forOp,
+                                    int64_t lb, int64_t ub, int64_t step,
+                                    uint64_t maxTripCount);
 
 DiagnosedSilenceableFailure
 mapForToForallImpl(OpBuilder &builder, scf::ForOp forOp,

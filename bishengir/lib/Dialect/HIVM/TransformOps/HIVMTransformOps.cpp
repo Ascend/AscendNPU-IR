@@ -17,8 +17,6 @@
 
 #include "bishengir/Dialect/HIVM/TransformOps/HIVMTransformOps.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/IR/HIVMVectorize.h"
-#include "bishengir/Dialect/HIVM/Interfaces/VectorizableOpInterface.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MathExt/IR/MathExt.h"
 
@@ -31,15 +29,10 @@
 #include "mlir/Dialect/Transform/IR/TransformDialect.h"
 #include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-
-#include "llvm/Support/Debug.h"
 
 using namespace mlir;
 using namespace mlir::hivm;
 using namespace mlir::transform;
-
-#define DEBUG_TYPE "hivm-transform-ops"
 
 DiagnosedSilenceableFailure transform::MapForallToHIVMBlocks::applyToOne(
     transform::TransformRewriter &rewriter, Operation *target,
@@ -63,44 +56,6 @@ void MapForallToHIVMBlocks::getEffects(
     SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
   consumesHandle(getTargetMutable(), effects);
   producesHandle(getOperation()->getOpResults(), effects);
-  modifiesPayload(effects);
-}
-
-DiagnosedSilenceableFailure
-transform::HIVMVectorizeOp::apply(transform::TransformRewriter &rewriter,
-                                  transform::TransformResults &transformResults,
-                                  transform::TransformState &state) {
-  ArrayRef<int64_t> explicitSizes = getStaticVectorSizes();
-  for (Operation *target : state.getPayloadOps(getTarget())) {
-    auto vecOp = dyn_cast<VectorizableOpInterface>(target);
-    if (!vecOp)
-      return emitSilenceableError()
-             << "payload op does not implement VectorizableOpInterface";
-    auto structuredOp = dyn_cast<HIVMStructuredOp>(target);
-    if (!structuredOp)
-      return emitSilenceableError() << "payload op is not a HIVM structured op";
-
-    SmallVector<int64_t> vectorSizes;
-    if (!explicitSizes.empty()) {
-      vectorSizes.assign(explicitSizes.begin(), explicitSizes.end());
-    } else {
-      FailureOr<SmallVector<int64_t>> computed =
-          computeVectorSizes(structuredOp);
-      if (failed(computed))
-        return emitSilenceableError() << "failed to compute vector sizes";
-      vectorSizes = std::move(*computed);
-    }
-
-    rewriter.setInsertionPoint(target);
-    if (failed(vecOp.vectorize(rewriter, vectorSizes)))
-      return emitSilenceableError() << "failed to vectorize HIVM op";
-  }
-  return DiagnosedSilenceableFailure::success();
-}
-
-void HIVMVectorizeOp::getEffects(
-    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
-  consumesHandle(getTargetMutable(), effects);
   modifiesPayload(effects);
 }
 

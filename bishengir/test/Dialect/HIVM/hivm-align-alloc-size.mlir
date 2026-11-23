@@ -237,13 +237,44 @@ func.func @test_sort_half() {
 
 // -----
 
-// CHECK:           %[[VAL_16:.*]] = memref.alloc() : memref<1x1x1x32x32xi8, #hivm.address_space<ub>>
-// CHECK:           %[[VAL_17:.*]] = memref.subview %[[VAL_16]][0, 0, 0, 0, 0] [1, 1, 1, 1, 32] [1, 1, 1, 1, 1] : memref<1x1x1x32x32xi8, #hivm.address_space<ub>> to  memref<1x1x1x1x32xi8, strided<[1024, 1024, 1024, 32, 1]>, #hivm.address_space<ub>>
-// CHECK:           %[[VAL_20:.*]] = scf.for %[[VAL_21:.*]] = %[[VAL_9:.*]] to %[[VAL_10:.*]] step %[[VAL_9:.*]] iter_args(%[[VAL_22:.*]] = %[[VAL_17]]) -> (memref<1x1x1x1x32xi8, strided<[1024, 1024, 1024, 32, 1]>, #hivm.address_space<ub>>)  : i32 {
-// CHECK:             %[[VAL_28:.*]] = memref.alloc() : memref<1x1x1x32x32xi8, #hivm.address_space<ub>>
-// CHECK:             %[[VAL_29:.*]] = memref.subview %[[VAL_28]][0, 0, 0, 0, 0] [1, 1, 1, 1, 32] [1, 1, 1, 1, 1] : memref<1x1x1x32x32xi8, #hivm.address_space<ub>> to  memref<1x1x1x1x32xi8, strided<[1024, 1024, 1024, 32, 1]>, #hivm.address_space<ub>>
-// CHECK:             hivm.hir.vcast ins(%[[VAL_27:.*]] : memref<1x1x1x1x32xi32, strided<[1024, 1024, 1024, 32, 1]>, #hivm.address_space<ub>>) outs(%[[VAL_29]] : memref<1x1x1x1x32xi8, strided<[1024, 1024, 1024, 32, 1]>, #hivm.address_space<ub>>) round_mode = <truncwithoverflow>
-// CHECK:             scf.yield{{.*}}%[[VAL_29]] : memref<1x1x1x1x32xi8, strided<[1024, 1024, 1024, 32, 1]>, #hivm.address_space<ub>>
+// Rank > 3 i32->i8 VCast: alloc size alignment is skipped and the
+// disable_size_align_for_cast attribute is set on the op.
+// CHECK-LABEL: func @test_cast_s322s8_4d
+// CHECK: %[[SRC:.*]] = memref.alloc() : memref<2x2x2x2xi32, #hivm.address_space<ub>>
+// CHECK: %[[DST:.*]] = memref.alloc() : memref<2x2x2x2xi8, #hivm.address_space<ub>>
+// CHECK: hivm.hir.vcast {hivm.disable_size_align_for_cast} ins(%[[SRC]] : memref<2x2x2x2xi32, #hivm.address_space<ub>>) outs(%[[DST]] : memref<2x2x2x2xi8, #hivm.address_space<ub>>) round_mode = <truncwithoverflow>
+func.func @test_cast_s322s8_4d() {
+  %s32 = memref.alloc() : memref<2x2x2x2xi32, #hivm.address_space<ub>>
+  %s8 = memref.alloc() : memref<2x2x2x2xi8, #hivm.address_space<ub>>
+  hivm.hir.vcast ins(%s32 : memref<2x2x2x2xi32, #hivm.address_space<ub>>)
+                outs(%s8 : memref<2x2x2x2xi8, #hivm.address_space<ub>>)
+                round_mode = #hivm.round_mode<truncwithoverflow>
+  return
+}
+
+// -----
+
+// Rank > 3 i16->i8 VCast: same behaviour as i32->i8.
+// CHECK-LABEL: func @test_cast_s162s8_4d
+// CHECK: %[[SRC:.*]] = memref.alloc() : memref<2x2x2x2xi16, #hivm.address_space<ub>>
+// CHECK: %[[DST:.*]] = memref.alloc() : memref<2x2x2x2xi8, #hivm.address_space<ub>>
+// CHECK: hivm.hir.vcast {hivm.disable_size_align_for_cast} ins(%[[SRC]] : memref<2x2x2x2xi16, #hivm.address_space<ub>>) outs(%[[DST]] : memref<2x2x2x2xi8, #hivm.address_space<ub>>) round_mode = <truncwithoverflow>
+func.func @test_cast_s162s8_4d() {
+  %s16 = memref.alloc() : memref<2x2x2x2xi16, #hivm.address_space<ub>>
+  %s8 = memref.alloc() : memref<2x2x2x2xi8, #hivm.address_space<ub>>
+  hivm.hir.vcast ins(%s16 : memref<2x2x2x2xi16, #hivm.address_space<ub>>)
+                outs(%s8 : memref<2x2x2x2xi8, #hivm.address_space<ub>>)
+                round_mode = #hivm.round_mode<truncwithoverflow>
+  return
+}
+
+// -----
+
+// CHECK:           %[[VAL_16:.*]] = memref.alloc(){{.*}}: memref<1x1x1x1x32xi8, #hivm.address_space<ub>>
+// CHECK:           %[[VAL_20:.*]] = scf.for %[[VAL_21:.*]] = %[[VAL_9:.*]] to %[[VAL_10:.*]] step %[[VAL_9:.*]] iter_args(%[[VAL_22:.*]] = %[[VAL_17:.*]]) -> (memref<1x1x1x1x32xi8, #hivm.address_space<ub>>)  : i32 {
+// CHECK-DAG:             %[[VAL_28:.*]] = memref.alloc(){{.*}}: memref<1x1x1x1x32xi8, #hivm.address_space<ub>>
+// CHECK-DAG:             hivm.hir.vcast {hivm.disable_size_align_for_cast} ins(%[[VAL_27:.*]] : memref<1x1x1x1x32xi32, #hivm.address_space<ub>>) outs(%[[VAL_28]] : memref<1x1x1x1x32xi8, #hivm.address_space<ub>>) round_mode = <truncwithoverflow>
+// CHECK-DAG:             scf.yield %[[VAL_28]] : memref<1x1x1x1x32xi8, {{.*}}#hivm.address_space<ub>>
 // CHECK:           }
 func.func @triton_yield_iter_args(%arg0: i64, %arg1: memref<?xi8, #hivm.address_space<gm>>, %arg2: memref<?xi8, #hivm.address_space<gm>>, %arg3: memref<?xi8, #hivm.address_space<gm>>, %arg4: memref<?xi8, #hivm.address_space<gm>>, %arg5: memref<?xi8, #hivm.address_space<gm>>, %arg6: i32,  %arg7: i32,  %arg8: i32) {
   %c1_i32 = arith.constant 1 : i32

@@ -306,6 +306,7 @@ LogicalResult VCastOp::verify() {
 
   static const std::set<std::string> kRegBasedSoftCasts{
       "int32_t_to_uint8_t_truncmode",
+      "double_to_float_rintmode",
       "float_to_bool_truncmode",
       "float_to_int8_t_roundmode",
       "float_to_int8_t_rintmode",
@@ -325,9 +326,9 @@ LogicalResult VCastOp::verify() {
       "int32_t_to_bool_rintmode",
       "int64_t_to_bool_rintmode",
       "bool_to_int8_t_rintmode",
+      "bool_to_uint8_t_rintmode",
       "bool_to_float_rintmode",
       "bool_to_half_rintmode",
-      "bool_to_int32_t_rintmode",
       "bool_to_float_truncmode",
       "bool_to_half_truncmode",
       "bool_to_bfloat16_t_truncmode",
@@ -354,6 +355,7 @@ LogicalResult VCastOp::verify() {
       "int16_t_to_int8_t_truncmode",
       "int32_t_to_int16_t_truncwithoverflowmode",
       "int64_t_to_int32_t_truncwithoverflowmode",
+      "int64_t_to_int8_t_truncwithoverflowmode",
       "int64_t_to_int16_t_rintmode",
       "int64_t_to_int8_t_rintmode",
       "int64_t_to_half_truncmode",
@@ -365,12 +367,18 @@ LogicalResult VCastOp::verify() {
       "uint8_t_to_uint16_t_rintmode",
       "uint16_t_to_uint8_t_truncwithoverflowmode",
       "uint8_t_to_uint32_t_rintmode",
+      "uint16_t_to_uint32_t_rintmode",
+      "uint16_t_to_float_rintmode",
+      "uint16_t_to_float_truncmode",
+      "float_to_uint64_t_truncmode",
+      "uint64_t_to_float_rintmode",
       "uint32_t_to_uint64_t_rintmode",
       "float8_e4m3_t_to_float_rintmode",
       "float8_e5m2_t_to_float_rintmode",
       "int32_t_to_int16_t_truncmode"};
 
   static const std::set<std::string> kMemBasedSoftCasts{
+      "double_to_float_rintmode",
       "float_to_int8_t_roundmode",
       "float_to_int8_t_rintmode",
       "float_to_int8_t_floormode",
@@ -571,7 +579,8 @@ LogicalResult VReduceOp::verify() {
 
   // fp8 check
   mlir::ModuleOp moduleOp = (*this)->getParentOfType<mlir::ModuleOp>();
-  if (!hacc::utils::isAscend950(moduleOp)) {
+  if (!hacc::utils::isAscend950(moduleOp) &&
+      !hacc::utils::isAscend960(moduleOp)) {
     Type srcType = this->getSrc().getType();
     ShapedType srcVecType = cast<ShapedType>(srcType);
     Type eleType = srcVecType.getElementType();

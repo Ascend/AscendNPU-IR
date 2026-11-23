@@ -23,7 +23,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
           memref<2x4x4x16x16xf16, #hivm.address_space<cbuf>>,
           i1, index, index, index)
       outs(%c : memref<2x4x4x16x16xf32, #hivm.address_space<cc>>)
-    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>}
       ins(%c : memref<2x4x4x16x16xf32, #hivm.address_space<cc>>)
       outs(%dst : memref<2x64x64xf16, #hivm.address_space<gm>>)
     return
@@ -40,7 +40,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     %c = memref.alloc() : memref<2x64x64x16x16xf32, #hivm.address_space<cc>>
     %dst = memref.alloc() : memref<2x1024x1024xf16, #hivm.address_space<gm>>
 
-    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>}
       ins(%c : memref<2x64x64x16x16xf32, #hivm.address_space<cc>>)
       outs(%dst : memref<2x1024x1024xf16, #hivm.address_space<gm>>)
     return

@@ -320,7 +320,7 @@ private:
       // with element locations:
       // [4, 5, 6, 7]
       // It is "strided contiguous" with a divisibility of 16 bytes
-      auto rank = lhs.getRank();
+      [[maybe_unused]] auto rank = lhs.getRank();
       auto elemSize = std::max<int64_t>(
           1, triton::getPointeeBitWidth(op.getPtr().getType()) / 8);
       rhsDivisibility = multiplyDivisor(rhs.getDivisibility(dim), elemSize);
@@ -344,7 +344,7 @@ private:
         return {lhs.getConstantValue().value() -
                 rhs.getConstantValue().value()};
       } else if constexpr (std::is_same_v<OpTy, triton::AddPtrOp>) {
-        auto rank = lhs.getRank();
+        [[maybe_unused]] auto rank = lhs.getRank();
         auto elemSize = std::max<int64_t>(
             1, triton::getPointeeBitWidth(op.getPtr().getType()) / 8);
         auto rhsValue = rhs.getConstantValue().value() * elemSize;
@@ -509,7 +509,7 @@ private:
 
   int64_t getDivisibility(OpTy op, const AxisInfo &lhs, const AxisInfo &rhs,
                           int dim) override {
-    auto resTy = dyn_cast<RankedTensorType>(op.getType());
+    [[maybe_unused]] auto resTy = dyn_cast<RankedTensorType>(op.getType());
     if (rhs.getConstancy(dim) > 1) {
       // lhs: d_lhs * k = gcd(d_lhs, d_rhs) * k' * k = gcd(d_lhs, d_rhs) * k''
       // rhs: d_rhs * p = gcd(d_lhs, d_rhs) * p' * p = gcd(d_lhs, d_rhs) * p''
@@ -788,8 +788,6 @@ private:
       return (uint64_t)lhs > (uint64_t)rhs;
     case arith::CmpIPredicate::uge:
       return (uint64_t)lhs >= (uint64_t)rhs;
-    default:
-      break;
     }
     llvm_unreachable("unknown comparison predicate");
   }
@@ -906,7 +904,7 @@ private:
       // Treat [2^n,2^n+1,...]'s divisibility as 1 instead of 2^n
       lhsDivisibility = 1;
     }
-    auto numBits = log2Int(lhsDivisibility);
+    [[maybe_unused]] auto numBits = log2Int(lhsDivisibility);
     return multiplyDivisor(lhsDivisibility, 1ll << shift);
   }
 
@@ -1102,8 +1100,7 @@ void AxisInfoAnalysis::visitForOpInductionVar(
       getLatticeElementFor(programPoint, op.getStep())->getValue();
   // If lb or step is not yet ready, skip this operation for now.
   if (lb.getRank() == 0 || step.getRank() == 0)
-      return;
-
+    return;
 
   AxisInfo::DimVectorT knownContiguity(1, 1);
   AxisInfo::DimVectorT knownDivisibility(1, 1);

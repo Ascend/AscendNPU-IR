@@ -52,7 +52,7 @@ createAsyncCopy(const DenseMap<Channel *, Value> &bufferMap, Channel *c,
     return {nullptr, nullptr};
   // Get basic information from tensorType
   auto order = ttg::getOrderForMemory(tensorType);
-  auto CTALayout = ttg::getCTALayout(tensorType.getEncoding());
+  [[maybe_unused]] auto CTALayout = ttg::getCTALayout(tensorType.getEncoding());
   auto elemType = tensorType.getElementType();
 
   // Get shape, layout and type of a slice
@@ -107,7 +107,7 @@ createLocalCopy(const DenseMap<Channel *, Value> &bufferMap, Channel *channel,
     return {nullptr, nullptr};
   // Get basic information from tensorType
   auto order = ttg::getOrderForMemory(tensorType);
-  auto CTALayout = ttg::getCTALayout(tensorType.getEncoding());
+  [[maybe_unused]] auto CTALayout = ttg::getCTALayout(tensorType.getEncoding());
   auto elemType = tensorType.getElementType();
 
   // Get shape, layout and type of a slice
@@ -145,24 +145,6 @@ createLocalCopy(const DenseMap<Channel *, Value> &bufferMap, Channel *channel,
   return {copy, sharedLoad};
 }
 
-static Value createBufferView(OpBuilderWithAsyncTaskIds &builder, Value alloc,
-                              Value idx) {
-  assert(isa<triton::gpu::MemDescType>(alloc.getType()) &&
-         "Expected MemDescType");
-  auto allocDescType = cast<triton::gpu::MemDescType>(alloc.getType());
-  SmallVector<int64_t> shape;
-  assert(allocDescType.getShape().size() > 1 &&
-         "Expected multi-dimensional memdesc (e.g., Nx...) for subview");
-  shape.insert(shape.end(), allocDescType.getShape().begin() + 1,
-               allocDescType.getShape().end());
-  auto viewDescType = triton::gpu::MemDescType::get(
-      shape, allocDescType.getElementType(), allocDescType.getEncoding(),
-      allocDescType.getMemorySpace(), allocDescType.getMutableMemory(),
-      /*allocShape=*/allocDescType.getAllocShape());
-  return builder.create<triton::gpu::MemDescIndexOp>(alloc.getLoc(),
-                                                     viewDescType, alloc, idx);
-}
-
 static int getTMALoadSize(tt::DescriptorLoadOp &tmaLoad) {
   auto tensorTy = cast<RankedTensorType>(tmaLoad->getResult(0).getType());
   int loadSize = product(tensorTy.getShape());
@@ -177,7 +159,7 @@ Value getBufferForPipelineStage(OpBuilderWithAsyncTaskIds &builder,
   assert(tensorType);
 
   auto order = ttg::getOrderForMemory(tensorType);
-  auto CTALayout = ttg::getCTALayout(tensorType.getEncoding());
+  [[maybe_unused]] auto CTALayout = ttg::getCTALayout(tensorType.getEncoding());
   auto elemType = tensorType.getElementType();
 
   // Get shape, layout and type of a slice
@@ -221,8 +203,9 @@ Operation *optimizeTMALoads(OpBuilderWithAsyncTaskIds &builder,
   auto prodBarrier =
       getBarrierForPipelineStage(builder, barrierAlloc, bufferIdx);
   auto pred = builder.createWithAsyncTaskIds<arith::ConstantIntOp>(loc, 1, 1);
-  auto expect = builder.createWithAsyncTaskIds<ttng::BarrierExpectOp>(
-      loc, prodBarrier, sizeInBytes, pred);
+  [[maybe_unused]] auto expect =
+      builder.createWithAsyncTaskIds<ttng::BarrierExpectOp>(loc, prodBarrier,
+                                                            sizeInBytes, pred);
 
   // Convert all the producers to async_tma_copy_global_to_local
   Operation *copy = nullptr;
@@ -243,8 +226,9 @@ Operation *optimizeTMALoads(OpBuilderWithAsyncTaskIds &builder,
       getBarrierForPipelineStage(builder, barrierAlloc, bufferIdxExtract);
   phase = builder.createWithAsyncTaskIds<arith::ExtSIOp>(
       loc, builder.getI32Type(), phase);
-  auto wait = builder.createWithAsyncTaskIds<ttng::WaitBarrierOp>(
-      loc, consBarrier, phase);
+  [[maybe_unused]] auto wait =
+      builder.createWithAsyncTaskIds<ttng::WaitBarrierOp>(loc, consBarrier,
+                                                          phase);
 
   // Convert all the consumers to local_load
   for (auto [tmaLoad, buffer] : zip(tmaLoads, buffers)) {
@@ -253,7 +237,7 @@ Operation *optimizeTMALoads(OpBuilderWithAsyncTaskIds &builder,
     auto sharedLoad = builder.createWithAsyncTaskIds<ttg::LocalLoadOp>(
         loc, tmaLoad.getType(), pipelineBuffer);
 
-    Value loadResult = tmaLoad.getResult();
+    [[maybe_unused]] Value loadResult = tmaLoad.getResult();
     tmaLoad.getResult().replaceAllUsesWith(sharedLoad.getResult());
     tmaLoad.erase();
   }

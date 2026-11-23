@@ -7,15 +7,16 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Conversion/HFusionToHIVM/Utils.h"
+#include "bishengir/Dialect/Analysis/VFFusion/Transforms/Transforms.h"
+#include "bishengir/Dialect/Analysis/VFFusion/VFStackInfo.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "bishengir/Dialect/Analysis/VFFusion/Transforms/Transforms.h"
-#include "bishengir/Dialect/Analysis/VFFusion/VFStackInfo.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/IR/PatternMatch.h"
@@ -68,6 +69,12 @@ static void generalizeBroadcastOp(PatternRewriter &rewriter,
       SmallVector<utils::IteratorType>(resultType.getRank(),
                                        utils::IteratorType::parallel),
       nestedBody);
+}
+
+static bool isF64ToF32Cast(hfusion::CastOp op) {
+  Type inputType = getElementTypeOrSelf(op.getDpsInputs()[0].getType());
+  Type resultType = getElementTypeOrSelf(op.getResult(0).getType());
+  return inputType.isF64() && resultType.isF32();
 }
 
 FailureOr<linalg::GenericOp> generalizeGatherOp(RewriterBase &rewriter,
@@ -139,6 +146,8 @@ struct HFusionGeneralizationPatterns
       mlir::linalg::LinalgOp>::OpInterfaceRewritePattern;
   LogicalResult matchAndRewrite(linalg::LinalgOp op,
                                 PatternRewriter &rewriter) const override {
+    if (op->hasAttr("hivm.defer_vectorize"))
+      return failure();
     // TODO: Skip AIC temporary. Move VF to HIVM
     if (scope::utils::isInCubeScope(op)) {
       return failure();
@@ -150,6 +159,12 @@ struct HFusionGeneralizationPatterns
         // TODO: Handle single element fillop
         hfusion::isMatmulOps(op) || isa<hfusion::ReduceWithIndexOp>(op) ||
         hfusion::opCanFuseIntoMatmul(op) || isa<linalg::TransposeOp>(op))
+      return failure();
+    // This pass is scheduled only by the regbase pipeline. Keep f64-to-f32
+    // casts as HFusion ops so they lower through VCastOp and the vector
+    // template library rather than being outlined as scalar loops.
+    if (auto castOp = dyn_cast<hfusion::CastOp>(op.getOperation());
+        castOp && isF64ToF32Cast(castOp))
       return failure();
     if (hfusion::isSingleElementLinalgOp(op) && isa<linalg::FillOp>(op)) {
       Type elemType = op.getDpsInputs()[0].getType();
@@ -231,11 +246,8 @@ struct GeneralizeMulextPattern : public OpRewritePattern<HFusionMulExtOp> {
     }
 
     // Create empty output tensor
-    auto shape = lhsType.getShape();
-    Value lowEmpty = rewriter.create<tensor::EmptyOp>(
-        op.getLoc(), shape, getElementTypeOrSelf(lowType));
-    Value highEmpty = rewriter.create<tensor::EmptyOp>(
-        op.getLoc(), shape, getElementTypeOrSelf(highType));
+    Value lowEmpty = utils::createEmptyOp(rewriter, op.getLoc(), lhs);
+    Value highEmpty = utils::createEmptyOp(rewriter, op.getLoc(), lhs);
 
     // create linalg.generic
     auto genericOp = rewriter.create<linalg::GenericOp>(
@@ -377,9 +389,8 @@ bool ElemwiseOpFuseControlFn(OpOperand *operand, int maxFusedElementwiseOps,
     for (auto it = start->getNextNode(); it != end && it != nullptr; it = it->getNextNode()) {
       // If a synchronization barrier is found, prohibit fusion to avoid data
       // races.
-      if (isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
-              hivm::CreateSyncBlockLockOp, hivm::SyncBlockLockOp,
-              hivm::SyncBlockUnlockOp>(it)) {
+      if (it->hasTrait<OpTrait::HIVMSyncOpTrait>() ||
+          isa<hivm::CreateSyncBlockLockOp>(it)) {
         hasSyncBarrier = true;
         break;
       }
@@ -849,17 +860,12 @@ static void populatePreVectorizationFusionPatterns(RewritePatternSet &patterns,
   }
 }
 
-bool isCopyFromGM(memref::CopyOp copyOp) {
-  Value src = copyOp.getSource();
-  return util::isFromFunctionArg(src);
-}
-
 void InsertPadConstMark(Operation *moduleOp) {
   // add pad value mark
   moduleOp->walk([&](Operation *op) {
     // if it is one load copy
     if (auto copyOp = dyn_cast<memref::CopyOp>(op)) {
-      if (!isCopyFromGM(copyOp))
+      if (!utils::isFromGMSpace(copyOp.getSource()))
         return WalkResult::skip();
       auto dst = copyOp.getTarget();
       auto allocOpAliases = utils::tracebackMemRefAllocAndAlias(dst);
@@ -905,7 +911,8 @@ void InsertPadConstMark(Operation *moduleOp) {
 void PreVectorizationFusionPass::runOnOperation() {
   Operation *op = getOperation();
   archisAscend950 =
-      hacc::utils::isAscend950(getOperation()->getParentOfType<ModuleOp>());
+      hacc::utils::isAscend950(getOperation()->getParentOfType<ModuleOp>()) ||
+      hacc::utils::isAscend960(getOperation()->getParentOfType<ModuleOp>());
   MLIRContext *context = op->getContext();
   RewritePatternSet patterns(context);
   OpBuilder builder(context);

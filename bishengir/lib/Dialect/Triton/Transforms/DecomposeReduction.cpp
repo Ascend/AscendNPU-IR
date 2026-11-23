@@ -88,7 +88,9 @@ public:
     for (int i = dim - 1; i >= 0; i--) {
       // Update sizePerThread: 4-way vectorization at gReductionAxis
       if (i == gReductionAxis) {
-        sizePerThread[i] = shape[i] >= gVectWidth ? gVectWidth :  static_cast<unsigned int>(shape[i]);
+        sizePerThread[i] = shape[i] >= gVectWidth
+                               ? gVectWidth
+                               : static_cast<unsigned int>(shape[i]);
         shape[i] = shape[i] >= gVectWidth ? shape[i] / gVectWidth : 1;
       }
       // Update warpsPerCTA: favor all warps towards higher dims
@@ -129,7 +131,7 @@ public:
     }
     // Dump all missing lproduct at the last nonReduction dimension
     completeLayout(warpsPerCTA, nonReductionAxis, gNumWarps);
-    int sproduct = 1;
+    [[maybe_unused]] int sproduct = 1;
     for (int x : shape) {
       sproduct *= x;
     }
@@ -314,8 +316,8 @@ public:
                   RankedTensorType srcType, int requireWarpSyncLayout,
                   Location loc, OpBuilder &builder) {
     BlockedEncodingAttr inferredDstEnc;
-    LogicalResult result = inferWarpSyncEncoding(dstTensorShape, srcType, inferredDstEnc,
-                                        requireWarpSyncLayout, loc);
+    LogicalResult result = inferWarpSyncEncoding(
+        dstTensorShape, srcType, inferredDstEnc, requireWarpSyncLayout, loc);
     if (failed(result))
       return failure();
     auto dstTensorType = RankedTensorType::get(
@@ -446,10 +448,9 @@ public:
     builder.setInsertionPointAfterValue(newValue);
     auto backCvt = builder.create<mlir::triton::gpu::ConvertLayoutOp>(
         loc, origResult.getType(), newValue);
-    origResult.replaceUsesWithIf(backCvt->getResult(0),
-                                 [excludeOp](OpOperand &use) {
-                                   return use.getOwner() != excludeOp;
-                                 });
+    origResult.replaceUsesWithIf(
+        backCvt->getResult(0),
+        [excludeOp](OpOperand &use) { return use.getOwner() != excludeOp; });
   }
 
   void runOnOperation() override {
@@ -497,8 +498,8 @@ public:
       // miscompiles.  Leave these to the default reduce lowering.  Large
       // reductions and trivial 1-element reductions are untouched.
       if (srcShape[gReductionAxis] > 1 &&
- 	        srcShape[gReductionAxis] < gNumThreads)
- 	      return WalkResult::advance();
+          srcShape[gReductionAxis] < gNumThreads)
+        return WalkResult::advance();
 
       // Enable for limited configurations as per required.
       if ((gReductionAxis == 0 && rank == 2) ||
@@ -532,10 +533,10 @@ public:
           newLayoutOperands.push_back(*newReshapeOp);
           convertLayoutOp->setOperands(newLayoutOperands);
           redirectRemainingUses(reshapeOp->getResult(0),
-                                (*newReshapeOp).getResult(),
-                                reshapeOp.getLoc(), builder);
-          redirectRemainingUses(reduceOp->getResult(0), rOut,
-                                reduceOp.getLoc(), builder, reshapeOp);
+                                (*newReshapeOp).getResult(), reshapeOp.getLoc(),
+                                builder);
+          redirectRemainingUses(reduceOp->getResult(0), rOut, reduceOp.getLoc(),
+                                builder, reshapeOp);
           // Record erase order:
           //   reshapeOp uses reduceOp
           //   -> push reshapeOp first, reductOp second

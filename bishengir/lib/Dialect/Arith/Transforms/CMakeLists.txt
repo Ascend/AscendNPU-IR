@@ -1,4 +1,5 @@
 add_bishengir_dialect_library(BiShengIRArithTransforms
+  BufferizableOpInterfaceImpl.cpp
   NormalizeArith.cpp
   LiftArithIndexCast.cpp
   MoveUpArith.cpp
@@ -12,4 +13,6 @@ add_bishengir_dialect_library(BiShengIRArithTransforms
 
   LINK_LIBS PUBLIC
   MLIRArithDialect
+  MLIRBufferizationDialect
+  MLIRBufferizationTransforms
   )

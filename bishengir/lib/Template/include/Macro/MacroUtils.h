@@ -17,10 +17,12 @@
 #ifndef HIVM_MLIR_TEMPLATE_MACRO_UTILS_H
 #define HIVM_MLIR_TEMPLATE_MACRO_UTILS_H
 
+#ifndef __aicore__
 #ifdef __CCE_KT_TEST__
 #define __aicore__
 #else
 #define __aicore__ [aicore]
+#endif
 #endif
 
 #include "Utils.h"

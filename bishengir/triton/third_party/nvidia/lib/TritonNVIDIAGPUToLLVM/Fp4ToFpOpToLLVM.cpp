@@ -103,7 +103,7 @@ public:
     results.reserve(xVals.size() * 2);
     assert(xVals.size() % 4 == 0);
     auto b = TritonLLVMOpBuilder(loc, rewriter);
-    for (int i = 0; i < xVals.size(); i += 4) {
+    for (int i = 0; i < static_cast<int>(xVals.size()); i += 4) {
       Value v0 = xVals[i];
       Value v1 = xVals[i + 1];
       Value v2 = xVals[i + 2];

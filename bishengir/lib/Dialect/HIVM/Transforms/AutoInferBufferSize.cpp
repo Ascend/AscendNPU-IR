@@ -17,7 +17,6 @@
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
-#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 
@@ -41,7 +40,7 @@ struct AutoInferBufferSizePass
 static bool isAnnotatedWithSize(Value val) {
   for (auto *userOp : val.getUsers()) {
     if (auto markOp = dyn_cast<annotation::MarkOp>(userOp)) {
-      if (markOp->hasAttrOfType<IntegerAttr>(kBufferSizeInByteAttr)) {
+      if (markOp->hasAttrOfType<IntegerAttr>(utils::kBufferSizeInByteAttr)) {
         return true;
       }
     }
@@ -54,7 +53,7 @@ static void insertAnnotation(Operation *allocOp, Value val,
   OpBuilder b(allocOp);
   b.setInsertionPointAfter(allocOp);
   auto newMarkOp = b.create<annotation::MarkOp>(allocOp->getLoc(), val);
-  newMarkOp->setAttr(kBufferSizeInByteAttr,
+  newMarkOp->setAttr(utils::kBufferSizeInByteAttr,
                      b.getI64IntegerAttr(bufferSizeInByte));
 }
 
@@ -69,11 +68,12 @@ void AutoInferBufferSizePass::runOnOperation() {
     // given that the number of elements in the buffer is the same,
     // bail out if numOfElements has been calculated
     if (numOfElements.has_value() ||
-        !markOp->hasAttrOfType<IntegerAttr>(kBufferSizeInByteAttr)) {
+        !markOp->hasAttrOfType<IntegerAttr>(utils::kBufferSizeInByteAttr)) {
       return;
     }
     int64_t bufferSizeInBit =
-        markOp->getAttrOfType<IntegerAttr>(kBufferSizeInByteAttr).getInt() *
+        markOp->getAttrOfType<IntegerAttr>(utils::kBufferSizeInByteAttr)
+            .getInt() *
         mlir::utils::kBitsToByte;
     int64_t elementWidthInBit =
         getElementTypeOrSelf(markOp.getSrc().getType()).getIntOrFloatBitWidth();

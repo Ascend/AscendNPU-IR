@@ -147,7 +147,7 @@ SmallVector<Value> ScheduleBuilder::getValues(const ValueHandles &handles) {
 
 std::pair<SmallVector<int64_t>, SmallVector<Value>>
 ScheduleBuilder::unpackFoldResults(ValueHandleFoldResults &values) {
-  OpBuilder &opBuilder = getOpBuilder();
+  [[maybe_unused]] OpBuilder &opBuilder = getOpBuilder();
   SmallVector<int64_t> staticSizes;
   SmallVector<Value> dynamicSizes;
   for (auto &v : values) {
@@ -315,7 +315,7 @@ ValueHandle *ScheduleBuilder::getOpsWithAttrs(
 ValueHandle *
 ScheduleBuilder::getOpsWithIdentifier(const Identifier &identifier,
                                       const MatchOptions &options) {
-  OpBuilder &opBuilder = getOpBuilder();
+  [[maybe_unused]] OpBuilder &opBuilder = getOpBuilder();
   assert(identifier.getIdentifierKind() != IdentifierType::kUnknown);
   // For named handles, there is no need to construct a new handle everytime as
   // the name should be unique. Directly fetch the handle if possible.

@@ -33,6 +33,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
+#include <atomic>
 #include <deque>
 
 #define INTRA_CORE_EVENT_ID_NUM (int64_t)8
@@ -111,6 +112,9 @@ struct SyncSolverOptions {
 
   bool enableSiblingIfSync{true};
 
+  // Avoid recursively unrolling nested loops in repeated iterations.
+  bool enableNonRecursiveLoopUnrolling{true};
+
   // Build unrolled sync IR.
   bool buildUnrolledSyncIR{true};
 
@@ -174,6 +178,8 @@ struct SetWaitPairInfo {
   bool setWaitInside{false};
   Occurrence *setIfOcc{nullptr};
   Occurrence *waitIfOcc{nullptr};
+  Occurrence *setPreloadScopeOcc{nullptr};
+  Occurrence *waitPreloadScopeOcc{nullptr};
 };
 
 class UnitFlagInfo : public UnitFlagInfoBase {
@@ -221,6 +227,8 @@ struct Occurrence {
   int startIndex{-1};
   int endIndex{-1};
   int loopSplitIndex{-1};
+  // Set on a split loop occurrence: the linearized copies of that loop.
+  llvm::SmallVector<Occurrence *> linearizedLoopOccs;
   bool hasUnitFlagFeat{false};
   UnitFlagInfo unitFlagInfo;
   llvm::SmallVector<Occurrence *> childOccs;
@@ -287,7 +295,7 @@ struct Occurrence {
   }
 
   void initMemInfoTree1() {
-    if (isa<Loop>(op)) {
+    if (isa<Loop>(op) && loopSplitIndex != -1) {
       for (auto childOcc : getLoopSecondIterOccs()) {
         memInfoTree1.merge(childOcc->memInfoTree1);
       }
@@ -321,7 +329,7 @@ struct Occurrence {
   }
 
   void initMemInfoTree2() {
-    if (isa<Loop>(op)) {
+    if (isa<Loop>(op) && loopSplitIndex != -1) {
       for (auto childOcc : getLoopFirstIterOccs()) {
         memInfoTree2.merge(childOcc->memInfoTree2);
       }
@@ -362,7 +370,7 @@ struct Occurrence {
 
 struct ConflictPair {
 
-  static int globalIdCounter;
+  static std::atomic<int> globalIdCounter;
 
   // Identity + the two conflicting ops
   const int id;
@@ -386,8 +394,6 @@ struct ConflictPair {
   Occurrence *waitIfOcc{nullptr};
   Occurrence *mirrorSetIfOcc{nullptr};
   Occurrence *mirrorWaitIfOcc{nullptr};
-
-
 
   // Backward-sync classification + hoist target
   bool isOccBackwardPair{false};
@@ -420,8 +426,9 @@ struct ConflictPair {
                OperationBase *waitOp, Occurrence *setOcc, Occurrence *waitOcc,
                CorePipeInfo setCorePipeInfo, CorePipeInfo waitCorePipeInfo,
                int startIndex, int endIndex)
-      : id(globalIdCounter++), op1(op1), op2(op2), setOp(setOp), waitOp(waitOp),
-        setOcc(setOcc), waitOcc(waitOcc), setCorePipeInfo(setCorePipeInfo),
+      : id(globalIdCounter.fetch_add(1, std::memory_order_relaxed)), op1(op1),
+        op2(op2), setOp(setOp), waitOp(waitOp), setOcc(setOcc),
+        waitOcc(waitOcc), setCorePipeInfo(setCorePipeInfo),
         waitCorePipeInfo(waitCorePipeInfo), startIndex(startIndex),
         endIndex(endIndex) {};
 
@@ -442,6 +449,13 @@ struct ConflictPair {
       this->waitOcc = waitOcc;
       this->waitOp = waitOcc->op;
       this->endIndex = waitOcc->startIndex;
+    }
+  }
+  void updateBarrierWaitOcc(Occurrence *waitOcc) {
+    if (waitOcc != nullptr) {
+      this->setOcc = this->waitOcc = waitOcc;
+      this->setOp = this->waitOp = waitOcc->op;
+      this->startIndex = this->endIndex = waitOcc->startIndex;
     }
   }
 
@@ -482,6 +496,12 @@ struct ConflictPair {
     clonedConflictPair->updateSetWaitOccs(setOcc, waitOcc);
     return clonedConflictPair;
   }
+
+  std::unique_ptr<ConflictPair> cloneBarrier(Occurrence *waitOcc) {
+    auto clonedConflictPair = this->clone();
+    clonedConflictPair->updateBarrierWaitOcc(waitOcc);
+    return clonedConflictPair;
+  }
 };
 
 struct EventIdNode {
@@ -492,15 +512,16 @@ public:
   const bool reversePriority;
 
 private:
-  static int globalIdCounter;
+  static std::atomic<int> globalIdCounter;
   llvm::SmallVector<int64_t> eventIds;
   llvm::DenseMap<ConflictPair *, int64_t> conflictPairs;
 
 public:
   EventIdNode(ConflictPair *conflictPair, int64_t eventIdNum,
               bool reversePriority)
-      : id(globalIdCounter++), initConflictPair(conflictPair),
-        eventIdNum(eventIdNum), reversePriority(reversePriority) {
+      : id(globalIdCounter.fetch_add(1, std::memory_order_relaxed)),
+        initConflictPair(conflictPair), eventIdNum(eventIdNum),
+        reversePriority(reversePriority) {
     insertConflictPair(conflictPair);
   }
 
@@ -705,6 +726,10 @@ getFirstLastOpOfTypes(Operation *parentOp) {
   assert(lastOp != nullptr);
   return std::make_pair(firstOp, lastOp);
 }
+
+/// Return the pool alloc/get supplying a direct pointer_cast's address.
+/// Views and other address expressions are not matched.
+Operation *getTcbPoolAddressSource(Value value);
 
 bool isEmptyScope(Scope *scope);
 

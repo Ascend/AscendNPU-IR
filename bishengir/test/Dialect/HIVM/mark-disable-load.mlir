@@ -44,3 +44,56 @@ func.func @same_func_store(%arg0: memref<1xi32, #hivm.address_space<gm>>) {
   memref.store %v, %arg0[%c0] : memref<1xi32, #hivm.address_space<gm>>
   return
 }
+
+// -----
+
+// A write through a view of the same argument invalidates scalar fallback
+// reads through another view. A load-only argument must stay cached.
+// CHECK-LABEL: func.func @structured_alias
+// CHECK: hivm.hir.load {{.*}} {disableDCache = 0 : i32, markDCacheInvalidatePatternVisited = 0 : i32}
+// CHECK: hivm.hir.load {{.*}} {markDCacheInvalidatePatternVisited = 0 : i32}
+func.func @structured_alias(
+    %rw: memref<4xi8, #hivm.address_space<gm>>,
+    %ro: memref<2xi8, #hivm.address_space<gm>>) {
+  %c0 = arith.constant 0 : index
+  %one = arith.constant 1 : i8
+  %read = memref.subview %rw[0] [2] [1] : memref<4xi8, #hivm.address_space<gm>> to memref<2xi8, strided<[1]>, #hivm.address_space<gm>>
+  %write = memref.subview %rw[0] [2] [1] : memref<4xi8, #hivm.address_space<gm>> to memref<2xi8, strided<[1]>, #hivm.address_space<gm>>
+  %ub = memref.alloc() : memref<2xi8, strided<[2]>, #hivm.address_space<ub>>
+  hivm.hir.load ins(%read : memref<2xi8, strided<[1]>, #hivm.address_space<gm>>) outs(%ub : memref<2xi8, strided<[2]>, #hivm.address_space<ub>>)
+  memref.store %one, %write[%c0] : memref<2xi8, strided<[1]>, #hivm.address_space<gm>>
+  hivm.hir.load ins(%ro : memref<2xi8, #hivm.address_space<gm>>) outs(%ub : memref<2xi8, strided<[2]>, #hivm.address_space<ub>>)
+  return
+}
+
+// -----
+
+// The corresponding argument in the paired cube function is written. A
+// similarly named unrelated function must not affect the read-only argument.
+// CHECK-LABEL: func.func @structured_mix_aiv
+// CHECK: hivm.hir.load {{.*}} {disableDCache = 0 : i32, markDCacheInvalidatePatternVisited = 0 : i32}
+// CHECK: hivm.hir.load {{.*}} {markDCacheInvalidatePatternVisited = 0 : i32}
+func.func @structured_mix_aiv(
+    %rw: memref<2xi8, #hivm.address_space<gm>>,
+    %ro: memref<2xi8, #hivm.address_space<gm>>)
+    attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix} {
+  %ub = memref.alloc() : memref<2xi8, strided<[2]>, #hivm.address_space<ub>>
+  hivm.hir.load ins(%rw : memref<2xi8, #hivm.address_space<gm>>) outs(%ub : memref<2xi8, strided<[2]>, #hivm.address_space<ub>>)
+  hivm.hir.load ins(%ro : memref<2xi8, #hivm.address_space<gm>>) outs(%ub : memref<2xi8, strided<[2]>, #hivm.address_space<ub>>)
+  return
+}
+func.func @structured_mix_aic(
+    %rw: memref<2xi8, #hivm.address_space<gm>>,
+    %ro: memref<2xi8, #hivm.address_space<gm>>)
+    attributes {hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix} {
+  %c0 = arith.constant 0 : index
+  %one = arith.constant 1 : i8
+  memref.store %one, %rw[%c0] : memref<2xi8, #hivm.address_space<gm>>
+  return
+}
+func.func @unrelated(%arg: memref<2xi8, #hivm.address_space<gm>>) {
+  %c0 = arith.constant 0 : index
+  %one = arith.constant 1 : i8
+  memref.store %one, %arg[%c0] : memref<2xi8, #hivm.address_space<gm>>
+  return
+}

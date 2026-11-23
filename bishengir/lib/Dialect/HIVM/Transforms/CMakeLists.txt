@@ -1,3 +1,5 @@
+file(GLOB Mix_PASSES CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/V2/*.cpp)
 file(GLOB ALIGN_BUFFER ${CMAKE_CURRENT_SOURCE_DIR}/AlignBuffer/*.cpp)
 file(GLOB BUBBLE_UP_EXTRACT_SLICE CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/BubbleUpExtractSlice/*.cpp)
@@ -8,13 +10,34 @@ file(GLOB INSERT_LOAD_STORE_FOR_MIX_CV ${CMAKE_CURRENT_SOURCE_DIR}/InsertLoadSto
 file(GLOB NDDMA CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/NDDMA/*.cpp)
 file(GLOB TILING ${CMAKE_CURRENT_SOURCE_DIR}/Tiling/*.cpp)
 file(GLOB NORMALIZE ${CMAKE_CURRENT_SOURCE_DIR}/regbase/Normalize/*.cpp)
+file(GLOB SMS_ALG_UTILS CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/../Utils/PipeSchedule/Alg/Sms/*.cpp)
+file(GLOB MS_COST_MODEL_UTILS CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/../Utils/PipeSchedule/CostModel/*.cpp)
+file(GLOB MS_UTILS CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/../Utils/PipeSchedule/*.cpp)
 set(TILE_AND_BIND_SUB_BLOCK
     ${CMAKE_CURRENT_SOURCE_DIR}/TileAndBindSubBlock/Helper.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/TileAndBindSubBlock/TileUtils.cpp)
 file(GLOB PARTITION_AND_BIND_SUB_BLOCK CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/PartitionAndBindSubBlock/*.cpp)
+file(GLOB BUFFER_POOL CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/BufferPool/*.cpp)
+file(GLOB PIPELINE_V2 CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/PipelineV2/*.cpp)
+
+set(HIVM_VECTORIZE_SEQUENCE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/HIVMVectorize/Sequences/HIVMVectorize.mlir")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${HIVM_VECTORIZE_SEQUENCE_FILE}")
+file(READ "${HIVM_VECTORIZE_SEQUENCE_FILE}" HIVM_VECTORIZE_SEQUENCE)
+string(REPLACE "\\" "\\\\" HIVM_VECTORIZE_SEQUENCE "${HIVM_VECTORIZE_SEQUENCE}")
+string(REPLACE "\"" "\\\"" HIVM_VECTORIZE_SEQUENCE "${HIVM_VECTORIZE_SEQUENCE}")
+string(REPLACE "\n" "\\n\"\n    \"" HIVM_VECTORIZE_SEQUENCE "${HIVM_VECTORIZE_SEQUENCE}")
+set(HIVM_VECTORIZE_SEQUENCE "\"${HIVM_VECTORIZE_SEQUENCE}\"")
+configure_file(HIVMVectorize/HIVMVectorize.inc.in HIVMVectorize/HIVMVectorize.inc @ONLY)
 
 add_bishengir_dialect_library(BiShengIRHIVMTransforms
+  PromoteL1Gather.cpp
+  ${Mix_PASSES}
   ${ALIGN_BUFFER}
   ${BUBBLE_UP_EXTRACT_SLICE}
   ${GRAPH_SYNC_CONFLICT_SOLVER}
@@ -24,7 +47,12 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ${TILING}
   ${TILE_AND_BIND_SUB_BLOCK}
   ${PARTITION_AND_BIND_SUB_BLOCK}
+  ${PIPELINE_V2}
+  ${BUFFER_POOL}
   ${NORMALIZE}
+  ${SMS_ALG_UTILS}
+  ${MS_COST_MODEL_UTILS}
+  ${MS_UTILS}
   AddFFTSToSyncBlockSetOp.cpp
   AllocExtraBuffer.cpp
   AllocToAlloca.cpp
@@ -40,8 +68,10 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ComposeCollapseExpand.cpp
   ComposeMemRefViews.cpp
   ConstantizeBufferSize.cpp
+  DecomposeAllocTensorCopy.cpp
   ConvertNonContiguousReshapeToCopy.cpp
   ConvertToHIVMOp.cpp
+  InferBufferSizeFromSlice.cpp
   InsertAnchorsAndBackup.cpp
   ConvertLayout/ShapeConversion/ConvertLayoutToFractalsUtils.cpp
   ConvertLayout/ShapeConversion/ConvertLayoutFromFractalsUtils.cpp
@@ -59,7 +89,9 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ConvertLayout/Propagate/PropagateConvertLayoutExtractSlice.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutInsertSlice.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutVBrc.cpp
+  MarkPreloadBuffers.cpp
   CreatePreload.cpp
+  PeelPreload.cpp
   CVPipelining.cpp
   EnableHIVMCCompatiblePrint.cpp
   EnableMultiBuffer.cpp
@@ -73,7 +105,9 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   HIVMMapForallToBlocks.cpp
   HIVMOptFuncOutput.cpp
   HIVMOptSinglePoint.cpp
-  HIVMVectorizeOps.cpp
+  HIVMVectorize.cpp
+  HIVMVectorizeBuffers.cpp
+  HIVMVectorizeLowering.cpp
   HoistSimtScalarCallsToSimd.cpp
   HoistTightlyCoupledAlloc.cpp
   InferFuncCoreType.cpp
@@ -84,9 +118,17 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   InferSimtVFMemScopeHint.cpp
   InitEntryKernel.cpp
   InjectBlockSync.cpp
-  InlineFixpipe.cpp
+  CacheModuleTarget.cpp
+  FixpipeCapabilityQuery.cpp
+  FixpipeUtils.cpp
+  InlineFixpipe/InlineFixpipe.cpp
+  InlineFixpipe/InlineFixpipeFallback.cpp
+  InlineFixpipe/InlineFixpipeFusion.cpp
+  InlineFixpipe/InlineFixpipeUtils.cpp
+  InsertFixpipe.cpp
   InlineLoadCopy.cpp
   InlineOTFBroadcast.cpp
+  InlineVFScope.cpp
   InsertAllocBasePlaceholder.cpp
   InsertCVTightCoupledBuffer.cpp
   InsertMemSemanticForSimtVF.cpp
@@ -108,6 +150,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   LowerCreateSyncBlockLock.cpp
   LowerMultiBufferCounter.cpp
   MarkDisableLoad.cpp
+  MarkMatmulRowCollapses.cpp
   MarkMultiBuffer.cpp
   MarkSimtScopeNoInline.cpp
   MarkSyncBlockLockWithSubblock.cpp
@@ -116,35 +159,43 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MarkTightlyCoupledBuffer.cpp
   MaterializeSimtVFMemScope.cpp
   MemoryDisplay.cpp
+  MergeSamePreloadScopes.cpp
   NormalizeBitwiseSelect.cpp
   NormalizeConvOps.cpp
   NormalizeSIMTVF.cpp
-  NormalizeToTensorOp.cpp
-  TensorCopyInsertion.cpp
   NormalizeMatmul.cpp
+  NormalizeTmpBufferInVf.cpp
   OptMemPlanForPipeline.cpp
+  OptimizeTransposePlacement/OptimizeTransposePlacement.cpp
+  OptimizeTransposePlacement/RootReachability.cpp
+  OptimizeTransposePlacement/Utils.cpp
   OutlineAllocInVF.cpp
   OutlineCopyInVF.cpp
   PlanMemory.cpp
-  regbase/PlanMemory.cpp
   RecognizeDeinterleaveOp.cpp
   RecognizeDiscontiguousStore.cpp
   ReduceRankSubview.cpp
   RemoveHIVMDataLayoutAnnotation.cpp
   RemoveCopyOps.cpp
   SetBufferSize.cpp
+  RepositionPreloadWork.cpp
   SinkOpToConsumerInLoop.cpp
+  SinkScalarReadback.cpp
   SIMTVFSubTiling.cpp
+  SplitKernelUtils.cpp
   SplitSimtModule.cpp
   SplitMixedIfConditionals.cpp
   SplitMixKernel.cpp
   SyncBlockHoisting.cpp
+  TcbPoolOpInsertion.cpp
+  TcbPoolPlan.cpp
   TileAndBindSubBlock.cpp
   TileBatchMMIntoLoop.cpp
   TileCubeVectorLoop.cpp
   TightlyCoupledBufferUtils.cpp
   TritonGlobalKernelArgsToHIVMOp.cpp
   UnitFlagInfoBase.cpp
+  VerifyCapability.cpp
   VFOperandSubstitution.cpp
   AnalyzeArithVectorMask.cpp
   WriteBackShared.cpp
@@ -155,10 +206,23 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
 
   DEPENDS
   BiShengIRHIVMTransformsIncGen
+  BiShengIRNPUArchitectureFeaturesIncGen
+  BiShengIRMmadCapabilityIncGen
+  BiShengIRMmadCapabilityBindingIncGen
+  BiShengIRFixpipeCapabilityIncGen
+  BiShengIRFixpipeCapabilityBindingIncGen
+  BiShengIRCubeLoadCapabilityIncGen
+  BiShengIRCubeLoadCapabilityBindingIncGen
+  BiShengIRSyncCapabilityIncGen
+  BiShengIRSyncCapabilityBindingIncGen
 
   LINK_LIBS PUBLIC
+  BiShengIRArithTransforms
+  BiShengIRVectorTransforms
+  MLIRArithValueBoundsOpInterfaceImpl
   MLIRAffineDialect
   MLIRAffineTransforms
+  MLIRAnalysis
   MLIRArithDialect
   MLIRArithUtils
   BiShengIRAnnotationDialect
@@ -169,12 +233,17 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MLIRDialectUtils
   BiShengIRHACCUtils
   BiShengIRHACCDialect
+  BiShengIRNPUMmadCapability
+  BiShengIRNPUFixpipeCapability
+  BiShengIRNPUSyncCapability
   BiShengIRHIVMAnalysis
   BiShengIRHIVMDialect
+  BiShengIRHIVMVectorizeTransformOps
   BiShengIRMathExtDialect
   BiShengIRScopeDialect
   MLIRIR
   MLIRLinalgDialect
+  MLIRLinalgTransforms
   MLIRLinalgUtils
   MLIRLLVMCommonConversion
   MLIRLLVMDialect
@@ -182,6 +251,9 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MLIRMemRefDialect
   MLIRMemRefTransforms
   MLIRTensorDialect
+  MLIRParser
+  MLIRTransformDialect
+  MLIRTransformDialectTransforms
   MLIRVectorDialect
   BiShengIRMemRefExtDialect
   BiShengIRDialectUtils

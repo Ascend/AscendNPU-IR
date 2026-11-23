@@ -129,7 +129,9 @@ static bool userCanReachMatmulOuts(Value current,
     if (auto loopOp = dyn_cast<LoopLikeOpInterface>(user)) {
       auto barg = getTiedBlockArgument(loopOp, use);
       if (barg) {
-        return userCanReachMatmulOuts(barg, visited);
+        if (userCanReachMatmulOuts(barg, visited))
+          return true;
+        continue;
       }
     }
 
@@ -147,7 +149,7 @@ static bool userCanReachMatmulOuts(Value current,
       getTerminatorSuccessorRegions(user, branchOp, successors);
       for (const RegionSuccessor &successor : successors) {
         ValueRange inputs = successor.getSuccessorInputs();
-        if (idx.value() >= inputs.size())
+        if (static_cast<size_t>(idx.value()) >= inputs.size())
           continue;
         if (userCanReachMatmulOuts(inputs[idx.value()], visited))
           return true;
@@ -239,7 +241,15 @@ bool traceSingleChainUser(
         llvm::to_vector(loopLikeOp.getYieldedValues());
     auto idx = findIdx(yieldValues, v);
     if (idx.has_value()) {
-      auto forResult = loopLikeOp.getLoopResults().value()[idx.value()];
+      auto loopResults = loopLikeOp.getLoopResults();
+      if (!loopResults) {
+        // getLoopResults() returns nullopt for scf.while
+        if (auto whileOp = dyn_cast<scf::WhileOp>(curOperation->getParentOp()))
+          return traceSingleChainUser(whileOp.getResult(idx.value()),
+                                      isMatchedOp);
+        return false;
+      }
+      auto forResult = loopResults.value()[idx.value()];
       return traceSingleChainUser(forResult, isMatchedOp);
     }
   }
@@ -498,12 +508,7 @@ Type getAnnotationMarkByteAlignment(Value value) {
   // set new type with new stride
   auto memrefType = cast<MemRefType>(shapedType);
   bool isAlreadyAligned = true;
-// TODO : release different version of ascendnpu ir and remove the macro
-#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
-  auto [strides, offset] = getStridesAndOffset(memrefType);
-#else
-  auto [strides, offset] = memrefType.getStridesAndOffset();
-#endif
+  auto [strides, offset] = utils::getStridesAndOffsetCompat(memrefType);
   llvm::SmallVector<int64_t> alignedStrides(rank, 1);
   for (int64_t i = 0; i < rank; i++) {
     if (strideAlignElems[i] == 1) {

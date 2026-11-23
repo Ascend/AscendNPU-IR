@@ -6,6 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/Sync/SyncCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Transforms.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -18,17 +20,19 @@
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "llvm/ADT/FloatingPointMode.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
 
 #include <cstdint>
+#include <type_traits>
 
 using namespace mlir;
 using namespace mlir::hivm;
 
-#if !defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) && \
+#if !defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) &&                          \
     !defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__)
 
 using GetBlockIdxLowering =
@@ -43,8 +47,12 @@ using GetSubBlockIdxLowering =
 using GetSubBlockNumLowering =
     OneToOneConvertToLLVMPattern<GetSubBlockNumOp, GetSubBlockNumInstrOp>;
 
-template <typename Op>
-LogicalResult convertToImmInstrOp(Op convertOp) {
+using GetCoreIdLowering =
+    OneToOneConvertToLLVMPattern<GetCoreIdOp, GetCoreIdInstrOp>;
+
+using SetCondLowering = OneToOneConvertToLLVMPattern<SetCondOp, SetCondInstrOp>;
+
+template <typename Op> LogicalResult convertToImmInstrOp(Op convertOp) {
   if (convertOp.getStaticEventId().has_value()) {
     return success();
   }
@@ -58,8 +66,7 @@ LogicalResult convertToImmInstrOp(Op convertOp) {
   return failure();
 }
 
-template <typename Op>
-LogicalResult convertToRegInstrOp(Op convertOp) {
+template <typename Op> LogicalResult convertToRegInstrOp(Op convertOp) {
   if (convertOp.getStaticEventId().has_value()) {
     return failure();
   }
@@ -96,9 +103,10 @@ struct HIVMSetWaitFlagOpLowering : public ConvertOpToLLVMPattern<Op> {
             static_cast<uint64_t>(convertOp.getStaticEventId()->getEvent());
       } else {
         // convertToImmInstrOp guarantees event id is a constant op in this case
-        eventId = static_cast<uint64_t>(cast<arith::ConstantIntOp>(
-                      convertOp.getDynamicEventId().getDefiningOp())
-                      .value());
+        eventId = static_cast<uint64_t>(
+            cast<arith::ConstantIntOp>(
+                convertOp.getDynamicEventId().getDefiningOp())
+                .value());
       }
       auto result = rewriter.create<ImmT>(loc, setPipe, waitPipe, eventId);
       rewriter.replaceOp(convertOp, result);
@@ -115,6 +123,92 @@ struct HIVMSetWaitFlagOpLowering : public ConvertOpToLLVMPattern<Op> {
     }
 
     return failure();
+  }
+};
+
+// TRY_WAIT hardware mode. Per the Ascend950 CCE instruction manual, mode 1
+// queries the intra-block synchronization counter.
+constexpr int64_t kTryWaitIntraBlockMode = 1;
+static_assert(kTryWaitIntraBlockMode ==
+                  static_cast<int64_t>(TryWaitSyncMode::INTRA_BLOCK),
+              "TRY_WAIT mode must match the intra_block sync mode");
+
+// CCE recognizes this intrinsic by name. Keep the declaration opaque to the
+// local LLVM optimizer, which does not have CCE's intrinsic ID table.
+struct HIVMTryWaitOpLowering : public ConvertOpToLLVMPattern<TryWaitOp> {
+  using ConvertOpToLLVMPattern<TryWaitOp>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(TryWaitOp op, TryWaitOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    ModuleOp module = op->getParentOfType<ModuleOp>();
+    // Only a confirmed native try_wait row permits the lowering. A missing
+    // #hacc.target is Unknown, not an affirmative.
+    if (!isNativeTryWaitCreate(op, op.getSyncMode()))
+      return op.emitOpError(
+          "is not natively supported on the enclosing target");
+
+    constexpr StringLiteral name = "llvm.hivm.TRY.WAIT.mode";
+    auto i64 = rewriter.getI64Type();
+    auto type = LLVM::LLVMFunctionType::get(i64, {i64, i64});
+    auto callee = module.lookupSymbol<LLVM::LLVMFuncOp>(name);
+    if (callee && callee.getFunctionType() != type)
+      return op.emitOpError("incompatible declaration of ") << name;
+    if (!callee) {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(module.getBody());
+      callee = rewriter.create<LLVM::LLVMFuncOp>(op.getLoc(), name, type);
+      // The declaration is introduced before mixed modules are split.
+      callee->setAttr(TFuncCoreTypeAttr::name,
+                      TFuncCoreTypeAttr::get(rewriter.getContext(),
+                                             TFuncCoreType::AIC_OR_AIV));
+    }
+
+    Value flag = adaptor.getDynamicFlagId();
+    if (auto id = op.getStaticFlagId())
+      flag = rewriter.create<LLVM::ConstantOp>(
+          op.getLoc(), i64, rewriter.getI64IntegerAttr(id->getInt()));
+    Value mode = rewriter.create<LLVM::ConstantOp>(
+        op.getLoc(), i64, rewriter.getI64IntegerAttr(kTryWaitIntraBlockMode));
+    auto call = rewriter.create<LLVM::CallOp>(op.getLoc(), callee,
+                                              ValueRange{flag, mode});
+    rewriter.replaceOp(op, call.getResults());
+    return success();
+  }
+};
+
+template <typename Op, typename ImmOp, typename RegOp>
+struct HIVMBufferSyncOpLowering : public ConvertOpToLLVMPattern<Op> {
+  using ConvertOpToLLVMPattern<Op>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(Op op, typename Op::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    // Only a confirmed native buffer-sync row permits the lowering. A
+    // missing #hacc.target is Unknown, not an affirmative.
+    bool native;
+    if constexpr (std::is_same_v<Op, GetBufOp>)
+      native = isNativeGetBufCreate(op);
+    else
+      native = isNativeRlsBufCreate(op);
+    if (!native)
+      return op.emitOpError(
+          "is not natively supported on the enclosing target");
+    std::optional<int64_t> constantId;
+    if (auto id = op.getStaticBufId())
+      constantId = id->getInt();
+    else if (auto constant =
+                 op.getDynamicBufId()
+                     .template getDefiningOp<arith::ConstantIntOp>())
+      constantId = constant.value();
+    auto pipe = static_cast<int64_t>(op.getPipe().getPipe());
+    int64_t mode = op.getMode() ? 1 : 0;
+    if (constantId)
+      rewriter.replaceOpWithNewOp<ImmOp>(op, pipe, *constantId, mode);
+    else
+      rewriter.replaceOpWithNewOp<RegOp>(op, pipe, adaptor.getDynamicBufId(),
+                                         mode);
+    return success();
   }
 };
 
@@ -142,7 +236,7 @@ inline Value GetBlockSyncInstrConfig(ConversionPatternRewriter &rewriter,
          mode <= hivm::SyncBlockInstrMode::INTRA_BLOCK_SYNCHRONIZATION &&
          "BlockSyncInstrMode is illegal");
   Value result;
-  // xd[15:8] contains mode, xd[7:0] contains flagID
+  // Enable bit 0, synchronization mode in bits [5:4], flag in bits [11:8].
   if (auto attr = dyn_cast_if_present<Attribute>(flagID)) {
     auto eventAttr = llvm::cast<IntegerAttr>(attr);
 #ifndef NDEBUG
@@ -175,80 +269,167 @@ inline Value GetBlockSyncInstrConfig(ConversionPatternRewriter &rewriter,
 
 template <typename Op, typename ImmT, typename RegT>
 struct LowerBlockSetWaitToIntraBlockSetWait {
-    static Value getPairFlagId(Value originalFlagId, PatternRewriter &rewriter, Location loc) {
-      Value offsetConstant = rewriter.create<LLVM::ConstantOp>(
-      loc, rewriter.getI64Type(), rewriter.getI64IntegerAttr(util::INTRA_BLOCK_FLAG_ID_OFFSET));
-      Value newValue = rewriter.create<LLVM::AddOp>(loc, originalFlagId, offsetConstant);
-      return newValue;
+  static Value getPairFlagId(Value originalFlagId, PatternRewriter &rewriter,
+                             Location loc) {
+    Value offsetConstant = rewriter.create<LLVM::ConstantOp>(
+        loc, rewriter.getI64Type(),
+        rewriter.getI64IntegerAttr(util::INTRA_BLOCK_FLAG_ID_OFFSET));
+    Value newValue =
+        rewriter.create<LLVM::AddOp>(loc, originalFlagId, offsetConstant);
+    return newValue;
+  }
+  static LogicalResult Lower(Op convertOp,
+                             ConversionPatternRewriter &rewriter) {
+    std::optional<uint64_t> flagId;
+    auto loc = convertOp.getLoc();
+    auto core = convertOp.getTcoreTypeAttr().getTcoretype();
+    // The +16 partner addresses a second vector subcore. An explicit CV1:1
+    // layout has no such receiver; retain paired signaling for other or
+    // unspecified ratios. A5 CV1:1 takes its separate FFTS lowering below.
+    auto func = convertOp->template getParentOfType<FunctionOpInterface>();
+    auto ratio =
+        func
+            ? func->template getAttrOfType<TCoreRatioAttr>(TCoreRatioAttr::name)
+            : TCoreRatioAttr{};
+    bool needsPartner =
+        !ratio || ratio.getCube() != 1 || ratio.getVector() != 1;
+    uint64_t pipeVal;
+    if (isa<SyncBlockSetOp>(convertOp)) {
+      pipeVal = static_cast<uint64_t>(convertOp.getTpipeAttr().getPipe());
+    } else {
+      pipeVal = static_cast<uint64_t>(convertOp.getPipeAttr().getPipe());
     }
-    static LogicalResult Lower(Op convertOp, ConversionPatternRewriter &rewriter) {
-      std::optional<uint64_t> flagId;
-      auto loc = convertOp.getLoc();
-      auto core = convertOp.getTcoreTypeAttr().getTcoretype();
-      uint64_t pipeVal;
-      if (isa<SyncBlockSetOp>(convertOp)) {
-        pipeVal = static_cast<uint64_t>(convertOp.getTpipeAttr().getPipe());
-      } else {
-        pipeVal = static_cast<uint64_t>(convertOp.getPipeAttr().getPipe());
-      }
-      if (convertOp.getStaticFlagId().has_value()) {
-        flagId = static_cast<uint64_t>(convertOp.getStaticFlagId()->getInt());
-      } else if (auto constOp = dyn_cast_if_present<arith::ConstantIntOp>(
-                  convertOp.getDynamicFlagId().getDefiningOp())) {
-        flagId = static_cast<uint64_t>(constOp.value());
-      }
-      if (flagId.has_value()) {
-        if (core == TCoreType::CUBE) {
-          rewriter.create<ImmT>(loc, pipeVal, flagId.value() + util::INTRA_BLOCK_FLAG_ID_OFFSET);
-        }
-        auto result = rewriter.create<ImmT>(loc, pipeVal, flagId.value());
-        rewriter.replaceOp(convertOp, result);
-        return success();
-      }
-      if (auto syncIdVal = convertOp.getDynamicFlagId()) {
-        if (core == TCoreType::CUBE) {
-          rewriter.create<RegT>(loc, pipeVal, getPairFlagId(syncIdVal, rewriter, loc));
-        }
-        auto result = rewriter.create<RegT>(loc, pipeVal, syncIdVal);
-        rewriter.replaceOp(convertOp, result);
-        return success();
-      }
-      return failure();
+    if (convertOp.getStaticFlagId().has_value()) {
+      flagId = static_cast<uint64_t>(convertOp.getStaticFlagId()->getInt());
+    } else if (auto constOp = dyn_cast_if_present<arith::ConstantIntOp>(
+                   convertOp.getDynamicFlagId().getDefiningOp())) {
+      flagId = static_cast<uint64_t>(constOp.value());
     }
+    if (flagId.has_value()) {
+      if (core == TCoreType::CUBE && needsPartner) {
+        rewriter.create<ImmT>(
+            loc, pipeVal, flagId.value() + util::INTRA_BLOCK_FLAG_ID_OFFSET);
+      }
+      auto result = rewriter.create<ImmT>(loc, pipeVal, flagId.value());
+      rewriter.replaceOp(convertOp, result);
+      return success();
+    }
+    if (auto syncIdVal = convertOp.getDynamicFlagId()) {
+      if (core == TCoreType::CUBE && needsPartner) {
+        rewriter.create<RegT>(loc, pipeVal,
+                              getPairFlagId(syncIdVal, rewriter, loc));
+      }
+      auto result = rewriter.create<RegT>(loc, pipeVal, syncIdVal);
+      rewriter.replaceOp(convertOp, result);
+      return success();
+    }
+    return failure();
+  }
 };
 
-using LowerBlockSetToIntraBlockSet =
-    LowerBlockSetWaitToIntraBlockSetWait<SyncBlockSetOp, SetIntraBlockImmInstrOp,
-                                             SetIntraBlockRegInstrOp>;
+using LowerBlockSetToIntraBlockSet = LowerBlockSetWaitToIntraBlockSetWait<
+    SyncBlockSetOp, SetIntraBlockImmInstrOp, SetIntraBlockRegInstrOp>;
 
-using LowerBlockWaitToIntraBlockSet =
-    LowerBlockSetWaitToIntraBlockSetWait<SyncBlockWaitOp, WaitIntraBlockImmInstrOp,
-                                             WaitIntraBlockRegInstrOp>;
+using LowerBlockWaitToIntraBlockSet = LowerBlockSetWaitToIntraBlockSetWait<
+    SyncBlockWaitOp, WaitIntraBlockImmInstrOp, WaitIntraBlockRegInstrOp>;
+
+// On Ascend950, fall back to FFTS mode 2 for CV11 instead of direct intra-block
+// instructions.
+template <typename SyncOp> static bool needsFFTSIntraBlockSync(SyncOp op) {
+  if (op.getTsyncInstrMode().getSyncInstrMode() !=
+          SyncBlockInstrMode::INTRA_BLOCK_SYNCHRONIZATION ||
+      !hacc::utils::isAscend950(op->template getParentOfType<ModuleOp>()))
+    return false;
+  // Read the enclosing function's attributes from either func.func or llvm.func
+  // while function and sync operations are being converted in the same pass.
+  auto func = op->template getParentOfType<FunctionOpInterface>();
+  auto ratio =
+      func ? func->template getAttrOfType<TCoreRatioAttr>(TCoreRatioAttr::name)
+           : TCoreRatioAttr{};
+  return ratio && ratio.getCube() == 1 && ratio.getVector() == 1;
+}
+
+template <typename Op, typename ImmOp, typename RegOp>
+struct HIVMIntraBlockSyncOpLowering : public ConvertOpToLLVMPattern<Op> {
+  using ConvertOpToLLVMPattern<Op>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(Op op, typename Op::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (!hacc::utils::isAscend950(op->template getParentOfType<ModuleOp>()))
+      return op.emitOpError("requires an Ascend950 target");
+    auto pipe = static_cast<uint64_t>(op.getPipe().getPipe());
+    std::optional<int64_t> constantId;
+    if (auto id = op.getStaticSyncId())
+      constantId = id->getInt();
+    else if (auto constant =
+                 op.getDynamicSyncId()
+                     .template getDefiningOp<arith::ConstantIntOp>())
+      constantId = constant.value();
+    if (constantId) {
+      rewriter.template replaceOpWithNewOp<ImmOp>(op, pipe, *constantId);
+    } else {
+      rewriter.template replaceOpWithNewOp<RegOp>(op, pipe,
+                                                  adaptor.getDynamicSyncId());
+    }
+    return success();
+  }
+};
+
+using HIVMIntraBlockSetOpLowering =
+    HIVMIntraBlockSyncOpLowering<SyncIntraBlockSetOp, SetIntraBlockImmInstrOp,
+                                 SetIntraBlockRegInstrOp>;
+using HIVMIntraBlockWaitOpLowering =
+    HIVMIntraBlockSyncOpLowering<SyncIntraBlockWaitOp, WaitIntraBlockImmInstrOp,
+                                 WaitIntraBlockRegInstrOp>;
+
 struct HIVMSetBlockSyncOpLowering
     : public ConvertOpToLLVMPattern<SyncBlockSetOp> {
   bool isRegBased;
-  explicit HIVMSetBlockSyncOpLowering(LLVMTypeConverter &converter, bool isRegBased)
+  explicit HIVMSetBlockSyncOpLowering(LLVMTypeConverter &converter,
+                                      bool isRegBased)
       : ConvertOpToLLVMPattern<SyncBlockSetOp>(converter),
         isRegBased(isRegBased) {}
   LogicalResult
   matchAndRewrite(SyncBlockSetOp convertOp, SyncBlockSetOp::Adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+    bool useFFTSIntraBlock = needsFFTSIntraBlockSync(convertOp);
     if (isRegBased &&
-      convertOp.getTsyncInstrMode().getSyncInstrMode() == SyncBlockInstrMode::INTRA_BLOCK_SYNCHRONIZATION) {
+        convertOp.getTsyncInstrMode().getSyncInstrMode() ==
+            SyncBlockInstrMode::INTRA_BLOCK_SYNCHRONIZATION &&
+        !useFFTSIntraBlock) {
       return LowerBlockSetToIntraBlockSet::Lower(convertOp, rewriter);
     }
     auto loc = convertOp.getLoc();
     auto fftsBaseAddr = convertOp.getFftsBaseAddr();
-      uint64_t pipeVal =
-          static_cast<uint64_t>(convertOp.getTpipeAttr().getPipe());
-      auto configVal = GetBlockSyncInstrConfig(
-          rewriter, loc, convertOp.getTsyncInstrMode().getSyncInstrMode(),
-          convertOp.getFlagId());
+    auto pipe = convertOp.getTpipeAttr().getPipe();
+    if (useFFTSIntraBlock) {
+      auto core = convertOp.getTcoreTypeAttr().getTcoretype();
+      if (core != TCoreType::CUBE && core != TCoreType::VECTOR)
+        return convertOp.emitOpError(
+            "CV11 FFTS SET requires an explicit CUBE or VECTOR core type");
+      if (pipe == PIPE::PIPE_ALL)
+        return convertOp.emitOpError("CV11 FFTS SET does not support PIPE_ALL");
+      if (pipe == PIPE::PIPE_S) {
+        // FFTS SET cannot issue on PIPE_S. Emit a PIPE_ALL barrier, then send
+        // the notification on FIX for Cube or MTE3 for Vector.
+        // TODO: Confidence is low that this correctly simulates PIPE_S SET.
+        // Verify the required ordering and whether PIPE_ALL is appropriate.
+        rewriter.create<PipeBarrierInstrOp>(
+            loc, static_cast<uint64_t>(PIPE::PIPE_ALL));
+        pipe = core == TCoreType::CUBE ? PIPE::PIPE_FIX : PIPE::PIPE_MTE3;
+      }
+    }
+    uint64_t pipeVal = static_cast<uint64_t>(pipe);
+    auto configVal = GetBlockSyncInstrConfig(
+        rewriter, loc, convertOp.getTsyncInstrMode().getSyncInstrMode(),
+        convertOp.getFlagId());
     if (isRegBased) {
       if (fftsBaseAddr) {
         rewriter.create<SetFftsBaseAddrInstrOp>(loc, fftsBaseAddr);
       }
-      auto result = rewriter.create<SetCrossCoreInstrOp>(loc, pipeVal, configVal);
+      auto result =
+          rewriter.create<SetCrossCoreInstrOp>(loc, pipeVal, configVal);
       rewriter.replaceOp(convertOp, result);
     } else {
       if (!fftsBaseAddr) {
@@ -312,12 +493,18 @@ struct HIVMWaitBlockSyncPipeOpLowering
   LogicalResult
   matchAndRewrite(SyncBlockWaitOp convertOp, SyncBlockWaitOp::Adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    if (convertOp.getTsyncInstrMode().getSyncInstrMode() == SyncBlockInstrMode::INTRA_BLOCK_SYNCHRONIZATION) {
+    bool useFFTSIntraBlock = needsFFTSIntraBlockSync(convertOp);
+    if (convertOp.getTsyncInstrMode().getSyncInstrMode() ==
+            SyncBlockInstrMode::INTRA_BLOCK_SYNCHRONIZATION &&
+        !useFFTSIntraBlock) {
       return LowerBlockWaitToIntraBlockSet::Lower(convertOp, rewriter);
     }
     auto loc = convertOp.getLoc();
-    uint64_t pipeVal =
-        static_cast<uint64_t>(convertOp.getPipeAttr().getPipe());
+    // WAIT uses the receiver's pipe directly, including PIPE_S.
+    auto pipe = convertOp.getPipeAttr().getPipe();
+    if (useFFTSIntraBlock && pipe == PIPE::PIPE_ALL)
+      return convertOp.emitOpError("CV11 FFTS WAIT does not support PIPE_ALL");
+    uint64_t pipeVal = static_cast<uint64_t>(pipe);
     std::optional<uint64_t> flagId;
     if (convertOp.getStaticFlagId().has_value()) {
       flagId = static_cast<uint64_t>(convertOp.getStaticFlagId()->getInt());
@@ -359,7 +546,6 @@ struct HIVMSetFFTSBaseAddrOpLowering
     return success();
   }
 };
-
 
 struct HIVMSetMaskNormOpLowering
     : public ConvertOpToLLVMPattern<SetMaskNormOp> {
@@ -504,9 +690,17 @@ void mlir::populateHIVMLegalizeForLLVMExportPatterns(
   // clang-format off
   patterns.add<GetBlockIdxLowering, GetBlockNumLowering,
                GetSubBlockIdxLowering, GetSubBlockNumLowering,
+               GetCoreIdLowering, SetCondLowering,
                HIVMSetFlagOpLowering,
                HIVMWaitFlagOpLowering,
                HIVMPipeBarrierOpLowering,
+               HIVMTryWaitOpLowering,
+               HIVMBufferSyncOpLowering<GetBufOp, GetBufImmInstrOp,
+                                        GetBufRegInstrOp>,
+               HIVMBufferSyncOpLowering<RlsBufOp, RlsBufImmInstrOp,
+                                        RlsBufRegInstrOp>,
+               HIVMIntraBlockSetOpLowering,
+               HIVMIntraBlockWaitOpLowering,
                HIVMSetFFTSBaseAddrOpLowering,
                HIVMSetMaskNormOpLowering,
                HIVMSetCtrlOpLowering,
@@ -530,6 +724,8 @@ void mlir::configureHIVMLegalizeForExportTarget(LLVMConversionTarget &target) {
   target.addLegalOp<GetBlockNumInstrOp>();
   target.addLegalOp<GetSubBlockIdxInstrOp>();
   target.addLegalOp<GetSubBlockNumInstrOp>();
+  target.addLegalOp<GetCoreIdInstrOp>();
+  target.addLegalOp<SetCondInstrOp>();
   target.addLegalOp<SetFlagImmInstrOp>();
   target.addLegalOp<WaitFlagImmInstrOp>();
   target.addLegalOp<SetFlagRegInstrOp>();
@@ -549,6 +745,8 @@ void mlir::configureHIVMLegalizeForExportTarget(LLVMConversionTarget &target) {
   target.addLegalOp<DCCIDstUBInstrOp>();
   target.addLegalOp<SetIntraBlockRegInstrOp>();
   target.addLegalOp<SetIntraBlockImmInstrOp>();
+  target.addLegalOp<GetBufImmInstrOp, GetBufRegInstrOp, RlsBufImmInstrOp,
+                    RlsBufRegInstrOp>();
   target.addLegalOp<WaitIntraBlockRegInstrOp>();
   target.addLegalOp<WaitIntraBlockImmInstrOp>();
   target.addLegalOp<LoadScalarOp>();
@@ -558,7 +756,7 @@ void mlir::configureHIVMLegalizeForExportTarget(LLVMConversionTarget &target) {
   });
 }
 
-#else  // LLVM 20/22 compatibility shims: instr ops are not built.
+#else // LLVM 20/22 compatibility shims: instr ops are not built.
 
 void mlir::populateHIVMLegalizeForLLVMExportPatterns(
     LLVMTypeConverter &converter, RewritePatternSet &patterns,
@@ -566,4 +764,5 @@ void mlir::populateHIVMLegalizeForLLVMExportPatterns(
 
 void mlir::configureHIVMLegalizeForExportTarget(LLVMConversionTarget &target) {}
 
-#endif // !__LLVM_MAJOR_VERSION_20_COMPATIBLE__ && !__LLVM_MAJOR_VERSION_22_COMPATIBLE__
+#endif // !__LLVM_MAJOR_VERSION_20_COMPATIBLE__ &&
+       // !__LLVM_MAJOR_VERSION_22_COMPATIBLE__

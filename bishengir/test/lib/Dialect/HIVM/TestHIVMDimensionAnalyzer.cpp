@@ -79,7 +79,7 @@ struct TestHIVMDimensionAnalyzerPass
       llvm::outs() << "Tiling dim for " << op << " is "
                    << analyzer.getTilingDim(op.getDpsInputs()[0]) << '\n';
       parentOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
-        for (auto res : op->getResults()) {
+        for ([[maybe_unused]] auto res : op->getResults()) {
           LDBG(res << '\n' << analyzer.getTilingDim(res));
         }
       });

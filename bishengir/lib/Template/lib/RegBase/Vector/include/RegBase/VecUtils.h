@@ -17,6 +17,7 @@
 #ifndef HIVMAVE_MLIR_TEMPLATE_VECTOR_UTILS_H
 #define HIVMAVE_MLIR_TEMPLATE_VECTOR_UTILS_H
 
+#include "ArchDefs.h"
 #include "Utils.h"
 #include <type_traits>
 
@@ -36,7 +37,7 @@ struct VectorTy;
 DEFINE_VECTOR_MAPPING(float, vector_f32);
 DEFINE_VECTOR_MAPPING(half, vector_f16);
 DEFINE_VECTOR_MAPPING(bfloat16_t, vector_bf16);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DEFINE_VECTOR_MAPPING(float8_e4m3_t, vector_f8e4m3);
 DEFINE_VECTOR_MAPPING(float8_e5m2_t, vector_f8e5m2);
 // 64-bit integers
@@ -103,7 +104,7 @@ using VectorReg = typename VectorTy<T>::type;
 DEFINE_AVE_VECTOR_TYPE(long long, ave_vector_i64, 64); // <64xi64>
 DEFINE_AVE_PREG_TYPE(bool, ave_preg, AVE_PREDICATE_LENGTH);
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 // helper Micros to convert between ave types and backend defined types
 #define convertAVEVec64To2xvl64(v) (*reinterpret_cast<vector_2xvl_s64 *>(&(v)))
 #define convert2xvl64ToAVEVec64(v) (*reinterpret_cast<ave_vector_i64 *>(&(v)))
@@ -946,31 +947,55 @@ vdiv_int_scalar(memref_t<__ubuf__ T, dim> *src0,
 
 #define REGISTE_INDIRECT_LOAD(dim, dtype, itype)                               \
   DECLARE_INDIRECT_LOAD(dim, dtype, itype) {                                   \
-    indirect_load<dim, dtype, itype, true>(src, idx, dst, mask, other);        \
+    indirect_load<dim, dtype, itype, dtype, true>(src, idx, dst, mask, other); \
   }                                                                            \
   DECLARE_INDIRECT_LOAD_NONVOLATILE(dim, dtype, itype) {                       \
-    indirect_load<dim, dtype, itype, false>(src, idx, dst, mask, other);       \
+    indirect_load<dim, dtype, itype, dtype, false>(src, idx, dst, mask,        \
+                                                   other);                     \
   }
 
-#define DECLARE_STRIDE_LOAD(dim, dtype, itype, ...)                            \
+#define DECLARE_INDIRECT_LOAD_MIXED(dim, dtype, itype, otherty)                \
   __aiv__ __attribute__((always_inline)) void                                  \
-  _mlir_ciface_stride_load_##dim##d_##dtype##_##itype(                         \
-      memref_t<__gm__ dtype, 1> *src, memref_t<__ubuf__ dtype, dim> *dst,      \
-      __VA_ARGS__)
+      _mlir_ciface_indirect_load_##dim##d_##dtype##_##itype##_##otherty(       \
+          memref_t<__gm__ dtype, 1> *src, memref_t<__ubuf__ itype, dim> *idx,  \
+          memref_t<__ubuf__ dtype, dim> *dst,                                  \
+          memref_t<__ubuf__ bool, dim> *mask,                                  \
+          memref_t<__ubuf__ otherty, dim> *other)
+
+#define DECLARE_INDIRECT_LOAD_MIXED_NONVOLATILE(dim, dtype, itype, otherty)          \
+  __aiv__ __attribute__((always_inline)) void                                        \
+      _mlir_ciface_indirect_load_nonvolatile_##dim##d_##dtype##_##itype##_##otherty( \
+          memref_t<__gm__ dtype, 1> *src, memref_t<__ubuf__ itype, dim> *idx,        \
+          memref_t<__ubuf__ dtype, dim> *dst,                                        \
+          memref_t<__ubuf__ bool, dim> *mask,                                        \
+          memref_t<__ubuf__ otherty, dim> *other)
+
+#define REGISTE_INDIRECT_LOAD_MIXED(dim, dtype, itype, otherty)                \
+  DECLARE_INDIRECT_LOAD_MIXED(dim, dtype, itype, otherty) {                    \
+    indirect_load<dim, dtype, itype, otherty, true>(src, idx, dst, mask,       \
+                                                    other);                    \
+  }                                                                            \
+  DECLARE_INDIRECT_LOAD_MIXED_NONVOLATILE(dim, dtype, itype, otherty) {        \
+    indirect_load<dim, dtype, itype, otherty, false>(src, idx, dst, mask,      \
+                                                     other);                   \
+  }
+
+#define DECLARE_STRIDE_LOAD(dim, dtype, itype, othertype, ...)                 \
+  __aiv__ __attribute__((always_inline)) void                                  \
+      _mlir_ciface_stride_load_##dim##d_##dtype##_##itype(                     \
+          memref_t<__gm__ dtype, 1> *src, memref_t<__ubuf__ dtype, dim> *dst,  \
+          itype offset, othertype other, __VA_ARGS__)
 
 #define DECLARE_STRIDE_LOAD_1D(dtype, itype)                                   \
-  DECLARE_STRIDE_LOAD(1, dtype, itype, itype offset, dtype other,              \
-                      itype stride, itype numel)
+  DECLARE_STRIDE_LOAD(1, dtype, itype, dtype, itype stride, itype numel)
 
 #define DECLARE_STRIDE_LOAD_2D(dtype, itype)                                   \
-  DECLARE_STRIDE_LOAD(2, dtype, itype, itype offset, dtype other,              \
-                      itype stride0, itype stride1, itype numel0,              \
-                      itype numel1)
+  DECLARE_STRIDE_LOAD(2, dtype, itype, dtype, itype stride0, itype stride1,    \
+                      itype numel0, itype numel1)
 
 #define DECLARE_STRIDE_LOAD_3D(dtype, itype)                                   \
-  DECLARE_STRIDE_LOAD(3, dtype, itype, itype offset, dtype other,              \
-                      itype stride0, itype stride1, itype stride2,             \
-                      itype numel0, itype numel1, itype numel2)
+  DECLARE_STRIDE_LOAD(3, dtype, itype, dtype, itype stride0, itype stride1,    \
+                      itype stride2, itype numel0, itype numel1, itype numel2)
 
 #define REGISTE_STRIDE_LOAD_1D(dtype, itype)                                   \
   DECLARE_STRIDE_LOAD_1D(dtype, itype) {                                       \
@@ -987,6 +1012,39 @@ vdiv_int_scalar(memref_t<__ubuf__ T, dim> *src0,
   DECLARE_STRIDE_LOAD_3D(dtype, itype) {                                       \
     stride_load_3d<dtype, itype>(src, dst, offset, other, stride0, stride1,    \
                                  stride2, numel0, numel1, numel2);            \
+  }
+
+#define REGISTE_STRIDE_LOAD_FP8_1D(dtype, itype)                               \
+  DECLARE_STRIDE_LOAD(1, dtype, itype, int8_t, itype stride, itype numel) {    \
+    static_assert(sizeof(dtype) == sizeof(int8_t),                             \
+                  "FP8 stride load requires byte-sized elements");             \
+    stride_load_1d<int8_t, itype>(                                             \
+        reinterpret_cast<memref_t<__gm__ int8_t, 1> *>(src),                   \
+        reinterpret_cast<memref_t<__ubuf__ int8_t, 1> *>(dst), offset, other,  \
+        stride, numel);                                                        \
+  }
+
+#define REGISTE_STRIDE_LOAD_FP8_2D(dtype, itype)                               \
+  DECLARE_STRIDE_LOAD(2, dtype, itype, int8_t, itype stride0, itype stride1,   \
+                      itype numel0, itype numel1) {                            \
+    static_assert(sizeof(dtype) == sizeof(int8_t),                             \
+                  "FP8 stride load requires byte-sized elements");             \
+    stride_load_2d<int8_t, itype>(                                             \
+        reinterpret_cast<memref_t<__gm__ int8_t, 1> *>(src),                   \
+        reinterpret_cast<memref_t<__ubuf__ int8_t, 2> *>(dst), offset, other,  \
+        stride0, stride1, numel0, numel1);                                     \
+  }
+
+#define REGISTE_STRIDE_LOAD_FP8_3D(dtype, itype)                               \
+  DECLARE_STRIDE_LOAD(3, dtype, itype, int8_t, itype stride0, itype stride1,   \
+                      itype stride2, itype numel0, itype numel1,               \
+                      itype numel2) {                                          \
+    static_assert(sizeof(dtype) == sizeof(int8_t),                             \
+                  "FP8 stride load requires byte-sized elements");             \
+    stride_load_3d<int8_t, itype>(                                             \
+        reinterpret_cast<memref_t<__gm__ int8_t, 1> *>(src),                   \
+        reinterpret_cast<memref_t<__ubuf__ int8_t, 3> *>(dst), offset, other,  \
+        stride0, stride1, stride2, numel0, numel1, numel2);                    \
   }
 
 #define DECLARE_STRIDE_STORE(dim, dtype, itype, ...)                           \
@@ -1025,6 +1083,12 @@ vdiv_int_scalar(memref_t<__ubuf__ T, dim> *src0,
                                   numel0, numel1, numel2);                    \
   }
 
+#if BISHENG_TPL_AVE_SHIFT_AMOUNT_IS_VECTOR
+#define AVE_SHIFT_AMOUNT(x) ((vector_u32)(x))
+#else
+#define AVE_SHIFT_AMOUNT(x) (x)
+#endif
+
 #define DECLARE_SHIFT_VV(op_name)                                              \
   __aiv__ __attribute__((always_inline)) void                                  \
   _mlir_ciface_##op_name##_int64_t(                                            \
@@ -1034,17 +1098,18 @@ vdiv_int_scalar(memref_t<__ubuf__ T, dim> *src0,
 #define REGISTE_SHIFT_VV(op_name)                                              \
   DECLARE_SHIFT_VV(op_name) {                                                  \
     vector_bool p = convertAVEPregToVecBool(preg);                             \
-    vector_s32 shift;                                                          \
     vector_f32 tmp;                                                            \
+    vector_s32 shift;                                                          \
     vcvt(tmp, *src1, ROUND_C);                                                 \
     vcvt(shift, tmp, p, ROUND_C, RS_ENABLE);                                   \
     if (!sign) {                                                               \
       vector_2xvl_u64 unsignSrc0 = vector_2xvl_u64(*src0);                     \
       vector_2xvl_u64 unsignSret;                                              \
-      op_name(unsignSret, unsignSrc0, shift, p, MODE_ZEROING);                 \
+      op_name(unsignSret, unsignSrc0, AVE_SHIFT_AMOUNT(shift), p,              \
+              MODE_ZEROING);                                                   \
       *sret = vector_2xvl_s64(unsignSret);                                     \
     } else {                                                                   \
-      op_name(*sret, *src0, shift, p, MODE_ZEROING);                           \
+      op_name(*sret, *src0, AVE_SHIFT_AMOUNT(shift), p, MODE_ZEROING);         \
     }                                                                          \
   }
 
@@ -1339,6 +1404,7 @@ DECLARE_VEC_LOAD_BRC(vload_BRC_B64, 5);
 DECLARE_VEC_LOAD_BRC(vload_BRC_B64, 6);
 DECLARE_VEC_LOAD_BRC(vload_BRC_B64, 7);
 DECLARE_VEC_LOAD_BRC(vload_BRC_B64, 8);
+DECLARE_VEC_LOAD_BRC(vload_BRC_B64, 9);
 DECLARE_VEC_LOAD_NORM(vload_NORM, 0);
 DECLARE_VEC_LOAD_NORM(vload_NORM, 1);
 DECLARE_VEC_LOAD_NORM(vload_NORM, 2);
@@ -1348,6 +1414,7 @@ DECLARE_VEC_LOAD_NORM(vload_NORM, 5);
 DECLARE_VEC_LOAD_NORM(vload_NORM, 6);
 DECLARE_VEC_LOAD_NORM(vload_NORM, 7);
 DECLARE_VEC_LOAD_NORM(vload_NORM, 8);
+DECLARE_VEC_LOAD_NORM(vload_NORM, 9);
 DECLARE_VEC_LOAD_NORM_UNALIGN(vload_NORM, 0);
 DECLARE_VEC_LOAD_NORM_UNALIGN(vload_NORM, 1);
 DECLARE_VEC_LOAD_NORM_UNALIGN(vload_NORM, 2);
@@ -1357,6 +1424,7 @@ DECLARE_VEC_LOAD_NORM_UNALIGN(vload_NORM, 5);
 DECLARE_VEC_LOAD_NORM_UNALIGN(vload_NORM, 6);
 DECLARE_VEC_LOAD_NORM_UNALIGN(vload_NORM, 7);
 DECLARE_VEC_LOAD_NORM_UNALIGN(vload_NORM, 8);
+DECLARE_VEC_LOAD_NORM_UNALIGN(vload_NORM, 9);
 DECLARE_VEC_STORE_OPT(masked_store_ONEPT_B64, 0);
 DECLARE_VEC_STORE_OPT(masked_store_ONEPT_B64, 1);
 DECLARE_VEC_STORE_OPT(masked_store_ONEPT_B64, 2);
@@ -1366,6 +1434,7 @@ DECLARE_VEC_STORE_OPT(masked_store_ONEPT_B64, 5);
 DECLARE_VEC_STORE_OPT(masked_store_ONEPT_B64, 6);
 DECLARE_VEC_STORE_OPT(masked_store_ONEPT_B64, 7);
 DECLARE_VEC_STORE_OPT(masked_store_ONEPT_B64, 8);
+DECLARE_VEC_STORE_OPT(masked_store_ONEPT_B64, 9);
 DECLARE_VEC_STORE_NORM(masked_store_NORM_B64, 0);
 DECLARE_VEC_STORE_NORM(masked_store_NORM_B64, 1);
 DECLARE_VEC_STORE_NORM(masked_store_NORM_B64, 2);
@@ -1375,6 +1444,7 @@ DECLARE_VEC_STORE_NORM(masked_store_NORM_B64, 5);
 DECLARE_VEC_STORE_NORM(masked_store_NORM_B64, 6);
 DECLARE_VEC_STORE_NORM(masked_store_NORM_B64, 7);
 DECLARE_VEC_STORE_NORM(masked_store_NORM_B64, 8);
+DECLARE_VEC_STORE_NORM(masked_store_NORM_B64, 9);
 DECLARE_VEC_STORE_NORM_UNALIGN(masked_store_NORM_B64, 0);
 DECLARE_VEC_STORE_NORM_UNALIGN(masked_store_NORM_B64, 1);
 DECLARE_VEC_STORE_NORM_UNALIGN(masked_store_NORM_B64, 2);
@@ -1384,6 +1454,7 @@ DECLARE_VEC_STORE_NORM_UNALIGN(masked_store_NORM_B64, 5);
 DECLARE_VEC_STORE_NORM_UNALIGN(masked_store_NORM_B64, 6);
 DECLARE_VEC_STORE_NORM_UNALIGN(masked_store_NORM_B64, 7);
 DECLARE_VEC_STORE_NORM_UNALIGN(masked_store_NORM_B64, 8);
+DECLARE_VEC_STORE_NORM_UNALIGN(masked_store_NORM_B64, 9);
 
 DECLARE_VEC_GATHER(vgather, 0);
 DECLARE_VEC_GATHER(vgather, 1);
@@ -1394,6 +1465,7 @@ DECLARE_VEC_GATHER(vgather, 5);
 DECLARE_VEC_GATHER(vgather, 6);
 DECLARE_VEC_GATHER(vgather, 7);
 DECLARE_VEC_GATHER(vgather, 8);
+DECLARE_VEC_GATHER(vgather, 9);
 
 DECLARE_CAST_I64_TO_F32();
 DECLARE_CAST_U64_TO_F32();

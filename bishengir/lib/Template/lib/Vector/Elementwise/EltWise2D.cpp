@@ -544,6 +544,26 @@ vector_last_axis_brc_2d(memref_t<__ubuf__ SRC_T, 2> *src,
     return;
   }
 
+  // vbrcb only supports 16/32-bit types, so 1/8-byte types cannot use it.
+  // Broadcast each row with a scalar dup instead: brc_scalar_core_1d dispatches
+  // to the uint16 merge path for 1-byte types and to broadcast_scalar_b64 for
+  // 8-byte types.
+  if constexpr (sizeof(SRC_T) == 1 || sizeof(SRC_T) == 8) {
+    for (int64_t i = 0; i < src->sizes[0]; ++i) {
+      auto tmp_buf_ptr = tmp_buf->aligned + tmp_buf->offset + i * num_per_block;
+      auto src_ptr = src->aligned + src->offset + i;
+      INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+      INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+      SRC_T scalar = *src_ptr;
+      INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+      INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+      brc_scalar_core_1d<SRC_T>(scalar, tmp_buf_ptr, num_per_block);
+    }
+    INTRINSIC(pipe_barrier, PIPE_V);
+    view_as<SRC_T, DST_T, 2>(&tmp_buf_for_brc, dst);
+    return;
+  }
+
   INTRINSIC_NO_ARGS(set_mask_count);
   brc_last_axis_2d_vbrcb<SRC_T>(src, &tmp_buf_for_brc);
   INTRINSIC(pipe_barrier, PIPE_V);
@@ -560,6 +580,28 @@ __aiv__ __attribute__((always_inline)) void normalize_vector_last_axis_2d(
     VectorLastAxisMode *mode) {
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(SRC_T);
   constexpr int new_num_per_block = INTR_BYTES_PER_BLOCK / sizeof(DST_T);
+
+  // tmp_buf is optional: the callers' constraint allows an empty tmp_buf
+  // (vv scene1 / v scene1&2: tmp_buf = 0) when no broadcast preprocessing
+  // is needed. Check the need first and bail out early, so a null tmp_buf
+  // is never dereferenced by the unconditional accesses below.
+  if (tmp_buf == nullptr) {
+    bool need_src0_brc =
+        *mode == VectorLastAxisMode::SV || *mode == VectorLastAxisMode::SB ||
+        (*mode != VectorLastAxisMode::SV && *mode != VectorLastAxisMode::SB &&
+         src0->sizes[1] != dst->sizes[1] && src0->sizes[1] == 1);
+    bool need_src1_brc =
+        ((*mode == VectorLastAxisMode::VS || *mode == VectorLastAxisMode::BS) &&
+         !isHardwareSupportedVS<OP>()) ||
+        (*mode != VectorLastAxisMode::V && *mode != VectorLastAxisMode::B &&
+         *mode != VectorLastAxisMode::VS && *mode != VectorLastAxisMode::BS &&
+         src1->sizes[1] != dst->sizes[1] && src1->sizes[1] == 1);
+    if (!need_src0_brc && !need_src1_brc) {
+      *mode = get_preprocessed_mode<OP>(*mode, false, false);
+      return;
+    }
+  }
+
   memref_t<__ubuf__ DST_T, 1> tmp_buf_as_dst_t;
   view_as<SRC_T, DST_T, 1>(tmp_buf, &tmp_buf_as_dst_t);
 
@@ -622,10 +664,11 @@ __aiv__ __attribute__((always_inline)) void normalize_vector_last_axis_2d(
             {1}};
         vector_last_axis_brc_2d<SRC_T, DST_T>(src1, new_src1, &new_tmp_buf);
         tmp_buf_as_dst_t.offset =
-            tmp_buf_as_dst_t.offset + (src1->sizes[0] == 1
-                ? new_num_per_block
-                : new_num_per_block *
-                      CEIL_FACTOR(src1->sizes[0], kSrcNumPerRepeatOfVBRCB));
+            tmp_buf_as_dst_t.offset +
+            (src1->sizes[0] == 1
+                 ? new_num_per_block
+                 : new_num_per_block *
+                       CEIL_FACTOR(src1->sizes[0], kSrcNumPerRepeatOfVBRCB));
       }
     }
   }

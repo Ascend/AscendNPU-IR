@@ -6,14 +6,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Transforms/Passes.h"
 #include "bishengir/Transforms/AffineMinMaxValueBounds.h"
+#include "bishengir/Transforms/Passes.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/Interfaces/ValueBoundsOpInterface.h"
 #include "mlir/Pass/Pass.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -43,8 +44,8 @@ static std::string getContainingFuncName(Value v) {
   return "unknown";
 }
 
-static void dumpAffineMinmaxBoundsToStderr(
-    const AffineMinMaxValueBoundsCollector &bounds) {
+static void
+dumpAffineMinmaxBoundsToStderr(const AffineMinMaxValueBoundsCollector &bounds) {
   struct Entry {
     std::string funcName;
     std::string valueStr;
@@ -76,13 +77,14 @@ static void dumpAffineMinmaxBoundsToStderr(
   llvm::outs() << "=== AFFINE_MINMAX_BOUNDS DUMP START ===\n";
   for (auto &e : entries) {
     llvm::outs() << "AFFINE_MINMAX_BOUNDS func=" << e.funcName
-                 << " value=" << e.valueStr << " LB=" << e.lb << " UB="
-                 << e.ub << "\n";
+                 << " value=" << e.valueStr << " LB=" << e.lb << " UB=" << e.ub
+                 << "\n";
   }
   llvm::outs() << "=== AFFINE_MINMAX_BOUNDS DUMP END ===\n";
 }
 
-static void eliminateOneIterationScfFor(scf::ForOp forOp, IRRewriter &rewriter) {
+static void eliminateOneIterationScfFor(scf::ForOp forOp,
+                                        IRRewriter &rewriter) {
   Block *bodyPtr = forOp.getBody();
   Block &body = *bodyPtr;
   auto yieldOp = cast<scf::YieldOp>(body.getTerminator());
@@ -110,6 +112,57 @@ static void eliminateOneIterationScfFor(scf::ForOp forOp, IRRewriter &rewriter) 
   rewriter.replaceOp(forOp, newResults);
 }
 
+static void foldDominatedAffineMins(func::FuncOp func) {
+  SmallVector<affine::AffineMinOp> mins;
+  func.walk([&](affine::AffineMinOp op) { mins.push_back(op); });
+  for (affine::AffineMinOp minOp : mins) {
+    if (!minOp || minOp.getAffineMap().getNumResults() < 2)
+      continue;
+    AffineMap map = minOp.getAffineMap();
+    SmallVector<Value> operands(minOp.getOperands());
+    int selected = -1;
+    for (unsigned i = 0; i < map.getNumResults(); ++i) {
+      AffineMap candidateMap = AffineMap::get(
+          map.getNumDims(), map.getNumSymbols(), map.getResult(i));
+      ValueBoundsConstraintSet::Variable candidate(candidateMap, operands);
+      bool dominates = true;
+      for (unsigned j = 0; j < map.getNumResults(); ++j) {
+        if (i == j)
+          continue;
+        AffineMap otherMap = AffineMap::get(
+            map.getNumDims(), map.getNumSymbols(), map.getResult(j));
+        if (!ValueBoundsConstraintSet::compare(
+                candidate, ValueBoundsConstraintSet::LE,
+                ValueBoundsConstraintSet::Variable(otherMap, operands))) {
+          dominates = false;
+          break;
+        }
+      }
+      if (dominates) {
+        selected = static_cast<int>(i);
+        break;
+      }
+    }
+    if (selected < 0)
+      continue;
+    AffineMap selectedMap = AffineMap::get(
+        map.getNumDims(), map.getNumSymbols(), map.getResult(selected));
+    // Always materialize the candidate. Searching for an equivalent
+    // `affine.apply` to reuse would cost a walk per fold, and this pass does
+    // not run CSE itself: the cleanup that follows it in the pipeline does,
+    // and it merges two of them that agree on map and operands. The shape this
+    // fold leaves behind usually differs from a neighbour until
+    // canonicalization folds the constant operands away, so the search rarely
+    // matched anyway. `createOrFold` still drops the op when the surviving
+    // candidate is an identity map or every operand is constant.
+    OpBuilder builder(minOp);
+    Value replacement = builder.createOrFold<affine::AffineApplyOp>(
+        minOp.getLoc(), selectedMap, operands);
+    minOp.getResult().replaceAllUsesWith(replacement);
+    minOp.erase();
+  }
+}
+
 struct EliminateSingleIterationScfForPass
     : public impl::EliminateSingleIterationScfForBase<
           EliminateSingleIterationScfForPass> {
@@ -131,6 +184,9 @@ struct EliminateSingleIterationScfForPass
 
     for (scf::ForOp forOp : singleIter)
       eliminateOneIterationScfFor(forOp, rewriter);
+
+    if (foldDominatedMins)
+      foldDominatedAffineMins(func);
   }
 };
 

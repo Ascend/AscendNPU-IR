@@ -188,8 +188,8 @@ struct RewriteHFusionIsNanOp : public OpRewritePattern<hfusion::IsNanOp> {
     Value initTensor = rewriter.create<tensor::EmptyOp>(
         loc, resultType.getShape(), resultType.getElementType(), dynamicSizes);
 
-    SmallVector<AffineMap> indexingMaps(
-        2, rewriter.getMultiDimIdentityMap(rank));
+    SmallVector<AffineMap> indexingMaps(2,
+                                        rewriter.getMultiDimIdentityMap(rank));
     SmallVector<utils::IteratorType> iteratorTypes(
         rank, utils::IteratorType::parallel);
 
@@ -206,7 +206,6 @@ struct RewriteHFusionIsNanOp : public OpRewritePattern<hfusion::IsNanOp> {
     return success();
   }
 };
-
 
 // -----------------------------------------------------------------------
 // IsFiniteOp Lowering
@@ -238,8 +237,8 @@ struct RewriteHFusionIsFiniteOp : public OpRewritePattern<hfusion::IsFiniteOp> {
     Value initTensor = rewriter.create<tensor::EmptyOp>(
         loc, resultType.getShape(), resultType.getElementType(), dynamicSizes);
 
-    SmallVector<AffineMap> indexingMaps(
-        2, rewriter.getMultiDimIdentityMap(rank));
+    SmallVector<AffineMap> indexingMaps(2,
+                                        rewriter.getMultiDimIdentityMap(rank));
     SmallVector<utils::IteratorType> iteratorTypes(
         rank, utils::IteratorType::parallel);
 
@@ -281,12 +280,12 @@ struct RewriteHFusionDeinterleaveOp
     if (!resultType)
       return failure();
 
-    const int64_t rank    = inputType.getRank();
+    const int64_t rank = inputType.getRank();
     const int64_t chanIdx = op.getDeInterLeaveChannelIdx(); // -1, 0, 1
     // -1(all) equals to even，offset=0；0=even；1=odd
-    const int64_t offset  = (chanIdx == 1) ? 1 : 0;
-    const Location loc    = op.getLoc();
-    MLIRContext *ctx      = rewriter.getContext();
+    const int64_t offset = (chanIdx == 1) ? 1 : 0;
+    const Location loc = op.getLoc();
+    MLIRContext *ctx = rewriter.getContext();
 
     // 1. prepare empty tensor
     SmallVector<Value> dynamicSizes;
@@ -323,8 +322,7 @@ struct RewriteHFusionDeinterleaveOp
 
     // 3. linalg.generic：body yield
     auto genericOp = rewriter.create<linalg::GenericOp>(
-        loc, resultType,
-        ValueRange{op.getInput()}, ValueRange{initTensor},
+        loc, resultType, ValueRange{op.getInput()}, ValueRange{initTensor},
         indexingMaps, iterTypes,
         [](OpBuilder &b, Location nestedLoc, ValueRange args) {
           b.create<linalg::YieldOp>(nestedLoc, args[0]);
@@ -373,7 +371,8 @@ static Value createOneConstant(OpBuilder &builder, Location loc,
   if (auto intType = dyn_cast<IntegerType>(elemType))
     return builder.create<arith::ConstantOp>(
         loc, builder.getIntegerAttr(intType, 1));
-  llvm::report_fatal_error("unsupported element type for HFusion cumprod lowering");
+  llvm::report_fatal_error(
+      "unsupported element type for HFusion cumprod lowering");
 }
 
 static Value createAccumulatedValue(OpBuilder &builder, Location loc, Value lhs,
@@ -383,7 +382,8 @@ static Value createAccumulatedValue(OpBuilder &builder, Location loc, Value lhs,
     return builder.create<arith::MulFOp>(loc, lhs, rhs);
   if (isa<IntegerType>(elemType))
     return builder.create<arith::MulIOp>(loc, lhs, rhs);
-  llvm::report_fatal_error("unsupported element type for HFusion cumprod lowering");
+  llvm::report_fatal_error(
+      "unsupported element type for HFusion cumprod lowering");
 }
 
 static Value buildCumLoop(OpBuilder &builder, Location loc, Value input,
@@ -449,10 +449,12 @@ struct RewriteHFusionCumprodOp : public OpRewritePattern<hfusion::CumprodOp> {
                                 PatternRewriter &rewriter) const final {
     auto inputType = dyn_cast<RankedTensorType>(op.getInput().getType());
     auto resultType = dyn_cast<RankedTensorType>(op.getResult().getType());
-    if (!inputType || !resultType) return failure();
+    if (!inputType || !resultType)
+      return failure();
 
     Type elemType = inputType.getElementType();
-    if (!isa<FloatType, IntegerType>(elemType)) return failure();
+    if (!isa<FloatType, IntegerType>(elemType))
+      return failure();
 
     Location loc = op.getLoc();
     int64_t cumDim = op.getCumDims()[0];
@@ -497,13 +499,13 @@ struct ConvertHFusionToUpstream
     patterns.add<RewriteHFusionDeinterleaveOp>(&ctx);
     patterns.add<RewriteHFusionCumprodOp>(&ctx);
 
-    // Future operations like CumprodOp, AtomicXchgOp, etc., should be added below.
+    // Future operations like CumprodOp, AtomicXchgOp, etc., should be added
+    // below.
     //
     // patterns.add<RewriteXXXXX>(&ctx);
 
     // Apply all rewrite patterns greedily.
-    if (failed(applyPatternsAndFoldGreedily(getOperation(),
-                                            std::move(patterns)))) {
+    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
       signalPassFailure();
     }
   }

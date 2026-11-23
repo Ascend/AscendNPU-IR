@@ -1,5 +1,5 @@
-// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase=shared-mem-dynamic-size=122880 -split-input-file -verify-diagnostics | FileCheck %s
-// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase=shared-mem-dynamic-size=221184 -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory=shared-mem-dynamic-size=122880 -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory=shared-mem-dynamic-size=221184 -split-input-file -verify-diagnostics | FileCheck %s
 
 // Verifies that the effective UB capacity used by the RegBase PlanMemory
 // planner follows the `shared-mem-dynamic-size` option for SIMT/MIX vector

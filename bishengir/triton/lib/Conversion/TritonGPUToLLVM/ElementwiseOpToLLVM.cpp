@@ -237,7 +237,8 @@ struct ElementwiseInlineAsmOpConversion
           elemTy.isIntOrFloat() ? elemTy.getIntOrFloatBitWidth() : 64;
       unsigned numElementPerReg = std::max(32 / bitWidth, 1u);
       numElementPerReg = std::min(numElementPerReg, numPackedElements);
-      for (int j = 0; j < numPackedElements; j += numElementPerReg) {
+      for (int j = 0; j < static_cast<int>(numPackedElements);
+           j += numElementPerReg) {
         if (numElementPerReg == 1) {
           packedOperands.push_back(operands[j][i]);
           continue;
@@ -245,7 +246,7 @@ struct ElementwiseInlineAsmOpConversion
         Type t =
             vec_ty(getTypeConverter()->convertType(elemTy), numElementPerReg);
         Value packed = b.undef(t);
-        for (int k = 0; k < numElementPerReg; k++) {
+        for (int k = 0; k < static_cast<int>(numElementPerReg); k++) {
           packed = b.insert_element(packed, operands[j + k][i], b.i32_val(k));
         }
         packedOperands.push_back(packed);
@@ -312,8 +313,8 @@ struct ElementwiseInlineAsmOpConversion
     // [return_value][op.getPackedElement()].
     SmallVector<SmallVector<Value>> ret(op->getNumResults());
     int structIdx = 0;
-    for (int i = 0; i < op->getNumResults(); i++) {
-      for (int j = 0; j < op.getPackedElement(); j++) {
+    for (int i = 0; i < static_cast<int>(op->getNumResults()); i++) {
+      for (int j = 0; j < static_cast<int>(op.getPackedElement()); j++) {
         Value val;
         if (asmRetTypes.size() > 1) {
           val = b.extract_val(asmResults, structIdx++);
@@ -342,7 +343,7 @@ struct ElementwiseInlineAsmOpConversion
     // Layout is unpackedOperands[operand][elem].
     SmallVector<SmallVector<Value>> unpackedOperands;
     for (auto operand : adaptor.getOperands()) {
-      auto argTy = op->getOperand(0).getType();
+      [[maybe_unused]] auto argTy = op->getOperand(0).getType();
       auto subOperands = unpackLLElements(loc, operand, rewriter);
       unpackedOperands.push_back(subOperands);
     }
@@ -353,7 +354,7 @@ struct ElementwiseInlineAsmOpConversion
     // These are checked by the verifier, so we don't need to raise a nice
     // error.
     assert(all_of(unpackedOperands, [&](auto &operands) {
-      return operands.size() == numElemsPerThread;
+      return operands.size() == static_cast<size_t>(numElemsPerThread);
     }));
     if (numElemsPerThread % op.getPackedElement() != 0) {
       // Pad with the undef for each operand to have a multiple of
@@ -374,13 +375,14 @@ struct ElementwiseInlineAsmOpConversion
     // This loop always runs at least once, even when the asm has no input
     // elements.
     SmallVector<SmallVector<Value>> unpackedResults(op->getNumResults());
-    for (unsigned i = 0; i < numElemsPerThread; i += op.getPackedElement()) {
+    for (int i = 0; i < numElemsPerThread;
+         i += static_cast<int>(op.getPackedElement())) {
       // Block of elements to process with one call to the inline asm.  This is
       // ordered opposite `unpackedResults`: The outer dim is
       // op.getPackedElement(), and the inner dim is the operand.
       SmallVector<SmallVector<Value>> block(op.getPackedElement());
       for (auto &os : unpackedOperands) {
-        for (int j = 0; j < op.getPackedElement(); j++) {
+        for (int j = 0; j < static_cast<int>(op.getPackedElement()); j++) {
           block[j].push_back(os[i + j]);
         }
       }
@@ -396,7 +398,7 @@ struct ElementwiseInlineAsmOpConversion
     }
     // Reorder and pack the results.
     SmallVector<Value> outs;
-    for (int i = 0; i < unpackedResults.size(); i++) {
+    for (int i = 0; i < static_cast<int>(unpackedResults.size()); i++) {
       outs.push_back(packLLElements(loc, getTypeConverter(), unpackedResults[i],
                                     rewriter, op->getResult(i).getType()));
     }
@@ -581,8 +583,9 @@ struct MapElementwiseOpConversion
 
   using Base::Base;
 
-  LogicalResult matchAndRewrite(MapElementwiseOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const {
+  LogicalResult
+  matchAndRewrite(MapElementwiseOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
     Location loc = op->getLoc();
     auto typeConverter = getTypeConverter();
 
@@ -615,7 +618,7 @@ struct MapElementwiseOpConversion
     }
 
     auto &scalarOp = op.getScalarOp();
-    Region &parent = *rewriter.getBlock()->getParent();
+    [[maybe_unused]] Region &parent = *rewriter.getBlock()->getParent();
 
     auto nOutputs = op.getNumResults();
     SmallVector<Value> scalarOutputs(nOutputs * nElems);

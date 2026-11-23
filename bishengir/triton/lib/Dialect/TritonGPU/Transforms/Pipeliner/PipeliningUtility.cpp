@@ -471,13 +471,13 @@ Value mlir::triton::createBarrierAlloc(Operation *op, int numBarriers,
 
   Value barrierAlloc =
       createScalarAlloc(rewriter, rewriter.getI64Type(), numBarriers);
-  for (unsigned i = 0; i < numBarriers; i++) {
+  for (unsigned i = 0; i < static_cast<unsigned>(numBarriers); i++) {
     Value barrierView = createSingleBufferView(rewriter, barrierAlloc, i);
     rewriter.create<ttng::InitBarrierOp>(barrierView, arriveCount);
   }
   // Invalidate and deallocate the barriers.
   rewriter.setInsertionPointAfter(op);
-  for (unsigned i = 0; i < numBarriers; i++) {
+  for (unsigned i = 0; i < static_cast<unsigned>(numBarriers); i++) {
     Value barrierView = createSingleBufferView(rewriter, barrierAlloc, i);
     rewriter.create<ttng::InvalBarrierOp>(barrierView);
   }
@@ -799,7 +799,7 @@ scf::ForOp triton::lowerTMADescriptors(scf::ForOp forOp,
   // updated independently without needing to write duplicate of existing tma
   // descriptors.
   unsigned tmaCounterArgsStartIdx = newOperandIndex + newOperands.size();
-  for (int i = 0; i < tmaBufferMapping.size(); ++i) {
+  for (int i = 0; i < static_cast<int>(tmaBufferMapping.size()); ++i) {
     newOperands.push_back(zero);
   }
 

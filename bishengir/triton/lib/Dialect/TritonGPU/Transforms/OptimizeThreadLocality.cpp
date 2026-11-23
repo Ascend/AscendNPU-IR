@@ -246,7 +246,9 @@ class TritonGPUOptimizeThreadLocalityPass
     // First try to optimize the layout of views and gathers.
     mlir::RewritePatternSet layoutPatterns(&getContext());
     layoutPatterns.add<OptimizeReshapeLayoutPattern>(&getContext());
+#if !BSPUB_DAVINCI_BISHENGIR
     layoutPatterns.add<OptimizeGatherLayoutPattern>(&getContext());
+#endif
     if (mlir::applyPatternsGreedily(mod, std::move(layoutPatterns)).failed()) {
       signalPassFailure();
     }
@@ -288,7 +290,7 @@ class TritonGPUOptimizeThreadLocalityPass
       auto yieldOp = dyn_cast<scf::YieldOp>(yieldOpOperand.getOwner());
       if (!yieldOp)
         return;
-      auto operandNumber = yieldOpOperand.getOperandNumber();
+      [[maybe_unused]] auto operandNumber = yieldOpOperand.getOperandNumber();
       Block *block = reduce->getBlock();
       Operation *parentOp = block->getParentOp();
       auto forOp = dyn_cast<scf::ForOp>(parentOp);
@@ -310,8 +312,9 @@ class TritonGPUOptimizeThreadLocalityPass
       auto srcEncoding = srcType.getEncoding();
       assert(isa<triton::gpu::BlockedEncodingAttr>(srcEncoding) &&
              "Thread locality optimization only supports blocked encoding");
-      auto blocked = dyn_cast<triton::gpu::BlockedEncodingAttr>(srcEncoding);
-      auto elemsPerThread =
+      [[maybe_unused]] auto blocked =
+          dyn_cast<triton::gpu::BlockedEncodingAttr>(srcEncoding);
+      [[maybe_unused]] auto elemsPerThread =
           triton::gpu::getElemsPerThread(srcType)[reduce.getAxis()];
       auto rank = srcShape.size();
       // create new layouts
@@ -357,8 +360,8 @@ class TritonGPUOptimizeThreadLocalityPass
       // create new accum update
       auto newUpdate = createUpdate(builder, newLoop, newReduce, oldUpdate);
       // create new yield
-      auto newYield = createYield(builder, newLoop, oldYield,
-                                  newUpdate->getResult(0), blockArgNum);
+      [[maybe_unused]] auto newYield = createYield(
+          builder, newLoop, oldYield, newUpdate->getResult(0), blockArgNum);
       // create post loop reduction on the original reduce axis
       auto newReduce2 = createPostLoopReduce(builder, newLoop, reduce);
       // add convert_layout to get back to original layout, the result layout

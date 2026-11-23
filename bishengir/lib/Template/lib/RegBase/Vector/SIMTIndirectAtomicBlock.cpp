@@ -70,7 +70,8 @@
 // sparse offsets, and prevents a single sparse lane from forcing the whole block
 // back to the slower GM atomic implementation.
 
-#if defined(__DAV_C310__)
+#include "ArchDefs.h"
+#if BISHENG_TPL_REGBASE
 
 #include "__clang_cce_simt_intrinsics.h"
 #include "RegBase/VecUtils.h"
@@ -504,4 +505,4 @@ REGISTE_INDIRECT_ATOMIC_BLOCK_NO_MASK(xor, uint64_t, int64_t);
 #undef REGISTE_INDIRECT_ATOMIC_BLOCK
 #undef REGISTE_INDIRECT_ATOMIC_BLOCK_NO_MASK
 
-#endif // defined(__DAV_C310__)
+#endif // BISHENG_TPL_REGBASE

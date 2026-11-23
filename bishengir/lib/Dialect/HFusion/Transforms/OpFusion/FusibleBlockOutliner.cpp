@@ -129,7 +129,7 @@ FusibleBlockOutliner::FusibleBlockOutliner(FusibleBlocks &fusibleBlocks,
               }
             }
           } else {
-            assert("outputMode not handled");
+            assert(false && "outputMode not handled");
           }
           if (safeToFuse && !newOpped.contains(defOp)) {
             dijkstraQueue.push(PairTopoOperation(topoOrder[defOp], defOp));

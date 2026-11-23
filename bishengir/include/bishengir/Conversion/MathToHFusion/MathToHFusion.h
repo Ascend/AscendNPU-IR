@@ -34,6 +34,7 @@ namespace hfusion {
 void populateMathToHFusionConversionPatterns(RewritePatternSet &patterns,
                                               ModuleOp moduleOp);
 void populateScalarMathPromotionPatterns(RewritePatternSet &patterns);
+void populateScalarMathPromotionPatternsMemBased(RewritePatternSet &patterns);
 } // namespace hfusion
 
 /// Creates a pass to convert the HFusion dialect to the HIVM dialect.

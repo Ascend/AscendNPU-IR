@@ -22,8 +22,8 @@ namespace ttng = mlir::triton::nvidia_gpu;
 
 Value createFullLike(OpBuilder &builder, Location loc, Value scalar,
                      RankedTensorType tensorTy) {
-  auto scalarTy = scalar.getType();
-  auto elemTy = tensorTy.getElementType();
+  [[maybe_unused]] auto scalarTy = scalar.getType();
+  [[maybe_unused]] auto elemTy = tensorTy.getElementType();
   assert(scalarTy == elemTy &&
          "Expected scalar to be of the same type as the tensor elements");
   return builder.create<triton::SplatOp>(loc, tensorTy, scalar);
@@ -58,9 +58,11 @@ Value createMemDescToI64(RewriterBase &rewriter, Location loc,
   return b.add(offset, b.ptrtoint(i64Ty, smemObj.getBase()));
 }
 
-Type getBarsElType(OpBuilder &b) { return b.getIntegerType(64); }
-
-RankedTensorType getWriteBarsType(OpBuilder &b, RankedTensorType buffersType) {
+[[maybe_unused]] Type getBarsElType(OpBuilder &b) {
+  return b.getIntegerType(64);
+}
+[[maybe_unused]] RankedTensorType
+getWriteBarsType(OpBuilder &b, RankedTensorType buffersType) {
   int size = buffersType.getShape()[0];
   assert(llvm::isPowerOf2_64(size) && "Expected power of 2");
   auto tensorType = RankedTensorType::get({size}, getBarsElType(b),
@@ -68,8 +70,9 @@ RankedTensorType getWriteBarsType(OpBuilder &b, RankedTensorType buffersType) {
   return tensorType;
 }
 
-RankedTensorType getReadBarsType(OpBuilder &b, RankedTensorType buffersType,
-                                 RankedTensorType barriersType) {
+[[maybe_unused]] RankedTensorType
+getReadBarsType(OpBuilder &b, RankedTensorType buffersType,
+                RankedTensorType barriersType) {
   int size = buffersType.getShape()[0];
   assert(llvm::isPowerOf2_64(size) && "Expected power of 2");
   auto tensorType = RankedTensorType::get({size}, getBarsElType(b),
@@ -127,7 +130,8 @@ Value createMaxReduce(OpBuilder &b, Location loc, Value tensor, int axis) {
   auto cmpOp =
       b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sgt, arg0, arg1);
   auto result = b.create<arith::SelectOp>(loc, cmpOp, arg0, arg1);
-  auto returnOp = b.create<tt::ReduceReturnOp>(loc, std::vector<Value>{result});
+  [[maybe_unused]] auto returnOp =
+      b.create<tt::ReduceReturnOp>(loc, std::vector<Value>{result});
   return reduceOp->getResult(0);
 }
 
@@ -148,7 +152,8 @@ struct AssertInThreadOpConversion
   matchAndRewrite(tti::ExperimentalAssertInThreadOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    auto tensorTy = cast<RankedTensorType>(op.getCondition().getType());
+    [[maybe_unused]] auto tensorTy =
+        cast<RankedTensorType>(op.getCondition().getType());
     auto b = TritonLLVMOpBuilder(loc, rewriter);
     SmallVector<Value> condElems =
         unpackLLElements(loc, adaptor.getCondition(), rewriter);
@@ -163,7 +168,7 @@ struct AssertInThreadOpConversion
     assert(condTy.isSignedInteger() ||
            condTy.isSignlessInteger() &&
                "Unsupported type for assert_in_thread");
-    Value zero = rewriter.create<LLVM::ConstantOp>(
+    [[maybe_unused]] Value zero = rewriter.create<LLVM::ConstantOp>(
         loc, condTy, rewriter.getZeroAttr(condTy));
     for (auto elem : condElems) {
       if (check_any) {
@@ -191,7 +196,7 @@ struct AssertInThreadOpConversion
     StringRef file = "unknown";
     StringRef func = "unknown";
     int line = 0;
-    int col = 0;
+    [[maybe_unused]] int col = 0;
 
     while (auto callLoc = dyn_cast<CallSiteLoc>(loc))
       loc = callLoc.getCallee();
@@ -232,8 +237,8 @@ struct BufferPointersOpConversion
   matchAndRewrite(tti::ExperimentalBufferPointersOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    auto *ctx = rewriter.getContext();
-    auto module = op->getParentOfType<ModuleOp>();
+    [[maybe_unused]] auto *ctx = rewriter.getContext();
+    [[maybe_unused]] auto module = op->getParentOfType<ModuleOp>();
     auto values = adaptor.getOffsets();
     auto encoding =
         cast<ttg::BlockedEncodingAttr>(op.getResult().getType().getEncoding());

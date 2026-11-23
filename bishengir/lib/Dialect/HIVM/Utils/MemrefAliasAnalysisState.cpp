@@ -10,10 +10,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HIVM/Utils/MemrefAliasAnalysisState.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "bishengir/Dialect/HIVM/Utils/MemrefAliasAnalysisState.h"
 
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 
@@ -70,12 +70,12 @@ void MemrefAliasAnalysisState::printAlias() {
 #else
     if (!(*it)->isLeader())
       continue;
-    Value leader = (*it)->getData();
+    [[maybe_unused]] Value leader = (*it)->getData();
     LDBG("Alias Set (Leader: " << leader << "):");
     for (auto memberIt = aliasInfo.member_begin(**it);
 #endif
          memberIt != aliasInfo.member_end(); ++memberIt) {
-      Value val = *memberIt;
+      [[maybe_unused]] Value val = *memberIt;
       LDBG("  - " << val);
     }
     LDBG("-----------------------------------");

@@ -1,8 +1,40 @@
 # mathExt方言
 
-扩展标准数学运算能力的方言，提供浮点数指数/分数部分分解等特殊数学操作，支持标量、张量和向量类型的逐元素计算。
+扩展标准数学运算能力的方言，提供浮点数指数与分数部分分解等特殊数学操作，支持标量、张量和向量类型的逐元素计算。
 
 ## 操作定义
+
+### mathExt.divfhp (::mlir::mathExt::DivFHPOp)
+
+**功能**：高精度浮点除法运算，恢复结果末位ULP精度。
+
+**语法**：
+
+```mlir
+operation ::= `mathExt.divfhp` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
+              attr-dict `:` type($result)
+```
+
+**特性**：`AlwaysSpeculatableImplTrait`, `Elementwise`, `SameOperandsAndResultType`, `Scalarizable`, `Tensorizable`, `Vectorizable`
+
+**属性**：
+
+| 属性名 | MLIR类型 | 说明 |
+| :-----: | ----------- | ---- |
+| `fastmath` | `::mlir::arith::FastMathFlagsAttr` | 浮点快速数学标志 |
+
+**操作数**：
+
+| 操作数   | 说明         |
+| :------: | ------------ |
+| `lhs`    | 浮点类型（标量、Tensor、向量） |
+| `rhs`    | 浮点类型（与`lhs`同类型） |
+
+**结果**：
+
+| 结果     | 说明         |
+| :------: | ------------ |
+| `result` | 浮点类型（与操作数同类型） |
 
 ### mathExt.ilogb (::mlir::mathExt::IlogbOp)
 
@@ -29,7 +61,7 @@ operation ::= `mathExt.ilogb` $operand (`fastmath` `` $fastmath^)?
 
 | 操作数    | 说明         |
 | :------: | ------------ |
-| `operand` | 浮点类型（标量/Tensor/向量） |
+| `operand` | 浮点类型（标量、Tensor、向量） |
 
 **结果**：
 
@@ -37,23 +69,23 @@ operation ::= `mathExt.ilogb` $operand (`fastmath` `` $fastmath^)?
 | :------: | ------------ |
 | `result` | 浮点类型（与操作数同类型） |
 
-### mathExt.ldep (::mlir::mathExt::LdexpOp)
+### mathExt.ldexp (::mlir::mathExt::LdexpOp)
 
 **功能**：计算浮点数的分数部分与指数部分的归一化组合（等效于`x * (ilogb(x) + 1)^(-1)`）。
 
 **语法**：
 
 ```mlir
-operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
+operation ::= `mathExt.ldexp` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
               attr-dict `:` type($result)
 ```
 
 **示例**：
 
 ```mlir
-%0 = mathExt.ldep %x, %y : f32
-%1 = mathExt.ldep %tensor1, %tensor2 : tensor<4xf64>
-%2 = mathExt.ldep %vec1, %vec2 fastmath<nnan,ninf> : vector<8xf16>
+%0 = mathExt.ldexp %x, %y : f32
+%1 = mathExt.ldexp %tensor1, %tensor2 : tensor<4xf64>
+%2 = mathExt.ldexp %vec1, %vec2 fastmath<nnan,ninf> : vector<8xf16>
 ```
 
 **特性**：`AlwaysSpeculatableImplTrait`, `Elementwise`, `SameOperandsAndResultType`, `Scalarizable`, `Tensorizable`, `Vectorizable`
@@ -62,8 +94,39 @@ operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
 
 | 操作数   | 说明         |
 | :------: | ------------ |
-| `lhs`    | 浮点类型（标量/Tensor/向量） |
+| `lhs`    | 浮点类型（标量、Tensor、向量） |
 | `rhs`    | 浮点类型（与`lhs`同类型） |
+
+**结果**：
+
+| 结果     | 说明         |
+| :------: | ------------ |
+| `result` | 浮点类型（与操作数同类型） |
+
+### mathExt.lgamma (::mlir::mathExt::LgammaOp)
+
+**功能**：计算伽马函数绝对值的自然对数，即`lgamma(x) := log(|Γ(x)|)`。输入为浮点类型（标量、Tensor、向量），返回同类型结果。
+
+**语法**：
+
+```mlir
+operation ::= `mathExt.lgamma` $operand (`fastmath` `` $fastmath^)?
+              attr-dict `:` type($result)
+```
+
+**特性**：`AlwaysSpeculatableImplTrait`, `Elementwise`, `SameOperandsAndResultType`, `Scalarizable`, `Tensorizable`, `Vectorizable`
+
+**属性**：
+
+| 属性名 | MLIR类型 | 说明 |
+| :-----: | ----------- | ---- |
+| `fastmath` | `::mlir::arith::FastMathFlagsAttr` | 浮点快速数学标志 |
+
+**操作数**：
+
+| 操作数    | 说明         |
+| :------: | ------------ |
+| `operand` | 浮点类型（标量、Tensor、向量） |
 
 **结果**：
 
@@ -100,7 +163,7 @@ operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
 
 ### CmpIPredicate
 
-**功能**：定义整数比较操作的谓词类型，区分有符号/无符号比较逻辑。
+**功能**：定义整数比较操作的谓词类型，区分有符号或无符号比较逻辑。
 
 **取值范围**：64位无符号整数（0~9）
 
@@ -165,7 +228,7 @@ operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
 
 ### FastMathFlags
 
-**功能**：定义浮点运算的优化标志集合，控制NaN/无穷大等特殊值的处理策略。
+**功能**：定义浮点运算的优化标志集合，控制NaN、无穷大等特殊值的处理策略。
 
 | 枚举符号   | 数值    | 标识字符串 |
 | :--------: | :-----: | ---------- |

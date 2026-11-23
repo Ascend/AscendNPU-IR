@@ -58,8 +58,9 @@ void InsertMemSemanticForSimtVFPass::dealWithReferenceOutOfScope(
       bool isDefinedInScope = false;
       if (defOp) {
         isDefinedInScope = scopeOp->isAncestor(defOp);
-      } else if (auto blockArg = operand.dyn_cast<BlockArgument>()) {
-        isDefinedInScope = scopeOp->isAncestor(blockArg.getOwner()->getParentOp());
+      } else if (auto blockArg = mlir::dyn_cast<BlockArgument>(operand)) {
+        isDefinedInScope =
+            scopeOp->isAncestor(blockArg.getOwner()->getParentOp());
       }
       if (isDefinedInScope) {
         continue;

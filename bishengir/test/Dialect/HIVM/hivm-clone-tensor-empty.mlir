@@ -14,10 +14,11 @@ module {
     %1 = hivm.hir.copy ins(%arg1 : tensor<16x16xf16>) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
     // CHECK: tensor.empty() : tensor<16x16xf16>
     %2 = hivm.hir.copy ins(%arg2 : tensor<16x16xf16>) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %c_init = tensor.empty() : tensor<16x16xf32>
+    // CHECK: tensor.empty() : tensor<16x16xf32>
+    %4 = hivm.hir.mmadL1 ins(%1, %2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%c_init : tensor<16x16xf32>) -> tensor<16x16xf32>
     // CHECK: tensor.empty() : tensor<16x16xf16>
-    %4 = hivm.hir.mmadL1 ins(%1, %2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
-    // CHECK: tensor.empty() : tensor<16x16xf16>
-    %5 = hivm.hir.fixpipe {enable_nz2nd} ins(%4 : tensor<16x16xf16>) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %5 = hivm.hir.fixpipe {enable_nz2nd, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%4 : tensor<16x16xf32>) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
     %6 = hivm.hir.copy ins(%5 : tensor<16x16xf16>) outs(%arg3 : tensor<16x16xf16>) -> tensor<16x16xf16>
     return %6 : tensor<16x16xf16>
   }
@@ -129,17 +130,20 @@ func.func @test_sink_empty() -> tensor<16xf32>{
   %ci = arith.constant 0.0 : f32
   %c1 = arith.constant 1 : i32
   %c2 = arith.constant 2 : i32
-
+  // NO-CLONE: memref.alloc
+  // CLONE: memref.alloc
   %empty = tensor.empty() : tensor<16xf32>
   %init = hivm.hir.vbrc ins(%ci:f32) outs(%empty:tensor<16xf32>) -> tensor<16xf32>
+  // NO-CLONE: memref.alloc
+  // NO-CLONE: memref.copy
+  // NO-CLONE: scf.for
 
+  // CLONE: scf.for
+  // CLONE: memref.alloc
+  // CLONE-NOT: memref.copy
   %ret = scf.for %i = %c0 to %c1 step %c2 iter_args(%arg = %init) -> tensor<16xf32> : i32 {
     %fi = arith.uitofp %i : i32 to f32
     %res = hivm.hir.vbrc ins(%fi:f32) outs(%empty:tensor<16xf32>) -> tensor<16xf32>
-    // NOTE: if this check fails, then the pass is no longer needed before one-shot-bufferize
-    // NO-CLONE: memref.copy
-
-    // CLONE-NOT: memref.copy
     scf.yield %res : tensor<16xf32>
   }
 

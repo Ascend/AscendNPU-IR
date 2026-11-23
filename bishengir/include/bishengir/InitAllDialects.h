@@ -25,25 +25,25 @@
 
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/BMU/IR/BMU.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "bishengir/Dialect/MathExt/IR/MathExt.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Symbol/IR/Symbol.h"
+#include "bishengir/Dialect/TensorView/IR/TensorViewDialect.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Conversion/TritonAscendGPUToLLVM/Passes.h"
-#include "bishengir/Dialect/AscendDPX/IR/AscendDPX.h"
-#include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
-#include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
-#include "bishengir/Dialect/Triton/Transforms/Passes.h"
-#include "bishengir/Dialect/TritonExt/IR/TritonExtAttrs.h"
 #include "bishengir/Dialect/Annotation/Transforms/BufferizableOpInterfaceImpl.h"
+#include "bishengir/Dialect/Arith/Transforms/BufferizableOpInterfaceImpl.h"
+#include "bishengir/Dialect/AscendDPX/IR/AscendDPX.h"
 #include "bishengir/Dialect/Bufferization/Transforms/FuncBufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Bufferization/Transforms/TilingInterfaceImpl.h"
 #include "bishengir/Dialect/HFusion/Transforms/BufferizableOpInterfaceImpl.h"
@@ -51,9 +51,13 @@
 #include "bishengir/Dialect/HFusion/Transforms/TilingInterfaceImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/HIVMTilingInterfaceImpl.h"
+#include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
 #include "bishengir/Dialect/SCF/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Scope/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Tensor/Transforms/TilingInterfaceImpl.h"
+#include "bishengir/Dialect/TensorView/Transforms/BufferizableOpInterfaceImpl.h"
+#include "bishengir/Dialect/Triton/Transforms/Passes.h"
+#include "bishengir/Dialect/TritonExt/IR/TritonExtAttrs.h"
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
 
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
@@ -72,12 +76,15 @@ namespace bishengir {
 inline void registerAllDialects(mlir::DialectRegistry &registry) {
   // clang-format off
   registry.insert<mlir::annotation::AnnotationDialect,
+                  mlir::bmu::BMUDialect,
                   mlir::hacc::HACCDialect,
                   mlir::hfusion::HFusionDialect,
                   mlir::hivm::HIVMDialect,
+                  mlir::hivmave::AVEDialect,
                   mlir::mathExt::MathExtDialect,
                   mlir::scope::ScopeDialect,
                   mlir::symbol::SymbolDialect,
+                  mlir::tv::TensorViewDialect,
                   bishengir::memref_ext::MemRefExtDialect>();
   // clang-format on
 
@@ -86,7 +93,6 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
   // clang-format off
   registry.insert<mlir::ascend_dpx::AscendDPXDialect,
                   mlir::hivm_regbaseintrins::HIVMRegbaseIntrinsDialect,
-                  mlir::hivmave::AVEDialect,
                   bishengir::triton_ext::TritonExtDialect>();
   // clang-format on
 #endif
@@ -105,11 +111,13 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
   mlir::triton::ascend::registerAllocateAscendSharedMemoryPass();
   registerConvertTritonAscendGPUToLLVMPass();
   registerConvertProtonAscendGPUToLLVMPass();
+  registerConvertProtonToHIVMPass();
   triton::registerGetTritonMetadataPass();
 #endif
 
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
   // Register all external models.
+  mlir::tv::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::hivm::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::annotation::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::hfusion::registerTilingInterfaceExternalModels(registry);
@@ -117,7 +125,8 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
   mlir::hfusion::registerDecomposeInterfaceExternalModels(registry);
   mlir::hivm::registerTilingInterfaceExternalModels(registry);
   mlir::scf_ext::registerBufferizableOpInterfaceExternalModels(registry);
-  mlir::bufferization_ext::registerFuncBufferizableOpInterfaceExternalModels(
+  bishengir::arith::registerBufferizableOpInterfaceExternalModels(registry);
+  bishengir::bufferization::registerFuncBufferizableOpInterfaceExternalModels(
       registry);
   mlir::scope::registerBufferizableOpInterfaceExternalModels(registry);
   bishengir::tensor::registerTilingInterfaceExternalModels(registry);

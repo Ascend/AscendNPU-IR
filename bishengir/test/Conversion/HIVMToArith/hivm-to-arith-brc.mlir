@@ -645,3 +645,12 @@ func.func @test_func_vmulext_arith.mulsi_extended_i32_high(%arg0:tensor<4x64x32x
     hivm.hir.vmulext                 ins(%arg0,%arg1 : tensor<4x64x32xi32>, tensor<4x64x32xi32>)                 outs(%0,%1:tensor<4x64x32xi32>,tensor<4x64x32xi32>)                  -> tensor<4x64x32xi32>,tensor<4x64x32xi32>
     return %1 : tensor<4x64x32xi32>
 }
+
+// CHECK-LABEL: func.func @test_func_vmulextui_arith.mului_extended_i32
+func.func @test_func_vmulextui_arith.mului_extended_i32(%arg0: tensor<8x8xi32>, %arg1: tensor<8x8xi32>) -> tensor<8x8xi32> {
+    %0 = tensor.empty() : tensor<8x8xi32>
+    %1 = tensor.empty() : tensor<8x8xi32>
+    // CHECK: %[[LOW:.*]], %[[HIGH:.*]] = arith.mului_extended %arg0, %arg1 : tensor<8x8xi32>
+    %2:2 = hivm.hir.vmulextui ins(%arg0, %arg1 : tensor<8x8xi32>, tensor<8x8xi32>) outs(%0, %1 : tensor<8x8xi32>, tensor<8x8xi32>) -> tensor<8x8xi32>, tensor<8x8xi32>
+    return %2#1 : tensor<8x8xi32>
+}

@@ -54,7 +54,7 @@ BasesT makeBasesMap(
 }
 
 // Dump the matrix to stderr in a human-readable format for debugging.
-void dumpMatrix(uint64_t *m, int numRows, int numCols) {
+[[maybe_unused]] void dumpMatrix(uint64_t *m, int numRows, int numCols) {
   assert(numCols <= 64);
   for (int r = 0; r < numRows; r++) {
     llvm::errs() << "0b";
@@ -72,7 +72,7 @@ void dumpMatrix(uint64_t *m, int numRows, int numCols) {
 // not to use any functions that create LLs in here.
 std::unique_ptr<uint64_t[]> getMatrix(const LinearLayout &layout) {
   int numRows = layout.getTotalOutDimSizeLog2();
-  int numCols = layout.getTotalInDimSizeLog2();
+  [[maybe_unused]] int numCols = layout.getTotalInDimSizeLog2();
 
   // Don't handle giant LLs.  This makes some things easier; for example, each
   // row can be a single uint64_t.
@@ -187,7 +187,7 @@ LinearLayout::LinearLayout(BasesT bases, ArrayRef<StringAttr> outDimNames)
   }
   for (const auto &[inDim, inDimBases] : this->bases) {
     for (const auto &basis : inDimBases) {
-      for (int i = 0; i < basis.size(); i++) {
+      for (size_t i = 0; i < basis.size(); i++) {
         int32_t &size = outDims[outDimNames[i]];
         size = std::max<int32_t>(size, llvm::NextPowerOf2(basis[i]));
       }
@@ -251,7 +251,7 @@ LinearLayout::checkInvariants(bool requireSurjective) {
   SmallVector<StringAttr> outDimNames = llvm::to_vector(getOutDimNames());
   for (const auto &[inDim, inDimBases] : this->bases) {
     for (const auto &basis : inDimBases) {
-      for (int i = 0; i < basis.size(); i++) {
+      for (size_t i = 0; i < basis.size(); i++) {
         if (basis[i] >= outDims[outDimNames[i]]) {
           return "Invalid basis " + std::to_string(basis[i]) + " for in-dim '" +
                  inDim.str() + "' and out-dim '" + outDimNames[i].str() +
@@ -372,7 +372,7 @@ int32_t LinearLayout::getNumConsecutiveInOut() const {
   // (2^i, 0, ..., 0).
   const auto &firstInDimBases = bases.begin()->second;
   int consec = 0;
-  for (; consec < firstInDimBases.size(); consec++) {
+  for (; consec < static_cast<int>(firstInDimBases.size()); consec++) {
     const auto &basis = firstInDimBases[consec];
     if (basis[0] != (1 << consec) ||
         !std::all_of(basis.begin() + 1, basis.end(),
@@ -384,7 +384,7 @@ int32_t LinearLayout::getNumConsecutiveInOut() const {
   // `or` together all other bases' first out-dim.
   int32_t otherBits = 0;
   for (const auto &[inDim, inDimBases] : bases) {
-    for (int i = 0; i < inDimBases.size(); i++) {
+    for (int i = 0; i < static_cast<int>(inDimBases.size()); i++) {
       if (inDim != bases.begin()->first || i >= consec) {
         otherBits |= inDimBases[i][0];
       }
@@ -489,7 +489,7 @@ LinearLayout LinearLayout::reshapeOuts(
     auto &flatInBases = flatBases[inDim];
     for (const auto &basis : inDimBases) {
       int b = 0;
-      for (int i = 0; i < basis.size(); i++) {
+      for (size_t i = 0; i < basis.size(); i++) {
         b += basis[i] << shifts[i];
       }
       flatInBases.push_back(b);
@@ -516,7 +516,7 @@ LinearLayout LinearLayout::concatIns(const LinearLayout &other) const {
   assert(llvm::to_vector(getOutDimNames()) ==
              llvm::to_vector(other.getOutDimNames()) &&
          "layouts must have the same output dimensions");
-  for (StringAttr outDim : getOutDimNames()) {
+  for ([[maybe_unused]] StringAttr outDim : getOutDimNames()) {
     assert(getOutDimSize(outDim) == other.getOutDimSize(outDim) &&
            "layouts must have the same output dimension sizes");
   }
@@ -535,7 +535,7 @@ LinearLayout LinearLayout::concatOuts(const LinearLayout &other) const {
   assert(llvm::to_vector(getInDimNames()) ==
              llvm::to_vector(other.getInDimNames()) &&
          "layouts must have the same input dimensions");
-  for (StringAttr inDim : getInDimNames()) {
+  for ([[maybe_unused]] StringAttr inDim : getInDimNames()) {
     assert(getInDimSize(inDim) == other.getInDimSize(inDim) &&
            "layouts must have the same input dimension sizes");
   }
@@ -908,7 +908,7 @@ LinearLayout::apply(ArrayRef<std::pair<StringAttr, int32_t>> ins) const {
 
 LinearLayout LinearLayout::compose(const LinearLayout &outer) const {
   assertDimsEqualIgnoringOrder(getOutDimNames(), outer.getInDimNames());
-  for (StringAttr outDim : getOutDimNames()) {
+  for ([[maybe_unused]] StringAttr outDim : getOutDimNames()) {
     assert(getOutDimSize(outDim) <= outer.getInDimSize(outDim));
   }
 
@@ -950,8 +950,8 @@ std::unique_ptr<uint64_t[]> concatMatrices(const LinearLayout &A,
   int rowA = 0;
   int rowB = 0;
   for (auto [outDim, outDimSize] : A.getOutDims()) {
-    for (int r = 0; r < llvm::Log2_32(outDimSize); r++) {
-      if (r < llvm::Log2_32(B.getOutDimSize(outDim))) {
+    for (int r = 0; r < static_cast<int>(llvm::Log2_32(outDimSize)); r++) {
+      if (r < static_cast<int>(llvm::Log2_32(B.getOutDimSize(outDim)))) {
         concat[rowA] |= BMat[rowB] << numColsA;
         rowB++;
       }
@@ -1049,7 +1049,7 @@ LinearLayout LinearLayout::invertAndCompose(const LinearLayout &outer) const {
   assertDimsEqualIgnoringOrder(outDims, outer.getOutDimNames());
   const auto &B = *this;
   const auto A = outer.transposeOuts(outDims);
-  for (auto dim : outDims) {
+  for ([[maybe_unused]] auto dim : outDims) {
     assert(A.getOutDimSize(dim) >= B.getOutDimSize(dim) &&
            ("A.invertAndCompose(B) called with incompatible output shapes in " +
             dim.str() + ": " + std::to_string(A.getOutDimSize(dim)) +
@@ -1303,7 +1303,7 @@ std::string LinearLayout::toString() const {
 
 LinearLayout ColumnAction::apply(const LinearLayout &layout) const {
   assert(layout.hasInDim(inDim));
-  assert(layout.getInDimSizeLog2(inDim) == inSizeLog2 &&
+  assert(layout.getInDimSizeLog2(inDim) == static_cast<int>(inSizeLog2) &&
          "Layout has a different size than the ColumnAction");
   if (m_isIdentity) {
     return layout;

@@ -1,18 +1,30 @@
 # Auto Flatten
 
+**Applicable Products**:
+
+<!-- npu="950" id1 -->
+- Ascend 950PR/Ascend 950DT
+<!-- end id1 -->
+<!-- npu="A3" id2 -->
+- Atlas A3 training products/Atlas A3 inference products
+<!-- end id2 -->
+<!-- npu="910b" id3 -->
+- Atlas A2 training products/Atlas A2 inference products
+<!-- end id3 -->
+
 The **Auto Flatten Pass** (**HIVMFlattenOps**) automatically folds multi-dimensional tensor operations into lower-dimensional equivalent forms, reducing the rank while preserving semantic correctness. This optimization simplifies memory access patterns and improves hardware utilization on the target accelerator.
 
 ## Hardware Background
 
 Modern hardware accelerators typically have constraints and performance characteristics that favor low-rank tensor operations:
 
-| Item | Impact of High Rank | Benefits of Flattening |
+| Item | Impact of High Rank | Benefit of Flattening |
 | ----------------------- | ------------------------------------------------------------ | -------------------------------------------------------- |
 | Address computation | Multi-dimensional indexing requires multiple multiply-add operations | Simplified linear addressing reduces overhead |
-| Memory coalescing | Complex stride patterns may hinder efficient memory access | Contiguous flattened dimensions enable better coalescing |
+| Memory coalescing | Complex stride patterns may hinder efficient memory access | Contiguous flattened dimensions achieve better coalescing |
 | Hardware loops | The number of hardware loop counters is limited | Fewer dimensions = fewer loop nests required |
-| DMA efficiency | Multi-stride transfers may require multiple DMA descriptors | Collapsed dimensions enable bulk transfers |
-| Register pressure | More index variables occupy registers | Reduces bookkeeping overhead |
+| DMA efficiency | Multi-stride transfers may require multiple DMA descriptors | Folded dimensions enable bulk transfers |
+| Register pressure | More index variables occupy registers | Reduced bookkeeping overhead |
 
 **Example Scenario**:
 
@@ -29,23 +41,23 @@ The flattening algorithm runs as a multi-stage pipeline, progressively collapsin
 
 1. **Reassociation Maps**
 
-   A reassociation map defines how the original dimensions map to the collapsed dimensions:
+   A reassociation map defines how the original dimensions map to the folded dimensions:
 
    ```text
    Original shape: [A, B, C, D, E] (rank 5)
-   Reassociation:  [[0, 1], [2], [3, 4]]
-   Result shape:   [A*B, C, D*E] (rank 3)
+   Reassociation:   [[0, 1], [2], [3, 4]]
+   Result shape: [A*B, C, D*E] (rank 3)
    ```
 
-2. **Dimension Classification (Ternary Mask)**
+2. **Dimension Classification**
 
-   Each dimension is classified into one of the following three types:
+   Each dimension is marked by a unit mask to indicate whether it is a unit dimension (size of 1); in addition, restricted axes (such as reduction and broadcast dimensions) act as barriers that prevent adjacent dimensions from folding:
 
-   | Category       | Symbol | Description          | Collapse Behavior                   |
-   | -------------- | ------ | -------------------- | ---------------------------------- |
-   | Unit dimension | `U`    | A dimension of size 1 | Absorbed into an adjacent group    |
-   | Collapsible dimension | `C` | Can merge with neighbors | Forms a group and absorbs adjacent unit dimensions |
-   | Non-collapsible dimension | `N` | Barrier dimension | Stands alone and blocks the absorption of unit dimensions |
+   | Category     | Condition                          | Folding behavior                          |
+   | ------------ | ---------------------------------- | ----------------------------------------- |
+   | Unit dimension | Size of 1, and not a restricted axis | Absorbed into an adjacent group           |
+   | Restricted axis | Dimensions with semantic restrictions such as broadcast/reduction | Stands alone and blocks the absorption of unit dimensions |
+   | Other dimension | Non-unit, non-restricted           | Merged into the same group when adjacent and contiguous |
 
 3. **Barrier Dimensions**
 
@@ -53,13 +65,13 @@ The flattening algorithm runs as a multi-stage pipeline, progressively collapsin
 
    - Reduction dimensions: must remain independent to preserve reduction semantics
    - Broadcast dimensions: shape mismatch prevents collapsing
-   - Transpose dimension: permutation requires constrained grouping
+   - Transpose dimensions: permutation requirements constrain grouping
 
 ### Pipeline Stages
 
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Input Operation                              │
+│                            Input Operation                      │
 │            Shape: [1, 64, 1, 128, 1, 256]                       │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -68,10 +80,10 @@ The flattening algorithm runs as a multi-stage pipeline, progressively collapsin
 │  Stage 1: Unit Dimension Collapse                               │
 │  ─────────────────────────────────────────────                  │
 │  • Identify unit (size-1) dimensions                            │
-│  • Build ternary mask considering barriers                      │
-│  • Collapse units into adjacent non-barrier groups              │
+│  • Build a binary unit mask (excluding barriers)                │
+│  • Collapse unit dimensions into adjacent non-barrier groups    │
 │                                                                 │
-│  Mask:    [U,  C, U,   C, U,   C]                               │
+│  Unit mask: [1, 0, 1, 0, 1, 0]   (1 = unit dimension)           │
 │  Result:  [[0, 1, 2], [3, 4], [5]]  →  Shape: [64, 128, 256]    │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -79,19 +91,20 @@ The flattening algorithm runs as a multi-stage pipeline, progressively collapsin
 ┌─────────────────────────────────────────────────────────────────┐
 │  Stage 2: Uniform Reassociation Collapse                        │
 │  ─────────────────────────────────────────────                  │
-│  • Check memory contiguity (stride patterns)                    │
+│  • Check memory contiguity (stride pattern)                     │
 │  • Respect target dimension boundaries                          │
-│  • Apply input consistency checks (for broadcast)               │
+│  • Apply input consistency check (for broadcasting)             │
 │                                                                 │
-│  Contiguous dims can be further collapsed                       │
+│  Contiguous dimensions can be further collapsed                 │
 │  Result:  [[0], [1, 2]]  →  Shape: [64, 32768]                  │
+│  (For example: input consistency boundary keeps dimension 0 independent)         │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  Stage 3: Compose Results                                       │
 │  ─────────────────────────────────────────────                  │
-│  • Combine reassociation maps from all stages                   │
+│  • Merge reassociation mappings from each stage                 │
 │  • Adjust target dimension indices                              │
 │  • Update barrier dimension tracking                            │
 │                                                                 │
@@ -100,9 +113,9 @@ The flattening algorithm runs as a multi-stage pipeline, progressively collapsin
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Output Operation                             │
+│                            Output Operation                     │
 │  • Insert memref.collapse_shape for each operand                │
-│  • Clone operation with collapsed operands                      │
+│  • Clone the operation and replace with the collapsed operands  │
 │  • Adjust operation attributes (reduce_dims, broadcast_dims)    │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -113,38 +126,39 @@ For operations with inline transpose semantics, the algorithm processes the inpu
 
 ```text
 Input shape:   [A, B, C, D, E, F]
-Permutation:   [2, 3, 0, 4, 1, 5]
-Output shape:  [C, D, A, E, B, F]
+Permutation:       [2, 3, 0, 4, 1, 5]
+Output shape:   [C, D, A, E, B, F]
 
-Step 1: Unit collapse on input (if B, D are unit)
-Step 2: Derive permutation blocks from inverse permutation
-Step 3: Generate separate input/init reassociation maps
-Step 4: Compose results maintaining permutation semantics
+Step 1: Collapse unit dimensions of the input (if B and D are unit dimensions)
+Step 2: Derive permutation blocks from the inverse permutation
+Step 3: Generate input/init reassociation mappings separately
+Step 4: Compose the results while preserving permutation semantics
 ```
 
 ### Mask Construction Logic
 
+The unit mask marks dimensions of size 1; restricted axes (obtained by `getLimitedAxes()`, such as broadcast and reduction dimensions) are then removed from the mask so that they form independent groups:
+
 ```cpp
-for each dimension i:
-    if (strictBarrierWithUnit && isBarrier[i]):
-        mask[i] = NonCollapsible    // Strict mode: barrier dimensions are independent.
-    else if (isUnit[i] && !isBarrier[i]):
-        mask[i] = Unit              // Unit dimensions are absorbed.
-    else:
-        mask[i] = Collapsible       // Can form a group.
+// 1. Binary unit mask: true when an axis has size 1 across all operands
+unitMask[i] = allOperandsDimSizeIs1(i);
+
+// 2. Restricted axes as barriers: removed from the unit mask (bitwise AND after inversion)
+limitationMask = arrayToMask(getLimitedAxes()); // Restricted axes are true
+unitMask &= limitationMask.flip();              // Restricted axes are no longer unit dimensions
 ```
 
-### Generating Reassociation from the Mask
+### Generate Reassociation from the Mask
 
 ```text
-Input Mask: [U, C, U, N, U, C, U]
+Input unit mask: [1, 1, 0, 0, 1, 0, 1]
 
-Processing:
-  Segment 1: [U, C, U] → Group units with collapsible → [[0, 1, 2]]
-  Segment 2: [N]       → Isolated non-collapsible    → [[3]]
-  Segment 3: [U, C, U] → Group units with collapsible → [[4, 5, 6]]
+Process:
+  Leading unit dimensions  [0, 1]    -> merged with the first non-unit dimension
+  Non-unit dimensions      [2, 3, 5] -> each starts a new group
+  Trailing unit dimensions [4, 6]    -> absorbed into the previous group
 
-Result: [[0, 1, 2], [3], [4, 5, 6]]
+Result: [[0, 1, 2], [3, 4], [5, 6]]
 ```
 
 ## API
@@ -152,7 +166,7 @@ Result: [[0, 1, 2], [3], [4, 5, 6]]
 ### Pass Registration
 
 ```cpp
-// Create the flatten pass.
+// Create a flatten pass.
 std::unique_ptr<Pass> mlir::hivm::createFlattenOpsPass();
 
 // Use it in the pass pipeline.
@@ -179,13 +193,10 @@ public:
 
 ```cpp
 struct FlattenOptions {
-  /// When true, even a barrier of a unit dimension becomes NonCollapsible.
-  bool strictBarrierWithUnit = false;
-
-  /// Check the alignment requirement of the stride annotation.
+  /// Check the alignment requirements of the stride annotation.
   bool checkMarkStride = false;
 
-  /// Verify input shape consistency before collapsing (for broadcasting).
+  /// Validate input shape consistency before collapsing (for broadcasting).
   bool checkInputConsistency = false;
 };
 ```
@@ -205,7 +216,7 @@ struct FlattenResult {
   SmallVector<int64_t> adjustedTargetDims;     // Adjusted index after collapsing
   SmallVector<int64_t> barrierDims;            // Non-collapsible boundary dimension
 
-  // Query method
+  // Query method.
   bool isIdentityCollapse() const;
   int getRankAfterFlatten() const;
   SmallVector<Type> getOperandTypes(DpsKind kind) const;
@@ -218,10 +229,10 @@ struct FlattenResult {
 ### Operation Traits
 
 ```cpp
-// Indicate that the operation uses the same reassociation for all operands.
+// Indicates that the operation uses the same reassociation for all operands.
 OpTrait::UniformReassociationFlattenTrait
 
-// Indicate that contiguous target dimensions can be merged.
+// Indicates that contiguous target dimensions can be collapsed.
 OpTrait::CollapsibleConsecutiveTargetDimsTrait
 ```
 
@@ -234,11 +245,12 @@ Each operation type implements `adjustTargetDimensions`:
 | `VBrcOp` | `broadcast_dims` |
 | `VReduceOp` | `reduce_dims` |
 | `VTransposeOp` | `permutation` |
-| `VCumsumOp` / `VCumprodOp` | `cum_dims` |
+| `VCumsumOp` / `VCumprodOp` / `VCummaxOp` / `VCumminOp` | `cum_dims` |
 | `VPadOp` | `static_low`, `static_high` |
 | `VConcatOp` | `dim` |
 | `VFlipOp` | `flip_axis` |
-| Element-wise operations | `iterator_types` (broadcast/transpose arrays) |
+| `VSortOp` | `sort_axis` |
+| Element-wise operations | `iterator_types` (broadcast, transpose arrays) |
 
 ## Capabilities and Limitations
 
@@ -246,33 +258,33 @@ Each operation type implements `adjustTargetDimensions`:
 
 | Feature | Description |
 | ------------------------------- | ------------------------------------------------------------ |
-| Unit dimension collapse | Automatically removes dimensions of size 1. |
-| Contiguity awareness | Respects the memory layout; non-contiguous dimensions remain independent. |
-| Operation-specific handling | Custom logic for reduction, broadcast, transpose, padding, and so on. |
-| Pipeline composition | Multiple collapse stages can be combined correctly. |
+| Unit dimension collapse | Automatically removes dimensions of size 1 |
+| Contiguity awareness | Respects memory layout; non-contiguous dimensions remain independent |
+| Operation-specific handling | Custom logic for reduction, broadcast, transpose, padding, etc. |
+| Pipeline composition | Multiple folding stages can be composed correctly |
 | Uniform reassociation | Efficient handling when all operands are collapsed in the same way. |
-| Non-uniform reassociation | Supports different input/init reassociation (transpose OTF). |
-| Barrier protection | Semantically critical dimensions remain independent. |
-| Skip Host functions | Automatically skips Host-side functions. |
+| Non-uniform reassociation | Supports different input/init reassociation (transpose OTF) |
+| Barrier protection | Semantically critical dimensions remain independent |
+| Skip Host functions | Automatically skips Host-side functions |
 
 **Limitations**:
 
 | Limitation | Description | Workaround |
 | ---------------------------- | --------------------------------------------------------- | ------------------------------------------------------- |
-| MemRef types only | Only `MemRefType` operands are collapsed. | Tensors must be bufferized first. |
-| Static shapes required | Dynamic dimensions may not be collapsed correctly. | Run the symbolic dialect or shape inference pass first. |
-| Strict barrier mode | `VFlipOp` requires `strictBarrierWithUnit=true`. | Handled automatically. |
-| Transpose backward dimension | The last dimension of certain operations cannot undergo OTF transpose. | The algorithm keeps the last dimension uncollapsed. |
-| Non-HIVMStructuredOp | Operations that do not implement the interface return an identity mapping. | Implement `FlattenInterface`. |
+| MemRef types only | Only `MemRefType` operands are collapsed. | Tensors must be bufferized first |
+| Static shape required | Dynamic dimensions may not fold correctly | Run symbolic dialect or shape inference passes first |
+| Strict barrier mode | Barrier dimensions (restricted axes) always remain independent | Handled automatically via `getLimitedAxes()` |
+| Transpose backward dimension | The last dimension of certain operations cannot undergo OTF transpose | The algorithm keeps the last dimension unfolded |
+| Non-HIVMStructuredOp | Operations that do not implement the interface return an identity mapping | Implement `FlattenInterface` |
 
 **Edge Cases**:
 
 ```cpp
-// Identity collapse (no change) -- the pass reports a match failure.
+// Identity collapse  (no change) -- Pass reports match failure
 if (res->isIdentityCollapse())
   return rewriter.notifyMatchFailure(op, "Identity reassociation");
 
-// The operation cannot be handled.
+// Operation cannot be handled
 if (failed(res))
   return rewriter.notifyMatchFailure(op, "Operation cannot be handled");
 ```
@@ -281,35 +293,36 @@ if (failed(res))
 
 Use the `LDBG` macro to enable debug logging, which can trace:
 
-- Reassociation mapping of each stage
-- Mask classification
-- Adjusted target dimension
-- Combined result
+- Reassociation mapping for each stage
+- Unit mask and restricted axes
+- Adjusted target dimensions
+- Composed results
 
-## Transformation Examples
+## Transformation Example
 
 **Before transformation**:
 
 ```mlir
-%0 = hivm.vbrc %input broadcast_dims = [3]
+%0 = hivm.vbrc %input broadcast_dims = [2]
      : memref<1x64x1x128x256xf32> -> memref<1x64x16x128x256xf32>
 ```
 
 **After the Flatten Pass**:
 
 ```mlir
-// Collapse the input: [[0, 1, 2], [3, 4]] → rank 2
-%collapsed_input = memref.collapse_shape %input [[0, 1, 2], [3, 4]]
+// Collapse input: [[0, 1], [2], [3, 4]] → rank 3
+// (Broadcast dim 2 is the restricted axis and must be preserved independently; unit dim 0 is absorbed into the first group)
+%collapsed_input = memref.collapse_shape %input [[0, 1], [2], [3, 4]]
      : memref<1x64x1x128x256xf32> into memref<64x1x32768xf32>
 
-// Adjust the dimension after broadcasting: [1, 3] → [0] (after remapping)
+// Broadcast dimension remapping: [2] → [1]
 %0 = hivm.vbrc %collapsed_input broadcast_dims = [1]
      : memref<64x1x32768xf32> -> memref<64x16x32768xf32>
 
-// Note: Output expansion is handled by a separate Pass.
+// Note: Output expansion is handled by a separate pass
 ```
 
-## Broadcast Examples with Strides
+## Broadcast Operation Example with Strides
 
 **About MemRef types with strides**:
 
@@ -341,7 +354,7 @@ Only contiguous adjacent dimensions can be collapsed. collapsing non-contiguous 
 
 The following scenarios demonstrate how the flattening pass interacts with strided memory layouts, which is a common situation when handling non-contiguous memory views. These examples use `hivm.hir.vbrc`, a scalar broadcast operation that fills a memref with a scalar value.
 
-1. **Scenario 1: A non-contiguous stride prevents all collapsing**
+1. **Scenario 1: Non-contiguous stride prevents all collapsing**
 
    The corresponding function is `@strided_brc`
 
@@ -351,7 +364,7 @@ The following scenarios demonstrate how the flattening pass interacts with strid
    //   dim 1: size=16, stride=2   ← non-contiguous (contiguity requires stride=1)
    ```
 
-   Analysis: Dimensions 0 and 1 cannot be merged. To satisfy contiguity, the stride of dimension 1 must equal 1 (the element stride). Here the stride is 2, indicating a non-contiguous access pattern of "every other element". collapsing dimensions $[0, 1]$ into a single dimension would produce a flat index of $i \cdot 16 + j$, but the actual memory access pattern is $i \cdot 16 + j \cdot 2$. The two are not equivalent—flattening would silently change the actual memory locations accessed.
+   Analysis: Dimensions 0 and 1 cannot be merged. To satisfy contiguity, the stride of dimension 1 must equal 1 (the element stride). Here the stride is 2, indicating a non-contiguous access pattern of "every other element". Collapsing dimensions $[0, 1]$ into a single dimension would produce a flat index of $i \cdot 16 + j$, but the actual memory access pattern is $i \cdot 16 + j \cdot 2$. The two are not equivalent—flattening would silently change the actual memory locations accessed.
 
    Output (unchanged):
 
@@ -362,7 +375,7 @@ The following scenarios demonstrate how the flattening pass interacts with strid
    }
    ```
 
-2. **Scenario 2: Partially contiguous strides allow partial collapsing**
+2. **Scenario 2: Partially continuous strides allow partial collapsing**
 
    The corresponding function is `@strided_brc_collapse_continuous`
 
@@ -378,11 +391,11 @@ The following scenarios demonstrate how the flattening pass interacts with strid
 
    $$\text{contiguous}(d_i, d_{i+1}) \iff \text{stride}(d_i) = \text{size}(d_{i+1}) \times \text{stride}(d_{i+1})$$
 
-   | Dimension pair  | Calculation                 | Is contiguous     |
-   | ------- | -------------------- | ------------ |
-   | Dimension 0–1 | $? = ? \times ?$     | Unknown (dynamic) |
-   | Dimension 1–2 | $? = 4 \times 2 = 8$ | Unknown (dynamic) |
-   | Dimension 2–3 | $2 = 2 \times 1 = 2$ | Yes           |
+   | Dimension Pair  | Calculation                 | Is Contiguous     |
+   | --------------- | --------------------------- | -------------- |
+   | dimension 0–1 | $? = ? \times ?$     | Unknown (dynamic) |
+   | dimension 1–2 | $? = 4 \times 2 = 8$ | Unknown (dynamic) |
+   | dimension 2–3 | $2 = 2 \times 1 = 2$ | Yes           |
 
    Output (dimensions 2 and 3 collapsed):
 
@@ -400,8 +413,8 @@ The following scenarios demonstrate how the flattening pass interacts with strid
 
    Result after collapsing:
 
-   - Merge dimensions 2 and 3: size is $4 \times 2 = 8$, stride $= 1$ (contiguous)
-   - The rank is reduced from 4 to 3
+   - Merge dimensions 2 and 3: size $4 \times 2 = 8$, stride $= 1$ (contiguous)
+   - Rank decreases from 4 to 3
 
 3. **Scenario 3: A dynamic inner dimension prevents contiguity verification**
 
@@ -415,11 +428,11 @@ The following scenarios demonstrate how the flattening pass interacts with strid
    //   dim 3: size=?,  stride=1   ← dynamic size
    ```
 
-   Contiguity check for dimensions 2–3:
+   Contiguity check for dimension 2–3:
 
    The compiler cannot statically prove $2 = ?$. If the runtime size of dimension 3 is 2, they are contiguous; if the size is 3, they are not. The pass conservatively refuses to collapse.
 
-   | Dimension pair  | Computation                 | Is contiguous                |
+   | Dimension Pair  | Computation                 | Is Contiguous                |
    | ------- | -------------------- | ----------------------- |
    | Dimension 0–1 | $? = ? \times ?$     | Unknown                    |
    | Dimension 1–2 | $? = 4 \times 2 = 8$ | Unknown                    |

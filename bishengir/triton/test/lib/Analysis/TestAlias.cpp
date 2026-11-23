@@ -10,7 +10,7 @@ namespace {
 struct TestAliasPass
     : public PassWrapper<TestAliasPass, OperationPass<triton::FuncOp>> {
 
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestAliasPass);
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestAliasPass)
 
   static std::string getValueOperandName(Value value, AsmState &state) {
     std::string opName;

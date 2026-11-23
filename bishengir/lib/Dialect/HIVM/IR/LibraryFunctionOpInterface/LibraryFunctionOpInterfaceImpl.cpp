@@ -15,18 +15,21 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/DMA/CubeLoad/CubeLoadCapabilityQuery.h"
+#include "bishengir/Dialect/HIVM/IR/CustomOp/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMDialectExtension.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Interfaces/LibraryFunctionOpInterface.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
@@ -243,6 +246,15 @@ std::string getVCastOpLibraryCallName(VCastOp concreteOp,
       if (funcOp->hasAttr(hivm::DisableSizeAlignForCastAttr::name)) {
         disableSizeAlignForCast = true;
       }
+    }
+    // Per-op attribute set by AlignAllocSize for high-rank VCast.
+    // Only honour it when the current rank is still > 3 — FlattenOps may
+    // have collapsed the shape after the attribute was set.
+    auto curRank =
+        cast<ShapedType>(concreteOp.getSrc()[0].getType()).getRank();
+    if (curRank > 3 &&
+        concreteOp->hasAttr(hivm::DisableSizeAlignForCastAttr::name)) {
+      disableSizeAlignForCast = true;
     }
     // Disable size align for overflow cast only when the cast is I32 to I8 or
     // I16 to I8
@@ -693,9 +705,19 @@ struct StaticMaxRankExternalModel
             getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(srcType));
         std::string offsetTypeStr =
             getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(offsetType));
-        return concreteOp.getOpName().str() +
-               (concreteOp.getIsVolatile() ? "" : "_nonvolatile") + "_" +
-               libCallDim + "_" + srcTypeStr + "_" + offsetTypeStr;
+        std::string otherTypeStr;
+        if (auto other = concreteOp.getOther()) {
+          Type otherType = other.getType();
+          otherTypeStr =
+              getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(otherType));
+        }
+        std::string name = concreteOp.getOpName().str() +
+                           (concreteOp.getIsVolatile() ? "" : "_nonvolatile") +
+                           "_" + libCallDim + "_" + srcTypeStr + "_" +
+                           offsetTypeStr;
+        if (!otherTypeStr.empty() && otherTypeStr != srcTypeStr)
+          name += "_" + otherTypeStr;
+        return name;
       }
       if constexpr (std::is_same_v<ConcreteOp, StrideLoadOp>) {
         auto dstType = cast<ShapedType>(concreteOp.getDst().getType());
@@ -825,7 +847,18 @@ struct StaticMaxRankExternalModel
       }
       Type elemType =
           getElementTypeOrSelf(concreteOp.getDpsInits().front().getType());
-      std::string elemTypeName = getTypeName(concreteOp.getLoc(), elemType);
+      std::string elemTypeName;
+      if constexpr (std::is_same_v<ConcreteOp, VShROp>) {
+        // The signless element type alone cannot distinguish logical from
+        // arithmetic right shift; select the unsigned/signed template from
+        // VShROp::is_signed for the A3 template call.
+        hivm::TypeFn casting = concreteOp.getIsSigned()
+                                   ? hivm::TypeFn::cast_signed
+                                   : hivm::TypeFn::cast_unsigned;
+        elemTypeName = getTypeName(concreteOp.getLoc(), elemType, casting);
+      } else {
+        elemTypeName = getTypeName(concreteOp.getLoc(), elemType);
+      }
       int rank = static_cast<int>(concreteOp.getNumLoops());
       return concatVectorOpLibraryCallName(
           baseCallName + suffix, getOpLibraryCallRank(op, rank), elemTypeName);
@@ -1260,6 +1293,34 @@ std::string NoMaxRankExternalModel<BatchMmadL1Op>::getOpLibraryCallName(
          suffix;
 }
 
+// Symbol token of one packed MatmulMx dataformat enumerator, shared by the
+// lhs and rhs symbol parts.  The tokens agree with the a_format/b_format
+// tokens used by the template registrations in LocalMmadUtils.h: cases 1-4
+// cover the legacy packed formats (A5 mmadmx), and the native enumerators
+// FP8E4M3_T(2)/FP16_T(5)/BF16_T(6) cover the Ascend960 heterogeneous forms
+// where the lhs token must equal the A element's template token.
+static std::optional<std::string>
+getMxFormatToken(std::optional<llvm::APInt> format) {
+  if (!format)
+    return std::nullopt;
+  switch (format->getSExtValue()) {
+  case 1:
+    return "fp8_e5m2_t";
+  case 2:
+    return "fp8_e4m3_t";
+  case 3:
+    return "fp4x2_e2m1_t";
+  case 4:
+    return "fp4_hif4_t";
+  case 5:
+    return "fp16";
+  case 6:
+    return "bf16";
+  default:
+    llvm_unreachable("unsupported Dataformat");
+  }
+}
+
 //===----------------------------------------------------------------------===//
 // MmadMxL1Op
 //===----------------------------------------------------------------------===//
@@ -1296,44 +1357,23 @@ std::string NoMaxRankExternalModel<MmadMxL1Op>::getOpLibraryCallName(
     finalName += "_tb";
 
   auto lhsFmt = concreteOp.getLhsFormat();
-  if (!lhsFmt || elemAType != i8Type || elemBType != i8Type)
-    return finalName;
-
-  std::string lhsFmtStr;
-  switch (lhsFmt->getSExtValue()) {
-  case 1:
-    lhsFmtStr = "fp8_e5m2_t";
-    break;
-  case 2:
-    lhsFmtStr = "fp8_e4m3_t";
-    break;
-  case 3:
-    lhsFmtStr = "fp4x2_e2m1_t";
-    break;
-  default:
-    llvm_unreachable("unsupported Dataformat");
-  }
-
   auto rhsFmt = concreteOp.getRhsFormat();
-  if (!rhsFmt)
-    return finalName;
+  bool legacyInt8Format = elemAType == i8Type && elemBType == i8Type;
+  // Both symbol tokens come from the format attributes.  For a native A the
+  // lhsFormat carries the matching native enumerator (FP8E4M3_T/FP16_T/
+  // BF16_T), so the token equals the A element type's template token.
+  std::optional<std::string> lhsFmtStr = getMxFormatToken(lhsFmt);
+  std::optional<std::string> rhsFmtStr = getMxFormatToken(rhsFmt);
 
-  std::string rhsFmtStr;
-  switch (rhsFmt->getSExtValue()) {
-  case 1:
-    rhsFmtStr = "fp8_e5m2_t";
-    break;
-  case 2:
-    rhsFmtStr = "fp8_e4m3_t";
-    break;
-  case 3:
-    rhsFmtStr = "fp4x2_e2m1_t";
-    break;
-  default:
-    llvm_unreachable("unsupported Dataformat");
+  if (!lhsFmtStr || !rhsFmtStr)
+    return finalName;
+  if (!legacyInt8Format) {
+    auto moduleOp = op->getParentOfType<ModuleOp>();
+    if (!moduleOp || !hacc::utils::isAscend960(moduleOp))
+      return finalName;
   }
 
-  return finalName + "_lhs_format_" + lhsFmtStr + "_rhs_format_" + rhsFmtStr;
+  return finalName + "_lhs_format_" + *lhsFmtStr + "_rhs_format_" + *rhsFmtStr;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1404,6 +1444,19 @@ std::string NoMaxRankExternalModel<NCHW2NC1HWC0Op>::getOpLibraryCallName(
 }
 
 //===----------------------------------------------------------------------===//
+// NCHW2C1HWNC0Op
+//===----------------------------------------------------------------------===//
+
+template <>
+std::string NoMaxRankExternalModel<NCHW2C1HWNC0Op>::getOpLibraryCallName(
+    Operation *op, std::optional<bool> /*isOpsAligned*/) const {
+  auto concreteOp = cast<NCHW2C1HWNC0Op>(op);
+  Type elemType = getElementTypeOrSelf(concreteOp.getSrc().getType());
+  return concreteOp.getOpName().str() + "_" +
+         getTypeName(concreteOp.getLoc(), elemType);
+}
+
+//===----------------------------------------------------------------------===//
 // ND2NZOp
 //===----------------------------------------------------------------------===//
 
@@ -1422,13 +1475,15 @@ std::string NoMaxRankExternalModel<ND2NZOp>::getOpLibraryCallName(
         callName = callName + "_forbias";
     }
   }
-  // A rank-3 source carries a leading batch dimension and maps to the batched
-  // library function, which folds the batch into one MTE2 descriptor. Only
-  // regbase registers that variant.
-  auto mod = op->getParentOfType<ModuleOp>();
-  auto srcType = dyn_cast<MemRefType>(concreteOp.getDpsInputs()[0].getType());
-  if (mod && hacc::utils::isRegBasedArch(mod) && srcType &&
-      srcType.getRank() == 3)
+  // A rank-3 source carries a leading batch dimension. Append _batch only
+  // when that batched symbol is Native for this type and these scopes.
+  auto srcValue = concreteOp.getDpsInputs()[0];
+  auto srcType = dyn_cast<MemRefType>(srcValue.getType());
+  if (srcType && srcType.getRank() == 3 &&
+      isNativeNd2NzBatch(
+          op, srcType.getElementType(),
+          cubeLoadSpaceOr(srcType, AddressSpace::GM),
+          cubeLoadSpaceOr(concreteOp.getDst().getType(), AddressSpace::L1)))
     callName = callName + "_batch";
 
   Type eleType = getElementTypeOrSelf(concreteOp.getDpsInputs()[0].getType());
@@ -1645,6 +1700,18 @@ static std::string getIndexSelectLibraryCallName(CustomOpT op) {
          idxTypeStr;
 }
 
+// Keyed on the gathered tensor's element type and the region metadata's
+// element type, matching REGISTER_SPARSE_GATHER_LOAD_TO_L1BUFFER in
+// RegBase/Cube/include/DMA/SparseGatherNd2nz.h.
+template <typename CustomOpT>
+static std::string getSparseGatherLoadToL1BufferLibraryCallName(CustomOpT op) {
+  const std::string baseTypeStr = getTypeName(
+      op->getLoc(), getElementTypeOrSelf(op->getOperand(0).getType()));
+  const std::string idxTypeStr = getTypeName(
+      op->getLoc(), getElementTypeOrSelf(op->getOperand(1).getType()));
+  return "sparse_gather_load_to_L1buffer_" + baseTypeStr + "_" + idxTypeStr;
+}
+
 template <typename CustomOpT>
 static std::string getIndirectAtomicLibraryCallName(CustomOpT op) {
   std::string opName = "unknown";
@@ -1689,8 +1756,8 @@ static std::string getIndirectAtomicLibraryCallName(CustomOpT op) {
 }
 
 template <typename CustomOpT>
-std::string inferCustomOpMaxRank(Operation *op,
-                                 std::optional<bool> isOpsAligned) {
+std::string customOpLibraryCallName(Operation *op,
+                                    std::optional<bool> isOpsAligned) {
   auto concreteOp = cast<CustomOpT>(op);
 
   if (concreteOp.isBuiltin()) {
@@ -1700,12 +1767,30 @@ std::string inferCustomOpMaxRank(Operation *op,
       return getIndexSelectLibraryCallName(concreteOp);
     if (concreteOp.getName() == CustomOpT::kBuiltinIndirectAtomicName)
       return getIndirectAtomicLibraryCallName(concreteOp);
+    // The kBuiltinOnlineSoftmaxNZName handles 3 functions.
+    if (concreteOp.getName() == CustomOpT::kBuiltinOnlineSoftmaxNZName) {
+      // The forward function + causal + runtime checking
+      if (concreteOp.getInputs().size() == 5)
+        return "online_softmax_nz_f16_f8e4m3fn_causal_if";
+
+      // The forward function + causal
+      if (concreteOp.getInputs().size() == 4)
+        return "online_softmax_nz_f16_f8e4m3fn_causal";
+
+      // The normal forward function
+      return "online_softmax_nz_f16_f8e4m3fn";
+    }
     if (concreteOp.getName() == CustomOpT::kBuiltinHistogramName)
       return getHistogramLibraryCallName(concreteOp);
+    if (concreteOp.getName() ==
+        CustomOpT::kBuiltinSparseGatherLoadToL1BufferName)
+      return getSparseGatherLoadToL1BufferLibraryCallName(concreteOp);
     if (concreteOp.getName() == CustomOpT::kBuiltinProtonGetSysCntName)
       return "proton_get_sys_cnt";
     if (concreteOp.getName() == CustomOpT::kBuiltinProtonCircularStoreName)
       return "proton_circular_store";
+    if (concreteOp.getName() == CustomOpT::kBuiltinProtonScopeBoundaryName)
+      return "proton_scope_boundary";
     llvm::report_fatal_error("Unsupported builtin CustomOp");
   }
 
@@ -1724,6 +1809,12 @@ std::string inferCustomOpMaxRank(Operation *op,
   if (!hasMemrefInArgOrRet()) {
     prefix = "_mlir_ciface_" + prefix;
   }
+  if constexpr (std::is_same_v<CustomOpT, hivm::CustomOp>) {
+    // User CustomOps name their implementation directly. Distributed ops keep
+    // the MIX core suffix used by their runtime entry points.
+    if (!isDistributedTypeCustomOp(op))
+      return prefix;
+  }
   return prefix + callNameMangleSuffix(op);
 }
 } // namespace
@@ -1737,7 +1828,7 @@ std::string inferCustomOpMaxRank(Operation *op,
   template <>                                                                  \
   std::string InferMaxRankExternalModel<OP>::getOpLibraryCallName(             \
       Operation *op, std::optional<bool> isOpsAligned) const {                 \
-    return inferCustomOpMaxRank<OP>(op, isOpsAligned);                         \
+    return customOpLibraryCallName<OP>(op, isOpsAligned);                      \
   }
 
 DEFINE_CUSTOM_OP_INFER_MAX_RANK(CustomOp)
@@ -1824,6 +1915,7 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
     REGISTER_NO_MAX_RANK(ND2NZOp);
     REGISTER_NO_MAX_RANK(LoadMXScaleOp);
     REGISTER_NO_MAX_RANK(NCHW2NC1HWC0Op);
+    REGISTER_NO_MAX_RANK(NCHW2C1HWNC0Op);
     REGISTER_NO_LIBRARY_FUNCTION(AtomicCasOp);
     REGISTER_NO_LIBRARY_FUNCTION(AtomicXchgOp);
     REGISTER_NO_LIBRARY_FUNCTION(AtomicRMWOp);

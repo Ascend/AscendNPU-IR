@@ -22,6 +22,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
+#include <atomic>
 #include <memory>
 #include <utility>
 
@@ -93,13 +94,13 @@ public:
 
 private:
   // Monotonic id allocator used to assign stable ids to in-memory ops.
-  static int globalIndex;
+  static std::atomic<int> globalIndex;
 
 public:
   OperationBase() = delete;
   OperationBase(const OpType &opType, Operation *op, OperationBase *parentOp)
       : opType(opType), op(op), parentOp(parentOp) {
-    id = globalIndex++;
+    id = globalIndex.fetch_add(1, std::memory_order_relaxed);
   }
 
 public:
@@ -225,6 +226,7 @@ class Loop : public Scope {
 private:
 public:
   bool isParallel{false};
+  bool isAutoBlockifyLoop{false};
   bool isCVUnrolledLoop{false};
   bool isCVPreloadingLoop{false};
   std::optional<int64_t> loopPreloadNum;
@@ -312,6 +314,8 @@ public:
 
   bool hasFalseScope() const { return this->falseScope != nullptr; }
 
+  bool isFalseScopeSynthetic{false};
+
   static bool classof(const OperationBase *e) {
     return e->opType == OpType::CONDITION;
   }
@@ -327,6 +331,8 @@ public:
   llvm::SmallVector<MemInfo, 0> readMemInfo;
   llvm::SmallVector<MemInfo, 0> writeMemInfo;
   bool hasUnitFlagFeat{false};
+  // Marked by auto-blockify as writing a block-indexed kernel argument.
+  bool isAutoBlockifyDMA{false};
   UnitFlagInfoBase mergedUnitFlagInfo;
 
 public:
@@ -488,12 +494,26 @@ struct CVPreloadingInfo {
         preloadOffset2(preloadOffset2) {};
 };
 
+/// Explicit dependency supplied by EnableBufferPool. The loop/resource and
+/// directed pipes identify a shared event node; SET and WAIT select it using
+/// independent slot values. Scopes bound placement to the corresponding issue.
+struct BufferPoolInfo {
+  Value resource;
+  Value setSlot, waitSlot;
+  Scope *setScope, *waitScope;
+  Loop *loop;
+  bool ready;
+};
+
 struct EventIdInfo {
   int64_t eventIdNum{0};
   int64_t eventIdRepeatNum{1};
   std::optional<MultiBufferInfo> multiBufferInfo;
   std::optional<CVPreloadingInfo> cvPreloadingInfo;
   std::optional<CVPipeliningInfo> cvPipeliningInfo;
+  std::optional<BufferPoolInfo> bufferPoolInfo;
+  // Explicit pool accesses use their own slot instead of loop rotation.
+  Value bufferSlot;
   bool cannotRepeatFlagId{false};
 
   EventIdInfo() {};

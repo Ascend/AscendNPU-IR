@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HACC/IR/HACCInterfaces.h"
 #include "bishengir/Dialect/HIVM/Analysis/VFInplaceReuseAnalyzer.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/BufferLifeVec.h"
 #include "bishengir/Dialect/HIVM/Transforms/InplaceReuseReachableMap.h"
 #include "bishengir/Dialect/HIVM/Transforms/OptMemPlanForPipeline.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -68,7 +69,7 @@ constexpr const int SPEC_LEVEL_1 = 1;
 /// dma.
 constexpr const int SPEC_LEVEL_2 = 2;
 
-/// do not reuse buffer when pipe conflicts.
+/// do not reuse buffer when pipe conflicts and in different pipelined loop.
 constexpr const int SPEC_LEVEL_3 = 3;
 
 /// plan information of alloc buffer.
@@ -135,10 +136,20 @@ struct BufferLife {
   int64_t freeTime{-1};
 };
 
-/// a list of buffer life for a given storage entry
-using BufferLifeVec = SmallVector<std::shared_ptr<BufferLife>>;
+/// Conflict-memo id types. Ids are unique per MemPlan instance; the two
+/// names distinguish entry ids from bound ids at memo-key sites.
+using EntryMemoId = uint32_t;
+using BoundMemoId = uint32_t;
 
 struct StorageEntry {
+  explicit StorageEntry(EntryMemoId memoId) : memoId(memoId) {}
+  /// Non-copyable: a copy would duplicate the memo id and alias memo keys.
+  StorageEntry(const StorageEntry &) = delete;
+  StorageEntry &operator=(const StorageEntry &) = delete;
+  StorageEntry &operator=(StorageEntry &&) = delete;
+  // Only move constructor is allowed.
+  StorageEntry(StorageEntry &&) = default;
+
   /// The the buffer plan info.
   BufferInfo *bufInfo{nullptr};
 
@@ -179,14 +190,25 @@ struct StorageEntry {
   /// optimization.
   uint32_t multiBufferNum{1};
 
-  /// Get Bufferlife by vaule
-  std::shared_ptr<BufferLife> GetBufferLifeByValue(const Value v) const;
+  /// Conflict-memo id, assigned at construction from the owning MemPlan's
+  /// id counter; unique per MemPlan instance, never reused.
+  const EntryMemoId memoId;
+
+  /// The buffer's own life, if this entry still stores it as an endpoint.
+  std::optional<BufferLifeView> GetBufferLifeByValue(Value v) const;
 };
 
 struct MemoryBound {
-  MemoryBound(BufferLifeVec life, uint64_t o, uint64_t e, const StorageEntry *s)
+  MemoryBound(BufferLifeVec life, uint64_t o, uint64_t e, const StorageEntry *s,
+              BoundMemoId memoId)
       : bufferLifeVec(std::move(life)), offset(o), extent(e),
-        lastStorageEntry(s) {}
+        lastStorageEntry(s), memoId(memoId) {}
+  /// Non-copyable: a copy would duplicate the memo id and alias memo keys.
+  MemoryBound(const MemoryBound &) = delete;
+  MemoryBound &operator=(const MemoryBound &) = delete;
+  MemoryBound &operator=(MemoryBound &&) = delete;
+  // Only move constructor is allowed.
+  MemoryBound(MemoryBound &&) = default;
   /// collection of buffer plan and free time which use this Memory
   BufferLifeVec bufferLifeVec;
   /// offset of tagged memory
@@ -195,6 +217,9 @@ struct MemoryBound {
   uint64_t extent;
   /// always record storage entry of last plan
   const StorageEntry *lastStorageEntry;
+  /// Conflict-memo id, assigned at construction from the owning MemPlan's
+  /// id counter; unique per MemPlan instance, never reused.
+  const BoundMemoId memoId;
 };
 using MemBoundList = std::list<std::shared_ptr<MemoryBound>>;
 using MemBoundListConstIter = MemBoundList::const_iterator;
@@ -231,7 +256,10 @@ struct SpecInfo {
   int minLevel = SPEC_LEVEL_0;
   int specLevel = SPEC_LEVEL_3;
   int childIdx = -1;
-  int specStartIdx = 0;
+  /// The child index at which recovery mode begins. After a rollback, the
+  /// specLevel is lowered to retry the failed entry; once childIdx catches up
+  /// to this index, specLevel is restored to maxLevel.
+  int rollBackStopIdx = 0;
   int rollbackIdx = -1;
   uint64_t rollbackAddr = UINT64_MAX;
 };
@@ -253,17 +281,6 @@ struct OutlineSectionInfo {
   bool isDirectlyRollback;
 };
 
-/// comparator of buffer life
-struct CompareBufferLife {
-  bool operator()(const std::shared_ptr<BufferLife> &lhs,
-                  const std::shared_ptr<BufferLife> &rhs) const {
-    if (lhs->allocTime == rhs->allocTime) {
-      return lhs->freeTime < rhs->freeTime;
-    }
-    return lhs->allocTime < rhs->allocTime;
-  }
-};
-
 struct StatusWrapper {
   /// Is it enough to roll back
   bool hasEnoughRollBackSize;
@@ -279,6 +296,54 @@ struct StatusWrapper {
   StorageEntry *RootE;
 };
 
+/// Example IR for preload buffer reuse:
+/// 1:  func.func {
+/// 2:    scf.for {
+/// 3:      %alloc = memref.alloc()
+/// 4:      annotation.mark %alloc {hivm.preload_local_buffer = 1 : i32}
+/// 5:      scope.scope : () -> () {
+/// 6:        ops
+/// 7:        hivm.hir.load outs(%alloc)
+/// 8:        ops
+/// 9:      } {preload_num = 1}
+/// 10:     scope.scope : () -> () {
+/// 11:       %alloc_0 = memref.alloc()
+/// 12:       func.call @vf_reuse_direct(%alloc, %alloc_0)
+/// 13:       read %alloc_0
+/// 14:       scope.return
+/// 15:     } {preload_num = 0}
+/// 16:   }
+/// 17:   return
+/// 18: }
+///
+/// Preload buffer %alloc is generated at line 7 (hivm.hir.load) and killed at
+/// line 12 (func.call). A preload buffer is alive across scopes, so the two
+/// idle intervals within each scope can be reused by other buffers:
+///   - genScope before genOp (line 6): %alloc is allocated but not yet loaded,
+///     so its storage is free before line 7.
+///   - killScope after killOp (line 13): %alloc has been consumed by the call,
+///     so its storage is free after line 12.
+///
+/// These two reusable intervals are recorded as reuseableBufferLifeBeforeGen
+/// and reuseableBufferLifeAfterKill respectively.
+/// Besides, genScope and killScope must have different preload_num.
+struct PreloadBufferReuseableInfo {
+  /// preload Buffer
+  Value preloadBuffer;
+  /// gen opInfo
+  OpInfo *genInfo;
+  /// reuseable buffer life in genScope before genOp
+  std::shared_ptr<BufferLife> reuseableBufferLifeBeforeGen;
+  /// gen scope preload num
+  int64_t genScopePreloadNum;
+  /// kill opInfo
+  OpInfo *killInfo;
+  /// reuseable buffer life in killScope after killOp
+  std::shared_ptr<BufferLife> reuseableBufferLifeAfterKill;
+  /// kill scope preload num
+  int64_t killScopePreloadNum;
+};
+
 /// Pair of alias buffer and whether the alias buffer is conditional
 using BufferCondPair = std::pair<Value, bool>;
 
@@ -286,10 +351,12 @@ class MemLivenessAnalysis {
 public:
   MemLivenessAnalysis(func::FuncOp func, MemPlanMode planMode,
                       bool disableTightlyCoupledBufferReuse,
-                      uint32_t randomSeed = 0)
+                      uint32_t randomSeed = 0,
+                      bool enableMmadL0Planning = false)
       : func_(func), planMode(planMode),
         disableTightlyCoupledBufferReuse(disableTightlyCoupledBufferReuse),
-        randomSeed(randomSeed), randomGenerator(this->randomSeed) {}
+        enableMmadL0Planning(enableMmadL0Planning), randomSeed(randomSeed),
+        randomGenerator(this->randomSeed) {}
 
   void build();
 
@@ -301,6 +368,9 @@ public:
 
   /// map from buffer to its lifetime.
   DenseMap<Value, std::shared_ptr<BufferLife>> buffer2Life;
+
+  /// map from preload buffer to its reuseable info
+  DenseMap<Value, PreloadBufferReuseableInfo> preloadBufferReuseableInfo;
 
   /// map from operation to its gen and kill buffer.
   DenseMap<OpInfo *, GenKillEntry> genKillMap;
@@ -327,17 +397,17 @@ public:
   bool isGlobalWorkSpaceMemPlan() const;
 
 private:
-  void RecursionIR(Region *region, Liveness live);
+  void RecursionIR(Region *region, const Liveness &live);
 
   /// Get the buffer used within the loop and defined outside the loop.
   SmallVector<Value> GetLiveBuffersInLoop(LoopLikeOpInterface loopOp,
-                                          Liveness live);
+                                          const Liveness &live);
 
   /// Update for Op tensor init args and tensor result args alias info.
   void UpdateInitAndResAlias(DestinationStyleOpInterface dstStyleOp);
 
   /// Recursive operation while.
-  void RecursiveWhileOp(scf::WhileOp whileOp, Liveness live);
+  void RecursiveWhileOp(scf::WhileOp whileOp, const Liveness &live);
 
   /// Update while Op init args region iter args alias info.
   void UpdateWhileOpInitArgsAlias(scf::WhileOp whileOp);
@@ -350,7 +420,7 @@ private:
   void UpdateConditionOpBufferAlias(scf::ConditionOp conditionOp);
 
   /// Recursive operation for.
-  void RecursiveForOp(scf::ForOp forOp, Liveness live);
+  void RecursiveForOp(scf::ForOp forOp, const Liveness &live);
 
   /// Update for Op init args region iter args alias info.
   void UpdateForOpInitArgsAlias(scf::ForOp forOp);
@@ -359,7 +429,7 @@ private:
   void UpdateForOpBufferAlias(scf::ForOp forOp);
 
   /// Recursive operation if.
-  void RecursiveIfOp(scf::IfOp ifOp, Liveness live);
+  void RecursiveIfOp(scf::IfOp ifOp, const Liveness &live);
 
   /// Update branch dest arg and operand buffer alias info.
   void UpdateBranchOpAlias(Block *brBlock, OperandRange destOperands);
@@ -368,7 +438,7 @@ private:
   void UpdateIfOpBufferAlias(scf::IfOp ifOp, scf::YieldOp yieldOp);
 
   /// Recursive operation scope.
-  void RecursiveScopeOp(scope::ScopeOp scopeOp, Liveness live);
+  void RecursiveScopeOp(scope::ScopeOp scopeOp, const Liveness &live);
 
   /// Update buffer alias information for scopeop.
   void UpdateScopeOpBufferAlias(scope::ScopeOp scopeOp,
@@ -420,10 +490,10 @@ private:
                                                      Value aliasValue);
 
   /// Get alias buffer information.
-  SmallVector<BufferCondPair> GetAliasBufferCondPairs(Value aliasBuffer);
+  SmallVector<BufferCondPair> GetAliasBufferCondPairs(Value aliasBuffer) const;
 
   /// Get alias buffers.
-  SetVector<Value> GetAliasBuffers(Value aliasBuffer);
+  SetVector<Value> GetAliasBuffers(Value aliasBuffer) const;
 
   /// Check whether there is an unknown operation with buffer
   /// information.
@@ -436,16 +506,17 @@ private:
   void UpdateMultiBufferInfo(annotation::MarkOp markOp, Value memrefVal);
 
   /// Update store op information.
-  void UpdateStoreOpInfo(OpInfo *opInfo, const Value storeValue, Liveness live);
+  void UpdateStoreOpInfo(OpInfo *opInfo, const Value storeValue,
+                         const Liveness &live);
 
   /// Check if it is local buffer with memory space
   LogicalResult CheckLocalBufferAllocOp(Operation *op) const;
 
   /// kill buffer handle.
-  void OpKillHandle(OpInfo *opInfo, Liveness live, Block *block);
+  void OpKillHandle(OpInfo *opInfo, const Liveness &live, Block *block);
 
   /// Process kill buffer based on the result live of op.
-  void UpdateOpKillInfo(OpInfo *opInfo, Value operand, Liveness live);
+  void UpdateOpKillInfo(OpInfo *opInfo, Value operand, const Liveness &live);
 
   /// Whether afterBlock is after beforeBlock.
   bool IsBlockAfter(Block *afterBlock, Block *beforeBlock) const;
@@ -455,31 +526,37 @@ private:
 
   /// Have all alias buffer been killed.
   bool AllDeadAfter(Operation *op, SetVector<Value> aliasVec,
-                    Liveness live) const;
+                    const Liveness &live) const;
 
   /// Determine whether two operation are in the same block or op2 is the
   /// ancestor of op1.
   bool isParentOpDominate(Operation *op1, Operation *op2) const;
 
-  /// Check whether operand is marked buffer used in multi scope operations.
-  bool IsPreloadBuffer(Value operand);
+  /// Check if a buffer is a preload buffer.
+  bool IsPreloadBuffer(Value buffer) const;
 
   /// Check whether operand is marked buffer used in multi scope operations.
   void UpdatePreloadBuffers(annotation::MarkOp markOp, memref::AllocOp allocOp);
 
-  /// Update Gen information for multi scope used buffers and their alias
-  /// buffers.
-  void UpdatePreloadBuffersGenInfo(OpInfo *opInfo,
-                                   const SetVector<Value> &preloadBufferValues);
+  /// Update gen info of preload buffers to their enclosing loop op.
+  void UpdatePreloadBuffersGenInfo(OpInfo *opInfo);
 
-  /// Update Kill information for multi scope used buffers and their alias
-  /// buffers.
-  void UpdatePreloadBuffersKillInfo(OpInfo *opInfo,
-                                    const SetVector<Value> &preloadBufferValues);
+  /// Update kill info of preload buffers to their enclosing loop op.
+  void UpdatePreloadBuffersKillInfo(OpInfo *opInfo);
+
+  /// Generate preload buffer reuseable lifetime vector.
+  void GeneratePreloadBufferReuseableInfo();
+
+  /// Generate preload buffers reuseable info and extend preload buffer lifetime
+  /// from scope to parent for.
+  void PreprocessPreloadBuffersBufferLife();
+
+  /// Dump preload buffer reuseable info for debugging.
+  void DumpPreloadBufferReuseableInfo() const;
 
   /// Process mark op and update buffer's gen and kill.
   void ProcessMarkOp(annotation::MarkOp markOp, OpInfo *curOpInfo,
-                     Liveness live);
+                     const Liveness &live);
 
   /// Process AllocOp that don't need to plan memory and if return allocOp, we
   /// need to run UpdateOpGenInfo manually.
@@ -520,6 +597,9 @@ private:
   /// Disable tightly coupled buffer reuse. Default is false
   bool disableTightlyCoupledBufferReuse;
 
+  /// Enable explicit A5 cube planning only for functions containing MMAD L0.
+  bool enableMmadL0Planning;
+
   /// Gen-kill status corresponding to buffer.
   DenseMap<Value, BufferStatus> buffer2status;
 
@@ -540,26 +620,46 @@ private:
 };
 
 /// Pair of StorageEntry.
-using StorageEntryPair = std::pair<const StorageEntry *, const StorageEntry *>;
+using StorageEntryIdPair = std::pair<EntryMemoId, EntryMemoId>;
+
+/// Map from buffer value to its planned memory address(es).
+using Buffer2Offsets = DenseMap<Value, SmallVector<uint64_t>>;
+
+/// Result of planning one function: the assigned buffer offsets and the roots
+/// of preload-local buffers.
+using PlanResult = std::pair<Buffer2Offsets, DenseSet<Value>>;
 
 class MemPlan {
 public:
   MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
           bool enableMemoryDisplay, bool restrictInplaceAsISA,
           int sharedMemDynamicSize, bool disableVFReachableCheck,
-          PlanMemoryStrategy planMemoryStrategy = PlanMemoryStrategy::DEFAULT)
+          PlanMemoryStrategy planMemoryStrategy = PlanMemoryStrategy::DEFAULT,
+          bool enableMmadL0Planning = false)
       : enableMemoryDisplay(enableMemoryDisplay), planMode(planMode),
         enableGlobalReuse(enableGlobalReuse),
         restrictInplaceAsISA(restrictInplaceAsISA),
         sharedMemDynamicSize(sharedMemDynamicSize),
         disableVFReachableCheck(disableVFReachableCheck),
-        planMemoryStrategy(planMemoryStrategy), vfInplaceReuseInfo(nullptr) {}
+        planMemoryStrategy(planMemoryStrategy),
+        enableMmadL0Planning(enableMmadL0Planning),
+        vfInplaceReuseInfo(nullptr) {}
 
   LogicalResult plan(bool emitErrors = true);
+  /// Report whether allocation failed only in UB.
+  bool failedOnlyInUB() const;
+  /// Emit final allocation diagnostics and populate memory-display errors.
+  void EmitPlanMemoryFailureInfo();
 
   /// Get buffer2Offsets
-  inline DenseMap<Value, SmallVector<uint64_t>> GetBuffer2Offsets() {
-    return buffer2Offsets;
+  inline Buffer2Offsets GetBuffer2Offsets() { return buffer2Offsets; }
+
+  /// Local buffers folded onto a preload storage entry during plan that do
+  /// not already carry `hivm.preload_local_buffer` (the preload TCB itself
+  /// is excluded). These need the mark added at pointer_cast materialization
+  /// so create-preload applies the same bank rotation to them.
+  inline const DenseSet<Value> GetPreloadLocalBuffers() const {
+    return preloadLocalBuffers;
   }
 
   inline void
@@ -590,6 +690,11 @@ public:
 
   inline void SetVFInplaceReuseInfo(VFCallInplaceReuseInfo *inplaceReuseInfo) {
     vfInplaceReuseInfo = inplaceReuseInfo;
+  }
+
+  inline void SetPreloadBufferReuseableInfo(
+      DenseMap<Value, PreloadBufferReuseableInfo> info) {
+    preloadBufferReuseableInfo = info;
   }
 
   /// Setup the device's storage specs
@@ -638,6 +743,9 @@ private:
 
   /// Strategy for reordering storage entries during plan memory.
   PlanMemoryStrategy planMemoryStrategy;
+
+  /// Per-function policy shared with liveness and DMA/scalar buffer analysis.
+  bool enableMmadL0Planning;
 
   /// inplace-reuse info for the vf call.
   VFCallInplaceReuseInfo *vfInplaceReuseInfo;
@@ -690,9 +798,6 @@ private:
   /// Obtain buffer space size and alignment information.
   std::pair<size_t, size_t> GetBufferSpaceInfo(hivm::AddressSpace &space) const;
 
-  /// Emit buffer applied failure message.
-  void EmitPlanMemoryFailureInfo();
-
   /// Multi level plan strategy.
   LogicalResult MultiSpecPlan(SpecInfo &si, MemBoundList &outline,
                               PlanRecHis &history, StorageEntry *entry);
@@ -728,7 +833,7 @@ private:
 
   /// check if e1 and e2 has pipe conflict.
   bool PipeConflict(const StorageEntry *e1, const StorageEntry *e2,
-                    DenseMap<StorageEntryPair, bool> &conflictMap);
+                    DenseMap<StorageEntryIdPair, bool> &conflictMap);
 
   /// check if e1 and e2 has same parent loop.
   bool PipeConflictInSameLoop(const StorageEntry *e1, const StorageEntry *e2);
@@ -768,13 +873,10 @@ private:
       StorageEntry *e, MemBoundListConstIter start, MemBoundListConstIter end,
       SmallVector<std::shared_ptr<MemoryBound>> &splitBound) const;
 
-  /// merge the buffer life between start and end.
+  /// Append buffer lives of bounds in [start, end) onto newLife, then merge.
   inline void MergeBufferLife(MemBoundList::const_iterator start,
                               MemBoundList::const_iterator end,
                               BufferLifeVec &newLife) const;
-
-  /// merge buffers in a vector.
-  void MergeBufferVec(BufferLifeVec &bufferLife) const;
 
   /// Judge if need to restart plan memory with other strategy after
   /// plan failed.
@@ -793,7 +895,7 @@ private:
   bool ContinueRollBack(const StatusWrapper &statusWrapper) const;
 
   /// Check if multibuffer-slots should be rolled back together
-  bool ShouldRollbackMuiltiBuffer(const PlanRecord& r) const;
+  bool ShouldRollbackMuiltiBuffer(const PlanRecord &r) const;
 
   /// Memory plan fallback information processing.
   void RollBackForAllocFailInner(StatusWrapper &statusWrapper,
@@ -835,17 +937,18 @@ private:
   bool IsReuseHIVMOp(Operation *op, const Value &genBuffer,
                      const Value &killBuffer) const;
 
-  /// the vf call that can reuse dst address `gen` and src address `kill` in
-  /// limited situation
-  bool IsReuseVFCall(Value gen, Value kill);
+  /// Returns true if reusing root alloc `kill` for root alloc `gen` would stall
+  /// the mte2/mte3 pipeline, so the reuse must be rejected.
+  bool IsReuseVFStallPipeline(Value gen, Value kill);
+
+  /// Returns true if the vf call `op` allows its dst `genBuffer` to reuse its
+  /// src `killBuffer` in place: no aliased-argument risk and the vf inplace
+  /// reuse analysis permits it.
+  bool IsReuseVFCall(Operation *op, Value genBuffer, Value killBuffer);
 
   /// Determines whether the value `src` is reachable to an operand of an
   /// operation with pipe type `Pipe`.
   template <PIPE Pipe> bool IsInplaceReuseReachable(Value allocValue);
-
-  /// Get overlap buffer life.
-  DenseMap<ValuePair, BufferLife>
-  GetOverlapBufferLife(const BufferLifeVec &b1, const BufferLifeVec &b2) const;
 
   /// Reorder and make the storage entries of firstbuffer and otherbuffer
   /// continuous.
@@ -891,6 +994,27 @@ private:
   void ReportAllocatedEntryDebugInfo(const StorageEntry *rootStorageEntry,
                                      bool isFail) const;
 
+  /// Print the max allocated size after a successful plan.
+  void PrintSuccessfulAllocatedMaxBits();
+
+  /// Check if every life in `lives` can reuse this preload buffer.
+  /// Before-gen requires an exact free time and VF inplace only on buffers
+  /// that end at the merged interval. After-kill requires an exact alloc time
+  /// and VF inplace only on buffers that start at the merged interval. Every
+  /// other endpoint only has to sit inside that same window.
+  bool IsPreloadBufferReuseable(PreloadBufferReuseableInfo &info,
+                                const BufferLifeVec &lives);
+
+  /// collect all the preload buffer reuseable info and generate the map from
+  /// local storage entry to its reuseable preload storage entry.
+  void GeneratePreloadReuseableSE();
+
+  /// Reuse the local buffer with the preload buffer if it is reuseable.
+  void LocalBufferReusePreloadBuffer(StorageEntry *entry, PlanRecHis &history);
+
+  /// Check inplaced buffer contained in preloadBuffer2Life
+  bool IsPreloadStorageEntry(const StorageEntry *storageEntry);
+
 private:
   /// The buffer corresponding to each operation.
   SmallVector<std::unique_ptr<OpInfo>> linearOperation;
@@ -924,7 +1048,12 @@ private:
   bool splitOutline{false};
 
   /// map from memref buffer to plan memory address.
-  DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets;
+  Buffer2Offsets buffer2Offsets;
+
+  /// Local buffers folded onto a preload storage entry that need a
+  /// `hivm.preload_local_buffer` mark; the preload TCB itself is excluded
+  /// (already tracked in preloadBufferReuseableInfo).
+  DenseSet<Value> preloadLocalBuffers;
 
   /// map from each scope to its root StorageEntry.
   llvm::MapVector<hivm::AddressSpace, StorageEntry *> memscope2rootStorageEntry;
@@ -945,8 +1074,24 @@ private:
   /// Inplace reuse reachable map for checking if a buffer is used by hivmPipeOp
   InplaceReuseReachableMap reachableMap;
 
-  /// Map from the storage entry pair to its pipeDma conflict info.
-  DenseMap<StorageEntryPair, bool> pipeDmaConflictMap;
+  /// Per-instance id sources stamped at entry/bound construction and used
+  /// as conflict-memo keys instead of pointers. Ids are never reused within
+  /// this MemPlan instance, so a destroyed entry/bound can never have its
+  /// address recycled into a stale memo key (ABA); no keep-alive pinning is
+  /// needed. Mutable: bounds are also created in const planning methods.
+  mutable EntryMemoId nextEntryMemoId = 1;
+  mutable BoundMemoId nextBoundMemoId = 1;
+
+  /// Map from the storage entry memo-id pair to its pipeDma conflict info.
+  DenseMap<StorageEntryIdPair, bool> pipeDmaConflictMap;
+
+  /// Map from the storage entry memo-id pair to its same-loop conflict info.
+  DenseMap<StorageEntryIdPair, bool> sameLoopConflictMap;
+
+  /// Entry-scoped memo of VerifyConflictStage0 per (entry, bound) pair,
+  /// keyed by memo ids. Bounds are immutable after creation and MemPlan is
+  /// rebuilt per planning attempt, so verdicts are stable.
+  DenseMap<std::pair<EntryMemoId, BoundMemoId>, bool> stage0ConflictMemo;
 
   /// First buffer storage entry corresponding to reused additional otherbuffer
   /// entries. When a single-buffer entry is expanded to use
@@ -962,6 +1107,12 @@ private:
 
   /// The scope of the buffer applied memory fail and the max bits it applied.
   llvm::MapVector<hivm::AddressSpace, uint64_t> failApplyBufferInfo;
+
+  /// map from preload buffer to its lifetime.
+  DenseMap<Value, PreloadBufferReuseableInfo> preloadBufferReuseableInfo;
+
+  /// map from local storage entry to its reuseable preload storage entry.
+  DenseMap<StorageEntry *, StorageEntry *> localSE2ReuseablePreloadSE;
 
   /// when plan memory fail, map from each scope to its root StorageEntry.
   llvm::MapVector<hivm::AddressSpace, StorageEntry *>

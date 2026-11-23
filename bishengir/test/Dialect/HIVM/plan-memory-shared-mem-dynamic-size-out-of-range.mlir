@@ -1,5 +1,5 @@
-// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase=shared-mem-dynamic-size=100000 -split-input-file -verify-diagnostics | FileCheck %s
-// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase=shared-mem-dynamic-size=300000 -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory=shared-mem-dynamic-size=100000 -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory=shared-mem-dynamic-size=300000 -split-input-file -verify-diagnostics | FileCheck %s
 
 // Out-of-range `shared-mem-dynamic-size` values must reject SIMT and MIX
 // vector functions before any buffer planning with:

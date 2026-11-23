@@ -73,6 +73,23 @@ def EnableTritonKernelCompile : FeatureControlOptions<
   bit isSharedWithDownstreamToolchain = 1;
 }
 
+def EnableTlaMode : FeatureControlOptions<
+  "Enable TLA affinity pipeline for NPU IR.",
+  "bool",
+  "false"
+> {
+  let optionScope = ["A5_ONLY"];
+  let passGroup = ["HIVM"];
+}
+
+def EnableTlaCvPipelining : FeatureControlOptions<
+  "Expand staged TLA loops through native preload in affinity mode.",
+  "bool",
+  "false"
+> {
+  let optionScope = ["A5_ONLY"];
+}
+
 def EnableUbufSaving : FeatureControlOptions<
   "Enable ub buffer saving mode.",
   "bool",
@@ -97,6 +114,7 @@ def EnableTorchCompile : FeatureControlOptions<
   "bool",
   "false"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION"];
 }
 #endif
@@ -105,6 +123,13 @@ def EnableHIVMCompile : FeatureControlOptions<
   "Enable BiShengHIR HIVM compilation.",
   "bool",
   "true"
+>;
+
+def UsePipelineVersion : FeatureControlOptions<
+  "Select the HIVM pipeline version: 1 = A5 regbase (default), "
+  "2 = hivm-v2-pipeline.",
+  "int",
+  "1"
 >;
 
 def EnableHfusionCompile : FeatureControlOptions<
@@ -126,6 +151,7 @@ def EnableSymbolAnalysis : FeatureControlOptions<
   "bool",
   "false"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION"];
 }
 
@@ -135,6 +161,7 @@ def EnableMultiKernel : FeatureControlOptions<
   "bool",
   "false"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION"];
 }
 
@@ -143,6 +170,7 @@ def EnableManageHostResources : FeatureControlOptions<
   "bool",
   "false"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION"];
 }
 
@@ -164,6 +192,7 @@ def EnableBinRelocation : FeatureControlOptions<
   bit isSharedWithDownstreamToolchain = 1;
 }
 
+
 #ifdef BISHENGIR_ENABLE_TORCH_CONVERSIONS
 def EnsureNoImplicitBroadcast : FeatureControlOptions<
   "Whether to ensure that there is no implicit broadcast "
@@ -172,6 +201,7 @@ def EnsureNoImplicitBroadcast : FeatureControlOptions<
   "bool",
   "false"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION"];
 }
 #endif
@@ -238,7 +268,6 @@ def DisableHIVMAutoInjectSync : FeatureControlOptions<
   "bool",
   "false"
 > {
-  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION", "HIVM"];
 }
 
@@ -257,6 +286,16 @@ def EnableFastDiv : FeatureControlOptions<
   "bool",
   "true"
 > {
+  let passGroup = ["HFUSION"];
+}
+
+def EnableDivRemPow2
+    : FeatureControlOptions<
+          "Enable strength reduction of integer div/div_unsigned/mod/modui "
+          "with "
+          "a power-of-two constant divisor into shift/and ops (regbased "
+          "Ascend950 only)",
+          "bool", "true"> {
   let passGroup = ["HFUSION"];
 }
 
@@ -358,11 +397,15 @@ def EnableAutoMultiBuffer : GeneralOptimizationControlOptions<
   let passGroup = ["HFUSION", "HIVM"];
 }
 
-def LimitAutoMultiBufferOnlyForLocalBuffer : GeneralOptimizationControlOptions<
-  "When enable-auto-multi-buffer = true, limit it only to work for local buffer",
-  "bool",
-  "false"
-> {
+def LimitAutoMultiBufferOnlyForLocalBuffer
+    : GeneralOptimizationControlOptions<
+          "DEPRECATED (removed in BiShengIR 1.4.0): when "
+          "enable-auto-multi-buffer = true, "
+          "limit it only to work for local buffer (disables GM workspace "
+          "multi-buffer). "
+          "Use --multibuffer-mode and set gm=1. A3 default gm=4, A5 default "
+          "gm=2.",
+          "bool", "false"> {
   let passGroup = ["HIVM"];
 }
 
@@ -400,7 +443,9 @@ def EnableDeterministicComputing : HFusionOptimizationControlOptions<
   "However, the result will be non-deterministic.",
   "bool",
   "true"
->;
+> {
+  let optionScope = ["A3_ONLY"];
+}
 
 def EnableOpsReorder : HFusionOptimizationControlOptions<
   "Enable ops reorder to opt pipeline.",
@@ -424,18 +469,23 @@ def HfusionMaxHorizontalFusionSize : HFusionOptimizationControlOptions<
   "Number of horizontal fusion attempt (Default: unlimited).",
   "int32_t",
   "-1"
->;
+> {
+  let optionScope = ["A3_ONLY"];
+}
 
 def HfusionMaxBufferCountTuning : HFusionOptimizationControlOptions<
   "Max buffer count tuning in HFusion auto schedule.",
   "int64_t",
   "0"
->;
+> {
+  let optionScope = ["A3_ONLY"];
+}
 
 def CubeTilingTuning : BiShengIRCompileListOpt<
   "Cube block size tuning in HFusion auto schedule",
   "int64_t"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION"];
   let compileOptionCategories = ["hfusionOptCategory"];
 }
@@ -445,7 +495,9 @@ def enableHfusionCountBufferDmaOpt : HFusionOptimizationControlOptions<
   "be reused by Vector operations.",
   "bool",
   "false"
->;
+> {
+  let optionScope = ["A3_ONLY"];
+}
 
 //===----------------------------------------------------------------------===//
 // HIVM Optimization Control Options
@@ -460,11 +512,14 @@ class HIVMOptimizationControlOptions<
   let passGroup = ["HIVM"];
 }
 
-def LimitAutoMultiBufferOfLocalBuffer : HIVMOptimizationControlOptions<
-  "When enable-auto-multi-buffer = true, limit local buffer mode.",
-  "MultiBufferStrategy",
-  "MultiBufferStrategy::CUBE_NO_L0C"
-> {
+def LimitAutoMultiBufferOfLocalBuffer
+    : HIVMOptimizationControlOptions<
+          "DEPRECATED (removed in BiShengIR 1.4.0): when "
+          "enable-auto-multi-buffer = true, "
+          "limit local buffer mode. Use --multibuffer-mode and set l0c=1 for "
+          "no-l0c, "
+          "or l0c>1 for no-limit.",
+          "MultiBufferStrategy", "MultiBufferStrategy::CUBE_NO_L0C"> {
   let additionalOptFlags = [{
 llvm::cl::values(
   clEnumValN(MultiBufferStrategy::NO_LIMIT, "no-limit", "No limit"),
@@ -485,13 +540,18 @@ def DisableMultiBufferOnUB : HIVMOptimizationControlOptions<
   "false"
 >;
 
-def LimitAutoMultiBufferBuffer : HIVMOptimizationControlOptions<
-  "When enable-auto-multi-buffer = true, limit it to only cube, only vector or no limit. "
-  "TableGen/CLI default is only-cube (A3/membase); Ascend950/RegBase applies "
-  "no-limit when this flag is not explicitly set.",
-  "MultiBufferStrategy",
-  "MultiBufferStrategy::ONLY_CUBE"
-> {
+def LimitAutoMultiBufferBuffer
+    : HIVMOptimizationControlOptions<
+          "DEPRECATED (removed in BiShengIR 1.4.0): when "
+          "enable-auto-multi-buffer = true, "
+          "limit it to only cube, only vector or no limit. TableGen/CLI "
+          "default is "
+          "only-cube (A3/membase); Ascend950/RegBase applies no-limit when "
+          "this flag is "
+          "not explicitly set. Use --multibuffer-mode instead "
+          "(only-cube: ub=1; only-vector: l1=1,l0c=1; no-limit: keep l1/ub > "
+          "1).",
+          "MultiBufferStrategy", "MultiBufferStrategy::ONLY_CUBE"> {
   let additionalOptFlags = [{
 llvm::cl::values(
     clEnumValN(MultiBufferStrategy::NO_LIMIT, "no-limit", "No limit"),
@@ -500,6 +560,18 @@ llvm::cl::values(
 )
   }];
 }
+
+def MultibufferMode
+    : HIVMOptimizationControlOptions<
+          "Per-level multi-buffer counts: [(gm, N), (l1, N), (l0c, N), (ub, "
+          "N)]. "
+          "N>1 enables that memory space with N slots; N=1 disables it; N=0 is "
+          "an "
+          "error. Empty preserves the deprecated limit-auto-multi-buffer-* "
+          "behavior; "
+          "typical MixedCV defaults are A3: gm=4,l1=2,l0c=1,ub=1 and "
+          "A5: gm=2,l1=2,l0c=1,ub=2.",
+          "std::string", "\"\"">;
 
 def PlanMemoryStrategy : HIVMOptimizationControlOptions<
   "Plan memory strategy for storage entry reorder.",
@@ -611,6 +683,28 @@ llvm::cl::values(
   }];
 }
 
+def EnableSchedulerAlg
+    : HIVMOptimizationControlOptions<
+          "Select the CV-pipelining scheduler algorithm (skew mode only).",
+          "CVSchedulerMode",
+          "CVSchedulerMode::Default"> {
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(CVSchedulerMode::Default, "default",
+             "Default WorklistBuilder-based partitioning"),
+  clEnumValN(CVSchedulerMode::Sms, "sms",
+             "SMS stage-level scheduling partitioning")
+)
+  }];
+}
+
+def SmsFailOnFallback
+    : HIVMOptimizationControlOptions<
+          "When true, treat SMS scheduler failure as a compilation error "
+          "instead of silently falling back to the default scheduler. "
+          "Useful for batch testing SMS enablement rates.",
+          "bool", "false">;
+
 def EnablePreload : BiShengIRCompileOpt<
   "Enable preload (skew mode) for CV-pipelining.",
   "bool",
@@ -674,51 +768,67 @@ def Target : BiShengIRCompileOpt<
 > {
   let additionalOptFlags = [{
 llvm::cl::values(
-#define TO_STRING(x) #x
-    #define REGISTER_TARGET(TARGET)                                              \
+  #define TO_STRING(x) #x
+  #define REGISTER_TARGET(TARGET)                                              \
   clEnumValN(mlir::hacc::TargetDevice::TARGET, TO_STRING(TARGET),              \
              TO_STRING(TARGET))
                 // Ascend910B series
-  REGISTER_TARGET(Ascend910B1), REGISTER_TARGET(Ascend910B2),
-  REGISTER_TARGET(Ascend910B3), REGISTER_TARGET(Ascend910B4),
+                REGISTER_TARGET(Ascend910B1), REGISTER_TARGET(Ascend910B2),
+                REGISTER_TARGET(Ascend910B3), REGISTER_TARGET(Ascend910B4),
                 clEnumValN(mlir::hacc::TargetDevice::Ascend910B4_1,
                               "Ascend910B4-1", "Ascend910B4-1"),
                 REGISTER_TARGET(Ascend910B2C),
                 // Ascend910_93 series
-  REGISTER_TARGET(Ascend910_9362), REGISTER_TARGET(Ascend910_9363),
-  REGISTER_TARGET(Ascend910_9372),
-  REGISTER_TARGET(Ascend910_9381), REGISTER_TARGET(Ascend910_9382),
-  REGISTER_TARGET(Ascend910_9391), REGISTER_TARGET(Ascend910_9392),
+                REGISTER_TARGET(Ascend910_9362), REGISTER_TARGET(Ascend910_9363),
+                REGISTER_TARGET(Ascend910_9372),
+                REGISTER_TARGET(Ascend910_9381), REGISTER_TARGET(Ascend910_9382),
+                REGISTER_TARGET(Ascend910_9391), REGISTER_TARGET(Ascend910_9392),
+                // Ascend950 generic
+                REGISTER_TARGET(Ascend950),
                 // Ascend910_95 series
-  REGISTER_TARGET(Ascend910_950z), REGISTER_TARGET(Ascend910_9579),
-  REGISTER_TARGET(Ascend910_957b), REGISTER_TARGET(Ascend910_957d),
-  REGISTER_TARGET(Ascend910_9581), REGISTER_TARGET(Ascend910_9589),
-  REGISTER_TARGET(Ascend910_958a), REGISTER_TARGET(Ascend910_958b),
+                REGISTER_TARGET(Ascend910_950z), REGISTER_TARGET(Ascend910_9579),
+                REGISTER_TARGET(Ascend910_957b), REGISTER_TARGET(Ascend910_957d),
+                REGISTER_TARGET(Ascend910_9581), REGISTER_TARGET(Ascend910_9589),
+                REGISTER_TARGET(Ascend910_958a), REGISTER_TARGET(Ascend910_958b),
                 REGISTER_TARGET(Ascend910_9599),
                 // Ascend950PR series
                 REGISTER_TARGET(Ascend950PR_950z), REGISTER_TARGET(Ascend950PR_9579),
-                REGISTER_TARGET(Ascend950PR_957a), REGISTER_TARGET(Ascend950PR_957b),
-                REGISTER_TARGET(Ascend950PR_957c), REGISTER_TARGET(Ascend950PR_957d),
-                REGISTER_TARGET(Ascend950PR_9589), REGISTER_TARGET(Ascend950PR_958a),
-                REGISTER_TARGET(Ascend950PR_958b), REGISTER_TARGET(Ascend950PR_958c),
-                REGISTER_TARGET(Ascend950PR_958d), REGISTER_TARGET(Ascend950PR_9599),
-                REGISTER_TARGET(Ascend950PR_959a), REGISTER_TARGET(Ascend950PR_959b),
+                REGISTER_TARGET(Ascend950PR_9579x), REGISTER_TARGET(Ascend950PR_957a),
+                REGISTER_TARGET(Ascend950PR_957b), REGISTER_TARGET(Ascend950PR_957c),
+                REGISTER_TARGET(Ascend950PR_957d), REGISTER_TARGET(Ascend950PR_9589),
+                REGISTER_TARGET(Ascend950PR_958a), REGISTER_TARGET(Ascend950PR_958b),
+                REGISTER_TARGET(Ascend950PR_958c), REGISTER_TARGET(Ascend950PR_958d),
+                REGISTER_TARGET(Ascend950PR_9599), REGISTER_TARGET(Ascend950PR_959a),
+                REGISTER_TARGET(Ascend950PR_959b), REGISTER_TARGET(Ascend950PR_957bx),
+                REGISTER_TARGET(Ascend950PR_958bx),
                 // Ascend950DT series
                 REGISTER_TARGET(Ascend950DT_950x), REGISTER_TARGET(Ascend950DT_950y),
                 REGISTER_TARGET(Ascend950DT_9571), REGISTER_TARGET(Ascend950DT_9572),
+                REGISTER_TARGET(Ascend950DT_9572x),
                 REGISTER_TARGET(Ascend950DT_9573), REGISTER_TARGET(Ascend950DT_9574),
                 REGISTER_TARGET(Ascend950DT_9575), REGISTER_TARGET(Ascend950DT_9576),
                 REGISTER_TARGET(Ascend950DT_9577), REGISTER_TARGET(Ascend950DT_9578),
-                REGISTER_TARGET(Ascend950DT_9581), REGISTER_TARGET(Ascend950DT_9582),
+                REGISTER_TARGET(Ascend950DT_9581), REGISTER_TARGET(Ascend950DT_9581x),
+                REGISTER_TARGET(Ascend950DT_9582), REGISTER_TARGET(Ascend950DT_9582x),
                 REGISTER_TARGET(Ascend950DT_9583), REGISTER_TARGET(Ascend950DT_9584),
                 REGISTER_TARGET(Ascend950DT_9585), REGISTER_TARGET(Ascend950DT_9586),
                 REGISTER_TARGET(Ascend950DT_9587), REGISTER_TARGET(Ascend950DT_9588),
                 REGISTER_TARGET(Ascend950DT_9591), REGISTER_TARGET(Ascend950DT_9592),
                 REGISTER_TARGET(Ascend950DT_9595), REGISTER_TARGET(Ascend950DT_9596),
                 REGISTER_TARGET(Ascend950DT_95A1), REGISTER_TARGET(Ascend950DT_95A2),
+                // Ascend960 series
+                REGISTER_TARGET(Ascend960),
+                // Ascend960DT series
+                REGISTER_TARGET(Ascend960DT_969B5), REGISTER_TARGET(Ascend960DT_969B6),
+                REGISTER_TARGET(Ascend960DT_968B7), REGISTER_TARGET(Ascend960DT_966B7),
+                REGISTER_TARGET(Ascend960DT_966B8), REGISTER_TARGET(Ascend960DT_961BY),
+                REGISTER_TARGET(Ascend960DT_961BZ),
+                // Ascend960PR series
+                REGISTER_TARGET(Ascend960PR_969A1), REGISTER_TARGET(Ascend960PR_964A1),
+                REGISTER_TARGET(Ascend960PR_936A1),
                 REGISTER_TARGET(Unknown)
-#undef REGISTER_TARGET
-#undef TO_STRING
+  #undef REGISTER_TARGET
+  #undef TO_STRING
 )
   }];
   let compileOptionCategories = ["targetCategory"];
@@ -727,13 +837,13 @@ llvm::cl::values(
 }
 
 def CustomAICNumber : BiShengIRCompileOpt<
-  "Custom amount of aic cores to use (should be lower or equal than targets' real number, default is no override)",
+  "Custom amount of aic cores to use. Must be strictly positive. The target's real number is used when not specified. Required for targets without default core counts.",
   "int32_t",
   "-1"
 >;
 
 def CustomAIVNumber : BiShengIRCompileOpt<
-  "Custom amount of aiv cores to use (should be lower or equal than targets' real number, default is no override)",
+  "Custom amount of aiv cores to use. Must be strictly positive. The target's real number is used when not specified. Required for targets without default core counts.",
   "int32_t",
   "-1"
 >;
@@ -771,6 +881,16 @@ def LinkAicoreBitcode : BiShengIRCompileListOpt<
 > {
   let compileOptionCategories = ["targetCategory"];
   bit isSharedWithDownstreamToolchain = 1;
+}
+
+def EnableOptimizedMetaop
+    : BiShengIRCompileOpt<
+          "Enable optimized (O2) template bitcode; false selects the "
+          "unoptimized "
+          "O0 variant. true attaches the matching ../lib/meta_op.*.O2.bc and "
+          "../lib/host.O2.bc files to the module.",
+          "bool", "true"> {
+  let compileOptionCategories = ["targetCategory"];
 }
 
 /// Note that we don't own `mlir-print-ir-after-all` and
@@ -1005,6 +1125,11 @@ def EnableVFStackLimit : FeatureControlOptions<
   let passGroup = ["HFUSION"];
 }
 
+def EnableVFStackOverflowRetry
+    : FeatureControlOptions<"Automatically retry with enable-vf-stack-limit "
+                            "when the bisheng device compile fails",
+                            "bool", "true">;
+
 def VfFusionMode : FeatureControlOptions<
   "VF fusion mode(max-parallel | all-op |). default is max-parallel",
   "mlir::analysis::FusionMode",
@@ -1055,7 +1180,7 @@ def HfusionEnableCrossIfFusion : FeatureControlOptions<
 def HfusionEnableMultipleConsumerFusion : FeatureControlOptions<
   "Enable multiple consumer fusion in AutoVectorizeV2",
   "bool",
-  "false"
+  "true"
 > {
   let passGroup = ["HFUSION"];
 }
@@ -1185,7 +1310,7 @@ def EnableFuseReductionIntoLoop : GeneralOptimizationControlOptions<
 
 def SimtOptimizationMode : GeneralOptimizationControlOptions<
   "set bishengir simt optimization modes",
-  "int",
+  "uint32_t",
   "900101"
 > {
   bit isSharedWithDownstreamToolchain = 1;
@@ -1227,6 +1352,20 @@ def HfusionMaxFusedElementwiseOps : HFusionOptimizationControlOptions<
   let passGroup = ["HFUSION"];
 }
 
+def EnableOptimizeScalarTransfers : HFusionOptimizationControlOptions<
+  "Lift intermediate scalar chains onto tensor<1xelem>. "
+  "Turned off for one retry after a UB overflow or an autovectorize failure.",
+  "bool",
+  "true"
+>;
+
+def EnableLegalizeScalarFP8 : HFusionOptimizationControlOptions<
+  "Work around backend FP8 phi limitations after HFusion Normalize. "
+  "Disable to test native backend support.",
+  "bool",
+  "true"
+>;
+
 //===----------------------------------------------------------------------===//
 // HIVM Optimization Control Options
 //===----------------------------------------------------------------------===//
@@ -1263,6 +1402,19 @@ def InlineQuantScaleInFixpipe : HIVMOptimizationControlOptions<
   let passGroup = ["HIVM"];
 }
 
+def DecoupledMemoryComputeScheduling : HIVMOptimizationControlOptions<
+  "Enable decoupled memory and compute scheduling for Cube loads (RegBase only).",
+  "bool",
+  "true"
+>;
+
+def UsePipelinev2 : HIVMOptimizationControlOptions<
+  "Enable pipeline v2 for all kernels, overriding the registered-kernel "
+  "v1 default (RegBase only).",
+  "bool",
+  "false"
+>;
+
 //===----------------------------------------------------------------------===//
 // SIMT / Proton / Other Options
 //===----------------------------------------------------------------------===//
@@ -1273,6 +1425,13 @@ def TritonMetadataOutput : BiShengIRCompileOpt<
   "\"\""
 > {
   bit isSharedWithDownstreamToolchain = 1;
+}
+
+def ProtonMetadataOutput
+    : BiShengIRCompileOpt<
+          "File to dump A5 Proton scope metadata. -- means stdout",
+          "std::string", "\"\""> {
+  bit isSharedWithDownstreamToolchain = 0;
 }
 
 def DisableDecomposeReduction : SIMTOptimizationControlOptions<
@@ -1342,7 +1501,7 @@ def EnableSIMTFastDiv : SIMTOptimizationControlOptions<
 def EnableSIMTDeviceDebug : SIMTOptimizationControlOptions<
   "Enable SIMT device print and assert lowering",
   "bool",
-  "false"
+  "true"
 > {
   bit isSharedWithDownstreamToolchain = 0;
 }
@@ -1532,6 +1691,13 @@ def UseDPX : BiShengIRCompileOpt<
 > {
   bit isSharedWithDownstreamToolchain = 1;
 }
+
+def SetMaxPipelineMultibuffer : HIVMOptimizationControlOptions<
+  "Maximum number of multibuffers for pipeline staging. ",
+  "unsigned",
+  "0"
+>;
+
 } // let optionScope = ["A5_ONLY"]
 
 #endif // BISHENGIR_TOOLS_BISHENGIR_COMPILE_OPTIONS_TD

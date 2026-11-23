@@ -59,8 +59,7 @@ static Type getFP8Ty(PatternRewriter &rewriter) {
 }
 
 // TODO-A5: requires proper Dialect/Utils/Util.h porting
-template <typename T>
-static T selectRoundMode(Type inType, Type outType) {
+template <typename T> static T selectRoundMode(Type inType, Type outType) {
   if (isa<Float8E5M2Type>(inType) || isa<Float8E4M3FNType>(inType) ||
       isa<Float8E5M2Type>(outType) || isa<Float8E4M3FNType>(outType))
     return T::RINT;
@@ -80,8 +79,8 @@ static Value castFP8ToF32(PatternRewriter &rewriter, Value src) {
 
 // TODO-A5: requires proper Dialect/Utils/Util.h porting
 static Value castF32ToFP8(PatternRewriter &rewriter, Value src, Type fp8Ty) {
-  auto roundMode = selectRoundMode<hfusion::RoundMode>(
-      rewriter.getF32Type(), fp8Ty);
+  auto roundMode =
+      selectRoundMode<hfusion::RoundMode>(rewriter.getF32Type(), fp8Ty);
   return castTo(rewriter, src, fp8Ty, roundMode);
 }
 
@@ -170,13 +169,22 @@ static bool shouldLegalizeFP8Op(Operation *op) {
 }
 
 template <typename Op, typename FP8Type>
-static Operation *createNewOp(PatternRewriter &rewriter, Op op,
-                              SmallVector<Value> &castedOperands) {
+static Operation *
+createNewOp(PatternRewriter &rewriter, Op op,
+            SmallVector<std::pair<Value, Value>> &mappedOperands,
+            SmallVector<std::pair<unsigned, Value>> &positionalOperands) {
+
   IRMapping mapper;
-  for (const auto &[idx, oper] : llvm::enumerate(op->getOperands()))
-    mapper.map(oper, castedOperands[idx]);
+  for (auto [original, replacement] : mappedOperands) {
+    mapper.map(original, replacement);
+  }
 
   auto *newOp = rewriter.cloneWithoutRegions(*op, mapper);
+
+  for (auto [index, replacement] : positionalOperands) {
+    newOp->setOperand(index, replacement);
+  }
+
   auto *ctx = op->getContext();
   for (const auto &[idx, res] : llvm::enumerate(op->getResults())) {
     ShapedType shapedType = cast<ShapedType>(res.getType());
@@ -251,25 +259,47 @@ static void createF32ElementTypeOp(Op fp8Op, PatternRewriter &rewriter) {
   rewriter.setInsertionPoint(fp8Op);
 
   Type fp8Type = getFP8Ty<FP8Type>(rewriter);
-  Type f32Type = rewriter.getF32Type();
+  [[maybe_unused]] Type f32Type = rewriter.getF32Type();
 
   // Count all the OPs that require casting.
-  SmallVector<Value> castedOperands;
-  for (auto oper : fp8Op->getOperands()) {
-    Value castedOperand = isFP8<FP8Type>(getElementTypeOrSelf(oper.getType()))
-                              ? castFP8ToF32<FP8Type>(rewriter, oper)
-                              : oper;
-    castedOperands.push_back(castedOperand);
+  SmallVector<std::pair<Value, Value>> mappedOperands;
+  SmallVector<std::pair<unsigned, Value>> positionalOperands;
+  for (OpOperand &operand : fp8Op->getOpOperands()) {
+    Value oper = operand.get();
+    Value castedOperand = oper;
+    if (isFP8<FP8Type>(getElementTypeOrSelf(oper.getType()))) {
+      auto linalgOp = dyn_cast<linalg::LinalgOp>(fp8Op.getOperation());
+
+      // A destination supplies only shape when neither its block argument nor
+      // the tensor itself is used in the payload, including nested regions.
+      if (linalgOp && linalgOp.isDpsInit(&operand) &&
+          !linalgOp.payloadUsesValueFromOperand(&operand) &&
+          !llvm::any_of(oper.getUsers(), [&](Operation *user) {
+            return fp8Op->isProperAncestor(user);
+          })) {
+        castedOperand = utils::createEmptyOpWithTargetElemType(
+            rewriter, fp8Op.getLoc(), oper, f32Type);
+        positionalOperands.emplace_back(operand.getOperandNumber(),
+                                        castedOperand);
+      } else {
+        castedOperand = castFP8ToF32<FP8Type>(rewriter, oper);
+        mappedOperands.emplace_back(oper, castedOperand);
+      }
+    } else {
+      mappedOperands.emplace_back(oper, castedOperand);
+    }
   }
 
-  auto newOp = createNewOp<Op, FP8Type>(rewriter, fp8Op, castedOperands);
+  auto newOp = createNewOp<Op, FP8Type>(rewriter, fp8Op, mappedOperands,
+                                        positionalOperands);
   createF32ElementTypeOpRegion<Operation *, FP8Type>(newOp, rewriter);
 
   rewriter.setInsertionPointAfter(newOp);
   SmallVector<Value> castedResults;
   for (auto res : newOp->getResults()) {
     auto resType = getElementTypeOrSelf(res.getType());
-    Value castedResult = resType.isF32() ? castF32ToFP8(rewriter, res, fp8Type) : res;
+    Value castedResult =
+        resType.isF32() ? castF32ToFP8(rewriter, res, fp8Type) : res;
     castedResults.push_back(castedResult);
   }
 
@@ -285,8 +315,7 @@ static LogicalResult legalizeFP8(Op op, PatternRewriter &rewriter) {
   return success();
 }
 
-template <typename Op>
-struct LegalizeFP8E4M3 : public OpRewritePattern<Op> {
+template <typename Op> struct LegalizeFP8E4M3 : public OpRewritePattern<Op> {
   using OpRewritePattern<Op>::OpRewritePattern;
   LogicalResult matchAndRewrite(Op op,
                                 PatternRewriter &rewriter) const override {
@@ -294,8 +323,7 @@ struct LegalizeFP8E4M3 : public OpRewritePattern<Op> {
   }
 };
 
-template <typename Op>
-struct LegalizeFP8E5M2 : public OpRewritePattern<Op> {
+template <typename Op> struct LegalizeFP8E5M2 : public OpRewritePattern<Op> {
   using OpRewritePattern<Op>::OpRewritePattern;
   LogicalResult matchAndRewrite(Op op,
                                 PatternRewriter &rewriter) const override {
@@ -319,8 +347,8 @@ void populateLegalizeFP8Pattern(RewritePatternSet &patterns) {
               mlir::linalg::ReduceOp, mlir::hfusion::CastOp,
               mlir::hfusion::CompareOp, mlir::hfusion::CumsumOp,
               mlir::hfusion::ElemwiseBinaryOp, mlir::hfusion::ElemwiseUnaryOp,
-              mlir::hfusion::ReduceWithIndexOp,
-              mlir::hfusion::PrintOp>(patterns);
+              mlir::hfusion::ReduceWithIndexOp, mlir::hfusion::PrintOp>(
+      patterns);
 }
 
 void LegalizeFP8Pass::runOnOperation() {

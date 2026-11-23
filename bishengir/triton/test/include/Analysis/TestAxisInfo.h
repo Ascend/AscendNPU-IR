@@ -12,7 +12,7 @@ namespace mlir::test {
 struct TestAxisInfoPass
     : public PassWrapper<TestAxisInfoPass, OperationPass<ModuleOp>> {
 
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestAxisInfoPass);
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestAxisInfoPass)
 
   StringRef getArgument() const override { return "test-print-alignment"; }
   StringRef getDescription() const final {

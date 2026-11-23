@@ -28,10 +28,12 @@
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/DialectImplementation.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
@@ -213,6 +215,17 @@ TypedValue<IntegerType> PointerCastOp::getSingleAddr() {
   return cast<TypedValue<IntegerType>>(getAddrs()[0]);
 }
 
+LogicalResult PoolSlotOp::verify() {
+  auto root = getSource().getDefiningOp<PointerCastOp>();
+  if (!root || root.getAddrs().empty())
+    return emitOpError("source must be a planned pointer_cast address table");
+  APInt slot;
+  if (matchPattern(getSlot(), m_ConstantInt(&slot)) &&
+      (slot.isNegative() || slot.getZExtValue() >= root.getAddrs().size()))
+    return emitOpError("constant slot is outside the source address table");
+  return success();
+}
+
 LogicalResult PointerCastOp::verify() {
   auto addrs = getAddrs();
   if (addrs.empty()) {
@@ -387,8 +400,8 @@ void hivm::detail::printHIVMStructuredDPSOp(OpAsmPrinter &p, Operation *op,
 }
 
 namespace {
-bool shouldMapToUnsigned(IntegerType::SignednessSemantics val,
-                         hivm::TypeFn casting) {
+[[maybe_unused]] bool shouldMapToUnsigned(IntegerType::SignednessSemantics val,
+                                          hivm::TypeFn casting) {
   if (hivm::TypeFn::cast_unsigned == casting)
     return true;
 
@@ -448,12 +461,15 @@ LogicalResult ConvertLayoutOp::verify() {
            << numDynamic << " dynamic dimensions but got "
            << getOutputShape().size();
   }
-  if (auto groupsAttr = (*this)->getAttr("groups")) {
+  if (auto groupsAttr =
+          getOperation()->getDiscardableAttr(kConvolutionGroupsAttrName)) {
     auto groups = dyn_cast<IntegerAttr>(groupsAttr);
     if (!groups || !groups.getType().isInteger(64))
-      return emitOpError("requires groups to be an i64 integer attribute");
+      return emitOpError() << "requires " << kConvolutionGroupsAttrName
+                           << " to be an i64 integer attribute";
     if (groups.getInt() <= 0)
-      return emitOpError("requires groups to be positive");
+      return emitOpError() << "requires " << kConvolutionGroupsAttrName
+                           << " to be positive";
   }
   return success();
 }
@@ -610,7 +626,7 @@ void IndirectStoreOp::getEffects(
 //===----------------------------------------------------------------------===//
 
 namespace {
-std::string debugCallNameMangleSuffix(Operation *op) {
+[[maybe_unused]] std::string debugCallNameMangleSuffix(Operation *op) {
   std::string suffix = "";
   ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
   if (!moduleOp) {
@@ -994,7 +1010,10 @@ LogicalResult IndirectLoadOp::verify() {
 
     auto otherElementType = otherMemrefType ? otherMemrefType.getElementType()
                                             : otherTensorType.getElementType();
-    if (otherElementType != srcElementType) {
+    auto mod = (*this)->getParentOfType<ModuleOp>();
+    bool isReg = mod && hacc::utils::isRegBasedArch(mod);
+    bool isF64ToF32Other = srcElementType.isF64() && otherElementType.isF32();
+    if (otherElementType != srcElementType && !(isReg && isF64ToF32Other)) {
       return emitOpError("other of hfusion::IndirectLoadOp must have the same "
                          "element type as src");
     }
@@ -1102,4 +1121,113 @@ void EmbeddingGatherOp::getEffects(
                        SideEffects::DefaultResource::get());
   effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
                        SideEffects::DefaultResource::get());
+}
+
+namespace {
+LogicalResult verifyTcbMetadata(Operation *op, Value metadata) {
+  auto type = cast<MemRefType>(metadata.getType());
+  SmallVector<int64_t> strides;
+  int64_t offset;
+  if (getOptionalHIVMAddressSpace(type) != AddressSpace::SSBUF ||
+      !type.hasStaticShape() ||
+      failed(utils::getStridesAndOffsetCompat(type, strides, offset)) ||
+      strides[0] != 1)
+    return op->emitOpError(
+        "metadata must be a static contiguous i32 SSBuffer vector");
+  return success();
+}
+
+LogicalResult verifyTcbCore(Operation *op, TCoreType expected) {
+  auto func = op->getParentOfType<func::FuncOp>();
+  if (!func)
+    return success();
+  auto type = queryFuncCoreType(func);
+  if (type && ((*type == TFuncCoreType::AIC && expected != TCoreType::CUBE) ||
+               (*type == TFuncCoreType::AIV && expected != TCoreType::VECTOR)))
+    return op->emitOpError("operation is on the wrong core");
+  return success();
+}
+
+LogicalResult verifyTcbPool(Operation *op, Value metadata, Value pool,
+                            int64_t segment) {
+  if (segment < 0 || segment >= 2)
+    return op->emitOpError("segment must be 0 or 1");
+  auto type = cast<MemRefType>(pool.getType());
+  if (getOptionalHIVMAddressSpace(type) != AddressSpace::UB ||
+      !type.hasStaticShape() || !type.getLayout().isIdentity() ||
+      type.getNumElements() <= 0 || type.getNumElements() % 32)
+    return op->emitOpError(
+        "pool must be a static contiguous aligned i8 UB vector");
+  for (Operation *other : metadata.getUsers()) {
+    if (auto init = dyn_cast<TcbPoolInitOp>(other)) {
+      if (init.getSlotBytes() > 0 && init.getSlotCount() > 0 &&
+          type.getNumElements() !=
+              int64_t(init.getSlotBytes()) * init.getSlotCount())
+        return op->emitOpError(
+            "pool size must match initialized slot geometry");
+    }
+    if (isa<TcbPoolAllocOp, TcbPoolGetOp>(other) &&
+        other->getOperand(1) != pool)
+      return op->emitOpError("shared metadata must use the same pool");
+  }
+  return success();
+}
+} // namespace
+
+LogicalResult TcbPoolInitOp::verify() {
+  if (failed(verifyTcbMetadata(*this, getMetadata())) ||
+      failed(verifyTcbCore(*this, TCoreType::CUBE)))
+    return failure();
+  if (getSlotBytesAttr().getInt() <= 0 || getSlotBytes() % 32 ||
+      getSlotCountAttr().getInt() <= 0)
+    return emitOpError("slot bytes must be positive and 32-byte aligned, and "
+                       "slot count positive");
+  auto slots = getSlotsPerBuffer();
+  if (slots.size() != 2 ||
+      llvm::any_of(slots, [](int32_t n) { return n <= 0; }))
+    return emitOpError("slots_per_buffer must contain two positive demands");
+  auto begin = getSearchBegin();
+  auto end = getSearchEnd();
+  if (begin.size() != 2 || end.size() != 2)
+    return emitOpError(
+        "search_begin and search_end must each contain two slots");
+  for (unsigned q = 0; q < 2; ++q)
+    if (begin[q] < 0 || int64_t(end[q]) > getSlotCount() ||
+        int64_t(end[q]) - begin[q] < slots[q])
+      return emitOpError(
+          "search regions must fit each queue demand within pool capacity");
+  uint32_t mask = getFlagMask();
+  if (!mask || mask > 0xffff)
+    return emitOpError("flag_mask must be nonzero and use only IDs in [0,15]");
+  unsigned flags = llvm::APInt(32, mask).popcount();
+  // Config, release state and per-core address indices occupy 18 i32 words.
+  constexpr int64_t kHeaderWords = 18;
+  // Two depth-three address queues, with two words per entry.
+  constexpr int64_t kAddressQueueWords = 2 * 3 * 2;
+  constexpr int64_t kReleaseEntryWords = 3;
+  int64_t requiredWords = kHeaderWords + int64_t(getSlotCount()) +
+                          kAddressQueueWords + kReleaseEntryWords * flags;
+  if (cast<MemRefType>(getMetadata().getType()).getDimSize(0) < requiredWords)
+    return emitOpError("metadata is too small for the configured pool");
+  return success();
+}
+
+LogicalResult TcbPoolAllocOp::verify() {
+  if (failed(verifyTcbMetadata(*this, getMetadata())) ||
+      failed(verifyTcbCore(*this, TCoreType::CUBE)))
+    return failure();
+  return verifyTcbPool(*this, getMetadata(), getPool(), getSegment());
+}
+
+LogicalResult TcbPoolGetOp::verify() {
+  if (failed(verifyTcbMetadata(*this, getMetadata())) ||
+      failed(verifyTcbCore(*this, TCoreType::VECTOR)))
+    return failure();
+  return verifyTcbPool(*this, getMetadata(), getPool(), getSegment());
+}
+
+LogicalResult TcbPoolReleaseOp::verify() {
+  if (failed(verifyTcbMetadata(*this, getMetadata())))
+    return failure();
+  return verifyTcbCore(*this, TCoreType::CUBE);
 }

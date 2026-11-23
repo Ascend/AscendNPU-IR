@@ -15,6 +15,14 @@ __aicore__ inline void SetHF32Mode(bool hf32Mode) {
   }
 }
 
+__aicore__ inline void SetHF32TransMode(bool hf32TransMode) {
+  if (hf32TransMode) {
+    set_ctrl(sbitset1(get_ctrl(), HF32_TRANS_MODE_BIT));
+  } else {
+    set_ctrl(sbitset0(get_ctrl(), HF32_TRANS_MODE_BIT));
+  }
+}
+
 } // namespace AscendCBisheng
 
 #endif // ASCENDC_BISHENG_OP_SET_HF32_MODE_HPP

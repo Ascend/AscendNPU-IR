@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/PatternMatch.h"
@@ -443,6 +444,48 @@ Value CodeGenerator::getNestedIndexModular(IRRewriter &rewriter,
   return modularIndex;
 }
 
+Value CodeGenerator::getPoolSlotEventId(IRRewriter &rewriter,
+                                        SetWaitOp *syncOp) {
+  Value slot = syncOp->eventIdInfo.bufferSlot;
+  Value &cached = explicitBufferSelectedMem[slot][syncOp->eventIds];
+  if (cached)
+    return cached;
+  PatternRewriter::InsertionGuard guard(rewriter);
+  if (Operation *def = slot.getDefiningOp())
+    rewriter.setInsertionPointAfter(def);
+  else
+    rewriter.setInsertionPointToStart(cast<BlockArgument>(slot).getOwner());
+
+  bool consecutive = true;
+  for (size_t i = 1; i < syncOp->eventIds.size(); ++i)
+    consecutive &= syncOp->eventIds[i - 1] + 1 == syncOp->eventIds[i];
+  if (!consecutive) {
+    Value selected;
+    for (auto [i, eventId] : llvm::enumerate(syncOp->eventIds)) {
+      Value value = rewriter.create<arith::ConstantOp>(
+          slot.getLoc(), rewriter.getI64IntegerAttr(eventId));
+      if (!selected) {
+        selected = value;
+        continue;
+      }
+      Value index = rewriter.create<arith::ConstantIndexOp>(slot.getLoc(), i);
+      Value matches = rewriter.create<arith::CmpIOp>(
+          slot.getLoc(), arith::CmpIPredicate::eq, slot, index);
+      selected = rewriter.create<arith::SelectOp>(slot.getLoc(), matches, value,
+                                                  selected);
+    }
+    return cached = selected;
+  }
+
+  Value eventId = slot;
+  if (int64_t base = syncOp->eventIds.front())
+    eventId = rewriter.create<arith::AddIOp>(
+        slot.getLoc(), slot,
+        rewriter.create<arith::ConstantIndexOp>(slot.getLoc(), base));
+  return cached = rewriter.createOrFold<arith::IndexCastOp>(
+             slot.getLoc(), rewriter.getI64Type(), eventId);
+}
+
 Value CodeGenerator::getMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
                                                        SetWaitOp *syncOp) {
   assert(syncOp != nullptr);
@@ -493,6 +536,8 @@ Value CodeGenerator::getMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
 Value CodeGenerator::getMultiBufferSelectOp(IRRewriter &rewriter,
                                             SetWaitOp *syncOp) {
   assert(syncOp != nullptr);
+  if (syncOp->eventIdInfo.bufferSlot)
+    return getPoolSlotEventId(rewriter, syncOp);
 
   int64_t preloadOffset = 0;
   Loop *multibufferLoopOp{nullptr};
@@ -873,6 +918,31 @@ void CodeGenerator::insertMmadL1SyncArgs(IRRewriter &rewriter) {
   }
 }
 
+// Create the function-scoped L0 ping-pong signal and attach it to MMAD ops.
+void CodeGenerator::insertPingPongSignal(IRRewriter &rewriter) {
+  if (funcOp.isExternal() || funcOp.getBody().empty())
+    return;
+
+  SmallVector<hivm::LocalMatmulLikeOpInterface> mmads;
+  funcOp.walk(
+      [&](hivm::LocalMatmulLikeOpInterface op) { mmads.push_back(op); });
+  if (mmads.empty())
+    return;
+
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointToStart(&funcOp.getBody().front());
+  Location loc = funcOp.getLoc();
+  auto memTy = MemRefType::get({}, rewriter.getI32Type());
+  auto alloca = rewriter.create<memref::AllocaOp>(loc, memTy);
+  alloca->setAttr(PingPongSignalAttr::name, rewriter.getUnitAttr());
+  Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+  rewriter.create<memref::StoreOp>(loc, zero, alloca.getResult(), ValueRange{});
+  Value signal = alloca.getResult();
+
+  for (hivm::LocalMatmulLikeOpInterface op : mmads)
+    op.setPingPongSignal(signal);
+}
+
 // Create and propagate sync args into MmadMxL1 op arguments.
 void CodeGenerator::insertMmadMxL1SyncArgs(IRRewriter &rewriter) {
   for (auto &[mmadMxL1Op, syncArgs] : mmadMxL1SyncArgsMap) {
@@ -975,7 +1045,9 @@ void CodeGenerator::generateResultOps() {
   if (options.isIntraCoreMode()) {
     insertMmadL1SyncArgs(rewriter);
     insertMmadMxL1SyncArgs(rewriter);
+    insertPingPongSignal(rewriter);
     customMacroCodegen.populateSyncRelatedArgs(funcOp, rewriter);
+    bufferPoolSync.eraseBoundaries();
     insertPipeMPipeMte1OuterBwdPairs(rewriter);
     handleUnitFlagEnabledOps(rewriter);
     insertBarrierAllBeforeReturn(rewriter);

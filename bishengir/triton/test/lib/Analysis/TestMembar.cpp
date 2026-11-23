@@ -11,7 +11,7 @@ namespace {
 struct TestMembarPass
     : public PassWrapper<TestMembarPass, OperationPass<ModuleOp>> {
 
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestMembarPass);
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestMembarPass)
 
   StringRef getArgument() const final { return "test-print-membar"; }
   StringRef getDescription() const final {

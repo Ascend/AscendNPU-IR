@@ -1,3 +1,29 @@
+# Loop-shape fingerprints consumed by CV / HFusion heuristics are generated at
+# build time. Declare the dependency before creating the dialect library so its
+# object library also waits for the generated include.
+set(SHAPE_REGISTRY
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../build-tools/coverage/shape_registry.py")
+if(NOT EXISTS "${SHAPE_REGISTRY}" AND DEFINED LLVM_EXTERNAL_BISHENGIR_SOURCE_DIR)
+  set(SHAPE_REGISTRY
+      "${LLVM_EXTERNAL_BISHENGIR_SOURCE_DIR}/../build-tools/coverage/shape_registry.py")
+endif()
+find_package(Python3 QUIET COMPONENTS Interpreter)
+set(SKEW_SHAPE_TABLE ${CMAKE_CURRENT_BINARY_DIR}/SkewShapeTable.inc)
+set(SKEW_SHAPE_TABLE_TARGET)
+if(Python3_Interpreter_FOUND)
+  add_custom_command(
+    OUTPUT ${SKEW_SHAPE_TABLE}
+    COMMAND ${Python3_EXECUTABLE} ${SHAPE_REGISTRY} --emit-cxx ${SKEW_SHAPE_TABLE}
+    DEPENDS ${SHAPE_REGISTRY}
+    COMMENT "Generating loop-shape fingerprints"
+    VERBATIM)
+  add_custom_target(BiShengIRSkewShapeTable DEPENDS ${SKEW_SHAPE_TABLE})
+  set(SKEW_SHAPE_TABLE_TARGET BiShengIRSkewShapeTable)
+else()
+  file(WRITE ${SKEW_SHAPE_TABLE}
+       "namespace {\nconstexpr unsigned kSpanKeyCount = 0;\nconstexpr uint64_t kSpanKeys[1] = {0ULL};\nconstexpr unsigned kSkipBindKeyCount = 0;\nconstexpr uint64_t kSkipBindKeys[1] = {0ULL};\nconstexpr unsigned kDedupL1SkipKeyCount = 0;\nconstexpr uint64_t kDedupL1SkipKeys[1] = {0ULL};\nconstexpr unsigned kLegacyCVPipelineKeyCount = 0;\nconstexpr uint64_t kLegacyCVPipelineKeys[1] = {0ULL};\n}\n")
+endif()
+
 file(GLOB HIVM_FLATTEN ${CMAKE_CURRENT_SOURCE_DIR}/FlattenInterface/*.cpp)
 file(GLOB HIVM_STRUCTURE ${CMAKE_CURRENT_SOURCE_DIR}/StructuredOpInterface/*.cpp)
 file(GLOB HIVM_AGGREGATED ${CMAKE_CURRENT_SOURCE_DIR}/BiShengIRAggregatedOpInterface/*.cpp)
@@ -8,10 +34,21 @@ file(GLOB HIVM_LAYOUT ${CMAKE_CURRENT_SOURCE_DIR}/OpLayoutInterface/*.cpp)
 file(GLOB HIVM_LIBRARY_FUNCTION ${CMAKE_CURRENT_SOURCE_DIR}/LibraryFunctionOpInterface/*.cpp)
 file(GLOB HIVM_PIPE ${CMAKE_CURRENT_SOURCE_DIR}/OpPipeInterface/*.cpp)
 file(GLOB HIVM_VECTOR_BASE ${CMAKE_CURRENT_SOURCE_DIR}/VectorOpBase/*.cpp)
-file(GLOB HIVM_VECTORIZE ${CMAKE_CURRENT_SOURCE_DIR}/Vectorize/*.cpp)
+file(GLOB_RECURSE HIVM_CONTRACT ${CMAKE_CURRENT_SOURCE_DIR}/Contracts/*.cpp)
 file(GLOB HIVM_CANONICALIZATIONS ${CMAKE_CURRENT_SOURCE_DIR}/Canonicalizations/*.cpp)
 file(GLOB HIVM_CUSTOM_OP ${CMAKE_CURRENT_SOURCE_DIR}/CustomOp/*.cpp)
-file(GLOB HIVM_VECTORIZE ${CMAKE_CURRENT_SOURCE_DIR}/Vectorize/*.cpp)
+
+# Standalone IR builds never configure lib/Target. Compile the CubeLoad
+# query into this dialect there, and link BiShengIRNPUCubeLoadCapability
+# in the normal build.
+set(CUBELOAD_CAPABILITY_SOURCES)
+set(CUBELOAD_CAPABILITY_LIBS)
+if(BISHENGIR_BUILD_STANDALONE_IR_ONLY)
+  list(APPEND CUBELOAD_CAPABILITY_SOURCES
+       ../../../Target/NPU/DMA/CubeLoad/CubeLoadCapability.cpp)
+else()
+  list(APPEND CUBELOAD_CAPABILITY_LIBS BiShengIRNPUCubeLoadCapability)
+endif()
 
 add_bishengir_dialect_library(BiShengIRHIVMDialect
   ${HIVM_FLATTEN}
@@ -24,10 +61,8 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   ${HIVM_LIBRARY_FUNCTION}
   ${HIVM_PIPE}
   ${HIVM_VECTOR_BASE}
-  ${HIVM_VECTORIZE}
   ${HIVM_CANONICALIZATIONS}
   ${HIVM_CUSTOM_OP}
-  ${HIVM_VECTORIZE}
   HIVMCanonicalizations.cpp
   HIVMDialect.cpp
   HIVMDialectExtension.cpp
@@ -35,6 +70,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   HIVMImpl.cpp
   HIVMInterfaces.cpp
   HIVMIntrinOps.cpp
+  ${HIVM_CONTRACT}
 
   HIVMMacroOps.cpp
   HIVMOps.cpp
@@ -42,11 +78,15 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   HIVMTraits.cpp
   HIVMVectorOps.cpp
   StoreLikeOpInterface.cpp
+  ../Utils/HIVMAliasAnalysis.cpp
   ../Utils/Utils.cpp
+  ../Utils/ShapeRegistry.cpp
+  ${SKEW_SHAPE_TABLE}
   ../Utils/RegbaseUtils.cpp
   ../Utils/MultiBufferLoopAdapter.cpp
   ../Utils/WorklistBuilder.cpp
   ../Utils/MemrefAliasAnalysisState.cpp
+  ${CUBELOAD_CAPABILITY_SOURCES}
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM
@@ -54,6 +94,8 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM/Utils
 
   DEPENDS
+  ${SKEW_SHAPE_TABLE_TARGET}
+  BiShengIRFixpipePreQuantContractIncGen
   BiShengIRHIVMIncGen
   BiShengIRHIVMEnumsIncGen
   BiShengIRHIVMAttributesIncGen
@@ -64,13 +106,18 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   BiShengIRHIVMVectorOpsIncGen
   BiShengIRHIVMSynchronizationOpsIncGen
   BiShengIRScopeIncGen
+  BiShengIRCubeLoadCapabilityIncGen
+  BiShengIRCubeLoadCapabilityBindingIncGen
 
   LINK_LIBS PUBLIC
   BiShengIRAnnotationDialect
   BiShengIRScopeDialect
   BiShengIRMathExtDialect
+  MLIRAnalysis
+  MLIRAffineDialect
   MLIRBufferizationDialect
   MLIRArithDialect
+  MLIRDataLayoutInterfaces
   MLIRDestinationStyleOpInterface
   MLIRLinalgDialect
   MLIRLLVMDialect
@@ -81,10 +128,15 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   MLIRSCFDialect
   MLIRTransformUtils
   MLIRTensorDialect
+  MLIRTensorUtils
+  MLIRValueBoundsOpInterface
   MLIRVectorDialect
   MLIRViewLikeInterface
   MLIRVectorDialect
   BiShengIRDialectUtils
   BiShengIRHACCDialect
   BiShengIRHACCUtils
+  ${CUBELOAD_CAPABILITY_LIBS}
 )
+
+target_include_directories(BiShengIRHIVMDialect PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "ArchDefs.h"
 #include "RegBase/DMAUtils.h"
 
 template <typename T>
@@ -26,17 +27,25 @@ check_inputs_of_load_gm_to_ubuf_3d_core(memref_t<__gm__ T, 3> *src,
   auto stride0_ub = dst->strides[0];
   auto stride1_ub = dst->strides[1];
   auto stride2_ub = dst->strides[2];
+  // A fully packed tile drives the DMA in Compact mode, where the UB strides
+  // are byte granular by design. Kept inline because isUbufTileFullyPacked3d
+  // lives in the reg-based section below. Mirrors the gates in
+  // load_gm_to_ubuf_3d_core.
+  bool packed_tile = left_padding_num == 0 && stride2_ub == 1 &&
+                     stride1_ub == src->sizes[2] &&
+                     stride0_ub == src->sizes[1] * src->sizes[2];
   assert(isAddress32ByteAligned(dst_ptr) &&
          "The starting address of dst must be 32byte aligned.");
-  assert(((isSizeAlignedToBlock<T>(stride0_ub) || stride0_ub == 1) &&
-          (isSizeAlignedToBlock<T>(stride1_ub) || stride1_ub == 1) &&
-          (isSizeAlignedToBlock<T>(stride2_ub) || stride2_ub == 1)) &&
-         "The dst strides[0]/strides[1]/strides[2] must be 1 or aligned to"
-         "block.");
+  assert((packed_tile ||
+          ((isSizeAlignedToBlock<T>(stride0_ub) || stride0_ub == 1) &&
+           (isSizeAlignedToBlock<T>(stride1_ub) || stride1_ub == 1) &&
+           (isSizeAlignedToBlock<T>(stride2_ub) || stride2_ub == 1))) &&
+         "The dst strides[0]/strides[1]/strides[2] must be 1, aligned to "
+         "block, or a fully packed tile without left padding.");
 #endif
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 template <typename T>
 __aiv__ __attribute__((always_inline)) bool
 hasUnalignedUbufStrideFor3dDma(int64_t size1, int64_t size2, int64_t stride0_ub,
@@ -53,6 +62,97 @@ hasUnalignedUbufStrideFor3dDma(int64_t size1, int64_t size2, int64_t stride0_ub,
   }
   return !isStrideAligned<T>(stride1_ub);
 }
+
+/// Return "true" if the UB tile holds the transfer with no gap at any level,
+/// so that every level's stride equals the length actually moved there. The
+/// ALIGN_V2 descriptor then gets dst_stride == burst_len: the hardware's
+/// Compact mode, whose UB stride is byte granular and need not be a multiple
+/// of 32B (see CANN CopyGmToUbufAlignV2, PaddingMode::Compact). Compact mode
+/// forbids padding, so callers must also require left_padding_num == 0.
+///
+/// The lengths are taken from the GM operand because that is what
+/// load_gm_to_ubuf_3d_core_with_contiguous_last_dim uses to derive burst_len
+/// and the UB gap. Judging packedness against the UB sizes instead would not
+/// imply a zero gap whenever the two operands disagree.
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+isUbufTileFullyPacked3d(const memref_t<__gm__ T, 3> *gm,
+                        const memref_t<__ubuf__ T, 3> *ub) {
+  return ub->strides[2] == 1 && ub->strides[1] == gm->sizes[2] &&
+         ub->strides[0] == gm->sizes[1] * gm->sizes[2];
+}
+
+// Address arithmetic guard only: the memref allocation remains the producer's
+// responsibility. Never replace the missing allocation length with UB capacity.
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+isBroadcastLayout3dValid(int64_t offset, int64_t planes, int64_t rows,
+                         int64_t width, int64_t planeStride, int64_t rowStride,
+                         int64_t innerStride) {
+  constexpr int64_t limit = INT64_MAX / sizeof(T);
+  if (offset < 0 || offset > limit || planes <= 0 || rows <= 0 || width <= 0 ||
+      width > limit - offset || innerStride != 1 || rowStride < width ||
+      rows - 1 > (limit - offset - width) / rowStride)
+    return false;
+  const int64_t planeSpan = (rows - 1) * rowStride + width;
+  return planeStride >= planeSpan &&
+         planes - 1 <= (limit - offset - planeSpan) / planeStride;
+}
+
+#if BISHENG_TPL_920R1
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool canUseNddmaForOrdinaryLoad3d(
+    const memref_t<__gm__ T, 3> *src, const memref_t<__ubuf__ T, 3> *dst,
+    PadMode pad_mode, bool has_padding, EvictionPolicy eviction_policy,
+    AtomicKind atomic_kind) {
+  const int64_t planes = src->sizes[0];
+  const int64_t rows = src->sizes[1];
+  const int64_t width = src->sizes[2];
+  const int64_t stride0_gm = src->strides[0];
+  const int64_t stride0_ub = dst->strides[0];
+  const int64_t stride1_gm = src->strides[1];
+  const int64_t stride1_ub = dst->strides[1];
+  const int64_t stride2_gm = src->strides[2];
+  const int64_t stride2_ub = dst->strides[2];
+  // Products below are evaluated only after the field bounds, and are
+  // at most 20-by-32 bits. This is not an allocation-capacity proof:
+  // ordinary load retains the original memref access domain.
+  return pad_mode == PadMode::Null && !has_padding &&
+         atomic_kind == AtomicKind::None &&
+         eviction_policy == EvictionPolicy::EvictFirst && planes > 0 &&
+         planes <= 0xfffff && rows > 0 && rows <= 0xfffff && width > 0 &&
+         width <= 0xfffff && width % (128 / sizeof(T)) == 0 &&
+         planes == dst->sizes[0] && rows == dst->sizes[1] &&
+         width == dst->sizes[2] && stride2_gm == 1 && stride2_ub == 1 &&
+         stride0_gm <= 0xffffffffLL && stride1_gm <= 0xffffffffLL &&
+         stride0_ub <= 0xfffff && stride1_ub <= 0xfffff &&
+         stride1_gm >= width && stride1_ub >= width &&
+         stride0_gm >= rows * stride1_gm && stride0_ub >= rows * stride1_ub &&
+         isStrideAligned<T>(stride0_ub) && isStrideAligned<T>(stride1_ub) &&
+         src->offset >= 0 && dst->offset >= 0 &&
+         src->offset <= INT64_MAX / sizeof(T) - (planes - 1) * stride0_gm -
+                            (rows - 1) * stride1_gm - width &&
+         dst->offset <= INT64_MAX / sizeof(T) - (planes - 1) * stride0_ub -
+                            (rows - 1) * stride1_ub - width;
+}
+
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+isBroadcastLoad3dValid(const memref_t<__gm__ T, 3> *src,
+                       const memref_t<__ubuf__ T, 3> *dst,
+                       AtomicKind atomic_kind, unsigned axes) {
+  return sizeof(T) <= 4 && atomic_kind == AtomicKind::None &&
+         (!(axes & 1) || (src->sizes[0] == 1 && dst->sizes[0] <= 0xfffff)) &&
+         (!(axes & 2) || (src->sizes[1] == 1 && dst->sizes[1] <= 0xfffff)) &&
+         (!(axes & 4) || (src->sizes[2] == 1 && dst->sizes[2] <= 0xfffff)) &&
+         isBroadcastLayout3dValid<T>(src->offset, src->sizes[0], src->sizes[1],
+                                     src->sizes[2], src->strides[0],
+                                     src->strides[1], src->strides[2]) &&
+         isBroadcastLayout3dValid<T>(dst->offset, dst->sizes[0], dst->sizes[1],
+                                     dst->sizes[2], dst->strides[0],
+                                     dst->strides[1], dst->strides[2]);
+}
+#endif
 
 /// Core func of loading GM -> UB, 3D
 /// UB starting address must be 32B aligned; otherwise, it degrades to looped
@@ -88,11 +188,43 @@ hasUnalignedUbufStrideFor3dDma(int64_t size1, int64_t size2, int64_t stride0_ub,
 ///       DMA transferring multiple bursts per instruction might yield slightly
 ///       better performance than pure scalar transfer, this corner case will
 ///       not be optimized for now.
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
     memref_t<__gm__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst, PadMode pad_mode,
     typename PadValueType<T>::type pad_value, int64_t left_padding_num,
     EvictionPolicy eviction_policy, AtomicKind atomic_kind = AtomicKind::None) {
+#if BISHENG_TPL_920R1
+  // Reuse the old rank-3 axis-mask dispatch, without its capacity/alignment
+  // policies. A legal narrow row must retain broadcast semantics in scalar.
+  if (pad_mode == PadMode::Null && left_padding_num == 0 &&
+      (src->sizes[0] != dst->sizes[0] || src->sizes[1] != dst->sizes[1] ||
+       src->sizes[2] != dst->sizes[2])) {
+    if (is_no_op<3>(dst->sizes))
+      return;
+    const unsigned axes = (src->sizes[0] != dst->sizes[0] ? 1 : 0) |
+                          (src->sizes[1] != dst->sizes[1] ? 2 : 0) |
+                          (src->sizes[2] != dst->sizes[2] ? 4 : 0);
+    const bool valid = isBroadcastLoad3dValid<T>(src, dst, atomic_kind, axes);
+    const bool encodable =
+        dst->sizes[0] <= 0xfffff && dst->sizes[1] <= 0xfffff &&
+        dst->sizes[2] <= 0xfffff && dst->strides[0] <= 0xfffff &&
+        dst->strides[1] <= 0xfffff && src->strides[0] <= 0xffffffffLL &&
+        src->strides[1] <= 0xffffffffLL;
+    if (!valid) {
+      __builtin_cce_trap_mov(1);
+      return;
+    }
+    if constexpr (sizeof(T) <= 4) {
+      if (encodable && dst->sizes[2] % (128 / sizeof(T)) == 0) {
+        load_gm_to_ubuf_3d_by_nddma<T>(
+            src, dst, static_cast<uint8_t>(eviction_policy), axes);
+        return;
+      }
+    }
+    load_gm_to_ubuf_3d_by_scalar_brc_pad<T, DisableDCache>(src, dst, axes);
+    return;
+  }
+#endif
   if (is_no_op<3>(src->sizes)) {
     return;
   }
@@ -109,7 +241,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
 
   auto dst_ptr = dst->aligned + dst->offset;
   if (!isAddress32ByteAligned(dst_ptr)) {
-    load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+    load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
     return;
   }
 
@@ -126,14 +258,39 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
   // offset. Keep those on the scalar path.
   if (stride0_gm < 0 || stride1_gm < 0 || stride2_gm < 0 || stride0_ub < 0 ||
       stride1_ub < 0 || stride2_ub < 0) [[unlikely]] {
-    load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+    load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
     return;
   }
+#if BISHENG_TPL_920R1
+  if constexpr (sizeof(T) <= 4) {
+    // The existing 3D emitter has the default cache policy. Leave other
+    // policies on the original path instead of silently dropping them.
+    if (canUseNddmaForOrdinaryLoad3d<T>(src, dst, pad_mode, has_padding,
+                                        eviction_policy, atomic_kind)) {
+      load_gm_to_ubuf_3d_by_nddma<T>(src, dst);
+      return;
+    }
+  }
+#endif
+
   if (((stride0_gm < stride1_gm || stride1_gm < stride2_gm) ||
        (stride0_ub < stride1_ub || stride1_ub < stride2_ub))) {
+#if BISHENG_TPL_920R1
+    // A6 cost model: when the rows stay contiguous and the UB row/plane
+    // strides are 32B aligned, block DMA is the faster engine; everything
+    // else keeps the descriptor.
+    if (stride2_gm == 1 && stride2_ub == 1 && !has_padding &&
+        !hasUnalignedUbufStrideFor3dDma<T>(dst->sizes[1], dst->sizes[2],
+                                           dst->strides[0], dst->strides[1],
+                                           src->strides[0], src->strides[1])) {
+      load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T, DisableDCache>(
+          src, dst, left_padding_num, l2_cache_ctl);
+      return;
+    }
+#endif
     // Implicit transposition scenarios
     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
-      load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+      load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
     } else {
       load_gm_to_ubuf_3d_by_nddma<T>(src, dst);
     }
@@ -142,14 +299,14 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
 
   if (stride2_gm == 1 && stride2_ub == 1) [[likely]] {
     // last dimension is contiguous
-    if (!has_padding &&
+    if (!has_padding && !isUbufTileFullyPacked3d<T>(src, dst) &&
         hasUnalignedUbufStrideFor3dDma<T>(dst->sizes[1], dst->sizes[2],
                                           dst->strides[0], dst->strides[1],
                                           src->strides[0], src->strides[1])) {
-      load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+      load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
       return;
     }
-    load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T>(
+    load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T, DisableDCache>(
         src, dst, left_padding_num, l2_cache_ctl);
     return;
   }
@@ -162,7 +319,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
     // axis 0 is contiguous
     if (stride0_ub == stride1_ub * size1 && stride0_gm == stride1_gm * size1) {
       if (!has_padding && !isStrideAligned<T>(stride2_ub)) {
-        load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+        load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
         return;
       }
       memref_t<__gm__ T, 2> gm_2d{src->allocated,
@@ -175,7 +332,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
                                     dst->offset,
                                     {size0 * size1 * size2, 1},
                                     {stride2_ub, 1}};
-      load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
+      load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
           &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
       return;
     }
@@ -190,14 +347,14 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
                                   dst->offset,
                                   {size0, size1 * size2, 1},
                                   {stride0_ub, stride2_ub, 1}};
-    if (!has_padding &&
+    if (!has_padding && !isUbufTileFullyPacked3d<T>(&gm_3d, &ub_3d) &&
         hasUnalignedUbufStrideFor3dDma<T>(ub_3d.sizes[1], ub_3d.sizes[2],
                                           ub_3d.strides[0], ub_3d.strides[1],
                                           gm_3d.strides[0], gm_3d.strides[1])) {
-      load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+      load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
       return;
     }
-    load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T>(
+    load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T, DisableDCache>(
         &gm_3d, &ub_3d, left_padding_num, l2_cache_ctl);
     return;
   }
@@ -214,26 +371,26 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
                                   dst->offset,
                                   {size0 * size1, size2, 1},
                                   {stride1_ub, stride2_ub, 1}};
-    if (!has_padding &&
+    if (!has_padding && !isUbufTileFullyPacked3d<T>(&gm_3d, &ub_3d) &&
         hasUnalignedUbufStrideFor3dDma<T>(ub_3d.sizes[1], ub_3d.sizes[2],
                                           ub_3d.strides[0], ub_3d.strides[1],
                                           gm_3d.strides[0], gm_3d.strides[1])) {
-      load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+      load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
       return;
     }
-    load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T>(
+    load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T, DisableDCache>(
         &gm_3d, &ub_3d, left_padding_num, l2_cache_ctl);
     return;
   }
   // axis 0 is non-contiguous
-  load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+  load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
   return;
 }
 #else
 ///========================================
 /// m300 arch
 ///========================================
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
     memref_t<__gm__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst, PadMode pad_mode,
     typename PadValueType<T>::type pad_value, int64_t left_padding_num,
@@ -264,8 +421,8 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
 
   if (src->strides[2] == 1 && dst->strides[2] == 1) [[likely]] {
     // last dimension is contiguous
-    load_gm_to_ubuf_3d_core_with_contiguous_last_dim(src, dst, left_padding_num,
-                                                     l2_cache_ctl);
+    load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T, DisableDCache>(
+        src, dst, left_padding_num, l2_cache_ctl);
     return;
   }
 
@@ -281,7 +438,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
        (stride0_ub < stride1_ub || stride1_ub < stride2_ub)) &&
       (stride0_ub % num_per_block != 0 || stride1_ub % num_per_block != 0 ||
        stride2_ub % num_per_block != 0)) {
-    load_gm_to_ubuf_3d_by_scalar(src, dst);
+    load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(src, dst);
     return;
   }
 
@@ -367,7 +524,7 @@ check_inputs_of_store_ubuf_to_gm_3d_core(memref_t<__ubuf__ T, 3> *src,
 #endif
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// Core func of loading UB -> GM, 3D
 /// UB starting address must be 32B aligned; otherwise, it degrades to looped
 /// scalar transfer.
@@ -586,7 +743,6 @@ store_ubuf_to_gm_3d_core(memref_t<__ubuf__ T, 3> *src,
   // stride2, 1], where last dimension of viewed_src is contiguous
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
   if (src->strides[2] != 1 && src->strides[2] % num_per_block != 0) {
-    // TODO: see "DMA/DMAUtils.h" for details.
     store_ubuf_to_gm_3d_by_scalar(src, dst);
     return;
   }
@@ -801,7 +957,7 @@ copy_ubuf_to_ubuf_3d_core(memref_t<__ubuf__ bool, 3> *src,
   copy_ubuf_to_ubuf_3d_core<int8_t>(&src_as_int8, &dst_as_int8);
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 check_inputs_of_copy_ubuf_to_cbuf_3d_core(memref_t<__ubuf__ T, 3> *src,
@@ -843,6 +999,20 @@ copy_ubuf_to_cbuf_3d_core(memref_t<__ubuf__ T, 3> *src,
 #endif
 
 extern "C" {
+#if BISHENG_TPL_920R1
+REGISTE_DMA_SPAN_LOAD(3, int8_t);
+REGISTE_DMA_SPAN_LOAD(3, uint8_t);
+REGISTE_DMA_SPAN_LOAD(3, int16_t);
+REGISTE_DMA_SPAN_LOAD(3, uint16_t);
+REGISTE_DMA_SPAN_LOAD(3, int32_t);
+REGISTE_DMA_SPAN_LOAD(3, uint32_t);
+REGISTE_DMA_SPAN_LOAD(3, half);
+REGISTE_DMA_SPAN_LOAD(3, float);
+REGISTE_DMA_SPAN_LOAD(3, bfloat16_t);
+REGISTE_DMA_SPAN_LOAD(3, float8_e4m3_t);
+REGISTE_DMA_SPAN_LOAD(3, float8_e5m2_t);
+#endif
+
 //===-------------------------------------------------------------------===//
 // Load gm to ub, 3 dim
 //===-------------------------------------------------------------------===//
@@ -857,7 +1027,7 @@ REGISTE_DMA_LOAD(3, uint64_t);
 REGISTE_DMA_LOAD(3, half);
 REGISTE_DMA_LOAD(3, float);
 REGISTE_DMA_LOAD(3, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 REGISTE_DMA_LOAD_FP8(3, float8_e4m3_t);
 REGISTE_DMA_LOAD_FP8(3, float8_e5m2_t);
 #endif
@@ -875,7 +1045,7 @@ REGISTE_DMA_STORE(3, uint64_t);
 REGISTE_DMA_STORE(3, half);
 REGISTE_DMA_STORE(3, float);
 REGISTE_DMA_STORE(3, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 REGISTE_DMA_STORE(3, float8_e4m3_t);
 REGISTE_DMA_STORE(3, float8_e5m2_t);
 #endif
@@ -894,12 +1064,12 @@ REGISTE_DMA_UB_COPY(ubuf, ubuf, 3, uint64_t)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 3, half)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 3, float)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 3, bfloat16_t)
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 3, float8_e4m3_t);
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 3, float8_e5m2_t);
 #endif
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 //===-------------------------------------------------------------------===//
 // ub to cbuf, 2 dim
 //===-------------------------------------------------------------------===//

@@ -31,7 +31,7 @@ struct HFusionNormalizeF16ToF32Traits;
 
 struct HFusionNormalizeReduceBoolToLogicalTraits;
 
-struct HFusionReduceI1AddToSelectMaxCompareTraits;
+struct HFusionReduceI1AddToSelectXorCompareTraits;
 
 struct HFusionReduceI1AndOrToI16Traits;
 
@@ -476,7 +476,9 @@ struct HFusionNormalizeReduceBoolToLogicalTraits : public NormalizeTraitsBase {
     Block &body = op.getCombiner().front();
     auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
     Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
-    if (isa<arith::AddIOp, arith::MaxUIOp, arith::MaxSIOp>(bodyOp))
+    if (isa<arith::AddIOp>(bodyOp))
+      return mlir::ReduceBoolLogicalKind::Xor;
+    if (isa<arith::MaxUIOp, arith::MaxSIOp>(bodyOp))
       return mlir::ReduceBoolLogicalKind::Or;
     if (isa<arith::MulIOp, arith::MinUIOp, arith::MinSIOp>(bodyOp))
       return mlir::ReduceBoolLogicalKind::And;
@@ -498,6 +500,11 @@ struct HFusionNormalizeReduceBoolToLogicalTraits : public NormalizeTraitsBase {
                                                   bodyOp->getOperand(0),
                                                   bodyOp->getOperand(1));
       rewriter.modifyOpInPlace(bodyOp, [&]() { bodyOp->replaceAllUsesWith(newOp); });
+    } else if (kind == mlir::ReduceBoolLogicalKind::Xor) {
+      auto newOp = rewriter.create<arith::XOrIOp>(
+          bodyOp->getLoc(), bodyOp->getOperand(0), bodyOp->getOperand(1));
+      rewriter.modifyOpInPlace(bodyOp,
+                               [&]() { bodyOp->replaceAllUsesWith(newOp); });
     } else {
       auto newOp = rewriter.create<arith::AndIOp>(bodyOp->getLoc(),
                                                    bodyOp->getOperand(0),
@@ -508,6 +515,14 @@ struct HFusionNormalizeReduceBoolToLogicalTraits : public NormalizeTraitsBase {
   }
 };
 
+/// i1 addition is modulo 2:
+/// | a | b | a + b | a ^ b |
+/// |---|---|-------|-------|
+/// | 0 | 0 | 0     | 0     |
+/// | 0 | 1 | 1     | 1     |
+/// | 1 | 0 | 1     | 1     |
+/// | 1 | 1 | 0     | 0     |
+///
 /// Before conversion:
 /// ```mlir
 ///    %26 = bufferization.alloc_tensor() : tensor<i1>
@@ -529,7 +544,7 @@ struct HFusionNormalizeReduceBoolToLogicalTraits : public NormalizeTraitsBase {
 ///        %reduced = linalg.reduce ins(%28 : tensor<8xi16>) outs(%30 :
 ///        tensor<i16>) dimensions = [0]
 ///          (%in: i16, %init: i16) {
-///            %35 = arith.maxsi %in, %init : i16
+///            %35 = arith.xori %in, %init : i16
 ///            linalg.yield %35 : i16
 ///          }
 ///        %31 = tensor.empty() : tensor<1xi1>
@@ -537,7 +552,7 @@ struct HFusionNormalizeReduceBoolToLogicalTraits : public NormalizeTraitsBase {
 ///        ins(%reduced, %c0_i16 : tensor<i16>, i16) outs(%31 : tensor<1xi1>) ->
 ///        tensor<1xi1>
 /// ```
-struct HFusionReduceI1AddToSelectMaxCompareTraits : public NormalizeTraitsBase {
+struct HFusionReduceI1AddToSelectXorCompareTraits : public NormalizeTraitsBase {
   static bool shouldNormalize(linalg::ReduceOp reduceOp) {
     if (!reduceOp.hasPureTensorSemantics())
       return false;
@@ -599,14 +614,16 @@ struct HFusionReduceI1AddToSelectMaxCompareTraits : public NormalizeTraitsBase {
     return fillOp.getResult(0);
   }
 
-  static Value createMaxReduce(PatternRewriter &rewriter, Location loc,
-                               linalg::ReduceOp op, Value input, Value init) {
+  static Value createWidenedReduce(PatternRewriter &rewriter, Location loc,
+                                   linalg::ReduceOp op, Value input,
+                                   Value init) {
     auto dimensions = op.getDimensions();
     auto newReduce = rewriter.create<linalg::ReduceOp>(
         loc, ValueRange{input}, ValueRange{init}, dimensions,
         [&](OpBuilder &builder, Location loc, ValueRange operands) {
-          Value max = builder.create<arith::MaxSIOp>(loc, operands[0], operands[1]);
-          builder.create<linalg::YieldOp>(loc, ValueRange{max});
+          Value xorValue =
+              builder.create<arith::XOrIOp>(loc, operands[0], operands[1]);
+          builder.create<linalg::YieldOp>(loc, ValueRange{xorValue});
         });
     return newReduce.getResult(0);
   }
@@ -642,11 +659,13 @@ struct HFusionReduceI1AddToSelectMaxCompareTraits : public NormalizeTraitsBase {
   }
 };
 
-/// Convert reduce i1 and/or operations to i16 reduce with min/max operations.
+/// Convert reduce i1 and/or/xor operations to i16 reduce with min/max/xor
+/// operations.
 ///
 /// The conversion leverages the following equivalence:
 ///   - i1 and operation: 0/-1 values -> max over i16 (0/-1 values)
 ///   - i1 or operation: 0/-1 values -> min over i16 (0/-1 values)
+///   - i1 xor operation: 0/-1 values -> xor over i16 (0/-1 values)
 ///
 /// Before conversion (and):
 /// ```mlir
@@ -656,9 +675,11 @@ struct HFusionReduceI1AddToSelectMaxCompareTraits : public NormalizeTraitsBase {
 ///
 /// After conversion (and):
 /// ```mlir
-///   %input_i16 = hfusion.cast ins(%arg0 : tensor<Nxi1>) outs(...) : tensor<Nxi16>
+///   %input_i16 = hfusion.cast ins(%arg0 : tensor<Nxi1>) outs(...)
+///       : tensor<Nxi16>
 ///   %init = linalg.fill ins(%c1_i16 : i16) outs(...) : tensor<i16>
-///   %reduced = reduce <minsi> ins(%input_i16 : tensor<Nxi16>) outs(%init : tensor<i16>)
+///   %reduced = reduce <minsi> ins(%input_i16 : tensor<Nxi16>)
+///       outs(%init : tensor<i16>)
 ///   %final = hfusion.cast ins(%reduced : tensor<i16>) outs(...) : tensor<i1>
 /// ```
 ///
@@ -678,7 +699,7 @@ struct HFusionReduceI1AndOrToI16Traits : public NormalizeTraitsBase {
     Block &body = reduceOp.getCombiner().front();
     auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
     Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
-    return isa<arith::AndIOp>(bodyOp) || isa<arith::OrIOp>(bodyOp);
+    return isa<arith::AndIOp, arith::OrIOp, arith::XOrIOp>(bodyOp);
   }
 
   static Value getInput(linalg::ReduceOp op) { return op.getInputs()[0]; }
@@ -693,6 +714,13 @@ struct HFusionReduceI1AndOrToI16Traits : public NormalizeTraitsBase {
     auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
     Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
     return isa<arith::AndIOp>(bodyOp);
+  }
+
+  static bool isXorReduce(linalg::ReduceOp reduceOp) {
+    Block &body = reduceOp.getCombiner().front();
+    auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
+    Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
+    return isa<arith::XOrIOp>(bodyOp);
   }
 
   static Value createReduceInit(PatternRewriter &rewriter, Location loc,
@@ -713,7 +741,10 @@ struct HFusionReduceI1AndOrToI16Traits : public NormalizeTraitsBase {
         loc, ValueRange{input}, ValueRange{init}, dimensions,
         [&](OpBuilder &builder, Location loc, ValueRange operands) {
           Value result;
-          if (isAndReduce) {
+          if (isXorReduce(op)) {
+            result =
+                builder.create<arith::XOrIOp>(loc, operands[0], operands[1]);
+          } else if (isAndReduce) {
             result = builder.create<arith::MaxSIOp>(loc, operands[0], operands[1]);
           } else {
             result = builder.create<arith::MinSIOp>(loc, operands[0], operands[1]);
@@ -1455,8 +1486,9 @@ struct HFusionNormalizeToTargetTypeTraits<bool, hfusion::SelectOp>
 
 void populateNormalizeI1ToTargetPatterns(RewritePatternSet &patterns) {
   if (archisAscend950)
-    addTypeConversionPatterns<mlir::ReduceI1AddToSelectMaxCompareTemplate<
-        linalg::ReduceOp, HFusionReduceI1AddToSelectMaxCompareTraits>>(patterns);
+    addTypeConversionPatterns<mlir::ReduceI1AddToSelectCompareTemplate<
+        linalg::ReduceOp, HFusionReduceI1AddToSelectXorCompareTraits>>(
+        patterns);
   addNormalizeToTargetPatterns<bool, hfusion::InterleaveOp,
                                linalg::BroadcastOp>(patterns);
   addTypeConversionPatterns<mlir::NormalizeReduceBoolToLogicalTemplate<

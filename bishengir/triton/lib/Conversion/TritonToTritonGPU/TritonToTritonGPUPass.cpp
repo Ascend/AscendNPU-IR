@@ -118,13 +118,12 @@ void populateMathPatternsAndLegality(TritonGPUTypeConverter &typeConverter,
   // Rewrite rule
   patterns.add<GenericOpPattern<math::ExpOp>, GenericOpPattern<math::Exp2Op>,
                GenericOpPattern<math::FloorOp>, GenericOpPattern<math::CeilOp>,
-               GenericOpPattern<math::RoundOp>,
-               GenericOpPattern<math::CosOp>, GenericOpPattern<math::SinOp>,
-               GenericOpPattern<math::LogOp>, GenericOpPattern<math::Log2Op>,
-               GenericOpPattern<math::ErfOp>, GenericOpPattern<math::AbsFOp>,
-               GenericOpPattern<math::AbsIOp>, GenericOpPattern<math::SqrtOp>,
-               GenericOpPattern<math::RsqrtOp>, GenericOpPattern<math::FmaOp>>(
-      typeConverter, context);
+               GenericOpPattern<math::RoundOp>, GenericOpPattern<math::CosOp>,
+               GenericOpPattern<math::SinOp>, GenericOpPattern<math::LogOp>,
+               GenericOpPattern<math::Log2Op>, GenericOpPattern<math::ErfOp>,
+               GenericOpPattern<math::AbsFOp>, GenericOpPattern<math::AbsIOp>,
+               GenericOpPattern<math::SqrtOp>, GenericOpPattern<math::RsqrtOp>,
+               GenericOpPattern<math::FmaOp>>(typeConverter, context);
 #if BSPUB_DAVINCI_BISHENGIR
   patterns.add<GenericOpPattern<math::TanhOp>>(typeConverter, context);
 #endif
@@ -296,7 +295,7 @@ struct TritonCatPattern : public OpConversionPattern<triton::CatOp> {
     auto lhsTotalElemsPerThread = triton::gpu::getTotalElemsPerThread(lhsType);
     auto rhsTotalElemsPerThread = triton::gpu::getTotalElemsPerThread(rhsType);
     auto retTotalElemsPerThread = triton::gpu::getTotalElemsPerThread(retType);
-    auto retShape = retType.getShape();
+    [[maybe_unused]] auto retShape = retType.getShape();
     auto retOrder = retEncoding.getOrder();
     auto retThreadsPerWarp = retEncoding.getThreadsPerWarp();
     auto retWarpsPerCTA = retEncoding.getWarpsPerCTA();
@@ -323,8 +322,9 @@ struct TritonCatPattern : public OpConversionPattern<triton::CatOp> {
 struct TritonJoinOpPattern : public OpConversionPattern<triton::JoinOp> {
   using OpConversionPattern::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(JoinOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const {
+  LogicalResult
+  matchAndRewrite(JoinOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
     // Simply rely on type inference for this op.  (Notably, GenericOpPattern
     // does not do this, instead it assigns the default layout to the ins and
     // outs.)
@@ -338,8 +338,9 @@ struct TritonJoinOpPattern : public OpConversionPattern<triton::JoinOp> {
 struct TritonSplitOpPattern : public OpConversionPattern<triton::SplitOp> {
   using OpConversionPattern::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(SplitOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const {
+  LogicalResult
+  matchAndRewrite(SplitOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
     auto src = adaptor.getSrc();
     auto srcTy = cast<RankedTensorType>(src.getType());
     auto srcEnc = dyn_cast<BlockedEncodingAttr>(srcTy.getEncoding());
@@ -353,7 +354,7 @@ struct TritonSplitOpPattern : public OpConversionPattern<triton::SplitOp> {
     //  - the last dimension minor.
     // If that's not the case, add a convert before the split.
     if (!srcEnc || srcEnc.getSizePerThread().back() != 2 ||
-        srcEnc.getOrder().front() != rank - 1) {
+        srcEnc.getOrder().front() != static_cast<unsigned>(rank - 1)) {
       // If we take the default encoding for the op's result (i.e. post-split)
       // and add 1 to the end of each dim, that gives us what we want.  Other
       // than making a legal src encoding, our choice of layout doesn't matter;

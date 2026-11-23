@@ -10,7 +10,9 @@
 func.func @unordered_single_lock(
               %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
               %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}) {
-  hivm.hir.create_sync_block_lock from %arg1 {hivm.sync_block_lock_unordered} : from memref<?xi8> to memref<1xi64>
+  %lock = hivm.hir.create_sync_block_lock from %arg1 : from memref<?xi8> to memref<1xi64>
+  hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%lock : memref<1xi64>)
+  hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%lock : memref<1xi64>)
   return
 }
 
@@ -26,7 +28,11 @@ func.func @unordered_single_lock(
 func.func @unordered_two_locks(
               %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
               %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}) {
-  hivm.hir.create_sync_block_lock from %arg1 {hivm.sync_block_lock_unordered} : from memref<?xi8> to memref<1xi64>
-  hivm.hir.create_sync_block_lock from %arg1 {hivm.sync_block_lock_unordered} : from memref<?xi8> to memref<1xi64>
+  %lock0 = hivm.hir.create_sync_block_lock from %arg1 : from memref<?xi8> to memref<1xi64>
+  hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%lock0 : memref<1xi64>)
+  hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%lock0 : memref<1xi64>)
+  %lock1 = hivm.hir.create_sync_block_lock from %arg1 : from memref<?xi8> to memref<1xi64>
+  hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%lock1 : memref<1xi64>)
+  hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%lock1 : memref<1xi64>)
   return
 }

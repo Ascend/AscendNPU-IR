@@ -42,8 +42,7 @@ enum class ReduceWithIndexOpTy : uint32_t {
 };
 
 // Applicable to vcadd, vcmin, vcmax.
-template <typename T>
-struct reduce_intrin_args {
+template <typename T> struct reduce_intrin_args {
   __ubuf__ T *dst_value;
   __ubuf__ int32_t *dst_index;
   __ubuf__ T *src;
@@ -182,12 +181,10 @@ reduceAR0ToA(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst_value,
              memref_t<__ubuf__ int32_t, 2> *dst_index) {
   __ubuf__ T *src_ptr = src->aligned + src->offset;
   __ubuf__ T *dst_value_ptr = dst_value->aligned + dst_value->offset;
-  __ubuf__ int32_t *dst_index_ptr = dst_index->aligned + dst_index->offset;
   const int64_t src_size0 = src->sizes[0];
   const int64_t src_size1 = src->sizes[1];
   const int64_t src_stride0 = src->strides[0];
   const int64_t dst_value_stride0 = dst_value->strides[0];
-  const int64_t dst_index_stride0 = dst_index->strides[0];
   constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
   SetMaskValueByCount(src_size1);
@@ -203,6 +200,7 @@ reduceAR0ToA(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst_value,
         static_cast<uint16_t>(src_stride0 / num_per_block) // src repeat stride
     });
     if constexpr (HASINDEX) {
+      __ubuf__ int32_t *dst_index_ptr = dst_index->aligned + dst_index->offset;
       reduce_intrin<OP, T, false, Order_t::ONLY_INDEX>(reduce_intrin_args<T>{
           nullptr, // dst_value, not work
           dst_index_ptr + i * INTR_MAX_REPEAT_CNTS,
@@ -228,6 +226,7 @@ reduceAR0ToA(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst_value,
         static_cast<uint16_t>(src_stride0 / num_per_block) // src repeat stride
     });
     if constexpr (HASINDEX) {
+      __ubuf__ int32_t *dst_index_ptr = dst_index->aligned + dst_index->offset;
       reduce_intrin<OP, T, false, Order_t::ONLY_INDEX>(reduce_intrin_args<T>{
           nullptr, // dst_value, not work
           dst_index_ptr +
@@ -260,7 +259,6 @@ reduceAR0ToAByLoopAAxis(memref_t<__ubuf__ T, 2> *src,
   const int64_t src_size1 = src->sizes[1];
   const int64_t src_stride0 = src->strides[0];
   const int64_t dst_value_stride0 = dst_value->strides[0];
-  const int64_t dst_index_stride0 = dst_index->strides[0];
   for (int64_t i = 0; i < src_size0; i++) {
     memref_t<__ubuf__ T, 2> subview_src{src->allocated,
                                         src->aligned,
@@ -274,6 +272,7 @@ reduceAR0ToAByLoopAAxis(memref_t<__ubuf__ T, 2> *src,
                                               {1, 1},
                                               {dst_value_stride0, 1}};
     if constexpr (HASINDEX) {
+      const int64_t dst_index_stride0 = dst_index->strides[0];
       memref_t<__ubuf__ int32_t, 2> subview_dst_index{dst_index->allocated,
                                                       dst_index->aligned,
                                                       dst_index->offset +
@@ -468,7 +467,7 @@ reduceARByBlocks(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst,
     INTRINSIC(pipe_barrier, PIPE_V);
     INTRINSIC_NO_ARGS(set_mask_count);
     INTRINSIC(set_vector_mask, 0, length);
-    vcgOP<OP, T>(dst_ptr, src_ptr);
+    vcgOP<OP, T>(dst_ptr, dst_ptr);
     INTRINSIC_NO_ARGS(set_mask_norm);
     num = num / num_per_block;
   }
@@ -508,7 +507,7 @@ reduceRByBlocks(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst,
     INTRINSIC(pipe_barrier, PIPE_V);
     INTRINSIC_NO_ARGS(set_mask_count);
     INTRINSIC(set_vector_mask, 0, num);
-    vcgOP<OP, T>(dst_ptr, src_ptr);
+    vcgOP<OP, T>(dst_ptr, dst_ptr);
     INTRINSIC_NO_ARGS(set_mask_norm);
     num = num / num_per_block;
   }
@@ -679,36 +678,16 @@ reduceRToR0(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst,
   if constexpr (NEED_MASK) {
     SetMaskValueByCount(num_per_repeat);
   }
-  for (int64_t i = 0; i < main_size / INTR_MAX_REPEAT_CNTS; ++i) {
+  for (int64_t i = 0; i < main_size; ++i) {
     INTRINSIC(pipe_barrier, PIPE_V);
-    intrin_args<2, T> args{
-        dst_ptr,
-        {src_ptr + i * INTR_MAX_REPEAT_CNTS * num_per_repeat, dst_ptr},
-        0,                            // scalar, not work
-        INTR_MAX_REPEAT_CNTS,         // repeat
-        1,                            // dst block stride
-        {1, 1},                       // src block stride
-        0,                            // dst repeat stride
-        {INTR_BLOCKS_PER_REPEAT, 0}}; // src repeat stride
-    if constexpr (OP == VectorOpTy::VXOR) {
-      vector_eltwise_xor_intrin<T>(args, tmp_buf);
-    } else {
-      vector_eltwise_vv_intrin<OP, T>(args);
-    }
-  }
-  if (main_size % INTR_MAX_REPEAT_CNTS != 0) {
-    INTRINSIC(pipe_barrier, PIPE_V);
-    intrin_args<2, T> args{
-        dst_ptr,
-        {src_ptr +
-             FLOOR_FACTOR(main_size, INTR_MAX_REPEAT_CNTS) * num_per_repeat,
-         dst_ptr},
-        0, // scalar, not work
-        static_cast<uint64_t>(main_size % INTR_MAX_REPEAT_CNTS), // repeat
-        1,                            // dst block stride
-        {1, 1},                       // src block stride
-        0,                            // dst repeat stride
-        {INTR_BLOCKS_PER_REPEAT, 0}}; // src repeat stride
+    intrin_args<2, T> args{dst_ptr,
+                           {src_ptr + i * num_per_repeat, dst_ptr},
+                           0,                            // scalar, not work
+                           1,                            // repeat
+                           1,                            // dst block stride
+                           {1, 1},                       // src block stride
+                           0,                            // dst repeat stride
+                           {INTR_BLOCKS_PER_REPEAT, 0}}; // src repeat stride
     if constexpr (OP == VectorOpTy::VXOR) {
       vector_eltwise_xor_intrin<T>(args, tmp_buf);
     } else {
@@ -875,17 +854,15 @@ reduce_r_with_index(memref_t<__ubuf__ T, 1> *src0,
 /// cross intrinsic, namely vcadd/vcmin/vcmax, to reduce (a, r0) to (a, 1).
 #define DECLARE_ENTIRE_REDUCE_ENABLEVC_AR(op_name, op_type, dim, dtype)        \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_enablevc_##op_name##_##ar##_##dtype(                        \
-          memref_t<__ubuf__ dtype, dim> *src0,                                 \
-          memref_t<__ubuf__ dtype, dim> *dst,                                  \
-          memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
+  _mlir_ciface_enablevc_##op_name##_##ar##_##dtype(                            \
+      memref_t<__ubuf__ dtype, dim> *src0, memref_t<__ubuf__ dtype, dim> *dst, \
+      memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
 
 #define DECLARE_ENTIRE_REDUCE_ENABLEVCG_AR(op_name, op_type, dim, dtype)       \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_enablevcg_##op_name##_##ar##_##dtype(                       \
-          memref_t<__ubuf__ dtype, dim> *src0,                                 \
-          memref_t<__ubuf__ dtype, dim> *dst,                                  \
-          memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
+  _mlir_ciface_enablevcg_##op_name##_##ar##_##dtype(                           \
+      memref_t<__ubuf__ dtype, dim> *src0, memref_t<__ubuf__ dtype, dim> *dst, \
+      memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
 
 /// Reduce src (a, r) to tmp (a, r0) and then reduce tmp (a, r0) to dst (a, 1)
 /// by vector element intrinsic. For int reduce_sum/min/max or any type of
@@ -894,10 +871,9 @@ reduce_r_with_index(memref_t<__ubuf__ T, 1> *src0,
 /// (a, 1).
 #define DECLARE_ENTIRE_REDUCE_AR(op_name, op_type, dim, dtype)                 \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_##op_name##_##ar##_##dtype(                                 \
-          memref_t<__ubuf__ dtype, dim> *src0,                                 \
-          memref_t<__ubuf__ dtype, dim> *dst,                                  \
-          memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
+  _mlir_ciface_##op_name##_##ar##_##dtype(                                     \
+      memref_t<__ubuf__ dtype, dim> *src0, memref_t<__ubuf__ dtype, dim> *dst, \
+      memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
 
 /// Reduce src (a, r) to dst (a, 1) by vector cross intrinsic. Only support
 /// reduce_min and reduce_max of half and float types, namely vcmin/vcmax.
@@ -905,11 +881,11 @@ reduce_r_with_index(memref_t<__ubuf__ T, 1> *src0,
 #define DECLARE_ENTIRE_REDUCE_AR_WITH_INDEX(op_name, op_type, with_index_type, \
                                             dim, dtype)                        \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_##op_name##_##ar##_##dtype(                                 \
-          memref_t<__ubuf__ dtype, dim> *src0,                                 \
-          memref_t<__ubuf__ dtype, dim> *dst_value,                            \
-          memref_t<__ubuf__ int32_t, dim> *dst_index,                          \
-          memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
+  _mlir_ciface_##op_name##_##ar##_##dtype(                                     \
+      memref_t<__ubuf__ dtype, dim> *src0,                                     \
+      memref_t<__ubuf__ dtype, dim> *dst_value,                                \
+      memref_t<__ubuf__ int32_t, dim> *dst_index,                              \
+      memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
 
 #define REGISTE_ENTIRE_REDUCE_AR(op_name, op_type, dim, dtype)                 \
   DECLARE_ENTIRE_REDUCE_AR(op_name, op_type, dim, dtype) {                     \
@@ -927,7 +903,7 @@ reduce_r_with_index(memref_t<__ubuf__ T, 1> *src0,
                                       dtype) {                                 \
     reduce_ar_with_index<op_type, with_index_type, dtype>(                     \
         src0, dst_value, dst_index, tmp_buf, initvalue);                       \
-      }
+  }
 
 #define REGISTE_ENTIRE_REDUCE_ENABLEVCG_AR(op_name, op_type, dim, dtype)       \
   DECLARE_ENTIRE_REDUCE_ENABLEVCG_AR(op_name, op_type, dim, dtype) {           \
@@ -937,11 +913,11 @@ reduce_r_with_index(memref_t<__ubuf__ T, 1> *src0,
 #define DECLARE_ENTIRE_REDUCE_RA_WITH_INDEX(op_name, op_type, with_index_type, \
                                             dim, dtype)                        \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_##op_name##_##ra##_##dtype(                                 \
-          memref_t<__ubuf__ dtype, dim> *src0,                                 \
-          memref_t<__ubuf__ dtype, dim> *dst_value,                            \
-          memref_t<__ubuf__ int32_t, dim> *dst_index,                          \
-          memref_t<__ubuf__ int32_t, 1> *tmp_index)
+  _mlir_ciface_##op_name##_##ra##_##dtype(                                     \
+      memref_t<__ubuf__ dtype, dim> *src0,                                     \
+      memref_t<__ubuf__ dtype, dim> *dst_value,                                \
+      memref_t<__ubuf__ int32_t, dim> *dst_index,                              \
+      memref_t<__ubuf__ int32_t, 1> *tmp_index)
 
 #define REGISTE_ENTIRE_REDUCE_RA_WITH_INDEX(op_name, op_type, with_index_type, \
                                             dim, dtype)                        \
@@ -955,17 +931,15 @@ reduce_r_with_index(memref_t<__ubuf__ T, 1> *src0,
 /// cross intrinsic, namely vcadd/vcmin/vcmax.
 #define DECLARE_ENTIRE_REDUCE_ENABLEVC_R(op_name, op_type, dim, dtype)         \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_enablevc_##op_name##_##r##_##dtype(                         \
-          memref_t<__ubuf__ dtype, dim> *src0,                                 \
-          memref_t<__ubuf__ dtype, dim> *dst,                                  \
-          memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
+  _mlir_ciface_enablevc_##op_name##_##r##_##dtype(                             \
+      memref_t<__ubuf__ dtype, dim> *src0, memref_t<__ubuf__ dtype, dim> *dst, \
+      memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
 
 #define DECLARE_ENTIRE_REDUCE_ENABLEVCG_R(op_name, op_type, dim, dtype)        \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_enablevcg_##op_name##_##r##_##dtype(                        \
-          memref_t<__ubuf__ dtype, dim> *src0,                                 \
-          memref_t<__ubuf__ dtype, dim> *dst,                                  \
-          memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
+  _mlir_ciface_enablevcg_##op_name##_##r##_##dtype(                            \
+      memref_t<__ubuf__ dtype, dim> *src0, memref_t<__ubuf__ dtype, dim> *dst, \
+      memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
 
 /// Reduce src (r,) to tmp (r0,) and then reduce tmp (r0,) to dst (1,) by vector
 /// element intrinsic. For int reduce_sum/min/max or any type of
@@ -974,10 +948,9 @@ reduce_r_with_index(memref_t<__ubuf__ T, 1> *src0,
 /// (1,).
 #define DECLARE_ENTIRE_REDUCE_R(op_name, op_type, dim, dtype)                  \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_##op_name##_##r##_##dtype(                                  \
-          memref_t<__ubuf__ dtype, dim> *src0,                                 \
-          memref_t<__ubuf__ dtype, dim> *dst,                                  \
-          memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
+  _mlir_ciface_##op_name##_##r##_##dtype(                                      \
+      memref_t<__ubuf__ dtype, dim> *src0, memref_t<__ubuf__ dtype, dim> *dst, \
+      memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
 
 /// Reduce src (r,) to dst (1,). by vector cross intrinsic. Only support
 /// reduce_min and reduce_max of half and float types, namely vcmin/vcmax.
@@ -985,11 +958,11 @@ reduce_r_with_index(memref_t<__ubuf__ T, 1> *src0,
 #define DECLARE_ENTIRE_REDUCE_R_WITH_INDEX(op_name, op_type, with_index_type,  \
                                            dim, dtype)                         \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_##op_name##_##r##_##dtype(                                  \
-          memref_t<__ubuf__ dtype, dim> *src0,                                 \
-          memref_t<__ubuf__ dtype, dim> *dst_value,                            \
-          memref_t<__ubuf__ int32_t, dim> *dst_index,                          \
-          memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
+  _mlir_ciface_##op_name##_##r##_##dtype(                                      \
+      memref_t<__ubuf__ dtype, dim> *src0,                                     \
+      memref_t<__ubuf__ dtype, dim> *dst_value,                                \
+      memref_t<__ubuf__ int32_t, dim> *dst_index,                              \
+      memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
 
 #define REGISTE_ENTIRE_REDUCE_ENABLEVC_R(op_name, op_type, dim, dtype)         \
   DECLARE_ENTIRE_REDUCE_ENABLEVC_R(op_name, op_type, dim, dtype) {             \
@@ -1018,20 +991,18 @@ reduce_r_with_index(memref_t<__ubuf__ T, 1> *src0,
 /// vector element intrinsic, here 'n' is a aligned to ub_block_unit.
 #define DECLARE_ENTIRE_REDUCE_RA(op_name, op_type, dim, dtype)                 \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_##op_name##_##ra##_##dtype(                                 \
-          memref_t<__ubuf__ dtype, dim> *src0,                                 \
-          memref_t<__ubuf__ dtype, dim> *dst,                                  \
-          memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
+  _mlir_ciface_##op_name##_##ra##_##dtype(                                     \
+      memref_t<__ubuf__ dtype, dim> *src0, memref_t<__ubuf__ dtype, dim> *dst, \
+      memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
 
 /// Reduce src (r, a0, a1) with stride [n, n1, 1] to dst (1, a0, a1) with stride
 // [n, n1, 1] by vector element intrinsic, here 'n' is a0*a1 aligned to
 // ub_block_unit, 'n1' is a1 aligned to ub_block_unit.
 #define DECLARE_ENTIRE_REDUCE_RA0A1(op_name, op_type, dim, dtype)              \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_##op_name##_##ra0a1##_##dtype(                              \
-          memref_t<__ubuf__ dtype, dim> *src0,                                 \
-          memref_t<__ubuf__ dtype, dim> *dst,                                  \
-          memref_t<__ubuf__ dtype, 1> *tmp, dtype initvalue)
+  _mlir_ciface_##op_name##_##ra0a1##_##dtype(                                  \
+      memref_t<__ubuf__ dtype, dim> *src0, memref_t<__ubuf__ dtype, dim> *dst, \
+      memref_t<__ubuf__ dtype, 1> *tmp, dtype initvalue)
 
 #define REGISTE_ENTIRE_REDUCE_RA(op_name, op_type, dim, dtype)                 \
   DECLARE_ENTIRE_REDUCE_RA(op_name, op_type, dim, dtype) {                     \
@@ -1045,12 +1016,11 @@ reduce_r_with_index(memref_t<__ubuf__ T, 1> *src0,
 
 /// Reduce src (a0, r, a1) with stride [n0, n1, 1] to dst (a0, 1, a1) with
 /// stride [n0, n1, 1] by dichotomy + hardware repeat, reducing along dim1.
-#define DECLARE_ENTIRE_REDUCE_ARA(op_name, op_type, dim, dtype)                 \
-  __aiv__ __attribute__((always_inline)) void                                   \
-      _mlir_ciface_##op_name##_ara_##dtype(                                     \
-          memref_t<__ubuf__ dtype, dim> *src0,                                  \
-          memref_t<__ubuf__ dtype, dim> *dst,                                   \
-          memref_t<__ubuf__ dtype, 1> *tmp, dtype initvalue)
+#define DECLARE_ENTIRE_REDUCE_ARA(op_name, op_type, dim, dtype)                \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  _mlir_ciface_##op_name##_ara_##dtype(                                        \
+      memref_t<__ubuf__ dtype, dim> *src0, memref_t<__ubuf__ dtype, dim> *dst, \
+      memref_t<__ubuf__ dtype, 1> *tmp, dtype initvalue)
 
 #define REGISTE_ENTIRE_REDUCE_ARA(op_name, op_type, dim, dtype)                \
   DECLARE_ENTIRE_REDUCE_ARA(op_name, op_type, dim, dtype) {                    \
@@ -1059,139 +1029,117 @@ reduce_r_with_index(memref_t<__ubuf__ T, 1> *src0,
 
 /// Reduce src (a0, a1, r) with stride [n0, n1, 1] to dst (a0, a1, 1) with
 /// stride [n0, n1, 1] by merging first two dims and reusing reduce_ar.
-#define DECLARE_ENTIRE_REDUCE_AAR(op_name, op_type, dim, dtype)                 \
-  __aiv__ __attribute__((always_inline)) void                                   \
-      _mlir_ciface_##op_name##_aar_##dtype(                                     \
-          memref_t<__ubuf__ dtype, dim> *src0,                                  \
-          memref_t<__ubuf__ dtype, dim> *dst,                                   \
-          memref_t<__ubuf__ dtype, 1> *tmp, dtype initvalue)
+#define DECLARE_ENTIRE_REDUCE_AAR(op_name, op_type, dim, dtype)                \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  _mlir_ciface_##op_name##_aar_##dtype(                                        \
+      memref_t<__ubuf__ dtype, dim> *src0, memref_t<__ubuf__ dtype, dim> *dst, \
+      memref_t<__ubuf__ dtype, 1> *tmp, dtype initvalue)
 
 #define REGISTE_ENTIRE_REDUCE_AAR(op_name, op_type, dim, dtype)                \
   DECLARE_ENTIRE_REDUCE_AAR(op_name, op_type, dim, dtype) {                    \
     reduce_aar<op_type, dtype>(src0, dst, tmp, initvalue);                     \
   }
 
-#define DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(op_name, op_type, dim, dtype)        \
-  __aiv__ __attribute__((always_inline)) void                                    \
-      _mlir_ciface_enablevc_##op_name##_aar_##dtype(                             \
-          memref_t<__ubuf__ dtype, dim> *src0,                                   \
-          memref_t<__ubuf__ dtype, dim> *dst,                                    \
-          memref_t<__ubuf__ dtype, 1> *tmp, dtype initvalue)
+#define DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(op_name, op_type, dim, dtype)       \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  _mlir_ciface_enablevc_##op_name##_aar_##dtype(                               \
+      memref_t<__ubuf__ dtype, dim> *src0, memref_t<__ubuf__ dtype, dim> *dst, \
+      memref_t<__ubuf__ dtype, 1> *tmp, dtype initvalue)
 
 #define REGISTE_ENTIRE_REDUCE_ENABLEVC_AAR(op_name, op_type, dim, dtype)       \
-  DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(op_name, op_type, dim, dtype) {            \
-    reduce_aar<op_type, dtype>(src0, dst, tmp, initvalue);                      \
+  DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(op_name, op_type, dim, dtype) {           \
+    reduce_aar<op_type, dtype>(src0, dst, tmp, initvalue);                     \
   }
 
-#define DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(op_name, op_type, dim, dtype)       \
-  __aiv__ __attribute__((always_inline)) void                                    \
-      _mlir_ciface_enablevcg_##op_name##_aar_##dtype(                            \
-          memref_t<__ubuf__ dtype, dim> *src0,                                   \
-          memref_t<__ubuf__ dtype, dim> *dst,                                    \
-          memref_t<__ubuf__ dtype, 1> *tmp, dtype initvalue)
+#define DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(op_name, op_type, dim, dtype)      \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  _mlir_ciface_enablevcg_##op_name##_aar_##dtype(                              \
+      memref_t<__ubuf__ dtype, dim> *src0, memref_t<__ubuf__ dtype, dim> *dst, \
+      memref_t<__ubuf__ dtype, 1> *tmp, dtype initvalue)
 
 #define REGISTE_ENTIRE_REDUCE_ENABLEVCG_AAR(op_name, op_type, dim, dtype)      \
-  DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(op_name, op_type, dim, dtype) {           \
-    reduce_aar_vcg<op_type, dtype>(src0, dst, tmp, initvalue);                  \
+  DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(op_name, op_type, dim, dtype) {          \
+    reduce_aar_vcg<op_type, dtype>(src0, dst, tmp, initvalue);                 \
   }
 
-#define REGISTE_ENTIRE_REDUCE_AR_WITH_INDEX_WITH_SPECIFIED_INDEX(op_name,      \
-                                                                 op_type,      \
-                                                                 with_index_type, \
-                                                                 dim,          \
-                                                                 dtype)        \
-  DECLARE_ENTIRE_REDUCE_AR_WITH_INDEX_WITH_SPECIFIED_INDEX(op_name, op_type,   \
-                                                           with_index_type,    \
-                                                           dim,                \
-                                                           dtype) {            \
-    reduce_ar_with_index_with_specified_index<op_type, with_index_type, dtype>( \
+#define REGISTE_ENTIRE_REDUCE_AR_WITH_INDEX_WITH_SPECIFIED_INDEX(              \
+    op_name, op_type, with_index_type, dim, dtype)                             \
+  DECLARE_ENTIRE_REDUCE_AR_WITH_INDEX_WITH_SPECIFIED_INDEX(                    \
+      op_name, op_type, with_index_type, dim, dtype) {                         \
+    reduce_ar_with_index_with_specified_index<op_type, with_index_type,        \
+                                              dtype>(                          \
         src0, indices, dst_value, dst_index, tmp_buf, initvalue);              \
   }
 
-#define DECLARE_ENTIRE_REDUCE_AR_WITH_INDEX_WITH_SPECIFIED_INDEX(op_name,      \
-                                                                 op_type,      \
-                                                                 with_index_type, \
-                                                                 dim, dtype)   \
+#define DECLARE_ENTIRE_REDUCE_AR_WITH_INDEX_WITH_SPECIFIED_INDEX(              \
+    op_name, op_type, with_index_type, dim, dtype)                             \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_##op_name##_##ar##_##dtype(                                 \
-          memref_t<__ubuf__ dtype, dim> *src0,                                 \
-          memref_t<__ubuf__ int32_t, dim> *indices,                            \
-          memref_t<__ubuf__ dtype, dim> *dst_value,                            \
-          memref_t<__ubuf__ int32_t, dim> *dst_index,                          \
-          memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
+  _mlir_ciface_##op_name##_##ar##_##dtype(                                     \
+      memref_t<__ubuf__ dtype, dim> *src0,                                     \
+      memref_t<__ubuf__ int32_t, dim> *indices,                                \
+      memref_t<__ubuf__ dtype, dim> *dst_value,                                \
+      memref_t<__ubuf__ int32_t, dim> *dst_index,                              \
+      memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
 
-#define REGISTE_ENTIRE_REDUCE_RA_WITH_INDEX_WITH_SPECIFIED_INDEX(op_name,      \
-                                                                 op_type,      \
-                                                                 with_index_type, \
-                                                                 dim,          \
-                                                                 dtype)        \
-  DECLARE_ENTIRE_REDUCE_RA_WITH_INDEX_WITH_SPECIFIED_INDEX(op_name, op_type,   \
-                                                           with_index_type,    \
-                                                           dim,                \
-                                                           dtype) {            \
-    reduce_ra_with_index_with_specified_index<op_type, with_index_type, dtype>( \
-        src0, indices, dst_value, dst_index, tmp_index);                        \
+#define REGISTE_ENTIRE_REDUCE_RA_WITH_INDEX_WITH_SPECIFIED_INDEX(              \
+    op_name, op_type, with_index_type, dim, dtype)                             \
+  DECLARE_ENTIRE_REDUCE_RA_WITH_INDEX_WITH_SPECIFIED_INDEX(                    \
+      op_name, op_type, with_index_type, dim, dtype) {                         \
+    reduce_ra_with_index_with_specified_index<op_type, with_index_type,        \
+                                              dtype>(src0, indices, dst_value, \
+                                                     dst_index, tmp_index);    \
   }
 
-#define DECLARE_ENTIRE_REDUCE_RA_WITH_INDEX_WITH_SPECIFIED_INDEX(op_name,      \
-                                                                 op_type,      \
-                                                                 with_index_type, \
-                                                                 dim, dtype)   \
+#define DECLARE_ENTIRE_REDUCE_RA_WITH_INDEX_WITH_SPECIFIED_INDEX(              \
+    op_name, op_type, with_index_type, dim, dtype)                             \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_##op_name##_##ra##_##dtype(                                 \
-          memref_t<__ubuf__ dtype, dim> *src0,                                 \
-          memref_t<__ubuf__ int32_t, dim> *indices,                            \
-          memref_t<__ubuf__ dtype, dim> *dst_value,                            \
-          memref_t<__ubuf__ int32_t, dim> *dst_index,                          \
-          memref_t<__ubuf__ int32_t, 1> *tmp_index)
+  _mlir_ciface_##op_name##_##ra##_##dtype(                                     \
+      memref_t<__ubuf__ dtype, dim> *src0,                                     \
+      memref_t<__ubuf__ int32_t, dim> *indices,                                \
+      memref_t<__ubuf__ dtype, dim> *dst_value,                                \
+      memref_t<__ubuf__ int32_t, dim> *dst_index,                              \
+      memref_t<__ubuf__ int32_t, 1> *tmp_index)
 
-#define REGISTE_ENTIRE_REDUCE_R_WITH_INDEX_WITH_SPECIFIED_INDEX(op_name,       \
-                                                                 op_type,      \
-                                                                 with_index_type, \
-                                                                 dim,          \
-                                                                 dtype)        \
-  DECLARE_ENTIRE_REDUCE_R_WITH_INDEX_WITH_SPECIFIED_INDEX(op_name, op_type,    \
-                                                           with_index_type,    \
-                                                           dim,                \
-                                                           dtype) {            \
+#define REGISTE_ENTIRE_REDUCE_R_WITH_INDEX_WITH_SPECIFIED_INDEX(               \
+    op_name, op_type, with_index_type, dim, dtype)                             \
+  DECLARE_ENTIRE_REDUCE_R_WITH_INDEX_WITH_SPECIFIED_INDEX(                     \
+      op_name, op_type, with_index_type, dim, dtype) {                         \
     reduce_r_with_index_with_specified_index<op_type, with_index_type, dtype>( \
         src0, indices, dst_value, dst_index, tmp_buf, initvalue);              \
   }
 
-#define DECLARE_ENTIRE_REDUCE_R_WITH_INDEX_WITH_SPECIFIED_INDEX(op_name,      \
-                                                                 op_type,      \
-                                                                 with_index_type, \
-                                                                 dim, dtype)   \
+#define DECLARE_ENTIRE_REDUCE_R_WITH_INDEX_WITH_SPECIFIED_INDEX(               \
+    op_name, op_type, with_index_type, dim, dtype)                             \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_##op_name##_##r##_##dtype(                                  \
-          memref_t<__ubuf__ dtype, dim> *src0,                                 \
-          memref_t<__ubuf__ int32_t, dim> *indices,                            \
-          memref_t<__ubuf__ dtype, dim> *dst_value,                            \
-          memref_t<__ubuf__ int32_t, dim> *dst_index,                          \
-          memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
+  _mlir_ciface_##op_name##_##r##_##dtype(                                      \
+      memref_t<__ubuf__ dtype, dim> *src0,                                     \
+      memref_t<__ubuf__ int32_t, dim> *indices,                                \
+      memref_t<__ubuf__ dtype, dim> *dst_value,                                \
+      memref_t<__ubuf__ int32_t, dim> *dst_index,                              \
+      memref_t<__ubuf__ dtype, 1> *tmp_buf, dtype initvalue)
 
 template <ReduceOpTy OP, typename T>
-__aiv__ __attribute__((always_inline))
-std::enable_if_t<!std::is_same_v<T, half>, T>
-reduction_scalar_operation(T src0_oprand, T src1_oprand) {
-  static_assert(OP == ReduceOpTy::REDUCE_SUM ||
-                OP == ReduceOpTy::REDUCE_MAX ||
-                OP == ReduceOpTy::REDUCE_MIN ||
-                OP == ReduceOpTy::REDUCE_PROD ||
-                OP == ReduceOpTy::REDUCE_XOR ||
-                OP == ReduceOpTy::REDUCE_OR ||
-                OP == ReduceOpTy::REDUCE_AND,
+__aiv__
+    __attribute__((always_inline)) std::enable_if_t<!std::is_same_v<T, half>, T>
+    reduction_scalar_operation(T src0_oprand, T src1_oprand) {
+  static_assert(OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_MAX ||
+                    OP == ReduceOpTy::REDUCE_MIN ||
+                    OP == ReduceOpTy::REDUCE_PROD ||
+                    OP == ReduceOpTy::REDUCE_XOR ||
+                    OP == ReduceOpTy::REDUCE_OR || OP == ReduceOpTy::REDUCE_AND,
                 "ReduceOpTy not find. The return value may be incorrect.");
 
   if constexpr (OP == ReduceOpTy::REDUCE_SUM) {
     return src0_oprand + src1_oprand;
   } else if constexpr (OP == ReduceOpTy::REDUCE_MAX) {
     // check if one of operands is NAN
-    if (src0_oprand != src0_oprand || src1_oprand != src1_oprand) return NAN;
+    if (src0_oprand != src0_oprand || src1_oprand != src1_oprand)
+      return NAN;
     return (src0_oprand > src1_oprand) ? src0_oprand : src1_oprand;
   } else if constexpr (OP == ReduceOpTy::REDUCE_MIN) {
     // check if one of operands is NAN
-    if (src0_oprand != src0_oprand || src1_oprand != src1_oprand) return NAN;
+    if (src0_oprand != src0_oprand || src1_oprand != src1_oprand)
+      return NAN;
     return (src0_oprand < src1_oprand) ? src0_oprand : src1_oprand;
   } else if constexpr (OP == ReduceOpTy::REDUCE_PROD) {
     return src0_oprand * src1_oprand;
@@ -1206,25 +1154,26 @@ reduction_scalar_operation(T src0_oprand, T src1_oprand) {
 }
 
 template <ReduceOpTy OP, typename T>
-__aiv__ __attribute__((always_inline))
-std::enable_if_t<std::is_same_v<T, half>, T>
-reduction_scalar_operation(T src0_oprand, T src1_oprand) {
+__aiv__
+    __attribute__((always_inline)) std::enable_if_t<std::is_same_v<T, half>, T>
+    reduction_scalar_operation(T src0_oprand, T src1_oprand) {
   float src0_oprand_float = static_cast<float>(src0_oprand);
   float src1_oprand_float = static_cast<float>(src1_oprand);
-  float result_float = reduction_scalar_operation<OP, float>(src0_oprand_float, src1_oprand_float);
+  float result_float = reduction_scalar_operation<OP, float>(src0_oprand_float,
+                                                             src1_oprand_float);
   return static_cast<T>(result_float);
 }
 
 template <typename T>
-__aiv__ __attribute__((always_inline)) int64_t reduction_element_nums_to_move_offset_aligned(
-    int64_t offset) {
+__aiv__ __attribute__((always_inline)) int64_t
+reduction_element_nums_to_move_offset_aligned(int64_t offset) {
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
   return CEIL_DIV(offset, num_per_block) * num_per_block - offset;
 }
 
 template <typename T>
-__aiv__ __attribute__((always_inline)) int64_t reduction_get_element_nums_on_scalar_1d(
-      memref_t<__ubuf__ T, 1> *src0) {
+__aiv__ __attribute__((always_inline)) int64_t
+reduction_get_element_nums_on_scalar_1d(memref_t<__ubuf__ T, 1> *src0) {
   int64_t scalar_element_num = 0;
   auto src0_ptr = src0->aligned + src0->offset;
 
@@ -1233,7 +1182,8 @@ __aiv__ __attribute__((always_inline)) int64_t reduction_get_element_nums_on_sca
       return 0;
     }
 
-    scalar_element_num = reduction_element_nums_to_move_offset_aligned<T>(src0->offset);
+    scalar_element_num =
+        reduction_element_nums_to_move_offset_aligned<T>(src0->offset);
     if (scalar_element_num > src0->sizes[0]) {
       scalar_element_num = src0->sizes[0];
     }
@@ -1253,7 +1203,8 @@ get_scalar_memref_t(int64_t element_nums_offset_to_aligned,
   if (src->sizes[1] * src->strides[1] < element_nums_offset_to_aligned) {
     return;
   }
-  scalar_memref->sizes[1] = CEIL_DIV(element_nums_offset_to_aligned, src->strides[1]);
+  scalar_memref->sizes[1] =
+      CEIL_DIV(element_nums_offset_to_aligned, src->strides[1]);
 }
 
 template <typename T>
@@ -1266,36 +1217,38 @@ get_vector_memref_t(int64_t element_nums_offset_to_aligned,
     return;
   }
 
-  vector_memref->allocated += vector_memref->offset + element_nums_offset_to_aligned;
-  vector_memref->aligned += vector_memref->offset + element_nums_offset_to_aligned;
+  vector_memref->allocated +=
+      vector_memref->offset + element_nums_offset_to_aligned;
+  vector_memref->aligned +=
+      vector_memref->offset + element_nums_offset_to_aligned;
   vector_memref->offset = 0;
-  vector_memref->sizes[1] -= CEIL_DIV(element_nums_offset_to_aligned, src->strides[1]);
+  vector_memref->sizes[1] -=
+      CEIL_DIV(element_nums_offset_to_aligned, src->strides[1]);
   return;
 }
 
 template <typename T>
-__aiv__ __attribute__((always_inline)) bool reduction_is_same_element_nums_to_move_offset_aligned(
-    int64_t src_offset, int64_t dst_offset) {
+__aiv__ __attribute__((always_inline)) bool
+reduction_is_same_element_nums_to_move_offset_aligned(int64_t src_offset,
+                                                      int64_t dst_offset) {
   return reduction_element_nums_to_move_offset_aligned<T>(src_offset) ==
          reduction_element_nums_to_move_offset_aligned<T>(dst_offset);
 }
 
 template <typename T>
-__aiv__ __attribute__((always_inline)) bool
-isnan_value(T data) {
-  static_assert(std::is_same<half, T>() ||
-                std::is_same<float, T>(),
+__aiv__ __attribute__((always_inline)) bool isnan_value(T data) {
+  static_assert(std::is_same<half, T>() || std::is_same<float, T>(),
                 "T must be half or float.");
   return static_cast<float>(data) != static_cast<float>(data);
 }
 
 /// Dichotomy reduction on buffer (in-place).
-/// Reduces buffer[0..current_size-1] to buffer[0..half-1] by folding front/back halves.
-/// Returns the new size (current_size / 2).
-/// Template parameter BufPtr can be T* or __ubuf__ T*.
+/// Reduces buffer[0..current_size-1] to buffer[0..half-1] by folding front/back
+/// halves. Returns the new size (current_size / 2). Template parameter BufPtr
+/// can be T* or __ubuf__ T*.
 template <ReduceOpTy OP, typename T, typename BufPtr>
-__aiv__ __attribute__((always_inline))
-int64_t dichotomy_reduce_buffer(BufPtr buffer, int64_t current_size) {
+__aiv__ __attribute__((always_inline)) int64_t
+dichotomy_reduce_buffer(BufPtr buffer, int64_t current_size) {
   int64_t half = current_size / 2;
   for (int64_t i = 0; i < half; ++i) {
     buffer[i] = reduction_scalar_operation<OP, T>(buffer[i], buffer[i + half]);
@@ -1304,16 +1257,17 @@ int64_t dichotomy_reduce_buffer(BufPtr buffer, int64_t current_size) {
 }
 
 /// Pairwise reduction on buffer (in-place).
-/// Reduces buffer[0..current_size-1] to buffer[0..half_size-1] by pairing adjacent elements.
-/// Returns the new size (ceil(current_size/2)).
-/// Template parameter BufPtr can be T* or __ubuf__ T*.
+/// Reduces buffer[0..current_size-1] to buffer[0..half_size-1] by pairing
+/// adjacent elements. Returns the new size (ceil(current_size/2)). Template
+/// parameter BufPtr can be T* or __ubuf__ T*.
 template <ReduceOpTy OP, typename T, typename BufPtr>
-__aiv__ __attribute__((always_inline))
-int64_t pairwise_reduce_buffer(BufPtr buffer, int64_t current_size) {
+__aiv__ __attribute__((always_inline)) int64_t
+pairwise_reduce_buffer(BufPtr buffer, int64_t current_size) {
   int64_t half_size = (current_size + 1) / 2;
   for (int64_t i = 0; i < half_size; ++i) {
     if (2 * i + 1 < current_size) {
-      buffer[i] = reduction_scalar_operation<OP, T>(buffer[2 * i], buffer[2 * i + 1]);
+      buffer[i] =
+          reduction_scalar_operation<OP, T>(buffer[2 * i], buffer[2 * i + 1]);
     } else {
       buffer[i] = buffer[2 * i];
     }
@@ -1325,9 +1279,8 @@ int64_t pairwise_reduce_buffer(BufPtr buffer, int64_t current_size) {
 /// Reads pairs directly from src_ptr and stores to tmp_buffer.
 /// Returns the new size (ceil(n/2)).
 template <ReduceOpTy OP, typename T, typename BufPtr>
-__aiv__ __attribute__((always_inline))
-int64_t pairwise_reduce_from_src(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
-                                  BufPtr tmp_buffer) {
+__aiv__ __attribute__((always_inline)) int64_t pairwise_reduce_from_src(
+    __ubuf__ T *src_ptr, int64_t stride, int64_t n, BufPtr tmp_buffer) {
   int64_t half_size = (n + 1) / 2;
   for (int64_t i = 0; i < half_size; ++i) {
     tmp_buffer[i] = *(src_ptr + (2 * i) * stride);
@@ -1340,16 +1293,19 @@ int64_t pairwise_reduce_from_src(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
 }
 
 /// Implements tree-based reduction to reduce to target_size elements.
-/// The result is stored in tmp_buffer[0..return_value-1], returns the final size after reduction.
+/// The result is stored in tmp_buffer[0..return_value-1], returns the final
+/// size after reduction.
 ///
 /// IMPORTANT: target_size MUST be a power of 2 (including 1).
 ///
-/// Template parameter BufPtr can be T* (stack buffer) or __ubuf__ T* (UB buffer).
+/// Template parameter BufPtr can be T* (stack buffer) or __ubuf__ T* (UB
+/// buffer).
 template <ReduceOpTy OP, typename T, typename BufPtr>
-__aiv__ __attribute__((always_inline))
-std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD), int64_t>
-scalar_reduce_dichotomy_to_target(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
-                                   BufPtr tmp_buffer, int64_t target_size) {
+__aiv__ __attribute__((always_inline)) std::enable_if_t<
+    (OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD), int64_t>
+scalar_reduce_dichotomy_to_target(__ubuf__ T *src_ptr, int64_t stride,
+                                  int64_t n, BufPtr tmp_buffer,
+                                  int64_t target_size) {
   const int64_t dichotomy_num = Log2(n);
   const int64_t main_size = static_cast<int64_t>(1) << dichotomy_num;
   const int64_t tail_size = n - main_size;
@@ -1357,13 +1313,13 @@ scalar_reduce_dichotomy_to_target(__ubuf__ T *src_ptr, int64_t stride, int64_t n
   int64_t half = (main_size == num_per_repeat) ? main_size : main_size / 2;
 
   for (int64_t i = 0; i < half; ++i) {
-      T val0 = *(src_ptr + i * stride);
-      if (main_size != num_per_repeat) {
-          T val1 = *(src_ptr + (i + half) * stride);
-          tmp_buffer[i] = reduction_scalar_operation<OP, T>(val0, val1);
-      } else {// if there is only one repeat, just move src0 to buffer
-          tmp_buffer[i] = val0;
-      }
+    T val0 = *(src_ptr + i * stride);
+    if (main_size != num_per_repeat) {
+      T val1 = *(src_ptr + (i + half) * stride);
+      tmp_buffer[i] = reduction_scalar_operation<OP, T>(val0, val1);
+    } else { // if there is only one repeat, just move src0 to buffer
+      tmp_buffer[i] = val0;
+    }
   }
 
   if (tail_size > 0) {
@@ -1373,7 +1329,8 @@ scalar_reduce_dichotomy_to_target(__ubuf__ T *src_ptr, int64_t stride, int64_t n
       int64_t sub_tail_size = MIN(tail_size - loop * half, half);
       for (int64_t i = 0; i < sub_tail_size; ++i) {
         T tail_val = *(src_ptr + (tail_start + i) * stride);
-        tmp_buffer[i] = reduction_scalar_operation<OP, T>(tmp_buffer[i], tail_val);
+        tmp_buffer[i] =
+            reduction_scalar_operation<OP, T>(tmp_buffer[i], tail_val);
       }
     }
   }
@@ -1387,25 +1344,27 @@ scalar_reduce_dichotomy_to_target(__ubuf__ T *src_ptr, int64_t stride, int64_t n
 }
 
 /// Wrapper that reduces to a single element (target_size = 1).
-/// Template parameter BufPtr can be T* (stack buffer) or __ubuf__ T* (UB buffer).
+/// Template parameter BufPtr can be T* (stack buffer) or __ubuf__ T* (UB
+/// buffer).
 template <ReduceOpTy OP, typename T, typename BufPtr>
-__aiv__ __attribute__((always_inline))
-std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD), T>
+__aiv__ __attribute__((always_inline)) std::enable_if_t<
+    (OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD), T>
 scalar_reduce_dichotomy(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
-                         BufPtr tmp_buffer) {
+                        BufPtr tmp_buffer) {
   scalar_reduce_dichotomy_to_target<OP, T>(src_ptr, stride, n, tmp_buffer, 1);
   return tmp_buffer[0];
 }
 
 /// Reduces to single element using pairwise reduction for SUM (half/float).
 /// - If n <= num_per_repeat: directly pairwise reduce to 1
-/// - If n > num_per_repeat: first dichotomy to num_per_repeat, then pairwise to 1
-/// Template parameter BufPtr can be T* (stack buffer) or __ubuf__ T* (UB buffer).
+/// - If n > num_per_repeat: first dichotomy to num_per_repeat, then pairwise to
+/// 1 Template parameter BufPtr can be T* (stack buffer) or __ubuf__ T* (UB
+/// buffer).
 template <ReduceOpTy OP, typename T, typename BufPtr>
 __aiv__ __attribute__((always_inline))
 std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM), T>
 scalar_reduce_pairwise(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
-                        BufPtr tmp_buffer) {
+                       BufPtr tmp_buffer) {
   constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
 
   if (n == 1) {
@@ -1417,7 +1376,8 @@ scalar_reduce_pairwise(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
     current_size = scalar_reduce_dichotomy_to_target<OP, T>(
         src_ptr, stride, n, tmp_buffer, num_per_repeat);
   } else {
-    current_size = pairwise_reduce_from_src<OP, T>(src_ptr, stride, n, tmp_buffer);
+    current_size =
+        pairwise_reduce_from_src<OP, T>(src_ptr, stride, n, tmp_buffer);
   }
 
   while (current_size > 1) {
@@ -1429,10 +1389,11 @@ scalar_reduce_pairwise(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
 
 /// Block-wise reduction to num_per_repeat, then dichotomy to 1.
 /// - If n <= num_per_repeat: directly dichotomy reduce to 1
-/// - If n > num_per_repeat: first block-wise reduce to num_per_repeat, then dichotomy to 1
+/// - If n > num_per_repeat: first block-wise reduce to num_per_repeat, then
+/// dichotomy to 1
 template <ReduceOpTy OP, typename T>
-__aiv__ __attribute__((always_inline))
-std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD), T>
+__aiv__ __attribute__((always_inline)) std::enable_if_t<
+    (OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD), T>
 scalar_reduce_two_phase(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
                         __ubuf__ T *tmp_buffer) {
   constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
@@ -1442,7 +1403,8 @@ scalar_reduce_two_phase(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
   }
 
   if (n <= num_per_repeat) {
-    return scalar_reduce_dichotomy<OP, T, __ubuf__ T*>(src_ptr, stride, n, tmp_buffer);
+    return scalar_reduce_dichotomy<OP, T, __ubuf__ T *>(src_ptr, stride, n,
+                                                        tmp_buffer);
   }
 
   int64_t num_chunks = n / num_per_repeat;
@@ -1771,10 +1733,12 @@ DECLARE_ENTIRE_REDUCE_AAR(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int64_t);
 DECLARE_ENTIRE_REDUCE_AAR(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint64_t);
 
 DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, half);
-DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, float);
-DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, half);
+DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3,
+                                   float);
 DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3,
-                                     float);
+                                    half);
+DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3,
+                                    float);
 
 DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(reduce_max, ReduceOpTy::REDUCE_MAX, 3, half);
 DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(reduce_max, ReduceOpTy::REDUCE_MAX, 3,

@@ -33,7 +33,7 @@ struct LowerTritonPipelineOptions
       *this, "shared-memory-size",
       llvm::cl::desc("max size of shared memory available for simt vf"),
       llvm::cl::init(122880)};
-  PassOptions::Option<int32_t> simtOptimizationMode{
+  PassOptions::Option<uint32_t> simtOptimizationMode{
       *this, "simt-optimization-mode",
       llvm::cl::desc("set modes for some simt optimization passes"),
       llvm::cl::init(900101)};
@@ -50,7 +50,7 @@ struct LowerTritonPipelineOptions
       llvm::cl::desc("disable reorder instruction"), llvm::cl::init(false)};
   PassOptions::Option<bool> disableSliceOptimizations{
       *this, "disable-slice-optimizations",
-      llvm::cl::desc("disable RewriteSliceOpToMemoryOps pass"), 
+      llvm::cl::desc("disable RewriteSliceOpToMemoryOps pass"),
       llvm::cl::init(false)};
   PassOptions::Option<bool> enableSinkDPXLoad{
       *this, "enable-sink-dpx-load",
@@ -62,6 +62,11 @@ struct LowerTritonPipelineOptions
       *this, "enable-optimize-math",
       llvm::cl::desc("enable optimize math pass"),
       llvm::cl::init(false)};
+  PassOptions::Option<bool> enableOptimizeAtomicReduction{
+      *this, "enable-optimize-atomic-reduction",
+      llvm::cl::desc("enable the pass that skips no-op atomic reductions, e.g. "
+                     "atomic.rmw.fadd(ptr, 0.f)"),
+      llvm::cl::init(true)};
   PassOptions::Option<int> KTileSize{
       *this, "k-tile-size",
       llvm::cl::desc("custom tile size for k tiling (must perfectly divide K)"),
@@ -77,7 +82,7 @@ struct LowerTritonPipelineOptions
   PassOptions::Option<bool> enableSIMTDeviceDebug{
       *this, "enable-simt-device-debug",
       llvm::cl::desc("enable SIMT device print and assert lowering"),
-      llvm::cl::init(false)};
+      llvm::cl::init(true)};
   PassOptions::Option<bool> useDPX{
       *this, "use-dpx",
       llvm::cl::desc("enable SIMT lowering through DPX Dialect"),

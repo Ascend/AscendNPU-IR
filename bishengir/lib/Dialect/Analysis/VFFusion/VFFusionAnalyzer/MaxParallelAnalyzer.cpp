@@ -469,12 +469,12 @@ bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
   auto &producerGroup = AllFusedGroupBlocks[producerGroupId];
   auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
 
-  // SyncBlockSet remains a hard boundary except for the stage-0 predicate
+  // Sync set ops remain a hard boundary except for the stage-0 predicate
   // co-location pattern. That exception only sinks a pure, isolated-use
   // compare/i1 pass-through chain whose inputs remain available at the target.
   for (auto it = producerOp->getNextNode(); it != nullptr && it != consumerOp;
        it = it->getNextNode()) {
-    if (isa<hivm::SyncBlockSetOp>(it)) {
+    if (isa<hivm::SyncBlockSetOp, hivm::SyncIntraBlockSetOp>(it)) {
       if (!this->option.enablePredicateSinkAcrossSync || stage != 0 ||
           !canSinkPredicateGroupAcrossSync(producerGroupId, consumerGroupId,
                                            consumerOp))
@@ -506,8 +506,7 @@ bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
       if (!consumerGroup.count(user) && !producerGroup.count(user))
         return false;
 
-  if (!isInFusionWhiteList(producerOp) ||
-      !isInFusionWhiteList(consumerOp))
+  if (!isInFusionWhiteList(producerOp) || !isInFusionWhiteList(consumerOp))
     return false;
 
   auto producerLinalgOp = dyn_cast<linalg::LinalgOp>(producerOp);
@@ -659,7 +658,7 @@ bool MaxParallelAnalyzer::canFuseGroups(int producerGroupId,
                                         int consumerGroupId, int producerIndex,
                                         int consumerIndex) {
   Operation *const candidateOp = opsInBlock[producerIndex];
-  auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
+  [[maybe_unused]] auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
   // enableCastOpt only takes effect in max-parallel mode.
   if (this->option.enableCastOpt) {
     if (tryFuseByCastStrategy(producerGroupId, consumerGroupId, producerIndex,
@@ -842,7 +841,7 @@ bool MaxParallelAnalyzer::isSmallShapeGroup(int groupId) {
   }
   int instNum = computeGroupInstNum(AllFusedGroupBlocks[groupId]);
   LDBG("isSmallShapeGroup: group " << groupId << " instNum=" << instNum);
-  return instNum < kIssueQueueLen;
+  return static_cast<unsigned>(instNum) < kIssueQueueLen;
 }
 
 bool MaxParallelAnalyzer::mergeGroups(const int producerGroupId,
@@ -1407,7 +1406,7 @@ bool MaxParallelAnalyzer::fuseShapeBoundGroupsWithNearestConsumer() {
 }
 
 void MaxParallelAnalyzer::printValidGroupCount() {
-  int64_t count = 0;
+  [[maybe_unused]] int64_t count = 0;
   std::vector<int> validGroupIds;
 
   LDBG("=============================================");
@@ -1427,7 +1426,7 @@ void MaxParallelAnalyzer::printValidGroupCount() {
   LDBG("=============================================");
   LDBG("Total valid groups: " << count);
   LDBG("All Valid Group IDs: ");
-  for (int id : validGroupIds) {
+  for ([[maybe_unused]] int id : validGroupIds) {
     LDBG("  - " << id);
   }
   LDBG("=============================================\n");

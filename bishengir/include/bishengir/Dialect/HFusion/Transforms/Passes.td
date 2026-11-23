@@ -20,6 +20,15 @@
 
 include "mlir/Pass/PassBase.td"
 
+def PrepareL1Gather : Pass<"hfusion-prepare-l1-gather", "func::FuncOp"> {
+  let summary = "Normalize explicitly hinted row gathers before legalization";
+  let constructor = "mlir::hfusion::createPrepareL1GatherPass()";
+  let dependentDialects = ["annotation::AnnotationDialect", "arith::ArithDialect",
+    "bufferization::BufferizationDialect", "hivm::HIVMDialect",
+    "linalg::LinalgDialect", "memref::MemRefDialect", "scf::SCFDialect",
+    "tensor::TensorDialect", "affine::AffineDialect"];
+}
+
 def HFusionOpFusion : Pass<"hfusion-fuse-ops", "ModuleOp"> {
   let summary = "HFusion Fuse operations on tensors";
   let constructor = "hfusion::createHFusionOpFusionPass()";
@@ -112,6 +121,13 @@ def AutoVectorize : Pass<"hfusion-auto-vectorize", "ModuleOp"> {
   ];
 }
 
+def SelectHIVMVectorize : Pass<"hfusion-select-hivm-vectorize", "ModuleOp"> {
+  let summary = "Select work for HIVM vectorization (hivm.defer_vectorize)";
+  let constructor = "mlir::hfusion::createSelectHIVMVectorizePass()";
+  let dependentDialects = ["linalg::LinalgDialect", "tensor::TensorDialect",
+                           "func::FuncDialect", "hivm::HIVMDialect"];
+}
+
 def GenericUnroller : Pass<"hfusion-generic-unroller", "func::FuncOp"> {
   let summary = "Provides lowering of non-vectorizeable linalg ops (currently only linalg.reduce)";
   let constructor = "mlir::hfusion::createGenericUnrollerPass()";
@@ -119,6 +135,11 @@ def GenericUnroller : Pass<"hfusion-generic-unroller", "func::FuncOp"> {
                          "transform::TransformDialect",
                          "arith::ArithDialect",
                          "vector::VectorDialect"];
+  let options = [Option<
+      "onlyScalarizeTagged", "only-scalarize-tagged", "bool",
+      /*default=*/"false",
+      "Only scalarize linalg.reduce ops explicitly marked for "
+      "scalarization">];
 }
 
 def AutoVectorizeVerifier
@@ -165,7 +186,7 @@ def AutoVectorizeV2 : Pass<"hfusion-auto-vectorize-v2", "ModuleOp"> {
            "Maximum number of ops allowed in one fused node.">,
     Option<"enableVFStackLimit", "enable-vf-stack-limit", "bool", "false",
            "Enable conservative vector function stack slot limit.">,
-    Option<"enableMultipleConsumerFusion", "enable-multiple-consumer-fusion", "bool", "false",
+    Option<"enableMultipleConsumerFusion", "enable-multiple-consumer-fusion", "bool", "true",
            "Enable multiple consumer fusion in AutoVectorizeV2.">,
     Option<"emitTransformSequence", "emit-transform-sequence", "bool", "false",
            "Emit AutoVectorizeV2 payload tags and transform sequence without applying it.">,
@@ -190,6 +211,11 @@ def TreeReduceV2 : Pass<"tree-reduce-v2", "ModuleOp"> {
            "Rewrite only loops marked for direct register reduction.">,
     Option<"directRegisterRA", "direct-register-ra", "bool", "false",
            "Use the direct balanced register-tree RA lowering.">,
+    Option<"ascendStyleAR", "ascend-style-ar", "bool", "true",
+           "Use the AscendC-style multi-pass in-place folding AR lowering.">,
+    Option<"ascendStyleRA", "ascend-style-ra", "bool", "false",
+           "Use the AscendC-style multi-stage tree-folding RA lowering and "
+           "enable generalized staged RA reductions.">,
     Option<"onlyLegacyScope", "only-legacy-scope", "bool", "false",
            "Rewrite only modules selected for the legacy tree strategy.">,
   ];
@@ -252,6 +278,21 @@ def FlattenOps : Pass<"hfusion-flatten-ops", "func::FuncOp"> {
              "Whether to skip the current pass when scope exists">];
 }
 
+def FlattenReductionRegions
+    : Pass<"hfusion-flatten-reduction-regions", "func::FuncOp"> {
+  let constructor = "mlir::hfusion::createFlattenReductionRegionsPass()";
+  let summary = "Flatten compatible local tensor reduction regions before V2";
+  let description = [{
+    Collapse adjacent reduction dimensions in linalg.generic operations and
+    their compatible elementwise producers. Keep parallel dimensions, projected
+    input maps, and producers with outside users at region boundaries. Run after
+    PreVectorizationFusion so broadcast and reduction payload fusion is retained,
+    and canonicalize the resulting tensor reshapes before AutoVectorizeV2.
+  }];
+  let dependentDialects = ["arith::ArithDialect", "linalg::LinalgDialect",
+                           "tensor::TensorDialect"];
+}
+
 def TensorResToOutParams
     : Pass<"hfusion-tensor-results-to-out-params", "ModuleOp"> {
   let summary = "Move tensor results to function output parameters";
@@ -296,18 +337,25 @@ def Normalize : Pass<"hfusion-normalize-ops", "func::FuncOp"> {
   let dependentDialects = ["hfusion::HFusionDialect", "hivm::HIVMDialect",
                            "bufferization::BufferizationDialect",
                            "scope::ScopeDialect"];
-  let options = [
-    Option<"useRegBase", "use-regbase", "bool", /*default=*/"false",
-           "Forcefully use RegBase normalize implementation.">,
-    Option<"enableHighPrecision", "enable-high-precision", "bool",
-           /*default=*/"true",
-           "Enable high precision calculation for sin/cos in HFusion.">,
-    Option<
-      "enableFastDiv", "enable-fast-div", "bool",
-      /*default=*/"true",
-      "Enable conversion of div with constant denominator into mul "
-      "excluding cases when reciprocal value is denormal or inf value">
-  ];
+  let options =
+      [Option<"useRegBase", "use-regbase", "bool", /*default=*/"false",
+              "Forcefully use RegBase normalize implementation.">,
+       Option<"enableHighPrecision", "enable-high-precision", "bool",
+              /*default=*/"true",
+              "Enable high precision calculation for sin/cos in HFusion.">,
+       Option<"enableFastDiv", "enable-fast-div", "bool",
+              /*default=*/"true",
+              "Enable conversion of div with constant denominator into mul "
+              "excluding cases when reciprocal value is denormal or inf value">,
+       Option<"enableDivRemPow2", "enable-div-rem-pow2", "bool",
+              /*default=*/"true",
+              "Enable strength reduction of integer div/div_unsigned/mod/modui "
+              "with "
+              "a power-of-two constant divisor into shift/and ops (regbased "
+              "Ascend950 only)">,
+       Option<"enableFma", "enable-fma", "bool", /*default=*/"false",
+              "Enable fused multiply-add for the floating-point mod residual "
+              "(requires the vectorization path)">];
 }
 
 def NormalizeSliceOps : Pass<"hfusion-normalize-slice-ops", "func::FuncOp"> {
@@ -519,6 +567,12 @@ def LegalizeFP8Pass : Pass<"hfusion-legalize-fp8", "func::FuncOp"> {
   let dependentDialects = ["linalg::LinalgDialect", "hfusion::HFusionDialect"];
 }
 
+def LegalizeScalarFP8Pass : Pass<"hfusion-legalize-scalar-fp8", "func::FuncOp"> {
+  let summary = "Carry scalar f8 conditional results as i8 bit patterns";
+  let constructor = "mlir::hfusion::createLegalizeScalarFP8Pass()";
+  let dependentDialects = ["arith::ArithDialect", "scf::SCFDialect"];
+}
+
 def LegalizeBoolPass : Pass<"hfusion-legalize-bool", "ModuleOp"> {
   let summary = "cast int8 to int1 for input and int1 to int8 for output.";
   let constructor = "mlir::hfusion::createLegalizeBoolPass()";
@@ -682,6 +736,19 @@ def UpliftWhileToFor : Pass<"hfusion-uplift-while-to-for", "func::FuncOp"> {
   let summary = "Uplift scf.while loops to scf.for when possible";
   let constructor = "mlir::hfusion::createUpliftWhileToForPass()";
   let dependentDialects = ["scf::SCFDialect", "arith::ArithDialect"];
+  let options =
+      [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+              /*default=*/"false",
+              "Bypass shape registry check for the 3160 "
+              "sign-extended while-bound normalize">,
+       Option<"enablePreload", "enable-preload", "bool",
+              /*default=*/"false",
+              "Enable the 3160 sign-extended while-bound normalize "
+              "when the kernel is registered">,
+       Option<
+           "workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
+           /*default=*/"0",
+           "Workspace multibuffer depth; heuristics require a non-zero value">];
 }
 
 def LoopInvariantPromotion
@@ -704,11 +771,6 @@ def HFusionGeneralizePass : Pass<"hfusion-generalize", "func::FuncOp"> {
   let summary = "Generalize named ops to generic ops";
   let constructor = "mlir::hfusion::createHFusionGeneralizePass()";
   let dependentDialects = ["linalg::LinalgDialect", "hfusion::HFusionDialect"];
-}
-
-def FoldExtractInsertPair : Pass<"hfusion-fold-extract-insert-pair", "func::FuncOp"> {
-  let summary = "Fold Extract Insert Pair.";
-  let constructor = "mlir::hfusion::createFoldExtractInsertPairPass()";
 }
 
 def PrepareI1Nx1ForVectorization
@@ -738,12 +800,17 @@ def MergeVecScope : Pass<"hfusion-merge-vf", "ModuleOp"> {
   ];
 }
 
-def PullSliceIntoVectorFunction
-    : Pass<"hfusion-pull-slice-into-vector-function", "ModuleOp"> {
-  let summary = "Pull tensor slice ops into VF callees to reduce buffer copies";
-  let constructor = "mlir::hfusion::createPullSliceIntoVectorFunctionPass()";
+def PullFillIntoVectorFunction
+    : Pass<"hfusion-pull-fill-into-vector-function", "ModuleOp"> {
+  let summary = "Pull constant scalar fills into VF callees";
+  let description = [{
+    Move constant 0-rank tensor fills to the SIMD VF entry when the VF has
+    exactly one direct caller.
+  }];
+  let constructor = "mlir::hfusion::createPullFillIntoVectorFunctionPass()";
   let dependentDialects = ["tensor::TensorDialect", "func::FuncDialect",
-                           "hivm::HIVMDialect", "scf::SCFDialect"];
+                           "hivm::HIVMDialect", "scf::SCFDialect",
+                           "arith::ArithDialect", "vector::VectorDialect"];
 }
 
 def VectorizeOps : Pass<"hfusion-vectorize-ops", "ModuleOp"> {

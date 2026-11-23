@@ -13,6 +13,7 @@
 #include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
 #include "bishengir/Dialect/Triton/Transforms/Passes.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "bishengir/Target/NPU/NPUArchitecture.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
@@ -137,7 +138,8 @@ struct AdaptGPUKernelPass
 
     // Calculate the block dim
     int64_t numWarp = -1;
-    if (auto numWarpAttr = moduleOp->getAttr(mlir::triton::gpu::AttrNumWarpsName))
+    if (auto numWarpAttr =
+            moduleOp->getAttr(mlir::triton::gpu::AttrNumWarpsName))
       if (auto intAttr = dyn_cast<IntegerAttr>(numWarpAttr))
         numWarp = intAttr.getInt();
 
@@ -210,7 +212,8 @@ struct AdaptGPUKernelPass
       Value tmp2 = builder.create<LLVM::UDivOp>(loc, int64Ty, tmp1, gridY);
       pz = tmp2;
     }
-    auto ub = mlir::triton::util::allocateSharedMemory(wrapperFuncOp, builder, loc);
+    auto ub =
+        mlir::triton::util::allocateSharedMemory(wrapperFuncOp, builder, loc);
 
     args.push_back(gridX);
     args.push_back(gridY);
@@ -254,12 +257,16 @@ struct AdaptGPUKernelPass
         m->getAttrOfType<hacc::TargetAttr>(hacc::TargetAttr::name);
     assert(target && "Target device not specified!");
 
+    auto device = hacc::symbolizeTargetDeviceEnum(target.getTarget());
+    auto architecture = hacc::getArchitecture(device);
+    if (architecture == npu::NPUArchitectureKind::kUnknown)
+      llvm::report_fatal_error("Unknown TargetDevice value");
+
     StringAttr targetAttr =
         StringAttr::get(context, hivm_regbaseintrins::kDavinciTargetAttrName);
     wrapperFunc->setAttr(
         targetAttr, hivm_regbaseintrins::SIMT_TargetAttr::get(
-                        context, hacc::getArch(hacc::symbolizeTargetDeviceEnum(
-                                     target.getTarget()))));
+                        context, npu::stringifyNPUArchitecture(architecture)));
 
     Block *entryBlock = wrapperFunc.addEntryBlock(builder);
     builder.setInsertionPointToStart(entryBlock);
@@ -556,8 +563,7 @@ struct AdaptGPUKernelPass
 };
 } // namespace
 
-std::unique_ptr<Pass>
-createAdaptGPUKernelPass(AdaptGPUKernelOptions options) {
+std::unique_ptr<Pass> createAdaptGPUKernelPass(AdaptGPUKernelOptions options) {
   return std::make_unique<AdaptGPUKernelPass>(options);
 }
 

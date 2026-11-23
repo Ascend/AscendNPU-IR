@@ -7,11 +7,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/DMA/CubeLoad/CubeLoadCapabilityQuery.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/DMA/Fixpipe/FixpipeCapabilityBinding.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/ConvertLayoutUtils.h"
+#include "bishengir/Dialect/HIVM/Transforms/FixpipeCapabilityQuery.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -23,6 +26,7 @@
 
 #include <bishengir/Dialect/Tensor/Transforms/PropagateReshape/Utils.h>
 
+#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 
 #define DEBUG_TYPE "hivm-combine-optimized-convert-layout"
@@ -116,9 +120,13 @@ bool isNCHW2NC1HWC0Conversion(ConvertLayoutOp op) {
          op.getDstLayout().getDataLayout() == DataLayout::NC1HWC0;
 }
 
-LogicalResult verifyNCHW2NC1HWC0Load(LoadOp loadOp,
-                                    PatternRewriter &rewriter,
-                                    Operation *op) {
+bool isNCHW2C1HWNC0Conversion(ConvertLayoutOp op) {
+  return op.getSrcLayout().getDataLayout() == DataLayout::NCHW &&
+         op.getDstLayout().getDataLayout() == DataLayout::C1HWNC0;
+}
+
+LogicalResult verifyNCHWLoad(LoadOp loadOp, PatternRewriter &rewriter,
+                             Operation *op) {
   if (loadOp.getPadModeAttr() || loadOp.getPadValue() ||
       loadOp.getLeftPaddingNum() || loadOp.getRightPaddingNum() ||
       loadOp.getInitOutBuffer() || loadOp.getInitCondition())
@@ -138,8 +146,7 @@ LogicalResult verifyNCHW2NC1HWC0Load(LoadOp loadOp,
   (void)offset;
   int64_t expectedStride = 1;
   for (int64_t dim = 3; dim >= 0; --dim) {
-    if (ShapedType::isDynamic(strides[dim]) ||
-        strides[dim] != expectedStride)
+    if (ShapedType::isDynamic(strides[dim]) || strides[dim] != expectedStride)
       return rewriter.notifyMatchFailure(op,
                                          "load source is not contiguous NCHW");
     expectedStride *= srcType.getDimSize(dim);
@@ -522,26 +529,56 @@ struct FoldDirectLoadToNCHW2NC1HWC0Pattern
   LogicalResult matchAndRewrite(ConvertLayoutOp op,
                                 PatternRewriter &rewriter) const override {
     if (!isNCHW2NC1HWC0Conversion(op))
-      return rewriter.notifyMatchFailure(op,
-                                         "not an NCHW→NC1HWC0 conversion");
-    ModuleOp module = op->getParentOfType<ModuleOp>();
-    if (!module || !hacc::utils::isAscend950(module))
-      return rewriter.notifyMatchFailure(op, "not an A5 target");
+      return rewriter.notifyMatchFailure(op, "not an NCHW→NC1HWC0 conversion");
+    Type elementType = getElementTypeOrSelf(op.getSource().getType());
+    if (!isNativeNchw2Nc1hwc0(op, elementType, AddressSpace::GM,
+                              AddressSpace::L1))
+      return rewriter.notifyMatchFailure(op, "NCHW2NC1HWC0 is not Native");
     auto match = matchDirectLoadConvertLayout(op, rewriter);
     if (failed(match))
       return failure();
-    if (failed(verifyNCHW2NC1HWC0Load(match->loadOp, rewriter, op)))
+    if (failed(verifyNCHWLoad(match->loadOp, rewriter, op)))
       return failure();
 
-    auto groupsAttr = op->getAttrOfType<IntegerAttr>("groups");
+    auto groupsAttr = dyn_cast_or_null<IntegerAttr>(
+        op->getDiscardableAttr(kConvolutionGroupsAttrName));
     int64_t groups = groupsAttr ? groupsAttr.getInt() : 1;
     auto createFusedDma = [groups](PatternRewriter &rewriter, Location loc,
-                                  LoadOp, Value src, Value dst) {
+                                   LoadOp, Value src, Value dst) {
       rewriter.create<NCHW2NC1HWC0Op>(loc, src, dst,
                                       rewriter.getI64IntegerAttr(groups));
     };
-    return rewriteDirectLoadConvertLayout(op, rewriter, *match,
-                                          createFusedDma);
+    return rewriteDirectLoadConvertLayout(op, rewriter, *match, createFusedDma);
+  }
+};
+
+struct FoldDirectLoadToNCHW2C1HWNC0Pattern
+    : public OpRewritePattern<ConvertLayoutOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ConvertLayoutOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!isNCHW2C1HWNC0Conversion(op))
+      return rewriter.notifyMatchFailure(op, "not an NCHW→C1HWNC0 conversion");
+    Type elementType = getElementTypeOrSelf(op.getSource().getType());
+    if (!isNativeNchw2C1hwnc0(op, elementType, AddressSpace::GM,
+                              AddressSpace::L1))
+      return rewriter.notifyMatchFailure(op, "NCHW2C1HWNC0 is not Native");
+    auto match = matchDirectLoadConvertLayout(op, rewriter);
+    if (failed(match))
+      return failure();
+    if (failed(verifyNCHWLoad(match->loadOp, rewriter, op)))
+      return failure();
+
+    auto groupsAttr = dyn_cast_or_null<IntegerAttr>(
+        op->getDiscardableAttr(kConvolutionGroupsAttrName));
+    int64_t groups = groupsAttr ? groupsAttr.getInt() : 1;
+    auto createFusedDma = [groups](PatternRewriter &rewriter, Location loc,
+                                   LoadOp, Value src, Value dst) {
+      rewriter.create<NCHW2C1HWNC0Op>(loc, src, dst,
+                                      rewriter.getI64IntegerAttr(groups));
+    };
+    return rewriteDirectLoadConvertLayout(op, rewriter, *match, createFusedDma);
   }
 };
 
@@ -631,6 +668,20 @@ struct FoldTensorLoadToLoadMXScalePattern
   }
 };
 
+/// Returns the data_layout declared in the custom op's arg_attrs for the
+/// operand at `operandIndex` (inputs then outputs), or nullptr if the operand
+/// has no declared data_layout.
+static DataLayoutAttr getCustomOpOperandLayout(CustomOp customOp,
+                                               unsigned operandIndex) {
+  auto argAttrs = customOp->getAttrOfType<ArrayAttr>(CustomOp::kArgAttrsName);
+  if (!argAttrs || operandIndex >= argAttrs.size())
+    return nullptr;
+  auto dict = dyn_cast<DictionaryAttr>(argAttrs[operandIndex]);
+  if (!dict)
+    return nullptr;
+  return dict.getAs<DataLayoutAttr>(CustomLikeOpInterface::kDataLayoutName);
+}
+
 //===----------------------------------------------------------------------===//
 // Fold ConvertLayout + Fixpipe
 //
@@ -675,8 +726,24 @@ struct FoldConvertLayoutFixpipePattern
 
       rewriter.modifyOpInPlace(fixpipeOp, [&]() {
         if (fixpipeOp.getDmaMode() == FixpipeDMAMode::NZ2NZ &&
-            hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>()) &&
-            needChannelSplit(op, fixpipeOp)) {
+            needChannelSplit(op, fixpipeOp) && [&] {
+              using bishengir::npu::FixpipeCapabilityRequestBuilder;
+              std::optional<FixpipeCapabilityRequestBuilder> builder =
+                  FixpipeCapabilityRequestBuilder::from(fixpipeOp);
+              if (!builder)
+                return false;
+              builder->channelSplit(true);
+              builder->srcAddressSpace(AddressSpace::L0C);
+              builder->dstAddressSpace(AddressSpace::L1);
+              std::optional<bishengir::npu::NPUArchitectureKind> architecture =
+                  lookupModuleArchitecture(fixpipeOp);
+              if (!architecture)
+                return false;
+              auto storage = builder->build();
+              return bishengir::npu::queryNativeSupport(*architecture,
+                                                        storage.getRequest()) ==
+                     bishengir::npu::NativeSupport::Native;
+            }()) {
           fixpipeOp.setChannelSplit(true);
         }
         fixpipeOp.getSrcMutable().assign(op.getSource());
@@ -878,20 +945,129 @@ struct FoldFixpipeNz2NzToFractalConvertLayoutPattern
 
     auto mixedFractalShape = op.getMixedOutputShape();
     auto emptyOp = rewriter.create<tensor::EmptyOp>(
-        op.getLoc(), mixedFractalShape, resultTensorType.getElementType());
+        op.getLoc(), mixedFractalShape, resultTensorType.getElementType(),
+        resultTensorType.getEncoding());
 
-    auto newFixpipe = rewriter.create<FixpipeOp>(
-        fixpipeOp.getLoc(), resultTensorType, fixpipeOp.getSrc(),
-        emptyOp.getResult(), fixpipeOp.getDmaModeAttr(),
-        fixpipeOp.getDualDstModeAttr(), fixpipeOp.getSubBlockIdxAttr(),
-        fixpipeOp.getPreQuantAttr(), fixpipeOp.getPreReluAttr(),
-        fixpipeOp.getChannelSplitAttr(), fixpipeOp.getC0PadEnAttr(),
-        fixpipeOp.getQuantScale());
-    if (fixpipeOp.getUnitFlagMode())
-      newFixpipe.setUnitFlagModeAttr(fixpipeOp.getUnitFlagModeAttr());
+    auto newFixpipe = FixpipeOp::clone(rewriter, fixpipeOp, fixpipeOp.getSrc(),
+                                       emptyOp.getResult());
 
     rewriter.replaceOp(op, newFixpipe.getResultTensor());
     rewriter.eraseOp(fixpipeOp);
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// Fold CustomOp + convert_layout
+//
+// A CustomOp result may already carry the target layout declared in its
+// arg_attrs (e.g. a DMA-like custom op with data_layout = Fractal on its
+// output). A convert_layout inserted after such a custom op is redundant
+// when the custom op's declared output layout matches the convert_layout's
+// dstLayout.
+//
+// Matches:
+//   %custom = hivm.hir.custom {arg_attrs = [..., {data_layout = Fractal}]}
+//       ... -> tensor<4D>
+//   %conv = hivm.hir.convert_layout %custom {srcLayout = ND, dstLayout =
+//   Fractal}
+//       -> tensor<4D>
+//
+// Transforms to:
+//   %custom = hivm.hir.custom {arg_attrs = [..., {data_layout = Fractal}]}
+//       ... -> tensor<4D>
+//===----------------------------------------------------------------------===//
+
+struct FoldCustomOpConvertLayoutPattern
+    : public OpRewritePattern<ConvertLayoutOp> {
+  FoldCustomOpConvertLayoutPattern(MLIRContext *context)
+      : OpRewritePattern(context) {}
+
+  LogicalResult matchAndRewrite(ConvertLayoutOp op,
+                                PatternRewriter &rewriter) const override {
+    auto customOp = op.getSource().getDefiningOp<CustomOp>();
+    if (!customOp)
+      return rewriter.notifyMatchFailure(op, "source is not a CustomOp");
+
+    // The custom op must have a single result (the one feeding this convert).
+    if (customOp->getNumResults() != 1)
+      return rewriter.notifyMatchFailure(
+          customOp, "custom op has multiple results; cannot determine layout");
+
+    // Only fold when the convert is the sole user of the custom op result.
+    if (!op.getSource().hasOneUse())
+      return rewriter.notifyMatchFailure(
+          customOp, "custom op result has multiple uses; cannot fold");
+
+    // getOperandsTargetLayout() is keyed by the custom op's *operand* values
+    // (inputs then outputs), not by its result values. Map the result feeding
+    // this convert to its corresponding output operand before looking up the
+    // declared data_layout.
+    auto opResult = dyn_cast<OpResult>(op.getSource());
+    if (!opResult)
+      return rewriter.notifyMatchFailure(customOp, "source is not an OpResult");
+    unsigned resultIdx = opResult.getResultNumber();
+    if (resultIdx >= customOp.getOutputs().size())
+      return rewriter.notifyMatchFailure(
+          customOp, "result index out of range of custom op outputs");
+
+    // Get the custom op's declared output layout from arg_attrs. The output
+    // operand's arg_attrs index follows all input operands.
+    unsigned outputOperandIdx = customOp.getInputs().size() + resultIdx;
+    auto outputLayout = getCustomOpOperandLayout(customOp, outputOperandIdx);
+    if (!outputLayout)
+      return rewriter.notifyMatchFailure(
+          customOp, "custom op output has no declared data_layout");
+
+    // The custom op's declared output layout must match the convert_layout's
+    // dstLayout (comparing the logical layout enum, not the full attribute).
+    if (outputLayout.getDataLayout() != op.getDstLayout().getDataLayout())
+      return rewriter.notifyMatchFailure(
+          op, "custom op output layout does not match convert dstLayout");
+
+    // Case 1: the custom op result type already matches the convert result
+    // type. The convert_layout is a pure no-op; fold it away directly.
+    if (op.getSource().getType() == op.getType()) {
+      rewriter.replaceOp(op, op.getSource());
+      return success();
+    }
+
+    // Case 2: the convert_layout changes the type (e.g. rank-2 ND result to
+    // rank-4 Fractal). Like the named nd2nz op, the custom op already produces
+    // the fractal layout physically; the convert only materializes the rank-4
+    // SSA type. Fold by recreating the custom op so it produces the convert's
+    // result type directly, mirroring FoldFixpipeNz2NzToFractal.
+    auto resultTensorType = dyn_cast<RankedTensorType>(op.getType());
+    if (!resultTensorType)
+      return rewriter.notifyMatchFailure(
+          op, "convert result is not a ranked tensor");
+
+    // The DestinationStyleOpInterface verifier requires each outs operand to
+    // match its corresponding result type, so materialize a new destination
+    // tensor with the convert's (fractal) result type for the folded output.
+    auto mixedFractalShape = op.getMixedOutputShape();
+    auto emptyOp = rewriter.create<tensor::EmptyOp>(
+        op.getLoc(), mixedFractalShape, resultTensorType.getElementType());
+
+    // Rebuild the operand list, replacing the folded output operand with the
+    // new fractal-typed destination. Operand order is: inputs, outputs, tmps.
+    SmallVector<Value> newOperands;
+    size_t numOutputs = customOp.getOutputs().size();
+    for (Value input : customOp.getInputs())
+      newOperands.push_back(input);
+    for (size_t i = 0; i < numOutputs; ++i)
+      newOperands.push_back(i == resultIdx ? emptyOp.getResult()
+                                           : customOp.getOutputs()[i]);
+    for (Value tmp : customOp.getTempBuffers())
+      newOperands.push_back(tmp);
+
+    SmallVector<Type> newResultTypes(customOp->getNumResults(),
+                                     resultTensorType);
+    auto newCustomOp = rewriter.create<CustomOp>(
+        customOp.getLoc(), newResultTypes, newOperands, customOp->getAttrs());
+
+    rewriter.replaceOp(op, newCustomOp.getResults()[resultIdx]);
+    rewriter.eraseOp(customOp);
     return success();
   }
 };
@@ -944,22 +1120,16 @@ struct FoldFixpipeConvertLayoutPattern
     // Create an empty tensor for the new fixpipe output (ND shape)
     // This is required because fixpipe requires outs type == result type
     auto emptyOp = rewriter.create<tensor::EmptyOp>(
-        op.getLoc(), mixedFractalShape, resultTensorType.getElementType());
+        op.getLoc(), mixedFractalShape, resultTensorType.getElementType(),
+        resultTensorType.getEncoding());
 
-    // Create new fixpipe with enhanced DMA mode
-    auto newFixpipe = rewriter.create<FixpipeOp>(
-        fixpipeOp.getLoc(),
-        resultTensorType,    // Result type: ND shape
-        fixpipeOp.getSrc(),  // Same source
-        emptyOp.getResult(), // New dst with ND shape (must match result)
-        FixpipeDMAModeAttr::get(rewriter.getContext(), dmaMode),
-        fixpipeOp.getDualDstModeAttr(), fixpipeOp.getSubBlockIdxAttr(),
-        fixpipeOp.getPreQuantAttr(), fixpipeOp.getPreReluAttr(),
-        fixpipeOp.getChannelSplitAttr(), fixpipeOp.getC0PadEnAttr());
+    auto newFixpipe = FixpipeOp::clone(
+        rewriter, fixpipeOp, fixpipeOp.getSrc(), emptyOp.getResult(),
+        {rewriter.getNamedAttr(
+            fixpipeOp.getDmaModeAttrName(),
+            FixpipeDMAModeAttr::get(rewriter.getContext(), dmaMode))});
 
-    if (fixpipeOp.getUnitFlagMode())
-      newFixpipe.setUnitFlagModeAttr(fixpipeOp.getUnitFlagModeAttr());
-    rewriter.replaceOp(op, newFixpipe.getResults());
+    rewriter.replaceOp(op, newFixpipe.getResultTensor());
     rewriter.eraseOp(fixpipeOp);
     return success();
   }
@@ -1135,6 +1305,29 @@ struct FoldFixpipeStoreConvertLayoutPattern
     newToTensorOp->setAttrs(match.toTensorOp->getAttrs());
 
     FixpipeOp fixpipeOp = match.fixpipeOp;
+    // channel_split=true must be Native. Plain NZ2NZ stays ungated until
+    // address-space/layout capability covers L1-only rows (W5.b).
+    if (match.channelSplit && [&] {
+          using bishengir::npu::FixpipeCapabilityRequestBuilder;
+          std::optional<FixpipeCapabilityRequestBuilder> builder =
+              FixpipeCapabilityRequestBuilder::from(fixpipeOp);
+          if (!builder)
+            return true;
+          builder->dmaMode(FixpipeDMAMode::NZ2NZ);
+          builder->channelSplit(true);
+          builder->srcAddressSpace(AddressSpace::L0C);
+          builder->dstAddressSpace(AddressSpace::L1);
+          std::optional<bishengir::npu::NPUArchitectureKind> architecture =
+              lookupModuleArchitecture(fixpipeOp);
+          if (!architecture)
+            return true;
+          auto storage = builder->build();
+          return bishengir::npu::queryNativeSupport(*architecture,
+                                                    storage.getRequest()) !=
+                 bishengir::npu::NativeSupport::Native;
+        }())
+      return rewriter.notifyMatchFailure(
+          op, "channel_split candidate is not Native on this target");
     rewriter.modifyOpInPlace(fixpipeOp, [&]() {
       fixpipeOp.getDstMutable().assign(newBuffer);
       fixpipeOp.setDmaModeAttr(FixpipeDMAModeAttr::get(rewriter.getContext(),
@@ -1276,20 +1469,141 @@ struct FoldUninitL1NDConvertToEmptyPattern
   }
 };
 
+/// Returns true if `value` is a view of a buffer. The contents of such a tensor
+/// can be changed by an interleaved memref-level writer, so two copies of it
+/// are not necessarily copies of the same bytes.
+static bool isBufferBackedTensor(Value value) {
+  while (Operation *def = value.getDefiningOp()) {
+    if (isa<bufferization::ToTensorOp>(def))
+      return true;
+    if (auto expand = dyn_cast<tensor::ExpandShapeOp>(def)) {
+      value = expand.getSrc();
+      continue;
+    }
+    if (auto collapse = dyn_cast<tensor::CollapseShapeOp>(def)) {
+      value = collapse.getSrc();
+      continue;
+    }
+    if (auto slice = dyn_cast<tensor::ExtractSliceOp>(def)) {
+      value = slice.getSource();
+      continue;
+    }
+    if (auto castOp = dyn_cast<tensor::CastOp>(def)) {
+      value = castOp.getSource();
+      continue;
+    }
+    return false;
+  }
+  return false;
+}
+
+/// Matches the staging buffer of `copyOp`: a freshly allocated destination that
+/// `copyOp` is the sole writer of and that is read back through a single
+/// `to_tensor` view. Returns that view, and sets `allocOp`, on success.
+static bufferization::ToTensorOp
+getStagingBufferView(CopyOp copyOp, memref::AllocOp &allocOp) {
+  allocOp = copyOp.getDst().getDefiningOp<memref::AllocOp>();
+  if (!allocOp)
+    return nullptr;
+  bufferization::ToTensorOp view = nullptr;
+  for (Operation *user : allocOp->getUsers()) {
+    if (user == copyOp.getOperation())
+      continue;
+    auto toTensor = dyn_cast<bufferization::ToTensorOp>(user);
+    if (!toTensor || view)
+      return nullptr;
+    view = toTensor;
+  }
+  return view;
+}
+
+/// Two inserted stagings are interchangeable when they move the same tensor,
+/// with the same settings, into a buffer of the same type.
+static bool isEquivalentStaging(CopyOp lhs, CopyOp rhs) {
+  return lhs->hasAttr(kInsertedCopyAttr::name) && !lhs.getResultTensor() &&
+         lhs.getSrc() == rhs.getSrc() &&
+         lhs.getDst().getType() == rhs.getDst().getType() &&
+         lhs.getPadValue() == rhs.getPadValue() &&
+         lhs->getAttrDictionary() == rhs->getAttrDictionary();
+}
+
+/// Drop an L1 staging that repeats an earlier one.
+///
+/// The mix-CV load/store inserter stages a vector-side tensor into L1 once per
+/// cube consumer, so a value feeding two `mmadL1` ops gets two L1 buffers and
+/// two copies. CSE unifies the two sources but cannot touch the destinations,
+/// because a copy is a destination-passing-style op, and the duplicate then
+/// survives to the end of the pipeline: the vector core moves the same bytes to
+/// L1 twice and the two matmuls can no longer issue back to back.
+///
+/// ```mlir
+///   %a = memref.alloc() : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+///   %va = bufferization.to_tensor %a restrict writable
+///   hivm.hir.copy ins(%src) outs(%a) {"hivm.inserted-copy"}
+///   %b = memref.alloc() : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+///   %vb = bufferization.to_tensor %b restrict writable
+///   hivm.hir.copy ins(%src) outs(%b) {"hivm.inserted-copy"}  // erased
+/// ```
+///
+/// after which every reader of `%vb` reads `%va`.
+struct DedupInsertedL1StagingPattern : public OpRewritePattern<CopyOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(CopyOp copyOp,
+                                PatternRewriter &rewriter) const override {
+    auto parent = copyOp->getParentOfType<func::FuncOp>();
+    if (!parent || !shouldDedupInsertedL1Staging(parent.getName()))
+      return rewriter.notifyMatchFailure(
+          copyOp, "kernel is not on the inserted-L1 dedup allow-list");
+    if (!copyOp->hasAttr(kInsertedCopyAttr::name))
+      return rewriter.notifyMatchFailure(copyOp, "not an inserted staging");
+    if (copyOp.getResultTensor())
+      return rewriter.notifyMatchFailure(copyOp, "has tensor semantics");
+    if (isBufferBackedTensor(copyOp.getSrc()))
+      return rewriter.notifyMatchFailure(copyOp, "source aliases a buffer");
+
+    memref::AllocOp allocOp;
+    bufferization::ToTensorOp view = getStagingBufferView(copyOp, allocOp);
+    if (!view)
+      return rewriter.notifyMatchFailure(copyOp, "buffer is not private");
+
+    for (Operation *prev = copyOp->getPrevNode(); prev;
+         prev = prev->getPrevNode()) {
+      auto prevCopy = dyn_cast<CopyOp>(prev);
+      if (!prevCopy || !isEquivalentStaging(prevCopy, copyOp))
+        continue;
+      memref::AllocOp prevAllocOp;
+      bufferization::ToTensorOp prevView =
+          getStagingBufferView(prevCopy, prevAllocOp);
+      // The earlier view has to dominate every reader of the later one. Being
+      // ahead of it in the same block is enough, and is all this pass sees.
+      if (!prevView || prevView->getBlock() != view->getBlock() ||
+          !prevView->isBeforeInBlock(view))
+        continue;
+      rewriter.eraseOp(copyOp);
+      rewriter.replaceOp(view, prevView.getResult());
+      rewriter.eraseOp(allocOp);
+      return success();
+    }
+    return rewriter.notifyMatchFailure(copyOp, "no earlier equal staging");
+  }
+};
+
 void populateCombineOptimizedConvertLayoutPatterns(RewritePatternSet &patterns,
                                                    MLIRContext *context) {
   ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
   patterns.add<
       FoldDirectLoadToND2NZPattern, FoldDirectLoadToLoadMXScalePattern,
-           FoldDirectLoadToNCHW2NC1HWC0Pattern,
+      FoldDirectLoadToNCHW2NC1HWC0Pattern, FoldDirectLoadToNCHW2C1HWNC0Pattern,
       FoldSubviewLoadToND2NZPattern, FoldSubviewLoadToLoadMXScalePattern,
       FoldFixpipeNz2NzToFractalConvertLayoutPattern,
       FoldTensorLoadToND2NZPattern, FoldTensorLoadToND2NZPattern,
       FoldTensorLoadToLoadMXScalePattern, FoldFixpipeConvertLayoutPattern,
-      FoldConvertLayoutFixpipePattern,
+      FoldConvertLayoutFixpipePattern, FoldCustomOpConvertLayoutPattern,
       FoldConvertLayoutExtractSliceFixpipePattern,
       FoldFixpipeStoreConvertLayoutPattern, FoldUninitL1NDConvertToEmptyPattern,
-      RouteVectorFractalizeViaGMPattern>(context);
+      RouteVectorFractalizeViaGMPattern, DedupInsertedL1StagingPattern>(
+      context);
 }
 
 } // namespace
@@ -1302,6 +1616,8 @@ struct CombineOptimizedConvertLayoutPass
     : public impl::CombineOptimizedConvertLayoutBase<
           CombineOptimizedConvertLayoutPass> {
   void runOnOperation() override {
+    ModuleTargetAnalysis &targets = getAnalysis<ModuleTargetAnalysis>();
+    ModuleTargetAnalysisScope targetScope(targets);
     auto module = getOperation();
     MLIRContext *context = &getContext();
 
@@ -1313,6 +1629,7 @@ struct CombineOptimizedConvertLayoutPass
 
     if (failed(applyPatternsGreedily(module, std::move(patterns), config)))
       signalPassFailure();
+    markAnalysesPreserved<ModuleTargetAnalysis>();
   }
 };
 } // namespace mlir::hivm

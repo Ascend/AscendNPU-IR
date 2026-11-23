@@ -16,12 +16,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Config/bishengir-config.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Capability/Cube/Mmad/MmadCapabilityQuery.h"
 #include "bishengir/Dialect/MathExt/IR/MathExt.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -131,16 +132,16 @@ getConvIntArrayAttrElement(Attribute attr, StringRef attrName, Dim dim,
   return (*values)[static_cast<size_t>(dim)];
 }
 
-FailureOr<int64_t> getConvPaddingAttrElement(
-    Attribute attr, size_t spatialRank, size_t symmetricDim,
-    size_t explicitSide, function_ref<InFlightDiagnostic()> emitError) {
+FailureOr<int64_t>
+getConvPaddingAttrElement(Attribute attr, size_t spatialRank,
+                          size_t symmetricDim, size_t explicitSide,
+                          function_ref<InFlightDiagnostic()> emitError) {
   if (auto intAttr = dyn_cast<IntegerAttr>(attr))
     return intAttr.getInt();
 
   SmallVector<int64_t, 6> values;
   if (auto denseAttr = dyn_cast<DenseI64ArrayAttr>(attr)) {
-    values.append(denseAttr.asArrayRef().begin(),
-                  denseAttr.asArrayRef().end());
+    values.append(denseAttr.asArrayRef().begin(), denseAttr.asArrayRef().end());
   } else if (auto arrayAttr = dyn_cast<ArrayAttr>(attr)) {
     values.reserve(arrayAttr.size());
     for (Attribute element : arrayAttr) {
@@ -183,11 +184,10 @@ LogicalResult checkConvOutputDim(Operation *op, ShapedType inputTy,
 
   int64_t inputSize = inputTy.getDimSize(inputDim);
   int64_t weightSize = weightTy.getDimSize(weightDim);
-  int64_t expectedOutputSize =
-      (inputSize + paddingBegin + paddingEnd -
-       dilation * (weightSize - 1) - 1) /
-          stride +
-      1;
+  int64_t expectedOutputSize = (inputSize + paddingBegin + paddingEnd -
+                                dilation * (weightSize - 1) - 1) /
+                                   stride +
+                               1;
   if (outputTy.getDimSize(outputDim) != expectedOutputSize)
     return op->emitOpError()
            << "requires output " << dimName << " to be computed as: "
@@ -220,8 +220,7 @@ using RegionBuilderFn = llvm::function_ref<void(
 /// `regionBuilder`. All output types are asserted to be ShapedType.
 static void fillStructuredOpRegion(OpBuilder &opBuilder, Region &region,
                                    TypeRange inputTypes, TypeRange outputTypes,
-                                   ArrayRef<NamedAttribute> attrs,
-                                   Location loc,
+                                   ArrayRef<NamedAttribute> attrs, Location loc,
                                    RegionBuilderFn regionBuilder) {
   assert(llvm::all_of(outputTypes,
                       [](Type t) { return llvm::isa<ShapedType>(t); }));
@@ -399,9 +398,9 @@ static ParseResult parseNamedStructuredOpRegion(
   }
 
   OpBuilder opBuilder(parser.getContext());
-  fillStructuredOpRegion(opBuilder, region, inputTypes, outputTypes, attrs,
-                         parser.getEncodedSourceLoc(parser.getCurrentLocation()),
-                         regionBuilder);
+  fillStructuredOpRegion(
+      opBuilder, region, inputTypes, outputTypes, attrs,
+      parser.getEncodedSourceLoc(parser.getCurrentLocation()), regionBuilder);
   return success();
 }
 
@@ -1202,7 +1201,10 @@ LogicalResult IndirectLoadOp::verify() {
   }
 
   auto otherElementType = otherTensorType.getElementType();
-  if (srcElementType != otherElementType) {
+  auto mod = (*this)->getParentOfType<ModuleOp>();
+  bool isReg = mod && hacc::utils::isRegBasedArch(mod);
+  bool isF64ToF32Other = srcElementType.isF64() && otherElementType.isF32();
+  if (srcElementType != otherElementType && !(isReg && isF64ToF32Other)) {
     return emitOpError("other of hfusion::IndirectLoadOp must have the same "
                        "element type as src");
   }
@@ -1873,6 +1875,24 @@ void ReduceWithIndexOp::print(OpAsmPrinter &p) {
   }
 }
 
+/// Return the arith reduction kind of a reduce_with_index.
+static arith::AtomicRMWKind getReduceWithIndexRMWKind(ReduceWithIndexOp op,
+                                                      Type elemType) {
+  ReduceWithIndexKind kind = op.getReduceKind().getReduceWithIndexKind();
+  bool isMax =
+      kind == ReduceWithIndexKind::MAX || kind == ReduceWithIndexKind::MAXUI;
+  if (isa<FloatType>(elemType))
+    return isMax ? arith::AtomicRMWKind::maximumf
+                 : arith::AtomicRMWKind::minimumf;
+  // Unsignedness is carried either by the MAXUI/MINUI kinds or, on regbase
+  // archs, by the `unsigned_src` attribute.
+  bool isUnsigned = kind == ReduceWithIndexKind::MAXUI ||
+                    kind == ReduceWithIndexKind::MINUI || op.getUnsignedSrc();
+  if (isMax)
+    return isUnsigned ? arith::AtomicRMWKind::maxu : arith::AtomicRMWKind::maxs;
+  return isUnsigned ? arith::AtomicRMWKind::minu : arith::AtomicRMWKind::mins;
+}
+
 /// If result index is not used, replace hfusion.reduce_with_index with
 /// linalg.reduce.
 struct ReplaceWithLinalgReduce : public OpRewritePattern<ReduceWithIndexOp> {
@@ -1890,26 +1910,18 @@ struct ReplaceWithLinalgReduce : public OpRewritePattern<ReduceWithIndexOp> {
     Value inValue = reduceWithIndexOp.getInputs()[0];
     Value outValue = reduceWithIndexOp.getInits()[0];
     Value shapeResult = reduceWithIndexOp.getResult()[0];
-    auto &region = reduceWithIndexOp.getRegion();
-    assert(region.hasOneBlock() && "reduce_with_index has more than one block");
-    auto &block = *(region.begin());
-    Operation &binOp = *(block.begin());
-    Value binOpBlockArg0 = block.getArgument(0);
-    Value binOpBlockArg1 = reduceWithIndexOp.getInputs().size() == 1
-                               ? block.getArgument(1)
-                               : block.getArgument(2);
+    Type elemType = getElementTypeOrSelf(inValue.getType());
+
+    arith::AtomicRMWKind rmwKind =
+        getReduceWithIndexRMWKind(reduceWithIndexOp, elemType);
     auto linalgReduceOp = rewriter.create<linalg::ReduceOp>(
         inValue.getLoc(), ValueRange{inValue}, ValueRange{outValue},
         reduceWithIndexOp.getDimensions(),
         [&](OpBuilder &nestedBuilder, Location nestedLoc,
             ValueRange blockArgs) {
-          IRMapping mapping;
-          mapping.map(binOpBlockArg0, blockArgs[0]);
-          mapping.map(binOpBlockArg1, blockArgs[1]);
-          Operation *newBinOp = nestedBuilder.clone(binOp, mapping);
-          Value newResultValue = newBinOp->getResult(0);
-          nestedBuilder.create<linalg::YieldOp>(newResultValue.getLoc(),
-                                                ValueRange({newResultValue}));
+          Value result = arith::getReductionOp(
+              rmwKind, nestedBuilder, nestedLoc, blockArgs[0], blockArgs[1]);
+          nestedBuilder.create<linalg::YieldOp>(nestedLoc, result);
         });
     rewriter.replaceAllUsesWith(shapeResult,
                                 linalgReduceOp.getODSResults(0)[0]);
@@ -1918,9 +1930,209 @@ struct ReplaceWithLinalgReduce : public OpRewritePattern<ReduceWithIndexOp> {
   }
 };
 
+/// Folds a plain `linalg.reduce` that recomputes the very value this
+/// `hfusion.reduce_with_index` already produces, so that only one full-width
+/// pass over the tile is left.  This is the shape Triton's
+///   chunk_max = tl.max(x); chunk_arg = tl.argmax(x)
+/// reaches us in:
+///   %v    = linalg.reduce (maximumf) ins(%src) outs(fill -inf)  // value used
+///   %wi:2 = hfusion.reduce_with_index {already_initialize_init} <max>
+///             ins(%src, %idx) outs(...)                          // index used
+/// `%wi#0` is the reduced value but is thrown away, while `%v` computes it a
+/// second time.  The two agree because the reduction's init is already the
+/// identity (`already_initialize_init`) and the plain reduction's init is the
+/// matching identity constant.
+///
+/// Both bodies are matched structurally rather than positionally: the yielded
+/// value has to be produced by a binary op over the two accumulator operands,
+/// and the declared `reduce_kind` has to agree with it.  A body that was
+/// reshaped or had other ops fused into it is therefore rejected instead of
+/// being folded into a value it no longer computes.
+struct FoldPlainReduceIntoReduceWithIndex
+    : public OpRewritePattern<ReduceWithIndexOp> {
+  using OpRewritePattern<ReduceWithIndexOp>::OpRewritePattern;
+
+  /// True when `init` fills the identity element of the max/min combiner
+  /// `binOp` (i.e. `-inf` for max, `+inf` for min), which is what makes the
+  /// plain reduction equal to the one with an already-normalized init.
+  static bool isIdentityInit(Value init, Operation &binOp) {
+    auto fillOp = init.getDefiningOp<linalg::FillOp>();
+    if (!fillOp || fillOp.getInputs().size() != 1)
+      return false;
+    auto cstOp = fillOp.getInputs()[0].getDefiningOp<arith::ConstantOp>();
+    if (!cstOp)
+      return false;
+    auto floatAttr = dyn_cast<FloatAttr>(cstOp.getValue());
+    if (!floatAttr)
+      return false;
+
+    StringRef name = binOp.getName().getStringRef();
+    bool isMax = name.contains("max");
+    bool isMin = name.contains("min");
+    if (isMax == isMin)
+      return false;
+    const llvm::APFloat &initValue = floatAttr.getValue();
+    return initValue.isInfinity() &&
+           (isMax ? initValue.isNegative() : !initValue.isNegative());
+  }
+
+  /// Returns the value combiner of a reduction body that is still in the shape
+  /// the region builder emits:
+  ///   ^bb0(%elem, ..., %acc, ...):
+  ///     %v = <combiner>(%elem, %acc)
+  ///     linalg.yield(%v, ...)
+  /// The combiner has to combine the reduced element (`block argument 0`) with
+  /// the accumulator (`block argument numInputs`, in either order, max/min
+  /// commute). Anything else -- the yielded value was post-processed, an op was
+  /// fused between the element and the combiner, or the accumulator is combined
+  /// with itself -- returns null, so a body that no longer reduces exactly the
+  /// source is never mistaken for the plain reduction.
+  static Operation *getValueCombiner(Region &region, unsigned numYieldedValues,
+                                     unsigned numInputs) {
+    if (!region.hasOneBlock() || region.front().empty())
+      return nullptr;
+    Block &block = region.front();
+    if (block.getNumArguments() < numInputs + 1)
+      return nullptr;
+    auto yieldOp = dyn_cast<linalg::YieldOp>(block.getTerminator());
+    if (!yieldOp || yieldOp.getValues().size() != numYieldedValues)
+      return nullptr;
+
+    Operation *combiner = yieldOp.getValues()[0].getDefiningOp();
+    if (!combiner || combiner->getBlock() != &block ||
+        combiner->getNumOperands() != 2 || combiner->getNumResults() != 1)
+      return nullptr;
+
+    Value element = block.getArgument(0);
+    Value accumulator = block.getArgument(numInputs);
+    bool combinesElement = false;
+    bool combinesAccumulator = false;
+    for (Value operand : combiner->getOperands()) {
+      if (operand == element)
+        combinesElement = true;
+      else if (operand == accumulator)
+        combinesAccumulator = true;
+      else
+        return nullptr;
+    }
+    // Both sides have to take part: combining the accumulator with itself would
+    // just fold the init, not the source, and combining the element with itself
+    // is not a reduction over the source either.
+    if (!combinesElement || !combinesAccumulator)
+      return nullptr;
+    return combiner;
+  }
+
+  /// The declared `reduce_kind` must agree with the combiner found in the body,
+  /// so a MAX op whose value body computes a min -- or whose body was reshaped
+  /// into something else -- is rejected instead of being trusted blindly.
+  static bool matchesReduceKind(ReduceWithIndexOp op, Operation &combiner) {
+    StringRef name = combiner.getName().getStringRef();
+    bool isMax = name.contains("max");
+    bool isMin = name.contains("min");
+    if (isMax == isMin)
+      return false;
+    switch (op.getReduceKind().getReduceWithIndexKind()) {
+    case ReduceWithIndexKind::MAX:
+      return isMax;
+    case ReduceWithIndexKind::MIN:
+      return isMin;
+    // Integer reductions never reach the fold: the identity init accepted below
+    // is a float, and only the float argmin/argmax normalization marks the init
+    // as normalized.
+    case ReduceWithIndexKind::MAXUI:
+    case ReduceWithIndexKind::MINUI:
+      return false;
+    }
+    return false;
+  }
+
+  LogicalResult matchAndRewrite(ReduceWithIndexOp op,
+                                PatternRewriter &rewriter) const override {
+    static constexpr llvm::StringLiteral kAlreadyInitializeInit =
+        "already_initialize_init";
+    if (!op.hasPureTensorSemantics() || op->getResultTypes().size() < 2 ||
+        !op->hasAttr(kAlreadyInitializeInit) || op.getInputs().empty())
+      return failure();
+
+    Value src = op.getInputs()[0];
+    Value value = op.getResult()[0];
+    Operation *opCombiner =
+        getValueCombiner(op.getRegion(),
+                         /*numYieldedValues=*/2,
+                         /*numInputs=*/op.getInputs().size());
+    if (!opCombiner || !matchesReduceKind(op, *opCombiner))
+      return failure();
+
+    for (Operation *user : llvm::make_early_inc_range(src.getUsers())) {
+      auto reduceOp = dyn_cast<linalg::ReduceOp>(user);
+      if (!reduceOp)
+        continue;
+      Operation *combiner = getValueCombiner(reduceOp.getRegion(),
+                                             /*numYieldedValues=*/1,
+                                             /*numInputs=*/1);
+      if (!combiner || reduceOp.getNumResults() != 1 ||
+          reduceOp.getInputs().size() != 1 || reduceOp.getInits().size() != 1 ||
+          reduceOp.getDimensions() != op.getDimensions() ||
+          reduceOp.getResult(0).getType() != value.getType())
+        continue;
+      if (combiner->getName() != opCombiner->getName() ||
+          !isIdentityInit(reduceOp.getInits()[0], *combiner))
+        continue;
+
+      // In the Triton pattern above the plain reduction is emitted first, so
+      // its uses sit before the reduce_with_index whose value we want to reuse.
+      // Everything involved is side-effect free, so hoist the op -- together
+      // with the pure producers of its operands, typically the `tensor.empty`
+      // inits -- in front of the plain reduction, unless an operand could not
+      // be made available there.
+      if (op->getBlock() != reduceOp->getBlock())
+        continue;
+      if (!op->isBeforeInBlock(reduceOp)) {
+        SmallVector<Operation *> hoistable;
+        auto dominatesReduce = [&](Value v) {
+          Operation *def = v.getDefiningOp();
+          return !def || (def->getBlock() == op->getBlock() &&
+                          def->isBeforeInBlock(reduceOp));
+        };
+        bool operandsAvailable =
+            llvm::all_of(op->getOperands(), [&](Value operand) {
+              Operation *def = operand.getDefiningOp();
+              if (!def)
+                return true;
+              if (dominatesReduce(operand))
+                return true;
+              // Only move producers that live in this block: moving an op
+              // defined in an enclosing region into it would break the
+              // dominance of its remaining uses.
+              if (def->getBlock() != op->getBlock())
+                return false;
+              if (isMemoryEffectFree(def) &&
+                  llvm::all_of(def->getOperands(), dominatesReduce)) {
+                hoistable.push_back(def);
+                return true;
+              }
+              return false;
+            });
+        if (!operandsAvailable)
+          continue;
+        for (Operation *def : hoistable)
+          def->moveBefore(reduceOp);
+        op->moveBefore(reduceOp);
+      }
+
+      rewriter.replaceAllUsesWith(reduceOp.getResult(0), value);
+      rewriter.eraseOp(reduceOp);
+      return success();
+    }
+    return failure();
+  }
+};
+
 void ReduceWithIndexOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                     MLIRContext *context) {
   results.add<ReplaceWithLinalgReduce>(context);
+  results.add<FoldPlainReduceIntoReduceWithIndex>(context);
 }
 
 LogicalResult ReduceWithIndexOp::verify() {
@@ -2657,7 +2869,8 @@ void ArangeOp::getEffects(
 /// isFiniteOp decompose:
 /// eg.
 /// isFiniteOp = !(isnanOp(x) || isinfOp(x))
-FailureOr<SmallVector<Value>> IsFiniteOp::decomposeOperation(PatternRewriter &b) {
+FailureOr<SmallVector<Value>>
+IsFiniteOp::decomposeOperation(PatternRewriter &b) {
   auto loc = getLoc();
   auto input = getInput();
 
@@ -3289,16 +3502,13 @@ struct CumsumFuseSextInput : public OpRewritePattern<CumsumOp> {
     if (producer.getInputs().empty())
       return failure();
     auto origInput = producer.getInputs()[0];
-    auto producerInputType =
-        dyn_cast<RankedTensorType>(origInput.getType());
+    auto producerInputType = dyn_cast<RankedTensorType>(origInput.getType());
     if (!producerInputType ||
         !producerInputType.getElementType().isInteger(32) ||
         !producerInputType.getShape().equals(inputType.getShape()))
       return failure();
 
-    rewriter.modifyOpInPlace(op, [&]() {
-      op->setOperand(0, origInput);
-    });
+    rewriter.modifyOpInPlace(op, [&]() { op->setOperand(0, origInput); });
     // Erase the cast if it is now dead.
     if (producer->use_empty())
       rewriter.eraseOp(producer);
@@ -3478,7 +3688,7 @@ LogicalResult HistogramOp::verify() {
 
 Value createConstIntZero(OpBuilder &b, Location loc, Value src) {
   auto ty = cast<IntegerType>(src.getType());
-#if !defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__) && \
+#if !defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__) &&                          \
     !defined(BSPUB_DAVINCI_BISHENGIR_A5)
   return b.create<arith::ConstantIntOp>(loc, 0, ty);
 #else
@@ -3499,9 +3709,9 @@ Value buildHistogramWriteMask(OpBuilder &b, Location loc, Value maskI16,
   }
   Value skipCond = b.create<arith::OrIOp>(loc, isNeg, outRange);
   return b.create<arith::AndIOp>(
-             loc, maskCond,
-             b.create<arith::XOrIOp>(
-                 loc, skipCond, b.create<arith::ConstantIntOp>(loc, 1, 1)));
+      loc, maskCond,
+      b.create<arith::XOrIOp>(loc, skipCond,
+                              b.create<arith::ConstantIntOp>(loc, 1, 1)));
 }
 
 Value buildHistogramConditionalWrite(OpBuilder &b, Location loc, Value hist,
@@ -3528,7 +3738,8 @@ Value buildHistogramConditionalWrite(OpBuilder &b, Location loc, Value hist,
   return ifOp.getResult(0);
 }
 
-FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(PatternRewriter &b) {
+FailureOr<SmallVector<Value>>
+HistogramOp::decomposeOperation(PatternRewriter &b) {
   OpBuilder::InsertionGuard guard(b);
   b.setInsertionPoint(getOperation());
 
@@ -3540,7 +3751,7 @@ FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(PatternRewriter &b
   auto inTy = cast<RankedTensorType>(input.getType());
   auto outTy = cast<RankedTensorType>(getOutput().getType());
   Type outEltTy = outTy.getElementType();
-  Type idxTy = b.getIndexType();
+  [[maybe_unused]] Type idxTy = b.getIndexType();
 
   // Helpers
   auto cstIdx = [&](int64_t v) -> Value {
@@ -3656,9 +3867,20 @@ MatMulMxOp::decomposeOperation(PatternRewriter &builder) {
   Value a = getInputA();
   auto aType = cast<RankedTensorType>(a.getType());
 
-  // Software emulation only used to support K = 32
+  // If it's not native mmadmx, we try to emulate it using mmad + vmul
   const auto K = aType.getShape()[1];
-  if (K != 32)
+  bool formatsPresent =
+      getLhsFormat().has_value() && getRhsFormat().has_value();
+  uint64_t lhsFormat =
+      formatsPresent ? static_cast<uint64_t>(*getLhsFormat()) : 1;
+  uint64_t rhsFormat =
+      formatsPresent ? static_cast<uint64_t>(*getRhsFormat()) : 1;
+  if (hivm::isNativeMmadMx(getOperation(), getElementTypeOrSelf(a.getType()),
+                           getElementTypeOrSelf(getInputB().getType()),
+                           getElementTypeOrSelf(getScaleA().getType()),
+                           getElementTypeOrSelf(getScaleB().getType()),
+                           getElementTypeOrSelf(getAcc().getType()),
+                           formatsPresent, lhsFormat, rhsFormat, K))
     return failure();
 
   OpBuilder::InsertionGuard guard(builder);
@@ -3837,8 +4059,8 @@ MatMulMxOp::decomposeOperation(PatternRewriter &builder) {
                      ->getResult(0);
 #else
   auto linalgKindAttr = builder.getNamedAttr(
-      "kind", linalg::ElementwiseKindAttr::get(
-          builder.getContext(), linalg::ElementwiseKind::mul));
+      "kind", linalg::ElementwiseKindAttr::get(builder.getContext(),
+                                               linalg::ElementwiseKind::mul));
   Value emptyA = builder.create<tensor::EmptyOp>(location, aType, ValueRange{});
   Value emptyB = builder.create<tensor::EmptyOp>(location, bType, ValueRange{});
   Value aFinal = builder
@@ -4229,15 +4451,13 @@ Conv1DOp::getRegionBuilder() {
 //===----------------------------------------------------------------------===//
 
 FailureOr<int64_t> Conv2DOp::getStrideH() {
-  return getConvIntArrayAttrElement<2>(
-      getStrideAttr(), "stride", Conv2DDim::H,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<2>(getStrideAttr(), "stride", Conv2DDim::H,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv2DOp::getStrideW() {
-  return getConvIntArrayAttrElement<2>(
-      getStrideAttr(), "stride", Conv2DDim::W,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<2>(getStrideAttr(), "stride", Conv2DDim::W,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv2DOp::getPaddingT() {
@@ -4265,15 +4485,15 @@ FailureOr<int64_t> Conv2DOp::getPaddingR() {
 }
 
 FailureOr<int64_t> Conv2DOp::getDilationH() {
-  return getConvIntArrayAttrElement<2>(
-      getDilationAttr(), "dilation", Conv2DDim::H,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<2>(getDilationAttr(), "dilation",
+                                       Conv2DDim::H,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv2DOp::getDilationW() {
-  return getConvIntArrayAttrElement<2>(
-      getDilationAttr(), "dilation", Conv2DDim::W,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<2>(getDilationAttr(), "dilation",
+                                       Conv2DDim::W,
+                                       [&]() { return emitOpError(); });
 }
 
 LogicalResult Conv2DOp::verify() {
@@ -4388,10 +4608,10 @@ LogicalResult Conv2DOp::verify() {
   int64_t inputHDim = (inputRank == 3) ? 1 : 2;
   int64_t outputHDim = (initRank == 3) ? 1 : 2;
 
-  if (failed(checkConvOutputDim(
-          getOperation(), inputTy, weightTy, initTy, inputHDim,
-          /*weightDim=*/2, outputHDim, *paddingT, *paddingB, *dilationH,
-          *strideH, "height oH")))
+  if (failed(checkConvOutputDim(getOperation(), inputTy, weightTy, initTy,
+                                inputHDim,
+                                /*weightDim=*/2, outputHDim, *paddingT,
+                                *paddingB, *dilationH, *strideH, "height oH")))
     return failure();
 
   // Check output width oW
@@ -4594,21 +4814,18 @@ Conv2DOp::getRegionBuilder() {
 //===----------------------------------------------------------------------===//
 
 FailureOr<int64_t> Conv3DOp::getStrideD() {
-  return getConvIntArrayAttrElement<3>(
-      getStrideAttr(), "stride", Conv3DDim::D,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getStrideAttr(), "stride", Conv3DDim::D,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DOp::getStrideH() {
-  return getConvIntArrayAttrElement<3>(
-      getStrideAttr(), "stride", Conv3DDim::H,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getStrideAttr(), "stride", Conv3DDim::H,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DOp::getStrideW() {
-  return getConvIntArrayAttrElement<3>(
-      getStrideAttr(), "stride", Conv3DDim::W,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getStrideAttr(), "stride", Conv3DDim::W,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DOp::getPaddingFront() {
@@ -4648,21 +4865,21 @@ FailureOr<int64_t> Conv3DOp::getPaddingR() {
 }
 
 FailureOr<int64_t> Conv3DOp::getDilationD() {
-  return getConvIntArrayAttrElement<3>(
-      getDilationAttr(), "dilation", Conv3DDim::D,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getDilationAttr(), "dilation",
+                                       Conv3DDim::D,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DOp::getDilationH() {
-  return getConvIntArrayAttrElement<3>(
-      getDilationAttr(), "dilation", Conv3DDim::H,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getDilationAttr(), "dilation",
+                                       Conv3DDim::H,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DOp::getDilationW() {
-  return getConvIntArrayAttrElement<3>(
-      getDilationAttr(), "dilation", Conv3DDim::W,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getDilationAttr(), "dilation",
+                                       Conv3DDim::W,
+                                       [&]() { return emitOpError(); });
 }
 
 LogicalResult Conv3DOp::verify() {
@@ -4808,10 +5025,10 @@ LogicalResult Conv3DOp::verify() {
           getOperation(), inputTy, weightTy, initTy, inputHDim,
           /*weightDim=*/3, outputHDim, *paddingT, *paddingB, *dilationH,
           *strideH, "height oH")) ||
-      failed(checkConvOutputDim(
-          getOperation(), inputTy, weightTy, initTy, inputWDim,
-          /*weightDim=*/4, outputWDim, *paddingL, *paddingR, *dilationW,
-          *strideW, "width oW")))
+      failed(checkConvOutputDim(getOperation(), inputTy, weightTy, initTy,
+                                inputWDim,
+                                /*weightDim=*/4, outputWDim, *paddingL,
+                                *paddingR, *dilationW, *strideW, "width oW")))
     return failure();
 
   return success();

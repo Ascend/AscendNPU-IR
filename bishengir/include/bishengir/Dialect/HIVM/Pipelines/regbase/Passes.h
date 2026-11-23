@@ -12,42 +12,18 @@
 #ifndef BISHENGIR_DIALECT_HIVM_PIPELINES_REGBASE_PASSES_H
 #define BISHENGIR_DIALECT_HIVM_PIPELINES_REGBASE_PASSES_H
 
-#include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Pipelines/HIVMPipelineBase.h"
+#include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "mlir/Pass/PassOptions.h"
 
 namespace mlir {
 namespace hivm {
 namespace regbase {
 
-struct HIVMPipelineOptions
-    : public mlir::PassPipelineOptions<HIVMPipelineOptions> {
-#define GEN_HIVM_OPTION_REGISTRATION
-#include "bishengir/Tools/bishengir-compile/PassPipelineOptions.cpp.inc"
-// TODO: already defined in Options.td
-//   PassOptions::Option<std::string> target{
-//       *this, "target", llvm::cl::desc("Target device name"),
-//       llvm::cl::init("Ascend910B1")};
-};
-
-struct ConvertToHIVMPipelineOptions
-    : public mlir::PassPipelineOptions<ConvertToHIVMPipelineOptions> {
-#define GEN_HFUSION_TO_HIVM_OPTION_REGISTRATION
-#include "bishengir/Tools/bishengir-compile/PassPipelineOptions.cpp.inc"
-
-  PassOptions::Option<bool> enableRegBaseHIVMPipe{
-      *this, "enable-regbase-hivmpipe",
-      llvm::cl::desc("Enable hivmpipeline on RegBase"), llvm::cl::init(false)};
-};
-
 //===----------------------------------------------------------------------===//
 // Building and Registering.
 //===----------------------------------------------------------------------===//
-
-/// Adds the "ConvertToHIVM" pipeline to the `OpPassManager`. This is the
-/// standard pipeline for lowering from other dialects to HIVM dialect.
-void buildConvertToHIVMPipeline(mlir::OpPassManager &pm,
-                                const ConvertToHIVMPipelineOptions &options);
 
 void buildHIVMTensorOptimizations(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions);
@@ -58,14 +34,14 @@ void buildHIVMTensorOptimizations(
 void buildLowerHIVMPipelines(OpPassManager &pm,
                              const HIVMPipelineOptions &hivmPipelineOptions);
 
-/// Register the "ConvertToHIVM" pipeline.
-void registerConvertToHIVMPipelines();
+/// Register each RegBase HIVM pass for the kernel kinds in its HIVMPass
+/// `kernelKinds` list, and the callback that runs InferFuncCoreType after a
+/// pass with `classifyKernel` set. Both come from HIVM Passes.td.
+/// Idempotent; called by the pipeline builders themselves.
+void registerKernelKindPassesForRegbase();
 
 /// Register the "LowerHIVM" pipeline.
 void registerLowerHIVMPipelines();
-
-/// A canonicalization pipeline for HIVM pipeline.
-void canonicalizationHIVMPipeline(OpPassManager &pm);
 
 /// Adds sync-block-lock finalize passes (insert infer-sync-block-lock-num/init
 /// + lower create_sync_block_lock + mark subblock + insert free_lock_var)

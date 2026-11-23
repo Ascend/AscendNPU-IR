@@ -194,84 +194,104 @@ public:
   }
 };
 
-/// Fold an nD memref load followed by a pure collapse to rank-3 into a direct
-/// 3D load:
-///   reinterpret_cast(nD) -> alloc(nD) <- copy <- to_tensor -> reshape/collapse
-/// becomes:
-///   reinterpret_cast(3D) -> alloc(3D) <- copy <- to_tensor[+cast]
-///
-/// Motivation: Triton leading-unit shapes (e.g. 1x1xMxK -> 1xMxK) otherwise
-/// keep a rank>=4 buffer through InferHIVM / TileBMM. Folding early reuses the
-/// existing 3D batch-matmul layout path without changing those passes.
-///
-/// Equivalence (when guards below hold):
-///   copy(strided nD -> contiguous nD) ; tensor-collapse to 3D
-/// == reinterpret nD as contiguous-group 3D view ; copy -> contiguous 3D
-///
-/// Safety guards (bugs caught in review — do not relax casually):
-/// - Sole use of to_tensor: memref.copy has no results, so use_empty(copy) is
-///   always true; erasing the chain while other to_tensor users remain would
-///   leave them reading an uninitialized alloc.
-/// - Insert each replacement at the *corresponding* original op (not all at
-///   alloc): preserves dominance if alloc precedes reinterpret_cast, and keeps
-///   the copy's program point relative to intervening side effects.
-/// - Contiguous stride groups only (overflow-safe); respect collapse_shape's
-///   own reassociation (reshape infers via getReassociationIndicesForCollapse).
-/// - Preserve element type, memref memory spaces, alloc alignment; to_tensor
-///   result must be the memref's tensor equivalent (no encoding) — reapply
-///   dst encoding with tensor.cast when needed.
-///
-/// Scope limits: only memref.copy loads (not hivm.load); only static dst rank
-/// 3; store-side 3D->nD expand is intentionally unchanged.
-static FailureOr<SmallVector<int64_t>>
-collapseContiguousStrides(ArrayRef<int64_t> sizes, ArrayRef<int64_t> strides,
+static FailureOr<int64_t> getCheckedElementCount(ArrayRef<int64_t> shape) {
+  int64_t count = 1;
+  for (int64_t size : shape)
+    if (size <= 0 || llvm::MulOverflow(count, size, count))
+      return failure();
+  return count;
+}
+
+/// Prove a reshape on the actual source descriptor, rather than on the dense
+/// tensor produced by the copy. Strict collapsibility is essential: ordinary
+/// verification accepts some unknown dynamic stride relationships.
+static FailureOr<MemRefType>
+getReshapedLoadSourceType(MemRefType srcType, ArrayRef<int64_t> dstShape,
                           ArrayRef<ReassociationIndices> reassoc) {
-  SmallVector<int64_t> newStrides;
-  newStrides.reserve(reassoc.size());
-  for (const ReassociationIndices &group : reassoc) {
-    if (group.empty())
+  if (!reassoc.empty()) {
+    if (!memref::CollapseShapeOp::isGuaranteedCollapsible(srcType, reassoc))
       return failure();
-    for (size_t i = 0, e = group.size(); i + 1 < e; ++i) {
-      int64_t d = group[i];
-      int64_t next = group[i + 1];
-      int64_t expected;
-      if (llvm::MulOverflow(sizes[next], strides[next], expected) ||
-          strides[d] != expected)
-        return failure();
-    }
-    newStrides.push_back(strides[group.back()]);
+    auto result =
+        memref::CollapseShapeOp::computeCollapsedType(srcType, reassoc);
+    if (!llvm::equal(result.getShape(), dstShape))
+      return failure();
+    return result;
   }
-  return newStrides;
+
+  SmallVector<ReassociationIndices> expand, collapse;
+  SmallVector<int64_t> expandedShape;
+  if (!areLooseReassociationsCompatible(
+          expand, collapse, llvm::to_vector(srcType.getShape()),
+          llvm::to_vector(dstShape), expandedShape)) {
+    // Some contiguous factorizations have no common expand-first form.
+    SmallVector<ReassociationIndices> flatten = {
+        llvm::to_vector(llvm::seq<int64_t>(0, srcType.getRank()))};
+    if (!memref::CollapseShapeOp::isGuaranteedCollapsible(srcType, flatten))
+      return failure();
+    auto flatType =
+        memref::CollapseShapeOp::computeCollapsedType(srcType, flatten);
+    SmallVector<ReassociationIndices> unflatten = {
+        llvm::to_vector(llvm::seq<int64_t>(0, dstShape.size()))};
+    return memref::ExpandShapeOp::computeExpandedType(flatType, dstShape,
+                                                      unflatten);
+  }
+  utils::renumberReassociation(expand);
+  utils::renumberReassociation(collapse);
+  auto expandedType = memref::ExpandShapeOp::computeExpandedType(
+      srcType, expandedShape, expand);
+  if (failed(expandedType) || !memref::CollapseShapeOp::isGuaranteedCollapsible(
+                                  *expandedType, collapse))
+    return failure();
+  auto result =
+      memref::CollapseShapeOp::computeCollapsedType(*expandedType, collapse);
+  if (!llvm::equal(result.getShape(), dstShape))
+    return failure();
+  return result;
 }
 
-static FailureOr<SmallVector<int64_t>>
-collapseSizes(ArrayRef<int64_t> sizes, ArrayRef<ReassociationIndices> reassoc) {
-  SmallVector<int64_t> newSizes;
-  newSizes.reserve(reassoc.size());
-  for (const ReassociationIndices &group : reassoc) {
-    // Match collapseContiguousStrides: reject empty reassociation groups.
-    if (group.empty())
-      return failure();
-    int64_t size = 1;
-    for (int64_t d : group) {
-      if (llvm::MulOverflow(size, sizes[d], size))
-        return failure();
-    }
-    newSizes.push_back(size);
-  }
-  return newSizes;
-}
-
+/// Fold a memref load followed by tensor.reshape or tensor.collapse_shape into
+/// a load with the final logical shape:
+///   src_view -> copy -> alloc -> to_tensor -> reshape/collapse
+/// becomes:
+///   reshaped_src_view -> copy -> reshaped_alloc -> to_tensor[+cast]
+/// Here, src_view is a memref.reinterpret_cast and alloc is the copy target.
+///
+/// Folding before reshape decomposition avoids intermediate buffer shapes in
+/// downstream layout inference. This covers leading-unit collapses such as
+/// 1x1xMxK -> 1xMxK and same-rank reshapes such as 2x64x32 -> 2x32x64.
+///
+/// Equivalence requires the reshaped source view to preserve the original
+/// source addresses in tensor element order. Prove this on the source memref,
+/// not on the dense copy destination; the copy remains in the rewritten IR.
+/// Use MLIR's expand/collapse type computations and strict collapsibility
+/// checks, retaining a collapse_shape operation's explicit reassociation.
+///
+/// Safety requirements:
+/// - The tensor has one use; the alloc is used only by its initializing copy
+///   and to_tensor. memref.copy has no results, so use_empty(copy) cannot prove
+///   that the destination buffer has no other consumers.
+/// - Alloc, copy, to_tensor, and reshape are ordered in one block. Insert each
+///   replacement at its original operation to preserve dominance and ordering
+///   relative to intervening memory effects.
+/// - Preserve element type, source offset, memory spaces, alloc alignment, and
+///   to_tensor flags. Reapply the result tensor encoding with a cast if needed.
+/// - Reject unknown attributes rather than dropping rank-dependent semantics.
+///
+/// Scope: memref.copy loads from reinterpret_cast, static positive shapes and
+/// static offsets/strides, and an identity-layout destination alloc. No fixed
+/// rank is required. hivm loads and store-side reshapes are not handled here.
 static LogicalResult
-foldNdMemrefLoadToRank3(Value tensorSrc, RankedTensorType srcType,
-                        RankedTensorType dstType,
-                        ArrayRef<ReassociationIndices> reassoc,
-                        PatternRewriter &rewriter, Operation *reshapeLikeOp) {
-  if (!srcType.hasStaticShape() || !dstType.hasStaticShape())
+foldMemrefLoadReshape(Value tensorSrc, RankedTensorType srcType,
+                      RankedTensorType dstType,
+                      ArrayRef<ReassociationIndices> reassoc,
+                      PatternRewriter &rewriter, Operation *reshapeLikeOp) {
+  if (!srcType.hasStaticShape() || !dstType.hasStaticShape() ||
+      srcType.getRank() == 0 || dstType.getRank() == 0)
     return failure();
-  if (dstType.getRank() != 3 || srcType.getRank() <= 3)
-    return failure();
-  if (static_cast<int64_t>(reassoc.size()) != dstType.getRank())
+  auto srcSize = getCheckedElementCount(srcType.getShape());
+  auto dstSize = getCheckedElementCount(dstType.getShape());
+  if (failed(srcSize) || failed(dstSize) || *srcSize != *dstSize ||
+      srcType.getElementType() != dstType.getElementType())
     return failure();
 
   // Sole consumer: otherwise erasing/rewriting the load chain would drop or
@@ -286,7 +306,9 @@ foldNdMemrefLoadToRank3(Value tensorSrc, RankedTensorType srcType,
 
   Value allocVal = toTensor.getMemref();
   auto alloc = allocVal.getDefiningOp<memref::AllocOp>();
-  if (!alloc || !alloc.getType().hasStaticShape())
+  if (!alloc || !alloc.getType().hasStaticShape() ||
+      !alloc.getType().getLayout().isIdentity() ||
+      alloc.getType().getElementType() != srcType.getElementType())
     return failure();
   if (!llvm::equal(alloc.getType().getShape(), srcType.getShape()))
     return failure();
@@ -305,9 +327,26 @@ foldNdMemrefLoadToRank3(Value tensorSrc, RankedTensorType srcType,
   if (!copyOp)
     return failure();
 
+  // Keep the initializing transfer at its original program point. Restrict
+  // matching to one block so its order and the tensor snapshot are explicit.
+  if (alloc->getBlock() != copyOp->getBlock() ||
+      copyOp->getBlock() != toTensor->getBlock() ||
+      toTensor->getBlock() != reshapeLikeOp->getBlock() ||
+      !alloc->isBeforeInBlock(copyOp) || !copyOp->isBeforeInBlock(toTensor) ||
+      !toTensor->isBeforeInBlock(reshapeLikeOp))
+    return failure();
+
   auto reinterp = copyOp.getSource().getDefiningOp<memref::ReinterpretCastOp>();
   if (!reinterp)
     return failure();
+
+  // Unknown attributes may carry rank-dependent layout or transfer semantics.
+  // Inherent attributes are reconstructed below; do not silently drop others.
+  for (Operation *op :
+       {reinterp.getOperation(), alloc.getOperation(), copyOp.getOperation(),
+        toTensor.getOperation(), reshapeLikeOp})
+    if (!op->getDiscardableAttrDictionary().empty())
+      return failure();
 
   ArrayRef<int64_t> srcShape = srcType.getShape();
   ArrayRef<int64_t> dstShape = dstType.getShape();
@@ -325,32 +364,20 @@ foldNdMemrefLoadToRank3(Value tensorSrc, RankedTensorType srcType,
   if (!llvm::equal(staticSizes, srcShape))
     return failure();
 
-  FailureOr<SmallVector<int64_t>> newSizesOr =
-      collapseSizes(staticSizes, reassoc);
-  if (failed(newSizesOr) || !llvm::equal(*newSizesOr, dstShape))
-    return failure();
-  ArrayRef<int64_t> newSizes = *newSizesOr;
-
-  FailureOr<SmallVector<int64_t>> newStridesOr =
-      collapseContiguousStrides(staticSizes, staticStrides, reassoc);
-  if (failed(newStridesOr))
+  auto newSrcType =
+      getReshapedLoadSourceType(reinterp.getType(), dstShape, reassoc);
+  if (failed(newSrcType))
     return rewriter.notifyMatchFailure(
-        reshapeLikeOp, "cannot collapse non-contiguous strides into 3D load");
-  ArrayRef<int64_t> newStrides = *newStridesOr;
-
-  if (srcType.getElementType() != dstType.getElementType())
+        reshapeLikeOp, "reshape is not an address-equivalent source view");
+  SmallVector<int64_t> newStrides;
+  int64_t offset;
+  if (failed(getStridesAndOffset(*newSrcType, newStrides, offset)) ||
+      ShapedType::isDynamic(offset) ||
+      llvm::any_of(newStrides, ShapedType::isDynamic))
     return failure();
-
-  int64_t offset = staticOffsets[0];
+  ArrayRef<int64_t> newSizes = dstShape;
   Type elemType = dstType.getElementType();
-  auto reinterpType = cast<MemRefType>(reinterp.getType());
-  Attribute srcMemSpace = reinterpType.getMemorySpace();
   Attribute allocMemSpace = alloc.getType().getMemorySpace();
-
-  auto layout =
-      StridedLayoutAttr::get(rewriter.getContext(), offset, newStrides);
-  auto newSrcMemrefType =
-      MemRefType::get(newSizes, elemType, layout, srcMemSpace);
   // Contiguous destination buffer: identity layout, preserve memory space.
   auto newAllocType =
       MemRefType::get(newSizes, elemType,
@@ -360,8 +387,8 @@ foldNdMemrefLoadToRank3(Value tensorSrc, RankedTensorType srcType,
   // and memory side-effect ordering (relative to intervening ops) are kept.
   rewriter.setInsertionPoint(reinterp);
   Value newReinterp = rewriter.create<memref::ReinterpretCastOp>(
-      reinterp.getLoc(), newSrcMemrefType, reinterp.getSource(), offset,
-      newSizes, newStrides);
+      reinterp.getLoc(), *newSrcType, reinterp.getSource(), offset, newSizes,
+      newStrides);
 
   rewriter.setInsertionPoint(alloc);
   Value newAlloc = rewriter.create<memref::AllocOp>(
@@ -394,10 +421,10 @@ foldNdMemrefLoadToRank3(Value tensorSrc, RankedTensorType srcType,
   return success();
 }
 
-/// tensor.reshape of an nD memref load into a static 3D tensor.
-class FoldNdLoadReshapeTo3D : public OpRewritePattern<tensor::ReshapeOp> {
+/// Retarget a loaded tensor's source view and copy to its final logical shape.
+class FoldLoadReshape : public OpRewritePattern<tensor::ReshapeOp> {
 public:
-  explicit FoldNdLoadReshapeTo3D(MLIRContext *context)
+  explicit FoldLoadReshape(MLIRContext *context)
       : OpRewritePattern<tensor::ReshapeOp>(context, /*benefit=*/10) {}
 
   LogicalResult matchAndRewrite(tensor::ReshapeOp reshapeOp,
@@ -406,21 +433,15 @@ public:
     auto dstType = dyn_cast<RankedTensorType>(reshapeOp.getResult().getType());
     if (!srcType || !dstType)
       return failure();
-    std::optional<SmallVector<ReassociationIndices>> reassoc =
-        getReassociationIndicesForCollapse(srcType.getShape(),
-                                           dstType.getShape());
-    if (!reassoc)
-      return failure();
-    return foldNdMemrefLoadToRank3(reshapeOp.getSource(), srcType, dstType,
-                                   *reassoc, rewriter, reshapeOp);
+    return foldMemrefLoadReshape(reshapeOp.getSource(), srcType, dstType, {},
+                                 rewriter, reshapeOp);
   }
 };
 
-/// tensor.collapse_shape of an nD memref load into a static 3D tensor.
-class FoldNdLoadCollapseTo3D
-    : public OpRewritePattern<tensor::CollapseShapeOp> {
+/// A collapse must retain the operation's own reassociation.
+class FoldLoadCollapse : public OpRewritePattern<tensor::CollapseShapeOp> {
 public:
-  explicit FoldNdLoadCollapseTo3D(MLIRContext *context)
+  explicit FoldLoadCollapse(MLIRContext *context)
       : OpRewritePattern<tensor::CollapseShapeOp>(context, /*benefit=*/10) {}
 
   LogicalResult matchAndRewrite(tensor::CollapseShapeOp collapseOp,
@@ -430,12 +451,11 @@ public:
     if (!srcType || !dstType)
       return failure();
     // Respect the op's own reassociation (do not re-infer).
-    return foldNdMemrefLoadToRank3(collapseOp.getSrc(), srcType, dstType,
-                                   collapseOp.getReassociationIndices(),
-                                   rewriter, collapseOp);
+    return foldMemrefLoadReshape(collapseOp.getSrc(), srcType, dstType,
+                                 collapseOp.getReassociationIndices(), rewriter,
+                                 collapseOp);
   }
 };
-
 
 class FoldStaticReshape : public OpRewritePattern<tensor::ReshapeOp> {
 public:
@@ -489,9 +509,9 @@ public:
 void CanonicalizeTensorReshape::runOnOperation() {
   MLIRContext *context = &getContext();
   RewritePatternSet patterns(context);
-  // Prefer folding nD load+reshape/collapse into a 3D load before decomposing
-  // reshape into collapse/expand pairs.
-  patterns.insert<FoldNdLoadReshapeTo3D, FoldNdLoadCollapseTo3D>(context);
+  // Prefer folding load+reshape/collapse into a final-shaped load before
+  // decomposing reshape into collapse/expand pairs.
+  patterns.insert<FoldLoadReshape, FoldLoadCollapse>(context);
   patterns.insert<CanonicalizeTensorReshapeOpPattern>(patterns.getContext());
   patterns.insert<FoldReshape>(patterns.getContext());
   // This pattern decomposes `tensor.reshape` into a one-dimensional tensor using collapse and then expands it.

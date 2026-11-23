@@ -78,6 +78,12 @@ class HIVM_LocalMmadLikeOperandDags {
     Arg<TensorOrMemref, "Matrix C">:$c
   );
 
+  // MmadL1 contract: C must be shaped F32/I32 (kept out of mmadCommonC,
+  // which is shared with MmadL0Op and must stay unconstrained).
+  dag mmadCommonCL1 = (ins
+    Arg<ShapedTypeOf<[F32, I32]>, "Matrix C">:$c
+  );
+
   dag mmadCommonUnitFlagCond = (ins
     Arg<Variadic<I1>, [{
       An optional condition to enable unit-flag mode,
@@ -131,6 +137,16 @@ class HIVM_LocalMmadLikeOperandDags {
       Matrix B is transposed before load
     }]>:$b_transpose
   );
+
+  dag mmadPingPongSignal = (ins
+    Arg<Optional<MemRefRankOf<[I32], [0]>>, [{
+      Function-scoped stack scalar (memref<i32>, one uint32) holding the
+      L0 ping-pong id shared by every MMAD in this function. Read and
+      flipped by the MMAD template. When absent, lowering passes a descriptor
+      with a null data pointer. The template assumes ping (0), disables double
+      buffering, and uses the full L0 buffer.
+    }]>:$ping_pong_signal
+  );
 }
 
 def HIVM_LocalMmadLikeOperands : HIVM_LocalMmadLikeOperandDags;
@@ -143,11 +159,13 @@ class HIVM_L1MmadOp<string mnemonic, list<Trait> traits = []> :
   HIVM_MacroOp<mnemonic, !listconcat(
     [HIVMLocalMatmulLikeOpTraits,
      HIVMUnitFlagEnabledInterface,
+     AllElementTypesMatch<["a", "b"]>,
     ], traits)> {
   let arguments = !con(
     HIVM_LocalMmadLikeOperands.mmadCommonAB,
     HIVM_LocalMmadLikeOperands.localMmadLikeArgs,
-    HIVM_LocalMmadLikeOperands.mmadCommonC,
+    HIVM_LocalMmadLikeOperands.mmadPingPongSignal,
+    HIVM_LocalMmadLikeOperands.mmadCommonCL1,
     HIVM_LocalMmadLikeOperands.localMmadLikeSyncArgs,
     HIVM_LocalMmadLikeOperands.mmadCommonUnitFlagCond,
     (ins Optional<TensorOrMemref>:$per_channel_bias),
@@ -155,7 +173,7 @@ class HIVM_L1MmadOp<string mnemonic, list<Trait> traits = []> :
     HIVM_LocalMmadLikeOperands.mmadCommonEnableAttrs,
     HIVM_LocalMmadLikeOperands.mmadCommonUnitFlagAttrs
   );
-  let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
+  let results = (outs Variadic<RankedTensorOf<[F32, I32]>>:$result_tensors);
   code localMmadBaseDecls = [{
     // Implement functions necessary for DestinationStyleOpInterface.
     ::mlir::MutableOperandRange getDpsInitsMutable() {
@@ -200,6 +218,7 @@ class HIVM_L1MmadOp<string mnemonic, list<Trait> traits = []> :
     `,` type($real_n)
     (`,` type($per_channel_bias)^)? `)`
     `outs` `(` $c `:` type($c) `)`
+    (`ping_pong_signal` `(` $ping_pong_signal^ `:` type($ping_pong_signal) `)`)?
     (`sync_related_args` `(` $sync_related_args^ `:` type($sync_related_args) `)`)?
     (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
     (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?
@@ -276,30 +295,26 @@ def BatchMmadL1Op : HIVM_L1MmadOp<"batchMmadL1", [
 // HIVM L0 MMAD op definitions.
 //===----------------------------------------------------------------------===//
 
-def MmadL0Op : HIVM_StructuredOp<"mmadL0", [
-  CubeCoreTypeTrait,
-  SinglePipeOpTrait,
-  HIVMLocalMatmulL0OpInterface,
-  HIVMUnitFlagEnabledInterface,
-  OpPipeTrait<"PIPE::PIPE_M">,
-  DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
-    ["getIteratorTypesArray"]>,
+def MmadL0Op
+    : HIVM_StructuredOp<
+          "mmadL0", [AttrSizedOperandSegments, CubeCoreTypeTrait,
+                     SinglePipeOpTrait, HIVMLocalMatmulL0OpInterface,
+                     HIVMUnitFlagEnabledInterface, OpPipeTrait<"PIPE::PIPE_M">,
+                     DeclareOpInterfaceMethods<
+                         HIVMStructuredOpInterface, ["getIteratorTypesArray"]>,
 ]> {
-  let arguments = !con(
-    HIVM_LocalMmadLikeOperands.mmadCommonAB,
-    HIVM_LocalMmadLikeOperands.mmadCommonMKN,
-    HIVM_LocalMmadLikeOperands.mmadCommonC,
-    (ins
-      Arg<I1, [{}]>:$k_direction_align,
-      Arg<I1, [{
+  let arguments = !con(HIVM_LocalMmadLikeOperands.mmadCommonAB,
+                       HIVM_LocalMmadLikeOperands.mmadCommonMKN,
+                       HIVM_LocalMmadLikeOperands.mmadCommonC,
+                       (ins Arg<I1, [{}]>:$k_direction_align, Arg<I1, [{
         If true, data in L0C is initialized from the bias source.
-      }]>:$is_with_bias
-    ),
-    HIVM_LocalMmadLikeOperands.mmadCommonInit,
-    HIVM_LocalMmadLikeOperands.mmadCommonUnitFlagCond,
-    HIVM_LocalMmadLikeOperands.mmadCommonEnableAttrs,
-    HIVM_LocalMmadLikeOperands.mmadCommonUnitFlagAttrs
-  );
+      }]>:$is_with_bias),
+                       HIVM_LocalMmadLikeOperands.mmadCommonInit,
+                       (ins Optional<TensorOrMemref>:$bias),
+                       HIVM_LocalMmadLikeOperands.mmadCommonUnitFlagCond,
+                       HIVM_LocalMmadLikeOperands.mmadCommonEnableAttrs,
+                       HIVM_LocalMmadLikeOperands.mmadCommonUnitFlagAttrs,
+                       (ins DefaultValuedAttr<BoolAttr, "true">:$disable_gemv));
   let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
 
   let summary = [{
@@ -309,8 +324,13 @@ def MmadL0Op : HIVM_StructuredOp<"mmadL0", [
     The computation logic is:
 
     ```
-    C = C + A x B + (optional) bias
+    C = A x B + (bias ? broadcast(bias) : (init_condition ? 0 : C))
     ```
+
+    The optional bias is an explicit BT input, not an implicit address-zero
+    source. is_with_bias must be a constant matching its presence. With bias,
+    init_condition must be false: the bias replaces the old accumulator.
+    A5 consumes physical L0A zN, L0B nZ and L0C layouts and disables GEMV.
   }];
   let assemblyFormat = [{
     attr-dict `ins` `(`
@@ -332,25 +352,18 @@ def MmadL0Op : HIVM_StructuredOp<"mmadL0", [
     `,` type($is_with_bias)
     `,` type($init_condition) `)`
     `outs` `(` $c `:` type($c) `)`
+    (`bias` `(` $bias^ `:` type($bias) `)`)?
     (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
     (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?
     (`->` type($result_tensors)^)?
   }];
 
-  let builders = [
-    OpBuilder<(ins "TypeRange":$result_tensors,
-                   "Value":$a,
-                   "Value":$b,
-                   "Value":$real_m,
-                   "Value":$real_k,
-                   "Value":$real_n,
-                   "Value":$c,
-                   "Value":$k_direction_align,
-                   "Value":$is_with_bias,
-                   "Value":$init_condition,
-                   CArg<"UnitAttr", "{}">:$enable_HF32,
-                   CArg<"UnitAttr", "{}">:$enable_I4)>
-  ];
+  let builders = [OpBuilder<(ins "TypeRange":$result_tensors, "Value":$a,
+      "Value":$b, "Value":$real_m, "Value":$real_k, "Value":$real_n, "Value":$c,
+      "Value":$k_direction_align, "Value":$is_with_bias,
+      "Value":$init_condition, CArg<"UnitAttr", "{}">:$enable_HF32,
+      CArg<"UnitAttr", "{}">:$enable_I4, CArg<"Value", "{}">:$bias,
+      CArg<"BoolAttr", "{}">:$disable_gemv)>];
 
   let extraClassDeclaration = [{
     // Required by DestinationStyleOpInterface
@@ -358,13 +371,15 @@ def MmadL0Op : HIVM_StructuredOp<"mmadL0", [
       return getCMutable();
     }
 
-    ArrayAttr getIndexingMaps() {
-      return ::mlir::hivm::detail::getIndexingMapsImpl(*this);
-    }
+    ArrayAttr getIndexingMaps();
+
+    // True unless this invocation is known to initialize C from zero or BT.
+    bool readsAccumulator();
 
     // LocalMatmulBaseOpInterface methods
     ::mlir::hivm::MatmulBiasMode getMatmulBiasMode() {
-      return ::mlir::hivm::MatmulBiasMode::NoBias;
+      return getBias() ? ::mlir::hivm::MatmulBiasMode::PerChannelAdd
+                       : ::mlir::hivm::MatmulBiasMode::NoBias;
     }
 
     bool supportsScaleOperands() {
@@ -383,11 +398,12 @@ def MmadL0Op : HIVM_StructuredOp<"mmadL0", [
 class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
   HIVM_MacroOp<mnemonic, !listconcat([HIVMLocalMatmulLikeOpTraits], traits)> {
   let arguments = !con((ins
-      Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>, "Matrix A">:$a,
-      Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>, "Matrix B">:$b,
+      Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8, F16, BF16]>, "Matrix A">:$a,
+      Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8, F16, BF16]>, "Matrix B">:$b,
       Arg<ShapedTypeOf<[UI8, I8]>, "Matrix ScaleA">:$scaleA,
       Arg<ShapedTypeOf<[UI8, I8]>, "Matrix ScaleB">:$scaleB),
     HIVM_LocalMmadLikeOperands.localMmadLikeArgs,
+    HIVM_LocalMmadLikeOperands.mmadPingPongSignal,
     (ins Arg<ShapedTypeOf<[AnyFloat]>, "Matrix C">:$c),
     HIVM_LocalMmadLikeOperands.localMmadLikeSyncArgs,
     (ins Optional<TensorOrMemref>:$per_channel_bias,
@@ -446,6 +462,7 @@ class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
     (`,` type($per_channel_bias)^)?
     `)`
     `outs` `(` $c `:` type($c) `)`
+    (`ping_pong_signal` `(` $ping_pong_signal^ `:` type($ping_pong_signal) `)`)?
     (`sync_related_args` `(` $sync_related_args^ `:` type($sync_related_args) `)`)?
     (`->` type($result_tensors)^)?
   }];

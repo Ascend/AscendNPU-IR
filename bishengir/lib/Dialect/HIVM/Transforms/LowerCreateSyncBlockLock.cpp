@@ -53,7 +53,8 @@ public:
 
   // Use two static counters to record the number of ordered and unordered
   // locks already processed. On each match, the offset of the current op
-  // is computed based on these counters (which represent the locks preceding it).
+  // is computed based on these counters (which represent the locks preceding
+  // it).
   inline static size_t orderedCount = 0;
   inline static size_t unorderedCount = 0;
   inline static size_t totalOrderedCount = 0;
@@ -67,32 +68,32 @@ public:
     auto loc = op.getLoc();
 
     constexpr int64_t cacheLineBytes = 64;
-    bool isUnordered = op->hasAttr(SyncBlockLockUnorderedAttr::name);
+    bool isUnordered = getSyncBlockLockOrdering(op.getMemref()) ==
+                       SyncBlockLockOrdering::Unordered;
     Value totalByte;
     if (isUnordered) {
-      Value blockNum =
-          rewriter.create<hivm::GetBlockNumOp>(loc)->getResult(0);
+      Value blockNum = rewriter.create<hivm::GetBlockNumOp>(loc)->getResult(0);
       if (hivm::isMixModule(op->getParentOfType<ModuleOp>())) {
-        Value subBlockNum = rewriter.create<hivm::GetSubBlockNumOp>(
-            loc, rewriter.getI64Type());
+        Value subBlockNum =
+            rewriter.create<hivm::GetSubBlockNumOp>(loc, rewriter.getI64Type());
         blockNum = rewriter.create<arith::MulIOp>(loc, blockNum, subBlockNum);
       }
       Value two = rewriter.create<arith::ConstantIntOp>(loc, 2, 64);
       Value one = rewriter.create<arith::ConstantIntOp>(loc, 1, 64);
-      Value cacheLineBytesVal = rewriter.create<arith::ConstantIntOp>(
-          loc, cacheLineBytes, 64);
+      Value cacheLineBytesVal =
+          rewriter.create<arith::ConstantIntOp>(loc, cacheLineBytes, 64);
       Value participantCacheLines = rewriter.create<arith::AddIOp>(
           loc, rewriter.create<arith::MulIOp>(loc, blockNum, two), one);
       Value unorderedStride = rewriter.create<arith::MulIOp>(
           loc, participantCacheLines, cacheLineBytesVal);
       Value unorderedIndex = rewriter.create<arith::ConstantIntOp>(
           loc, static_cast<int64_t>(unorderedCount), 64);
-      Value unorderedPart = rewriter.create<arith::MulIOp>(
-          loc, unorderedStride, unorderedIndex);
+      Value unorderedPart =
+          rewriter.create<arith::MulIOp>(loc, unorderedStride, unorderedIndex);
       Value orderedRegion = rewriter.create<arith::ConstantIntOp>(
           loc, static_cast<int64_t>(totalOrderedCount) * cacheLineBytes, 64);
-      totalByte = rewriter.create<arith::AddIOp>(
-          loc, orderedRegion, unorderedPart);
+      totalByte =
+          rewriter.create<arith::AddIOp>(loc, orderedRegion, unorderedPart);
       ++unorderedCount;
     } else {
       totalByte = rewriter.create<arith::ConstantIntOp>(
@@ -131,7 +132,8 @@ void LowerCreateSyncBlockLockPass::runOnOperation() {
   LowerCreateSyncBlockLock::unorderedCount = 0;
   LowerCreateSyncBlockLock::totalOrderedCount = 0;
   funcOp.walk([](hivm::CreateSyncBlockLockOp op) {
-    if (!op->hasAttr(SyncBlockLockUnorderedAttr::name))
+    if (getSyncBlockLockOrdering(op.getMemref()) !=
+        SyncBlockLockOrdering::Unordered)
       ++LowerCreateSyncBlockLock::totalOrderedCount;
   });
 

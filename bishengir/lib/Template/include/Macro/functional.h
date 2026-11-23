@@ -19,10 +19,12 @@
 #include "limits"
 #include "type_traits"
 
+#ifndef __aicore__
 #ifdef __CCE_KT_TEST__
 #define __aicore__
 #else
 #define __aicore__ [aicore]
+#endif
 #endif
 
 template <uint32_t ALIGN, typename T>

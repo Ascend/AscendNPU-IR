@@ -335,6 +335,17 @@ public:
                           ? constToMagic[{d.constVal, rank}]
                           : argToMagic[{d.divisorArg.getArgNumber(), rank}];
       builder.setInsertionPoint(d.op);
+      // Keep the source location of the original division so the expanded
+      // magic-multiply sequence is attributed to the original line instead
+      // of the function definition line.
+      Location opLoc = d.op->getLoc();
+      // Intermediate instructions only keep the source line, not the variable
+      // name of the original op. Otherwise an intermediate pointer value (the
+      // magic/shift load) would be recorded as the type of the variable that
+      // the expanded computation defines.
+      Location innerLoc = opLoc;
+      if (auto nameLoc = dyn_cast<NameLoc>(opLoc))
+        innerLoc = nameLoc.getChildLoc();
       bool isSigned = isa<arith::DivSIOp>(d.op) || isa<arith::RemSIOp>(d.op);
 
       // Extract dividend and divisor uniformly for div and rem ops.
@@ -351,20 +362,24 @@ public:
                                : cast<arith::DivUIOp>(d.op).getRhs();
       }
 
-      // Compute the quotient using magic multiply + shift.
+      // Compute the quotient using magic multiply + shift. The quotient is the
+      // final value only for a plain division; for a remainder it feeds the
+      // subtraction, so only the latter keeps the original op's location.
+      Location quotientLoc = d.isRem ? innerLoc : opLoc;
       Value quotient;
       if (!d.isTensor) {
         // ---- Scalar i32 ------------------------------------------------
         auto loadTy =
             buildLoadType(ctx, /*enc=*/nullptr, rank, threadsPerWarp, numWarps);
-        builder.create<LocalLoadOp>(loc, loadTy, mi.shmShift);
-        builder.create<LocalLoadOp>(loc, loadTy, mi.shmMul);
+        builder.create<LocalLoadOp>(innerLoc, loadTy, mi.shmShift);
+        builder.create<LocalLoadOp>(innerLoc, loadTy, mi.shmMul);
 
         Value hi32 = builder.create<mlir::ascend_dpx::UmulhiOp>(
-            loc, i32Ty, dividend, mi.magicScalar);
-        Value sum = builder.create<arith::AddIOp>(loc, hi32, dividend);
-        quotient = builder.create<arith::ShRUIOp>(loc, sum, mi.shiftScalar)
-                       .getResult();
+            innerLoc, i32Ty, dividend, mi.magicScalar);
+        Value sum = builder.create<arith::AddIOp>(innerLoc, hi32, dividend);
+        quotient =
+            builder.create<arith::ShRUIOp>(quotientLoc, sum, mi.shiftScalar)
+                .getResult();
 
       } else {
         // ---- Tensor<Nxi32> ---------------------------------------------
@@ -372,25 +387,30 @@ public:
         Attribute enc = resTy.getEncoding();
 
         auto loadTy = buildLoadType(ctx, enc, resTy.getRank());
-        Value magicLoad = builder.create<LocalLoadOp>(loc, loadTy, mi.shmMul);
-        Value shiftLoad = builder.create<LocalLoadOp>(loc, loadTy, mi.shmShift);
+        Value magicLoad =
+            builder.create<LocalLoadOp>(innerLoc, loadTy, mi.shmMul);
+        Value shiftLoad =
+            builder.create<LocalLoadOp>(innerLoc, loadTy, mi.shmShift);
 
-        Value magicTensor = builder.create<BroadcastOp>(loc, resTy, magicLoad);
-        Value shiftTensor = builder.create<BroadcastOp>(loc, resTy, shiftLoad);
+        Value magicTensor =
+            builder.create<BroadcastOp>(innerLoc, resTy, magicLoad);
+        Value shiftTensor =
+            builder.create<BroadcastOp>(innerLoc, resTy, shiftLoad);
 
         Value hi32 =
-            builder.create<triton::MulhiUIOp>(loc, dividend, magicTensor);
-        Value sum = builder.create<arith::AddIOp>(loc, hi32, dividend);
-        quotient =
-            builder.create<arith::ShRUIOp>(loc, sum, shiftTensor).getResult();
+            builder.create<triton::MulhiUIOp>(innerLoc, dividend, magicTensor);
+        Value sum = builder.create<arith::AddIOp>(innerLoc, hi32, dividend);
+        quotient = builder.create<arith::ShRUIOp>(quotientLoc, sum, shiftTensor)
+                       .getResult();
       }
 
       // For division the result is the quotient directly.
       // For remainder: result = dividend - quotient * divisor.
       Value result = quotient;
       if (d.isRem) {
-        Value mul = builder.create<arith::MulIOp>(loc, quotient, origDivisor);
-        result = builder.create<arith::SubIOp>(loc, dividend, mul);
+        Value mul =
+            builder.create<arith::MulIOp>(innerLoc, quotient, origDivisor);
+        result = builder.create<arith::SubIOp>(opLoc, dividend, mul);
       }
 
       d.op->getResult(0).replaceAllUsesWith(result);

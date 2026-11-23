@@ -182,7 +182,7 @@ CTAPlanner::~CTAPlanner() {
 
 void CTAPlanner::run(triton::FuncOp &funcOp) {
   assert(!tiled && "Please create a new CTAPlanner");
-  static const unsigned maxSteps = 10000;
+  [[maybe_unused]] static const unsigned maxSteps = 10000;
 
   auto nextStep = [&]() {
     ++step;
@@ -252,7 +252,7 @@ void CTAPlanner::setTiling(llvm::ArrayRef<unsigned> CTAsPerCGA) {
     clusterInfo->clusterDimY = CTAsPerCGA[1];
   if (CTAsPerCGA.size() > 2)
     clusterInfo->clusterDimZ = CTAsPerCGA[2];
-  for (auto i = 3; i < CTAsPerCGA.size(); ++i)
+  for (size_t i = 3; i < CTAsPerCGA.size(); ++i)
     if (CTAsPerCGA[i] != 1)
       llvm::report_fatal_error("tiling > 3 dims is not implemented");
 }
@@ -531,7 +531,7 @@ bool CTAPlanner::propagateForward(CastOp cast) {
 }
 
 void CTAPlanner::eraseCastOp(CastOp cast) {
-  Value output = cast.getResult(0);
+  [[maybe_unused]] Value output = cast.getResult(0);
   assert(getNumUsers(output) == 0 &&
          "Cannot erase CastOp because it is still in use");
   cast.erase();
@@ -804,10 +804,11 @@ bool CTAPlanner::processConvertLayoutForward(ttg::ConvertLayoutOp convertLayout,
 
 bool CTAPlanner::processIfOp(scf::IfOp ifOp, int index, const Type &newType) {
   // Check index
-  assert(index < ifOp.getNumResults() && "Invalid result index of IfOp");
-  assert(index < ifOp.thenYield().getNumOperands() &&
+  assert(index < static_cast<int>(ifOp.getNumResults()) &&
+         "Invalid result index of IfOp");
+  assert(index < static_cast<int>(ifOp.thenYield().getNumOperands()) &&
          "Invalid operand index of YieldOp");
-  assert(index < ifOp.elseYield().getNumOperands() &&
+  assert(index < static_cast<int>(ifOp.elseYield().getNumOperands()) &&
          "Invalid operand index of YieldOp");
 
   Location loc = ifOp.getLoc();
@@ -844,8 +845,10 @@ bool CTAPlanner::processForOp(scf::ForOp forOp, int index,
          "Invalid operand index of ForOp");
   assert(index + forOp.getNumInductionVars() < body->getNumArguments() &&
          "Invalid block arg index of ForOp");
-  assert(index < yield.getNumOperands() && "Invalid operand index of YieldOp");
-  assert(index < forOp.getNumResults() && "Invalid result index of IfOp");
+  assert(index < static_cast<int>(yield.getNumOperands()) &&
+         "Invalid operand index of YieldOp");
+  assert(index < static_cast<int>(forOp.getNumResults()) &&
+         "Invalid result index of IfOp");
 
   Location loc = forOp.getLoc();
   OpBuilder builder(forOp.getContext());
@@ -886,7 +889,7 @@ bool CTAPlanner::processForOp(scf::ForOp forOp, int index,
 }
 
 int findResultIndex(Operation *op, Value result) {
-  for (int i = 0; i < op->getNumResults(); ++i)
+  for (int i = 0; i < static_cast<int>(op->getNumResults()); ++i)
     if (op->getResult(i) == result)
       return i;
   llvm::report_fatal_error("Invalid index of op result");

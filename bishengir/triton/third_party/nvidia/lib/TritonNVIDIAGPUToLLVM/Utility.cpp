@@ -174,7 +174,8 @@ LogicalResult lowerLdStMatrix(
     return failure();
 
   // We must have at least 32-bits worth of registers to use these instructions
-  if (transpose && cvt.getInDimSizeLog2(kReg) < llvm::Log2_32(32 / bitwidth)) {
+  if (transpose && cvt.getInDimSizeLog2(kReg) <
+                       static_cast<int32_t>(llvm::Log2_32(32 / bitwidth))) {
     return failure();
   }
 
@@ -342,13 +343,14 @@ LogicalResult lowerLdStMatrix(
                            LLVM::GEPNoWrapFlags::inbounds
 #endif
       );
-      auto layout = transpose ? NVVM::MMALayout::col : NVVM::MMALayout::row;
+      [[maybe_unused]] auto layout =
+          transpose ? NVVM::MMALayout::col : NVVM::MMALayout::row;
       if (isStore) {
         // Pack into vector of i32
         SmallVector<Value> inputs;
         for (int j = 0; j < nVecs; j++) {
           Value input = b.undef(vecTy);
-          for (int k = 0; k < elemsPerVec; k++) {
+          for (int k = 0; k < static_cast<int>(elemsPerVec); k++) {
             input = b.insert_element(
                 vecTy, input, vals[i + i2 + j * elemsPerVec + k], b.i32_val(k));
           }
@@ -377,7 +379,7 @@ LogicalResult lowerLdStMatrix(
         for (int j = 0; j < nVecs; j++) {
           Value output = nVecs == 1 ? res : b.extract_val(i32_ty, res, j);
           output = b.bitcast(output, vec_ty(llvmElemTy, elemsPerVec));
-          for (int k = 0; k < elemsPerVec; k++) {
+          for (int k = 0; k < static_cast<int>(elemsPerVec); k++) {
             vals.push_back(b.extract_element(llvmElemTy, output, b.i32_val(k)));
           }
         }
@@ -386,7 +388,8 @@ LogicalResult lowerLdStMatrix(
   }
 
   if (!isStore) {
-    assert(vals.size() == cvt.getInDimSize(kReg));
+    assert(static_cast<int64_t>(vals.size()) ==
+           static_cast<int64_t>(cvt.getInDimSize(kReg)));
     auto invPermStrides = permStrides.inverse();
     vals = invPermStrides.apply(vals);
     if (maybePermutation.has_value()) {

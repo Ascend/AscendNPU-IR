@@ -17,7 +17,23 @@
 #ifndef HIVM_MLIR_TEMPLATE_DEBUG_UTILS_H
 #define HIVM_MLIR_TEMPLATE_DEBUG_UTILS_H
 
+#include "ArchDefs.h"
 #include "Utils.h"
+
+#if BISHENG_TPL_NEEDS_PRINT_BOOTSTRAP && !defined(CCELIB_PRINT_PRINT_H)
+#if !defined(__CCE_ENABLE_PRINT_AICORE__)
+#if defined(__DAV_CUBE__)
+#define __CCE_ENABLE_PRINT_AICORE_CUBE__ 1
+#else
+#define __CCE_ENABLE_PRINT_AICORE_VEC__ 1
+#endif
+#define __CCE_ENABLE_PRINT_AICORE__ 1
+#endif
+#if !defined(__CCE_ENABLE_PRINT__)
+#define __CCE_ENABLE_PRINT__ 1
+#endif
+#include "ccelib/print/print.h"
+#endif
 
 // print
 

@@ -27,6 +27,8 @@ using namespace mlir;
 
 namespace bishengir {
 
+class BishengAsyncRuntime;
+
 /// Configuration options for the hivmc tool.
 /// This is intended to help building tools like hivmc by collecting
 /// the supported options.
@@ -41,7 +43,6 @@ public:
   static void registerCLOptions();
   /// Create a new config with the default set from the CL options.
   static HIVMCMainConfig createFromCLOptions();
-
   // -------------------------------------------------------------------------//
   //                       Feature control options                            //
   // -------------------------------------------------------------------------//
@@ -324,7 +325,8 @@ public:
   }
   bool shouldEnableLayoutOptimization() const {
     return enableLayoutOptimizationFlag &&
-           hacc::utils::isAscend950(this->getTargetBackend());
+           (hacc::utils::isAscend950(this->getTargetBackend()) ||
+            hacc::utils::isAscend960(this->getTargetBackend()));
   }
 
   HIVMCMainConfig &mixedCV(bool enable) {
@@ -333,7 +335,8 @@ public:
   }
   bool shouldEnableMixedCV() const {
     return enableMixedCVFlag &&
-           hacc::utils::isAscend950(this->getTargetBackend());
+           (hacc::utils::isAscend950(this->getTargetBackend()) ||
+            hacc::utils::isAscend960(this->getTargetBackend()));
   }
 
   HIVMCMainConfig &autoMultiBuffer(bool enable) {
@@ -417,12 +420,12 @@ public:
   }
   int32_t enableVfMergeLevel() const { return enableVfMergeLevelFlag; }
 
-  HIVMCMainConfig &enableBishengirSimtOptimization(int enable) {
-    enableBishengirSimtOptimizationFlag = enable;
+  HIVMCMainConfig &simtOptimizationMode(int mode) {
+    simtOptimizationModeFlag = mode;
     return *this;
   }
-  int getEnableBishengirSimtOptimize() const {
-    return enableBishengirSimtOptimizationFlag;
+  int simtOptimizationMode() const {
+    return simtOptimizationModeFlag;
   }
 
   HIVMCMainConfig &enableSIMTFastDiv(bool enable) {
@@ -528,6 +531,13 @@ public:
   bool shouldInjectBarrierAllSync() const {
     return enableHIVMInjectBarrierAllSyncFlag;
   }
+
+  /// Control bisheng's automatic synchronization inside SIMD VFs.
+  HIVMCMainConfig &enableVFAutoSync(bool enable) {
+    enableVFAutoSyncFlag = enable;
+    return *this;
+  }
+  bool shouldEnableVFAutoSync() const { return enableVFAutoSyncFlag; }
 
   HIVMCMainConfig &unitFlagSync(bool enable) {
     enableUnitFlagSyncFlag = enable;
@@ -738,6 +748,18 @@ public:
     return *this;
   }
   std::vector<std::string> getClArgs() const { return clArgsFlag; }
+
+  /// Non-owning pointer to the compile-scope true-async runtime.
+  /// nullptr in Process / CPU-Runner mode; downstream compileDeviceKernel
+  /// falls back to the synchronous bridge.  Lifetime is bound to the
+  /// CompileScope at CLI main(), which outlives every HIVMCMainConfig copy.
+  /// Set by HIVMCFromBiShengIRConfig so the HIVMC layer reads runtime off
+  /// the config instead of receiving it as a separate parameter.
+  HIVMCMainConfig &setRuntime(BishengAsyncRuntime *runtime) {
+    runtime_ = runtime;
+    return *this;
+  }
+  BishengAsyncRuntime *getRuntime() const { return runtime_; }
 
   void readCLArgs(int argc, char **argv) {
     std::vector<std::string> clArgs;
@@ -987,6 +1009,9 @@ protected:
   /// Enable barrier all mode for HIVM inject sync.
   bool enableHIVMInjectBarrierAllSyncFlag{false};
 
+  /// Enable bisheng SIMD VF auto-sync independently of HIVM PIPE sync.
+  bool enableVFAutoSyncFlag{true};
+
   /// Enable inject all block sync for HIVM inject block sync
   bool enableInjectBlockAllSyncFlag{false};
 
@@ -1015,7 +1040,7 @@ protected:
   /// one
   bool enableAutoBlockifyLoopFlag{false};
 
-  int enableBishengirSimtOptimizationFlag{000};
+  int simtOptimizationModeFlag{0000000};
 
   std::optional<int32_t> simtStackLimitFlag{};
 
@@ -1073,6 +1098,10 @@ protected:
 
   std::string debugLLVMActions{""};
   std::string debugLLVMCacheFilePath{""};
+
+  /// Non-owning compile-scope true-async runtime (nullptr in Process/CPU mode).
+  /// See setRuntime() for lifetime contract.
+  BishengAsyncRuntime *runtime_{nullptr};
 };
 
 } // namespace bishengir

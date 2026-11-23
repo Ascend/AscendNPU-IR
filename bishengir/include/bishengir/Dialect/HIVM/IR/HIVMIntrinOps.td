@@ -50,6 +50,16 @@ def GetSubBlockIdxInstrOp : HIVM_IntrinOp<"hivm.GET.SUBBLOCKID">;
 
 def GetSubBlockNumInstrOp : HIVM_IntrinOp<"hivm.GET.SUBBLOCKDIM">;
 
+def GetCoreIdInstrOp : HIVM_IntrinOp<"hivm.GET.COREID">;
+
+def SetCondInstrOp : HIVM_IntrinOp<
+                         /*string opName=*/"hivm.SET.COND",
+                         /*list<int> overloadedOperands=*/[],
+                         /*list<Trait> traits=*/[],
+                         /*int numResults=*/0> {
+  let arguments = (ins I<64>:$cond);
+}
+
 class SetWaitFlag_InstrOp<string mnemonic, int numResults = 0>
     : HIVM_IntrinOp<
           /*string opName=*/mnemonic,
@@ -294,6 +304,30 @@ def WaitIntraBlockImmInstrOp : HIVM_IntrinOp<
   let arguments = (ins I64Attr:$pipe,
                        I64Attr:$sync_id);
 }
+
+class BufferSyncImm_InstrOp<string mnemonic>
+    : HIVM_IntrinOp<mnemonic, [], [], 0, [0, 1, 2],
+                    ["pipe", "buf_id", "mode"]> {
+  let arguments = (ins I64Attr:$pipe, I64Attr:$buf_id, I64Attr:$mode);
+  let llvmBuilder = [{
+    convertBufferSyncIntrinsic(opInst, builder, moduleTranslation,
+                              "llvm.}] # mnemonic # [{");
+  }];
+}
+
+class BufferSyncReg_InstrOp<string mnemonic>
+    : HIVM_IntrinOp<mnemonic, [], [], 0, [0, 2], ["pipe", "mode"]> {
+  let arguments = (ins I64Attr:$pipe, I<64>:$buf_id, I64Attr:$mode);
+  let llvmBuilder = [{
+    convertBufferSyncIntrinsic(opInst, builder, moduleTranslation,
+                              "llvm.}] # mnemonic # [{");
+  }];
+}
+
+def GetBufImmInstrOp : BufferSyncImm_InstrOp<"hivm.GET.BUFI.mode">;
+def GetBufRegInstrOp : BufferSyncReg_InstrOp<"hivm.GET.BUF.mode">;
+def RlsBufImmInstrOp : BufferSyncImm_InstrOp<"hivm.RLS.BUFI.mode">;
+def RlsBufRegInstrOp : BufferSyncReg_InstrOp<"hivm.RLS.BUF.mode">;
 
 def SetMaskNormInstrOp : HIVM_IntrinOp<
                              /*string opName=*/"hivm.SET.MASK.NORM",

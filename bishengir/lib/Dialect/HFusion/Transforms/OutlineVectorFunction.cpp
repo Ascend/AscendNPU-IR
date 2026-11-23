@@ -6,13 +6,19 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
+#include "bishengir/Dialect/SCF/Utils/Utils.h"
+#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Transform/IR/TransformOps.h"
 #include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
 #include "mlir/Dialect/Transform/Transforms/TransformInterpreterUtils.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/Transforms/RegionUtils.h"
 
 namespace mlir {
@@ -138,6 +144,77 @@ static void duplicateReusedValuesForInnerSCFForOp(scf::ForOp loop,
   });
 }
 
+/// The ccec VF launch parameter block packs the trip count of each outlined
+/// vector loop into a 16-bit field (INT_HIVM_INSERT_REG ..., 0, 15). Split such
+/// loops into consecutive chunks of at most kMaxVFLoopTrip iterations; each
+/// chunk stays in the same VF, with a representable hardware loop count.
+static constexpr int64_t kMaxVFLoopTrip = 65535;
+
+/// Record the unique direct call to each VF. A null entry means multiple
+/// call sites; missing entries have no direct calls. Neither is handled here.
+static DenseMap<Operation *, func::CallOp> collectVFCalls(ModuleOp module) {
+  DenseMap<Operation *, func::CallOp> calls;
+  SymbolTableCollection symbols;
+  module.walk([&](func::CallOp call) {
+    auto func = symbols.lookupNearestSymbolFrom<func::FuncOp>(
+        call, call.getCalleeAttr());
+    if (!func || func.isDeclaration() || !hivm::isVF(func))
+      return;
+    auto [it, inserted] = calls.try_emplace(func, call);
+    if (!inserted)
+      it->second = nullptr;
+  });
+  return calls;
+}
+
+static LogicalResult splitLargeTripOutlinedLoops(func::FuncOp func,
+                                                 func::CallOp call) {
+  DenseMap<Value, int64_t> constants;
+  for (auto [arg, operand] : llvm::zip(func.getArguments(), call.getOperands()))
+    if (auto constant = getConstantIntValue(operand))
+      constants[arg] = *constant;
+  auto resolve = [&](Value value) -> std::optional<int64_t> {
+    if (auto constant = getConstantIntValue(value))
+      return constant;
+    auto it = constants.find(value);
+    if (it != constants.end())
+      return it->second;
+    return std::nullopt;
+  };
+  // Post-order processes inner loops before cloning their parent. No nested
+  // operation pointers survive a parent rewrite and no fixpoint scan is needed.
+  SmallVector<scf::ForOp> loops;
+  func.walk<WalkOrder::PostOrder>(
+      [&](scf::ForOp loop) { loops.push_back(loop); });
+  OpBuilder builder(func.getContext());
+  for (scf::ForOp loop : loops) {
+    auto lb = resolve(loop.getLowerBound());
+    auto ub = resolve(loop.getUpperBound());
+    auto step = resolve(loop.getStep());
+    if (!lb || !ub || !step) {
+      loop.emitRemark("dynamic VF loop count was not checked against the ")
+          << "16-bit launch limit; runtime chunking may be required";
+      continue;
+    }
+    if (loop->hasAttr("unsignedCmp")) {
+      loop.emitRemark("unsigned VF loop count legalization is unsupported");
+      continue;
+    }
+    if (*step <= 0) {
+      loop.emitRemark("non-positive VF loop step; ")
+          << "16-bit launch count was not checked";
+      continue;
+    }
+    if (failed(scf::utils::splitForOpByTripCount(builder, loop, *lb, *ub, *step,
+                                                 kMaxVFLoopTrip))) {
+      loop.emitError("failed to split the VF loop by trip count to satisfy ")
+          << "the 16-bit launch limit";
+      return failure();
+    }
+  }
+  return success();
+}
+
 void OutlineVectorFunctionPass::runOnOperation() {
   ModuleOp module = getOperation();
   OpBuilder builder(module.getContext());
@@ -206,6 +283,22 @@ void OutlineVectorFunctionPass::runOnOperation() {
     if (failed(result))
       func->emitError(
           "Failed to outline vector function from loops of current function.");
+  });
+
+  // Preserve the existing VF boundaries first, then legalize loop counts
+  // inside those functions. No chunk labels or regrouping are needed.
+  const auto calls = collectVFCalls(module);
+  module.walk([&](func::FuncOp func) {
+    if (!hivm::isVF(func))
+      return;
+    auto it = calls.find(func);
+    if (it == calls.end() || !it->second) {
+      func.emitRemark("VF does not have exactly one direct call site; ")
+          << "16-bit loop trip limit was not checked";
+      return;
+    }
+    if (failed(splitLargeTripOutlinedLoops(func, it->second)))
+      signalPassFailure();
   });
 
   module.walk([&](scf::ForOp forOp) { removeLabelsForOutlinedLoops(forOp); });

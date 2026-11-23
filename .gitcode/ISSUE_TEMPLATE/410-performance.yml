@@ -1,0 +1,50 @@
+name: 📊 Performance Discussion
+description: 提交性能的优化提案或讨论
+title: "[Performance]: "
+labels: ["performance"]
+
+body:
+- type: markdown
+  attributes:
+    value: >
+      **提交提案之前，请先检索仓库内是否已有相同的提案，如已有请在同一提案中进行讨论。**
+- type: textarea
+  attributes:
+    label: 性能优化具体描述
+    description: >
+      请描述你所发现的性能优化特性和使用场景
+  validations:
+    required: true
+- type: textarea
+  attributes:
+    label: 性能劣化说明
+    description: >
+      请提供详细的性能数据对比，以遍确认性能裂化是否存在。
+  validations:
+    required: false
+- type: textarea
+  attributes:
+    label: 其他相关讨论
+    description: >
+      其他任何与性能相关的内容，均可在此填写
+  validations:
+    required: false
+- type: textarea
+  attributes:
+    label: 环境信息
+    description: |
+      请粘贴您当前的环境信息。
+    value: |
+      ```
+      例如：
+      - 操作系统
+      - 昇腾硬件信息
+      - CANN软件版本
+      - 安装的对应软件版本
+      ```
+  validations:
+    required: true
+- type: markdown
+  attributes:
+    value: >
+      欢迎加入社区，感谢您对社区的贡献 🎉!

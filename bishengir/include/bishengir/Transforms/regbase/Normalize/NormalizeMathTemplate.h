@@ -493,12 +493,9 @@ public:
 
     Value truncDiv = Traits::createDivOpForMod(rewriter, loc, xForDiv, yForDiv,
                                                elemType);
-    Value mul = Traits::createBinaryOp(
-        rewriter, loc, truncDiv, y, utils::createEmptyOp(rewriter, loc, x),
-        BinaryKind::Mul);
-    Value rem = Traits::createBinaryOp(
-        rewriter, loc, x, mul, utils::createEmptyOp(rewriter, loc, x),
-        BinaryKind::Sub);
+    bool preserveLowPrecision = Traits::shouldPreserveLowPrecision(op);
+    Value rem = Traits::createModResidual(rewriter, loc, x, y, truncDiv,
+                                          elemType, preserveLowPrecision);
 
     rewriter.replaceOp(op, handleInfinityModulus(rewriter, loc, y, rem));
     return success();
@@ -1045,19 +1042,12 @@ public:
   }
 };
 
-/// Normalizes maxnumf (minnumf) elemwise binary ops to maxf (minf) by masking
-/// NaN inputs with +/-inf so the hardware maxf/minf op gives maxnumf/minnumf
-/// semantics.
-/// NaN is masked via: select(isnan(x), padding_inf, x)
-///   maxnumf uses -inf as padding so NaN loses the comparison
-///   minnumf uses +inf as padding so NaN loses the comparison
-///
-/// eg.
-///   dst = elemwise_binary {maxnumf} (src0, src1)
-///    is normalized to
-///    new_src0 = select(isnan(src0), -inf, src0)
-///    new_src1 = select(isnan(src1), -inf, src1)
-///    dst = elemwise_binary {maxf} (new_src0, new_src1)
+/// Normalize maxnumf (minnumf) with explicit selection of NaN operands.
+/// Preserve both operand checks and select an original operand for NaN cases:
+///   base = maxf(src0, src1)
+///   tmp = select(isnan(src0), src1, base)
+///   dst = select(isnan(src1), src0, tmp)
+/// This returns the numeric operand for one NaN and a NaN for two NaNs.
 template <typename OpType, typename Traits>
 struct NormalizeElemwiseMinMaxNumFOpTemplate : public OpRewritePattern<OpType> {
 public:
@@ -1068,32 +1058,29 @@ public:
     if (!Traits::shouldNormalizeElemwiseMinMaxNumF(op))
       return failure();
 
-    bool isMax = Traits::isMaxNumF(op);
-    double paddingInfValue =
-        isMax ? -std::numeric_limits<double>::infinity()
-              : std::numeric_limits<double>::infinity();
-    BinaryKind targetKind = isMax ? BinaryKind::Max : BinaryKind::Min;
-
+    BinaryKind targetKind =
+        Traits::isMaxNumF(op) ? BinaryKind::Max : BinaryKind::Min;
     Location loc = op->getLoc();
     Value src0 = Traits::getMinMaxNumFInput0(op);
     Value src1 = Traits::getMinMaxNumFInput1(op);
+    Value result = Traits::createBinaryOp(
+        rewriter, loc, src0, src1, utils::createEmptyOp(rewriter, loc, src0),
+        targetKind);
 
-    auto maskNan = [&](Value src) {
-      auto fill = src.template getDefiningOp<linalg::FillOp>();
+    auto selectIfNaN = [&](Value checked, Value ifNaN, Value otherwise) {
+      auto fill = checked.template getDefiningOp<linalg::FillOp>();
       FloatAttr value;
-      // For a non-NaN splat, select(isnan(src), inf, src) is exactly src.
       if (fill && matchPattern(fill.getInputs()[0], m_Constant(&value)) &&
           !value.getValue().isNaN())
-        return src;
-      return maskNanWithInf<Traits>(rewriter, loc, src, paddingInfValue);
+        return otherwise;
+      Value isNaN = Traits::createIsNanOp(rewriter, loc, checked);
+      return Traits::createSelectOp(
+          rewriter, loc, isNaN, ifNaN, otherwise,
+          utils::createEmptyOp(rewriter, loc, otherwise));
     };
 
-    Value newSrc0 = maskNan(src0);
-    Value newSrc1 = maskNan(src1);
-
-    Value result = Traits::createBinaryOp(
-        rewriter, loc, newSrc0, newSrc1,
-        utils::createEmptyOp(rewriter, loc, src0), targetKind);
+    result = selectIfNaN(src0, src1, result);
+    result = selectIfNaN(src1, src0, result);
     rewriter.replaceOp(op, result);
     return success();
   }

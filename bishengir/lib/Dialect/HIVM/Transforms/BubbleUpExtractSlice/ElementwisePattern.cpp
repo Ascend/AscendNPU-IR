@@ -329,6 +329,12 @@ ElementwiseBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   auto hivmOp = dyn_cast<HIVMStructuredOp>(sliceOp.getSource().getDefiningOp());
   if (!hivmOp)
     return failure();
+  // The tiling logic below assumes a single-result producer: it tiles the
+  // first DPS init and replaces the slice with all results of the cloned op.
+  // Bail out gracefully on multi-result elementwise ops (e.g. vmulextui).
+  if (hivmOp->getNumResults() != 1)
+    return rewriter.notifyMatchFailure(
+        sliceOp, "expected single-result elementwise op");
   rewriter.setInsertionPoint(hivmOp);
 
   OpOperand *outOperand = hivmOp.getDpsInitOperand(0);

@@ -269,10 +269,10 @@ void HoistTightlyCoupledAllocPass::runOnOperation() {
   if (hacc::utils::isHost(func))
     return;
 
-  // Match MarkTightlyCoupledBuffer: only RegBase Ascend950 uses CV tightly-
-  // coupled buffers, so hoisting is a no-op on other arches.
+  // Keep existing RegBase coupled allocations and their marks in a scope
+  // shared by both sides of the transfer after splitting the two cores.
   auto module = func->getParentOfType<ModuleOp>();
-  if (!module || !hacc::utils::isAscend950(module))
+  if (!module || !hacc::utils::supportsRegBaseVectorLowering(module))
     return;
 
   SmallVector<memref::AllocOp> worklist;

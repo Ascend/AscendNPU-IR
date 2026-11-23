@@ -17,6 +17,7 @@
 #ifndef BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVER_H
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVER_H
 
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/BufferPoolSync.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/CorePipeInfo.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/CustomMacroSync.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/EventIdSolver.h"
@@ -70,6 +71,8 @@ public:
 
   // Custom-macro reserved event-id numbers and any reservation conflicts.
   CustomMacroSyncState customMacroSync;
+  BufferPoolSync bufferPoolSync;
+  bool bufferPoolSyncFailed = false;
 
   // Counters for debugging / performance tracing of the solve loop.
   struct PerfInfo {
@@ -203,6 +206,10 @@ public:
   // Entry point: run the solver (or barrier-all mode) for the function.
   void solve();
 
+  LogicalResult prepareBufferPoolSync();
+  void processBufferPoolDependencies();
+  bool hasBufferPoolSyncFailure() const { return bufferPoolSyncFailed; }
+
   // Whether custom macros reserved conflicting event-id numbers.
   bool hasCustomMacroEventIdConflict() const {
     return customMacroSync.hasConflict();
@@ -268,12 +275,18 @@ protected:
   // Return the LCA occurrence pair used when placing set/wait for a hazard.
   std::pair<Occurrence *, Occurrence *> getSetWaitLCAPairOcc(Occurrence *occ1,
                                                              Occurrence *occ2);
-  Occurrence *getElseBranchOcc(Occurrence *ifOcc, bool isSet);
+  Occurrence *getSiblingBranchOcc(Occurrence *ifOcc, Occurrence *occ,
+                                  bool isSet);
+
+  Occurrence *sinkIntoPreloadScope(Occurrence *occ, Occurrence *scopeOcc,
+                                   bool isSet, Occurrence *&mirrorIfOcc);
 
   struct ExtraConflictOccPair {
     Occurrence *setOcc;
     Occurrence *waitOcc;
-    Occurrence *parentOcc;
+    Occurrence *setParentOcc;
+    Occurrence *waitParentOcc;
+    bool couldNotRun;
   };
   llvm::SmallVector<ExtraConflictOccPair, 5>
   buildSiblingIfExtraConflictOccs(const SetWaitPairInfo &setWaitPairInfo,
@@ -297,8 +310,17 @@ protected:
                               hivm::TCoreType coreTypeDst);
   bool checkSkipCrossCorePair(Occurrence *occ1, Occurrence *occ2);
 
+  // The LCA loop of a backward pair, or nullptr if the pair is not backward.
+  Loop *getBackwardLCALoop(Occurrence *occ1, Occurrence *occ2);
+
   // Whether the pair is inside a parallel loop that needs no sync operation.
   bool checkSkipParallelLoop(Occurrence *occ1, Occurrence *occ2);
+
+  // Whether the pair is a cross-iteration conflict of an auto-blockify marked
+  // op with itself, made unnecessary by the disjoint logical blocks.
+  bool checkSkipAutoBlockifyDMAPair(Occurrence *occ1, Occurrence *occ2);
+
+  bool checkSkipPoolManagedFixPair(Occurrence *occ1, Occurrence *occ2);
 
   // Whether (occ1, occ2) cannot form a valid sync-operation candidate.
   bool checkImpossibleOccPair(Occurrence *occ1, Occurrence *occ2);
@@ -322,6 +344,11 @@ protected:
   // otherwise nullopt.
   std::optional<UnitFlagInfo> checkUnitFlagPatterns(Occurrence *occ1,
                                                     Occurrence *occ2);
+
+  // Whether the pool protocol covers every conflict on the requested pipes.
+  bool checkBufferPoolCoveredConflict(RWOperation *rwOp1, RWOperation *rwOp2,
+                                      CorePipeInfo corePipeSrc,
+                                      CorePipeInfo corePipeDst);
 
   // Whether two MemInfos (or MemInfo lists) conflict under the given
   // constraints.
@@ -407,6 +434,15 @@ protected:
       Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
       RWOperation *rwOp2,
       std::optional<std::pair<int64_t, int64_t>> offsetPair = {});
+
+  // checkAllParentLoopsAreForLoops() memoized per Operation. The predicate
+  // only depends on the op's loop ancestors, and solve() never mutates the
+  // MLIR function (ops are only created later, by the code generator), so an
+  // op keeps its classification for the whole solve. Walking the ancestors
+  // hits MLIR's LoopLikeOpInterface lookup once per level, which dominates
+  // the solve loop when it runs on every conflict pair.
+  llvm::DenseMap<Operation *, bool> allParentLoopsAreForLoopsCache;
+  bool checkAllParentLoopsAreForLoopsCached(Operation *op);
 
   // Construct and return EventIdInfo if the hazard is generic multibuffer
   // reuse; otherwise nullopt.

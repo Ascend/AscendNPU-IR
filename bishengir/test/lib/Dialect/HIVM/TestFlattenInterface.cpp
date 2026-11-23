@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/Support/raw_ostream.h"
 
 #define DEBUG_TYPE "test-flatten-interface"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
@@ -43,10 +44,11 @@ struct TestFlattenInterface
   void runOnOperation() override {
     func::FuncOp funcOp = getOperation();
 
-    unsigned instructionCounter = 0;
+    [[maybe_unused]] unsigned instructionCounter = 0;
 
     funcOp.walk([&](FlattenInterface hivmFlattenInterface) {
-      Operation *currentOperation = hivmFlattenInterface.getOperation();
+      [[maybe_unused]] Operation *currentOperation =
+          hivmFlattenInterface.getOperation();
       auto res = hivmFlattenInterface.getFlattened(FlattenOptions());
       LDBG("Current operation: " << *currentOperation);
       if (failed(res)) {
@@ -54,12 +56,30 @@ struct TestFlattenInterface
         return;
       }
       LDBG(to_string(res->reassociation));
-      for (auto ty : res->operandTypes)
+      for ([[maybe_unused]] auto ty : res->operandTypes)
         LDBG((ty.first ? "DpsInput" : "DpsInit") << " " << ty.second);
+    });
+  }
+};
+struct TestFlattenLimitedAxes
+    : public PassWrapper<TestFlattenLimitedAxes, OperationPass<func::FuncOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestFlattenLimitedAxes)
+
+  StringRef getArgument() const final { return "test-flatten-limited-axes"; }
+  StringRef getDescription() const final {
+    return "Print dimensions excluded from flattening";
+  }
+
+  void runOnOperation() override {
+    getOperation().walk([&](FlattenInterface op) {
+      llvm::outs() << "@" << getOperation().getName() << " limited axes: [";
+      llvm::interleaveComma(op.getLimitedAxes(), llvm::outs());
+      llvm::outs() << "]\n";
     });
   }
 };
 void registerTestFlattenInterface() {
   PassRegistration<TestFlattenInterface>();
+  PassRegistration<TestFlattenLimitedAxes>();
 }
 } // namespace bishengir_test

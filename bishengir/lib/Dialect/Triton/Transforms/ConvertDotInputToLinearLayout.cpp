@@ -78,6 +78,7 @@ static void markDotPropagated(Operation *op, MLIRContext *ctx) {
 
 enum class ConvertCost { RegisterReorder, WarpShuffle, SharedMemory };
 
+#ifndef NDEBUG
 static ConvertCost classifyConversionCost(RankedTensorType srcTy,
                                           RankedTensorType dstTy) {
   if (cvtReordersRegisters(srcTy, dstTy))
@@ -98,6 +99,7 @@ static StringRef convCostStr(ConvertCost c) {
   }
   llvm::report_fatal_error("unknown ConvertCost");
 }
+#endif
 
 static bool isAtMostWarpShuffle(RankedTensorType srcTy,
                                 RankedTensorType dstTy) {
@@ -128,7 +130,8 @@ struct BasisVec {
   unsigned originalIndex = 0;
 };
 
-// Generic version: returns the contribution of any output dimension, not just K.
+// Generic version: returns the contribution of any output dimension, not just
+// K.
 static int64_t getDimContribution(ArrayRef<int32_t> v, unsigned dimIdx) {
   if (dimIdx >= v.size())
     return 0;
@@ -274,9 +277,8 @@ static LinearLayout buildLayoutFromOrdering(MLIRContext *ctx,
 // Verify the ABI consumed by FMADotUtility.  A cost-classification result is
 // insufficient: a layout can be reachable by a warp shuffle and still put a
 // different logical element in a given LLVM struct slot.
-static bool isFMARegisterOrdinalLayout(const LinearLayout &ll,
-                                       unsigned kDimIdx, unsigned kBits,
-                                       bool isBOperand) {
+static bool isFMARegisterOrdinalLayout(const LinearLayout &ll, unsigned kDimIdx,
+                                       unsigned kBits, bool isBOperand) {
   auto *ctx = ll.getBases().begin()->first.getContext();
   auto reg = StringAttr::get(ctx, "register");
   auto lane = StringAttr::get(ctx, "lane");
@@ -309,10 +311,11 @@ static bool isFMARegisterOrdinalLayout(const LinearLayout &ll,
   return true;
 }
 
-static LinearLayout buildShuffleCompatibleFMALayout(
-    MLIRContext *ctx, const LinearLayout &srcLL, unsigned kOutDimIdx,
-    unsigned fastRegDimIdx, unsigned kBits, bool isBOperand,
-    RankedTensorType srcTy, Attribute srcEnc) {
+static LinearLayout
+buildShuffleCompatibleFMALayout(MLIRContext *ctx, const LinearLayout &srcLL,
+                                unsigned kOutDimIdx, unsigned fastRegDimIdx,
+                                unsigned kBits, bool isBOperand,
+                                RankedTensorType srcTy, Attribute srcEnc) {
   auto kRegister = StringAttr::get(ctx, "register");
   auto kLane = StringAttr::get(ctx, "lane");
 
@@ -345,8 +348,8 @@ static LinearLayout buildShuffleCompatibleFMALayout(
     auto dstTy = RankedTensorType::get(srcTy.getShape(), srcTy.getElementType(),
                                        LinearEncodingAttr::get(ctx, c.layout));
 
-    bool ordinalValid = isFMARegisterOrdinalLayout(
-        c.layout, kOutDimIdx, kBits, isBOperand);
+    bool ordinalValid =
+        isFMARegisterOrdinalLayout(c.layout, kOutDimIdx, kBits, isBOperand);
     c.ordinalValid = ordinalValid;
     c.conversionValid = isAtMostWarpShuffle(srcTy, dstTy);
     c.warpShuffle = cvtNeedsWarpShuffle(srcTy, dstTy);
@@ -354,8 +357,8 @@ static LinearLayout buildShuffleCompatibleFMALayout(
     LLVM_DEBUG({
       llvm::dbgs() << "  [FMA] candidate " << name << ": "
                    << (c.conversionValid ? "fast" : "shared-memory")
-                   << ", ordinal="
-                   << (c.ordinalValid ? "valid" : "invalid") << ", kind="
+                   << ", ordinal=" << (c.ordinalValid ? "valid" : "invalid")
+                   << ", kind="
                    << (c.warpShuffle ? "warp-shuffle" : "register-reorder")
                    << "\n";
       llvm::dbgs() << "        srcEnc=" << srcEnc << "\n";
@@ -370,8 +373,9 @@ static LinearLayout buildShuffleCompatibleFMALayout(
   LLVM_DEBUG({
     llvm::dbgs() << "  [FMA] selected candidate: fma-ordinal"
                  << (canonical.ordinalValid
-                         ? (canonical.conversionValid ? " (fast conversion)"
-                                                       : " (shared-memory conversion)")
+                         ? (canonical.conversionValid
+                                ? " (fast conversion)"
+                                : " (shared-memory conversion)")
                          : " (ordinal validation failed)")
                  << "\n";
   });
@@ -402,8 +406,7 @@ static Attribute createFMALinearEncoding(MLIRContext *ctx,
                                          bool isBOperand) {
   auto inputLL = toLinearLayout(inputType.getShape(), inputType.getEncoding());
   unsigned kBits = 0;
-  for (int64_t extent = inputType.getShape()[kDimIdx]; extent > 1;
-       extent >>= 1)
+  for (int64_t extent = inputType.getShape()[kDimIdx]; extent > 1; extent >>= 1)
     ++kBits;
   auto fmaLL = buildShuffleCompatibleFMALayout(
       ctx, inputLL, kDimIdx, fastRegDimIdx, kBits, isBOperand, inputType,
@@ -504,30 +507,33 @@ struct ConvertDotInputToLinearPattern : public OpRewritePattern<DotOp> {
     } else {
       // Build separate FMA LinearEncodings for A [M, K] and B [K, N].
       //
-      // For A: K is both the reduction axis (kDimIdx=1) and the fast register dim
+      // For A: K is both the reduction axis (kDimIdx=1) and the fast register
+      // dim
       //        (fastRegDimIdx=1) — K-innermost, unchanged behaviour.
-      // For B: K is the reduction axis (kDimIdx=0) but N is the fast register dim
+      // For B: K is the reduction axis (kDimIdx=0) but N is the fast register
+      // dim
       //        (fastRegDimIdx=1) — N-innermost, so that consecutive B[*, ni]
       //        elements at a fixed k step are adjacent in the struct ordinal,
       //        matching the N-tile inner loop in parametricConvertFMADot.
       //
-      // Degenerate-axis fallback: `buildShuffleCompatibleFMALayout` arranges the
-      // register order by SORTING bases on their `fastRegDimIdx` contribution.
-      // If that axis has extent 1 (e.g. K==1 from size-1 K-tiling, or N==1) it
-      // contributes NO basis vectors, the sort has zero signal, and every
-      // candidate collapses to source order — leaving the operand un-normalized
-      // while the FMA microkernel still assumes the canonical ordinal order.
-      // When the intended fast axis is degenerate, fall back to the other tensor
-      // axis so the operand is still actively arranged into the order the FMA
-      // ordinals assume (A: register-ordinal == mi; B: register-ordinal == ni).
+      // Degenerate-axis fallback: `buildShuffleCompatibleFMALayout` arranges
+      // the register order by SORTING bases on their `fastRegDimIdx`
+      // contribution. If that axis has extent 1 (e.g. K==1 from size-1
+      // K-tiling, or N==1) it contributes NO basis vectors, the sort has zero
+      // signal, and every candidate collapses to source order — leaving the
+      // operand un-normalized while the FMA microkernel still assumes the
+      // canonical ordinal order. When the intended fast axis is degenerate,
+      // fall back to the other tensor axis so the operand is still actively
+      // arranged into the order the FMA ordinals assume (A: register-ordinal ==
+      // mi; B: register-ordinal == ni).
       unsigned fastRegA = (aType.getShape()[1] == 1) ? 0u : 1u;
       unsigned fastRegB = (bType.getShape()[1] == 1) ? 0u : 1u;
       fmaEncA = createFMALinearEncoding(ctx, aType, /*kDimIdx=*/1,
-                                         /*fastRegDimIdx=*/fastRegA,
-                                         /*isBOperand=*/false);
+                                        /*fastRegDimIdx=*/fastRegA,
+                                        /*isBOperand=*/false);
       fmaEncB = createFMALinearEncoding(ctx, bType, /*kDimIdx=*/0,
-                                         /*fastRegDimIdx=*/fastRegB,
-                                         /*isBOperand=*/true);
+                                        /*fastRegDimIdx=*/fastRegB,
+                                        /*isBOperand=*/true);
     }
 
     if (!fmaEncA || !fmaEncB) {
@@ -545,14 +551,15 @@ struct ConvertDotInputToLinearPattern : public OpRewritePattern<DotOp> {
     // let the blocked-encoding dot path handle lowering instead.
     auto elemsPerThreadOk = [&](Attribute enc, int64_t kSize,
                                 StringRef name) -> bool {
-      auto linEnc = enc.dyn_cast<LinearEncodingAttr>();
+      auto linEnc = mlir::dyn_cast<LinearEncodingAttr>(enc);
       if (!linEnc)
         return false;
       auto ll = linEnc.getLinearLayout();
       auto regKey = StringAttr::get(ctx, "register");
       auto it = ll.getBases().find(regKey);
-      int64_t nRegBits =
-          (it != ll.getBases().end()) ? static_cast<int64_t>(it->second.size()) : 0;
+      int64_t nRegBits = (it != ll.getBases().end())
+                             ? static_cast<int64_t>(it->second.size())
+                             : 0;
       int64_t elemsPerThread = 1LL << nRegBits;
       bool ok = (elemsPerThread % kSize == 0);
       LLVM_DEBUG(if (!ok) llvm::dbgs()
@@ -942,9 +949,9 @@ struct PushConvertThroughLoadPattern
     // 7. Emit load directly in the target layout — no shared memory.
     // Use the (ptr, mask, other, cache, evict, isVolatile) builder which
     // infers the result tensor type from the pointer element type.
-    auto newLoad = rewriter.create<LoadOp>(
-        loc, newPtrs, newMask, newOther, loadOp.getCache(), loadOp.getEvict(),
-        loadOp.getIsVolatile());
+    auto newLoad = rewriter.create<LoadOp>(loc, newPtrs, newMask, newOther,
+                                           loadOp.getCache(), loadOp.getEvict(),
+                                           loadOp.getIsVolatile());
     Value newLoadResult = newLoad.getResult();
     for (NamedAttribute attr : loadOp->getAttrs())
       newLoad->setAttr(attr.getName(), attr.getValue());

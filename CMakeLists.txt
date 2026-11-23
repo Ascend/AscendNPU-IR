@@ -55,6 +55,10 @@ endif()
 option(BISHENGIR_BUILD_TEMPLATE
   "Build the BiShengIR template." OFF)
 
+# The BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE option is used to specify whether C310 BiShengIR template will be preoptimized.
+option(BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE
+  "Optimize C310 BiShengIR template bitcode." ON)
+
 # The BISHENGIR_BUILD_STANDALONE_IR_ONLY option is used to only build IR definitions.
 option(BISHENGIR_BUILD_STANDALONE_IR_ONLY
   "Experimental feature. If set, only build IR definitions." OFF)
@@ -163,7 +167,15 @@ set(BISHENGIR_TARGET_SPEC_TABLEGEN_TARGET
     "${BISHENGIR_TARGET_SPEC_TABLEGEN_TARGET}"
     CACHE INTERNAL "")
 
+# bishengir-options-tblgen links BiShengIRConfigOptions. The full build
+# creates that library from bishengir/lib. The standalone IR build does not
+# add bishengir/lib, so create the library here or the link becomes
+# -lBiShengIRConfigOptions.
+if(BISHENGIR_BUILD_STANDALONE_IR_ONLY)
+  add_subdirectory(bishengir/lib/Tools/ConfigOptions)
+endif()
 add_subdirectory(bishengir/tools/bishengir-options-tblgen)
+add_subdirectory(bishengir/tools/bishengir-hivm-ir-contract-tblgen)
 set(BISHENGIR_OPTIONS_TABLEGEN_EXE
     "${BISHENGIR_OPTIONS_TABLEGEN_EXE}"
     CACHE INTERNAL "")
@@ -240,16 +252,19 @@ add_subdirectory(bishengir/tools/bishengir-hfusion-ods-gen)
 if (BISHENGIR_BUILD_STANDALONE_IR_ONLY)
   add_definitions(-DBISHENGIR_BUILD_STANDALONE_IR_ONLY)
   add_subdirectory(bishengir/include/bishengir/Interfaces)
+  add_subdirectory(bishengir/include/bishengir/Target)
   set(STANDALONE_IR_BUILD_DIALECT
   Annotation
   HACC
   HFusion
   HIVM
+  HIVMAVE
   MemRef
   MemRefExt
   Scope
   Symbol
   Tensor
+  TensorView
   )
   foreach(d IN LISTS STANDALONE_IR_BUILD_DIALECT)
     add_subdirectory(bishengir/include/bishengir/Dialect/${d})

@@ -16,10 +16,18 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/TightlyCoupledBufferUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
+#include "bishengir/Dialect/HIVM/Utils/HIVMAliasAnalysis.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/Alg/Sms/SmsScheduler.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/CostModel/MSCostModel.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsDagBuilder.h"
+#include "bishengir/Dialect/HIVM/Utils/PipeSchedule/MsPartitioner.h"
+#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
 #include "bishengir/Dialect/HIVM/Utils/WorklistBuilder.h"
@@ -28,6 +36,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
+#include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -36,9 +45,14 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Support/MathExtras.h"
+
+#include <functional>
 
 #define DEBUG_TYPE "cv-pipelining"
 
@@ -69,13 +83,42 @@ struct AtomicEffect {
   TypeAttr type;
 };
 
+static bool computeAllowShapeHeuristics(bool bypass, bool enablePreload,
+                                        int64_t workspaceMultiBuffer,
+                                        Operation *op) {
+  if (auto func = op->getParentOfType<func::FuncOp>())
+    return allowLoopShapeHeuristics(bypass, func.getName(), enablePreload,
+                                    workspaceMultiBuffer);
+  return bypass;
+}
+
+//===----------------------------------------------------------------------===//
+// FixedProductionLatencyProvider — deterministic P0 cost model
+//===----------------------------------------------------------------------===//
+
+/// Production latency provider for SMS mode.  Returns a fixed positive
+/// latency for every op, ensuring deterministic scheduling independent of
+/// hardware.  The P0 strategy assigns unit latency/issue-time; a future
+/// hardware-aware provider can replace this without touching the integration.
+struct FixedProductionLatencyProvider : public LatencyProvider {
+  int getLatency(Operation *) const override { return 2; }
+  int getIssueTime(Operation *) const override { return 2; }
+};
+
 struct CVPipelineImpl {
   CVPipelineImpl(LoopLikeOpInterface loop, int multibuffer,
-                 CVPipelineMode pipelineMode, bool enableLazyLoading)
+                 CVPipelineMode pipelineMode, bool enableLazyLoading,
+                 CVSchedulerMode schedulerMode,
+                 bool bypassShapeRegistry = false, bool enablePreload = false,
+                 bool msFailOnFallback = false)
       : pipelineLoop(loop), newLoop(nullptr), builder(loop->getContext()),
         numMultibuffer(multibuffer), pipelineMode(pipelineMode),
+        schedulerMode(schedulerMode), msFailOnFallback(msFailOnFallback),
+        allowShapeHeuristics(
+            computeAllowShapeHeuristics(bypassShapeRegistry, enablePreload,
+                                        multibuffer, loop.getOperation())),
         wlBuilder(cast<scf::ForOp>(loop.getOperation()), multibuffer,
-                  enableLazyLoading),
+                  enableLazyLoading, allowShapeHeuristics),
         yieldedVals(loop.getYieldedValues().begin(),
                     loop.getYieldedValues().end()) {
     builder.setInsertionPoint(loop);
@@ -83,6 +126,12 @@ struct CVPipelineImpl {
   }
 
   LogicalResult run();
+
+  /// True when this loop entered the SMS scheduler and hit the fallback
+  /// convergence point in run(). Lets the pass distinguish an actual SMS
+  /// fallback from pre-SMS (worklist build) or post-SMS failures under
+  /// sms-fail-on-fallback.
+  bool sawMsFallback() const { return msFallbackSeen; }
 
 private:
   void collectAtomicEffects();
@@ -133,6 +182,19 @@ private:
   /// un-pipelined instead of crashing.
   LogicalResult checkWorkItemDependencies();
 
+  /// msCoordinateMap lookup from a const WorkItem *. The map is keyed by the
+  /// mutable pointer because every other user holds one; this wrapper keeps
+  /// the cast in a single place for the analysis code that holds a const
+  /// pointer. Returns 0 for an unmapped item, like DenseMap::lookup.
+  int32_t lookupMsCoordinate(const WorkItem *item) const {
+    return msCoordinateMap.lookup(const_cast<WorkItem *>(item));
+  }
+
+  /// Install the SMS schedule coordinates and pipeline depth onto the
+  /// authoritative Default WorkItems.  Never replaces ownership,
+  /// output/workspace state, or the worklist itself.
+  LogicalResult installMsPartition(const MsPartitionResult &partition);
+
   LogicalResult expandOutputInits(WorkItem *item);
   LogicalResult expandOutputInitsForPreload(WorkItem *item);
 
@@ -168,6 +230,8 @@ private:
   Value createSubview(OpBuilder &builder, Location loc, Value from, Type to,
                       Value iv);
   Value createToTensor(OpBuilder &builder, Location loc, Value src);
+  FailureOr<Value> rematerializeTCBOutputView(Value output, Value storage,
+                                              IRMapping &scopeMap);
   // Returns failure() on malformed input. On success, the returned Value may
   // still be nullptr when there is no masking subview to update.
   FailureOr<Value> updateMaskingSubview(OpBuilder &builder, Location loc,
@@ -191,6 +255,29 @@ private:
 
   // Pipeline mode for CV-pipelining.
   CVPipelineMode pipelineMode;
+
+  // Scheduler mode: Default (WorklistBuilder) or Sms (SMS stage-level).
+  CVSchedulerMode schedulerMode;
+
+  // When true, SMS failure returns pass failure instead of falling back.
+  bool msFailOnFallback;
+
+  // Set at the SMS fallback convergence point in run().
+  bool msFallbackSeen = false;
+
+  // SMS state: per-WorkItem preload coordinate and loop-level depth.
+  // Populated by installMsPartition() and consumed by
+  // createNewLoopsForPreloadWithScopes(). Both are reset when SMS falls
+  // back to the Default scheduler.
+  DenseMap<WorkItem *, int32_t> msCoordinateMap;
+  int32_t msPipelineDepth = 0;
+
+  // True when the parent function is registered, preload is on, and
+  // workspace multibuffer is non-zero, or LIT bypass is on.
+  bool allowShapeHeuristics = false;
+
+  // Preserve same-iteration scope scheduling when a tensor carry cannot skew.
+  bool pinAllPreloadNumToZero = false;
 
   // Worklist builder — owns dep-tracking machinery, separator/dependence
   // discovery, lazy-load hint surface, and outputMemrefMap. Held as a member
@@ -220,6 +307,11 @@ private:
 
   // Corresponding expanded tensors for each output of work items
   DenseMap<Value, Value> expandedTensorMap;
+
+  // TCB outputs whose logical tensor type is recovered through a view of the
+  // physical backing allocation. Rebuild the view in each consumer scope so
+  // its dynamic sizes remain local to that scope.
+  DenseMap<Value, Value> viewedTCBOutputStorage;
 
   // Mapping from each op under atomic effect to its atomic kind and data type
   DenseMap<Operation *, AtomicEffect> atomicEffectMap;
@@ -614,11 +706,7 @@ processWorkspaceOutputs(OpBuilder &builder, WorkItem *item,
     if (auto storeOp = dyn_cast<StoreOp>(store))
       builder.create<StoreOp>(loc, TypeRange{}, storeOp.getSrc(), newDst);
     else if (auto fixpipe = dyn_cast<FixpipeOp>(store))
-      builder.create<FixpipeOp>(
-          loc, TypeRange{}, fixpipe.getSrc(), newDst, fixpipe.getDmaModeAttr(),
-          fixpipe.getDualDstModeAttr(), fixpipe.getSubBlockIdxAttr(),
-          fixpipe.getPreQuantAttr(), fixpipe.getPreReluAttr(),
-          fixpipe.getChannelSplitAttr());
+      FixpipeOp::clone(builder, fixpipe, fixpipe.getSrc(), newDst);
 
     // Before forOp so to_tensor dominates in-loop and later consumers.
     builder.setInsertionPoint(forOp);
@@ -720,6 +808,8 @@ static void processWorkspaceOutputUsers(
 
 static Operation *cloneStoreLikeToWorkspace(OpBuilder &builder, Operation *op,
                                             Value newDst) {
+  if (auto fixpipe = dyn_cast<FixpipeOp>(op))
+    return FixpipeOp::clone(builder, fixpipe, fixpipe.getSrc(), newDst);
   OperationState state(op->getLoc(), op->getName().getStringRef());
   state.addOperands(op->getOperands());
   state.operands[1] = newDst;
@@ -1024,6 +1114,73 @@ void CVPipelineImpl::expandWorkspace(OpBuilder &builder) {
   }
 }
 
+/// Clone an address slice, keeping values outside the loop unchanged. Only
+/// view operations and side-effect-free scalar calculations can be cloned.
+static Value cloneGMAccess(Value value, scf::ForOp loop, OpBuilder &builder,
+                           IRMapping &mapping, unsigned &remaining,
+                           unsigned depth = 0) {
+  if (Value mapped = mapping.lookupOrNull(value))
+    return mapped;
+  if (loop.isDefinedOutsideOfLoop(value))
+    return value;
+  Operation *op = value.getDefiningOp();
+  if (!op || depth > 32 || !remaining || op->getNumRegions() ||
+      !isMemoryEffectFree(op))
+    return {};
+  if (!value.getType().isIntOrIndex() &&
+      !isa<memref::ReinterpretCastOp, memref::SubViewOp, memref::CastOp,
+           memref::MemorySpaceCastOp>(op))
+    return {};
+  --remaining;
+  for (Value operand : op->getOperands()) {
+    Value cloned =
+        cloneGMAccess(operand, loop, builder, mapping, remaining, depth + 1);
+    if (!cloned)
+      return {};
+    mapping.map(operand, cloned);
+  }
+  builder.clone(*op, mapping);
+  return mapping.lookup(value);
+}
+
+/// Check the GM pairs that may cross during skewing. Build future views in a
+/// private block and let the alias utility compare the actual memref values.
+static bool areGMAccessesIndependent(Value lhs, Value rhs, scf::ForOp loop,
+                                     int64_t maxDistance,
+                                     utils::HIVMAliasAnalysis &aliasAnalysis) {
+  auto step = getConstantIntValue(loop.getStep());
+  if (!step || *step <= 0 || loop->hasAttr("unsignedCmp"))
+    return false;
+  Value iv = loop.getInductionVar();
+  // CV pipelining assumes signed GM address arithmetic never overflows,
+  // including intermediate i32 offset calculations before casts to index.
+  for (int64_t distance = 1; distance <= maxDistance; ++distance) {
+    int64_t displacement;
+    if (llvm::MulOverflow(*step, distance, displacement))
+      return false;
+    if (auto type = dyn_cast<IntegerType>(iv.getType());
+        type && !llvm::isIntN(type.getWidth(), displacement))
+      return false;
+    Region scratch;
+    OpBuilder builder(loop.getContext());
+    builder.setInsertionPointToEnd(&scratch.emplaceBlock());
+    auto shift = builder.create<arith::ConstantOp>(
+        loop.getLoc(), builder.getIntegerAttr(iv.getType(), displacement));
+    Value nextIV = builder.create<arith::AddIOp>(loop.getLoc(), iv, shift);
+    IRMapping mapping;
+    mapping.map(iv, nextIV);
+    unsigned remaining = 256;
+    Value futureA = cloneGMAccess(lhs, loop, builder, mapping, remaining);
+    Value futureB = cloneGMAccess(rhs, loop, builder, mapping, remaining);
+    // Only assumptions established before the loop can justify preloading.
+    if (!futureA || !futureB ||
+        !aliasAnalysis.alias(lhs, futureB, loop).isNo() ||
+        !aliasAnalysis.alias(rhs, futureA, loop).isNo())
+      return false;
+  }
+  return true;
+}
+
 LogicalResult CVPipelineImpl::markOutputs() {
   for (const auto &item : worklist) {
     for (Operation *op : item->ops) {
@@ -1040,21 +1197,27 @@ LogicalResult CVPipelineImpl::markOutputs() {
         continue;
       // With lazy loading (kernel-level switch, per-tensor compile hint,
       // or auto cross-core legality), skip to_tensor results backed by a
-      // load-like writer (LoadOp or ND2NZOp) since the writer is cloned into
-      // each consuming work item directly and therefore does not need a
-      // multi-buffered cross-stage tensor.
+      // load-like writer (LoadOp or ND2NZOp) for local cross-stage
+      // communication since the writer is cloned into each consuming work item
+      // directly and therefore does not need a multi-buffered cross-stage
+      // tensor.
       FailureOr<bool> shouldLazy = wlBuilder.shouldLazyLoadFor(op);
       if (failed(shouldLazy))
         return failure();
-      if (*shouldLazy)
-        continue;
+      bool isLazy = *shouldLazy;
       for (Value result : op->getResults()) {
         if (yieldedVals.contains(result)) {
+          // Off-registry kernels keep the pre-0af4b240b behavior: lazy
+          // results, including yields, are not recorded.
+          if (!allowShapeHeuristics && isLazy)
+            continue;
           unsigned opNumber = static_cast<unsigned>(std::distance(
               yieldedVals.begin(), llvm::find(yieldedVals, result)));
           item->yieldedOutputs.push_back(std::make_pair(result, opNumber));
           continue;
         }
+        if (isLazy)
+          continue;
         if (!isa<TensorType>(result.getType()))
           continue;
 
@@ -1080,55 +1243,98 @@ LogicalResult CVPipelineImpl::markOutputs() {
     }
   }
 
-  // Detect cross-workitem aliasing on function arguments: if a Fixpipe/Store
-  // writes to a func arg that another workitem loads from, pipelining would
-  // reorder the store past the load and break correctness. Walk into nested
-  // regions since item->ops may contain whole region ops (scf.if / inner
-  // scf.for) whose nested Fixpipe/Store/Load would otherwise be missed.
-  DenseMap<BlockArgument, WorkItem *> storedFuncArgs;
+  // Preserve the existing function-argument alias groups, but retain every
+  // access: remembering only the last writer can hide a conflicting store.
+  // Iterate in work-item order so the same-iteration ordering check below
+  // compares the original program order with the proposed stage order.
+  struct GMAccess {
+    Operation *op;
+    Value view;
+    WorkItem *item;
+    bool writes;
+  };
+  llvm::MapVector<BlockArgument, SmallVector<GMAccess>> accesses;
   for (const auto &item : worklist) {
     for (Operation *op : item->ops) {
       op->walk([&](Operation *nested) {
-        Value dst;
-        // TODO: Use StoreLikeOpInterface when available
-        if (auto fixpipe = dyn_cast<FixpipeOp>(nested))
-          dst = fixpipe.getDst();
-        else if (auto store = dyn_cast<StoreOp>(nested))
-          dst = store.getDst();
-        else
+        Value view;
+        bool writes = false;
+        if (auto load = dyn_cast<LoadOp>(nested))
+          view = load.getSrc();
+        else if (auto nd2nz = dyn_cast<ND2NZOp>(nested))
+          view = nd2nz.getSrc();
+        else if (auto store = dyn_cast<StoreOp>(nested)) {
+          view = store.getDst();
+          writes = true;
+        } else if (auto fixpipe = dyn_cast<FixpipeOp>(nested)) {
+          view = fixpipe.getDst();
+          writes = true;
+        } else {
           return;
-        BlockArgument funcArg = traceToFuncArg(dst);
-        if (!funcArg)
-          return;
-        storedFuncArgs[funcArg] = item.get();
+        }
+        if (BlockArgument arg = traceToFuncArg(view))
+          accesses[arg].push_back({nested, view, item.get(), writes});
       });
     }
   }
-  for (const auto &item : worklist) {
-    for (Operation *op : item->ops) {
-      WalkResult result = op->walk([&](Operation *nested) {
-        // TODO: replace this with a LoadLikeOpInterface
-        if (!isa<LoadOp, ND2NZOp>(nested))
-          return WalkResult::advance();
-        BlockArgument funcArg;
-        if (auto load = dyn_cast<LoadOp>(nested))
-          funcArg = traceToFuncArg(load.getSrc());
-        else if (auto nd2nz = dyn_cast<ND2NZOp>(nested))
-          funcArg = traceToFuncArg(nd2nz.getSrc());
-        else
-          llvm_unreachable("Replace with LoadLikeOpInterface.getSrc()");
-        if (!funcArg)
-          return WalkResult::advance();
-        auto it = storedFuncArgs.find(funcArg);
-        if (it != storedFuncArgs.end() && it->second != item.get()) {
-          nested->emitWarning(
-              "[cv-pipelining] using GM as intermediate buffer is unsupported");
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      });
-      if (result.wasInterrupted())
+  utils::HIVMAliasAnalysis aliasAnalysis(
+      pipelineLoop->getParentOfType<func::FuncOp>());
+  for (auto &entry : accesses) {
+    const auto &group = entry.second;
+    // Only analyze buffers read and written by different work items.
+    bool hasCrossItemReadWrite = false;
+    for (const GMAccess &writer : group) {
+      if (!writer.writes)
+        continue;
+      for (const GMAccess &reader : group) {
+        if (reader.writes || reader.item == writer.item)
+          continue;
+        hasCrossItemReadWrite = true;
+        break;
+      }
+      if (hasCrossItemReadWrite)
+        break;
+    }
+    if (!hasCrossItemReadWrite)
+      continue;
+    for (unsigned i = 0; i < group.size(); ++i) {
+      for (unsigned j = i + 1; j < group.size(); ++j) {
+        const GMAccess &a = group[i], &b = group[j];
+        if (a.item == b.item || (!a.writes && !b.writes))
+          continue;
+        if (pipelineMode != CVPipelineMode::Skew && a.writes && b.writes)
+          continue;
+        Operation *aTop = getContainedParent(pipelineLoop, a.op);
+        Operation *bTop = getContainedParent(pipelineLoop, b.op);
+        // Cross-iteration independence alone cannot justify reversing a RAW,
+        // WAR or WAW dependence within an iteration. Region-internal ordering
+        // and repeated copies of the same access remain conservative.
+        // The hasLoopCarriedDep clause guards the one case where block order
+        // stops implying preload order: a stage pinned to preload 0 followed
+        // by a stage with a higher preload, which would execute the same
+        // iteration first. Under the SMS scheduler the DAG builder rejects
+        // loop-carried recurrences outright, and SMS assigns preload numbers
+        // non-increasing in block order, so the clause degenerates to the
+        // block-order test there.
+        bool preservesOrder =
+            aTop != bTop && aTop->isBeforeInBlock(bTop) &&
+            (!a.item->hasLoopCarriedDep || b.item->hasLoopCarriedDep);
+        // The largest preload depth assigned by
+        // createNewLoopsForPreloadWithScopes is at most worklist.size().
+        // Checking both directions through that distance conservatively
+        // covers every access pair whose relative order can change.
+        if (pipelineMode == CVPipelineMode::Skew && preservesOrder &&
+            areGMAccessesIndependent(a.view, b.view, pipelineLoop,
+                                     worklist.size(), aliasAnalysis))
+          continue;
+        // Keep the existing diagnostic anchored at the read when possible.
+        LLVM_DEBUG(dbgs() << "[cv-pipelining] cannot prove GM independence: "
+                          << *a.op << "\n  versus " << *b.op << '\n');
+        Operation *diagnosticOp = a.writes ? b.op : a.op;
+        diagnosticOp->emitWarning(
+            "[cv-pipelining] using GM as intermediate buffer is unsupported");
         return failure();
+      }
     }
   }
   return success();
@@ -1181,24 +1387,6 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Reject cross-core loop-carried dependencies.
-  //
-  // CV pipelining splits the loop body into a VECTOR stage and a CUBE stage,
-  // each of which runs all of its iterations in its own loop before the other
-  // stage's loop runs. A tensor carried across the iteration boundary (a loop
-  // iter_arg) that is *produced* on one core but *consumed* on the other can
-  // therefore never be honored: the consuming stage would read the loop-entry
-  // value instead of the previous iteration's result computed by the other
-  // core. The split happens silently, so the existing operand-resolvability
-  // walk above does not catch it — an iter_arg is a BlockArgument and so is
-  // always deemed "resolvable" there. Detect it here, before any IR mutation,
-  // and leave the loop un-pipelined.
-  //
-  // Same-core carries (e.g. a CUBE matmul accumulator) are fine: that stage's
-  // own loop runs sequentially. Non-tensor carries (loop-index / address
-  // arithmetic) are replicated onto every stage and never form a cross-core
-  // data hazard, so they are ignored.
   DenseMap<unsigned, const WorkItem *> producerByIterArg;
   for (const auto &item : worklist) {
     for (auto &yielded : item->yieldedOutputs)
@@ -1231,7 +1419,7 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
       if (it != opToWorkItemMap.end()) {
         for (const WorkItem *wi : it->second)
           uses.push_back({wi, top});
-        continue; // stop at the consuming work item; don't walk past it
+        continue;
       }
       for (Operation *next : top->getUsers())
         stack.push_back(next);
@@ -1244,27 +1432,45 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
   for (unsigned pos = 0, e = iterArgs.size(); pos < e; ++pos) {
     BlockArgument iterArg = iterArgs[pos];
     if (!isa<TensorType>(iterArg.getType()))
-      continue; // only tensor data can form a cross-core hazard
+      continue;
     auto prodIt = producerByIterArg.find(pos);
     if (prodIt == producerByIterArg.end())
-      continue; // not produced by a work item (e.g. forwarded unchanged)
+      continue;
     const WorkItem *producerItem = prodIt->second;
 
     for (auto [consumerItem, consumerOp] : consumerUses(iterArg)) {
       if (consumerItem != producerItem) {
-        InFlightDiagnostic diag =
-            pipelineLoop->emitWarning()
-            << "[cv-pipelining] cannot pipeline loop: loop-carried tensor "
-               "iter_arg #"
-            << pos
-            << " is produced by one work item but consumed by another "
-               "work item across the iteration boundary; skipping pipelining";
-        if (Operation *producerOp = yieldedValues[pos].getDefiningOp())
-          diag.attachNote(producerOp->getLoc())
-              << "loop-carried value produced here";
-        diag.attachNote(consumerOp->getLoc())
-            << "and consumed here by another work item in the next iteration";
-        return diag;
+        // A cross-work-item carry can overlap iterations only when its
+        // producer and consumer share stage zero and an independent stage
+        // remains. Otherwise registered skew loops retain their scopes with
+        // every item at stage zero. Unroll and off-registry behavior stay
+        // unchanged.
+        bool sameStage =
+            consumerItem->hasLoopCarriedDep && producerItem->hasLoopCarriedDep;
+        bool hasAnyIndependentItem =
+            llvm::any_of(worklist, [](const auto &item) {
+              return !item->hasLoopCarriedDep;
+            });
+        if (!allowShapeHeuristics || !sameStage || !hasAnyIndependentItem ||
+            pipelineMode == CVPipelineMode::Unroll) {
+          if (allowShapeHeuristics && pipelineMode == CVPipelineMode::Skew) {
+            pinAllPreloadNumToZero = true;
+            continue;
+          }
+          InFlightDiagnostic diag =
+              pipelineLoop->emitWarning()
+              << "[cv-pipelining] cannot pipeline loop: loop-carried tensor "
+                 "iter_arg #"
+              << pos
+              << " is produced by one work item but consumed by another "
+                 "work item across the iteration boundary; skipping pipelining";
+          if (Operation *producerOp = yieldedValues[pos].getDefiningOp())
+            diag.attachNote(producerOp->getLoc())
+                << "loop-carried value produced here";
+          diag.attachNote(consumerOp->getLoc())
+              << "and consumed here by another work item in the next iteration";
+          return diag;
+        }
       }
     }
   }
@@ -1280,6 +1486,87 @@ Value CVPipelineImpl::createToTensor(OpBuilder &builder, Location loc,
   }
   return builder.create<bufferization::ToTensorOp>(loc, src, /*restrict*/ true,
                                                    /*writable*/ true);
+}
+
+FailureOr<Value>
+CVPipelineImpl::rematerializeTCBOutputView(Value output, Value storage,
+                                           IRMapping &scopeMap) {
+  auto toTensor = output.getDefiningOp<bufferization::ToTensorOp>();
+  if (!toTensor) {
+    auto dps = dyn_cast_if_present<DestinationStyleOpInterface>(
+        output.getDefiningOp());
+    if (dps && dps.getNumDpsInits() == 1) {
+      Value init = dps.getDpsInitOperand(0)->get();
+      toTensor = init.getDefiningOp<bufferization::ToTensorOp>();
+    }
+  }
+  if (!toTensor) {
+    pipelineLoop->emitWarning(
+        "[cv-pipelining] expected viewed TCB output to have a to_tensor "
+        "destination");
+    return failure();
+  }
+
+  SmallVector<Operation *> aliasOps;
+  Value current = toTensor.getMemref();
+  while (current != storage) {
+    Operation *defining = current.getDefiningOp();
+    if (!defining || defining->getNumResults() != 1 ||
+        defining->getResult(0) != current ||
+        !isa<CastOpInterface, ViewLikeOpInterface>(defining)) {
+      pipelineLoop->emitWarning(
+          "[cv-pipelining] unsupported alias chain for viewed TCB output");
+      return failure();
+    }
+    aliasOps.push_back(defining);
+    current = defining->getOperand(0);
+  }
+
+  IRMapping aliasMap(scopeMap);
+  // A producer-local offset or size may still map into the producer scope.
+  // Rebuild its scalar expression in this scope, just like the view itself.
+  std::function<LogicalResult(Value)> remapScalar = [&](Value value) {
+    if (!value.getType().isIntOrIndex())
+      return failure();
+    if (!pipelineLoop->isAncestor(value.getParentBlock()->getParentOp()))
+      return success();
+    if (isa<BlockArgument>(value))
+      return success(value.getParentBlock() == pipelineLoop.getBody());
+    Value mapped = aliasMap.lookupOrDefault(value);
+    if (mapped.getParentBlock() == builder.getInsertionBlock())
+      return success();
+    Operation *def = value.getDefiningOp();
+    if (def->getBlock() != pipelineLoop.getBody() ||
+        def->getNumRegions() != 0 || !isMemoryEffectFree(def) ||
+        !llvm::all_of(def->getResultTypes(),
+                      [](Type type) { return type.isIntOrIndex(); }))
+      return failure();
+    for (Value operand : def->getOperands())
+      if (failed(remapScalar(operand)))
+        return failure();
+    builder.clone(*def, aliasMap);
+    return success();
+  };
+  for (Operation *alias : llvm::reverse(aliasOps)) {
+    for (Value operand : alias->getOperands().drop_front()) {
+      if (failed(remapScalar(operand))) {
+        pipelineLoop->emitWarning("[cv-pipelining] unsupported scalar "
+                                  "dependency of viewed TCB output");
+        return failure();
+      }
+    }
+    builder.clone(*alias, aliasMap);
+  }
+
+  Value logicalMemref = aliasMap.lookupOrDefault(toTensor.getMemref());
+  Value rematerialized =
+      createToTensor(builder, output.getLoc(), logicalMemref);
+  if (!rematerialized || rematerialized.getType() != output.getType()) {
+    pipelineLoop->emitWarning(
+        "[cv-pipelining] failed to recover viewed TCB output type");
+    return failure();
+  }
+  return rematerialized;
 }
 
 LogicalResult CVPipelineImpl::expandOutputInits(WorkItem *item) {
@@ -1490,6 +1777,9 @@ LogicalResult CVPipelineImpl::createNewLoops() {
   newLoop =
       builder.create<scf::ForOp>(loc, lb, ub, newStep, pipelineLoop.getInits());
   newLoop->setAttr(hivm::CVPipelinedLoopAttr::name, builder.getUnitAttr());
+  // TODO: Temporary transition measure so PipelineV2 ignores loops already
+  // pipelined by legacy CVPipelining.
+  newLoop->setAttr(hivm::LegacyCVPipelineAttr::name, builder.getUnitAttr());
   newLoop->setAttr(hivm::kCVUnrolledLoopName, builder.getUnitAttr());
   if (newLoop->getNumResults() == 0)
     newLoop.getBody()->getTerminator()->erase();
@@ -2030,28 +2320,20 @@ LogicalResult CVPipelineImpl::privatizeSharedCounterIterArgs() {
   if (pending.empty())
     return success();
 
-  unsigned origNumIterArgs = pipelineLoop.getNumRegionIterArgs();
-  IRRewriter rewriter(pipelineLoop.getContext());
-  FailureOr<LoopLikeOpInterface> newLoopLike =
-      pipelineLoop.replaceWithAdditionalYields(
-          rewriter, newInits, /*replaceInitOperandUsesInLoop=*/false,
-          [](OpBuilder &, Location, ArrayRef<BlockArgument> newArgs) {
-            // Placeholder pass-through; each private counter's yield slot is
-            // rewritten to its scope result in
-            // createNewLoopsForPreloadWithScopes.
-            return SmallVector<Value>(newArgs.begin(), newArgs.end());
-          });
-  if (failed(newLoopLike))
+  // Each private counter's yield slot is a placeholder pass-through until
+  // createNewLoopsForPreloadWithScopes rewrites it to its scope result. The
+  // old loop is replaced, but its body block is moved rather than cloned, so
+  // every Operation * collected so far (worklist, toErase, atomic effects,
+  // workspace allocs) stays valid. globalIRMap is still empty at this point.
+  FailureOr<unsigned> privateBase =
+      hivm::appendPassThroughIterArgs(pipelineLoop, newInits);
+  if (failed(privateBase))
     return pipelineLoop->emitWarning(
         "[cv-pipelining] failed to append private counter iter_args");
-  // The old loop is replaced, but its body block was moved rather than cloned,
-  // so every Operation * collected so far (worklist, toErase, atomic effects,
-  // workspace allocs) stays valid. globalIRMap is still empty at this point.
-  pipelineLoop = cast<scf::ForOp>(newLoopLike->getOperation());
   builder.setInsertionPoint(pipelineLoop);
 
   for (auto [idx, p] : llvm::enumerate(pending)) {
-    unsigned privateIdx = origNumIterArgs + static_cast<unsigned>(idx);
+    unsigned privateIdx = *privateBase + static_cast<unsigned>(idx);
     p.item->privateCounters.push_back(
         {p.advanceVal, p.sharedArgIdx,
          pipelineLoop.getRegionIterArg(p.sharedArgIdx),
@@ -2068,7 +2350,37 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     if (isa<SetAtomicOp>(op))
       toErase.insert(&op);
 
-  int32_t preloadNum = static_cast<int32_t>(worklist.size()) - 1;
+  // SMS mode: preload coordinates come from the verified partition and
+  // override the Default loop-carried heuristic below.  Default mode keeps
+  // the loop-carried-aware scheme untouched.
+  const bool useSms = (schedulerMode == CVSchedulerMode::Sms);
+
+  // SMS: validate coordinate map completeness before creating any scope, so
+  // that a missing coordinate fails this loop instead of silently emitting a
+  // zero preload number.
+  if (useSms) {
+    for (const auto &item : worklist) {
+      if (!msCoordinateMap.count(item.get())) {
+        DEBUG_WITH_TYPE("ms-preload-scheduler",
+                        dbgs() << "[ms] WorkItem #" << item->id
+                               << " has no coordinate in msCoordinateMap\n");
+        return failure();
+      }
+    }
+  }
+
+  bool hasAnyLoopCarriedItem = llvm::any_of(
+      worklist, [](const auto &item) { return item->hasLoopCarriedDep; });
+  unsigned numIndependent = llvm::count_if(
+      worklist, [](const auto &item) { return !item->hasLoopCarriedDep; });
+  int32_t maxPreloadNum = hasAnyLoopCarriedItem
+                              ? static_cast<int32_t>(numIndependent) + 1
+                              : static_cast<int32_t>(worklist.size());
+  if (pinAllPreloadNumToZero)
+    maxPreloadNum = 1;
+  if (useSms)
+    maxPreloadNum = msPipelineDepth;
+  int32_t preloadNum = maxPreloadNum - 1;
   for (auto &item : worklist) {
     // Reset insertion point after we're done with this item
     OpBuilder::InsertionGuard g(builder);
@@ -2096,27 +2408,39 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     newScopeOp.setNoInline(true);
     newScopeOp->setAttr(kPipelinedLoopCoreTypeAttrName,
                         TCoreTypeAttr::get(builder.getContext(), item->core));
+    int32_t itemPreloadNum = useSms
+                                 ? msCoordinateMap.lookup(item.get())
+                                 : (item->hasLoopCarriedDep ? 0 : preloadNum);
     newScopeOp->setAttr(
         hivm::PreloadNumAttr::name,
         IntegerAttr::get(IntegerType::get(newScopeOp->getContext(), 32),
-                         preloadNum));
+                         itemPreloadNum));
     // TODO: add a new pass to analyze max preload num
     newScopeOp->setAttr(
         hivm::MaxPreloadNumAttr::name,
         IntegerAttr::get(IntegerType::get(newScopeOp->getContext(), 32),
-                         worklist.size()));
+                         maxPreloadNum));
+    // hivm.has_loop_carried_dep is Default-scheduler semantics: the bit marks
+    // the forward closure Default pins to preload 0, which extends to the end
+    // of the worklist. SMS never pins that closure (the DAG builder rejects
+    // loop-carried recurrences outright), so the attr is stamped on the
+    // Default path only.
+    bool markLoopCarriedDep = !useSms && item->hasLoopCarriedDep;
+    if (markLoopCarriedDep)
+      newScopeOp->setAttr("hivm.has_loop_carried_dep", builder.getUnitAttr());
 
     Region &region = newScopeOp.getRegion();
     Block *bodyBlock = builder.createBlock(&region);
     builder.setInsertionPointToEnd(bodyBlock);
     IRMapping scopeMap(globalIRMap);
 
-    // Critical fix: Remove all block argument mappings from scopeMap before cloning.
-    // If scopeMap contains mappings for block arguments of ForOps we're about to clone,
-    // Region::cloneInto will skip adding those arguments to the cloned block
-    // (see mlir/lib/IR/Region.cpp: "if (!mapper.contains(arg))"),
-    // resulting in ForOps with missing block arguments.
-    // We need to clear these mappings so cloned ForOps get fresh block arguments.
+    // Critical fix: Remove all block argument mappings from scopeMap before
+    // cloning. If scopeMap contains mappings for block arguments of ForOps
+    // we're about to clone, Region::cloneInto will skip adding those arguments
+    // to the cloned block (see mlir/lib/IR/Region.cpp: "if
+    // (!mapper.contains(arg))"), resulting in ForOps with missing block
+    // arguments. We need to clear these mappings so cloned ForOps get fresh
+    // block arguments.
     SmallVector<BlockArgument> argsToErase;
     for (auto it : scopeMap.getValueMap()) {
       if (auto blockArg = dyn_cast<BlockArgument>(it.first))
@@ -2147,12 +2471,30 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
       if (toTensorOp)
         tcbToTensorOps.insert(toTensorOp);
     }
+    SmallVector<Value> scopeViewedTCBOutputs;
     for (Operation &op : parentFor.getBody()->getOperations()) {
       if (!item->ops.contains(&op))
         continue;
       toErase.insert(&op);
       if (tcbToTensorOps.contains(&op))
         continue;
+      WalkResult remapResult = op.walk([&](Operation *nested) {
+        for (Value operand : nested->getOperands()) {
+          auto storage = viewedTCBOutputStorage.find(operand);
+          if (storage == viewedTCBOutputStorage.end() ||
+              scopeMap.contains(operand))
+            continue;
+          FailureOr<Value> rematerialized =
+              rematerializeTCBOutputView(operand, storage->second, scopeMap);
+          if (failed(rematerialized))
+            return WalkResult::interrupt();
+          scopeMap.map(operand, *rematerialized);
+          scopeViewedTCBOutputs.push_back(operand);
+        }
+        return WalkResult::advance();
+      });
+      if (remapResult.wasInterrupted())
+        return failure();
       auto atomicIt = atomicEffectMap.find(&op);
       if (atomicIt != atomicEffectMap.end()) {
         const AtomicEffect &effect = atomicIt->getSecond();
@@ -2163,6 +2505,8 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
         builder.create<SetAtomicOp>(op.getLoc(), AtomicKind::NONE,
                                     atomicIt->getSecond().type);
     }
+    for (Value output : scopeViewedTCBOutputs)
+      scopeMap.erase(output);
     item->irMap = scopeMap;
 
     for (Operation *workspaceOutput : item->workspaceOutputs) {
@@ -2194,7 +2538,19 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
       Value toTensor = createToTensor(builder, loc, localOutput.second);
       if (!toTensor)
         return failure();
-      globalIRMap.map(localOutput.first, toTensor);
+      if (toTensor.getType() != localOutput.first.getType()) {
+        // Keep the common path conservative: only the registered v1 path can
+        // reconstruct a logical view of differently typed physical storage.
+        if (!allowShapeHeuristics)
+          return failure();
+        // Registered / bypass kernels keep the physical TCB storage and
+        // rebuild the logical view in each consumer scope.
+        toTensor.getDefiningOp()->erase();
+        globalIRMap.erase(localOutput.first);
+        viewedTCBOutputStorage[localOutput.first] = localOutput.second;
+      } else {
+        globalIRMap.map(localOutput.first, toTensor);
+      }
     }
 
     size_t resultIdx = 0;
@@ -2229,7 +2585,8 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     }
 
     item->scopeOp = newScopeOp;
-    preloadNum--;
+    if (!pinAllPreloadNumToZero && !item->hasLoopCarriedDep)
+      preloadNum--;
   }
 
   if (trailingAtomicEffect) {
@@ -2240,6 +2597,195 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
   }
 
   return success();
+}
+
+static Value stripStorePriorityTensorViews(Value value) {
+  while (Operation *op = value.getDefiningOp()) {
+    if (!isa<tensor::ExtractSliceOp, tensor::ExpandShapeOp,
+             tensor::CollapseShapeOp>(op))
+      break;
+    value = op->getOperand(0);
+  }
+  return value;
+}
+
+static bool isStorePriorityCBuf(Value value) {
+  auto alloc = value.getDefiningOp<memref::AllocOp>();
+  if (!alloc)
+    return false;
+  auto space =
+      dyn_cast_or_null<AddressSpaceAttr>(alloc.getType().getMemorySpace());
+  return space && space.getAddressSpace() == AddressSpace::L1;
+}
+
+/// Prioritize the transposed CBUF copy over the GM output of the same tensor.
+/// Keep this local to tensor-form preload scopes, before memory planning and
+/// sync insertion account for the delayed store's buffer lifetime.
+/// Callers must first pass `allowShapeHeuristics` (registry + preload +
+/// non-zero workspace multibuffer, or LIT bypass).
+static void prioritizePreloadCrossCoreCopy(Block &body, bool sameIteration) {
+  if (llvm::any_of(body, [](Operation &op) { return isa<SetAtomicOp>(op); }))
+    return;
+
+  SmallVector<StoreOp> stores(body.getOps<StoreOp>());
+  // Reverse traversal preserves the order of consecutive GM stores.
+  for (StoreOp store : llvm::reverse(stores)) {
+    if (store->getNumResults() || store.getAtomicKindAttr() ||
+        !isa<TensorType>(store.getSrc().getType()) ||
+        !isa<MemRefType>(store.getDst().getType()))
+      continue;
+
+    Value dst = store.getDst();
+    while (Operation *op = dst.getDefiningOp()) {
+      if (!isa<memref::SubViewOp, memref::ReinterpretCastOp, memref::CastOp>(
+              op))
+        break;
+      dst = op->getOperand(0);
+    }
+    auto arg = dyn_cast<BlockArgument>(dst);
+    if (!arg || !isa<func::FuncOp>(arg.getOwner()->getParentOp()))
+      continue;
+    Attribute space = cast<BaseMemRefType>(dst.getType()).getMemorySpace();
+    if (space && space != AddressSpaceAttr::get(body.getParent()->getContext(),
+                                                AddressSpace::GM))
+      continue;
+
+    Value source = stripStorePriorityTensorViews(store.getSrc());
+    Operation *producer = source.getDefiningOp();
+    if (!producer ||
+        !(isa<VCastOp>(producer) || (sameIteration && isa<VAddOp>(producer))) ||
+        !isMemoryEffectFree(producer))
+      continue;
+    auto dps = cast<DestinationStyleOpInterface>(producer);
+    if (dps.getNumDpsInits() != 1 ||
+        !dps.getDpsInitOperand(0)->get().getDefiningOp<tensor::EmptyOp>())
+      continue;
+
+    Operation *insertAfter = nullptr;
+    for (Operation *op = store->getNextNode(); op; op = op->getNextNode()) {
+      if (op->hasTrait<OpTrait::IsTerminator>() || op->getNumRegions())
+        break;
+      if (auto copy = dyn_cast<CopyOp>(op)) {
+        if (!isa<TensorType>(copy.getSrc().getType()) ||
+            !isStorePriorityCBuf(copy.getDst()))
+          break;
+        auto transpose = stripStorePriorityTensorViews(copy.getSrc())
+                             .getDefiningOp<VTransposeOp>();
+        if (!transpose || !isMemoryEffectFree(transpose) ||
+            !transpose.getDst().getDefiningOp<tensor::EmptyOp>() ||
+            stripStorePriorityTensorViews(transpose.getSrc()) != source)
+          break;
+        insertAfter = op;
+        continue;
+      }
+      if (auto mark = dyn_cast<annotation::MarkOp>(op)) {
+        if (mark->hasAttr(HIVMTightlyCoupledBufferAttr::name) &&
+            isStorePriorityCBuf(mark.getSrc()))
+          continue;
+      }
+      // Unknown memory effects, other GM accesses and synchronization are
+      // boundaries. Pure tensor/index operations do not overwrite the tensor.
+      if (!isMemoryEffectFree(op))
+        break;
+      // Keep the store after trailing pure vector work as well. Otherwise VF
+      // merging can hoist it ahead of the transpose and undo this priority.
+      if (insertAfter)
+        insertAfter = op;
+    }
+    if (insertAfter)
+      store->moveAfter(insertAfter);
+  }
+}
+
+// Keep an early Cube publication separate from a later consumer that needs
+// another Cube result. Only accept a contiguous pure tensor producer chain;
+// tensor.empty and the copy's TCB annotation stay outside the fusion boundary.
+static void preserveEarlyPreloadCopy(Block &body, OpBuilder &builder) {
+  // Keep cross-stage returns directly traceable by multi-buffer analysis.
+  if (body.getTerminator()->getNumOperands())
+    return;
+  auto collect = [&](Operation *root, SetVector<Operation *> &slice) {
+    DenseSet<Operation *> inputs;
+    BackwardSliceOptions options;
+    options.inclusive = true;
+    options.omitBlockArguments = true;
+    options.filter = [&](Operation *op) {
+      if (auto tensor = dyn_cast<bufferization::ToTensorOp>(op)) {
+        Value buffer = tensor.getMemref();
+        if (getOptionalHIVMAddressSpace(buffer.getType()) == AddressSpace::UB &&
+            isTightlyCoupledValue(buffer))
+          if (Operation *alloc = traceAllocLike(buffer))
+            inputs.insert(alloc);
+        return false;
+      }
+      return op->getBlock() == &body && op->getNumResults() &&
+             !op->getNumRegions() && !isa<tensor::EmptyOp>(op) &&
+             isMemoryEffectFree(op) &&
+             llvm::all_of(op->getResultTypes(),
+                          [](Type type) { return isa<TensorType>(type); });
+    };
+    if (root)
+      getBackwardSlice(root, &slice, options);
+    return inputs;
+  };
+  for (CopyOp copy : llvm::make_early_inc_range(body.getOps<CopyOp>())) {
+    if (!isa<TensorType>(copy.getSrc().getType()) ||
+        !isStorePriorityCBuf(copy.getDst()))
+      continue;
+    SetVector<Operation *> producers;
+    auto inputs = collect(copy.getSrc().getDefiningOp(), producers);
+    if (inputs.empty())
+      continue;
+    SmallVector<Operation *> ordered;
+    for (Operation *op = copy->getPrevNode(); op; op = op->getPrevNode()) {
+      if (producers.contains(op)) {
+        ordered.push_back(op);
+        continue;
+      }
+      if (isa<tensor::EmptyOp>(op))
+        continue;
+      if (auto mark = dyn_cast<annotation::MarkOp>(op);
+          mark && mark.getSrc() == copy.getDst() &&
+          mark->hasAttr(HIVMTightlyCoupledBufferAttr::name))
+        continue;
+      break;
+    }
+    if (ordered.size() != producers.size())
+      continue;
+    SetVector<Value> outputs;
+    bool needsAnotherCubeInput = false;
+    for (Operation *op : ordered)
+      for (Value result : op->getResults())
+        for (Operation *user : result.getUsers()) {
+          if (user == copy || producers.contains(user))
+            continue;
+          outputs.insert(result);
+          SetVector<Operation *> consumerSlice;
+          auto consumerInputs = collect(user, consumerSlice);
+          needsAnotherCubeInput |=
+              llvm::any_of(consumerInputs,
+                           [&](auto input) { return !inputs.contains(input); });
+        }
+    // Extra live-outs can materialize unrelated vector work across the scope.
+    if (outputs.size() != 1 || !needsAnotherCubeInput)
+      continue;
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPoint(copy);
+    auto boundary = builder.create<scope::ScopeOp>(
+        copy.getLoc(), TypeRange(ValueRange(outputs.getArrayRef())));
+    boundary.setNoInline(true);
+    boundary->setAttr("vf-scope", builder.getUnitAttr());
+    Block *inner = builder.createBlock(&boundary.getRegion());
+    for (Operation *op : llvm::reverse(ordered))
+      op->moveBefore(inner, inner->end());
+    copy->moveBefore(inner, inner->end());
+    builder.setInsertionPointToEnd(inner);
+    Value output = outputs.front();
+    builder.create<scope::ReturnOp>(copy.getLoc(), output);
+    output.replaceUsesWithIf(boundary.getResult(0), [&](OpOperand &use) {
+      return !boundary->isProperAncestor(use.getOwner());
+    });
+  }
 }
 
 LogicalResult CVPipelineImpl::markScopesForPreload() {
@@ -2253,6 +2799,17 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
   if (failed(migrateOpsForPreload(builder))) {
     revert();
     return failure();
+  }
+
+  // Off-registry kernels keep the original GM-store / CBUF-copy order and
+  // do not nest an inner vf-scope around an early CBUF publication.
+  if (allowShapeHeuristics) {
+    for (auto &item : worklist)
+      if (item->core == TCoreType::VECTOR && item->scopeOp) {
+        prioritizePreloadCrossCoreCopy(item->scopeOp.getRegion().front(),
+                                       pinAllPreloadNumToZero);
+        preserveEarlyPreloadCopy(item->scopeOp.getRegion().front(), builder);
+      }
   }
 
   LLVM_DEBUG({
@@ -2312,17 +2869,27 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
     }
 
     if (!toErase.contains(usrOp)) {
-      LLVM_DEBUG(dbgs() << "func" << "\n\nDef: " << *eraseOp
-                        << "\nUser: " << *usrOp << '\n');
+      LLVM_DEBUG(dbgs() << "func"
+                        << "\n\nDef: " << *eraseOp << "\nUser: " << *usrOp
+                        << '\n');
       return usrOp->emitWarning(
           "[cv-pipelining] cannot erase user of pipelined op, aborting "
           "pipelining pass");
     }
     eraseOp = usrOp;
   }
-  LLVM_DEBUG(dbgs() << "\n\nAfter everything:\n";
-             newLoop->getParentOfType<func::FuncOp>()->dump());
+  LLVM_DEBUG({
+    dbgs() << "\n\nAfter everything:\n";
+    if (pipelineMode == CVPipelineMode::Skew)
+      pipelineLoop->getParentOfType<func::FuncOp>()->dump();
+    else if (pipelineMode == CVPipelineMode::Unroll)
+      newLoop->getParentOfType<func::FuncOp>()->dump();
+  });
   pipelineLoop->setAttr(hivm::CVPipelinedLoopAttr::name, builder.getUnitAttr());
+  // TODO: Temporary transition measure so PipelineV2 ignores loops already
+  // pipelined by legacy CVPipelining.
+  pipelineLoop->setAttr(hivm::LegacyCVPipelineAttr::name,
+                        builder.getUnitAttr());
   checkpoint->erase();
   return success();
 }
@@ -2350,6 +2917,52 @@ void CVPipelineImpl::revert() {
   for (Operation *op : llvm::reverse(expandedWorkspaceOps))
     op->erase();
   expandedWorkspaceOps.clear();
+}
+
+//===----------------------------------------------------------------------===//
+// installMsPartition — install SMS partition into CVPipelineImpl state
+//===----------------------------------------------------------------------===//
+
+LogicalResult
+CVPipelineImpl::installMsPartition(const MsPartitionResult &partition) {
+  // The partition result carries the SAME Default worklist / owner map
+  // (shared_ptr identity) already installed by run(); ownership and
+  // output/workspace state are NOT replaced here.  Only schedule
+  // coordinates, pipeline depth, and transfer metadata are installed.
+  msPipelineDepth = partition.pipelineDepth;
+  numMultibuffer = partition.pipelineDepth;
+
+  // Build the WorkItem → verified preload coordinate map from stages.
+  msCoordinateMap.clear();
+  for (const auto &stage : partition.stages) {
+    for (WorkItem *wi : stage.workItems) {
+      if (!wi) {
+        DEBUG_WITH_TYPE("ms-preload-scheduler",
+                        dbgs() << "[ms] null WorkItem in stage "
+                               << stage.stageOrdinal << "\n");
+        return failure();
+      }
+      auto [it, inserted] =
+          msCoordinateMap.try_emplace(wi, stage.preloadCoordinate);
+      if (!inserted) {
+        DEBUG_WITH_TYPE("ms-preload-scheduler",
+                        dbgs() << "[ms] duplicate WorkItem in stage mapping\n");
+        return failure();
+      }
+    }
+  }
+
+  // Validate that every worklist item has a coordinate.
+  for (const auto &wi : worklist) {
+    if (!msCoordinateMap.count(wi.get())) {
+      DEBUG_WITH_TYPE("ms-preload-scheduler", dbgs()
+                                                  << "[ms] WorkItem #" << wi->id
+                                                  << " missing coordinate\n");
+      return failure();
+    }
+  }
+
+  return success();
 }
 
 LogicalResult CVPipelineImpl::preprocessCounterAllocas() {
@@ -2629,25 +3242,163 @@ LogicalResult CVPipelineImpl::run() {
     revert();
     return failure();
   }
+
+  // ---- Authoritative WorkItem partition (Default WorklistBuilder) ----
+  // Always run the Default WorklistBuilder first.  Its result is the
+  // authoritative partition — SMS scheduling overlays timing coordinates onto
+  // these WorkItems but never creates, splits, or merges them.
+  //
+  // Running the builder unconditionally also avoids a redundant re-build when
+  // SMS falls back to Default: the result is already in place.
   wlBuilder.setCounterClones(counterCloneMap);
-  auto buildResult = wlBuilder.build();
-  if (failed(buildResult)) {
+  auto defaultBuild = wlBuilder.build();
+  if (failed(defaultBuild)) {
     revert();
     return failure();
   }
-  worklist = buildResult->worklist;
-  opToWorkItemMap = buildResult->opToWorkItemMap;
-  outputMemrefMap = buildResult->outputMemrefMap;
-  numMultibuffer = buildResult->resolvedMultibuffer;
-  workspaceAllocs = buildResult->workspaceAllocs;
+  worklist = defaultBuild->worklist;
+  opToWorkItemMap = defaultBuild->opToWorkItemMap;
+  outputMemrefMap = defaultBuild->outputMemrefMap;
+  numMultibuffer = defaultBuild->resolvedMultibuffer;
+  workspaceAllocs = defaultBuild->workspaceAllocs;
 
+  // ---- SMS scheduling overlay (optional) ----
+  // All SMS phases (DAG build, SMS, checked materialization, and coordinate
+  // installation) are read-only with respect to the IR and the
+  // Default ownership state.  Any failure falls back to the Default
+  // scheduler using the result already installed above.
+  //
+  // [ms] debug prints use the unified "ms-preload-scheduler" type (the
+  // same channel as the SMS component files); the rest of this file stays
+  // in the "cv-pipelining" channel.
+  if (schedulerMode == CVSchedulerMode::Sms) {
+    auto parentModule = pipelineLoop->getParentOfType<ModuleOp>();
+    if (!hacc::utils::isRegBasedArch(parentModule)) {
+      DEBUG_WITH_TYPE("ms-preload-scheduler",
+                      dbgs() << "[ms] SMS scheduler is only supported on "
+                                "reg-based (A5) architectures; "
+                                "falling back to default\n");
+      schedulerMode = CVSchedulerMode::Default;
+    }
+  }
+
+  if (schedulerMode == CVSchedulerMode::Sms) {
+    StringRef msFailReason;
+    auto msParentFunc = pipelineLoop->getParentOfType<func::FuncOp>();
+    StringRef msFuncName =
+        msParentFunc ? msParentFunc.getName() : StringRef("unknown");
+    auto tryMsScheduler = [&]() -> LogicalResult {
+      DEBUG_WITH_TYPE("ms-preload-scheduler",
+                      dbgs() << "[ms] trying SMS scheduler on loop at "
+                             << pipelineLoop.getLoc() << "\n");
+
+      // Emit attempt status to stderr for batch SMS enablement testing.
+      llvm::errs() << "[MS_STATUS] status=attempt"
+                   << " function=" << msFuncName
+                   << " loop=" << pipelineLoop.getLoc() << "\n";
+      llvm::errs().flush();
+
+      if (pipelineMode != CVPipelineMode::Skew) {
+        DEBUG_WITH_TYPE("ms-preload-scheduler",
+                        dbgs() << "[ms] scheduler=sms requires "
+                                  "pipeline-mode=skew"
+                               << "\n");
+        msFailReason = "unsupported-pipeline-mode";
+        return failure();
+      }
+
+      // 1. Build DAG1/DAG2/DAG3 from Default WorkItems.
+      FixedProductionLatencyProvider latencyProvider;
+      costmodel::MSCostModel costModel;
+      MsDagBuilder dagBuilder(pipelineLoop, latencyProvider, counterCloneMap,
+                              *defaultBuild, &costModel);
+      auto dagResult = dagBuilder.build();
+      if (failed(dagResult)) {
+        DEBUG_WITH_TYPE("ms-preload-scheduler",
+                        dbgs() << "[ms] DAG build failed\n");
+        msFailReason = dagBuilder.failedDueToLoopCarriedDependency()
+                           ? "LoopCarriedDep"
+                           : "dag-build-failure";
+        return failure();
+      }
+
+      // 2. Run SMS scheduler.
+      auto schedule = sms::smsSchedule(dagResult->ddg);
+      if (!schedule) {
+        DEBUG_WITH_TYPE("ms-preload-scheduler",
+                        dbgs()
+                            << "[ms] SMS schedule failed (no feasible II)\n");
+        msFailReason = "no-feasible-ii";
+        return failure();
+      }
+
+      // 3. Materialize the schedule onto the Default WorkItems.
+      MsPartitioner partitioner(pipelineLoop, *dagResult, *schedule);
+      auto partResult = partitioner.partition();
+      if (failed(partResult)) {
+        DEBUG_WITH_TYPE("ms-preload-scheduler",
+                        dbgs() << "[ms] schedule materialization failed\n");
+        msFailReason = "partition-failure";
+        return failure();
+      }
+
+      // 4. Install checked coordinates/depth (no ownership mutation).
+      if (failed(installMsPartition(*partResult))) {
+        DEBUG_WITH_TYPE("ms-preload-scheduler",
+                        dbgs() << "[ms] coordinate installation failed\n");
+        msFailReason = "installation-failure";
+        return failure();
+      }
+
+      // Emit success status to stderr for batch SMS enablement testing.
+      llvm::errs() << "[MS_STATUS] status=success"
+                   << " function=" << msFuncName
+                   << " loop=" << pipelineLoop.getLoc() << "\n";
+      llvm::errs().flush();
+
+      return success();
+    };
+
+    if (!succeeded(tryMsScheduler())) {
+      DEBUG_WITH_TYPE("ms-preload-scheduler",
+                      dbgs() << "[ms] falling back to default scheduler on "
+                             << "loop " << pipelineLoop.getLoc() << "\n");
+
+      // Emit fallback status to stderr for batch SMS enablement testing.
+      llvm::errs() << "[MS_STATUS] status=fallback"
+                   << " function=" << msFuncName
+                   << " loop=" << pipelineLoop.getLoc()
+                   << " reason=" << msFailReason << "\n";
+      llvm::errs().flush();
+
+      msFallbackSeen = true;
+
+      // Discard any partially installed SMS coordinate state and restore
+      // the Default multibuffer resolution.
+      msCoordinateMap.clear();
+      msPipelineDepth = 0;
+      numMultibuffer = defaultBuild->resolvedMultibuffer;
+
+      if (msFailOnFallback) {
+        revert();
+        return failure();
+      }
+
+      schedulerMode = CVSchedulerMode::Default;
+      // Default result is already in worklist / opToWorkItemMap / etc.
+    }
+  }
+
+  // ---- Common post-partition pipeline ----
   if (failed(absorbMergerOpsIntoWorkItems())) {
     revert();
     return failure();
   }
   if (pipelineMode == CVPipelineMode::Skew &&
-      failed(collectWorkspaceAllocsForPreload()))
+      failed(collectWorkspaceAllocsForPreload())) {
+    revert();
     return failure();
+  }
   if (failed(markOutputs())) {
     revert();
     return failure();
@@ -2758,7 +3509,9 @@ void CVPipeliningPass::runOnOperation() {
 
     auto parentLoop = loop->getParentOfType<scf::ForOp>();
     CVPipelineImpl impl(loop, this->setDepthInUnrollMode, this->pipelineMode,
-                        this->enableLazyLoading);
+                        this->enableLazyLoading, this->schedulerMode,
+                        this->bypassShapeRegistry, this->enablePreload,
+                        this->smsFailOnFallback);
 
     // Mark all parent loops to not attempt pipelining to save compile time
     if (impl.run().succeeded())
@@ -2766,6 +3519,10 @@ void CVPipeliningPass::runOnOperation() {
         pipelinedNest.insert(parentLoop);
         parentLoop = parentLoop->getParentOfType<scf::ForOp>();
       }
+    else if (this->smsFailOnFallback && impl.sawMsFallback()) {
+      signalPassFailure();
+      return;
+    }
   }
 
   removeWorkspaceMultiBufferMarks(func);

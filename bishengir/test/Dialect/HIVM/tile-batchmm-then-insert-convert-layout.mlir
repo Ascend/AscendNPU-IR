@@ -26,7 +26,7 @@ func.func @batchmm_gets_fractal_after_tile(%dst : memref<2x256x256xf16>) {
     ins(%ma, %mb, %true, %M, %K, %N
         : tensor<2x256x128xf16>, tensor<2x128x256xf16>, i1, index, index, index)
     outs(%mc : tensor<2x256x256xf32>) -> tensor<2x256x256xf32>
-  hivm.hir.fixpipe {enable_nz2nd}
+  hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, enable_nz2nd}
     ins(%result : tensor<2x256x256xf32>)
     outs(%dst : memref<2x256x256xf16>)
   return

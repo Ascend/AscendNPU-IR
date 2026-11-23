@@ -327,6 +327,21 @@ func.func @lower_fma(%a: vector<64xf32>, %b: vector<64xf32>, %c: vector<64xf32>)
 
 // -----
 
+// On dav-920r1 (Ascend960) math.fma lowers to the native vfma op.
+// CHECK-LABEL: @lower_fma_ascend960
+// CHECK-SAME: (%[[A:.*]]: vector<64xf32>, %[[B:.*]]: vector<64xf32>, %[[C:.*]]: vector<64xf32>)
+// CHECK: %[[MASK:.*]] = ave.hir.pge <ALL> : vector<64xi1>
+// CHECK: ave.hir.vfma %[[C]], %[[A]], %[[B]], %[[MASK]]
+// CHECK-SAME: vector<64xf32>
+module attributes {hacc.target = #hacc.target<"Ascend960">} {
+  func.func @lower_fma_ascend960(%a: vector<64xf32>, %b: vector<64xf32>, %c: vector<64xf32>) -> vector<64xf32> {
+    %result = math.fma %a, %b, %c : vector<64xf32>
+    return %result: vector<64xf32>
+  }
+}
+
+// -----
+
 // CHECK-LABEL: @test_create_preg_from_constant_op
 // Test for createPRegFromConstantOp function with multi-dimensional vector
 func.func @test_create_preg_from_constant_op(%arg0: memref<16x2x1xi1, strided<[65536, 256, 1]>, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
@@ -417,6 +432,58 @@ func.func @trunci_i16_to_i8_si2si_wrap(%arg0: memref<128xi16, #hivm.address_spac
   %mask = ave.hir.pge <ALL> : vector<128xi1>
   %0 = ave.hir.vload <NORM> %arg0[%c0] : memref<128xi16, #hivm.address_space<ub>> into vector<128xi16>
   %1 = arith.trunci %0 {enable_saturate = false, unsigned_mode = #hfusion.unsigned_mode<si2si>, round_mode = #hfusion.round_mode<truncwithoverflow>} : vector<128xi16> to vector<128xi8>
+  ave.hir.masked_store <NORM_B8> %arg1[%c0], %mask, %1 : memref<128xi8, #hivm.address_space<ub>>, vector<128xi1>, vector<128xi8>
+  return
+}
+
+// -----
+
+// Unsigned-destination i32->i8 wrap must also keep the low 8 bits.
+// s322u8/u322u8 saturate above 255 even with sat cleared, so an
+// unmasked narrow would clamp overflow to 255 instead of wrapping.
+
+// CHECK-LABEL: @trunci_i32_to_i8_si2ui_wrap
+// CHECK: %[[C255:.*]] = arith.constant 255 : i32
+// CHECK: %[[SPLAT:.*]] = ave.hir.broadcast %[[C255]], %{{.*}} : i32, vector<64xi1> -> vector<64xi32>
+// CHECK: %[[AND:.*]] = ave.hir.vand %{{.*}}, %[[SPLAT]], %{{.*}} : vector<64xi32>, vector<64xi1>
+// CHECK: ave.hir.vtrunci %[[AND]], false, %{{.*}} {pp = #ave.vcvt_pp_type<pp0>, uni = #hivm.unsigned_mode<si2ui>} : vector<64xi32>, vector<64xi8>, vector<64xi1>
+func.func @trunci_i32_to_i8_si2ui_wrap(%arg0: memref<64xi32, #hivm.address_space<ub>>, %arg1: memref<64xi8, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %mask = ave.hir.pge <ALL> : vector<64xi1>
+  %0 = ave.hir.vload <NORM> %arg0[%c0] : memref<64xi32, #hivm.address_space<ub>> into vector<64xi32>
+  %1 = arith.trunci %0 {enable_saturate = false, unsigned_mode = #hfusion.unsigned_mode<si2ui>, round_mode = #hfusion.round_mode<trunc>} : vector<64xi32> to vector<64xi8>
+  ave.hir.masked_store <NORM_B8> %arg1[%c0], %mask, %1 : memref<64xi8, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi8>
+  return
+}
+
+// -----
+
+// CHECK-LABEL: @trunci_i32_to_i8_ui2ui_wrap
+// CHECK: %[[C255:.*]] = arith.constant 255 : i32
+// CHECK: %[[SPLAT:.*]] = ave.hir.broadcast %[[C255]], %{{.*}} : i32, vector<64xi1> -> vector<64xi32>
+// CHECK: %[[AND:.*]] = ave.hir.vand %{{.*}}, %[[SPLAT]], %{{.*}} : vector<64xi32>, vector<64xi1>
+// CHECK: ave.hir.vtrunci %[[AND]], false, %{{.*}} {pp = #ave.vcvt_pp_type<pp0>, uni = #hivm.unsigned_mode<si2ui>} : vector<64xi32>, vector<64xi8>, vector<64xi1>
+func.func @trunci_i32_to_i8_ui2ui_wrap(%arg0: memref<64xi32, #hivm.address_space<ub>>, %arg1: memref<64xi8, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %mask = ave.hir.pge <ALL> : vector<64xi1>
+  %0 = ave.hir.vload <NORM> %arg0[%c0] : memref<64xi32, #hivm.address_space<ub>> into vector<64xi32>
+  %1 = arith.trunci %0 {enable_saturate = false, unsigned_mode = #hfusion.unsigned_mode<ui2ui>, round_mode = #hfusion.round_mode<trunc>} : vector<64xi32> to vector<64xi8>
+  ave.hir.masked_store <NORM_B8> %arg1[%c0], %mask, %1 : memref<64xi8, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi8>
+  return
+}
+
+// -----
+
+// CHECK-LABEL: @trunci_i16_to_i8_ui2ui_wrap
+// CHECK: %[[C255:.*]] = arith.constant 255 : i16
+// CHECK: %[[SPLAT:.*]] = ave.hir.broadcast %[[C255]], %{{.*}} : i16, vector<128xi1> -> vector<128xi16>
+// CHECK: %[[AND:.*]] = ave.hir.vand %{{.*}}, %[[SPLAT]], %{{.*}} : vector<128xi16>, vector<128xi1>
+// CHECK: ave.hir.vtrunci %[[AND]], false, %{{.*}} {part = #ave.vcvt_part_type<part_even>, uni = #hivm.unsigned_mode<si2ui>} : vector<128xi16>, vector<128xi8>, vector<128xi1>
+func.func @trunci_i16_to_i8_ui2ui_wrap(%arg0: memref<128xi16, #hivm.address_space<ub>>, %arg1: memref<128xi8, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %mask = ave.hir.pge <ALL> : vector<128xi1>
+  %0 = ave.hir.vload <NORM> %arg0[%c0] : memref<128xi16, #hivm.address_space<ub>> into vector<128xi16>
+  %1 = arith.trunci %0 {enable_saturate = false, unsigned_mode = #hfusion.unsigned_mode<ui2ui>, round_mode = #hfusion.round_mode<trunc>} : vector<128xi16> to vector<128xi8>
   ave.hir.masked_store <NORM_B8> %arg1[%c0], %mask, %1 : memref<128xi8, #hivm.address_space<ub>>, vector<128xi1>, vector<128xi8>
   return
 }
@@ -522,4 +589,24 @@ func.func @trunci_i64_to_i8_ui2si_sat(%arg0: memref<32xi64, #hivm.address_space<
   %1 = arith.trunci %0 {enable_saturate = true, unsigned_mode = #hfusion.unsigned_mode<ui2si>, round_mode = #hfusion.round_mode<round>} : vector<32xi64> to vector<32xi8>
   ave.hir.masked_store <NORM_B8> %arg1[%c0], %mask, %1 : memref<32xi8, #hivm.address_space<ub>>, vector<32xi1>, vector<32xi8>
   return
+}
+
+// -----
+
+// An index constant whose arithmetic sequence (0, 32, ..., 3168) is followed
+// by a zero tail of a length with no pge pattern (100 of 128 lanes): only the
+// first 100 lanes may take the sequence, the tail must stay 0.
+// CHECK-LABEL: @tail_padding_non_pattern_prefix
+// CHECK: %[[VCI:.*]] = ave.hir.vci %{{.*}}, <INCREASE> : i16, vector<128xi16>
+// CHECK: %[[SEQ:.*]] = ave.hir.vmuls %[[VCI]], %{{.*}}, %{{.*}} : vector<128xi16>, i16, vector<128xi1>
+// CHECK: %[[ZERO:.*]] = ave.hir.broadcast
+// CHECK: %[[C100:.*]] = arith.constant 100 : index
+// CHECK: %[[PREFIX:.*]], %{{.*}} = ave.hir.plt %[[C100]] : vector<128xi1>, index
+// CHECK: ave.hir.vsel %[[PREFIX]], %[[SEQ]], %[[ZERO]] : vector<128xi1>, vector<128xi16>
+func.func @tail_padding_non_pattern_prefix(%arg0: memref<200x1xi8, strided<[16, 1]>, #hivm.address_space<ub>>) -> vector<128xi16> attributes {hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant dense<"0x00002000400060008000A000C000E00000012001400160018001A001C001E00100022002400260028002A002C002E00200032003400360038003A003C003E00300042004400460048004A004C004E00400052005400560058005A005C005E00500062006400660068006A006C006E00600072007400760078007A007C007E00700082008400860088008A008C008E00800092009400960098009A009C009E009000A200A400A600A800AA00AC00AE00A000B200B400B600B800BA00BC00BE00B000C200C400C600C0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"> : vector<128xi16>
+  %mask = ave.hir.pge <ALL> : vector<128xi1>
+  %0 = ave.hir.vgather %arg0[%c0, %c0] [%cst], %mask : memref<200x1xi8, strided<[16, 1]>, #hivm.address_space<ub>>, vector<128xi16>, vector<128xi1> into vector<128xi16>
+  return %0 : vector<128xi16>
 }

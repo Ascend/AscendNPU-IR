@@ -9,8 +9,8 @@
 
 #define DEBUG_TYPE "hfusion-auto-vectorize-v2"
 
-#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/PlanContext.h"
+#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Scope/Utils/Utils.h"
@@ -156,12 +156,6 @@ void PlanContext::initFusableOpInfoFrom(func::FuncOp func) {
     LLVM_DEBUG(llvm::dbgs() << "++++++++copy conflicts++++++++\n");
     for (auto *op : info.copyConflicts)
       LLVM_DEBUG(llvm::dbgs() << *op << "\n");
-    LLVM_DEBUG(llvm::dbgs() << "++++++++op conflicts++++++++\n");
-    for (auto &[op, _] : info.opConflicts)
-      LLVM_DEBUG(llvm::dbgs() << *op << "\n");
-    LLVM_DEBUG(llvm::dbgs() << "++++++++group conflicts++++++++\n");
-    for (auto &[op, _] : info.groupConflicts)
-      LLVM_DEBUG(llvm::dbgs() << *op << "\n");
   }
   LLVM_DEBUG(llvm::dbgs() << "\n");
 #endif
@@ -185,22 +179,6 @@ void PlanContext::computeTileSize() {
 //===----------------------------------------------------------------------===//
 
 namespace {
-
-template <typename PivotTy>
-static void
-dissolvePivotImpl(FusableOpInfo::ConflictPivotMap<PivotTy> &conflictA,
-                  Operation *a,
-                  FusableOpInfo::ConflictPivotMap<PivotTy> &conflictB,
-                  Operation *b, PivotTy pivot) {
-  if (!conflictA.contains(b) || !conflictB.contains(a) ||
-      (conflictA[b].erase(pivot) != conflictB[a].erase(pivot) && a != b) ||
-      conflictA[b].empty() != conflictB[a].empty())
-    llvm::report_fatal_error("inconsistent conflict state");
-  if (!conflictA[b].empty())
-    return;
-  conflictA.erase(b);
-  conflictB.erase(a);
-}
 
 void findPreviousAndFollowingFusableOpOf(Operation *barrierOp, Block *block,
                                          DenseSet<Operation *> &previousOps,
@@ -238,17 +216,17 @@ void computeConflictListsForCopyOpOperand(PlanContext &ctx,
   }
   auto memRef = optMemRef.value();
 
-  for (auto previousOp : previousOps) {
+  for (auto *previousOp : previousOps) {
     if (hasMemRefInOperands(previousOp, memRef)) {
-      for (auto followingOp : followingOps) {
+      for (auto *followingOp : followingOps) {
         ctx.addCopyConflict(previousOp, followingOp);
       }
     }
   }
 
-  for (auto followingOp : followingOps) {
+  for (auto *followingOp : followingOps) {
     if (hasMemRefInOperands(followingOp, memRef)) {
-      for (auto previousOp : previousOps) {
+      for (auto *previousOp : previousOps) {
         ctx.addCopyConflict(previousOp, followingOp);
       }
     }
@@ -300,9 +278,9 @@ static std::optional<StaticView> getStaticRankOneView(Value value) {
     auto stride = getStaticInt(strides.front());
     if (!parent || !offset || !size || !stride || *stride < 0)
       return std::optional<StaticView>();
-    return std::optional<StaticView>(StaticView{parent->root,
-                                                parent->offset + *offset * parent->stride,
-                                                parent->stride * *stride, *size});
+    return std::optional<StaticView>(
+        StaticView{parent->root, parent->offset + *offset * parent->stride,
+                   parent->stride * *stride, *size});
   };
 
   if (auto subview = value.getDefiningOp<memref::SubViewOp>())
@@ -311,13 +289,15 @@ static std::optional<StaticView> getStaticRankOneView(Value value) {
 
   if (auto reinterpret = value.getDefiningOp<memref::ReinterpretCastOp>())
     return composeView(reinterpret.getSource(), reinterpret.getMixedOffsets(),
-                       reinterpret.getMixedSizes(), reinterpret.getMixedStrides());
+                       reinterpret.getMixedSizes(),
+                       reinterpret.getMixedStrides());
 
   return std::nullopt;
 }
 
 static GMAccessRange getGMAccessRange(memref::LoadOp load) {
-  auto root = mlir::utils::tracebackMemRefToAllocOrBlockArgument(load.getMemRef());
+  auto root =
+      mlir::utils::tracebackMemRefToAllocOrBlockArgument(load.getMemRef());
   if (!root)
     return {};
   auto view = getStaticRankOneView(load.getMemRef());
@@ -332,8 +312,8 @@ static GMAccessRange getGMAccessRange(memref::LoadOp load) {
 
 static GMAccessRange
 getGMAccessRange(bufferization::MaterializeInDestinationOp materialize) {
-  auto root = mlir::utils::tracebackMemRefToAllocOrBlockArgument(
-      materialize.getDest());
+  auto root =
+      mlir::utils::tracebackMemRefToAllocOrBlockArgument(materialize.getDest());
   if (!root)
     return {};
   auto view = getStaticRankOneView(materialize.getDest());
@@ -342,7 +322,8 @@ getGMAccessRange(bufferization::MaterializeInDestinationOp materialize) {
   if (view->size == 0)
     return {view->root, 1, 0};
   int64_t last = view->offset + (view->size - 1) * view->stride;
-  return {view->root, std::min(view->offset, last), std::max(view->offset, last)};
+  return {view->root, std::min(view->offset, last),
+          std::max(view->offset, last)};
 }
 
 static bool mayOverlap(const GMAccessRange &lhs, const GMAccessRange &rhs) {
@@ -388,34 +369,6 @@ static void findNearestDownstreamFusableOps(Operation *op, Block *block,
 
 } // namespace
 
-void PlanContext::dissolvePivot(Operation *newOp, const FusedNode *node,
-                                Block *block) {
-  // Step 1 — discharge op-level def-use conflicts induced by `newOp`.
-  // When `newOp` was standalone it sat between upstreamOps and their
-  // downstream, creating pivot entries in opConflicts. Now that `newOp`
-  // is fused into `node`, erase it from every (ancestor, descendant)
-  // pair so that pairs that lose their last pivot also lose the conflict.
-  DenseSet<Operation *> upstreamOps;
-  DenseSet<Operation *> visitedUpstreamOps;
-  findUpstreamFusableOpOf(newOp, block, upstreamOps, visitedUpstreamOps);
-  for (Operation *upstreamOp : upstreamOps) {
-    auto &conflicts = getInfo(upstreamOp).opConflicts;
-    for (auto [otherOp, pivotSet] : llvm::make_early_inc_range(conflicts)) {
-      auto &otherConflicts = getInfo(otherOp).opConflicts;
-      dissolvePivotImpl(conflicts, upstreamOp, otherConflicts, otherOp, newOp);
-    }
-  }
-
-  // Step 2 — discharge group-level conflicts where `node` blocks
-  // `newOp` from sharing a loop with other ops. Since `newOp` just
-  // joined `node`, the group is no longer a barrier between them.
-  auto &conflicts = getInfo(newOp).groupConflicts;
-  for (auto [otherOp, pivotSet] : llvm::make_early_inc_range(conflicts)) {
-    auto &otherConflicts = getInfo(otherOp).groupConflicts;
-    dissolvePivotImpl(conflicts, newOp, otherConflicts, otherOp, node);
-  }
-}
-
 void PlanContext::computeConflictLists(func::FuncOp func) {
   func.walk([&](Block *block) {
     if (isa<func::FuncOp, scf::ForOp, scf::IfOp, scf::WhileOp, scope::ScopeOp>(
@@ -423,25 +376,13 @@ void PlanContext::computeConflictLists(func::FuncOp func) {
       block->walk([&](Operation *op) {
         if (!isOpInBlock(op, block))
           return;
-        DenseSet<Operation *> upstreamOps;
-        DenseSet<Operation *> visitedUpstreamOps;
-        findUpstreamFusableOpOf(op, block, upstreamOps, visitedUpstreamOps);
-        DenseSet<Operation *> downstreamOps;
-        DenseSet<Operation *> visitedDownstreamOps;
-        findDownstreamFusableOpOf(op, block, downstreamOps,
-                                  visitedDownstreamOps);
-        for (auto upstreamOp : upstreamOps) {
-          for (auto downstreamOp : downstreamOps) {
-            addOpConflict(upstreamOp, downstreamOp, op);
-          }
-        }
-
         if (isNonVectorizableOp(op)) {
           if (enableCrossIfFusion) {
             // Only region-bearing ops or explicit sync/copy ops need the
             // previous/following scan and the body walk below.
             if (op->getNumRegions() == 0 &&
                 !isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp,
+                     hivm::SyncIntraBlockSetOp, hivm::SyncIntraBlockWaitOp,
                      hivm::SyncBlockWaitOp, hivm::CreateSyncBlockLockOp,
                      hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp>(op) &&
                 !isa<hivm::CopyOp, memref::CopyOp>(op))
@@ -467,14 +408,15 @@ void PlanContext::computeConflictLists(func::FuncOp func) {
               if (isa<hivm::AnchorOp>(op))
                 return WalkResult::interrupt();
               return isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp,
+                         hivm::SyncIntraBlockSetOp, hivm::SyncIntraBlockWaitOp,
                          hivm::SyncBlockWaitOp, hivm::CreateSyncBlockLockOp,
                          hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp>(op)
                          ? WalkResult::interrupt()
                          : WalkResult::advance();
             };
             if (op->walk(walker).wasInterrupted()) {
-              for (auto previousOp : previousOps) {
-                for (auto followingOp : followingOps) {
+              for (auto *previousOp : previousOps) {
+                for (auto *followingOp : followingOps) {
                   addSyncConflict(previousOp, followingOp);
                 }
               }
@@ -495,6 +437,7 @@ void PlanContext::computeConflictLists(func::FuncOp func) {
           }
 
           if (isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp,
+                  hivm::SyncIntraBlockSetOp, hivm::SyncIntraBlockWaitOp,
                   hivm::SyncBlockWaitOp, hivm::CreateSyncBlockLockOp,
                   hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp, scf::ForOp,
                   scf::WhileOp, scf::IfOp, scope::ScopeOp>(op)) {
@@ -502,8 +445,8 @@ void PlanContext::computeConflictLists(func::FuncOp func) {
             DenseSet<Operation *> followingOps;
             findPreviousAndFollowingFusableOpOf(op, block, previousOps,
                                                 followingOps);
-            for (auto previousOp : previousOps) {
-              for (auto followingOp : followingOps) {
+            for (auto *previousOp : previousOps) {
+              for (auto *followingOp : followingOps) {
                 addSyncConflict(previousOp, followingOp);
               }
             }
@@ -551,23 +494,6 @@ void PlanContext::addSyncConflict(Operation *a, Operation *b) {
 void PlanContext::addCopyConflict(Operation *a, Operation *b) {
   getInfo(a).copyConflicts.insert(b);
   getInfo(b).copyConflicts.insert(a);
-}
-void PlanContext::addOpConflict(Operation *a, Operation *b, Operation *pivot) {
-  getInfo(a).opConflicts[b].insert(pivot);
-  getInfo(b).opConflicts[a].insert(pivot);
-}
-void PlanContext::addGroupConflict(Operation *a, Operation *b,
-                                   const FusedNode *pivot) {
-  getInfo(a).groupConflicts[b].insert(pivot);
-  getInfo(b).groupConflicts[a].insert(pivot);
-}
-
-bool PlanContext::hasConflict(const FusableOpInfo &a, Operation *b) const {
-  return a.syncConflicts.contains(b) || a.copyConflicts.contains(b) ||
-         a.opConflicts.contains(b) || a.groupConflicts.contains(b);
-}
-bool PlanContext::hasConflict(Operation *a, Operation *b) const {
-  return hasConflict(getInfo(a), b);
 }
 
 } // namespace hfusion

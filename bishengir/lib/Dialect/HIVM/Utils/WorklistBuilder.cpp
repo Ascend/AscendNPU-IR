@@ -26,8 +26,10 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Interfaces/CastInterfaces.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #define DEBUG_TYPE "cv-pipelining"
@@ -36,8 +38,8 @@ using llvm::dbgs;
 
 namespace mlir {
 using namespace hivm;
-using hivm::detail::queryCoreTypeHelper;
 using bishengir::memref_ext::AllocWorkspaceOp;
+using hivm::detail::queryCoreTypeHelper;
 
 static constexpr llvm::StringLiteral CubeOnlyAttrName = "pipeline.cubeonly";
 static constexpr llvm::StringLiteral VecOnlyAttrName = "pipeline.veconly";
@@ -180,6 +182,16 @@ static bool isCoreOp(Operation &op) {
           isa<DestinationStyleOpInterface>(op));
 }
 
+/// True if `op` is the `__builtin_sparse_gather_load_to_L1buffer`, gathers
+/// sparse-attention KV regions GM->L1 in zN. It has the same memref-dst shape
+/// as `hivm.hir.load`/`hivm.hir.nd2nz`.
+static bool isSparseGatherLoadCustomOp(Operation *op) {
+  auto customOp = dyn_cast<CustomOp>(op);
+  if (!customOp)
+    return false;
+  return customOp.getName() == CustomOp::kBuiltinSparseGatherLoadToL1BufferName;
+}
+
 /// True if `op` is a HIVM DMA op whose alloc-backed memref destination may have
 /// a `bufferization.to_tensor` reader that crosses CV-pipelining workitem
 /// boundaries — i.e. we need `traceMemrefSubnet` to register it in
@@ -188,15 +200,17 @@ static bool isCoreOp(Operation &op) {
 /// producers for CVPipelining and must not enter the memref subnet tracer.
 ///
 /// Includes memref-dst `hivm.hir.load`, `hivm.hir.fixpipe`, the cross-core
-/// variant of `hivm.hir.copy`, and memref-dst `hivm.hir.nd2nz` (the fused
+/// variant of `hivm.hir.copy`, memref-dst `hivm.hir.nd2nz` (the fused
 /// GM->L1 load with NZ layout conversion that `CombineOptimizedConvertLayout`
-/// emits in place of a LoadOp under `--enable-layout-optimization=true`).
+/// emits in place of a LoadOp under `--enable-layout-optimization=true`), and
+/// the `__builtin_sparse_gather_load_to_L1buffer` CustomOp.
 static bool isMemrefSubnetWriter(Operation *op) {
   auto dps = dyn_cast<DestinationStyleOpInterface>(op);
   if (!dps || dps.getNumDpsInits() != 1 ||
       !isa<MemRefType>(dps.getDpsInitOperand(0)->get().getType()))
     return isCrossCoreCopy(op);
-  return isa<LoadOp, FixpipeOp, ND2NZOp>(op) || isCrossCoreCopy(op);
+  return isa<LoadOp, FixpipeOp, ND2NZOp>(op) || isCrossCoreCopy(op) ||
+         isSparseGatherLoadCustomOp(op);
 }
 
 /// True if `op` is a HIVM "load-like" DMA op that pulls data from GM into
@@ -205,10 +219,169 @@ static bool isMemrefSubnetWriter(Operation *op) {
 /// tracing. Under `enableLazyLoading`, they may be cloned into multiple
 /// consumer workitems so each stage loads independently from GM.
 ///
-/// Currently covers `hivm.hir.load` and `hivm.hir.nd2nz` — both read GM and
-/// write to a UB/L1 alloc that the consumer mmadL1/vector op will read via
-/// `bufferization.to_tensor`.
-static bool isLoadLikeOp(Operation *op) { return isa<LoadOp, ND2NZOp>(op); }
+/// Currently covers `hivm.hir.load`, `hivm.hir.nd2nz` and the
+/// `__builtin_sparse_gather_load_to_L1buffer` CustomOp — all read GM and write
+/// to a UB/L1 alloc that the consumer mmadL1/vector op will read via
+/// `bufferization.to_tensor`. The custom op has to be named explicitly: it
+/// reaches the pipeliner as a generic `hivm.hir.custom`, so without this it is
+/// treated as ordinary compute and never hoisted a stage ahead, which leaves
+/// the gather unable to overlap the mmad chain it feeds.
+static bool isLoadLikeOp(Operation *op) {
+  return isa<LoadOp, ND2NZOp>(op) || isSparseGatherLoadCustomOp(op);
+}
+
+static Value unwrapTensorViews(Value val) {
+  while (val) {
+    Operation *def = val.getDefiningOp();
+    if (!def)
+      break;
+    if (auto view = dyn_cast<ViewLikeOpInterface>(def)) {
+      val = view.getViewSource();
+      continue;
+    }
+    if (auto castOp = dyn_cast<CastOpInterface>(def)) {
+      val = castOp->getOperand(0);
+      continue;
+    }
+    if (isa<tensor::CollapseShapeOp, tensor::ExpandShapeOp, tensor::ReshapeOp>(
+            def)) {
+      val = def->getOperand(0);
+      continue;
+    }
+    break;
+  }
+  return val;
+}
+
+static Operation *getLoadOpFeedingVCast(VCastOp vcast) {
+  if (!vcast)
+    return nullptr;
+  Value inVal = vcast.getDpsInputOperand(0)->get();
+  inVal = unwrapTensorViews(inVal);
+  if (!inVal)
+    return nullptr;
+  Operation *def = inVal.getDefiningOp();
+  if (!def)
+    return nullptr;
+  if (isLoadLikeOp(def))
+    return def;
+  auto toTensor = dyn_cast<bufferization::ToTensorOp>(def);
+  if (!toTensor)
+    return nullptr;
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+  Value memref = toTensor.getMemref();
+#else
+  Value memref = toTensor.getBuffer();
+#endif
+  Value root = traceValueDef(memref);
+  if (!root)
+    root = memref;
+  for (Operation *user : root.getUsers()) {
+    SmallVector<Operation *> userStack = {user};
+    DenseSet<Operation *> visited;
+    while (!userStack.empty()) {
+      Operation *curr = userStack.pop_back_val();
+      if (!visited.insert(curr).second)
+        continue;
+      if (isLoadLikeOp(curr)) {
+        if (auto dps = dyn_cast<DestinationStyleOpInterface>(curr)) {
+          if (llvm::any_of(dps.getDpsInits(), [&](Value init) {
+                return traceValueDef(init) == root;
+              }))
+            return curr;
+        } else {
+          return curr;
+        }
+      }
+      for (Value res : curr->getResults()) {
+        if (isa<MemRefType>(res.getType())) {
+          for (Operation *resUser : res.getUsers())
+            userStack.push_back(resUser);
+        }
+      }
+    }
+  }
+  return nullptr;
+}
+
+static bool isCastingLoadResult(Operation *op) {
+  auto vcast = dyn_cast_or_null<VCastOp>(op);
+  return vcast && getLoadOpFeedingVCast(vcast) != nullptr;
+}
+
+static bool isVCastDowncast(VCastOp vcast) {
+  Type inType =
+      getElementTypeOrSelf(vcast.getDpsInputOperand(0)->get().getType());
+  Type outType =
+      vcast->getNumResults() > 0
+          ? getElementTypeOrSelf(vcast->getResult(0).getType())
+          : getElementTypeOrSelf(vcast.getDpsInitOperand(0)->get().getType());
+  if (!inType.isIntOrFloat() || !outType.isIntOrFloat())
+    return false;
+  return inType.getIntOrFloatBitWidth() > outType.getIntOrFloatBitWidth();
+}
+
+static bool isVCastUpcast(VCastOp vcast) {
+  Type inType =
+      getElementTypeOrSelf(vcast.getDpsInputOperand(0)->get().getType());
+  Type outType =
+      vcast->getNumResults() > 0
+          ? getElementTypeOrSelf(vcast->getResult(0).getType())
+          : getElementTypeOrSelf(vcast.getDpsInitOperand(0)->get().getType());
+  if (!inType.isIntOrFloat() || !outType.isIntOrFloat())
+    return false;
+  return inType.getIntOrFloatBitWidth() < outType.getIntOrFloatBitWidth();
+}
+
+bool WorklistBuilder::hasStoreToSameBuffer(VCastOp vcast) {
+  if (!scopeOp)
+    return false;
+  Operation *loadOp = getLoadOpFeedingVCast(vcast);
+  if (!loadOp)
+    return false;
+  Value src;
+  if (auto load = dyn_cast<LoadOp>(loadOp))
+    src = load.getSrc();
+  else if (auto nd2nz = dyn_cast<ND2NZOp>(loadOp))
+    src = nd2nz.getSrc();
+  else
+    return false;
+  Value gmRoot = traceValueDef(src);
+  if (!gmRoot)
+    return false;
+  bool foundStore = false;
+  scopeOp->walk([&](StoreOp store) {
+    if (traceValueDef(store.getDst()) == gmRoot) {
+      foundStore = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return foundStore;
+}
+
+bool WorklistBuilder::shouldTreatAsDelayedLoadLike(Operation *op) {
+  return allowPreferredLoopHeuristics && isCastingLoadResult(op);
+}
+
+bool WorklistBuilder::shouldDelayCoreOp(Operation *op) {
+  if (!allowPreferredLoopHeuristics || !op)
+    return false;
+  if (auto vcast = dyn_cast<VCastOp>(op)) {
+    if (hasStoreToSameBuffer(vcast))
+      return false;
+    if (isCastingLoadResult(vcast))
+      return true;
+    if (isVCastDowncast(vcast))
+      return false;
+    if (isVCastUpcast(vcast))
+      return true;
+    return false;
+  }
+  if (isa<VBrcOp>(op))
+    return true;
+  return false;
+}
 
 /// Recognize an indirect-gather loop expressed entirely in non-HIVM ops:
 ///
@@ -314,7 +487,7 @@ static bool illegalRegionedOp(Operation &op, bool isLoopMode) {
 
   if (isLoopMode && !hasCube && !hasVector &&
       op.walk([](DebugOp) { return WalkResult::interrupt(); }).wasInterrupted())
-      hasVector = true;
+    hasVector = true;
 
   auto unit = UnitAttr::get(op.getContext());
   if (hasCube)
@@ -383,8 +556,8 @@ static bool hasOnlySameGMAliasDeferralUses(Operation *scope, Value gmRoot,
                                            bufferization::ToTensorOp toTensor,
                                            StoreOp store) {
   SmallVector<OpOperand *, 4> endpoints{
-      &load.getSrcMutable(), &load.getDstMutable(),
-      &toTensor->getOpOperand(0), &store.getDstMutable()};
+      &load.getSrcMutable(), &load.getDstMutable(), &toTensor->getOpOperand(0),
+      &store.getDstMutable()};
   WalkResult result = scope->walk([&](Operation *op) -> WalkResult {
     for (OpOperand &use : op->getOpOperands()) {
       if (!isa<MemRefType>(use.get().getType()))
@@ -549,10 +722,12 @@ markWorkspaceOps(Operation *op,
 //===----------------------------------------------------------------------===//
 
 WorklistBuilder::WorklistBuilder(scf::ForOp loop, int numMultibuffer,
-                                 bool enableLazyLoading)
+                                 bool enableLazyLoading,
+                                 bool allowPreferredLoopHeuristics)
     : targetBlock(loop.getBody()), scopeOp(loop.getOperation()),
       pipelineLoop(loop), isLoopMode(true), numMultibuffer(numMultibuffer),
       enableLazyLoading(enableLazyLoading),
+      allowPreferredLoopHeuristics(allowPreferredLoopHeuristics),
       yieldedVals(loop.getYieldedValues().begin(),
                   loop.getYieldedValues().end()) {}
 
@@ -746,6 +921,14 @@ FailureOr<bool> WorklistBuilder::isCrossCoreLoad(const Value loaded) const {
 }
 
 FailureOr<bool> WorklistBuilder::shouldLazyLoadFor(Operation *op) {
+  if (shouldTreatAsDelayedLoadLike(op)) {
+    auto vcast = cast<VCastOp>(op);
+    Value inVal = vcast.getDpsInputOperand(0)->get();
+    inVal = unwrapTensorViews(inVal);
+    if (inVal && inVal.getDefiningOp())
+      return shouldLazyLoadFor(inVal.getDefiningOp());
+    return false;
+  }
   // Find the candidate to_tensor whose hint we should consult, with
   // shape-specific fallbacks when no candidate exists.
   bufferization::ToTensorOp tt;
@@ -840,10 +1023,10 @@ LogicalResult WorklistBuilder::populateDependencies(Operation &separator) {
             scopedUsr == &separator)
           continue;
         dfsStack.push_back(scopedUsr);
-        if (dependenceMap.contains(scopedUsr))
-          dependenceMap[scopedUsr].insert(&separator);
-        else
-          dependenceMap[scopedUsr] = DenseSet<Operation *>({&separator});
+        auto &setPtr = dependenceMap[scopedUsr];
+        if (!setPtr)
+          setPtr = std::make_unique<DenseSet<Operation *>>();
+        setPtr->insert(&separator);
       }
     }
   }
@@ -853,46 +1036,133 @@ LogicalResult WorklistBuilder::populateDependencies(Operation &separator) {
 /// Populate dependencies that are carried between loop iterations (iter args,
 /// yield operands). Only meaningful in loop mode; no-op in block mode.
 void WorklistBuilder::populateLoopCarriedDependencies() {
-  auto maybeYield = pipelineLoop.getYieldedValuesMutable();
-  if (!maybeYield.has_value())
+  if (!isLoopMode)
     return;
-  for (OpOperand &yieldOperand : *maybeYield) {
-    Value yieldVal = yieldOperand.get();
-    if (!isa<TensorType>(yieldVal.getType()))
-      continue;
-    Operation *defining = yieldVal.getDefiningOp();
-    if (!defining || !scopeOp->isAncestor(defining))
-      continue;
-    BlockArgument iterArg =
-        pipelineLoop.getRegionIterArgs()[yieldOperand.getOperandNumber()];
-    SmallVector<Operation *> dfsStack(iterArg.getUsers());
-    DenseSet<Operation *> visited;
-    while (!dfsStack.empty()) {
-      Operation *op = getContainedParent(scopeOp, *dfsStack.pop_back_val());
-      if (visited.contains(op) || op == defining)
-        continue;
-      visited.insert(op);
-      if (isa<DestinationStyleOpInterface>(op)) {
-        if (loopCarriedDependenceMap.contains(op))
-          loopCarriedDependenceMap[op].insert(defining);
-        else
-          loopCarriedDependenceMap[op] = {defining};
-        continue;
+
+  if (!useLcdBackup) {
+    loopCarriedDependenceMap.clear();
+    for (auto [iterArg, yieldedVal] :
+         llvm::zip(pipelineLoop.getRegionIterArgs(),
+                   pipelineLoop.getYieldedValues())) {
+      SmallVector<Operation *> userTraceStack;
+      for (Operation *user : iterArg.getUsers()) {
+        Operation *scopedUsr = getContainedParent(scopeOp, *user);
+        if (scopedUsr && scopedUsr->getParentOp() == scopeOp &&
+            !isa<scf::YieldOp, scf::ConditionOp>(scopedUsr))
+          userTraceStack.push_back(scopedUsr);
       }
-      for (Operation *usr : op->getUsers()) {
-        if (isa<scf::YieldOp>(usr))
+      Operation *yieldedOp = yieldedVal.getDefiningOp();
+      while (!userTraceStack.empty()) {
+        Operation *op = userTraceStack.pop_back_val();
+        if (!(isCoreOp(*op) || isa<BitcastOp>(op)))
           continue;
-        dfsStack.push_back(usr);
+        auto it = dependenceMap.find(op);
+        if (yieldedOp && it != dependenceMap.end() && it->second &&
+            it->second->contains(yieldedOp))
+          continue;
+        if (yieldedOp) {
+          auto &setPtr = loopCarriedDependenceMap[op];
+          if (!setPtr)
+            setPtr = std::make_unique<DenseSet<Operation *>>();
+          setPtr->insert(yieldedOp);
+        }
       }
     }
+    // Off-registry kernels keep the pre-3530 standard path: only the
+    // consumer->yield deferral map is populated. `hasLoopCarriedDep` stays
+    // unset so later stages do not pin preload_num or take the same-stage
+    // cross-WI exception. Registered kernels (and LIT bypass) also collect
+    // the transitive LCD op set so the 3530 same-stage check is accurate.
+    if (!allowPreferredLoopHeuristics)
+      return;
   }
-  LLVM_DEBUG({
-    for (auto &[val, set] : loopCarriedDependenceMap) {
-      dbgs() << *val << " depends on:\n";
-      for (auto *op : set) {
-        dbgs() << "\t";
-        op->dump();
+
+  // `loopCarriedDependentOps` (and with it WorkItem::hasLoopCarriedDep) must
+  // be accurate for the standard extraction as well, not only for the LCD
+  // backup attempt: CVPipelining relies on it to pin LCD work items to
+  // preload 0 and to reject cross-stage carries it cannot honor.
+  collectLoopCarriedDependentOps();
+}
+
+void WorklistBuilder::collectLoopCarriedDependentOps() {
+  loopCarriedDependentOps.clear();
+  SmallVector<Operation *> dfsStack;
+  DenseSet<Operation *> visited;
+
+  auto pushScopedUser = [&](Operation *user) {
+    Operation *scopedUsr = getContainedParent(scopeOp, *user);
+    if (scopedUsr && scopedUsr->getParentOp() == scopeOp &&
+        !isa<scf::YieldOp, scf::ConditionOp>(scopedUsr))
+      dfsStack.push_back(scopedUsr);
+  };
+
+  for (BlockArgument iterArg : pipelineLoop.getRegionIterArgs()) {
+    if (!isa<TensorType>(iterArg.getType()))
+      continue;
+    for (Operation *user : iterArg.getUsers())
+      pushScopedUser(user);
+  }
+
+  while (!dfsStack.empty()) {
+    Operation *op = dfsStack.pop_back_val();
+    if (!visited.insert(op).second)
+      continue;
+
+    const bool isLoopCarriedTrackedOp = isCoreOp(*op) || isa<BitcastOp>(op);
+    if (isLoopCarriedTrackedOp) {
+      if (!isLoadLikeOp(op) ||
+          !(enableLazyLoading || shouldLazyLoadFor(op).value_or(false)))
+        loopCarriedDependentOps.insert(op);
+    }
+
+    // Follow SSA results
+    for (Value res : op->getResults())
+      for (Operation *user : res.getUsers())
+        pushScopedUser(user);
+
+    // Follow memref writes if DPS op. Registered kernels also walk into
+    // region ops and follow memref.copy targets.
+    if (allowPreferredLoopHeuristics) {
+      op->walk([&](Operation *nestedOp) {
+        if (auto dps = dyn_cast<DestinationStyleOpInterface>(nestedOp)) {
+          for (Value init : dps.getDpsInits()) {
+            if (!isa<MemRefType>(init.getType()))
+              continue;
+            SmallVector<Operation *> memrefUsers;
+            memrefDFS(init, memrefUsers);
+            for (Operation *usr : memrefUsers)
+              pushScopedUser(usr);
+          }
+        } else if (auto copy = dyn_cast<memref::CopyOp>(nestedOp)) {
+          SmallVector<Operation *> memrefUsers;
+          memrefDFS(copy.getTarget(), memrefUsers);
+          for (Operation *usr : memrefUsers)
+            pushScopedUser(usr);
+        }
+      });
+    } else if (auto dps = dyn_cast<DestinationStyleOpInterface>(op)) {
+      for (Value init : dps.getDpsInits()) {
+        if (!isa<MemRefType>(init.getType()))
+          continue;
+        SmallVector<Operation *> memrefUsers;
+        memrefDFS(init, memrefUsers);
+        for (Operation *usr : memrefUsers)
+          pushScopedUser(usr);
       }
+    }
+
+    // Follow dependenceMap successors
+    for (auto &[consumer, deps] : dependenceMap)
+      if (deps && deps->contains(op))
+        pushScopedUser(consumer);
+  }
+
+  LLVM_DEBUG({
+    dbgs() << "[collectLoopCarriedDependentOps] CoreOps with loop-carried "
+              "dependency:\n";
+    for (Operation *op : loopCarriedDependentOps) {
+      dbgs() << "\t";
+      op->dump();
     }
   });
 }
@@ -1075,7 +1345,7 @@ LogicalResult WorklistBuilder::traceDependentOps(WorkItem &item) {
           // hint, or auto cross-core legality), allow load-like ops to be
           // cloned into multiple work items so each stage loads
           // independently from GM.
-          if (!isLoadLikeOp(op))
+          if (!isLoadLikeOp(op) && !shouldTreatAsDelayedLoadLike(op))
             continue;
           FailureOr<bool> shouldLazy = shouldLazyLoadFor(op);
           if (failed(shouldLazy))
@@ -1083,7 +1353,7 @@ LogicalResult WorklistBuilder::traceDependentOps(WorkItem &item) {
           if (!*shouldLazy)
             continue;
         }
-      } else if (!isLoadLikeOp(op)) {
+      } else if (!isLoadLikeOp(op) && !shouldDelayCoreOp(op)) {
         // Separators (Store/Fixpipe/cross-core Copy) that reach here via a
         // shared memref alias chain have not been assigned to any workitem
         // yet — they will be picked up in a subsequent extractAvailableOps
@@ -1192,8 +1462,18 @@ WorklistBuilder::populateWorkItem(SmallVector<Operation *> &availableOps,
   for (Operation *op : availableOps)
     mapOpToItem(*op, *item);
 
+  if (traceDependentOps(*item).failed())
+    return failure();
+
+  if (isLoopMode && useLcdBackup) {
+    item->hasLoopCarriedDep = llvm::any_of(item->ops, [&](Operation *op) {
+      return loopCarriedDependentOps.contains(op);
+    });
+  }
+
   LLVM_DEBUG({
-    dbgs() << "[populateWorkItem] Initial set{\n";
+    dbgs() << "[populateWorkItem] Initial set (hasLoopCarriedDep = "
+           << item->hasLoopCarriedDep << ") {\n";
     for (Operation *op : item->ops) {
       dbgs() << '\t';
       op->dump();
@@ -1201,10 +1481,24 @@ WorklistBuilder::populateWorkItem(SmallVector<Operation *> &availableOps,
     dbgs() << "[populateWorkItem] } // Initial set\n";
   });
 
-  if (traceDependentOps(*item).failed())
-    return failure();
   worklist.push_back(item);
   return success();
+}
+
+static TCoreType inferBitcastOpCoreType(BitcastOp op) {
+  // A bitcast only reinterprets the element type of its operand; it neither
+  // moves data nor changes the memory scope, so it carries no core type of its
+  // own. Infer the core type from the consumers of the result: if any consumer
+  // resolves to a definite VECTOR or CUBE core op, the bitcast runs on the same
+  // core. Otherwise it stays CUBE_OR_VECTOR and is resolved later.
+  for (Operation *user : op.getResult().getUsers()) {
+    TCoreType userCoreType =
+        queryCoreTypeHelper(user).value_or(TCoreType::CUBE_OR_VECTOR);
+
+    if (userCoreType == TCoreType::VECTOR || userCoreType == TCoreType::CUBE)
+      return userCoreType;
+  }
+  return TCoreType::CUBE_OR_VECTOR;
 }
 
 /// Find ops that have no dependencies; can be executed if all other previously
@@ -1214,19 +1508,42 @@ WorklistBuilder::extractAvailableOps(SmallVector<Operation *> &extractedOps,
                                      TCoreType &core) {
   SetVector<Operation *> potentiallyAvailable;
 
+  bool hasRemainingNoLoopCarriedOps = false;
+  if (isLoopMode && useLcdBackup) {
+    for (Operation &op : *targetBlock) {
+      if (opToWorkItemMap.contains(&op) ||
+          isa<scf::YieldOp, scf::ConditionOp>(&op) || !isCoreOp(op) ||
+          isLoadLikeOp(&op) || shouldDelayCoreOp(&op))
+        continue;
+      if (!loopCarriedDependentOps.contains(&op)) {
+        hasRemainingNoLoopCarriedOps = true;
+        break;
+      }
+    }
+  }
+
   for (Operation &op : *targetBlock) {
     if (opToWorkItemMap.contains(&op))
+      continue;
+    if (isLoadLikeOp(&op) || shouldDelayCoreOp(&op))
+      continue;
+    if (isLoopMode && useLcdBackup && hasRemainingNoLoopCarriedOps &&
+        loopCarriedDependentOps.contains(&op))
       continue;
     TCoreType maybeCore = op.hasAttr(CubeOnlyAttrName) ? TCoreType::CUBE
                           : op.hasAttr(VecOnlyAttrName)
                               ? TCoreType::VECTOR
                               : TCoreType::CUBE_OR_VECTOR;
     if (maybeCore == hivm::TCoreType::CUBE_OR_VECTOR) {
-      if (!isCoreOp(op) || isLoadLikeOp(&op))
+      if (!(isCoreOp(op) ||
+            (isa<BitcastOp>(&op) && loopCarriedDependentOps.contains(&op))) ||
+          isLoadLikeOp(&op))
         continue;
       maybeCore = queryCoreTypeHelper(&op).value_or(TCoreType::CUBE_OR_VECTOR);
       if (maybeCore != TCoreType::VECTOR && isCrossCoreCopy(&op))
         maybeCore = TCoreType::VECTOR;
+      if (isa<BitcastOp>(&op) && loopCarriedDependentOps.contains(&op))
+        maybeCore = inferBitcastOpCoreType(dyn_cast<BitcastOp>(&op));
       // Block-mode-only: CUBE_OR_VECTOR core ops (e.g. plain tensor-level
       // hivm.hir.copy) get pulled in as deps of consuming core ops via
       // traceDependentOps; silently skip here. Loop mode falls through to
@@ -1243,33 +1560,78 @@ WorklistBuilder::extractAvailableOps(SmallVector<Operation *> &extractedOps,
          core == TCoreType::CUBE) ||
         ((maybeCore == TCoreType::CUBE && core == TCoreType::VECTOR)))
       continue;
-    core = maybeCore;
-    if (!dependenceMap.contains(&op) || dependenceMap[&op].empty())
+    auto it = dependenceMap.find(&op);
+    if (it == dependenceMap.end() || !it->second || it->second->empty()) {
+      core = maybeCore;
       potentiallyAvailable.insert(&op);
+    }
+  }
+
+  if (potentiallyAvailable.empty()) {
+    for (Operation &op : *targetBlock) {
+      if (opToWorkItemMap.contains(&op))
+        continue;
+      if (isLoadLikeOp(&op) || shouldTreatAsDelayedLoadLike(&op))
+        continue;
+      if (isLoopMode && useLcdBackup && hasRemainingNoLoopCarriedOps &&
+          loopCarriedDependentOps.contains(&op))
+        continue;
+      TCoreType maybeCore = op.hasAttr(CubeOnlyAttrName) ? TCoreType::CUBE
+                            : op.hasAttr(VecOnlyAttrName)
+                                ? TCoreType::VECTOR
+                                : TCoreType::CUBE_OR_VECTOR;
+      if (maybeCore == hivm::TCoreType::CUBE_OR_VECTOR) {
+        if (!isCoreOp(op) || isLoadLikeOp(&op))
+          continue;
+        maybeCore =
+            queryCoreTypeHelper(&op).value_or(TCoreType::CUBE_OR_VECTOR);
+        if (maybeCore != TCoreType::VECTOR && isCrossCoreCopy(&op))
+          maybeCore = TCoreType::VECTOR;
+        if (!isLoopMode && maybeCore == TCoreType::CUBE_OR_VECTOR)
+          continue;
+      }
+
+      if (maybeCore != TCoreType::VECTOR && maybeCore != TCoreType::CUBE)
+        return op.emitWarning("[cv-pipelining] unexpected core type for op");
+      if (((maybeCore == TCoreType::VECTOR || isCrossCoreCopy(&op)) &&
+           core == TCoreType::CUBE) ||
+          ((maybeCore == TCoreType::CUBE && core == TCoreType::VECTOR)))
+        continue;
+      auto it = dependenceMap.find(&op);
+      if (it == dependenceMap.end() || !it->second || it->second->empty()) {
+        core = maybeCore;
+        potentiallyAvailable.insert(&op);
+      }
+    }
   }
 
   DenseSet<Operation *> deferredOps;
-  for (Operation *op : potentiallyAvailable) {
-    if (!loopCarriedDependenceMap.contains(op))
-      continue;
-    if (llvm::all_of(loopCarriedDependenceMap[op], [&](Operation *dependantOp) {
-          return potentiallyAvailable.contains(dependantOp);
-        }))
-      continue;
-    deferredOps.insert(op);
-  }
-
-  // Propagate the loop-carried dependencies through the available ops
-  SmallVector<Operation *> dfsStack;
-  dfsStack.append(deferredOps.begin(), deferredOps.end());
-  while (!dfsStack.empty()) {
-    Operation *op = dfsStack.pop_back_val();
-    if (deferredOps.contains(op))
-      continue;
-    if (potentiallyAvailable.contains(op))
+  if (!useLcdBackup) {
+    for (Operation *op : potentiallyAvailable) {
+      auto it = loopCarriedDependenceMap.find(op);
+      if (it == loopCarriedDependenceMap.end() || !it->second ||
+          it->second->empty())
+        continue;
+      if (llvm::all_of(*it->second, [&](Operation *dependantOp) {
+            return potentiallyAvailable.contains(dependantOp);
+          }))
+        continue;
       deferredOps.insert(op);
-    for (Operation *usr : op->getUsers())
-      dfsStack.push_back(usr);
+    }
+
+    // Propagate the loop-carried dependencies through the available ops
+    SmallVector<Operation *> dfsStack;
+    DenseSet<Operation *> visited;
+    dfsStack.append(deferredOps.begin(), deferredOps.end());
+    while (!dfsStack.empty()) {
+      Operation *op = dfsStack.pop_back_val();
+      if (!visited.insert(op).second)
+        continue;
+      if (potentiallyAvailable.contains(op))
+        deferredOps.insert(op);
+      for (Operation *usr : op->getUsers())
+        dfsStack.push_back(usr);
+    }
   }
 
   // This deferral exists only to avoid the cross-WorkItem GM-alias rejection.
@@ -1417,6 +1779,47 @@ void WorklistBuilder::computeLocalOutputs() {
     }
   }
 }
+LogicalResult WorklistBuilder::runRoundExtraction() {
+  SmallVector<Operation *> independentOps;
+  TCoreType core = hivm::TCoreType::CUBE_OR_VECTOR;
+  const size_t maxRounds = targetBlock->getOperations().size() + 2;
+  bool extractionDone = false;
+  for (size_t round = 0; round < maxRounds && !extractionDone; ++round) {
+    if (extractAvailableOps(independentOps, core).failed())
+      return failure();
+    if (independentOps.empty() &&
+        (core == TCoreType::CUBE || core == TCoreType::VECTOR)) {
+      TCoreType altCore =
+          (core == TCoreType::CUBE) ? TCoreType::VECTOR : TCoreType::CUBE;
+      if (extractAvailableOps(independentOps, altCore).failed())
+        return failure();
+      if (!independentOps.empty())
+        core = altCore;
+    }
+    if (independentOps.empty()) {
+      extractionDone = true;
+      continue;
+    }
+    if (core == hivm::TCoreType::CUBE_OR_VECTOR)
+      return failure();
+    if (populateWorkItem(independentOps, core).failed())
+      return failure();
+
+    for (auto &[op, dependant] : dependenceMap)
+      if (dependant)
+        for (Operation *processed : independentOps)
+          dependant->erase(processed);
+    independentOps.clear();
+
+    if (core == TCoreType::VECTOR)
+      core = TCoreType::CUBE;
+    else if (core == TCoreType::CUBE)
+      core = TCoreType::VECTOR;
+    else
+      return failure();
+  }
+  return success(extractionDone);
+}
 
 /// Unified entry point used by both CV pipelining (loop mode) and split-if
 /// (block mode). Performs the same core algorithm: scan ops → collect
@@ -1473,43 +1876,37 @@ FailureOr<WorklistBuildResult> WorklistBuilder::build() {
     if (populateDependencies(*separator).failed())
       return failure();
 
-  // Loop-carried deps only exist in loop mode.
+  // First attempt: standard / original extraction
+  useLcdBackup = false;
   if (isLoopMode)
     populateLoopCarriedDependencies();
 
-  // Round-based extraction, alternating CUBE/VECTOR. Bound iterations by the
-  // number of block-level ops (plus slack) — each round consumes at least one
-  // op into a WorkItem, so more iterations than that indicates a bug.
-  SmallVector<Operation *> independentOps;
-  TCoreType core = hivm::TCoreType::CUBE_OR_VECTOR;
-  const size_t maxRounds = targetBlock->getOperations().size() + 2;
-  bool extractionDone = false;
-  for (size_t round = 0; round < maxRounds && !extractionDone; ++round) {
-    if (extractAvailableOps(independentOps, core).failed())
-      return failure();
-    if (independentOps.empty()) {
-      extractionDone = true;
-      continue;
-    }
-    if (core == hivm::TCoreType::CUBE_OR_VECTOR)
-      return failure();
-    if (populateWorkItem(independentOps, core).failed())
-      return failure();
+  bool extractionSuccess =
+      succeeded(runRoundExtraction()) && toBePipelined.empty();
 
-    for (auto &[op, dependant] : dependenceMap)
-      for (Operation *processed : independentOps)
-        dependant.erase(processed);
-    independentOps.clear();
+  // Registered kernels retain the LCD-aware v1 fallback when standard work
+  // item extraction cannot separate a loop-carried dependence.
+  if (isLoopMode && !extractionSuccess && allowPreferredLoopHeuristics) {
+    LLVM_DEBUG(dbgs() << "[WorklistBuilder] Standard extraction failed, "
+                         "retrying with LCD backup handling\n");
+    worklist.clear();
+    opToWorkItemMap.clear();
+    outputMemrefMap.clear();
+    toBePipelined.clear();
+    for (Operation &op : targetBlock->getOperations())
+      if (isCoreOp(op))
+        toBePipelined.insert(&op);
 
-    if (core == TCoreType::VECTOR)
-      core = TCoreType::CUBE;
-    else if (core == TCoreType::CUBE)
-      core = TCoreType::VECTOR;
-    else
-      return failure();
+    dependenceMap.clear();
+    for (Operation *separator : separators)
+      if (populateDependencies(*separator).failed())
+        return failure();
+
+    useLcdBackup = true;
+    populateLoopCarriedDependencies();
+    extractionSuccess =
+        succeeded(runRoundExtraction()) && toBePipelined.empty();
   }
-  if (!extractionDone)
-    return failure();
 
   // Block-mode fallback: collect any remaining ops (not assigned to any
   // WorkItem by the round-based extraction) into a single CUBE_OR_VECTOR
@@ -1549,6 +1946,38 @@ FailureOr<WorklistBuildResult> WorklistBuilder::build() {
       return scopeOp->emitWarning("[cv-pipelining] cannot pipeline loop due "
                                   "to loop carried dependencies");
     return failure();
+  }
+
+  if (isLoopMode && useLcdBackup) {
+    int wi0Idx = -1;
+    int wi1Idx = -1;
+    for (int i = 0; i < static_cast<int>(worklist.size()); ++i) {
+      if (!worklist[i]->hasLoopCarriedDep)
+        wi0Idx = i;
+      else if (wi1Idx == -1)
+        wi1Idx = i;
+    }
+    if (wi0Idx != -1 && wi1Idx != -1) {
+      auto &wi0 = worklist[wi0Idx];
+      auto &wi1 = worklist[wi1Idx];
+      int wi0CoreOps =
+          llvm::count_if(wi0->ops, [](Operation *op) { return isCoreOp(*op); });
+      // HACK: Merging WI0 into WI1 when WI0 has fewer than 3 core ops is a
+      // temporary heuristic to avoid excessive pipeline stages and reduce
+      // preload depth when WI0 has insufficient work to justify a separate
+      // stage.
+      if (wi0CoreOps < 3 && wi1->core == wi0->core) {
+        for (Operation *op : wi0->ops) {
+          wi1->ops.insert(op);
+          if (opToWorkItemMap.contains(op)) {
+            auto &items = opToWorkItemMap[op];
+            std::replace(items.begin(), items.end(), wi0.get(), wi1.get());
+            items.erase(std::unique(items.begin(), items.end()), items.end());
+          }
+        }
+        worklist.erase(worklist.begin() + wi0Idx);
+      }
+    }
   }
 
   // Loop mode needs ≥2 WorkItems to form an alternating pipeline.

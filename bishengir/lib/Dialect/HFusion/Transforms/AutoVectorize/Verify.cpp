@@ -80,7 +80,8 @@ LogicalResult runFreeVectorRegionCheck(Operation *root, bool emitDiagnostics) {
           emitDiagnostics);
     }
     return emitVerifierError(
-        op, "unexpected hfusion/linalg operation outside outlined vector region",
+        op,
+        "unexpected hfusion/linalg operation outside outlined vector region",
         emitDiagnostics);
   });
 

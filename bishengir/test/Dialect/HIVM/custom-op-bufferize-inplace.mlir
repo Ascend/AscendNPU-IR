@@ -47,6 +47,33 @@ func.func @custom_inplace_single_out(%arg0 : memref<256xf32>)
 
 // -----
 
+// no_side_effect excludes hidden effects but does not make the declared DPS
+// output read-only. Bufferization must still pass the destination as a writable
+// output of the buffer-form CustomOp.
+// CHECK-LABEL: func.func @custom_no_side_effect_output_write
+// CHECK: hivm.hir.custom
+// CHECK-SAME: no_side_effect
+// CHECK-SAME: ins(%[[INPUT:[^)]+]] : memref<256xf32>)
+// CHECK-SAME: outs(%[[OUTPUT:[^)]+]] : memref<256xf32>)
+func.func @custom_no_side_effect_output_write(%arg0 : memref<256xf32>,
+                                              %arg1 : memref<256xf32>)
+    attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  %input = bufferization.to_tensor %arg0 restrict : memref<256xf32>
+  %output = bufferization.to_tensor %arg1 restrict writable : memref<256xf32>
+  %0 = hivm.hir.custom
+      {hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+       hivm.pipe = #hivm.pipe<PIPE_V>,
+       hivm.vf_mode = #hivm.vf_mode<SIMD>,
+       no_side_effect,
+       symbol = "k_no_side_effect"}
+      "user.no_side_effect"
+      ins(%input : tensor<256xf32>)
+      outs(%output : tensor<256xf32>) -> tensor<256xf32>
+  return
+}
+
+// -----
+
 // CHECK-LABEL: func.func @custom_macro_inplace_single_out
 // CHECK-NOT: memref.alloc
 // CHECK-NOT: memref.copy

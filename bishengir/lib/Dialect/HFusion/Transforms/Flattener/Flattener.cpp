@@ -17,6 +17,8 @@
 
 #include "bishengir/Dialect/HFusion/Transforms/Flattener/Flattener.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/TensorView/IR/TensorViewDialect.h"
 
 using namespace mlir;
 using namespace mlir::hfusion;
@@ -88,6 +90,29 @@ LogicalResult Flattener::flatten(bool multiDynamicShape) {
   auto result = initialize();
   if (failed(result))
     return success();
+  // TensorView tile axes and broadcast/span load axes retain their logical
+  // ranks. Disconnect both load operands before propagating collapse
+  // constraints, so producers (including memory_space_cast) cannot collapse
+  // only the source. Unrelated dimension groups remain available for
+  // flattening.
+  op_->walk([&](Operation *op) {
+    auto loadOp = dyn_cast<hivm::LoadOp>(op);
+    bool preserveLoadRank =
+        options.registerBased && loadOp &&
+        (loadOp.getBroadcastAxesAttr() || loadOp.isSpanPaddedLoad());
+    if (!isa<tv::ViewLoadOp, tv::ViewStoreOp>(op) && !preserveLoadRank)
+      return;
+    for (Value value :
+         llvm::concat<Value>(op->getOperands(), op->getResults())) {
+      if (!isa<ShapedType>(value.getType()))
+        continue;
+      createDummyRefIfNotExist({value});
+      updatePreviousType(value);
+      auto dimensions = getValueDimIndices(value);
+      for (size_t i = 1; i < dimensions.size(); ++i)
+        disconnect(dimensions[i - 1], dimensions[i]);
+    }
+  });
   for (const auto &ref : dimIndices_) {
     markBroken(ref);
   }
@@ -103,6 +128,29 @@ LogicalResult Flattener::flatten(bool multiDynamicShape) {
   breakSubByteI1CollapseBoundaries();
   propagateBroken();
   dumpIsConnected();
+  // Other users can introduce source boundaries after a slice was visited.
+  // Propagate these constraints to a fixed point before rebuilding any IR.
+  bool changed;
+  do {
+    auto previous = isConnected_;
+    propagateBroken();
+    op_->walk([&](Operation *op) {
+      if (auto slice = dyn_cast<tensor::ExtractSliceOp>(op))
+        propagateSliceBoundaries(slice.getSource(), slice.getResult(),
+                                 slice.getDroppedDims());
+      else if (auto slice = dyn_cast<tensor::InsertSliceOp>(op))
+        propagateSliceBoundaries(slice.getResult(), slice.getSource(),
+                                 slice.getDroppedDims());
+      else if (auto slice = dyn_cast<memref::SubViewOp>(op))
+        propagateSliceBoundaries(slice.getSource(), slice.getResult(),
+                                 slice.getDroppedDims());
+    });
+    changed = llvm::any_of(llvm::zip(previous, isConnected_), [](auto pair) {
+      const auto &[before, after] = pair;
+      return before.leftConnected != after.leftConnected ||
+             before.rightConnected != after.rightConnected;
+    });
+  } while (changed);
   adjustOperations();
   return success();
 }
@@ -260,8 +308,26 @@ void Flattener::breakDynamicShapes() {
     // Trying to flatten more than one dynamic dimension
     if (dynamicPosition.size() > 1) {
       LDBG("Trying to flatten more than one dynamic dimension");
+      auto groupHasUnitDim = [this](int idx) -> bool {
+        int root = structuralDsu_->find(idx);
+        for (int j = 0; j < argumentTotalLength_; ++j) {
+          if (structuralDsu_->find(j) != root)
+            continue;
+          auto [_, shape] = equivalentDsu_->getMinParentAndShapePair(j);
+          if (shape == 1)
+            return true;
+        }
+        return false;
+      };
       for (size_t i = 1; i < dynamicPosition.size(); ++i) {
-        disconnect(dynamicPosition[i] - 1, dynamicPosition[i]);
+        int boundaryLeft = dynamicPosition[i] - 1;
+        int boundaryRight = dynamicPosition[i];
+        if (groupHasUnitDim(boundaryLeft) || groupHasUnitDim(boundaryRight)) {
+          LDBG("Keep dynamic collapse between "
+               << boundaryLeft << " and " << boundaryRight << " (unit bridge)");
+          continue;
+        }
+        disconnect(boundaryLeft, boundaryRight);
       }
     }
   }

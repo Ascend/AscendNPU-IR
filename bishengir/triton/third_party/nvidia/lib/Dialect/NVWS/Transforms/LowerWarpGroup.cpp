@@ -89,11 +89,13 @@ class LowerWarpGroup : public OpRewritePattern<WarpGroupOp> {
                                        ArrayRef<int> numWarps,
                                        ArrayRef<int> warpGroupStartIds) const {
     if (partitions.size() != numWarps.size())
-      return failure("mismatched number of warp groups and number of warps per "
-                     "warp group");
+      return rewriter.notifyMatchFailure(
+          warpGroupOp,
+          "mismatched number of warp groups and warps-per-group entries");
     if (partitions.size() != warpGroupStartIds.size())
-      return failure(
-          "mismatched number of warp groups and number of warp start ids");
+      return rewriter.notifyMatchFailure(
+          warpGroupOp,
+          "mismatched number of warp groups and warp-start-id entries");
 
     SetVector<Value> captures;
     for (auto partition : partitions)
@@ -212,10 +214,9 @@ public:
       startWarp = globalNumWarps;
       numWarps = numWarps.drop_front();
     } else if (warpGroupOp.getNumResults() > 0) {
-      return failure("The first warp group does not use the default number of "
-                     "warps. The default partition cannot be created. When "
-                     "nvws.warp_group op returns results, there must be a "
-                     "default region.");
+      return rewriter.notifyMatchFailure(
+          warpGroupOp,
+          "result-producing warp group requires a default partition");
     }
 
     auto result = createWarpSpecializeOp(
