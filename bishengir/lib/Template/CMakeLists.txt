@@ -148,21 +148,7 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type opt_leve
         list(APPEND bisheng_args -I ${CMAKE_CURRENT_SOURCE_DIR}/include)
     endif ()
     list(APPEND bisheng_args -I ${INCLUDE_PATH})
-    set(bc_output "${CMAKE_CURRENT_BINARY_DIR}/${bc_name}")
-    set(compile_output "${bc_name}")
-    set(bc_postprocess)
-    set(bc_postprocess_deps)
-    set(bc_byproducts)
-    if (SIMT_DEBUG_LEGACY_REWRITE)
-        set(compile_output "${bc_output}.raw.bc")
-        set(bc_byproducts BYPRODUCTS "${compile_output}")
-        set(bc_postprocess COMMAND "${Python3_EXECUTABLE}"
-            "${SIMT_DEBUG_LEGACY_REWRITE}" "${BISHENGIR_SIMT_DEBUG_LEGACY_LLVM_LINK}"
-            "${BISHENGIR_SIMT_DEBUG_LEGACY_MAX_REGISTERS}" "${compile_output}" "${bc_output}")
-        set(bc_postprocess_deps "${SIMT_DEBUG_LEGACY_REWRITE}"
-            "${BISHENGIR_SIMT_DEBUG_LEGACY_LLVM_LINK}" "${Python3_EXECUTABLE}")
-    endif ()
-    list(APPEND bisheng_args -o "${compile_output}")
+    list(APPEND bisheng_args -o ${bc_name})
 
     # Conditionally append sysroot if it exists
     if(CMAKE_SYSROOT)
@@ -178,6 +164,7 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type opt_leve
         set(bc_arch_tag "${core_type}${arch_suffix_tok}_${opt_level}")
     endif ()
 
+    set(bc_output "${CMAKE_CURRENT_BINARY_DIR}/${bc_name}")
     string(REGEX REPLACE ";" " " compile_command "${BISHENG_TOOL} ${bisheng_args}")
     message("-- command of compile cpp to bc is ${compile_command}")
 
@@ -185,22 +172,16 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type opt_leve
     # Generate a content-addressed command signature and depend on it so a
     # changed ccec flag, compiler path, include path, or sysroot rebuilds this
     # output. file(GENERATE) updates the file only when its content changes.
-    set(compile_plan "${BISHENG_TOOL}\n${bisheng_args}")
-    if (bc_postprocess)
-        string(APPEND compile_plan "\n${bc_postprocess}")
-    endif ()
-    string(REPLACE ";" "\n" compile_signature_content "${compile_plan}")
+    string(REPLACE ";" "\n" compile_signature_content "${BISHENG_TOOL}\n${bisheng_args}")
     set(compile_signature "${bc_output}.ccec.args")
     file(GENERATE OUTPUT "${compile_signature}" CONTENT "${compile_signature_content}\n")
 
     add_custom_command(
         OUTPUT "${bc_output}"
-        ${bc_byproducts}
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMAND ${BISHENG_TOOL} ${bisheng_args}
-        ${bc_postprocess}
         DEPENDS "${cpp_with_path}" ${BISHENGIR_TEMPLATE_HEADERS} "${compile_signature}"
-                "${BISHENG_TOOL}" ${bc_postprocess_deps}
+                "${BISHENG_TOOL}"
         COMMENT "[ccec] ${cpp_name} -> ${bc_name}"
         VERBATIM
     )
