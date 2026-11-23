@@ -1626,23 +1626,18 @@ private:
           isa<HiFloat8Type>(elemType) ||
 #endif
           isa<Float8E4M3FNType>(elemType) || isa<Float8E5M2Type>(elemType)) {
-        bool isSpan = false;
-        if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>)
-          isSpan = op.isSpanPaddedLoad();
-        if (isSpan) {
-          // Preserve the already-converted FP8 value in the existing f32
-          // bit carrier. Do not numerically extend it or replace it with zero.
-          Value byte = rewriter.create<arith::BitcastOp>(
-              op.getLoc(), rewriter.getIntegerType(8), padValue);
-          Value bits = rewriter.create<arith::ExtUIOp>(
-              op.getLoc(), rewriter.getI32Type(), byte);
-          padValue = rewriter.create<arith::BitcastOp>(
-              op.getLoc(), rewriter.getF32Type(), bits);
-        } else {
-          // Default-anchor and non-span targets retain their existing ABI.
-          padValue = rewriter.create<arith::ConstantOp>(
-              op.getLoc(), rewriter.getF32FloatAttr(0.0));
-        }
+        // The library takes an FP8 pad value in an f32 bit carrier
+        // (PadValueType<float8_*>::type == float, handed verbatim to
+        // set_mov_pad_val) for the span and the default anchor alike, so move
+        // the FP8 byte into the low bits of that carrier in both cases. Do not
+        // numerically extend it, and do not replace it with zero: that would
+        // silently turn every requested pad value into 0.0.
+        Value byte = rewriter.create<arith::BitcastOp>(
+            op.getLoc(), rewriter.getIntegerType(8), padValue);
+        Value bits = rewriter.create<arith::ExtUIOp>(
+            op.getLoc(), rewriter.getI32Type(), byte);
+        padValue = rewriter.create<arith::BitcastOp>(
+            op.getLoc(), rewriter.getF32Type(), bits);
       }
     } else {
       Type elemType = getElementTypeOrSelf(op.getSrc().getType());
