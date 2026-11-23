@@ -340,8 +340,9 @@ findBestFusedNodeForProducer(Block *block, Operation *producer,
   for (auto *user : producer->getUsers()) {
     if (!isOpInBlock(user, block) || !isFusableOp(user) || !isBetter(user))
       continue;
+    // A user the planner left standalone has no node to host the producer.
     if (auto node = ctx.getInfo(user).fusedNode;
-        node->canAccept(producer, AcceptContext::Producer) &&
+        node && node->canAccept(producer, AcceptContext::Producer) &&
         node->canFuseProducer(producer))
       bestFusedNode = node;
   }
@@ -952,19 +953,21 @@ void AutoVectorizeV2::planFuseProducersIntoConsumers(Block *block,
     for (Value operand : consumer->getOperands()) {
       Operation *producer = operand.getDefiningOp();
       if (isFusableOp(producer)) {
-        // It means that current producer has been handled if the value of
-        // ctx.getInfo(producer).fusedNode is not nullptr.
-        if (!isOpInBlock(producer, block) || ctx.getInfo(producer).fusedNode)
+        // This producer has already been processed in the traversal.
+        if (!isOpInBlock(producer, block) || ctx.getInfo(producer).processed)
           continue;
 
-        // If all users of the producer has been handled, we can fuse this
-        // producer into proper fused node.
+        // Traverse only after every fusable user has been processed, whether
+        // it was merged into a node or deliberately left standalone.
         if (llvm::all_of(producer->getUsers(), [&](Operation *user) {
               if (isFusableOp(user))
-                return ctx.getInfo(user).fusedNode != nullptr;
+                return ctx.getInfo(user).processed;
               return true;
             })) {
           planFuseProducerIntoFusedNode(block, producer, ctx);
+          // Record that the traversal handled this producer, regardless of
+          // whether it was merged into a node.
+          ctx.getInfo(producer).processed = true;
           queue.push(producer);
         }
       }
@@ -1023,6 +1026,8 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(Block *block,
   } else {
     // expand_shape has no tile transform of its own — only vsstb-fused paths
     // can tile it.
+    // Leaving it standalone is fine: the caller marks it processed, so it no
+    // longer blocks its producers.
     if (isExpandShapeOpCanFuseIntoVsstbPatternTranspose(producer))
       return;
 
@@ -1253,6 +1258,9 @@ void AutoVectorizeV2::buildVectorizeTransformSequence(
     PlanContext &result) {
   auto loc = seqOp.getLoc();
   for (auto info : result.opInfos()) {
+    // Standalone processed ops carry no tile size; do not vectorize them.
+    if (info.second.processed && !info.second.fusedNode)
+      continue;
     // Here only vectorize LinalgOp, interleave/deinterleave will be vectorized
     // in convert-hfusion-to-hivmave pass.
     if (isa<linalg::LinalgOp>(info.first)) {

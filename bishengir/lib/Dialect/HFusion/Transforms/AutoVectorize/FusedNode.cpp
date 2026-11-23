@@ -36,6 +36,7 @@ void FusedNode::addProducer(Operation *op) {
   producers.insert(op);
   insertOrdered(op);
   ctx.getInfo(op).fusedNode = shared_from_this();
+  ctx.getInfo(op).processed = true;
 }
 
 void FusedNode::addLeaf(Operation *op) {
@@ -46,6 +47,7 @@ void FusedNode::addLeaf(Operation *op) {
   leaf.insert(op);
   insertOrdered(op);
   ctx.getInfo(op).fusedNode = shared_from_this();
+  ctx.getInfo(op).processed = true;
 }
 
 void FusedNode::insertOrdered(Operation *op) {
