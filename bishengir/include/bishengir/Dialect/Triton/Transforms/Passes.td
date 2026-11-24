@@ -20,6 +20,12 @@ def DecomposeFRem : Pass<"decompose-frem", "ModuleOp"> {
 
 #ifdef BISHENGIR_ENABLE_TRITON_COMPILE
 
+def CatchUnsupportedKernels : Pass<"catch-unsupported-kernels", "mlir::triton::FuncOp"> {
+  let summary = "Signals a pass failure when unsupported kernels are detected at the start of the pipeline";
+  let constructor = "bishengir::triton::createCatchUnsupportedKernelsPass()";
+  let dependentDialects = [];
+}
+
 def ConvertNonPowerTwoTensors
   : Pass<"convert-non-power-two-tensors", "mlir::triton::FuncOp"> {
   let summary = "Converts tensors with dimension sizes that are not powers of 2 into tensors with powers of 2";
@@ -31,7 +37,7 @@ def ConvertNonPowerTwoTensors
   ];
 }
 
-def ConvertZeroDimTensors 
+def ConvertZeroDimTensors
   : Pass<"convert-zero-dim-tensors", "mlir::ModuleOp"> {
   let summary = "Converts 0D tensors into either scalars or 1D tensors depending on usage";
   let constructor = "bishengir::triton::createConvertZeroDimTensorsPass()";
