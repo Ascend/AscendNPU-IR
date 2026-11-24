@@ -179,12 +179,9 @@ std::optional<TilePlan> analyzeTilePlan(func::FuncOp func,
       return WalkResult::interrupt();
     }
     if (dimSize % maxTileSize != 0) {
-      LDBG("Skip SIMT VF sub-tiling for " << func.getSymName()
-                                          << ": odd tail is not supported yet "
-                                          << "(dimSize="
-                                          << dimSize
-                                          << ", maxTileSize="
-                                          << maxTileSize << ")");
+      LDBG("Skip SIMT VF sub-tiling for "
+           << func.getSymName() << ": odd tail is not supported yet "
+           << "(dimSize=" << dimSize << ", maxTileSize=" << maxTileSize << ")");
       isEligible = false;
       return WalkResult::interrupt();
     }
@@ -303,9 +300,8 @@ FailureOr<TileWindow> computeTileWindow(IRRewriter &rewriter, Location loc,
   TileWindow window;
   SmallVector<int64_t, 4> ignoredShape;
   if (failed(findCorrespondingSizesOffsetsStrides(
-          rewriter, shapedType, tilingDim, offsetAtTileDim,
-          maybeTileSize.value(), window.strides, window.offsets, window.sizes,
-          ignoredShape)))
+          rewriter, value, tilingDim, offsetAtTileDim, maybeTileSize.value(),
+          window.strides, window.offsets, window.sizes, ignoredShape)))
     return failure();
   return window;
 }
@@ -313,17 +309,18 @@ FailureOr<TileWindow> computeTileWindow(IRRewriter &rewriter, Location loc,
 FailureOr<Value> createSlicedValue(IRRewriter &rewriter, Location loc,
                                    Value value, ArrayRef<OpFoldResult> offsets,
                                    ArrayRef<OpFoldResult> sizes,
-                                   ArrayRef<OpFoldResult> strides) {
+                                   ArrayRef<OpFoldResult> strides,
+                                   int64_t tilingDim) {
   if (isa<RankedTensorType>(value.getType())) {
     auto slice = rewriter.create<tensor::ExtractSliceOp>(loc, value, offsets,
                                                          sizes, strides);
-    markCreatedExtractSliceOp(rewriter, slice);
+    markCreatedExtractSliceOp(rewriter, slice, tilingDim);
     return slice.getResult();
   }
   if (isa<MemRefType>(value.getType())) {
     auto subView =
         rewriter.create<memref::SubViewOp>(loc, value, offsets, sizes, strides);
-    markCreatedExtractSliceOp(rewriter, subView);
+    markCreatedExtractSliceOp(rewriter, subView, tilingDim);
     return subView.getResult();
   }
   return failure();
@@ -360,14 +357,16 @@ LogicalResult seedLocalStoreBoundarySlices(func::FuncOp func,
       return failure();
 
     rewriter.setInsertionPoint(localStore);
-    auto maybeTiledData = createSlicedValue(
-        rewriter, localStore.getLoc(), localStore.getData(),
-        maybeWindow->offsets, maybeWindow->sizes, maybeWindow->strides);
+    auto maybeTiledData =
+        createSlicedValue(rewriter, localStore.getLoc(), localStore.getData(),
+                          maybeWindow->offsets, maybeWindow->sizes,
+                          maybeWindow->strides, plan.tilingDim);
     if (failed(maybeTiledData))
       return failure();
-    auto maybeTiledAddr = createSlicedValue(
-        rewriter, localStore.getLoc(), localStore.getAddr(),
-        maybeWindow->offsets, maybeWindow->sizes, maybeWindow->strides);
+    auto maybeTiledAddr =
+        createSlicedValue(rewriter, localStore.getLoc(), localStore.getAddr(),
+                          maybeWindow->offsets, maybeWindow->sizes,
+                          maybeWindow->strides, plan.tilingDim);
     if (failed(maybeTiledAddr))
       return failure();
 
@@ -454,12 +453,11 @@ LogicalResult verifyNoPendingTilingArtifacts(func::FuncOp func) {
         insertSliceOp && isMarkedInsertSliceOp(insertSliceOp))
       return WalkResult::interrupt();
     if (auto sliceOp = dyn_cast<tensor::ExtractSliceOp>(op);
-        sliceOp && sliceOp->hasAttrOfType<UnitAttr>(toBeBubbleUpSlice))
+        sliceOp && sliceOp->hasAttr(toBeBubbleUpSlice))
       return WalkResult::interrupt();
     if (auto castOp = dyn_cast<UnrealizedConversionCastOp>(op);
-        castOp &&
-        (castOp->hasAttr(hivm::detail::kBubbleUpPropagateUp) ||
-         castOp->hasAttr(hivm::detail::kBubbleUpPropagateDown)))
+        castOp && (castOp->hasAttr(hivm::detail::kBubbleUpPropagateUp) ||
+                   castOp->hasAttr(hivm::detail::kBubbleUpPropagateDown)))
       return WalkResult::interrupt();
     return WalkResult::advance();
   });
@@ -482,8 +480,7 @@ LogicalResult runBubbleUpCleanupPipeline(func::FuncOp func) {
   bufferizationPostProcess
       .add<hivm::detail::BufferizationPropagatePostProcessPattern>(
           func.getContext());
-  if (failed(applyPatternsGreedily(func,
-                                   std::move(bufferizationPostProcess))))
+  if (failed(applyPatternsGreedily(func, std::move(bufferizationPostProcess))))
     return failure();
 
   RewritePatternSet patternsPost(func.getContext());

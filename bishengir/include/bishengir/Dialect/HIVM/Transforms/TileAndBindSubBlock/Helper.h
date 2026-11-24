@@ -48,7 +48,11 @@ static constexpr int kSubBlockDim = 2;
 static constexpr int kMaxIterations = 50;
 
 // Mark this op, so it will be considered as candidate to be bubbled up.
-void markCreatedExtractSliceOp(RewriterBase &rewriter, Operation *op);
+void markCreatedExtractSliceOp(RewriterBase &rewriter, Operation *op,
+                               int64_t tilingDim);
+
+/// Return the marked axis, or -1 if the slice has no valid tiling dimension.
+int64_t getBubbledTilingDim(Operation *op);
 
 // Return true if this op is intented to be bubbled up.
 bool isMarkedExtractSliceOp(Operation *op);
@@ -80,7 +84,7 @@ FailureOr<OpFoldResult> getSingleTileSize(OpBuilder &builder, Location loc,
                                           scf::ForOp containingLoop);
 
 LogicalResult findCorrespondingSizesOffsetsStrides(
-    RewriterBase &rewriter, ShapedType rankType, int64_t tilingDim,
+    RewriterBase &rewriter, Value source, int64_t tilingDim,
     OpFoldResult offsetAtTileDim, OpFoldResult tileSize,
     SmallVector<OpFoldResult, 4> &mixedStrides,
     SmallVector<OpFoldResult, 4> &mixedOffsets,
@@ -90,7 +94,8 @@ DenseSet<size_t> getExtractOrInsertDim(OffsetSizeAndStrideOpInterface op);
 DenseSet<size_t> getIntersectionDims(DenseSet<size_t> dims1,
                                      const DenseSet<size_t> &dims2);
 
-bool createdByTiling(OffsetSizeAndStrideOpInterface offsetSizeAndStrideOp);
+bool createdByTiling(OffsetSizeAndStrideOpInterface offsetSizeAndStrideOp,
+                     int64_t tilingDim);
 
 void handleExtractOfExtract(OpFoldResult &offset, OpFoldResult &size,
                             OpFoldResult tiledOffset, OpFoldResult tiledSize,

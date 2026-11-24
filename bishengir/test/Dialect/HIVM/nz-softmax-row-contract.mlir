@@ -23,8 +23,8 @@ func.func @nz_softmax_m128_static(%score: tensor<32x8x16x16xf16>, %m: tensor<128
   %mo = tensor.empty() : tensor<128xf16>
   %bo = tensor.empty() : tensor<128xf32>
   %r:3 = hivm.hir.custom {iterator_types = [#hivm.iterator_type<opaque>, #hivm.iterator_type<parallel>, #hivm.iterator_type<opaque>, #hivm.iterator_type<opaque>, #hivm.iterator_type<opaque>], indexing_map = [#nz_score, #nz_state, #nz_lut, #nz_p, #nz_state, #nz_state], symbol = "__builtin_online_softmax_nz", hivm.pipe = #hivm.pipe<PIPE_V>, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMD>} "__builtin_online_softmax_nz" ins(%score, %m, %lut : tensor<32x8x16x16xf16> {inplace_outs = [0 : i32, affine_map<(d0, d1, d2, d3) -> (d0 * 2, d1, d2, d3)>]}, tensor<128xf16>, tensor<256xi8>) outs(%p, %mo, %bo : tensor<16x8x16x32xf8E4M3FN>, tensor<128xf16>, tensor<128xf32>) -> (tensor<16x8x16x32xf8E4M3FN>, tensor<128xf16>, tensor<128xf32>)
-  %ps = tensor.extract_slice %r#0[0, 4, 0, 0] [16, 4, 16, 32] [1, 1, 1, 1] {to_be_bubbled_slice} : tensor<16x8x16x32xf8E4M3FN> to tensor<16x4x16x32xf8E4M3FN>
-  %ms = tensor.extract_slice %r#1[64] [64] [1] {to_be_bubbled_slice} : tensor<128xf16> to tensor<64xf16>
-  %ss = tensor.extract_slice %r#2[64] [64] [1] {to_be_bubbled_slice} : tensor<128xf32> to tensor<64xf32>
+  %ps = tensor.extract_slice %r#0[0, 4, 0, 0] [16, 4, 16, 32] [1, 1, 1, 1] {to_be_bubbled_slice = 1 : i64} : tensor<16x8x16x32xf8E4M3FN> to tensor<16x4x16x32xf8E4M3FN>
+  %ms = tensor.extract_slice %r#1[64] [64] [1] {to_be_bubbled_slice = 0 : i64} : tensor<128xf16> to tensor<64xf16>
+  %ss = tensor.extract_slice %r#2[64] [64] [1] {to_be_bubbled_slice = 0 : i64} : tensor<128xf32> to tensor<64xf32>
   return %ps, %ms, %ss : tensor<16x4x16x32xf8E4M3FN>, tensor<64xf16>, tensor<64xf32>
 }

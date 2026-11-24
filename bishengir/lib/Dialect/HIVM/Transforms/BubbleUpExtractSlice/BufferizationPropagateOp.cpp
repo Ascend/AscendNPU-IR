@@ -42,26 +42,23 @@
 namespace mlir::hivm::detail {
 namespace {
 
-/// Derive subview offsets/sizes/strides from propagate_up UCC shapes: locate
-/// tilingDim from the UCC result type, then reuse sub-block tiling helpers.
+/// Apply the propagated tile on its axis and preserve all other extents.
 FailureOr<std::tuple<SmallVector<OpFoldResult, 4>, SmallVector<OpFoldResult, 4>,
                      SmallVector<OpFoldResult, 4>>>
 getSubViewParamsFromPropagatorResult(UnrealizedConversionCastOp propagateOp,
                                      PatternRewriter &rewriter) {
-  auto parentType = dyn_cast<MemRefType>(propagateOp.getInputs()[0].getType());
-  if (!parentType)
+  Value source = propagateOp.getInputs()[0];
+  if (!isa<MemRefType>(source.getType()))
     return failure();
   auto [tilingDim, tiledOffset, tiledSize] = getTilingDimInfo(propagateOp);
-  if (tilingDim == -1)
-    return failure();
 
   SmallVector<OpFoldResult, 4> strides;
   SmallVector<OpFoldResult, 4> offsets;
   SmallVector<OpFoldResult, 4> sizes;
   SmallVector<int64_t, 4> newShape;
   if (failed(findCorrespondingSizesOffsetsStrides(
-          rewriter, parentType, tilingDim, tiledOffset, tiledSize, strides,
-          offsets, sizes, newShape)))
+          rewriter, source, tilingDim, tiledOffset, tiledSize, strides, offsets,
+          sizes, newShape)))
     return failure();
 
   return std::make_tuple(std::move(offsets), std::move(sizes),
@@ -219,7 +216,6 @@ LogicalResult BufferizationPropagateUpPattern::propagateUpReinterpretCast(
     return failure();
   auto &[offsets, sizes, strides] = *maybeParams;
 
-  rewriter.setInsertionPointAfter(castOp);
   rewriter.replaceOpWithNewOp<memref::SubViewOp>(
       propagateOp, castOp.getResult(), offsets, sizes, strides);
 

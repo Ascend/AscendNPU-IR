@@ -34,7 +34,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
         outs(%slice : memref<1x8xf32, strided<[8, 1], offset: ?>>) core_type = <VECTOR>
     } {hivm.parallel_loop}
     %result = bufferization.to_tensor %dst restrict writable : memref<4x8xf32>
-    %tile = tensor.extract_slice %result[2, 0] [2, 8] [1, 1] {to_be_bubbled_slice}
+    %tile = tensor.extract_slice %result[2, 0] [2, 8] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<4x8xf32> to tensor<2x8xf32>
     bufferization.materialize_in_destination %tile in writable %out
       : (tensor<2x8xf32>, memref<2x8xf32>) -> ()
@@ -84,7 +84,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       outs(%mask_init : tensor<4x8xi1>) dimensions = [1]
     %fallback = arith.constant dense<0.0> : tensor<4x8xf32>
     %selected = arith.select %full_mask, %loaded, %fallback : tensor<4x8xi1>, tensor<4x8xf32>
-    %tile = tensor.extract_slice %selected[2, 0] [2, 8] [1, 1] {to_be_bubbled_slice}
+    %tile = tensor.extract_slice %selected[2, 0] [2, 8] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<4x8xf32> to tensor<2x8xf32>
     bufferization.materialize_in_destination %tile in writable %out
       : (tensor<2x8xf32>, memref<2x8xf32>) -> ()

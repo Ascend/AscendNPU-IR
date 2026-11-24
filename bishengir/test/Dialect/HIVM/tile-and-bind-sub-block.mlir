@@ -1302,7 +1302,7 @@ module {
 // CHECK:           %[[VAL_4:.*]] = arith.constant 2 : index
 // CHECK:           scf.for %[[VAL_5:.*]] = %[[VAL_2]] to %[[VAL_4]] step %[[VAL_3]] {
 // CHECK:             %[[VAL_6:.*]] = affine.apply #[[$ATTR_0]]()[%[[VAL_5]]]
-// CHECK:             %[[VAL_7:.*]] = memref.subview %{{.*}}[%[[VAL_6]]] [32] [1] {to_be_bubbled_slice} : memref<64xf32> to memref<32xf32, strided<[1], offset: ?>>
+// CHECK:             %[[VAL_7:.*]] = memref.subview %{{.*}}[%[[VAL_6]]] [32] [1] {to_be_bubbled_slice = 0 : i64} : memref<64xf32> to memref<32xf32, strided<[1], offset: ?>>
 // CHECK:             %[[VAL_8:.*]] = tensor.empty() : tensor<32xf32>
 // CHECK:             %[[VAL_9:.*]] = hivm.hir.vln ins(%[[VAL_8]] : tensor<32xf32>) outs(%[[VAL_8]] : tensor<32xf32>) -> tensor<32xf32>
 // CHECK:             hivm.hir.store ins(%[[VAL_9]] : tensor<32xf32>) outs(%[[VAL_7]] : memref<32xf32, strided<[1], offset: ?>>)
@@ -1372,13 +1372,13 @@ module {
 // CHECK:           %[[VAL_4:.*]] = arith.constant 2 : index
 // CHECK:           scf.for %[[VAL_5:.*]] = %[[VAL_2]] to %[[VAL_4]] step %[[VAL_3]] {
 // CHECK:             %[[VAL_6:.*]] = affine.apply #[[$ATTR_0]](){{\[}}%[[VAL_5]]]
-// CHECK:             %[[VAL_7:.*]] = tensor.extract_slice %[[VAL_0]]{{\[}}%[[VAL_6]]] [32] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<32xf32>
+// CHECK:             %[[VAL_7:.*]] = tensor.extract_slice %[[VAL_0]]{{\[}}%[[VAL_6]]] [32] [1] {to_be_bubbled_slice = 0 : i64} : tensor<64xf32> to tensor<32xf32>
 // CHECK:             %[[VAL_8:.*]] = scf.for %[[VAL_9:.*]] = %[[VAL_2]] to %[[VAL_4]] step %[[VAL_3]] iter_args(%[[VAL_10:.*]] = %[[VAL_7]]) -> (tensor<32xf32>) {
 // CHECK:               %[[VAL_11:.*]] = tensor.empty() : tensor<32xf32>
 // CHECK:               %[[VAL_12:.*]] = hivm.hir.vln ins(%[[VAL_7]] : tensor<32xf32>) outs(%[[VAL_11]] : tensor<32xf32>) -> tensor<32xf32>
 // CHECK:               %[[VAL_13:.*]] = hivm.hir.store ins(%[[VAL_12]] : tensor<32xf32>) outs(%[[VAL_10]] : tensor<32xf32>) {tiled_op} -> tensor<32xf32>
 // CHECK:               annotation.mark %[[VAL_13]] : tensor<32xf32>
-// CHECK:               %[[VAL_14:.*]] = tensor.extract_slice %[[VAL_13]]{{\[}}%[[VAL_6]]] [32] [1] {to_be_bubbled_slice} : tensor<32xf32> to tensor<32xf32>
+// CHECK:               %[[VAL_14:.*]] = tensor.extract_slice %[[VAL_13]]{{\[}}%[[VAL_6]]] [32] [1] {to_be_bubbled_slice = 0 : i64} : tensor<32xf32> to tensor<32xf32>
 // CHECK:               scf.yield %[[VAL_14]] : tensor<32xf32>
 // CHECK:             }
 // CHECK:           } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
@@ -1417,8 +1417,8 @@ module {
 // CHECK:           %[[VAL_7:.*]] = arith.constant 2 : index
 // CHECK:           scf.for %[[VAL_8:.*]] = %[[VAL_5]] to %[[VAL_7]] step %[[VAL_6]] {
 // CHECK:             %[[VAL_9:.*]] = affine.apply #[[$ATTR_0]](){{\[}}%[[VAL_8]]]
-// CHECK:             %[[VAL_10:.*]] = memref.subview %[[VAL_1]]{{\[}}%[[VAL_9]]] [32] [1] {to_be_bubbled_slice} : memref<64xf32> to memref<32xf32, strided<[1], offset: ?>>
-// CHECK:             %[[VAL_11:.*]] = tensor.extract_slice %[[VAL_0]]{{\[}}%[[VAL_9]]] [32] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<32xf32>
+// CHECK:             %[[VAL_10:.*]] = memref.subview %[[VAL_1]]{{\[}}%[[VAL_9]]] [32] [1] {to_be_bubbled_slice = 0 : i64} : memref<64xf32> to memref<32xf32, strided<[1], offset: ?>>
+// CHECK:             %[[VAL_11:.*]] = tensor.extract_slice %[[VAL_0]]{{\[}}%[[VAL_9]]] [32] [1] {to_be_bubbled_slice = 0 : i64} : tensor<64xf32> to tensor<32xf32>
 // CHECK:             %[[VAL_12:.*]] = tensor.empty() : tensor<32xf32>
 // CHECK:             %[[VAL_13:.*]] = hivm.hir.vln ins(%[[VAL_11]] : tensor<32xf32>) outs(%[[VAL_12]] : tensor<32xf32>) -> tensor<32xf32>
 // CHECK:             %[[VAL_14:.*]] = arith.addi %[[VAL_9]], %[[VAL_4]] : index
@@ -1453,11 +1453,11 @@ func.func @store_with_nonzero_offset(%arg0: tensor<64xf32>, %arg1: memref<64xf32
 // CHECK:           %[[VAL_4:.*]] = arith.constant 2 : index
 // CHECK:           scf.for %[[VAL_5:.*]] = %[[VAL_2]] to %[[VAL_4]] step %[[VAL_3]] {
 // CHECK:             %[[VAL_6:.*]] = affine.apply #[[$ATTR_0]](){{\[}}%[[VAL_5]]]
-// CHECK:             %[[VAL_7:.*]] = memref.subview %[[VAL_1]]{{\[}}%[[VAL_6]], 0] [32, 64] [1, 1] {to_be_bubbled_slice} : memref<64x64xf32> to memref<32x64xf32, strided<[64, 1], offset: ?>>
+// CHECK:             %[[VAL_7:.*]] = memref.subview %[[VAL_1]]{{\[}}%[[VAL_6]], 0] [32, 64] [1, 1] {to_be_bubbled_slice = 0 : i64} : memref<64x64xf32> to memref<32x64xf32, strided<[64, 1], offset: ?>>
 // CHECK:             %[[VAL_8:.*]] = tensor.empty() : tensor<64xf32>
 // CHECK:             %[[VAL_9:.*]] = hivm.hir.vln ins(%[[VAL_0]] : tensor<64xf32>) outs(%[[VAL_8]] : tensor<64xf32>) -> tensor<64xf32>
 // CHECK:             %[[VAL_10:.*]] = tensor.expand_shape %[[VAL_9]] {{\[\[}}0, 1]] output_shape [1, 64] : tensor<64xf32> into tensor<1x64xf32>
-// CHECK:             %[[VAL_11:.*]] = tensor.extract_slice %[[VAL_9]]{{\[}}%[[VAL_6]]] [32] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<32xf32>
+// CHECK:             %[[VAL_11:.*]] = tensor.extract_slice %[[VAL_9]]{{\[}}%[[VAL_6]]] [32] [1] {to_be_bubbled_slice = 0 : i64} : tensor<64xf32> to tensor<32xf32>
 // CHECK:             %[[VAL_12:.*]] = tensor.expand_shape %[[VAL_11]] {{\[\[}}0, 1]] output_shape [32, 1] : tensor<32xf32> into tensor<32x1xf32>
 // CHECK:             %[[VAL_13:.*]] = tensor.empty() : tensor<32x64xf32>
 // CHECK:             %[[VAL_14:.*]] = hivm.hir.vadd ins(%[[VAL_12]], %[[VAL_10]] : tensor<32x1xf32>, tensor<1x64xf32>) outs(%[[VAL_13]] : tensor<32x64xf32>) broadcast = [0, 1] -> tensor<32x64xf32>
@@ -1648,8 +1648,8 @@ func.func @unstructure_store(%arg0: tensor<64xf32>, %arg1: memref<64xf32>, %arg2
 // CHECK:           %[[VAL_5:.*]] = arith.constant 2 : index
 // CHECK:           scf.for %[[VAL_6:.*]] = %[[VAL_3]] to %[[VAL_5]] step %[[VAL_4]] {
 // CHECK:             %[[VAL_7:.*]] = affine.apply #[[$ATTR_0]](){{\[}}%[[VAL_6]]]
-// CHECK:             %[[VAL_8:.*]] = memref.subview %[[VAL_1]]{{\[}}%[[VAL_7]]] [32] [1] {to_be_bubbled_slice} : memref<64xf32> to memref<32xf32, strided<[1], offset: ?>>
-// CHECK:             %[[VAL_9:.*]] = tensor.extract_slice %[[VAL_0]]{{\[}}%[[VAL_7]]] [32] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<32xf32>
+// CHECK:             %[[VAL_8:.*]] = memref.subview %[[VAL_1]]{{\[}}%[[VAL_7]]] [32] [1] {to_be_bubbled_slice = 0 : i64} : memref<64xf32> to memref<32xf32, strided<[1], offset: ?>>
+// CHECK:             %[[VAL_9:.*]] = tensor.extract_slice %[[VAL_0]]{{\[}}%[[VAL_7]]] [32] [1] {to_be_bubbled_slice = 0 : i64} : tensor<64xf32> to tensor<32xf32>
 // CHECK:             %[[VAL_10:.*]] = tensor.empty() : tensor<32xf32>
 // CHECK:             %[[VAL_11:.*]] = hivm.hir.vln ins(%[[VAL_9]] : tensor<32xf32>) outs(%[[VAL_10]] : tensor<32xf32>) -> tensor<32xf32>
 // CHECK:             %[[VAL_12:.*]] = arith.minsi %[[VAL_7]], %[[VAL_4]] : index
@@ -1682,8 +1682,8 @@ func.func @store_with_static_mask(%arg0: tensor<64xf32>, %arg1: memref<64xf32>) 
 // CHECK:           %[[VAL_6:.*]] = arith.constant 2 : index
 // CHECK:           scf.for %[[VAL_7:.*]] = %[[VAL_4]] to %[[VAL_6]] step %[[VAL_5]] {
 // CHECK:             %[[VAL_8:.*]] = affine.apply #[[$ATTR_0]](){{\[}}%[[VAL_7]]]
-// CHECK:             %[[VAL_9:.*]] = memref.subview %[[VAL_1]]{{\[}}%[[VAL_8]]] [32] [1] {to_be_bubbled_slice} : memref<64xf32> to memref<32xf32, strided<[1], offset: ?>>
-// CHECK:             %[[VAL_10:.*]] = tensor.extract_slice %[[VAL_0]]{{\[}}%[[VAL_8]]] [32] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<32xf32>
+// CHECK:             %[[VAL_9:.*]] = memref.subview %[[VAL_1]]{{\[}}%[[VAL_8]]] [32] [1] {to_be_bubbled_slice = 0 : i64} : memref<64xf32> to memref<32xf32, strided<[1], offset: ?>>
+// CHECK:             %[[VAL_10:.*]] = tensor.extract_slice %[[VAL_0]]{{\[}}%[[VAL_8]]] [32] [1] {to_be_bubbled_slice = 0 : i64} : tensor<64xf32> to tensor<32xf32>
 // CHECK:             %[[VAL_11:.*]]:2 = scf.while (%[[VAL_12:.*]] = %[[VAL_10]], %[[VAL_13:.*]] = %[[VAL_3]]) : (tensor<32xf32>, i32) -> (tensor<32xf32>, i32) {
 // CHECK:               %[[VAL_14:.*]] = arith.cmpi slt, %[[VAL_13]], %[[VAL_2]] : i32
 // CHECK:               scf.condition(%[[VAL_14]]) %[[VAL_12]], %[[VAL_13]] : tensor<32xf32>, i32
@@ -1717,7 +1717,10 @@ func.func @tile_and_bind_while(%arg0: tensor<64xf32>, %arg1: memref<64xf32>) att
 
 // -----
 // CHECK-LABEL:   func.func @dynamic_shape_insert_slice
-// CHECK:         {limit_sub_block_id0}
+// CHECK:         %[[SRC:.*]] = tensor.extract_slice %arg0[%[[ROW:.*]], 0] [32, %arg2] [1, 1]
+// CHECK:         %[[INS:.*]] = tensor.insert_slice %[[SRC]] into %{{.*}}[0, 0] [32, %arg2] [1, 1]
+// CHECK:         hivm.hir.store ins(%[[INS]] : tensor<32x64xf32>)
+// CHECK:         mapping = [#hivm.sub_block<x>]
 func.func @dynamic_shape_insert_slice(%arg0: tensor<64x?xf32>, %arg1: memref<64x64xf32>, %arg2: index) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
   %0 = tensor.empty() : tensor<64x64xf32>
   %inserted_slice = tensor.insert_slice %arg0 into %0[0, 0] [64, %arg2] [1, 1] : tensor<64x?xf32> into tensor<64x64xf32>
@@ -1739,8 +1742,8 @@ func.func @dynamic_shape_insert_slice(%arg0: tensor<64x?xf32>, %arg1: memref<64x
 // CHECK:           scf.for %[[VAL_6:.*]] = %[[VAL_3]] to %[[VAL_5]] step %[[VAL_4]] {
 // CHECK:             %[[VAL_7:.*]] = affine.apply #[[$ATTR_0]](){{\[}}%[[VAL_6]]]
 // CHECK:             %[[VAL_8:.*]] = affine.apply #[[$ATTR_1]](){{\[}}%[[VAL_6]]]
-// CHECK:             %[[VAL_9:.*]] = tensor.extract_slice %[[VAL_1]]{{\[}}%[[VAL_8]]] [32] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<32xf32>
-// CHECK:             %[[VAL_10:.*]] = tensor.extract_slice %[[VAL_2]]{{\[}}%[[VAL_8]]] [32] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<32xf32>
+// CHECK:             %[[VAL_9:.*]] = tensor.extract_slice %[[VAL_1]]{{\[}}%[[VAL_8]]] [32] [1] {to_be_bubbled_slice = 0 : i64} : tensor<64xf32> to tensor<32xf32>
+// CHECK:             %[[VAL_10:.*]] = tensor.extract_slice %[[VAL_2]]{{\[}}%[[VAL_8]]] [32] [1] {to_be_bubbled_slice = 0 : i64} : tensor<64xf32> to tensor<32xf32>
 // CHECK:             %[[VAL_11:.*]] = scope.scope : () -> tensor<32xf32> {
 // CHECK:               %[[VAL_12:.*]] = tensor.empty() : tensor<32xf32>
 // CHECK:               %[[VAL_13:.*]] = scf.for %[[VAL_14:.*]] = %[[VAL_3]] to %[[VAL_5]] step %[[VAL_4]] iter_args(%[[VAL_15:.*]] = %[[VAL_12]]) -> (tensor<32xf32>) {
@@ -1809,8 +1812,8 @@ module {
 // CHECK:           %[[VAL_7:.*]] = arith.constant 2 : index
 // CHECK:           scf.for %[[VAL_8:.*]] = %[[VAL_5]] to %[[VAL_7]] step %[[VAL_6]] {
 // CHECK:             %[[VAL_9:.*]] = affine.apply #[[$ATTR_0]](){{\[}}%[[VAL_8]]]
-// CHECK:             %[[VAL_10:.*]] = memref.subview %[[VAL_1]]{{\[}}%[[VAL_9]]] [32] [1] {to_be_bubbled_slice} : memref<64xf32> to memref<32xf32, strided<[1], offset: ?>>
-// CHECK:             %[[VAL_11:.*]] = tensor.extract_slice %[[VAL_0]]{{\[}}%[[VAL_9]]] [32] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<32xf32>
+// CHECK:             %[[VAL_10:.*]] = memref.subview %[[VAL_1]]{{\[}}%[[VAL_9]]] [32] [1] {to_be_bubbled_slice = 0 : i64} : memref<64xf32> to memref<32xf32, strided<[1], offset: ?>>
+// CHECK:             %[[VAL_11:.*]] = tensor.extract_slice %[[VAL_0]]{{\[}}%[[VAL_9]]] [32] [1] {to_be_bubbled_slice = 0 : i64} : tensor<64xf32> to tensor<32xf32>
 // CHECK:             %[[VAL_12:.*]] = tensor.empty() : tensor<32xf32>
 // CHECK:             %[[VAL_13:.*]] = hivm.hir.vln ins(%[[VAL_11]] : tensor<32xf32>) outs(%[[VAL_12]] : tensor<32xf32>) -> tensor<32xf32>
 // CHECK:             %[[VAL_14:.*]] = arith.addi %[[VAL_9]], %[[VAL_4]] : index
@@ -1909,7 +1912,7 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
 // CHECK: scf.yield %{{.*}} : tensor<8x16xf32>
 // CHECK: } else {
 // CHECK: %[[WS_STORE:.*]] = hivm.hir.store ins(%{{.*}} : tensor<8x16xf32>) outs(%{{.*}} : tensor<8x16xf32>) {tiled_op} -> tensor<8x16xf32>
-// CHECK: %[[WS_SLICE:.*]] = tensor.extract_slice %[[WS_STORE]]{{\[}}%{{.*}}, 0] [8, 16] [1, 1] {to_be_bubbled_slice} : tensor<8x16xf32> to tensor<8x16xf32>
+// CHECK: %[[WS_SLICE:.*]] = tensor.extract_slice %[[WS_STORE]]{{\[}}%{{.*}}, 0] [8, 16] [1, 1] {to_be_bubbled_slice = 0 : i64} : tensor<8x16xf32> to tensor<8x16xf32>
 // CHECK: scf.yield %[[WS_SLICE]] : tensor<8x16xf32>
 // CHECK: }
 // CHECK: hivm.hir.store ins(%{{.*}} : tensor<8x16xf32>) outs(%{{.*}} : memref<8x16xf32, strided<[16, 1], offset: ?>>) {tiled_op}
@@ -5754,11 +5757,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">, hivm.module_c
 // CHECK-NOT: tile_and_bind_subblock_reverted
 // CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
 // CHECK:   %{{.*}} = affine.apply
-// CHECK:   %{{.*}} = memref.subview %{{.*}}{{\[}}%{{.*}}, 0] [105, 112] [1, 1] {to_be_bubbled_slice}
-// CHECK:   %{{.*}} = tensor.extract_slice %{{.*}}{{\[}}%{{.*}}, 0] [105, 112] [1, 1] {to_be_bubbled_slice}
+// CHECK:   %{{.*}} = memref.subview %{{.*}}{{\[}}%{{.*}}, 0] [105, 112] [1, 1] {to_be_bubbled_slice = 0 : i64}
+// CHECK:   %{{.*}} = tensor.extract_slice %{{.*}}{{\[}}%{{.*}}, 0] [105, 112] [1, 1] {to_be_bubbled_slice = 0 : i64}
 // CHECK:   scf.for %{{.*}} iter_args(
 // CHECK:     scf.for %{{.*}} iter_args(
-// CHECK:       %[[WS:.*]] = tensor.extract_slice %{{.*}}[0, %{{.*}}, 0] [4, 105, 112] [1, 1, 1] {to_be_bubbled_slice}
+// CHECK:       %[[WS:.*]] = tensor.extract_slice %{{.*}}[0, %{{.*}}, 0] [4, 105, 112] [1, 1, 1] {to_be_bubbled_slice = 1 : i64}
 // CHECK:       %[[TILE:.*]] = tensor.extract_slice %[[WS]]
 // CHECK:       %[[ODD:.*]] = tensor.extract_slice %[[TILE]]{{\[}}%{{.*}}, 0] {{\[}}%{{.*}}, 112] [1, 1] : tensor<105x112xf32> to tensor<?x112xf32>
 // CHECK:       hivm.hir.load ins(%[[ODD]] : tensor<?x112xf32>)
@@ -6786,6 +6789,13 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">, hivm.module_c
 
 // The final row tile has only 21 rows. Seed CV1:2 on the static column axis.
 // CHECK-LABEL: func.func @partial_row_tile_mix_aiv
+// CHECK: scf.for {{.*}} iter_args
+// CHECK: %[[ROW:.*]] = affine.apply
+// CHECK: %[[ROWS:.*]] = affine.min
+// CHECK: tensor.extract_slice %{{.*}}[%[[ROW]], 0] [%[[ROWS]], 56] [1, 1] : tensor<210x56xf32> to tensor<?x56xf32>
+// CHECK: hivm.hir.vabs ins(%{{.*}} : tensor<?x56xf32>)
+// CHECK: tensor.insert_slice %{{.*}} into %{{.*}}[%[[ROW]], 0] [%[[ROWS]], 56] [1, 1]
+// CHECK: hivm.hir.store ins(%{{.*}} : tensor<210x56xf32>)
 // PRE-LABEL: After tileAndSliceStore: func.func @partial_row_tile_mix_aiv
 // PRE: hivm.hir.store ins({{.*}} : tensor<210x56xf32>)
 #tail = affine_map<(d0) -> (210 - d0, 27)>
@@ -6838,4 +6848,23 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">, hivm.module_core_t
     hivm.hir.store ins(%result : tensor<216xf32>) outs(%dst : memref<216xf32>)
     return
   }
+}
+
+// -----
+
+// The store seeds a row tile. The inner extract restricts the dynamic column
+// dimension independently, so its width must survive bubbling the row tile.
+// CHECK-LABEL: func.func @row_tile_with_dynamic_source_width(
+// CHECK: scf.for
+// CHECK: memref.subview %arg0[%{{.*}}, 0] [12, %{{.*}}] [1, 1]
+// CHECK: tensor.extract_slice %{{.*}}[0, 0] [12, 10] [1, 1]
+// CHECK: hivm.hir.store ins(%{{.*}} : tensor<12x10xi32>)
+func.func @row_tile_with_dynamic_source_width(%src: memref<24x?xf32>, %dst: memref<24x10xi32>)
+    attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  %input = bufferization.to_tensor %src restrict : memref<24x?xf32>
+  %columns = tensor.extract_slice %input[0, 0] [24, 10] [1, 1]
+      : tensor<24x?xf32> to tensor<24x10xf32>
+  %wide = hivm.hir.bitcast %columns : tensor<24x10xf32> -> tensor<24x10xi32>
+  hivm.hir.store ins(%wide : tensor<24x10xi32>) outs(%dst : memref<24x10xi32>)
+  return
 }
