@@ -211,7 +211,9 @@ jobs:
           bash cicd/CI/make-run.sh -a "$ARCH" -v "$PACKAGE_VERSION"
 
           EVENT_NAME="${{ atomgit.event_name }}"
-          SHA="$(printf '%s' "${{ atomgit.sha }}" | cut -c1-13)"
+          # Note(PR 评论) 事件使用 PR 源分支最新提交，push / schedule 使用触发提交
+          COMMIT_ID="${{ atomgit.event_name == 'Note' && atomgit.event.pull_request.head.sha || atomgit.sha }}"
+          SHA="$(printf '%s' "$COMMIT_ID" | cut -c1-13)"
           # 归档目录使用的分支名：优先用入参 branch，否则取触发 ref 的短名
           BRANCH_NAME="${{ inputs.branch || atomgit.ref_name }}"
           # OBS 前缀根目录由参数传入，去掉结尾多余的 /
