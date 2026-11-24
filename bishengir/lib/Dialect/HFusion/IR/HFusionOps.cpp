@@ -2415,7 +2415,10 @@ struct ConstantFolding : public OpRewritePattern<hfusion::CastOp> {
     if (inputDataType == outputDataType) {
       return sameFloatTypeCast(roundMode, outputDataType, aPVal);
     }
-    aPVal.convert(getFltSemantics(outputDataType), rMode, &loseInfo);
+    const auto &semantics = getFltSemantics(outputDataType);
+    if (&semantics == &llvm::APFloatBase::Bogus())
+      return failure();
+    aPVal.convert(semantics, rMode, &loseInfo);
     return success();
   }
 
