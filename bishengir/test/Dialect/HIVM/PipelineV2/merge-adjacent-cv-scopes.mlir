@@ -1,5 +1,6 @@
 // RUN: bishengir-opt -merge-cv-scopes -verify-each -split-input-file %s -o %t
 // RUN: FileCheck %s < %t
+// RUN: FileCheck %s --check-prefix=COUNT < %t
 // RUN: bishengir-opt -merge-cv-scopes -verify-each -split-input-file %t -o %t.twice
 // RUN: diff %t %t.twice
 
@@ -379,11 +380,15 @@ func.func @graph_merges_consumer_with_cross_core_input(%a: f32) {
 
 // -----
 
-// C -> V2: disconnected V1 has no merge candidate.
+// C stays outside. The two following VECTOR scopes are fused into one.
 // CHECK-LABEL: func.func @adjacent_preserves_incoming_overlap(
+// COUNT-LABEL: func.func @adjacent_preserves_incoming_overlap(
+// COUNT-COUNT-2: scope.scope
+// COUNT-NOT: scope.scope
+// COUNT: } {hivm.cv_pipelined_loop}
 // CHECK: scf.for
-// CHECK-COUNT-3: scope.scope
-// CHECK-NOT: scope.scope
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
 // CHECK: } {hivm.cv_pipelined_loop}
 func.func @adjacent_preserves_incoming_overlap(%a: f32) {
   %c0 = arith.constant 0 : index
@@ -442,11 +447,15 @@ func.func @graph_merges_consumer_after_transitive_boundary(%a: f32) {
 
 // -----
 
-// C -> bridge -> V2: disconnected V1 has no merge candidate.
+// The bridge keeps C outside the VECTOR run. The two VECTOR scopes are fused.
 // CHECK-LABEL: func.func @adjacent_preserves_transitive_incoming_overlap(
+// COUNT-LABEL: func.func @adjacent_preserves_transitive_incoming_overlap(
+// COUNT-COUNT-2: scope.scope
+// COUNT-NOT: scope.scope
+// COUNT: } {hivm.cv_pipelined_loop}
 // CHECK: scf.for
-// CHECK-COUNT-3: scope.scope
-// CHECK-NOT: scope.scope
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
 // CHECK: } {hivm.cv_pipelined_loop}
 func.func @adjacent_preserves_transitive_incoming_overlap(%a: f32) {
   %c0 = arith.constant 0 : index
@@ -505,11 +514,14 @@ func.func @adjacent_merges_shared_transitive_boundaries(%a: f32) {
 
 // -----
 
-// Adjacency alone is insufficient: three disconnected scopes stay separate.
+// Three disconnected VECTOR scopes are fused into one VECTOR scope.
 // CHECK-LABEL: func.func @graph_keeps_disconnected_scopes(
+// COUNT-LABEL: func.func @graph_keeps_disconnected_scopes(
+// COUNT: scope.scope
+// COUNT-NOT: scope.scope
+// COUNT: } {hivm.cv_pipelined_loop}
 // CHECK: scf.for
-// CHECK-COUNT-3: scope.scope
-// CHECK-NOT: scope.scope
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
 // CHECK: } {hivm.cv_pipelined_loop}
 func.func @graph_keeps_disconnected_scopes(%a: f32) {
   %c0 = arith.constant 0 : index
@@ -534,11 +546,15 @@ func.func @graph_keeps_disconnected_scopes(%a: f32) {
 
 // -----
 
-// Merge the common predecessors V1/V2; disconnected V3 stays separate.
+// V1/V2/V3 are fused into one VECTOR scope. The CUBE consumer stays outside.
 // CHECK-LABEL: func.func @adjacent_rechecks_after_merge(
+// COUNT-LABEL: func.func @adjacent_rechecks_after_merge(
+// COUNT-COUNT-2: scope.scope
+// COUNT-NOT: scope.scope
+// COUNT: } {hivm.cv_pipelined_loop}
 // CHECK: scf.for
-// CHECK-COUNT-3: scope.scope
-// CHECK-NOT: scope.scope
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
 // CHECK: } {hivm.cv_pipelined_loop}
 func.func @adjacent_rechecks_after_merge(%a: f32) {
   %c0 = arith.constant 0 : index
@@ -567,11 +583,15 @@ func.func @adjacent_rechecks_after_merge(%a: f32) {
 
 // -----
 
-// C1 -> V: disconnected C2 has no merge candidate.
+// The two CUBE scopes are fused. The VECTOR consumer stays outside.
 // CHECK-LABEL: func.func @adjacent_preserves_cube_overlap(
+// COUNT-LABEL: func.func @adjacent_preserves_cube_overlap(
+// COUNT-COUNT-2: scope.scope
+// COUNT-NOT: scope.scope
+// COUNT: } {hivm.cv_pipelined_loop}
 // CHECK: scf.for
-// CHECK-COUNT-3: scope.scope
-// CHECK-NOT: scope.scope
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
 // CHECK: } {hivm.cv_pipelined_loop}
 func.func @adjacent_preserves_cube_overlap(%a: f32) {
   %c0 = arith.constant 0 : index
@@ -596,11 +616,15 @@ func.func @adjacent_preserves_cube_overlap(%a: f32) {
 
 // -----
 
-// CUBE_AND_VECTOR is not a concrete-core merge member; V2 is disconnected.
+// The two VECTOR scopes are fused. CUBE_AND_VECTOR stays outside.
 // CHECK-LABEL: func.func @adjacent_preserves_mixed_scope_overlap(
+// COUNT-LABEL: func.func @adjacent_preserves_mixed_scope_overlap(
+// COUNT-COUNT-2: scope.scope
+// COUNT-NOT: scope.scope
+// COUNT: } {hivm.cv_pipelined_loop}
 // CHECK: scf.for
-// CHECK-COUNT-3: scope.scope
-// CHECK-NOT: scope.scope
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>}
 // CHECK: } {hivm.cv_pipelined_loop}
 func.func @adjacent_preserves_mixed_scope_overlap(%a: f32) {
   %c0 = arith.constant 0 : index
@@ -625,11 +649,12 @@ func.func @adjacent_preserves_mixed_scope_overlap(%a: f32) {
 
 // -----
 
-// A consumer without a core type cannot merge with V1; V2 is disconnected.
+// The two VECTOR scopes are fused. A scope without a core type stays outside.
 // CHECK-LABEL: func.func @adjacent_preserves_unknown_scope_overlap(
 // CHECK: scf.for
-// CHECK-COUNT-3: scope.scope
-// CHECK-NOT: scope.scope
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK: scope.scope
+// CHECK-NOT: hivm.loop_core_type
 // CHECK: } {hivm.cv_pipelined_loop}
 func.func @adjacent_preserves_unknown_scope_overlap(%a: f32) {
   %c0 = arith.constant 0 : index
@@ -654,13 +679,17 @@ func.func @adjacent_preserves_unknown_scope_overlap(%a: f32) {
 
 // -----
 
-// A mixed wrapper cannot merge with V1; disconnected V2 also stays separate.
+// The two VECTOR scopes are fused. The mixed wrapper stays separate.
 // CHECK-LABEL: func.func @adjacent_preserves_wrapper_overlap(
+// COUNT-LABEL: func.func @adjacent_preserves_wrapper_overlap(
+// COUNT-COUNT-4: scope.scope
+// COUNT-NOT: scope.scope
+// COUNT: } {hivm.cv_pipelined_loop}
 // CHECK: scf.for
-// CHECK-COUNT-5: scope.scope
-// CHECK-NOT: scope.scope
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
 // CHECK: } {cv_merged_scope}
-// CHECK-NOT: scope.scope
 // CHECK: } {hivm.cv_pipelined_loop}
 func.func @adjacent_preserves_wrapper_overlap(%a: f32) {
   %c0 = arith.constant 0 : index
@@ -692,11 +721,12 @@ func.func @adjacent_preserves_wrapper_overlap(%a: f32) {
 
 // -----
 
-// V1 -> C is a memory conflict; the disconnected V2 still has no candidate.
+// The two VECTOR scopes are fused. The CUBE scope that conflicts with the
+// first store stays outside.
 // CHECK-LABEL: func.func @adjacent_preserves_memory_overlap(
 // CHECK: scf.for
-// CHECK-COUNT-3: scope.scope
-// CHECK-NOT: scope.scope
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
 // CHECK: } {hivm.cv_pipelined_loop}
 func.func @adjacent_preserves_memory_overlap(%a: f32, %buffer: memref<1xf32>) {
   %c0 = arith.constant 0 : index
