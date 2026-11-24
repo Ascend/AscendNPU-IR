@@ -77,7 +77,10 @@ void bufferizationPipelineBase(OpPassManager &pm, bool isRegBased) {
   oneShotOptions.analysisHeuristic =
       OneShotBufferizationOptions::AnalysisHeuristic::TopDown;
   pm.nest<func::FuncOp>().addPass(createDecomposeAllocTensorCopyPass());
-  // Run a first round of analysis + tensor copy insertion.
+  // tensor-copy-insertion is the pipeline of insert-loop-init-copies and
+  // resolve-tensor-copy-conflicts. One options object is forwarded to both
+  // stages. Decompose turns an alloc_tensor copy into hivm.hir.copy, which
+  // may alias its source, so the whole pipeline runs again.
   pm.addPass(
       bishengir::bufferization::createTensorCopyInsertionPass(oneShotOptions));
   pm.nest<func::FuncOp>().addPass(createDecomposeAllocTensorCopyPass());

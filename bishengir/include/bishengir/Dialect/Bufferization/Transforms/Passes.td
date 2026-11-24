@@ -53,12 +53,21 @@ def TensorCopyInsertion : Pass<"tensor-copy-insertion", "mlir::ModuleOp"> {
     Running this pass before `one-shot-bufferize` (with `copy-before-write`
     or the default analyze+copy path) allows a second round of analysis to
     catch conflicts that were exposed by the first round's copy insertion.
+
+    This pass is the pipeline of `insert-loop-init-copies` followed by
+    `resolve-tensor-copy-conflicts`. Options are parsed once and forwarded to
+    both stages. A loop yield aliases its init, so the first stage copies
+    loop inits and the second stage analyzes that IR. The two stages stay
+    inside this pass: a pass between them can turn the copy into an op that
+    aliases its source, and the yield is then decided against the original
+    tensor again.
   }];
   let constructor = "bishengir::bufferization::createTensorCopyInsertionPass()";
   let dependentDialects = ["mlir::bufferization::BufferizationDialect",
                            "mlir::memref::MemRefDialect",
                            "mlir::tensor::TensorDialect",
-                           "mlir::func::FuncDialect"];
+                           "mlir::func::FuncDialect",
+                           "mlir::scf::SCFDialect"];
   let options =
       [Option<"allowReturnAllocsFromLoops", "allow-return-allocs-from-loops",
               "bool", /*default=*/"false",
