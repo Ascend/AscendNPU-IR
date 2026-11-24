@@ -281,8 +281,7 @@ static Value getPreloadCondition(const PreloadInfo &info, Location loc,
 static bool isRematerializableAliasOp(Operation *op) {
   if (!op)
     return false;
-  // View-like ops, pointer casts, and pure arithmetic ops can be rematerialized
-  // as part of a result chain in the preload skip branch.
+  // Rebuild both the view and the index expressions for its offsets and sizes.
   return isa<ViewLikeOpInterface, hivm::PointerCastOp, affine::AffineApplyOp>(
              op) ||
          isa<arith::ArithDialect>(op->getDialect());
