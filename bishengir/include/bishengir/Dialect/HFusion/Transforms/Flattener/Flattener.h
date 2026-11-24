@@ -216,10 +216,6 @@ private:
   template <typename OpTy>
   void adjustTensorOutOpSource(OpTy tensorOutOp, OpBuilder &builder);
 
-  /// Adjusts tensor output operations (destination).
-  template <typename OpTy>
-  void adjustTensorOutOpDest(OpTy tensorOutOp, OpBuilder &builder);
-
   /// Adjusts tensor output operations (source alternative).
   template <typename OpTy>
   void adjustTensorOutOpSrc(OpTy tensorOutOp, OpBuilder &builder);
