@@ -74,7 +74,8 @@ std::unique_ptr<Pass>
 createOptimizeRowLoadsPass(const OptimizeRowLoadsOptions &options = {});
 
 /// Create a pass to infer the core type of each function.
-std::unique_ptr<Pass> createInferFuncCoreTypePass();
+std::unique_ptr<Pass>
+createInferFuncCoreTypePass(const InferFuncCoreTypeOptions &options = {});
 
 /// Create a pass to convert ops from other dialects to HIVM Ops.
 std::unique_ptr<Pass> createConvertToHIVMOpPass();

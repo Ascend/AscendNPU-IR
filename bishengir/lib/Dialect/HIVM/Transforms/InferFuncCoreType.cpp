@@ -49,6 +49,8 @@ namespace {
 struct InferFuncCoreTypePass
     : public impl::InferFuncCoreTypeBase<InferFuncCoreTypePass> {
 public:
+  using Base::Base;
+
   enum class CoreTypeConstraint { None = 0, AIC, AIV, MIX };
 
 public:
@@ -77,6 +79,8 @@ public:
       });
       // Coupled targets use an implicit AIV function convention except for
       // the AIC annotations above. Resolve placement without changing it.
+      if (!resolveOpPlacement)
+        return;
       module.walk([](func::FuncOp func) {
         hivm::resolveFlexibleCoreTypes(func, /*specializeBoth=*/false,
                                        hivm::TFuncCoreType::AIV);
@@ -182,7 +186,8 @@ public:
       func->setAttr(hivm::TFuncCoreTypeAttr::name,
                     hivm::TFuncCoreTypeAttr::get(func->getContext(), e));
 
-      hivm::resolveFlexibleCoreTypes(func);
+      if (resolveOpPlacement)
+        hivm::resolveFlexibleCoreTypes(func);
 
       auto parentModule = func->getParentOfType<ModuleOp>();
       // Materialize the A6 default before sub-block partitioning and MIX
@@ -453,6 +458,7 @@ private:
 };
 } // namespace
 
-std::unique_ptr<Pass> mlir::hivm::createInferFuncCoreTypePass() {
-  return std::make_unique<InferFuncCoreTypePass>();
+std::unique_ptr<Pass> mlir::hivm::createInferFuncCoreTypePass(
+    const InferFuncCoreTypeOptions &options) {
+  return std::make_unique<InferFuncCoreTypePass>(options);
 }

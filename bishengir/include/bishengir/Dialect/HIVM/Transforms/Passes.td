@@ -48,6 +48,10 @@ def OptimizeRowLoads : HIVMPass<"hivm-optimize-row-loads", "func::FuncOp",
 def InferFuncCoreType : HIVMPass<"hivm-infer-func-core-type", "ModuleOp"> {
   let summary = "Infer the core type of each function";
   let constructor = "mlir::hivm::createInferFuncCoreTypePass()";
+  let options = [
+    Option<"resolveOpPlacement", "resolve-op-placement", "bool", "true",
+           "Resolve flexible operation placement after classifying functions">
+  ];
   let dependentDialects = ["hivm::HIVMDialect", ];
 }
 
