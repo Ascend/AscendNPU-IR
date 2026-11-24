@@ -14,6 +14,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Pass/PassManager.h"
+#include "bishengir/Target/NPU/NPUArchitectureFeatures.h"
 #include "bishengir/Tools/Utils/AuxBitcodePaths.h"
 #include "bishengir/Tools/Utils/Utils.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
@@ -664,6 +665,13 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
                                        BishengAsyncRuntime *runtime) {
   if (failed(checkInOutOptionsValidity(config))) {
     return failure();
+  }
+
+  if (config.getUsePipelineVersion() == 0) {
+    auto arch = hacc::getArchitecture(config.getTarget());
+    bool useV2 =
+        npu::getDefaultHIVMPipeline(arch) == npu::DefaultHIVMPipeline::kV2;
+    config.setUsePipelineVersion(useV2 ? 2 : 1);
   }
 
   if (regbase::isSpecialCaseCloseNewTreeReduce(mod)) {
