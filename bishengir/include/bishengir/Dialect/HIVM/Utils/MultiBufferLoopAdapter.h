@@ -15,22 +15,30 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// MultiBufferLoopAdapter wraps an scf.for or scf.while loop and exposes a
-// uniform "counter" abstraction used by the four multi-buffer passes
-// (MarkMultiBuffer, PlanMemory, GraphSyncSolver, EnableMultiBuffer) to drive
-// per-iteration slot rotation.
+// MultiBufferLoopAdapter wraps an scf.for or scf.while loop and exposes one
+// uniform counter abstraction to MarkMultiBuffer, PlanMemory, GraphSyncSolver
+// and EnableMultiBuffer.
+// The counter decides what the slot rotates on:
+//   loop counter      -> one step per loop iteration
+//   conditional block -> one step per entry of that block
 //
-// Counter strategy (unified for both scf.for and scf.while; legacy
-// affine.apply((iv - lb)/step) % N codegen for scf.for is retired):
-//   The adapter materializes a single hivm.hir.multi_buffer_counter op in the
-//   loop body and reuses it across all clients. The op is a pure anchor with no
-//   attributes; the later lowering pass keys the concrete counter storage off
-//   the op's owning loop.
+// One hivm.hir.multi_buffer_counter op per block, reused by every client of
+// that block. The op is a pure anchor with no attributes;
+// LowerMultiBufferCounter keys the storage off the op's block.
 //
-//   A later lowering pass rewrites that HIVM op to the concrete stateful form:
-//   memref.alloca<1xi64>() + initial store at FunctionOpInterface entry,
-//   body-head load, and body-tail increment-store. The loop signature
-//   (iter_args / yields / result types) is *not* modified.
+// LowerMultiBufferCounter rewrites the op to the stateful form:
+// memref.alloca<1xi64>() + initial store at FunctionOpInterface entry,
+// block-head load, block-tail increment-store.
+// The loop signature (iter_args, yields, result types) is left alone.
+//
+// A conditional block runs fewer times than the loop:
+// a loop-iteration index reproduces neither its rotation nor its parity.
+// So that block owns its counter, incremented before its own terminator
+// => one step per entry.
+// getModuloIndex takes the owning block; getIterationCounter keeps the loop
+// body counter.
+//
+// Legacy affine.apply((iv - lb)/step) % N codegen for scf.for is retired.
 //
 //===----------------------------------------------------------------------===//
 
@@ -51,24 +59,33 @@ public:
   /// Returns failure if `loop` is neither scf.for nor scf.while.
   static FailureOr<MultiBufferLoopAdapter> create(LoopLikeOpInterface loop);
 
-  /// Returns the slot-select index value, computed as `counter mod modular`,
-  /// where counter is produced by the shared hivm.hir.multi_buffer_counter op
-  /// for both scf.for and scf.while. Counter-op materialization is done
-  /// idempotently on the first call.
+  /// Slot-select index: `counter mod modular`.
+  /// counter := the hivm.hir.multi_buffer_counter op of `anchorBlock`.
+  /// The first call materializes it, later calls reuse it.
   ///
-  /// For scf.while, `anchor` selects before vs after. When null, the builder
-  /// insertion point selects the region, falling back to after if unavailable.
+  /// `anchorBlock` := the block whose counter drives the rotation.
+  /// Pass the consuming block, never the buffer's definition block.
+  ///
+  /// scf.for: that block's own counter when it lies in this loop and no other
+  /// loop sits between the two; the loop body otherwise.
+  /// scf.while: the region is `anchorBlock`'s, the insertion point's when
+  /// `anchorBlock` names none, the after region as the last fallback.
   Value getModuloIndex(OpBuilder &builder, int64_t modular,
-                       Operation *anchor = nullptr);
+                       Block *anchorBlock = nullptr);
 
-  /// Returns the raw counter SSA value (no modulo), index-typed, from the
-  /// shared hivm.hir.multi_buffer_counter op for both for and while.
-  /// See getModuloIndex for the while before/after `anchor` rule.
-  Value getIterationCounter(OpBuilder &builder, Operation *anchor = nullptr);
+  /// Raw counter SSA value, index-typed, no modulo.
+  /// Same hivm.hir.multi_buffer_counter op as getModuloIndex, for for and
+  /// while.
+  /// while region rule: see getModuloIndex.
+  ///
+  /// The counter always stays on the loop body, even for a nested
+  /// `anchorBlock`: this value drives iteration parity, which a block counter
+  /// does not reproduce.
+  Value getIterationCounter(OpBuilder &builder, Block *anchorBlock = nullptr);
 
   /// Idempotent. Ensures the shared counter op exists. The concrete increment
   /// store is produced by the lowering pass.
-  void finalizeIncrement(OpBuilder &builder, Operation *anchor = nullptr);
+  void finalizeIncrement(OpBuilder &builder, Block *anchorBlock = nullptr);
 
   LoopLikeOpInterface loop() const { return loop_; }
   // Important: dyn_cast on the LoopLikeOpInterface wrapper itself does *not*
@@ -90,10 +107,13 @@ public:
 private:
   explicit MultiBufferLoopAdapter(LoopLikeOpInterface loop) : loop_(loop) {}
 
-  /// Find or create the shared counter op in the loop body. Works uniformly for
-  /// both scf.for (body = forOp.getBody()) and scf.while (before or after
-  /// region selected by `anchor` or the builder insertion point).
-  void ensureCounterMaterialized(OpBuilder &builder, Operation *anchor);
+  /// Find or create the counter op of the block that owns the current use.
+  /// scf.for -> body; scf.while -> the region `anchorBlock` names, else the
+  /// builder insertion point.
+  /// null `counterBlock` -> the loop body counter.
+  /// Otherwise -> the counter of `counterBlock`.
+  void ensureCounterMaterialized(OpBuilder &builder, Block *anchorBlock,
+                                 Block *counterBlock);
 
   LoopLikeOpInterface loop_;
   Value cachedCounter_ = {};

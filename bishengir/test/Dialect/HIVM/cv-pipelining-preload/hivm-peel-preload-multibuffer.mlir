@@ -96,3 +96,49 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>} {
 // CHECK-NOT: memref.store
 // CHECK: scf.yield
 // CHECK: return
+
+// A guarded branch shares the loop body's alloca and does not step it: one
+// iteration advances one slot whether or not the branch ran, so the slot stays
+// in step with a flag that rotates once per iteration.
+module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>} {
+  // CHECK-LABEL: func.func @guarded_branch_shares_owner_step(
+  func.func @guarded_branch_shares_owner_step(
+      %src: memref<16xf16, #hivm.address_space<gm>>,
+      %dst: memref<16xf16, #hivm.address_space<gm>>,
+      %cond: i1)
+      attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %c0 = arith.constant 0 : i32
+    %c8 = arith.constant 8 : i32
+    %c1 = arith.constant 1 : i32
+    %c0_i64 = arith.constant 0 : i64
+    %c128_i64 = arith.constant 128 : i64
+    scf.for %i = %c0 to %c8 step %c1 : i32 {
+      %buf = hivm.hir.pointer_cast(%c0_i64, %c128_i64)
+          : memref<16xf16, #hivm.address_space<ub>>
+      annotation.mark %buf {hivm.multi_buffer = 2 : i32}
+          : memref<16xf16, #hivm.address_space<ub>>
+      hivm.hir.load ins(%src : memref<16xf16, #hivm.address_space<gm>>)
+        outs(%buf : memref<16xf16, #hivm.address_space<ub>>)
+      scf.if %cond {
+        %inner = hivm.hir.pointer_cast(%c0_i64, %c128_i64)
+            : memref<16xf16, #hivm.address_space<ub>>
+        annotation.mark %inner {hivm.multi_buffer = 2 : i32}
+            : memref<16xf16, #hivm.address_space<ub>>
+        hivm.hir.store ins(%inner : memref<16xf16, #hivm.address_space<ub>>)
+          outs(%dst : memref<16xf16, #hivm.address_space<gm>>)
+      }
+    } {hivm.max_preload_num = 2 : i32}
+    return
+  }
+}
+
+// CHECK: %[[ALLOCA:.*]] = memref.alloca() : memref<1xi64>
+// CHECK: scf.for
+// CHECK: %[[LCTR:.*]] = memref.load %[[ALLOCA]][
+// CHECK: scf.if
+// CHECK: %[[BCTR:.*]] = memref.load %[[ALLOCA]][
+// CHECK: hivm.hir.store
+// CHECK-NEXT: }
+// CHECK-NOT: arith.addi
+// CHECK: %[[NEXT:.*]] = arith.addi %[[LCTR]], %{{.*}} : i64
+// CHECK-NEXT: memref.store %[[NEXT]], %[[ALLOCA]][

@@ -318,7 +318,14 @@ static Value lowerCountersInBlock(RewriterBase &rewriter, Block *block,
 
   OpBuilder::InsertionGuard guard(rewriter);
   Location loc = counters.front().getLoc();
-  rewriter.setInsertionPoint(counters.front());
+  // The load must dominate every use in the block.
+  // A counter can sit below ops that already consume it: replaceOpWithRegion
+  // inlines a preload guard, which lifts a guarded counter into the loop body,
+  // below the multi-buffer casts that read it.
+  // Loading it where it stands => the def lands after the use in one block.
+  // The block's value is the same wherever it is read: the only increment is at
+  // the terminator.
+  rewriter.setInsertionPointToStart(block);
   Value val = loadCounter(rewriter, loc, alloca);
   for (MultiBufferCounterOp counter : counters)
     rewriter.replaceOp(counter, val);
@@ -376,11 +383,19 @@ static Value sharedNestedAlloca(Block *body, Value parentAlloca) {
 }
 
 /// Lower counters, expand multi-addr casts via the same counter, and strip
-/// multi_buffer marks in `block`. Nested loops with their own counter get a
-/// private alloca. A nested loop that yields a parent buffer reuses
-/// `sharedAlloca` and does not increment it. Nested if reuses `sharedAlloca`.
+/// multi_buffer marks in `block`.
+/// A counter op in `block` -> one step per entry of that block.
+/// A block without one -> reads `sharedAlloca`:
+///   - guarded branch: no step here, its owner steps once per entry
+///   - loop body: steps here, it runs once per its own iteration
+///   - yields a multi-addr cast: no step here, that view belongs to the parent
+///     iteration unless the caller owns the parent counter (`allowBorrowParent`
+///     false for the peeled middle body, which is that counter's owner)
+/// `isGuardedBranch` marks a branch of an `scf.if`, the only region running
+/// fewer times than the block that owns its counter.
 static void processMultiBufferInBlock(RewriterBase &rewriter, Block *block,
-                                      Value sharedAlloca, func::FuncOp funcOp,
+                                      Value sharedAlloca, bool isGuardedBranch,
+                                      func::FuncOp funcOp,
                                       bool allowBorrowParent = true) {
   Value alloca = sharedAlloca;
   bool hasTopLevelCounter =
@@ -391,21 +406,22 @@ static void processMultiBufferInBlock(RewriterBase &rewriter, Block *block,
         auto pc = dyn_cast<PointerCastOp>(op);
         return pc && needsMultiBufferExpansion(pc);
       });
-  // Borrowed parent buffer: read the parent counter, do not bump it per
-  // inner trip and do not allocate a second counter.
-  bool borrowParent = allowBorrowParent && sharedAlloca &&
-                      !hasTopLevelCounter && yieldsMultiBufferCast(block);
   if ((hasTopLevelCounter || hasTopLevelMultiCast) && !alloca)
     alloca = createCounterAlloca(rewriter, block->front().getLoc(), funcOp);
 
   Value iterCounter = lowerCountersInBlock(rewriter, block, alloca);
   if (!iterCounter && hasTopLevelMultiCast) {
+    Location loc = block->front().getLoc();
     OpBuilder::InsertionGuard bodyGuard(rewriter);
     rewriter.setInsertionPointToStart(block);
-    iterCounter = loadCounter(rewriter, block->front().getLoc(), alloca);
-    if (!borrowParent) {
+    iterCounter = loadCounter(rewriter, loc, alloca);
+    // Only a loop body steps here: a guarded branch is counted by the single
+    // step of its owner, and a yielded view follows the parent iteration.
+    bool borrowsParent =
+        allowBorrowParent && sharedAlloca && yieldsMultiBufferCast(block);
+    if (!isGuardedBranch && !borrowsParent) {
       rewriter.setInsertionPoint(block->getTerminator());
-      incrementCounter(rewriter, block->front().getLoc(), alloca, iterCounter);
+      incrementCounter(rewriter, loc, alloca, iterCounter);
     }
   }
   expandMultiBufferCastsInBlock(rewriter, block, iterCounter);
@@ -424,21 +440,26 @@ static void processMultiBufferInBlock(RewriterBase &rewriter, Block *block,
     if (auto nestFor = dyn_cast<scf::ForOp>(&op)) {
       processMultiBufferInBlock(rewriter, nestFor.getBody(),
                                 sharedNestedAlloca(nestFor.getBody(), alloca),
-                                funcOp);
+                                /*isGuardedBranch=*/false, funcOp);
     } else if (auto nestWhile = dyn_cast<scf::WhileOp>(&op)) {
       processMultiBufferInBlock(
           rewriter, &nestWhile.getBefore().front(),
-          sharedNestedAlloca(&nestWhile.getBefore().front(), alloca), funcOp);
+          sharedNestedAlloca(&nestWhile.getBefore().front(), alloca),
+          /*isGuardedBranch=*/false, funcOp);
       processMultiBufferInBlock(
           rewriter, &nestWhile.getAfter().front(),
-          sharedNestedAlloca(&nestWhile.getAfter().front(), alloca), funcOp);
+          sharedNestedAlloca(&nestWhile.getAfter().front(), alloca),
+          /*isGuardedBranch=*/false, funcOp);
     } else if (auto nestIf = dyn_cast<scf::IfOp>(&op)) {
+      // A branch shares `alloca`: a counter op of its own steps once per entry
+      // through lowerCountersInBlock, and a branch without one only reads the
+      // counter its owner steps.
       if (!nestIf.getThenRegion().empty())
         processMultiBufferInBlock(rewriter, &nestIf.getThenRegion().front(),
-                                  alloca, funcOp);
+                                  alloca, /*isGuardedBranch=*/true, funcOp);
       if (!nestIf.getElseRegion().empty())
         processMultiBufferInBlock(rewriter, &nestIf.getElseRegion().front(),
-                                  alloca, funcOp);
+                                  alloca, /*isGuardedBranch=*/true, funcOp);
     }
   }
 }
@@ -532,23 +553,26 @@ static void clonePeeledIteration(RewriterBase &rewriter, scf::ForOp forOp,
       if (auto nestFor = dyn_cast<scf::ForOp>(cloned))
         processMultiBufferInBlock(
             rewriter, nestFor.getBody(),
-            sharedNestedAlloca(nestFor.getBody(), counterAlloca), funcOp);
+            sharedNestedAlloca(nestFor.getBody(), counterAlloca),
+            /*isGuardedBranch=*/false, funcOp);
       else if (auto nestWhile = dyn_cast<scf::WhileOp>(cloned)) {
         processMultiBufferInBlock(
             rewriter, &nestWhile.getBefore().front(),
             sharedNestedAlloca(&nestWhile.getBefore().front(), counterAlloca),
-            funcOp);
+            /*isGuardedBranch=*/false, funcOp);
         processMultiBufferInBlock(
             rewriter, &nestWhile.getAfter().front(),
             sharedNestedAlloca(&nestWhile.getAfter().front(), counterAlloca),
-            funcOp);
+            /*isGuardedBranch=*/false, funcOp);
       } else if (auto nestIf = dyn_cast<scf::IfOp>(cloned)) {
         if (!nestIf.getThenRegion().empty())
           processMultiBufferInBlock(rewriter, &nestIf.getThenRegion().front(),
-                                    counterAlloca, funcOp);
+                                    counterAlloca, /*isGuardedBranch=*/true,
+                                    funcOp);
         if (!nestIf.getElseRegion().empty())
           processMultiBufferInBlock(rewriter, &nestIf.getElseRegion().front(),
-                                    counterAlloca, funcOp);
+                                    counterAlloca, /*isGuardedBranch=*/true,
+                                    funcOp);
       }
       return;
     }
@@ -630,7 +654,8 @@ static void peelPreloadLoop(scf::ForOp forOp, size_t maxPreloadNum) {
     if (counterAlloca) {
       auto funcOp = forOp->getParentOfType<func::FuncOp>();
       processMultiBufferInBlock(rewriter, middle.getBody(), counterAlloca,
-                                funcOp, /*allowBorrowParent=*/false);
+                                /*isGuardedBranch=*/false, funcOp,
+                                /*allowBorrowParent=*/false);
     }
     erasePreloadNumMarks(middle);
   }
