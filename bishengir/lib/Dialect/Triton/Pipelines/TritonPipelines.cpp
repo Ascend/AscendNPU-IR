@@ -138,6 +138,7 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   bishengir::TileDotLoadsOptions tileDotLoadsOpts;
   tileDotLoadsOpts.smemBudgetBytes = options.sharedDynamicSize;
   tileDotLoadsOpts.KTileSize = options.KTileSize;
+  tileDotLoadsOpts.superBlockFactor = options.superBlockFactor;
   tileDotLoadsOpts.enableGlobalScratchAllocation = options.enableGlobalScratchAllocation;
   pm.addNestedPass<mlir::triton::FuncOp>(
       bishengir::triton::createTileDotLoadsPass(tileDotLoadsOpts));
