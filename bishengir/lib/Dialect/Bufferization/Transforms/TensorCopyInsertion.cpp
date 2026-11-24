@@ -124,34 +124,6 @@ insertLoopInitCopies(Operation *op,
   return success();
 }
 
-// CLI options live only on tensor-copy-insertion. The two stages receive the
-// parsed OneShotBufferizationOptions and have no flags of their own.
-#define FILL_COPY_INSERTION_OPTIONS(opt)                                       \
-  do {                                                                         \
-    (opt).allowReturnAllocsFromLoops = allowReturnAllocsFromLoops;             \
-    (opt).allowUnknownOps = allowUnknownOps;                                   \
-    (opt).analysisFuzzerSeed = analysisFuzzerSeed;                             \
-    (opt).analysisHeuristic = parseHeuristicOption(analysisHeuristic);         \
-    (opt).bufferizeFunctionBoundaries = bufferizeFunctionBoundaries;           \
-    (opt).checkParallelRegions = checkParallelRegions;                         \
-    (opt).copyBeforeWrite = copyBeforeWrite;                                   \
-    (opt).dumpAliasSets = dumpAliasSets;                                       \
-    if (mustInferMemorySpace) {                                                \
-      (opt).defaultMemorySpaceFn =                                             \
-          [](TensorType) -> std::optional<Attribute> { return std::nullopt; }; \
-    }                                                                          \
-    (opt).printConflicts = printConflicts;                                     \
-    (opt).testAnalysisOnly = testAnalysisOnly;                                 \
-    (opt).noAnalysisFuncFilter = noAnalysisFuncFilter;                         \
-    OpFilter::Entry::FilterFn filterFn = [&](Operation *op) {                  \
-      if (dialectFilter.hasValue())                                            \
-        return llvm::is_contained(dialectFilter,                               \
-                                  op->getDialect()->getNamespace());           \
-      return true;                                                             \
-    };                                                                         \
-    (opt).opFilter.allowOperation(filterFn);                                   \
-  } while (false)
-
 // "copy-before-write" inserts a copy before every memory write, while
 // "test-analysis-only" runs the analysis and leaves the IR unchanged.
 static LogicalResult
@@ -326,7 +298,7 @@ struct TensorCopyInsertionPass
     if (options)
       opt = *options;
     else
-      FILL_COPY_INSERTION_OPTIONS(opt);
+      fillCopyInsertionOptions(opt);
     if (failed(validateCopyInsertionOptions(&getContext(), opt)))
       return signalPassFailure();
     // The filter is applied once. Both stages see the same op filter.
@@ -350,6 +322,34 @@ struct TensorCopyInsertionPass
   }
 
 private:
+  // CLI options live only on tensor-copy-insertion. The two stages receive the
+  // parsed OneShotBufferizationOptions and have no flags of their own.
+  void fillCopyInsertionOptions(OneShotBufferizationOptions &opt) {
+    opt.allowReturnAllocsFromLoops = allowReturnAllocsFromLoops;
+    opt.allowUnknownOps = allowUnknownOps;
+    opt.analysisFuzzerSeed = analysisFuzzerSeed;
+    opt.analysisHeuristic = parseHeuristicOption(analysisHeuristic);
+    opt.bufferizeFunctionBoundaries = bufferizeFunctionBoundaries;
+    opt.checkParallelRegions = checkParallelRegions;
+    opt.copyBeforeWrite = copyBeforeWrite;
+    opt.dumpAliasSets = dumpAliasSets;
+    if (mustInferMemorySpace) {
+      opt.defaultMemorySpaceFn = [](TensorType) -> std::optional<Attribute> {
+        return std::nullopt;
+      };
+    }
+    opt.printConflicts = printConflicts;
+    opt.testAnalysisOnly = testAnalysisOnly;
+    opt.noAnalysisFuncFilter = noAnalysisFuncFilter;
+    OpFilter::Entry::FilterFn filterFn = [&](Operation *op) {
+      if (dialectFilter.hasValue())
+        return llvm::is_contained(dialectFilter,
+                                  op->getDialect()->getNamespace());
+      return true;
+    };
+    opt.opFilter.allowOperation(filterFn);
+  }
+
   std::optional<OneShotBufferizationOptions> options;
 };
 } // namespace

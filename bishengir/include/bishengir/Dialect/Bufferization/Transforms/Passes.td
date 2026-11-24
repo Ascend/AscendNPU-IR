@@ -66,8 +66,7 @@ def TensorCopyInsertion : Pass<"tensor-copy-insertion", "mlir::ModuleOp"> {
   let dependentDialects = ["mlir::bufferization::BufferizationDialect",
                            "mlir::memref::MemRefDialect",
                            "mlir::tensor::TensorDialect",
-                           "mlir::func::FuncDialect",
-                           "mlir::scf::SCFDialect"];
+                           "mlir::func::FuncDialect", "mlir::scf::SCFDialect"];
   let options =
       [Option<"allowReturnAllocsFromLoops", "allow-return-allocs-from-loops",
               "bool", /*default=*/"false",

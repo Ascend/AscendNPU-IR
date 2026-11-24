@@ -79,25 +79,13 @@ static BufferRelation bufferRelation(Operation *op, OpResult opResult,
                                       : BufferRelation::Unknown;
 }
 
-// The while init is the value at loop entry. Once a yield is tied to that
-// init, the init and a tensor defined inside the loop show up in one alias
-// set. The entry value is not read or written by that inside tensor: the
-// body runs only after the entry read, and an in-place yield of a value
-// produced in the body is the loop-carried update. Reporting a conflict
-// copies the yielded value, or copies the init in front of the loop, and
-// the next tensor-copy-insertion copies that init copy again.
+// Reads and writes of two distinct ops that are both nested inside the loop
+// region do not conflict at the loop boundary. Same rule as scf.for.
 bool isNotConflicting(Operation *op, OpOperand *uRead, OpOperand *uWrite,
                       const AnalysisState &state) {
-  auto whileOp = cast<scf::WhileOp>(op);
-  // The while operand is one side. The other side is inside the loop.
-  Operation *insideOp = nullptr;
-  if (uWrite->getOwner() == whileOp)
-    insideOp = uRead->get().getDefiningOp();
-  else if (uRead->getOwner() == whileOp)
-    insideOp = uWrite->getOwner();
-  else
-    return false;
-  return insideOp && whileOp->isProperAncestor(insideOp);
+  return uRead->getOwner() != uWrite->getOwner() &&
+         op->isAncestor(uRead->getOwner()) &&
+         op->isAncestor(uWrite->getOwner());
 }
 
 LogicalResult resolveConflicts(Operation *op, RewriterBase &rewriter,
