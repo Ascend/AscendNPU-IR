@@ -416,6 +416,19 @@ std::string getVGatherMaskOpLibraryCallName(VGatherMaskOp concreteOp,
 
 std::string getDebugOpLibraryCallName(DebugOp concreteOp,
                                       std::optional<bool> /*isOpsAligned*/) {
+  // triton-ascend records the signedness of the printed value in the
+  // `is_signed` array. Signless integers are printed through the unsigned
+  // library entry (uint8_t/uint16_t/uint32_t) when the flag is 0.
+  auto printTypeName = [&](Type elemType) -> std::string {
+    auto isSignedAttr =
+        concreteOp->getAttrOfType<DenseI32ArrayAttr>("is_signed");
+    bool printAsUnsigned = elemType.isSignlessInteger() && isSignedAttr &&
+                           !isSignedAttr.empty() && isSignedAttr[0] == 0;
+    return getTypeName(concreteOp.getLoc(), elemType,
+                       printAsUnsigned ? hivm::TypeFn::cast_unsigned
+                                       : hivm::TypeFn::cast_signed);
+  };
+
   std::string callName = concreteOp.getDebugtype().str();
   auto argTy = concreteOp.getArg().getType();
   if (isa<ShapedType>(argTy)) {
@@ -429,8 +442,7 @@ std::string getDebugOpLibraryCallName(DebugOp concreteOp,
     if (rank > maxOpRank)
       concreteOp.emitError("DebugOp requires rank <= maxOpRank");
     std::string libCallDim = std::to_string(rank) + "d";
-    std::string dataTypeStr =
-        getTypeName(concreteOp.getLoc(), argBufTy.getElementType());
+    std::string dataTypeStr = printTypeName(argBufTy.getElementType());
     callName += "_" + libCallDim + "_" + dataTypeStr;
     // get and append address space
     // when getOpLibraryCallName is called from HIVMToStandard,
@@ -457,7 +469,7 @@ std::string getDebugOpLibraryCallName(DebugOp concreteOp,
   } else {
     // Note: in this case "_mlir_ciface_" won't be automatically added by
     // mlir/lib/Conversion/FuncToLLVM/FuncToLLVM.cpp
-    std::string dataTypeStr = getTypeName(concreteOp.getLoc(), argTy);
+    std::string dataTypeStr = printTypeName(argTy);
     callName = "_mlir_ciface_" + callName + "_scalar_" + dataTypeStr;
     callName += "_gm"; // currently, scalar can choose either gm or ubuf since
                        // they currently call the same core

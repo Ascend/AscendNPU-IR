@@ -2306,6 +2306,32 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  // The `is_signed` flag selects the unsigned print library entry for signless
+  // integers: uint8_t instead of int8_t.
+  // CHECK-LABEL: func.func @test_print_signedness
+  // CHECK: call @print_1d_uint8_t_gm
+  // CHECK: call @print_1d_int8_t_ubuf
+  func.func @test_print_signedness(
+      %gm: memref<1024xi8, #hivm.address_space<gm>>,
+      %ub: memref<1024xi8, #hivm.address_space<ub>>) {
+    hivm.hir.init_debug
+    hivm.hir.debug {debugtype = "print", hex = false, is_signed = array<i32: 0>, memscope = #hivm.address_space<gm>, prefix = " u8 =: ", tcoretype = #hivm.tcore_type<VECTOR>} %gm : memref<1024xi8, #hivm.address_space<gm>>
+    hivm.hir.debug {debugtype = "print", hex = false, is_signed = array<i32: 1>, memscope = #hivm.address_space<ub>, prefix = " s8 =: ", tcoretype = #hivm.tcore_type<VECTOR>} %ub : memref<1024xi8, #hivm.address_space<ub>>
+    hivm.hir.finish_debug
+    return
+  }
+  // CHECK-LABEL: func.func @test_print_signedness_scalar
+  // CHECK: call @_mlir_ciface_print_scalar_uint8_t_gm
+  // CHECK: call @_mlir_ciface_print_scalar_int8_t_gm
+  func.func @test_print_signedness_scalar(%u: i8, %s: i8) {
+    hivm.hir.debug {debugtype = "print", hex = false, is_signed = array<i32: 0>, prefix = " u8 scalar =: "} %u : i8
+    hivm.hir.debug {debugtype = "print", hex = false, is_signed = array<i32: 1>, prefix = " s8 scalar =: "} %s : i8
+    return
+  }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   func.func @test_vinterleave_op() {
   // CHECK: scf.for
   // CHECK: call @interleave_1d_half
