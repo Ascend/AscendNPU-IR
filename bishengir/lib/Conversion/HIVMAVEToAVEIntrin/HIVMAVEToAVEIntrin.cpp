@@ -606,14 +606,14 @@ struct HIVMVusqzOpLowering : ConvertOpToLLVMPattern<hivmave::VusqzOp> {
       return rewriter.notifyMatchFailure(op, "expected vector result");
     Type elementType = resType.getElementType();
     if (!(elementType.isInteger(8) || elementType.isInteger(16) ||
-          elementType.isInteger(32)))
-      return rewriter.notifyMatchFailure(op, "vusqz requires integer result");
+          elementType.isInteger(32) || elementType.isBF16()))
+      return rewriter.notifyMatchFailure(op, "unsupported vusqz result type");
     VectorType vlType = createVLVectorType(elementType);
     // VUSQZ is an in-place merging instruction: its destination must start at
     // zero.  Materialize that zero with VBR; a dense zero-vector constant can
     // survive as BUILD_VECTOR and has no ISel pattern on the CCE backend.
     Value zeroScalar = rewriter.create<LLVM::ConstantOp>(
-        loc, elementType, rewriter.getIntegerAttr(elementType, 0));
+        loc, elementType, rewriter.getZeroAttr(elementType));
     Value zero = rewriter.create<VbrInstrOp>(loc, vlType, zeroScalar).getRes();
     Value mask = getVLRegValueOrSelf(op.getMask(), rewriter);
     Value result =

@@ -72,6 +72,15 @@ llvm.func @vusqz(%src: vector<64xi32>, %mask: vector<256xi1>)
   llvm.return %res : vector<64xi32>
 }
 
+// CHECK-LABEL: @vusqz_bf16
+// CHECK: call <128 x bfloat> @llvm.hivm.vusqz.m.v128bf16
+llvm.func @vusqz_bf16(%src: vector<128xbf16>, %mask: vector<256xi1>)
+    -> vector<128xbf16> {
+  %res = "hivm_regbaseintrins.intr.hivm.vusqz.m"(%src, %mask)
+      : (vector<128xbf16>, vector<256xi1>) -> vector<128xbf16>
+  llvm.return %res : vector<128xbf16>
+}
+
 // CHECK-LABEL: @vaddcs
 // CHECK: call { <64 x i32>, <256 x i1> } @llvm.hivm.vaddcs.v64s32
 // CHECK: extractvalue { <64 x i32>, <256 x i1> } {{.*}}, 0
