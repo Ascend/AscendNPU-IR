@@ -18,9 +18,9 @@
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_SYNC_COMMON_H
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "llvm/ADT/STLExtras.h"
 #include <cstddef>
@@ -412,11 +412,25 @@ using SyncOperations = SmallVector<SmallVector<std::unique_ptr<SyncOperation>>>;
 using Buffer2MemInfoMap =
     llvm::DenseMap<Value, llvm::SmallVector<std::unique_ptr<BaseMemInfo>>>;
 
+/// Check if an mmadl1 operation needs (pipe_m, pipe_mte1) sync related
+/// arguments.
+bool checkMmadl1NeedsPipeMPipeMTE1SyncArg(MmadL1Op mmadL1Op);
+
 bool isBackwardSync(const CompoundInstanceElement *nowCompound,
                     const CompoundInstanceElement *frontCompound);
 
+bool isBackwardSyncUnderForLoop(const CompoundInstanceElement *nowCompound,
+                                const CompoundInstanceElement *frontCompound,
+                                const std::optional<unsigned> &forEndIndex);
+
 // Check all loop-like parents of `op` to be of class SCF::ForOps.
 bool checkAllParentLoopsAreForLoops(Operation *op);
+
+// check and assert that index is within the bounds of syncIR
+void checkSyncIRIndex(const SyncIRs &syncIR, int index);
+
+// check and assert given condition
+void checkCondition(bool condition, const std::string &message);
 
 // check and assert that index is within the bounds of syncIR
 void checkSyncIRIndex(const SyncIRs &syncIR, int index);

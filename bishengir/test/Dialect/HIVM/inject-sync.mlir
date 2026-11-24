@@ -538,6 +538,13 @@ module {
     %c256 = arith.constant 256 : index
     %c0_i64 = arith.constant 0 : i64
     %0 = hivm.hir.pointer_cast(%c0_i64) : memref<16xf32, #hivm.address_space<cbuf>>
+    // The local matmul template waits on M->MTE1 EVENT_ID0/ID1 unconditionally
+    // on entry and sets them again on exit, so this pass has to preset both
+    // flags and consume them afterwards. That holds even when the mmadL1 is not
+    // inside a loop, as here; otherwise the template would wait on a flag that
+    // nobody ever sets.
+    // CHECK: hivm.hir.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+    // CHECK: hivm.hir.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
     hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<16xf32, #hivm.address_space<gm>>)
                    outs(%0 : memref<16xf32, #hivm.address_space<cbuf>>)
     // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID1>]
@@ -546,7 +553,8 @@ module {
                    outs(%1 : memref<16xf32, #hivm.address_space<cbuf>>)
     // CHECK:   hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
     %2 = hivm.hir.pointer_cast(%c0_i64) : memref<256xf32, #hivm.address_space<cc>>
-    // CHECK: sync_related_args(%c1_i64, %c0_i64, %c-1_i64, %c-1_i64, %c-1_i64, %c-1_i64, %c-1_i64
+    // The last two operands are the M->MTE1 event ids the pass reserved above.
+    // CHECK: sync_related_args(%c1_i64, %c0_i64, %c-1_i64, %c-1_i64, %c-1_i64, %c0_i64{{[_0-9]*}}, %c1_i64{{[_0-9]*}}
     hivm.hir.mmadL1 ins(%0, %1, %true, %c16, %c256, %c16 : memref<16xf32, #hivm.address_space<cbuf>>,
                         memref<16xf32, #hivm.address_space<cbuf>>, i1, index, index, index)
                         outs(%2 : memref<256xf32, #hivm.address_space<cc>>)
@@ -554,6 +562,8 @@ module {
     // CHECK: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
     hivm.hir.fixpipe {enable_nz2nd} ins(%2 : memref<256xf32, #hivm.address_space<cc>>)
                      outs(%arg2 : memref<256xf32, #hivm.address_space<gm>>)
+    // CHECK: hivm.hir.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+    // CHECK: hivm.hir.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
     return
   }
 }

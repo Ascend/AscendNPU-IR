@@ -16,13 +16,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncCodegen.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncCodegen.h"
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncCommon.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/SCF/Utils/Utils.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/ValueRange.h"
@@ -32,7 +33,6 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/ErrorHandling.h"
 
 #define DEBUG_TYPE "hivm-inject-sync"
 
@@ -56,11 +56,12 @@ void SyncCodegen::Build() {
   });
 
   if (syncAnalysisMode == SyncAnalysisMode::NORMALSYNC) {
-    UpdateMmadL1SyncTemplateInter(rewriter);
+    UpdateMmadL1SyncTemplateInter();
+    UpdateMmadMxL1SyncTemplateInter();
   }
 }
 
-void SyncCodegen::UpdateMmadL1SyncTemplateInter(IRRewriter &rewriter) {
+void SyncCodegen::UpdateMmadL1SyncTemplateInter() {
   func_->walk<WalkOrder::PreOrder>([&](hivm::MmadL1Op mmadL1Op) {
     auto iter = mmadL12SyncTemplateInter.find(mmadL1Op);
     checkCondition(iter != mmadL12SyncTemplateInter.end(),
@@ -74,6 +75,25 @@ void SyncCodegen::UpdateMmadL1SyncTemplateInter(IRRewriter &rewriter) {
     newArgs.push_back(iter->second.BackPipeMPipeMTE1DBEvent0);
     newArgs.push_back(iter->second.BackPipeMPipeMTE1DBEvent1);
     auto syncArgs = mmadL1Op.getSyncRelatedArgsMutable();
+    syncArgs.assign(newArgs);
+  });
+}
+
+void SyncCodegen::UpdateMmadMxL1SyncTemplateInter() {
+  func_->walk<WalkOrder::PreOrder>([&](hivm::MmadMxL1Op mmadMxL1Op) {
+    auto iter = mmadMxL12SyncTemplateInter.find(mmadMxL1Op);
+    checkCondition(iter != mmadMxL12SyncTemplateInter.end(),
+                   "mmadMxL1 must have SyncTemplateInter");
+    SmallVector<Value> newArgs;
+    newArgs.push_back(iter->second.MmadMxL1WaitL1AEvent);
+    newArgs.push_back(iter->second.MmadMxL1WaitL1ScaleAEvent);
+    newArgs.push_back(iter->second.MmadMxL1WaitL1BEvent);
+    newArgs.push_back(iter->second.MmadMxL1WaitL1ScaleBEvent);
+    newArgs.push_back(iter->second.L1AWaitMmadMxL1Event);
+    newArgs.push_back(iter->second.L1ScaleAWaitMmadMxL1Event);
+    newArgs.push_back(iter->second.L1BWaitMmadMxL1Event);
+    newArgs.push_back(iter->second.L1ScaleBWaitMmadMxL1Event);
+    auto syncArgs = mmadMxL1Op.getSyncRelatedArgsMutable();
     syncArgs.assign(newArgs);
   });
 }
@@ -92,6 +112,9 @@ void SyncCodegen::UpdateOpInsertSync(IRRewriter &rewriter) {
         InitDefaultSyncTemplateInterForMmadL1Op(mmadL1Op);
         UpdateSyncTemplateInterForBackPipeMPipeMTE1DB(compoundElement,
                                                       mmadL1Op);
+      } else if (auto mmadMxL1Op =
+                     dyn_cast<MmadMxL1Op>(compoundElement->elementOp)) {
+        InitDefaultSyncTemplateInterForMmadMxL1Op(mmadMxL1Op);
       }
     } else if (auto *placeHolder =
                    dyn_cast<PlaceHolderInstanceElement>(nowElement.get())) {
@@ -111,8 +134,9 @@ void SyncCodegen::HandleUnitFlagEnabledOp(
     UnitFlagInfo unitFlagInfo) const {
   if (auto unitFlagArgsOpt =
           unitFlagInfo.getUnitFlagArgs(unitFlagEnabledOp, rewriter)) {
-    auto [unitFlagModes, unitFlagConds, unitFlagGroupId] =
-        unitFlagArgsOpt.value();
+    auto &unitFlagArgs = unitFlagArgsOpt.value();
+    auto &unitFlagModes = unitFlagArgs.unitFlagModes;
+    auto &unitFlagConds = unitFlagArgs.unitFlagConds;
     assert(unitFlagModes.size() <= 1 ||
            unitFlagModes.size() == unitFlagConds.size());
     if (!unitFlagModes.empty()) {
@@ -182,6 +206,9 @@ void SyncCodegen::UpdateCompoundOpInsertSync(
 
 void SyncCodegen::UpdateSyncTemplateInterForBackPipeMPipeMTE1DB(
     CompoundInstanceElement *nowCompound, hivm::MmadL1Op mmadL1Op) {
+  if (!checkMmadl1NeedsPipeMPipeMTE1SyncArg(mmadL1Op)) {
+    return;
+  }
   if (!nowCompound->BwdPipeMPipeMTE1SyncPtr ||
       nowCompound->BwdPipeMPipeMTE1SyncPtr->uselessSync) {
     // There is no reverse or EventId conflict, and the library implementation
@@ -192,15 +219,10 @@ void SyncCodegen::UpdateSyncTemplateInterForBackPipeMPipeMTE1DB(
                  "expected BwdPipeMPipeMTE1SyncPtr eventIds to be of size 1");
   IRRewriter rewriter(func_->getContext());
   rewriter.setInsertionPointToStart(&func_.getBody().front());
-#ifndef BSPUB_DAVINCI_BISHENGIR_A5
-  auto backPipeMPipeMTE1DBEvent = rewriter.create<arith::ConstantIntOp>(
+  auto backPipeMPipeMTE1DBEvent = rewriter.create<arith::ConstantOp>(
       nowCompound->elementOp->getLoc(),
-      nowCompound->BwdPipeMPipeMTE1SyncPtr->eventIds[0], rewriter.getI64Type());
-#else
-  auto backPipeMPipeMTE1DBEvent = rewriter.create<arith::ConstantIntOp>(
-      nowCompound->elementOp->getLoc(), rewriter.getI64Type(),
-      nowCompound->BwdPipeMPipeMTE1SyncPtr->eventIds[0]);
-#endif
+      rewriter.getI64IntegerAttr(
+          nowCompound->BwdPipeMPipeMTE1SyncPtr->eventIds[0]));
   // mmadL1 Sync IR two updates, namely BackPipeMPipeMTE1DBEvent0 and
   // BackPipeMPipeMTE1DBEvent1.
   if (nowCompound->macroOpInstanceId == 0) {
@@ -219,16 +241,12 @@ void SyncCodegen::InitDefaultSyncTemplateInterForMmadL1Op(
   }
   IRRewriter rewriter(func_->getContext());
   rewriter.setInsertionPointToStart(&func_.getBody().front());
-#ifndef BSPUB_DAVINCI_BISHENGIR_A5
-  auto defaultValue = rewriter.create<arith::ConstantIntOp>(
-      mmadL1Op.getOperation()->getLoc(), -1, rewriter.getI64Type());
-#else
-  auto defaultValue = rewriter.create<arith::ConstantIntOp>(
-      mmadL1Op.getOperation()->getLoc(), rewriter.getI64Type(), -1);
-#endif
-  SyncTemplateInter syncTemplateInter(defaultValue);
+  auto defaultValue = rewriter.create<arith::ConstantOp>(
+      mmadL1Op.getOperation()->getLoc(), rewriter.getI64IntegerAttr(-1));
+  SyncTemplateInter<hivm::MmadL1Op> syncTemplateInter(defaultValue);
   mmadL12SyncTemplateInter[mmadL1Op] = syncTemplateInter;
-  if (checkAllParentLoopsAreForLoops(mmadL1Op)) {
+  if (checkMmadl1NeedsPipeMPipeMTE1SyncArg(mmadL1Op) &&
+      checkAllParentLoopsAreForLoops(mmadL1Op)) {
     if (auto KLoopDBCondIndex =
             createNestedIndexForOp(rewriter, mmadL1Op.getOperation())) {
       Value KLoopDBCondIdx = rewriter.create<arith::IndexCastOp>(
@@ -236,6 +254,19 @@ void SyncCodegen::InitDefaultSyncTemplateInterForMmadL1Op(
       mmadL12SyncTemplateInter[mmadL1Op].KLoopDBCond = KLoopDBCondIdx;
     }
   }
+}
+
+void SyncCodegen::InitDefaultSyncTemplateInterForMmadMxL1Op(
+    hivm::MmadMxL1Op mmadMxL1Op) {
+  if (mmadMxL12SyncTemplateInter.contains(mmadMxL1Op)) {
+    return;
+  }
+  IRRewriter rewriter(func_->getContext());
+  rewriter.setInsertionPointToStart(&func_.getBody().front());
+  auto defaultValue = rewriter.create<arith::ConstantOp>(
+      mmadMxL1Op.getOperation()->getLoc(), rewriter.getI64IntegerAttr(-1));
+  SyncTemplateInter<hivm::MmadMxL1Op> syncTemplateInter(defaultValue);
+  mmadMxL12SyncTemplateInter[mmadMxL1Op] = syncTemplateInter;
 }
 
 void SyncCodegen::UpdateLoopOpInsertSync(LoopInstanceElement *nowElement) {
@@ -304,7 +335,7 @@ void SyncCodegen::SyncInsert(IRRewriter &rewriter, Operation *op,
              sync->GetType() == SyncOperation::TYPE::PIPE_BARRIER_VECTOR) {
     CreateBlockSyncBarrierOp(rewriter, op, sync, beforeInsert);
   } else {
-    llvm::report_fatal_error("Sync type not supported! ");
+    llvm_unreachable("Sync type not supported! ");
   }
 }
 
@@ -316,7 +347,16 @@ void SyncCodegen::CreateBarrierOp(IRRewriter &rewriter, Operation *op,
   } else {
     rewriter.setInsertionPointAfter(op);
   }
-  auto setPipe = PipeAttr::get(func_->getContext(), sync->GetActualSrcPipe());
+  PipeAttr setPipe;
+  ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
+  if (hacc::utils::isRegBasedArch(moduleOp)) {
+    if (sync->GetSrcPipe() == hivm::PIPE::PIPE_V) {
+      return;
+    }
+    setPipe = PipeAttr::get(func_->getContext(), sync->GetSrcPipe());
+  } else {
+    setPipe = PipeAttr::get(func_->getContext(), sync->GetActualSrcPipe());
+  }
   Location loc = op->getLoc();
   rewriter.create<hivm::PipeBarrierOp>(loc, setPipe);
 }
@@ -352,7 +392,7 @@ void SyncCodegen::CreateSetWaitBlockOpForMultiBuffer(IRRewriter &rewriter,
                                                      SyncOperation *sync,
                                                      bool beforeInsert) {
   if (sync->eventIds.size() > MAX_MULTI_BUFFER_NUM) {
-    llvm::report_fatal_error("Sync supports up to 16 buffers! ");
+    llvm_unreachable("Sync supports up to 16 buffers! ");
   }
 
   Location loc = op->getLoc();
@@ -382,7 +422,7 @@ void SyncCodegen::CreateSetWaitBlockOpForMultiBuffer(IRRewriter &rewriter,
       id = rewriter.create<arith::ExtSIOp>(op->getLoc(),
                                            rewriter.getIntegerType(64), id);
     } else {
-      llvm::report_fatal_error("unhandled casting type");
+      llvm_unreachable("unhandled casting type");
     }
   }
 
@@ -459,34 +499,17 @@ bool SyncCodegen::IsNeedLowerSyncToTemplate(Operation *op,
   if (!isVirtualMTE2) {
     return false;
   }
-  if (!isa<hivm::MmadL1Op>(op)) {
+  if (!isa<hivm::MmadL1Op, hivm::MmadMxL1Op>(op)) {
     return false;
   }
   return true;
 }
 
-bool SyncCodegen::NeedLowerSyncToTemplate(IRRewriter &rewriter, Operation *op,
-                                          SyncOperation *sync, Value eventId) {
-  if (!IsNeedLowerSyncToTemplate(op, sync)) {
-    return false;
-  }
-  if (!eventId) {
-    Location loc = op->getLoc();
-    checkCondition(sync->eventIds.size() == 1,
-                   "sync operation expected to have exactly 1 eventId");
-    rewriter.setInsertionPointToStart(&func_.getBody().front());
-#ifndef BSPUB_DAVINCI_BISHENGIR_A5
-    eventId = rewriter.create<arith::ConstantIntOp>(loc, sync->eventIds[0],
-                                                    rewriter.getI64Type());
-#else
-    eventId = rewriter.create<arith::ConstantIntOp>(loc, rewriter.getI64Type(),
-                                                    sync->eventIds[0]);
-#endif
-  }
-  auto mmadL1Op = dyn_cast<hivm::MmadL1Op>(op);
-  auto iter = mmadL12SyncTemplateInter.find(mmadL1Op);
-  checkCondition(iter != mmadL12SyncTemplateInter.end(),
-                 "mmadL1Op expected to be found in mmadL12SyncTemplateInter");
+template <typename T = hivm::MmadL1Op>
+static bool LowerSyncToTemplate(SyncOperation *sync, Value eventId, T op,
+                                DenseMap<T, SyncTemplateInter<T>> &t) {
+  auto iter = t.find(op);
+  checkCondition(iter != t.end(), "expected to be found");
   if (sync->GetType() == SyncOperation::TYPE::WAIT_EVENT) {
     if (sync->GetSrcPipe() == hivm::PIPE::VIRTUAL_PIPE_MTE2_L1A) {
       sync->uselessSync = true;
@@ -510,6 +533,63 @@ bool SyncCodegen::NeedLowerSyncToTemplate(IRRewriter &rewriter, Operation *op,
       return true;
     }
   }
+  return false;
+}
+
+static bool LowerSyncToTemplateMmadMxL1(
+    SyncOperation *sync, Value eventId, hivm::MmadMxL1Op op,
+    DenseMap<hivm::MmadMxL1Op, SyncTemplateInter<hivm::MmadMxL1Op>> &t) {
+  auto iter = t.find(op);
+  checkCondition(iter != t.end(), "expected to be found");
+  if (sync->GetType() == SyncOperation::TYPE::WAIT_EVENT) {
+    if (sync->GetSrcPipe() == hivm::PIPE::VIRTUAL_PIPE_MTE2_L1A) {
+      sync->uselessSync = true;
+      iter->second.MmadMxL1WaitL1AEvent = eventId;
+      return true;
+    }
+    if (sync->GetSrcPipe() == hivm::PIPE::VIRTUAL_PIPE_MTE2_L1B) {
+      iter->second.MmadMxL1WaitL1BEvent = eventId;
+      sync->uselessSync = true;
+      return true;
+    }
+  } else if (sync->GetType() == SyncOperation::TYPE::SET_EVENT) {
+    if (sync->GetDstPipe() == hivm::PIPE::VIRTUAL_PIPE_MTE2_L1A) {
+      iter->second.L1AWaitMmadMxL1Event = eventId;
+      sync->uselessSync = true;
+      return true;
+    }
+    if (sync->GetDstPipe() == hivm::PIPE::VIRTUAL_PIPE_MTE2_L1B) {
+      iter->second.L1BWaitMmadMxL1Event = eventId;
+      sync->uselessSync = true;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool SyncCodegen::NeedLowerSyncToTemplate(IRRewriter &rewriter, Operation *op,
+                                          SyncOperation *sync, Value eventId) {
+  if (!IsNeedLowerSyncToTemplate(op, sync)) {
+    return false;
+  }
+  if (!eventId) {
+    Location loc = op->getLoc();
+    checkCondition(sync->eventIds.size() == 1,
+                   "sync operation expected to have exactly 1 eventId");
+    rewriter.setInsertionPointToStart(&func_.getBody().front());
+    eventId = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI64IntegerAttr(sync->eventIds[0]));
+  }
+
+  if (auto mmadL1Op = dyn_cast_or_null<hivm::MmadL1Op>(op))
+    if (LowerSyncToTemplate(sync, eventId, mmadL1Op, mmadL12SyncTemplateInter))
+      return true;
+
+  if (auto mmadMxL1Op = dyn_cast_or_null<hivm::MmadMxL1Op>(op))
+    if (LowerSyncToTemplateMmadMxL1(sync, eventId, mmadMxL1Op,
+                                    mmadMxL12SyncTemplateInter))
+      return true;
+
   return false;
 }
 
@@ -550,7 +630,7 @@ void SyncCodegen::CreateSetWaitOpForMultiBuffer(IRRewriter &rewriter,
                                                 SyncOperation *sync,
                                                 bool beforeInsert) {
   if (sync->eventIds.size() == 1) {
-    llvm::report_fatal_error("Sync supports up to multi buffers! ");
+    llvm_unreachable("Sync supports up to multi buffers! ");
   }
   Value bufferSelected = GetBufferSelected(rewriter, op, sync);
   if (NeedLowerSyncToTemplate(rewriter, op, sync, bufferSelected)) {
@@ -586,7 +666,7 @@ Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,
                    "initialized");
     auto *defineOp = sync->lowestCommonAncestorBuffer.getDefiningOp();
     if (!defineOp) {
-      llvm::report_fatal_error("defineOp is not defined");
+      llvm_unreachable("defineOp is not defined");
       return nullptr;
     }
     LoopLikeOpInterface parentLoop =
@@ -609,22 +689,20 @@ Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,
       loop2BufferCounter[counterKey] = counter;
     }
     // Insert selector after the defined value.
+    assert(counter.getDefiningOp() != nullptr);
     rewriter.setInsertionPointAfter(counter.getDefiningOp());
     Location locDefineOp = counter.getDefiningOp()->getLoc();
 
     // Support multi-buffer selection for arbitrary buffer counts (>=2)
     if (eventIdCount >= 2) {
       // For multi buffers selection, create array of event IDs and use the
-      // counter variable directly Create constants for each event ID
+      // counter variable directly.
+      //
+      // Create constants for each event ID
       SmallVector<Value> eventValues;
       for (int eventId : sync->eventIds) {
-#ifndef BSPUB_DAVINCI_BISHENGIR_A5
-        eventValues.push_back(rewriter.create<arith::ConstantIntOp>(
-            locDefineOp, static_cast<int64_t>(eventId), rewriter.getI64Type()));
-#else
-        eventValues.push_back(rewriter.create<arith::ConstantIntOp>(
-            locDefineOp, rewriter.getI64Type(), static_cast<int64_t>(eventId)));
-#endif
+        eventValues.push_back(rewriter.create<arith::ConstantOp>(
+            locDefineOp, rewriter.getI64IntegerAttr(eventId)));
       }
 
       // Build selections using the reused counter variable
@@ -633,13 +711,8 @@ Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,
       //   if (counter == i) selected = eventValues[i] else keep previous
       Value selectedValue = eventValues[0];
       for (unsigned i = 1; i < eventValues.size(); ++i) {
-#ifndef BSPUB_DAVINCI_BISHENGIR_A5
-        Value iVal = rewriter.create<arith::ConstantIntOp>(
-            locDefineOp, static_cast<int64_t>(i), rewriter.getI64Type());
-#else
-        Value iVal = rewriter.create<arith::ConstantIntOp>(
-            locDefineOp, rewriter.getI64Type(), static_cast<int64_t>(i));
-#endif
+        Value iVal = rewriter.create<arith::ConstantOp>(
+            locDefineOp, rewriter.getI64IntegerAttr(i));
         Value cond = rewriter.create<arith::CmpIOp>(
             locDefineOp, arith::CmpIPredicate::eq, counter, iVal);
         selectedValue = rewriter.create<arith::SelectOp>(
@@ -648,7 +721,7 @@ Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,
       }
       bufferSelected = selectedValue;
     } else {
-      llvm::report_fatal_error("Should not reach here!!");
+      llvm_unreachable("Should not reach here!!");
     }
     SyncIndex2SelectBuffer[sync->GetSyncIndex()] = bufferSelected;
   }
