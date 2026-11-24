@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Utils/IndexBoundAnalyzer.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -28,9 +29,12 @@
 
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Support/MathExtras.h"
 
+#include <algorithm>
 #include <memory>
 #include <numeric>
+#include <optional>
 
 #define DEBUG_TYPE "hivm-enable-stride-align"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -314,36 +318,120 @@ struct RemoveAlignMarkPattern : public OpRewritePattern<annotation::MarkOp> {
   }
 };
 
-// storage-align re-allocates a buffer with padded static dims, which enlarges
-// the buffer by the ratio of the aligned vs the unaligned static element count.
-// The `buffer_size_in_byte` annotations were computed on the unaligned type and
-// are not updated when the buffer is re-padded here, so they must be scaled by
-// the same ratio.
+// storage-align re-allocates a buffer with padded extents, so a
+// `buffer_size_in_byte` annotation computed on the unpadded shape no longer
+// bounds the allocation and has to grow with it.
+//
+// The factor cannot be read off the two types. A padded *dynamic* extent is
+// `ShapedType::kDynamic` on the unaligned and on the aligned type alike, so the
+// growth is invisible there; only a padded *static* extent keeps its value. The
+// pre-padding extents and the emitted `AlignUp` results are passed in instead,
+// because that is where the growth is still visible.
+//
+// The annotation is a byte *upper bound*, so it is scaled by the ratio of the
+// per-dimension upper bounds. Only extents that really grew contribute: an
+// untouched extent appears in both products and cancels, so whether it is
+// static or dynamic does not matter.
+//
+// The factors are applied one extent at a time rather than accumulated into a
+// single fraction. The product of the bounds alone can exceed int64 even when
+// the ratio it represents is small -- two extents bounded by 2^25 are enough --
+// and the overflow is silent. Rounding up at each step can only grow the
+// result, so applying them separately never reports less than the fraction.
+//
+// Bounds are queried on the *unaligned* extents only. An aligned extent is the
+// addi/remsi/subi chain this pass has just emitted, which the bound analyses do
+// not resolve, so its bound is derived with `AlignUp` from the unaligned one.
 static void scaleBufferSizeMarks(PatternRewriter &rewriter, Value bufferValue,
-                                 MemRefType unalignedTy, MemRefType alignedTy) {
-  auto staticVolume = [](MemRefType t) -> int64_t {
-    int64_t v = 1;
-    for (int64_t d : t.getShape())
-      if (!ShapedType::isDynamic(d))
-        v *= d;
-    return v;
-  };
-  int64_t unalignedVol = staticVolume(unalignedTy);
-  int64_t alignedVol = staticVolume(alignedTy);
-  if (unalignedVol <= 0 || alignedVol <= unalignedVol)
+                                 ArrayRef<OpFoldResult> unalignedShape,
+                                 ArrayRef<OpFoldResult> alignedShape,
+                                 ArrayRef<int> alignUnits) {
+  SmallVector<Operation *> sizeMarks = utils::getAllAnnotateOpsWithAttr(
+      bufferValue, utils::kBufferSizeInByteAttr);
+  if (sizeMarks.empty())
+    return;
+  assert(unalignedShape.size() == alignedShape.size());
+
+  utils::IndexBoundAnalyzer boundAnalyzer;
+  // Growth of each extent that really grew, as (bound before, bound after).
+  SmallVector<std::pair<int64_t, int64_t>> paddedFactors;
+  // Element count of the padded buffer, used to cap the scaled size. Only
+  // usable when every extent has a known bound.
+  int64_t paddedElems = 1;
+  bool capUsable = true;
+
+  for (auto [dim, unalignedExtent] : llvm::enumerate(unalignedShape)) {
+    int64_t unit = dim < alignUnits.size() ? alignUnits[dim] : 1;
+    // An extent the pass left alone is identical on both shapes: `AlignUpOFR`
+    // returns its argument for a unit alignment and folds a constant in place.
+    bool padded = unit > 1 && unalignedExtent != alignedShape[dim];
+
+    std::optional<int64_t> extentUB = boundAnalyzer.get(unalignedExtent).upper;
+    if (!extentUB.has_value() || *extentUB <= 0) {
+      // No bound means no factor for this extent. The factors of the other
+      // extents are known regardless and still have to be applied: abandoning
+      // the rewrite here would leave the annotation below the value this pass
+      // produced from the static extents alone.
+      capUsable = false;
+      if (padded)
+        LDBG("extent " << dim
+                       << " is padded but has no known bound; its growth is "
+                          "not accounted for");
+      continue;
+    }
+
+    int64_t paddedUB = padded ? static_cast<int64_t>(hivm::AlignUp(
+                                    static_cast<uint64_t>(*extentUB),
+                                    static_cast<uint64_t>(unit)))
+                              : *extentUB;
+    if (llvm::MulOverflow(paddedElems, paddedUB, paddedElems))
+      capUsable = false;
+    if (padded && paddedUB > *extentUB)
+      paddedFactors.emplace_back(*extentUB, paddedUB);
+  }
+
+  if (paddedFactors.empty())
     return;
 
-  // The dynamic dims are identical on both types (padding only grows static
-  // dims), so the byte size scales by the static-volume ratio.
-  auto sizeMarks = utils::getAllAnnotateOpsWithAttr(
-      bufferValue, utils::kBufferSizeInByteAttr);
-  for (auto *markOp : sizeMarks) {
+  std::optional<int64_t> capBytes;
+  if (capUsable) {
+    int64_t elemBits = static_cast<int64_t>(
+        cast<MemRefType>(bufferValue.getType()).getElementTypeBitWidth());
+    int64_t paddedBits = 0;
+    if (llvm::MulOverflow(paddedElems, elemBits, paddedBits))
+      LDBG("the padded element count overflows in bytes; not capping");
+    else
+      capBytes = static_cast<int64_t>(
+          llvm::divideCeil(paddedBits, utils::kBitsToByte));
+  }
+
+  for (Operation *markOp : sizeMarks) {
     int64_t oldSize =
         markOp->getAttrOfType<IntegerAttr>(utils::kBufferSizeInByteAttr)
             .getInt();
-    // ceil-divide so the buffer is never under-allocated.
-    assert(unalignedVol != 0);
-    int64_t newSize = (oldSize * alignedVol + unalignedVol - 1) / unalignedVol;
+    // A non-positive recorded size carries no bound to scale.
+    if (oldSize <= 0)
+      continue;
+    // One factor at a time, ceil-dividing at each step so the buffer is never
+    // under-allocated.
+    int64_t newSize = oldSize;
+    for (auto [extentUB, paddedUB] : paddedFactors) {
+      int64_t scaled = 0;
+      if (llvm::MulOverflow(newSize, paddedUB, scaled)) {
+        LDBG("scaling " << newSize << " by " << paddedUB
+                        << " overflows; the remaining factors are skipped");
+        break;
+      }
+      newSize = static_cast<int64_t>(llvm::divideCeil(scaled, extentUB));
+    }
+    // Keep the scaled size within what the padded buffer can need. An
+    // annotation that was already looser than that stays as it is: shrinking it
+    // here would discard a bound its producer chose, and it is large enough
+    // either way.
+    if (capBytes.has_value())
+      newSize = std::min(newSize, *capBytes);
+    if (newSize <= oldSize)
+      continue;
     rewriter.modifyOpInPlace(markOp, [&]() {
       markOp->setAttr(utils::kBufferSizeInByteAttr,
                       rewriter.getI64IntegerAttr(newSize));
@@ -407,8 +495,8 @@ struct EnableAlignAllocation : public OpRewritePattern<AllocLikeOp> {
 
       // The buffer just grew due to padding; keep its buffer_size_in_byte
       // annotations in sync before they get re-pointed to the new allocation.
-      scaleBufferSizeMarks(rewriter, allocOp.getResult(), unalignedTy,
-                           alignedTy);
+      scaleBufferSizeMarks(rewriter, allocOp.getResult(), subShape,
+                           alignedShape, alignUnits);
 
       SmallVector<OpFoldResult> offsets(alignedTy.getRank(),
                                         rewriter.getIndexAttr(0));
