@@ -922,9 +922,8 @@ translateDeviceKernelToLLVM(const SmallVector<ModuleOp, 2> &modulesToLower,
     if (!llvmModule) {
       m->emitError(
           "Failed to translate module from LLVM Dialect IR to BiShengLIR\n");
-    }
-    if (config.shouldEnableSanitizer() &&
-        failed(setSanitizerAddrArgName(m, llvmModule))) {
+    } else if (config.shouldEnableSanitizer() &&
+               failed(setSanitizerAddrArgName(m, llvmModule))) {
       m->emitError("Sanitizer arg rename failed \n");
     }
     result.push_back(std::make_pair(std::move(llvmModule), target));

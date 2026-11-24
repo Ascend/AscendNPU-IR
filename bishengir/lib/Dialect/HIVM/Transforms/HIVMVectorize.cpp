@@ -31,6 +31,7 @@
 #include "bishengir/Dialect/Vector/Transforms/Passes.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Bufferization/Transforms/Passes.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Linalg/TransformOps/DialectExtension.h"
 #include "mlir/Dialect/Linalg/Transforms/TilingInterfaceImpl.h"
 #include "mlir/Dialect/SCF/TransformOps/SCFTransformOps.h"
@@ -268,7 +269,8 @@ struct HIVMVectorizePass
 
   void getDependentDialects(DialectRegistry &registry) const override {
     HIVMVectorizeBase::getDependentDialects(registry);
-    registry.insert<mlir::hfusion::HFusionDialect, mlir::hivmave::AVEDialect>();
+    registry.insert<mlir::hfusion::HFusionDialect, mlir::hivmave::AVEDialect,
+                    mlir::LLVM::LLVMDialect>();
     mlir::hivm::registerVectorizeTransformDialectExtension(registry);
     mlir::linalg::registerTransformDialectExtension(registry);
     mlir::linalg::registerTilingInterfaceExternalModels(registry);
