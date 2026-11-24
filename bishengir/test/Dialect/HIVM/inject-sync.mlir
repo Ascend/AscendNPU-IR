@@ -723,3 +723,51 @@ func.func @triton_add_full_loop(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_
   // CHECK:  hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID3>]
   return
 }
+
+// -----
+// InjectSync materializes the same function-scoped L0 ping-pong signal that
+// GraphSyncSolver does, shared by every local matmul op.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  // CHECK-LABEL: func.func @test_ping_pong_signal_shared
+  func.func @test_ping_pong_signal_shared(
+      %a: memref<16x16xf16, #hivm.address_space<cbuf>>,
+      %b: memref<16x16xf16, #hivm.address_space<cbuf>>,
+      %c: memref<16x16xf32, #hivm.address_space<cc>>,
+      %ba: memref<2x16x16xf16, #hivm.address_space<cbuf>>,
+      %bb: memref<2x16x16xf16, #hivm.address_space<cbuf>>,
+      %bc: memref<2x16x16xf32, #hivm.address_space<cc>>,
+      %mxa: memref<16x16xf8E5M2, #hivm.address_space<cbuf>>,
+      %mxb: memref<16x16xf8E5M2, #hivm.address_space<cbuf>>,
+      %sa: memref<16x1xui8, #hivm.address_space<cbuf>>,
+      %sb: memref<16x1xui8, #hivm.address_space<cbuf>>,
+      %mxc: memref<16x16xf32, #hivm.address_space<cc>>,
+      %init: i1, %n: index) {
+    // One signal, zero-initialized, created at function entry.
+    // CHECK: %[[SIGNAL:.*]] = memref.alloca() {hivm.ping_pong_signal} : memref<i32>
+    // CHECK: memref.store %{{.*}}, %[[SIGNAL]][] : memref<i32>
+    // CHECK-NOT: memref.alloca() {hivm.ping_pong_signal}
+
+    // All three local matmul kinds share it.
+    // CHECK: hivm.hir.mmadL1
+    // CHECK-SAME: ping_pong_signal(%[[SIGNAL]] : memref<i32>)
+    hivm.hir.mmadL1 ins(%a, %b, %init, %n, %n, %n : memref<16x16xf16, #hivm.address_space<cbuf>>, memref<16x16xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%c : memref<16x16xf32, #hivm.address_space<cc>>)
+    // CHECK: hivm.hir.batchMmadL1
+    // CHECK-SAME: ping_pong_signal(%[[SIGNAL]] : memref<i32>)
+    hivm.hir.batchMmadL1 ins(%ba, %bb, %init, %n, %n, %n : memref<2x16x16xf16, #hivm.address_space<cbuf>>, memref<2x16x16xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%bc : memref<2x16x16xf32, #hivm.address_space<cc>>)
+    // CHECK: hivm.hir.mmadmxL1
+    // CHECK-SAME: ping_pong_signal(%[[SIGNAL]] : memref<i32>)
+    hivm.hir.mmadmxL1 ins(%mxa, %mxb, %sa, %sb, %init, %n, %n, %n : memref<16x16xf8E5M2, #hivm.address_space<cbuf>>, memref<16x16xf8E5M2, #hivm.address_space<cbuf>>, memref<16x1xui8, #hivm.address_space<cbuf>>, memref<16x1xui8, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%mxc : memref<16x16xf32, #hivm.address_space<cc>>)
+    return
+  }
+
+  // CHECK-LABEL: func.func @test_no_matmul_no_signal
+  func.func @test_no_matmul_no_signal(%arg0: memref<16xf32, #hivm.address_space<gm>>) {
+    // CHECK-NOT: hivm.ping_pong_signal
+    %c0_i64 = arith.constant 0 : i64
+    %0 = hivm.hir.pointer_cast(%c0_i64) : memref<16xf32, #hivm.address_space<cbuf>>
+    hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<16xf32, #hivm.address_space<gm>>)
+                   outs(%0 : memref<16xf32, #hivm.address_space<cbuf>>)
+    // CHECK: return
+    return
+  }
+}
