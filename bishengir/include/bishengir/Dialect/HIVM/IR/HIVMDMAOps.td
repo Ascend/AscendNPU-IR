@@ -592,6 +592,10 @@ def L12L0Op: HIVM_DmaOp<"l12l0",
     exposes only src/dst views can use the buffer builder to encode a single
     aligned copy: k_part_idx=0, k_part_loop=1, k_part=k_part_ceil=k_part_actual=K,
     and m=M for L0A or N for L0B. The views already carry the copy origin.
+    This buffer builder requires non-null memrefs with positive static rank-2
+    or rank-4 shapes, src in L1 and dst in L0A or L0B. Violations of these
+    preconditions or overflowing copy extents produce a fatal error in all
+    build modes.
     The frontend validates the shapes, layouts, alignment, strides and storage;
     this builder neither pads the copy nor introduces a tail protocol.
     actual_batch=None/1 is normalized by the frontend to a single copy and
