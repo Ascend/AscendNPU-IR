@@ -57,7 +57,8 @@ static hacc::TargetDevice resolveTarget(const V2PipelineOptions &options) {
 static void buildPreVectorizationPhase(OpPassManager &pm,
                                        const V2PipelineOptions &options) {
   regbase::registerKernelKindPassesForRegbase();
-  addFuncPass(pm, createInitEntryKernelPass());
+  if (!options.enableAutoBlockifyLoop)
+    addFuncPass(pm, createInitEntryKernelPass());
   canonicalizationHIVMPipeline(pm);
   pm.addPass(createNormalizeMatmulPass());
 
@@ -95,6 +96,13 @@ static void buildPreVectorizationPhase(OpPassManager &pm,
   // CV 1:2 needs operand-parallel sub-block partitioning; 1:1 targets skip it.
   if (needsCV12(hacc::symbolizeTargetDeviceEnum(options.target)))
     pm.addPass(createPartitionAndBindSubBlockPass());
+
+  if (options.enableAutoBlockifyLoop) {
+    pm.addPass(createInferFuncCoreTypePass());
+    addFuncPass(pm, createAutoBlockifyParallelLoopPass());
+    // Keep entry and exit CTRL writes outside the logical block loop.
+    addFuncPass(pm, createInitEntryKernelPass());
+  }
 }
 
 /// Tensor phase on the unsplit MIX.
@@ -102,6 +110,8 @@ void buildV2TensorPhase(OpPassManager &pm, const V2PipelineOptions &options) {
   buildPreVectorizationPhase(pm, options);
 
   pm.addPass(createHIVMVectorizePass());
+  // Fold tensor transfer pairs before bufferization introduces copies.
+  pm.addPass(createCanonicalizerPass());
 }
 
 /// The tensor -> memref anchor.
@@ -151,11 +161,20 @@ static void hivmCrossCoreAutoSyncPipeline(OpPassManager &pm,
   if (options.disableAutoInjectBlockSync)
     return;
 
+  MarkRealCoreTypeOptions markOptions;
+  markOptions.enablePreload = options.enablePreload;
+  markOptions.workspaceMultiBufferNum = options.enableMultiBuffer ? 1 : 0;
+  pm.addPass(createMarkRealCoreTypePass(markOptions));
+
   CrossCoreGSSOptions crossCoreOptions;
   crossCoreOptions.forceIsRegBased = true;
   crossCoreOptions.blockAllSync = options.enableHIVMInjectBlockAllSync;
   crossCoreOptions.solverVersion = options.hivmSyncSolverVersion;
   addFuncPass(pm, createCrossCoreGSSPass(crossCoreOptions));
+
+  MarkRealCoreTypeOptions cleanupOptions = markOptions;
+  cleanupOptions.removeCoreTypeAttrs = true;
+  pm.addPass(createMarkRealCoreTypePass(cleanupOptions));
 }
 
 /// Post-bufferization: both memory plans and the solve see the unsplit MIX.
@@ -224,8 +243,10 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
   localPlanOptions.planMemoryUBCopyBankMode = options.planMemoryUBCopyBankMode;
   pm.addPass(createPlanMemoryPass(localPlanOptions));
 
-  // Expand slots before the split clones the counters.
-  if (options.enableMultiBuffer)
+  // CreatePreload needs the complete address list to rotate each stage.
+  bool expandAfterPreload =
+      options.enablePreload && hacc::utils::isAscend960(options.target);
+  if (options.enableMultiBuffer && !expandAfterPreload)
     addFuncPass(pm, createEnableMultiBufferPass());
 
   // Single-shot cross-core solve on the MIX.
@@ -236,6 +257,8 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
     CreatePreloadOptions preloadOptions;
     preloadOptions.enablePreload = true;
     pm.addPass(createCreatePreloadPass(preloadOptions));
+    if (options.enableMultiBuffer && expandAfterPreload)
+      addFuncPass(pm, createEnableMultiBufferPass());
   }
 
   // Last structural pass.

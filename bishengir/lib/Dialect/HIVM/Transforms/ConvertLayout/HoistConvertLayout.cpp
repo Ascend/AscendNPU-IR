@@ -40,6 +40,9 @@ struct MoveConvertLayoutToSourcePattern
 
   LogicalResult matchAndRewrite(ConvertLayoutOp op,
                                 PatternRewriter &rewriter) const override {
+    // A buffer-backed source can be initialized after its tensor view.
+    if (isMarkedAsNotPropagatingUp(op))
+      return failure();
     Value source = op.getSource();
     Operation *sourceOp = source.getDefiningOp();
     Block *currentBlock = op->getBlock();

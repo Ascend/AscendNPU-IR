@@ -616,7 +616,7 @@ HIVMCMainConfig HIVMCFromBiShengIRConfig(BiShengIRCompileMainConfig &config,
   hivmcConfig.simtOptimizationMode(1900101);
   hivmcConfig.enableAutoCVBalance(true);
   hivmcConfig.setUseDPX(true);
-  hivmcConfig.onlyRunHIVMPipeline(false);
+  hivmcConfig.onlyRunHIVMPipeline(config.getOnlyRunHIVMPipeline());
 
   hivmcConfig.appendBishengOptions(config.getAppendBishengOptions());
   hivmcConfig.compileTriton(config.getEnableTritonKernelCompile());

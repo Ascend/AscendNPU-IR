@@ -76,3 +76,21 @@ func.func @copy_both_sides_aligned_distinct_dims() {
   hivm.hir.copy ins(%src : memref<2x15xf16, #hivm.address_space<ub>>) outs(%dst : memref<2x15xf16, #hivm.address_space<ub>>)
   return
 }
+
+// -----
+
+// A flat observation need not carry an internal row constraint when the
+// original matrix already satisfies the complete alignment requirements.
+// CHECK-LABEL: func.func @aligned_matrix_flat_view
+// CHECK: %[[MATRIX:.*]] = memref.alloc() : memref<16x32xf32, #hivm.address_space<ub>>
+// CHECK-NOT: annotation.mark
+// CHECK: %[[FLAT:.*]] = memref.collapse_shape %[[MATRIX]]
+// CHECK: return %[[FLAT]] : memref<512xf32, #hivm.address_space<ub>>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @aligned_matrix_flat_view() -> memref<512xf32, #hivm.address_space<ub>> {
+    %matrix = memref.alloc() : memref<16x32xf32, #hivm.address_space<ub>>
+    annotation.mark %matrix {hivm.stride_align_dims = array<i32: 0, 1>, hivm.stride_align_value_in_byte = array<i32: 8, 32>} : memref<16x32xf32, #hivm.address_space<ub>>
+    %flat = memref.collapse_shape %matrix [[0, 1]] : memref<16x32xf32, #hivm.address_space<ub>> into memref<512xf32, #hivm.address_space<ub>>
+    return %flat : memref<512xf32, #hivm.address_space<ub>>
+  }
+}

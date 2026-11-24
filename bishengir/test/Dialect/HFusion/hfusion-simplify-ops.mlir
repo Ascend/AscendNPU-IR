@@ -1129,3 +1129,39 @@ func.func @keepTwoCastMixedNegToUnsigned(%arg0: tensor<4xi8>) -> tensor<4xi8> {
   %t1 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<trunc>, unsigned_mode = #hfusion.unsigned_mode<ui2ui>} ins(%t0 : tensor<4xf16>) outs(%e1 : tensor<4xi8>) -> tensor<4xi8>
   return %t1 : tensor<4xi8>
 }
+
+// -----
+
+// A lossy f32 -> f16 -> f32 chain fed by a matmul must not be folded away:
+// folding it would drop the f16 rounding and change the result.
+// CHECK-LABEL: func.func @matmulNoFastmathCastChain
+// CHECK: %[[MATMUL:.*]] = linalg.matmul {{.*}} -> tensor<16x16xf32>
+// CHECK: %[[DOWN:.*]] = hfusion.cast ins(%[[MATMUL]] : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf16>) -> tensor<16x16xf16>
+// CHECK: %[[UP:.*]] = hfusion.cast ins(%[[DOWN]] : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK: return %[[UP]] : tensor<16x16xf32>
+func.func @matmulNoFastmathCastChain(%a: tensor<16x16xf32>, %b: tensor<16x16xf32>) -> tensor<16x16xf32> {
+  %init = tensor.empty() : tensor<16x16xf32>
+  %h = tensor.empty() : tensor<16x16xf16>
+  %o = tensor.empty() : tensor<16x16xf32>
+  %mm = linalg.matmul ins(%a, %b : tensor<16x16xf32>, tensor<16x16xf32>) outs(%init : tensor<16x16xf32>) -> tensor<16x16xf32>
+  %down = hfusion.cast ins(%mm : tensor<16x16xf32>) outs(%h : tensor<16x16xf16>) -> tensor<16x16xf16>
+  %up = hfusion.cast ins(%down : tensor<16x16xf16>) outs(%o : tensor<16x16xf32>) -> tensor<16x16xf32>
+  return %up : tensor<16x16xf32>
+}
+
+// -----
+
+// With a fastmath contract on the down-cast the chain is still folded.
+// CHECK-LABEL: func.func @matmulFastmathCastChain
+// CHECK: %[[MATMUL:.*]] = linalg.matmul {{.*}} -> tensor<16x16xf32>
+// CHECK-NOT: hfusion.cast
+// CHECK: return %[[MATMUL]] : tensor<16x16xf32>
+func.func @matmulFastmathCastChain(%a: tensor<16x16xf32>, %b: tensor<16x16xf32>) -> tensor<16x16xf32> {
+  %init = tensor.empty() : tensor<16x16xf32>
+  %h = tensor.empty() : tensor<16x16xf16>
+  %o = tensor.empty() : tensor<16x16xf32>
+  %mm = linalg.matmul ins(%a, %b : tensor<16x16xf32>, tensor<16x16xf32>) outs(%init : tensor<16x16xf32>) -> tensor<16x16xf32>
+  %down = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%mm : tensor<16x16xf32>) outs(%h : tensor<16x16xf16>) -> tensor<16x16xf16>
+  %up = hfusion.cast ins(%down : tensor<16x16xf16>) outs(%o : tensor<16x16xf32>) -> tensor<16x16xf32>
+  return %up : tensor<16x16xf32>
+}

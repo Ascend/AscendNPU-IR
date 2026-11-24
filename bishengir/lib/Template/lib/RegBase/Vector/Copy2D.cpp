@@ -339,6 +339,21 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     // Mirrors is_compact_mode in store_ubuf_to_gm_2d_core.
     const bool is_compact_mode =
         left_padding_num == 0 && stride0_ub == src->sizes[1];
+    // NDDMA amortizes its setup over many short rows with small GM gaps.
+    // Its 2D descriptor takes both loop counts from the destination.
+    const int64_t rows = src->sizes[0];
+    const int64_t width = src->sizes[1];
+    // Short GM pitches benefit from NDDMA at fewer rows.
+    const int64_t min_rows = stride0_gm <= 12 / sizeof(T) ? 128 : 320;
+    if (sizeof(T) <= 4 && is_compact_mode && pad_mode == PadMode::Null &&
+        atomic_kind == AtomicKind::None && rows >= min_rows &&
+        rows <= 0xfffff && width <= 16 / sizeof(T) && stride0_gm > width &&
+        stride0_gm <= 32 / sizeof(T) && rows == dst->sizes[0] &&
+        width == dst->sizes[1]) {
+      load_gm_to_ubuf_2d_by_nddma<T>(src, dst, pad_mode, pad_value, 0,
+                                     l2_cache_ctl);
+      return;
+    }
     if (!is_compact_mode &&
         (!isStrideAligned<T>(stride0_ub) ||
          CEIL_FACTOR(left_padding_num + src->sizes[1],

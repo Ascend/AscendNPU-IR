@@ -1,4 +1,6 @@
 // RUN: bishengir-opt %s --pass-pipeline="builtin.module(hivm-v2-pipeline{target=Ascend960})" --dump-pass-pipeline -o /dev/null 2>&1 | tr ',' '\n' | FileCheck %s --check-prefixes=CHECK,FULL --implicit-check-not=hivm-inject-sync --implicit-check-not=hivm-inject-block-sync --implicit-check-not=hivm-delayed-cross-core-gss --implicit-check-not=hivm-insert-anchors-and-backup
+// RUN: bishengir-opt %s --pass-pipeline="builtin.module(hivm-v2-pipeline{target=Ascend960 enable-preload=true enable-multi-buffer=true})" --dump-pass-pipeline -o /dev/null 2>&1 | FileCheck %s --check-prefix=A6-SLOTS
+// RUN: bishengir-opt %s --pass-pipeline="builtin.module(hivm-v2-pipeline{target=Ascend950PR_9579 enable-preload=true enable-multi-buffer=true})" --dump-pass-pipeline -o /dev/null 2>&1 | FileCheck %s --check-prefix=A5-SLOTS
 // RUN: bishengir-opt %s --pass-pipeline="builtin.module(hivm-v2-pipeline{target=Ascend960})" --dump-pass-pipeline -o /dev/null 2>&1 | FileCheck %s --check-prefix=NO-MERGE --implicit-check-not=hfusion-merge-vf
 // RUN: bishengir-opt %s --pass-pipeline="builtin.module(hivm-v2-pre-vectorize-pipeline{target=Ascend960})" --dump-pass-pipeline -o /dev/null 2>&1 | tr ',' '\n' | FileCheck %s --check-prefixes=CHECK,PRE --implicit-check-not=hivm-vectorize --implicit-check-not=bufferiz
 // RUN: bishengir-opt %s --pass-pipeline="builtin.module(hivm-v2-pipeline{target=Ascend960})" | FileCheck %s --check-prefix=SPLIT
@@ -30,6 +32,7 @@
 // PRE: cv-pipelining
 // PRE: hivm-normalize-matmul
 // FULL: hivm-vectorize{phase=tensor}
+// FULL-NEXT: canonicalize
 // FULL-NOT: hfusion-merge-vf
 // FULL: hfusion-simplify-vf-arg
 // FULL: tensor-copy-insertion
@@ -41,6 +44,10 @@
 // FULL-SAME: enable-unit-flag=false
 // FULL-SAME: solver-version=v2
 // FULL: hivm-vectorize{phase=tail}
+
+// Preload rotates the planned A6 address lists before slot selection.
+// A6-SLOTS: hivm-cross-core-gss{{.*}}create-preload{{.*}}hivm-enable-multi-buffer{{.*}}hivm-v2-split-kernel
+// A5-SLOTS: hivm-enable-multi-buffer{{.*}}hivm-cross-core-gss{{.*}}create-preload{{.*}}hivm-v2-split-kernel
 
 // The same solver version reaches both solves, with unit flags on the per-core
 // solver. Each disable flag affects only its own solve.

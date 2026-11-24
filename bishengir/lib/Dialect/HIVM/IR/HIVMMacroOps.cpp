@@ -2147,6 +2147,31 @@ LogicalResult L12BTOp::verify() {
 // L12L0Op
 //===----------------------------------------------------------------------===//
 
+void L12L0Op::build(OpBuilder &odsBuilder, OperationState &odsState, Value src,
+                    Value dst, bool is_transposed) {
+  auto dstType = cast<MemRefType>(dst.getType());
+  auto space = getOptionalHIVMAddressSpace(dstType);
+  assert(space && (*space == AddressSpace::L0A || *space == AddressSpace::L0B));
+  assert(dstType.hasStaticShape() &&
+         (dstType.getRank() == 2 || dstType.getRank() == 4));
+  bool toA = *space == AddressSpace::L0A;
+  // The destination view is the complete copy region, not a larger slot.
+  // Its axes are independent of the source transpose flag. Physical L0A/B
+  // descriptors both store [K/C0, MN/16, 16, C0].
+  int64_t mn = dstType.getRank() == 2
+                   ? dstType.getDimSize(toA ? 0 : 1)
+                   : dstType.getDimSize(1) * dstType.getDimSize(2);
+  int64_t k = dstType.getRank() == 2
+                  ? dstType.getDimSize(toA ? 1 : 0)
+                  : dstType.getDimSize(0) * dstType.getDimSize(3);
+  auto kAttr = odsBuilder.getI64IntegerAttr(k);
+  build(odsBuilder, odsState, /*result_tensor=*/TypeRange{}, src, dst,
+        /*k_part_idx=*/odsBuilder.getI64IntegerAttr(0), /*k_part=*/kAttr,
+        /*k_part_ceil=*/kAttr, /*k_part_loop=*/odsBuilder.getI64IntegerAttr(1),
+        /*k_part_actual=*/kAttr, /*m=*/odsBuilder.getI64IntegerAttr(mn),
+        odsBuilder.getBoolAttr(is_transposed));
+}
+
 SmallVector<IteratorType> L12L0Op::getIteratorTypesArray() {
   SmallVector<IteratorType> iteratorTypes;
   iteratorTypes.push_back(IteratorType::kParallel);
@@ -2158,6 +2183,11 @@ Value L12L0Op::getSource() { return getSrc(); }
 
 Value L12L0Op::getTarget() { return getDst(); }
 
+LogicalResult L12L0Op::fold(FoldAdaptor adaptor,
+                            SmallVectorImpl<OpFoldResult> &results) {
+  return memref::foldMemRefCast(*this);
+}
+
 bool L12L0Op::isToL0A() {
   auto dstSpace = getOptionalHIVMAddressSpace(getDst().getType());
   return dstSpace && *dstSpace == AddressSpace::L0A;
@@ -2166,6 +2196,37 @@ bool L12L0Op::isToL0A() {
 bool L12L0Op::isToL0B() {
   auto dstSpace = getOptionalHIVMAddressSpace(getDst().getType());
   return dstSpace && *dstSpace == AddressSpace::L0B;
+}
+
+llvm::SmallDenseMap<Value, DataLayoutAttr> L12L0Op::getOperandsTargetLayout() {
+  llvm::SmallDenseMap<Value, DataLayoutAttr> layouts;
+  auto blockSizes = getBlockSizes(getSrc());
+  auto makeLayout = [&](DataLayout layout) {
+    return DataLayoutAttr::get(
+        getContext(), layout, nullptr,
+        DenseI64ArrayAttr::get(getContext(), blockSizes));
+  };
+  layouts[getSrc()] =
+      makeLayout(getIsTransposed() ? DataLayout::nZ : DataLayout::zN);
+  layouts[getDst()] = makeLayout(isToL0A() ? DataLayout::zN : DataLayout::nZ);
+  return layouts;
+}
+
+llvm::SmallDenseMap<Value, DataLayoutAttr> L12L0Op::getOperandsCurrentLayout() {
+  auto layouts = getOperandsTargetLayout();
+  if (getSrcOperandType().getRank() == 2) {
+    // Match local matmul: a matching hint already describes normalized axes.
+    bool transpose = getIsTransposed() &&
+                     !sourceCarriesFractalLayoutHint(getSrc(), DataLayout::nZ);
+    layouts[getSrc()] = DataLayoutAttr::get(
+        getContext(), isToL0A() ? DataLayout::DOTA_ND : DataLayout::DOTB_ND,
+        transpose);
+  }
+  if (getDstOperandType().getRank() == 2)
+    layouts[getDst()] = DataLayoutAttr::get(
+        getContext(), isToL0A() ? DataLayout::DOTA_ND : DataLayout::DOTB_ND,
+        /*transpose=*/false);
+  return layouts;
 }
 
 LogicalResult L12L0Op::verify() {

@@ -22,6 +22,7 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "bishengir/Target/NPU/NPUArchitectureFeatures.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -29,6 +30,7 @@
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/Value.h"
 #include "llvm/Support/LogicalResult.h"
+#include <limits>
 
 #define DEBUG_TYPE "hivm-align-buffer-util"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -204,6 +206,29 @@ LogicalResult propagateAlignInfoByCollapse(
         getCollapsedDim(alignDims[i], reassociations, propagateFromShapes,
                         alignDimAttrName, isContiguous);
     if (!mappedDim.has_value()) {
+      // An internal row boundary may disappear in a flat debug view. Keep
+      // constraints on the source when they already require no padding.
+      if (alignDimAttrName == hivm::StrideAlignDimsAttr::name.str() &&
+          isContiguous && propagateFromTy.hasStaticShape()) {
+        auto target = hacc::utils::getTargetDevice(
+            op->template getParentOfType<ModuleOp>());
+        bool isRegBased =
+            target && *target != hacc::TargetDevice::Unknown &&
+            bishengir::npu::getExecutionModel(hacc::getArchitecture(*target)) ==
+                bishengir::npu::ExecutionModel::kRegBased;
+        auto units = utils::collectAlignUnits<MemRefType>(
+            alignDims, alignBytes, propagateFromTy, isRegBased);
+        if (units.size() == propagateFromShapes.size() + 1) {
+          SmallVector<OpFoldResult> shape;
+          for (int64_t size : propagateFromShapes)
+            shape.push_back(rewriter.getIndexAttr(size));
+          auto [aligned, original] =
+              calculateAlignedShape(rewriter, op.getLoc(), shape, units);
+          if (isEqualConstantIntOrValueArray(aligned, original))
+            return rewriter.notifyMatchFailure(
+                op, "source already satisfies stride alignment");
+        }
+      }
       return op.emitError() << "cannot align " << alignDims[i] << " axis for "
                             << propagateFromValue;
     }
@@ -1031,8 +1056,80 @@ FailureOrCastVec propagateCastOp(RewriterBase &rewriter,
   Value newSrc = conversionOp.getOperand(0);
   Type dstType = castOp.getDest().getType();
   if (!memref::CastOp::areCastCompatible({newSrc.getType()}, {dstType})) {
-    LDBG("Cannot cast aligned memref " << newSrc << " to " << dstType);
-    return FailureOrCastVec{};
+    // Preserve shape refinements while propagating the aligned layout. The
+    // original stride constraints describe the pre-alignment buffer.
+    auto newSrcType = cast<MemRefType>(newSrc.getType());
+    auto resultType = cast<MemRefType>(dstType);
+    SmallVector<int64_t> newSrcStrides, resultStrides;
+    int64_t newSrcOffset, resultOffset;
+    if (failed(utils::getStridesAndOffsetCompat(newSrcType, newSrcStrides,
+                                                newSrcOffset)) ||
+        failed(utils::getStridesAndOffsetCompat(resultType, resultStrides,
+                                                resultOffset)))
+      return failure();
+    // Translate refinements introduced by an expand within the same
+    // reassociation group. The relative strides of expanded dimensions are
+    // unchanged when the underlying source stride is padded.
+    // Assume the destination's static stride constrains a multiple of a
+    // stride in this group, so it scales with the group's base stride. The IR
+    // cannot distinguish this from a hardware-mandated absolute stride, which
+    // would also be scaled by this translation.
+    SmallVector<int64_t> newResultStrides = newSrcStrides;
+    auto oldSrcType = cast<MemRefType>(castOp.getSource().getType());
+    SmallVector<int64_t> oldSrcStrides;
+    int64_t oldSrcOffset;
+    if (failed(utils::getStridesAndOffsetCompat(oldSrcType, oldSrcStrides,
+                                                oldSrcOffset)))
+      return failure();
+    if (ShapedType::isDynamic(newSrcOffset) &&
+        !ShapedType::isDynamic(resultOffset))
+      return failure();
+    auto expand = newSrc.getDefiningOp<memref::ExpandShapeOp>();
+    for (unsigned i = 0; i < newResultStrides.size(); ++i) {
+      if (!ShapedType::isDynamic(resultStrides[i]) &&
+          ShapedType::isDynamic(oldSrcStrides[i]) &&
+          ShapedType::isDynamic(newSrcStrides[i]) &&
+          resultType.getDimSize(i) != 1 && newSrcType.getDimSize(i) != 1) {
+        bool translated = false;
+        if (expand) {
+          for (const auto &group : expand.getReassociationIndices()) {
+            if (!llvm::is_contained(group, i))
+              continue;
+            for (int64_t j : group) {
+              if (ShapedType::isDynamic(oldSrcStrides[j]) ||
+                  ShapedType::isDynamic(newSrcStrides[j]) ||
+                  oldSrcStrides[j] <= 0 || newSrcStrides[j] <= 0 ||
+                  resultStrides[i] < 0 ||
+                  resultStrides[i] % oldSrcStrides[j] != 0)
+                continue;
+              int64_t ratio = resultStrides[i] / oldSrcStrides[j];
+              if (ratio >
+                  std::numeric_limits<int64_t>::max() / newSrcStrides[j])
+                return failure();
+              newResultStrides[i] = ratio * newSrcStrides[j];
+              translated = true;
+              break;
+            }
+          }
+        }
+        if (!translated)
+          return failure();
+      }
+    }
+    auto newResultType =
+        MemRefType::get(resultType.getShape(), newSrcType.getElementType(),
+                        StridedLayoutAttr::get(rewriter.getContext(),
+                                               newSrcOffset, newResultStrides),
+                        newSrcType.getMemorySpace());
+    if (!memref::CastOp::areCastCompatible({newSrcType}, {newResultType}))
+      return FailureOrCastVec{};
+    rewriter.setInsertionPoint(castOp);
+    Value alignedCast =
+        rewriter.create<memref::CastOp>(castOp.getLoc(), newResultType, newSrc);
+    auto resultConversion = rewriter.create<UnrealizedConversionCastOp>(
+        castOp.getLoc(), dstType, alignedCast);
+    rewriter.replaceOp(castOp, resultConversion.getResult(0));
+    return UnrealizedCastOpVec{resultConversion};
   }
   rewriter.setInsertionPoint(castOp);
   auto newCast =
@@ -1459,7 +1556,9 @@ FailureOrCastVec propagateFuncCallOp(RewriterBase &rewriter,
   ModuleOp module = callOp->getParentOfType<ModuleOp>();
   SymbolTable symtab(module);
   auto callee = symtab.lookup<func::FuncOp>(callOp.getCallee());
-  if (!callee)
+  // External callees cannot accept a propagated layout. Leave the call
+  // unchanged so failure materialization preserves its declared interface.
+  if (!callee || callee.isExternal())
     return FailureOrCastVec{};
 
   std::optional<unsigned> argIdx;
@@ -1834,8 +1933,79 @@ static void findWriteOp(Value mem, SmallVector<Operation *> &writeOps) {
   }
 }
 
-void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
-                                        func::FuncOp &funcOp) {
+static bool hasSupportedFallbackLayout(Value value) {
+  auto type = dyn_cast<MemRefType>(value.getType());
+  SmallVector<int64_t> strides;
+  int64_t offset;
+  if (!type || failed(utils::getStridesAndOffsetCompat(type, strides, offset)))
+    return false;
+  return (ShapedType::isDynamic(offset) || offset >= 0) &&
+         llvm::all_of(strides, [](int64_t stride) {
+           return ShapedType::isDynamic(stride) || stride > 0;
+         });
+}
+
+// Choose a concrete layout for fresh storage at a fixed consumer interface.
+// Dynamic layout entries are free parameters of this allocation, not metadata
+// recovered from dst. Preserve static entries and choose dynamic strides from
+// the storage span of the inner dimensions.
+// Cast refinements must be translated instead of materialized here.
+static Value createFallbackBuffer(RewriterBase &rewriter, Location loc,
+                                  Value dst) {
+  auto type = cast<MemRefType>(dst.getType());
+  auto layout = dyn_cast<StridedLayoutAttr>(type.getLayout());
+  if (!layout || (llvm::none_of(layout.getStrides(), ShapedType::isDynamic) &&
+                  !ShapedType::isDynamic(layout.getOffset())))
+    return utils::createEmptyOp(rewriter, loc, dst);
+
+  // Keep all extents for stride calculation, but pass only dynamic extents as
+  // allocation size operands. These dim queries are later redirected to the
+  // aligned source by handlePropagateFailure.
+  SmallVector<Value> sizes, dynamicSizes;
+  for (auto [i, size] : llvm::enumerate(type.getShape())) {
+    Value value;
+    if (ShapedType::isDynamic(size)) {
+      value = rewriter.create<memref::DimOp>(loc, dst, i);
+      dynamicSizes.push_back(value);
+    } else {
+      value = rewriter.create<arith::ConstantIndexOp>(loc, size);
+    }
+    sizes.push_back(value);
+  }
+
+  SmallVector<Value> strides(type.getRank());
+  // span is one plus the largest element offset covered by the dimensions
+  // already visited. Use it as the stride of a dynamic enclosing dimension;
+  // static strides remain constraints imposed by the consumer's type.
+  Value span = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  for (int64_t i = type.getRank() - 1; i >= 0; --i) {
+    int64_t stride = layout.getStrides()[i];
+    strides[i] = ShapedType::isDynamic(stride)
+                     ? span
+                     : rewriter.create<arith::ConstantIndexOp>(loc, stride);
+    // A zero extent still needs a nonzero stride for enclosing dimensions.
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value extent = rewriter.createOrFold<arith::MaxUIOp>(loc, sizes[i], one);
+    Value count = rewriter.createOrFold<arith::SubIOp>(loc, extent, one);
+    Value distance =
+        rewriter.createOrFold<arith::MulIOp>(loc, strides[i], count);
+    span = rewriter.createOrFold<arith::AddIOp>(loc, span, distance);
+  }
+  // StridedLayoutAttr allocation symbols are ordered as the dynamic offset,
+  // followed by dynamic strides in dimension order. Fresh storage can start at
+  // offset zero when the consumer does not require a static offset.
+  SmallVector<Value> symbols;
+  if (ShapedType::isDynamic(layout.getOffset()))
+    symbols.push_back(rewriter.create<arith::ConstantIndexOp>(loc, 0));
+  for (auto [stride, value] : llvm::zip(layout.getStrides(), strides))
+    if (ShapedType::isDynamic(stride))
+      symbols.push_back(value);
+  return rewriter.create<memref::AllocOp>(loc, type, dynamicSizes, symbols);
+}
+
+LogicalResult mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
+                                                 func::FuncOp &funcOp) {
+  bool unsupported = false;
   funcOp->walk([&](UnrealizedConversionCastOp conversion) {
     if (!conversion->hasAttr(propagateFailureName))
       return WalkResult::skip();
@@ -1855,6 +2025,30 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
     Location loc = conversion.getLoc();
     Value src = conversion.getInputs()[0];
     Value dst = conversion.getOutputs()[0];
+    // Conservatively refuse failed casts rather than materialize an unaligned
+    // cast operand. An allocatable layout alone does not establish that the
+    // cast's refinements have been preserved through alignment. Unit-dimension
+    // stride refinements are handled during cast propagation; other failures
+    // remain unsupported here.
+    for (OpOperand *use : failedUses) {
+      if (isa<memref::CastOp>(use->getOwner())) {
+        use->getOwner()->emitError(
+            "cannot translate aligned layout refinement; "
+            "refusing to materialize an unaligned cast operand");
+        unsupported = true;
+        return WalkResult::advance();
+      }
+    }
+    // Fallback allocation and copy lowering currently support positive
+    // strided layouts only. In particular, choosing zero for an unknown
+    // offset cannot make a negative-stride allocation safe.
+    if (!hasSupportedFallbackLayout(src) || !hasSupportedFallbackLayout(dst)) {
+      conversion.emitError("cannot materialize stride-alignment fallback: "
+                           "requires positive strided layouts and nonnegative "
+                           "static offsets");
+      unsupported = true;
+      return WalkResult::advance();
+    }
     // Delay the shared allocation within the cast's block, before every
     // failing use or the enclosing operation that contains it.
     Block *block = conversion->getBlock();
@@ -1869,7 +2063,7 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
         allocBefore = user;
     }
     rewriter.setInsertionPoint(allocBefore);
-    Value shared = utils::createEmptyOp(rewriter, loc, dst);
+    Value shared = createFallbackBuffer(rewriter, loc, dst);
 
     // Dominance makes the buffer referable here; it does not make the data
     // readable here. A write to `src` that this pass can see is paired with a
@@ -1928,6 +2122,12 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
       rewriter.setInsertionPointAfter(writeOp);
       rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, shared);
     }
+    // Include dimension queries introduced by all fallback allocations. Move
+    // only the current use; no outer iterator remains on this use-list.
+    for (OpOperand &use : make_early_inc_range(dst.getUses()))
+      if (auto dim = dyn_cast<memref::DimOp>(use.getOwner()))
+        rewriter.modifyOpInPlace(dim,
+                                 [&] { dim.getSourceMutable().assign(src); });
     if (conversion->use_empty())
       rewriter.eraseOp(conversion);
     return WalkResult::advance();
@@ -1937,10 +2137,12 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
       op->removeAttr(propagateFailureName);
     return WalkResult::advance();
   });
+  return failure(unsupported);
 }
 
-void mlir::hivm::materializeRemainingStaticUBLayoutCasts(RewriterBase &rewriter,
-                                                         func::FuncOp funcOp) {
+LogicalResult
+mlir::hivm::materializeRemainingStaticUBLayoutCasts(RewriterBase &rewriter,
+                                                    func::FuncOp funcOp) {
   SmallVector<UnrealizedConversionCastOp> conversions;
   funcOp.walk([&](UnrealizedConversionCastOp conversion) {
     conversions.push_back(conversion);
@@ -1977,13 +2179,22 @@ void mlir::hivm::materializeRemainingStaticUBLayoutCasts(RewriterBase &rewriter,
       continue;
 
     rewriter.setInsertionPoint(conversion);
-    Value newDst =
-        rewriter.create<memref::AllocOp>(conversion.getLoc(), dstType);
+    if (!hasSupportedFallbackLayout(src) || !hasSupportedFallbackLayout(dst)) {
+      conversion.emitError("cannot materialize stride-alignment fallback: "
+                           "requires positive strided layouts and nonnegative "
+                           "static offsets");
+      return failure();
+    }
+    // Both shapes are static, so allocation creates no dimension queries
+    // through the temporary conversion. Dynamic layout entries still need
+    // explicit symbol operands.
+    Value newDst = createFallbackBuffer(rewriter, conversion.getLoc(), dst);
     rewriter.create<hivm::CopyOp>(conversion.getLoc(), TypeRange{}, src,
                                   newDst);
     rewriter.replaceAllUsesWith(dst, newDst);
     rewriter.eraseOp(conversion);
   }
+  return success();
 }
 
 void mlir::hivm::populatePropagateAlignUpToRootAllocationPattern(

@@ -7,10 +7,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/HIVMVectorizeBuffers.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/TransformOps/Outline.h"
 #include "bishengir/Dialect/HIVM/TransformOps/VectorizeLinalg.h"
 #include "bishengir/Dialect/HIVM/TransformOps/VectorizeResult.h"
+#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/TransformOps/DialectExtension.h"
 #include "mlir/Dialect/Linalg/Transforms/TilingInterfaceImpl.h"
@@ -19,6 +22,7 @@
 #include "mlir/Dialect/Tensor/TransformOps/TensorTransformOps.h"
 #include "mlir/Dialect/Transform/IR/TransformDialect.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Verifier.h"
 
@@ -26,6 +30,61 @@ using namespace mlir;
 using namespace mlir::hivm;
 
 namespace {
+static bool supportsScalarBroadcast(Type element) {
+  // A one-element store needs a masked data store after AVE lowering.
+  if (auto integer = dyn_cast<IntegerType>(element))
+    return integer.isSignless() &&
+           llvm::is_contained(ArrayRef<unsigned>{8, 16, 32},
+                              integer.getWidth());
+  return isa<Float16Type, BFloat16Type, Float32Type, Float8E4M3FNType,
+             Float8E5M2Type>(element);
+}
+
+// A generic scalar store would be cloned onto both cores of a MIX kernel.
+// When the AIV already has the scalar and exclusively consumes a fresh
+// singleton UB, a vector broadcast writes the entire allocation on its owner.
+static void promotePrivateVectorInput(memref::StoreOp store) {
+  auto function = store->getParentOfType<func::FuncOp>();
+  if (!function || queryFuncCoreType(function) != TFuncCoreType::MIX ||
+      store->hasAttr(TCoreTypeAttr::name))
+    return;
+  Value dest = store.getMemRef();
+  auto alloc = dest.getDefiningOp<memref::AllocOp>();
+  if (!alloc || alloc->getBlock() != store->getBlock() ||
+      !llvm::hasNItems(dest.getUses(), 2))
+    return;
+  auto type = alloc.getType();
+  if (type.getShape() != ArrayRef<int64_t>{1} ||
+      !type.getLayout().isIdentity() ||
+      getOptionalHIVMAddressSpace(type) != AddressSpace::UB ||
+      !supportsScalarBroadcast(type.getElementType()) ||
+      !matchPattern(store.getIndices().front(), m_Zero()))
+    return;
+  auto isLocalVF = [&](Operation *user) {
+    return user->getBlock() == store->getBlock() && isVFCall(user);
+  };
+  Value scalar = store.getValue();
+  auto arg = dyn_cast<BlockArgument>(scalar);
+  bool available = (arg && arg.getOwner() == &function.front()) ||
+                   scalar.getDefiningOp<arith::ConstantOp>() ||
+                   llvm::any_of(scalar.getUsers(), isLocalVF);
+  // The call can publish the buffer address. Initialize it before the call
+  // and in the allocation's block so the address is fresh on every iteration.
+  auto initializedByStore = [&](Operation *user) {
+    return isLocalVF(user) && store->isBeforeInBlock(user);
+  };
+  if (!available || !llvm::any_of(dest.getUsers(), initializedByStore))
+    return;
+  for (Operation *parent = store->getParentOp(); parent != function;
+       parent = parent->getParentOp()) {
+    auto owner = getCoreType(parent);
+    if (failed(owner) || *owner != TCoreType::CUBE_OR_VECTOR)
+      return;
+  }
+  IRRewriter rewriter(store);
+  rewriter.replaceOpWithNewOp<VBrcOp>(store, TypeRange{}, scalar, dest);
+}
+
 bool isBufferMovement(Operation &operation) {
   auto structured = dyn_cast<HIVMStructuredOp>(operation);
   if (!structured || !structured.hasPureBufferSemantics() ||
@@ -273,6 +332,8 @@ void annotateBufferFunction(func::FuncOp function) {
 }
 
 LogicalResult vectorizeBufferFunctions(ModuleOp module) {
+  if (hacc::utils::isAscend960(module))
+    module.walk(promotePrivateVectorInput);
   Groups groups;
   auto checked = module.walk([&](Operation *operation) {
     if (!isBufferMovement(*operation))

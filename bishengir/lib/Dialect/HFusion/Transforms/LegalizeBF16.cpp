@@ -39,9 +39,12 @@ using namespace mlir::hfusion;
 
 static thread_local bool isAscend950Arch{false};
 static thread_local bool isRegBasedArch{false};
+static thread_local bool enableNativeBF16{false};
 
 class LegalizeBF16Pass : public impl::LegalizeBF16PassBase<LegalizeBF16Pass> {
 public:
+  explicit LegalizeBF16Pass(const LegalizeBF16PassOptions &options)
+      : LegalizeBF16PassBase(options) {}
   void runOnOperation() override;
 };
 
@@ -101,6 +104,38 @@ static bool shouldLegalizeBF16Op(Operation *op) {
         isExcluded |= funAttr == linalg::UnaryFn::floor;
       }
       isExcluded |= isa<hfusion::GatherOp>(op);
+      if (enableNativeBF16) {
+        // Ascend 950 supports native BF16 for elementwise add/sub/mul and
+        // min/max. Both the hfusion fun variants and the linalg fun variants
+        // must be kept out of the F32 legalization.
+        if (auto hfBinaryOp = dyn_cast<hfusion::ElemwiseBinaryOp>(op)) {
+          auto fun = hfBinaryOp.getFun();
+          isExcluded |= fun == hfusion::BinaryFn::maxf;
+          isExcluded |= fun == hfusion::BinaryFn::minf;
+          isExcluded |= fun == hfusion::BinaryFn::maxnumf;
+          isExcluded |= fun == hfusion::BinaryFn::minnumf;
+        }
+        if (auto linalgBinaryOp = dyn_cast<linalg::ElemwiseBinaryOp>(op)) {
+          auto fun = linalgBinaryOp.getFun();
+          isExcluded |= fun == linalg::BinaryFn::add;
+          isExcluded |= fun == linalg::BinaryFn::sub;
+          isExcluded |= fun == linalg::BinaryFn::mul;
+          isExcluded |= fun == linalg::BinaryFn::max_signed;
+          isExcluded |= fun == linalg::BinaryFn::min_signed;
+          isExcluded |= fun == linalg::BinaryFn::max_unsigned;
+          isExcluded |= fun == linalg::BinaryFn::min_unsigned;
+        }
+        // Ascend 950 supports native BF16 for vector compare and select.
+        // Rank-0 and singleton selects stay on the F32 scalar path; the
+        // select_rank_zero / select_singleton regression tests lock that
+        // behavior in.
+        isExcluded |= isa<hfusion::CompareOp>(op);
+        if (auto selectOp = dyn_cast<hfusion::SelectOp>(op)) {
+          auto initType =
+              dyn_cast<ShapedType>(selectOp->getResult(0).getType());
+          isExcluded |= initType && initType.getNumElements() > 1;
+        }
+      }
     }
     return hasBF16Operand(op) && !isExcluded;
   }
@@ -361,6 +396,7 @@ void LegalizeBF16Pass::runOnOperation() {
   ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
   isAscend950Arch = moduleOp && hacc::utils::isAscend950(moduleOp);
   isRegBasedArch = moduleOp && hacc::utils::isRegBasedArch(moduleOp);
+  enableNativeBF16 = enableBf16;
   MLIRContext *context = &getContext();
   RewritePatternSet patterns(context);
   populateLegalizeBF16Pattern(patterns);
@@ -368,6 +404,7 @@ void LegalizeBF16Pass::runOnOperation() {
     return signalPassFailure();
 }
 
-std::unique_ptr<Pass> mlir::hfusion::createLegalizeBF16Pass() {
-  return std::make_unique<LegalizeBF16Pass>();
+std::unique_ptr<Pass>
+mlir::hfusion::createLegalizeBF16Pass(const LegalizeBF16PassOptions &options) {
+  return std::make_unique<LegalizeBF16Pass>(options);
 }

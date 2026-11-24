@@ -27,6 +27,7 @@ include "bishengir/Dialect/HIVM/IR/HIVMBase.td"
 include "bishengir/Dialect/HIVM/IR/HIVMAttrs.td"
 include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.td"
 include "bishengir/Dialect/HIVM/IR/HIVMTraits.td"
+include "bishengir/Dialect/HIVM/Interfaces/OpLayoutInterface.td"
 
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
@@ -581,11 +582,24 @@ def LoadMXScaleOp : HIVM_DmaOp<"load_scale", [
 def L12L0Op: HIVM_DmaOp<"l12l0",
     [StaticMaxRankTrait<2>,
      SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_MTE1">,
-     HIVMCoreTypeInterface, CubeCoreTypeTrait
+     HIVMCoreTypeInterface, CubeCoreTypeTrait,
+     DeclareOpInterfaceMethods<OpLayoutInterface>
     ]> {
   let summary = "HIVM data copy operation from L1 to L0A or L0B Buffer";
   let description = [{
     Copy data from L1 to L0A or L0B buffer.
+    The partition attributes retain their existing meaning. A frontend that
+    exposes only src/dst views can use the buffer builder to encode a single
+    aligned copy: k_part_idx=0, k_part_loop=1, k_part=k_part_ceil=k_part_actual=K,
+    and m=M for L0A or N for L0B. The views already carry the copy origin.
+    The frontend validates the shapes, layouts, alignment, strides and storage;
+    this builder neither pads the copy nor introduces a tail protocol.
+    actual_batch=None/1 is normalized by the frontend to a single copy and
+    is not emitted as an attribute. Batch copies are not implemented here.
+
+    Logical destination axes are [M,K] for L0A and [K,N] for L0B. Layout
+    inference uses the local-matmul source transpose/hint convention and
+    preserves all partition attributes while converting allocs and subviews.
     The destination is distinguished by the dst address space:
       - L0A: `#hivm.address_space<ca>`
       - L0B: `#hivm.address_space<cb>`
@@ -610,6 +624,13 @@ def L12L0Op: HIVM_DmaOp<"l12l0",
     `}`
     (`->` type($result_tensor)^)?
   }];
+  let builders = [
+    // Convenience builder for frontend-validated, static buffer views.
+    // The existing builders accepting explicit partition attributes remain.
+    OpBuilder<(ins "Value":$src, "Value":$dst,
+                   CArg<"bool", "false">:$is_transposed)>
+  ];
+  let hasFolder = 1;
   let hasVerifier = 1;
   let extraClassDeclaration = DmaOpBaseDecl # [{
     bool isToL0A();

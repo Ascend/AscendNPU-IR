@@ -92,6 +92,16 @@ struct FoldBroadcastInBinaryOp : public OpRewritePattern<HivmVFVVOp> {
 public:
   using OpRewritePattern<HivmVFVVOp>::OpRewritePattern;
 
+  // Whether the element type is accepted by the vector-scalar variant of the
+  // op. BF16 is rejected for now: some vector-scalar instructions do have
+  // BF16 variants, but enabling them is left for future work.
+  static bool isSupportedByScalarOp(Type elemType) {
+    if (isa<BFloat16Type>(elemType)) {
+      return false;
+    }
+    return true;
+  }
+
   LogicalResult matchAndRewrite(HivmVFVVOp op,
                                 PatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
@@ -103,6 +113,9 @@ public:
     // The result should be a vector
     VectorType resVecType = mlir::dyn_cast<VectorType>(resType);
     if (!resVecType || resVecType.getRank() != 1) {
+      return failure();
+    }
+    if (!isSupportedByScalarOp(resVecType.getElementType())) {
       return failure();
     }
     auto new_operands = foldBroadcastInOperands(op, rewriter);

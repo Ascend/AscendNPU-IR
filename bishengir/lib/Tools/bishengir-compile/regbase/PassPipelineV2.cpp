@@ -51,6 +51,8 @@ void setupV2PipelineOptions(const BiShengIRCompileMainConfig &config,
   v2Options.target = hacc::stringifyTargetDeviceEnum(config.getTarget()).str();
   v2Options.enablePreload = hivmOptions.enablePreload;
   v2Options.enableMultiBuffer = config.getEnableAutoMultiBuffer();
+  v2Options.enableAutoBlockifyLoop = hivmOptions.enableTritonKernelCompile &&
+                                     hivmOptions.enableAutoBlockifyLoop;
   v2Options.disableHIVMAutoInjectSync = hivmOptions.disableHIVMAutoInjectSync;
   v2Options.disableAutoInjectBlockSync = hivmOptions.disableAutoInjectBlockSync;
   v2Options.enableHIVMInjectBarrierAllSync =
