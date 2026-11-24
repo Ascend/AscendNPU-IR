@@ -33,7 +33,7 @@ namespace hivm {
 ///
 /// Local buffers in `preloadLocalBuffers` (those folded onto a preload
 /// storage entry but not already carrying the mark) are tagged with
-/// `annotation.mark {hivm.preload_local_buffer = 1}` on the materialized
+/// `annotation.mark {hivm.preload_local_buffer}` on the materialized
 /// pointer_cast so that create-preload applies the same bank rotation to
 /// them.
 LogicalResult walkAllocToPointerCast(

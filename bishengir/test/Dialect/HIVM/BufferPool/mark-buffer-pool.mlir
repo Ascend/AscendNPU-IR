@@ -28,7 +28,7 @@ func.func @insufficient_simultaneous_inputs(%src: memref<32xf32, #hivm.address_s
   // INPUTS: scf.for {{.*}}iter_args({{.*}}, %[[READ:arg[0-9]+]] = %{{.*}})
   scf.for %i = %c0 to %c8 step %c1 {
     %b0 = memref.alloc() : memref<32xf32, #hivm.address_space<ub>>
-    // CHECK: annotation.mark {{.*}} {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32}
+    // CHECK: annotation.mark {{.*}} {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer}
     annotation.mark %b0 {hivm.multi_buffer = 2 : i32} : memref<32xf32, #hivm.address_space<ub>>
     scope.scope : () -> () {
       hivm.hir.load ins(%src : memref<32xf32, #hivm.address_space<gm>>) outs(%b0 : memref<32xf32, #hivm.address_space<ub>>)
@@ -36,7 +36,7 @@ func.func @insufficient_simultaneous_inputs(%src: memref<32xf32, #hivm.address_s
     // CHECK: hivm.load_preload = 1 : i32
     } {hivm.load_preload = 1 : i32, no_inline, hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
     %b1 = memref.alloc() : memref<32xf32, #hivm.address_space<ub>>
-    // CHECK: annotation.mark {{.*}} {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32}
+    // CHECK: annotation.mark {{.*}} {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer}
     annotation.mark %b1 {hivm.multi_buffer = 2 : i32} : memref<32xf32, #hivm.address_space<ub>>
     scope.scope : () -> () {
       hivm.hir.load ins(%src : memref<32xf32, #hivm.address_space<gm>>) outs(%b1 : memref<32xf32, #hivm.address_space<ub>>)
@@ -267,7 +267,7 @@ func.func @no_target_spec(%src: memref<32xf32, #hivm.address_space<gm>>, %dst: m
   scf.for %i = %c0 to %c8 step %c1 {
     // CHECK-NOT: hivm.mempool
     %b = memref.alloc() : memref<32xf32, #hivm.address_space<ub>>
-    // CHECK: annotation.mark {{.*}}hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32
+    // CHECK: annotation.mark {{.*}}hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer
     annotation.mark %b {hivm.multi_buffer = 2 : i32} : memref<32xf32, #hivm.address_space<ub>>
     scope.scope : () -> () {
       hivm.hir.load ins(%src : memref<32xf32, #hivm.address_space<gm>>) outs(%b : memref<32xf32, #hivm.address_space<ub>>)

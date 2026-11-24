@@ -31,7 +31,7 @@ func.func @gqa_filtered_loop_args(%ub: i32)
       -> (i64, memref<8xf32, #hivm.address_space<ub>>,
           memref<8xf32, #hivm.address_space<ub>>) : i32 {
     annotation.mark %buffer {hivm.multi_buffer = 2 : i32,
-                            hivm.preload_local_buffer = 1 : i32}
+                            hivm.preload_local_buffer}
         : memref<8xf32, #hivm.address_space<ub>>
     %updated:2 = scope.scope : () ->
         (i64, memref<8xf32, #hivm.address_space<ub>>) {

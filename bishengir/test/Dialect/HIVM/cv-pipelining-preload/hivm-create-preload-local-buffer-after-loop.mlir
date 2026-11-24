@@ -48,7 +48,7 @@ func.func @yield_preload_local_used_after(
     %tcb = hivm.hir.pointer_cast(%c16384, %c65536)
         : memref<64x64xf32, #hivm.address_space<ub>>
     annotation.mark %tcb {hivm.multi_buffer = 2 : i32,
-                          hivm.preload_local_buffer = 1 : i32}
+                          hivm.preload_local_buffer}
         : memref<64x64xf32, #hivm.address_space<ub>>
     scope.scope : () -> () {
       hivm.hir.copy ins(%acc_tcb : memref<64x64xf32, #hivm.address_space<ub>>)

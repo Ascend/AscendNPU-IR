@@ -57,7 +57,7 @@ func.func @preserve_annotated_outer_buffer_selection(%outer_n: i32, %inner_n: i3
   scf.for %outer = %c0 to %outer_n step %c1 : i32 {
     %state = hivm.hir.pointer_cast(%addr0, %addr1)
         : memref<32x64xf32, #hivm.address_space<ub>>
-    annotation.mark %state {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32}
+    annotation.mark %state {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer}
         : memref<32x64xf32, #hivm.address_space<ub>>
     %result = scf.for %inner = %c0 to %inner_n step %c1
         iter_args(%current = %state)

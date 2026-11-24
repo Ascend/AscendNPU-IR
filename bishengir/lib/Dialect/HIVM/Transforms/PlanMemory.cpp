@@ -1089,7 +1089,7 @@ void MemLivenessAnalysis::UpdatePreloadBuffersKillInfo(OpInfo *opInfo) {
 /// 1:  func.func {
 /// 2:    scf.for {
 /// 3:      %alloc = memref.alloc()
-/// 4:      annotation.mark %alloc {hivm.preload_local_buffer = 1 : i32}
+/// 4:      annotation.mark %alloc {hivm.preload_local_buffer}
 /// 5:      scope.scope : () -> () {
 /// 6:        ops
 /// 7:        hivm.hir.load outs(%alloc)
