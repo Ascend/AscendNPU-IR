@@ -1940,7 +1940,7 @@ void mlir::triton::ascend::populateAscendElementwiseOpToLLVMPatterns(
   POPULATE_BINARY_OP(arith::MulIOp, LLVM::MulOp) // *
   POPULATE_BINARY_OP(arith::MulFOp, LLVM::FMulOp)
   POPULATE_BINARY_OP(arith::DivSIOp, ascend_dpx::DivOp)
-  POPULATE_BINARY_OP(arith::DivUIOp, ascend_dpx::DivOp)
+  POPULATE_BINARY_OP(arith::DivUIOp, ascend_dpx::UDivOp)
   POPULATE_BINARY_OP(arith::DivFOp, ascend_dpx::DivOp)
   POPULATE_BINARY_OP(arith::RemFOp, LLVM::FRemOp) // %
   POPULATE_BINARY_OP(arith::RemSIOp, LLVM::SRemOp)
