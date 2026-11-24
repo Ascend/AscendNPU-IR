@@ -531,19 +531,22 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK-NEXT:   scope.return {{.*}} : tensor<16x16xf32>
 // CHECK-NEXT: }
 // CHECK-NOT:  hivm.loop_core_type
-// CHECK-NEXT: %[[MERGED_VEC:.*]]:2 = scope.scope : () -> (tensor<1x1x16x16xf16>, tensor<16x16xf16>) {
+// CHECK-NEXT: %[[MERGED_VEC:.*]] = scope.scope : () -> tensor<1x1x16x16xf16> {
 // CHECK:        %[[VADD:.*]] = hivm.hir.vadd ins(%[[UNTYPED_DEP]], {{.*}})
 // CHECK:        hivm.hir.vcast ins(%[[VADD]] : tensor<16x16xf32>)
 // CHECK:        hivm.hir.copy
+// CHECK-NEXT:   scope.return {{.*}} : tensor<1x1x16x16xf16>
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: %[[PRE_UNTYPED:.*]] = scope.scope : () -> tensor<16x16xf16> {
 // CHECK:        hivm.hir.vrelu
-// CHECK-NEXT:   scope.return {{.*}} : tensor<1x1x16x16xf16>, tensor<16x16xf16>
+// CHECK-NEXT:   scope.return {{.*}} : tensor<16x16xf16>
 // CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NEXT: %[[UNTYPED_SEED:.*]] = scope.scope : () -> tensor<1x1x16x16xf16> {
-// CHECK:        tensor.expand_shape %[[MERGED_VEC]]#1
+// CHECK:        tensor.expand_shape %[[PRE_UNTYPED]]
 // CHECK:        hivm.hir.copy
 // CHECK-NEXT:   scope.return {{.*}} : tensor<1x1x16x16xf16>
 // CHECK-NEXT: }
-// CHECK-NEXT: scf.yield %[[MERGED_VEC]]#0, %[[UNTYPED_SEED]]
+// CHECK-NEXT: scf.yield %[[MERGED_VEC]], %[[UNTYPED_SEED]]
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @skip_scopes_without_core_type(
       %x: tensor<16x16xf32>,

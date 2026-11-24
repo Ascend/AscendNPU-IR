@@ -431,25 +431,17 @@ func.func @lcd_gate_merges_with_tail(%x: f32) -> f32 {
 
 // -----
 
-// Adjacent VECTOR scopes with no dependency remain separate, including
-// inside nested wrappers. Sharing an external function argument is not
-// a shared scope predecessor.
+// Sharing an external function argument is not a shared scope predecessor.
+// The single-core wrapper rule fuses these children and collapses both
+// wrappers before graph merging, even in isolation.
 // CHECK-LABEL: func.func @nested_unconnected_scopes
 // CHECK: scf.for
 // CHECK-NEXT: scope.scope : () -> () {
-// CHECK-NEXT: scope.scope : () -> () {
-// CHECK-NEXT: scope.scope : () -> () {
 // CHECK-NEXT: {{.*}} = arith.addf
-// CHECK-NEXT: scope.return
-// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
-// CHECK-NEXT: scope.scope : () -> () {
 // CHECK-NEXT: {{.*}} = arith.mulf
 // CHECK-NEXT: scope.return
 // CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
-// CHECK-NEXT: scope.return
-// CHECK-NEXT: } {cv_merged_scope}
-// CHECK-NEXT: scope.return
-// CHECK-NEXT: } {cv_merged_scope}
+// CHECK-NEXT: } {hivm.cv_pipelined_loop}
 func.func @nested_unconnected_scopes(%x: f32) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index

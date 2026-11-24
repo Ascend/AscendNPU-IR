@@ -150,12 +150,11 @@ public:
   // sharing a predecessor or successor in the loop body or a nested scope body.
   bool applyGraphSameCoreRule();
 
-  // Rule 6: Wrap a consecutive run of scopes that resolve to the same single
-  // core into one `{cv_merged_scope}`. A `{cv_merged_scope}` whose nested
-  // scopes all have that one core type counts as a scope of that core.
-  // Same-core scopes inside that wrapper are then fused in program order.
-  // A different core, a mixed wrapper, or a non-scope op ends the run.
-  bool applySameCoreRunGroupingRule();
+  // Rule 6: Fuse consecutive same-core scopes inside each existing single-core
+  // `{cv_merged_scope}` in program order, then collapse redundant wrappers.
+  // Normalize nested single-core merged scopes recursively without merging
+  // scopes across the enclosing wrapper's boundary.
+  bool applySingleCoreMergedScopeFusionRule();
 
   // Rule 7: Starting from a Cube-and-Vector scope with an alloca inside,
   // trace downward to find its users and sink the alloca, initialization, and
@@ -179,7 +178,7 @@ private:
   // Fuse direct children that have the same Cube or Vector core, in order.
   // A single-core `{cv_merged_scope}` is fused internally and collapsed first
   // so it can join that sequence.
-  static void fuseOrderedSameCoreScopes(Block *body);
+  static bool fuseOrderedSameCoreScopes(Block *body);
   static void collectAllocaScopes(scf::ForOp &loopOp,
                                   SmallVector<ScopeOp> &allocaScopes);
   static void collectAllocaAccesses(
@@ -1646,9 +1645,9 @@ static std::optional<TCoreType> getSingleCoreKind(ScopeOp scope) {
   return only;
 }
 
-void LoopScopeMerger::fuseOrderedSameCoreScopes(Block *body) {
+bool LoopScopeMerger::fuseOrderedSameCoreScopes(Block *body) {
   if (!body)
-    return;
+    return false;
 
   SmallVector<ScopeOp> nested;
   for (Operation &op : body->without_terminator()) {
@@ -1657,9 +1656,10 @@ void LoopScopeMerger::fuseOrderedSameCoreScopes(Block *body) {
         getSingleCoreKind(scope))
       nested.push_back(scope);
   }
+  bool changed = false;
   for (ScopeOp scope : nested) {
-    fuseOrderedSameCoreScopes(scope.getBody());
-    collapseSingleChildMergedScope(scope);
+    changed |= fuseOrderedSameCoreScopes(scope.getBody());
+    changed |= collapseSingleChildMergedScope(scope);
   }
 
   ScopeOp previous;
@@ -1679,52 +1679,23 @@ void LoopScopeMerger::fuseOrderedSameCoreScopes(Block *body) {
       if (prevCore && *prevCore == *currCore) {
         if (ScopeOp merged = mergeScopes(previous, current, current)) {
           previous = merged;
+          changed = true;
           continue;
         }
       }
     }
     previous = current;
   }
+  return changed;
 }
 
-bool LoopScopeMerger::applySameCoreRunGroupingRule() {
-  SmallVector<SmallVector<Operation *>> runs;
-  SmallVector<Operation *> run;
-  std::optional<TCoreType> runCore;
-  auto flush = [&]() {
-    if (run.size() >= 2)
-      runs.push_back(std::move(run));
-    run.clear();
-    runCore.reset();
-  };
-  for (Operation &op : loopOp.getBody()->without_terminator()) {
-    auto scope = dyn_cast<ScopeOp>(&op);
-    std::optional<TCoreType> core =
-        scope ? getSingleCoreKind(scope) : std::nullopt;
-    if (!core || (runCore && *runCore != *core))
-      flush();
-    if (!core)
-      continue;
-    runCore = core;
-    run.push_back(scope.getOperation());
-  }
-  flush();
-
+bool LoopScopeMerger::applySingleCoreMergedScopeFusionRule() {
   bool changed = false;
-  // Later runs sit further down the block. Wrapping them first leaves the
-  // earlier runs' operations in place.
-  for (auto it = runs.rbegin(); it != runs.rend(); ++it) {
-    FailureOr<scope::ScopeOp> wrapped = wrapGroupInScope(loopOp.getBody(), *it);
-    if (succeeded(wrapped)) {
-      fuseOrderedSameCoreScopes(wrapped->getBody());
-      // One remaining child is the fused core scope. Collapse the wrapper so
-      // a second run of this pass does not do it again.
-      collapseSingleChildMergedScope(*wrapped);
-      changed = true;
+  for (ScopeOp scope : loopOp.getBody()->getOps<ScopeOp>()) {
+    if (!scope->hasAttr(kCVMergedScopeAttrName) || !getSingleCoreKind(scope))
       continue;
-    }
-    loopOp->emitWarning("[MergeCVScopes] same-core run is not convex; "
-                        "left unmerged");
+    changed |= fuseOrderedSameCoreScopes(scope.getBody());
+    changed |= collapseSingleChildMergedScope(scope);
   }
   return changed;
 }
@@ -2088,9 +2059,10 @@ void MergeCVScopesPass::runOnOperation() {
        "merged.4-cross-core-backward"},
       {&LoopScopeMerger::applySmallVectorScopeMergeRule,
        "merged.5-small-vector-merge"},
-      {&LoopScopeMerger::applyGraphSameCoreRule, "merged.6-graph-same-core"},
-      {&LoopScopeMerger::applySameCoreRunGroupingRule,
-       "merged.7-same-core-run"},
+      // Expose single-core wrappers before considering graph-based merges.
+      {&LoopScopeMerger::applySingleCoreMergedScopeFusionRule,
+       "merged.6-single-core-wrapper"},
+      {&LoopScopeMerger::applyGraphSameCoreRule, "merged.7-graph-same-core"},
       {&LoopScopeMerger::applySinkAllocaInCAVScopeRule,
        "merged.8-sink-alloca"}};
 
