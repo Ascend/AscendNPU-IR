@@ -57,19 +57,6 @@ std::optional<int> getYieldValueIdx(Value targetVal, ValueRange yieldedValues) {
 
   return std::nullopt;
 }
-
-/// First block of the region that `block` belongs to and `loop` owns.
-/// `scf.while` has two such regions and neither dominates the other
-/// => the use has to name the region it sits in.
-/// null when `block` is not nested in `loop`.
-static Block *getLoopRegionBlock(Block *block, Operation *loop) {
-  if (!block || !loop)
-    return nullptr;
-  Region *region = block->getParent();
-  while (region && region->getParentOp() != loop)
-    region = region->getParentOp()->getParentRegion();
-  return region ? &region->front() : nullptr;
-}
 class MultiBufferHelper {
 public:
   explicit MultiBufferHelper(hivm::PointerCastOp &ptrCastOp)
@@ -125,43 +112,16 @@ public:
     createMarkOp(builder, newPtrCastOps);
 
     // Find guarded consumer.
-    // The sync pass already decided whether this pair is local to a block.
-    // The slot follows that block's real execution count, not the trip count.
-    Block *selectionBlock =
-        getMultiBufferConsumerBlock({ptrCastOp_.getOperation()->getResult(0)});
-    bool ownsRotation = selectionBlock && ownsCounter(selectionBlock);
+    Block *selectionBlock = getSingleConsumerBlock();
 
     Location loc = ptrCastOp_->getLoc();
     auto idxType = builder.getI64Type();
-    Operation *enclosingLoop =
-        ptrCastOp_->getParentOfType<LoopLikeOpInterface>();
-    Block *definitionBlock = ptrCastOp_->getBlock();
-    bool insideGuard = false;
-    for (Operation *parent = definitionBlock->getParentOp();
-         parent && parent != enclosingLoop; parent = parent->getParentOp())
-      insideGuard |= isa<scf::IfOp>(parent);
-    // A guard between the cast and the loop makes the definition block count
-    // its own entries, while the flags keep the loop counter.
-    // anchorBlock := selectionBlock when the sync pass put a counter there,
-    //                else rotationBlock: the loop's own region under a guard.
-    // The region must still be named: before and after do not dominate each
-    // other, and the counter itself stays on the loop.
-    Block *rotationBlock = definitionBlock;
-    if (insideGuard)
-      rotationBlock = getLoopRegionBlock(definitionBlock, enclosingLoop);
     Value modularIndex =
-        createNestedIndexModular(builder, ptrCastOp_.getOperation(), factor,
-                                 ownsRotation ? selectionBlock : rotationBlock);
+        createNestedIndexModular(builder, ptrCastOp_.getOperation(), factor);
 
     // Restore selection locality.
-    if (ownsRotation) {
-      // index in selectionBlock -> insert after it
-      // else -> insert at the block head: the builder stays in selectionBlock
-      if (modularIndex.getParentBlock() == selectionBlock)
-        builder.setInsertionPointAfter(modularIndex.getDefiningOp());
-      else
-        builder.setInsertionPointToStart(selectionBlock);
-    }
+    if (selectionBlock)
+      builder.setInsertionPointToStart(selectionBlock);
     Value modularIdx =
         builder.create<arith::IndexCastOp>(loc, idxType, modularIndex);
 
@@ -190,14 +150,33 @@ public:
   }
 
 private:
-  /// True when `block` already carries a counter op, i.e. it counts its own
-  /// entries.
-  /// null `block` (no guarded consumer) -> false.
-  /// Returns a bool, not the counter op: the only caller branches on it.
-  static bool ownsCounter(Block *block) {
-    return block && llvm::any_of(*block, [](Operation &op) {
-             return isa<hivm::MultiBufferCounterOp>(&op);
-           });
+  /// Find guarded consumer.
+  Block *getSingleConsumerBlock() const {
+    Block *consumerBlock = nullptr;
+    for (Operation *user : ptrCastOp_->getUsers()) {
+      if (isa<annotation::MarkOp>(user))
+        continue;
+      if (!consumerBlock) {
+        consumerBlock = user->getBlock();
+        continue;
+      }
+      if (consumerBlock != user->getBlock())
+        return nullptr;
+    }
+
+    Block *definitionBlock = ptrCastOp_->getBlock();
+    if (!consumerBlock || consumerBlock == definitionBlock)
+      return nullptr;
+
+    Operation *ancestor = consumerBlock->getParentOp();
+    while (ancestor && ancestor->getBlock() != definitionBlock) {
+      if (!isa<scf::IfOp>(ancestor))
+        return nullptr;
+      ancestor = ancestor->getParentOp();
+    }
+    if (!isa_and_nonnull<scf::IfOp>(ancestor))
+      return nullptr;
+    return consumerBlock;
   }
 
   bool isPtrAddrsConstantIntOp() {
