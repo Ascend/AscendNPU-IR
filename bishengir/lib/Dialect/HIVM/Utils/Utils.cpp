@@ -1386,123 +1386,16 @@ BlockArgument getTiedBlockArgument(LoopLikeOpInterface loopOp,
   return nullptr;
 }
 
-bool blockEncloses(Block *outer, Block *inner) {
-  if (!outer || !inner)
-    return false;
-  for (Block *cur = inner; cur;) {
-    if (cur == outer)
-      return true;
-    Operation *parent = cur->getParentOp();
-    cur = parent ? parent->getBlock() : nullptr;
-  }
-  return false;
-}
-
-/// Whether \p op splits its parent loop into preload stages: a scope or loop
-/// annotated `hivm.preload_num` / `hivm.max_preload_num`, or a guard whose
-/// condition carries a `hivm.preload_num` mark.
-///
-/// The stage copies of one iteration share their physical buffers, so a
-/// counter inside any copy rotates on a phase its siblings do not follow.
-static bool isPreloadStage(Operation *op) {
-  if (op->hasAttr(hivm::MaxPreloadNumAttr::name) ||
-      op->hasAttr(hivm::PreloadNumAttr::name))
-    return true;
-  auto ifOp = dyn_cast<scf::IfOp>(op);
-  return ifOp && utils::getAnnotateOpWithAttr(ifOp.getCondition(),
-                                              hivm::PreloadNumAttr::name);
-}
-
-Block *getMultiBufferConsumerBlock(ArrayRef<Value> buffers) {
-  llvm::SmallVector<Operation *> users;
-  for (Value buffer : buffers) {
-    if (!buffer)
-      continue;
-    for (Operation *user : buffer.getUsers()) {
-      if (!isa<annotation::MarkOp>(user))
-        users.push_back(user);
-    }
-  }
-  if (users.empty())
-    return nullptr;
-  Block *common = users.front()->getBlock();
-  for (Operation *user : users) {
-    while (common && !blockEncloses(common, user->getBlock()))
-      common =
-          common->getParentOp() ? common->getParentOp()->getBlock() : nullptr;
-    if (!common)
-      return nullptr;
-  }
-  // Only scf.if may stand between that block and a user: a guard runs its body
-  // once per entry, like the block itself.
-  // nested loop -> its own trip count, which breaks the pairing.
-  // preload stage -> fewer entries than the loop has iterations.
-  for (Operation *user : users) {
-    for (Block *cur = user->getBlock(); cur != common;) {
-      Operation *parent = cur->getParentOp();
-      if (!parent || !isa<scf::IfOp>(parent) || isPreloadStage(parent))
-        return nullptr;
-      cur = parent->getBlock();
-    }
-  }
-  // All users may sit inside one stage: the block then never leaves it, so its
-  // own ancestors up to the function are the ones to check.
-  for (Operation *parent = common->getParentOp(); parent;
-       parent = parent->getParentOp())
-    if (isPreloadStage(parent))
-      return nullptr;
-  return common;
-}
-
-// Four overloads of one expression: the nested index of a loop.
-// anchor := the block whose entries the counter counts
-// anchor + scf.while -> the region is named too, before or after
-// no anchor -> the loop counter
-//   (op, mod)           -> loop from op's result, no anchor
-//   (op, mod, anchor)   -> loop from op's result, anchor given
-//   (loop, mod)         -> loop given, no anchor
-//   (loop, mod, anchor) -> loop given, anchor given
 Value createNestedIndexModular(OpBuilder &builder, Operation *op, int modular) {
   LoopLikeOpInterface parentLoop = getParentLoop(op->getResult(0));
   assert(parentLoop && " op has no proper parent loop to do multi buffer");
   auto adapter = MultiBufferLoopAdapter::create(parentLoop);
   assert(succeeded(adapter) &&
          "createNestedIndexModular: loop is neither scf.for nor scf.while");
-  // op only names the while region: the regions do not dominate each other,
-  // so the use has to say which one.
-  // scf.for -> no anchor: the loop body owns the counter.
-  // scf.while -> the use's block, climbed inside the loop: before and after
-  // do not dominate each other, so the use must name its region.
-  // Not the use's own block when it is scf.for: a guard-nested use would own
-  // a per-block counter while these callers' flags keep the loop counter.
-  Block *anchorBlock = nullptr;
-  if (adapter->asWhileOp()) {
-    anchorBlock = op->getBlock();
-    for (Operation *parent = op->getParentOp();
-         parent && parent != parentLoop.getOperation();
-         parent = parent->getParentOp())
-      anchorBlock = parent->getBlock();
-  }
-  return modular == -1 ? adapter->getIterationCounter(builder, anchorBlock)
-                       : adapter->getModuloIndex(builder, modular, anchorBlock);
-}
-
-Value createNestedIndexModular(OpBuilder &builder, Operation *op, int modular,
-                               Block *anchorBlock) {
-  LoopLikeOpInterface parentLoop = getParentLoop(op->getResult(0));
-  assert(parentLoop && " op has no proper parent loop to do multi buffer");
-  return createNestedIndexModular(builder, parentLoop, modular, anchorBlock);
-}
-
-Value createNestedIndexModular(OpBuilder &builder, LoopLikeOpInterface loopOp,
-                               int modular, Block *anchorBlock) {
-  auto adapter = MultiBufferLoopAdapter::create(loopOp);
-  assert(succeeded(adapter) &&
-         "createNestedIndexModular: loop is neither scf.for nor scf.while");
-  // anchorBlock given -> that block owns the counter.
-  // scf.while -> it also picks the region: before and after do not dominate.
-  return modular == -1 ? adapter->getIterationCounter(builder, anchorBlock)
-                       : adapter->getModuloIndex(builder, modular, anchorBlock);
+  // Pass `op` so scf.while places the counter in the same before/after region
+  // as the multi-buffer use (before and after do not dominate each other).
+  return modular == -1 ? adapter->getIterationCounter(builder, op)
+                       : adapter->getModuloIndex(builder, modular, op);
 }
 
 Value createNestedIndexModular(OpBuilder &builder, LoopLikeOpInterface loopOp,
@@ -1525,7 +1418,7 @@ Value createNestedIndexForOp(OpBuilder &builder, Operation *operation) {
   auto adapter = MultiBufferLoopAdapter::create(parentLoop);
   if (failed(adapter))
     return nullptr;
-  return adapter->getIterationCounter(builder, operation->getBlock());
+  return adapter->getIterationCounter(builder, operation);
 }
 
 static std::optional<BlockArgument> traceBlockArgument(BlockArgument ba) {

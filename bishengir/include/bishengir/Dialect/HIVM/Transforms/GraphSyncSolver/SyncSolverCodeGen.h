@@ -62,40 +62,15 @@ public:
 private:
   bool resultFuncIrWasGenerated{false};
 
-  // Per-loop cache of modular slot indices built during codegen.
-  // key -> value: (loop, mod, offset, counterBlock) -> modular slot index
-  //   loop         := the multi-buffer loop that rotates
-  //   mod          := number of event ids, the modulo
-  //   offset       := preload shift; 0 -> the plain counter mod mod index
-  //   counterBlock := the block that owns the counter
-  // counterBlock is in the key: two id sets of one loop may live in different
-  // blocks, hence own different counters.
-  llvm::DenseMap<std::tuple<LoopLikeOpInterface, int64_t, int64_t, Block *>,
-                 Value>
+  // Per-multibuffer loop cached helper: nested index modular counters created
+  // during codegen and reused to select between multi-buffer event ids.
+  llvm::DenseMap<std::tuple<LoopLikeOpInterface, int64_t, int64_t>, Value>
       nestedIndexModularMem;
 
-  // Counter block of one id set, from collectCounterAnchors.
-  // Written only by record() there, read only through getMultiBufferIdAnchor().
-  // An entry exists only for a decided set: the block that owns the counter,
-  // or null when the set keeps the loop counter.
-  //   consumers span regions => null: no block holds the whole handshake
-  //   a flag lands outside that block => null: that id could not read the
-  //     counter
-  //
-  // key := (candidate block, id set)
-  // candidate := the block the handshake's own buffers resolve to
-  // One id set resolved to two different blocks keeps two entries, so each
-  // handshake's counter choice stays with its own block.
-  llvm::DenseMap<
-      LoopLikeOpInterface,
-      std::map<std::pair<Block *, llvm::SmallVector<int64_t>>, Block *>>
-      multiBufferIdAnchors;
-
-  // Select value per (loop, preload offset), keyed by (counter block, id set):
-  // the buffer or event id this pair reads at runtime.
-  llvm::DenseMap<
-      std::tuple<LoopLikeOpInterface, int64_t>,
-      std::map<std::pair<Block *, llvm::SmallVector<int64_t>>, Value>>
+  // Cache mapping a loop + (eventIdA,eventIdB) pair to the created select Value
+  // that chooses which buffer/event id to use at runtime.
+  llvm::DenseMap<std::tuple<LoopLikeOpInterface, int64_t>,
+                 std::map<llvm::SmallVector<int64_t>, Value>>
       bufferSelectedMem;
 
   llvm::DenseMap<Value, std::map<llvm::SmallVector<int64_t>, Value>>
@@ -179,21 +154,7 @@ private:
 
   Value getNestedIndexModular(IRRewriter &rewriter,
                               LoopLikeOpInterface multibufferLoop, int64_t mod,
-                              int64_t offset = 0,
-                              Block *counterBlock = nullptr);
-
-  void collectCounterAnchors();
-
-  /// Landing block of the flag of \p opBase, null when it cannot be known yet.
-  /// Shares the block query with setProperInsertionPoint, which creates the
-  /// else block on demand.
-  Block *getFlagLandingBlock(OperationBase *opBase);
-
-  /// Counter block of \p ids in \p loop, for the handshake whose consumer
-  /// block is \p candidate.
-  /// null when the set keeps the loop counter.
-  Block *getMultiBufferIdAnchor(LoopLikeOpInterface loop, Block *candidate,
-                                llvm::ArrayRef<int64_t> ids);
+                              int64_t offset = 0);
 
   Value getPoolSlotEventId(IRRewriter &rewriter, SetWaitOp *syncOp);
 

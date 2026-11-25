@@ -283,22 +283,6 @@ FailureOr<scf::ForOp> findContainingSubblockLoop(Operation *op);
 /// If val is yielded by the parent loop, need to get parent of parent loop.
 LoopLikeOpInterface getParentLoop(Value val);
 
-/// True when \p inner is \p outer, or sits in a region nested in it.
-bool blockEncloses(Block *outer, Block *inner);
-
-/// Block that may own the rotation index of a multi-buffer handshake.
-/// \p buffers := the pre-expansion values (`pointer_cast` or workspace alloc),
-/// never one of the slots `EnableMultiBuffer` creates from them.
-/// The innermost block enclosing every non-mark user.
-/// nested loop between that block and a user => null
-///   its trip count is not the block's entry count.
-/// preload stage between them or above the block => null
-///   the stages of one iteration share their buffers.
-/// null -> keep the loop counter.
-/// The sync passes and `EnableMultiBuffer` both call this,
-/// so slot select and flags of one pair read one counter by construction.
-Block *getMultiBufferConsumerBlock(ArrayRef<Value> buffers);
-
 // Get tied loop block argument for opoperand
 BlockArgument getTiedBlockArgument(LoopLikeOpInterface loopOp,
                                    OpOperand &operand);
@@ -308,24 +292,9 @@ BlockArgument getTiedBlockArgument(LoopLikeOpInterface loopOp,
 /// In the position of ptrCastOp, affineApply and indexCastOp would be
 /// created.
 ///
-/// \p modular = -1 -> the iteration counter, no modulo applied.
-///
 /// \return Index value of affineApply
 Value createNestedIndexModular(OpBuilder &builder, Operation *op,
                                int modular = 2);
-
-/// \p anchorBlock := the block that owns the slot-rotation counter.
-/// Pass the consuming block: it counts its own entries, not loop iterations.
-///
-/// The loop still comes from \p op / \p loopOp, as in the overloads above.
-///
-/// null \p anchorBlock -> the loop counter.
-/// Block resolution: MultiBufferLoopAdapter::getModuloIndex.
-Value createNestedIndexModular(OpBuilder &builder, Operation *op, int modular,
-                               Block *anchorBlock);
-
-Value createNestedIndexModular(OpBuilder &builder, LoopLikeOpInterface loopOp,
-                               int modular, Block *anchorBlock);
 
 Value createNestedIndexModular(OpBuilder &builder, LoopLikeOpInterface loopOp,
                                int modular = 2);
