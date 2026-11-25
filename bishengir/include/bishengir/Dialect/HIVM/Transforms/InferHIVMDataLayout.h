@@ -18,6 +18,7 @@
 #define BISHENGIR_DIALECT_HIVM_TRANSFORMS_INFERHIVMDATALAYOUT_H
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -167,6 +168,7 @@ private:
   Operation *rewriteAllocOp(memref::AllocOp op);
   Operation *rewriteForOp(scf::ForOp op);
   Operation *rewriteIfOp(scf::IfOp op);
+  void rewriteScopeOp(scope::ScopeOp op);
   Operation *rewriteSubViewOp(memref::SubViewOp op);
   Operation *rewriteCollapseShapeOp(memref::CollapseShapeOp op);
   Operation *rewriteMemrefCastOp(memref::CastOp op);

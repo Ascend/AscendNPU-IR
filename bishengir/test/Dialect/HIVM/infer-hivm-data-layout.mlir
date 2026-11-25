@@ -1,5 +1,74 @@
 // RUN: bishengir-opt %s -allow-unregistered-dialect -hivm-infer-data-layout -split-input-file | FileCheck %s
 
+// Layout conversion must cross a preload scope boundary without changing the
+// ND destination of the L1-to-UB copy used for device printing. Scalar results
+// and buffers with no layout conversion must keep their original types.
+module attributes {hacc.target = #hacc.target<"Ascend950">} {
+  // CHECK-LABEL: func.func @scope_layout_for_debug
+  func.func @scope_layout_for_debug(
+      %gm_a: memref<16x32xbf16, #hivm.address_space<gm>>,
+      %gm_b: memref<32x16xbf16, #hivm.address_space<gm>>,
+      %ub_a: memref<16x32xbf16, #hivm.address_space<ub>>,
+      %ub_b: memref<32x16xbf16, #hivm.address_space<ub>>,
+      %token: i32) -> i32 attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %true = arith.constant true
+    // CHECK: %[[SCOPE:.*]]:4 = scope.scope : () -> (memref<?x?x?x?xbf16, #hivm.address_space<cbuf>>, memref<?x?x?x?xbf16, #hivm.address_space<cbuf>>, i32, memref<16x32xbf16, #hivm.address_space<ub>>) {
+    %r:4 = scope.scope : () -> (memref<16x32xbf16, #hivm.address_space<cbuf>>, memref<32x16xbf16, #hivm.address_space<cbuf>>, i32, memref<16x32xbf16, #hivm.address_space<ub>>) {
+      %a = memref.alloc() : memref<16x32xbf16, #hivm.address_space<cbuf>>
+      %b = memref.alloc() : memref<32x16xbf16, #hivm.address_space<cbuf>>
+      %c = memref.alloc() : memref<16x16xf32, #hivm.address_space<cc>>
+      // CHECK: hivm.hir.nd2nz
+      memref.copy %gm_a, %a : memref<16x32xbf16, #hivm.address_space<gm>> to memref<16x32xbf16, #hivm.address_space<cbuf>>
+      // CHECK: hivm.hir.nd2nz
+      memref.copy %gm_b, %b : memref<32x16xbf16, #hivm.address_space<gm>> to memref<32x16xbf16, #hivm.address_space<cbuf>>
+      hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c32, %c16 : memref<16x32xbf16, #hivm.address_space<cbuf>>, memref<32x16xbf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%c : memref<16x16xf32, #hivm.address_space<cc>>)
+      // CHECK: scope.return {{.*}} : memref<?x?x?x?xbf16, #hivm.address_space<cbuf>>, memref<?x?x?x?xbf16, #hivm.address_space<cbuf>>, i32, memref<16x32xbf16, #hivm.address_space<ub>>
+      scope.return %a, %b, %token, %ub_a : memref<16x32xbf16, #hivm.address_space<cbuf>>, memref<32x16xbf16, #hivm.address_space<cbuf>>, i32, memref<16x32xbf16, #hivm.address_space<ub>>
+    // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 2 : i32, no_inline}
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 2 : i32, no_inline}
+    // CHECK: hivm.hir.l12ub ins(%[[SCOPE]]#0 : memref<?x?x?x?xbf16, #hivm.address_space<cbuf>>) outs(%[[SCOPE]]#3 : memref<16x32xbf16, #hivm.address_space<ub>>)
+    hivm.hir.l12ub ins(%r#0 : memref<16x32xbf16, #hivm.address_space<cbuf>>) outs(%r#3 : memref<16x32xbf16, #hivm.address_space<ub>>)
+    // CHECK: hivm.hir.l12ub ins(%[[SCOPE]]#1 : memref<?x?x?x?xbf16, #hivm.address_space<cbuf>>) outs({{.*}} : memref<32x16xbf16, #hivm.address_space<ub>>)
+    hivm.hir.l12ub ins(%r#1 : memref<32x16xbf16, #hivm.address_space<cbuf>>) outs(%ub_b : memref<32x16xbf16, #hivm.address_space<ub>>)
+    // CHECK: return %[[SCOPE]]#2 : i32
+    return %r#2 : i32
+  }
+}
+
+// -----
+
+// A returned subview retains its strided layout through nested scopes.
+module attributes {hacc.target = #hacc.target<"Ascend950">} {
+  // CHECK-LABEL: func.func @nested_scope_layout
+  func.func @nested_scope_layout(%ub: memref<16x32xbf16, #hivm.address_space<ub>>)
+      attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
+    %c32 = arith.constant 32 : index
+    %true = arith.constant true
+    // CHECK: %[[OUTER:.*]] = scope.scope : () -> memref<?x?x?x?xbf16, strided<[?, ?, ?, 1], offset: ?>, #hivm.address_space<cbuf>> {
+    %outer = scope.scope : () -> (memref<16x32xbf16, strided<[32, 1]>, #hivm.address_space<cbuf>>) {
+      // CHECK: %[[INNER:.*]] = scope.scope : () -> memref<?x?x?x?xbf16, strided<[?, ?, ?, 1], offset: ?>, #hivm.address_space<cbuf>> {
+      %inner = scope.scope : () -> (memref<16x32xbf16, strided<[32, 1]>, #hivm.address_space<cbuf>>) {
+        %a = memref.alloc() : memref<32x32xbf16, #hivm.address_space<cbuf>>
+        %b = memref.alloc() : memref<32x32xbf16, #hivm.address_space<cbuf>>
+        %c = memref.alloc() : memref<32x32xf32, #hivm.address_space<cc>>
+        hivm.hir.mmadL1 ins(%a, %b, %true, %c32, %c32, %c32 : memref<32x32xbf16, #hivm.address_space<cbuf>>, memref<32x32xbf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%c : memref<32x32xf32, #hivm.address_space<cc>>)
+        %view = memref.subview %a[0, 0] [16, 32] [1, 1] : memref<32x32xbf16, #hivm.address_space<cbuf>> to memref<16x32xbf16, strided<[32, 1]>, #hivm.address_space<cbuf>>
+        // CHECK: scope.return {{.*}} : memref<?x?x?x?xbf16, strided<[?, ?, ?, 1], offset: ?>, #hivm.address_space<cbuf>>
+        scope.return %view : memref<16x32xbf16, strided<[32, 1]>, #hivm.address_space<cbuf>>
+      } {no_inline}
+      // CHECK: scope.return %[[INNER]] : memref<?x?x?x?xbf16, strided<[?, ?, ?, 1], offset: ?>, #hivm.address_space<cbuf>>
+      scope.return %inner : memref<16x32xbf16, strided<[32, 1]>, #hivm.address_space<cbuf>>
+    } {no_inline}
+    // CHECK: hivm.hir.l12ub ins(%[[OUTER]] : memref<?x?x?x?xbf16, strided<[?, ?, ?, 1], offset: ?>, #hivm.address_space<cbuf>>) outs({{.*}} : memref<16x32xbf16, #hivm.address_space<ub>>)
+    hivm.hir.l12ub ins(%outer : memref<16x32xbf16, strided<[32, 1]>, #hivm.address_space<cbuf>>) outs(%ub : memref<16x32xbf16, #hivm.address_space<ub>>)
+    return
+  }
+}
+
+// -----
+
 // CHECK: #map = affine_map<()[s0, s1] -> ((s0 + 15) floordiv 16)>
 // CHECK: #map1 = affine_map<()[s0, s1] -> ((s1 + 15) floordiv 16)>
 // CHECK: module attributes {hacc.target = #hacc.target<"Ascend910B3">} {

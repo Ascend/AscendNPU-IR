@@ -852,6 +852,11 @@ DataLayoutInferAndPropagateHelper::propagateDataLayoutToUsers(
         // TODO: adapt custom op's infer data layout in V2
         .Case<hivm::CustomOp>(
             [&](hivm::CustomOp op) { populateLayoutToHIVMCustom(op, changed); })
+        .Case<scope::ReturnOp>([&](scope::ReturnOp op) {
+          auto scopeOp = cast<scope::ScopeOp>(op->getParentOp());
+          updateLayout(scopeOp->getResult(user.getOperandNumber()), info,
+                       changed);
+        })
         .Case<scf::YieldOp>([&](scf::YieldOp op) {
           Operation *parentOp = op->getParentOp();
           if (auto loopOp =
@@ -1018,6 +1023,10 @@ void DataLayoutInferAndPropagateHelper::rewrite() {
           << "//===--------------------------------------------===//\n"
           << "//===-- Rewriting module with data layout info --===//\n";);
   rewriteRegion(func_->getRegion(0));
+  // Nested scopes are rewritten recursively. Keep their old values alive until
+  // all users, including users outside the scope, have been remapped.
+  for (Operation *op : llvm::reverse(opsToDelete_))
+    op->erase();
 }
 
 void DataLayoutInferAndPropagateHelper::rewriteRegion(Region &region) {
@@ -1026,6 +1035,10 @@ void DataLayoutInferAndPropagateHelper::rewriteRegion(Region &region) {
     Region *currentRegion = queue.back();
     queue.pop_back();
     for (Operation &op : currentRegion->getOps()) {
+      if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
+        rewriteScopeOp(scopeOp);
+        continue;
+      }
       bool needRewrite = false;
       SmallVector<Value> results = op.getResults();
       for (Value result : results) {
@@ -1073,13 +1086,33 @@ void DataLayoutInferAndPropagateHelper::rewriteRegion(Region &region) {
       }
     }
   }
-  // Erase ops in reversed order
-  for (Operation *op : llvm::reverse(opsToDelete_))
-    op->erase();
-
   LLVM_DEBUG(
       llvm::dbgs()
           << "//===--------------------------------------------===//\n";);
+}
+
+void DataLayoutInferAndPropagateHelper::rewriteScopeOp(scope::ScopeOp op) {
+  // Rewrite the body first so the scope exposes the exact types of its returned
+  // values, including the layout and strides of returned views. Scope results
+  // cannot be used inside their own region, so this also handles nested scopes.
+  rewriteRegion(op.getRegion());
+  auto returnOp = cast<scope::ReturnOp>(op.getRegion().front().getTerminator());
+  if (llvm::equal(op->getResultTypes(), returnOp->getOperandTypes()))
+    return;
+
+  OpBuilder builder(op);
+  auto newOp =
+      builder.create<scope::ScopeOp>(op.getLoc(), returnOp->getOperandTypes());
+  newOp->setAttrs(op->getAttrs());
+  newOp.getRegion().takeBody(op.getRegion());
+  for (auto [oldResult, newResult] :
+       llvm::zip_equal(op.getResults(), newOp.getResults())) {
+    if (oldResult.getType() == newResult.getType())
+      oldResult.replaceAllUsesWith(newResult);
+    if (auto layout = getTargetLayout(oldResult))
+      map(oldResult, newResult, layout);
+  }
+  opsToDelete_.insert(op);
 }
 
 Operation *
