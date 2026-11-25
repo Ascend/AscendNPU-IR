@@ -369,3 +369,142 @@ func.func @keep_oob_read(%dst: tensor<1x?xf32>, %v: vector<1x64xf32>,
 // CHECK: %[[W:.+]] = vector.transfer_write
 // CHECK: %[[E:.+]] = tensor.expand_shape %[[W]]
 // CHECK: vector.transfer_read %[[E]]
+
+// -----
+
+#flatten = affine_map<(d0) -> (d0 * 8)>
+#swap = affine_map<(d0, d1, d2) -> (d1, d0, d2)>
+
+// f16 goes through the same masked forwarding; the padding select must carry
+// the f16 element type.
+func.func @forward_masked_f16(%dst: tensor<1x?xf16>, %v: vector<1x64xf16>,
+                              %rows: index) -> vector<8x1x8xf16> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c8 = arith.constant 8 : index
+  %pad = arith.constant 7.0 : f16
+  %cols = affine.apply #flatten(%rows)
+  %wm = vector.create_mask %c1, %cols : vector<1x64xi1>
+  %w = vector.transfer_write %v, %dst[%c0, %c0], %wm {in_bounds = [true, true]} : vector<1x64xf16>, tensor<1x?xf16>
+  %i = tensor.insert_slice %w into %dst[0, 0] [1, %cols] [1, 1] : tensor<1x?xf16> into tensor<1x?xf16>
+  %e = tensor.expand_shape %i [[0], [1, 2]] output_shape [1, %rows, 8] : tensor<1x?xf16> into tensor<1x?x8xf16>
+  %rm = vector.create_mask %c1, %rows, %c8 : vector<1x8x8xi1>
+  %r = vector.transfer_read %e[%c0, %c0, %c0], %pad, %rm {in_bounds = [true, true, true], permutation_map = #swap} : tensor<1x?x8xf16>, vector<8x1x8xf16>
+  return %r : vector<8x1x8xf16>
+}
+
+// CHECK-LABEL: func.func @forward_masked_f16(
+// CHECK-SAME: %[[V:[^,:]+]]: vector<1x64xf16>
+// CHECK-DAG: %[[MASK:.+]] = vector.create_mask {{.*}} : vector<1x64xi1>
+// CHECK-NOT: vector.transfer_write
+// CHECK-NOT: tensor.expand_shape
+// CHECK-NOT: vector.transfer_read
+// CHECK: %[[SELECT:.+]] = arith.select %[[MASK]], %[[V]], %{{.*}} : vector<1x64xi1>, vector<1x64xf16>
+// CHECK-NEXT: %[[CAST:.+]] = vector.shape_cast %[[SELECT]] : vector<1x64xf16> to vector<8x1x8xf16>
+// CHECK-NEXT: return %[[CAST]] : vector<8x1x8xf16>
+
+// -----
+
+// An f16 write of exactly one vector length is the boundary the VL guard
+// must still accept.
+func.func @forward_masked_f16_boundary(%dst: tensor<1x128xf16>,
+                                       %v: vector<1x128xf16>) -> vector<1x16x8xf16> {
+  %c0 = arith.constant 0 : index
+  %pad = arith.constant 0.0 : f16
+  %wm = vector.constant_mask [1, 64] : vector<1x128xi1>
+  %w = vector.transfer_write %v, %dst[%c0, %c0], %wm {in_bounds = [true, true]} : vector<1x128xf16>, tensor<1x128xf16>
+  %e = tensor.expand_shape %w [[0], [1, 2]] output_shape [1, 16, 8] : tensor<1x128xf16> into tensor<1x16x8xf16>
+  %rm = vector.constant_mask [1, 8, 8] : vector<1x16x8xi1>
+  %r = vector.transfer_read %e[%c0, %c0, %c0], %pad, %rm {in_bounds = [true, true, true]} : tensor<1x16x8xf16>, vector<1x16x8xf16>
+  return %r : vector<1x16x8xf16>
+}
+
+// CHECK-LABEL: func.func @forward_masked_f16_boundary(
+// CHECK-SAME: %[[V:[^,:]+]]: vector<1x128xf16>
+// CHECK-DAG: %[[MASK:.+]] = vector.constant_mask [1, 64] : vector<1x128xi1>
+// CHECK-NOT: vector.transfer_write
+// CHECK-NOT: vector.transfer_read
+// CHECK: %[[SELECT:.+]] = arith.select %[[MASK]], %[[V]], %{{.*}} : vector<1x128xi1>, vector<1x128xf16>
+// CHECK-NEXT: %[[CAST:.+]] = vector.shape_cast %[[SELECT]] : vector<1x128xf16> to vector<1x16x8xf16>
+// CHECK-NEXT: return %[[CAST]] : vector<1x16x8xf16>
+
+// -----
+
+// f64 is outside the masked forwarding surface even at 1024 bits.
+func.func @keep_masked_f64(%dst: tensor<1x16xf64>,
+                           %v: vector<1x16xf64>) -> vector<1x2x8xf64> {
+  %c0 = arith.constant 0 : index
+  %pad = arith.constant 0.0 : f64
+  %wm = vector.constant_mask [1, 8] : vector<1x16xi1>
+  %w = vector.transfer_write %v, %dst[%c0, %c0], %wm {in_bounds = [true, true]} : vector<1x16xf64>, tensor<1x16xf64>
+  %e = tensor.expand_shape %w [[0], [1, 2]] output_shape [1, 2, 8] : tensor<1x16xf64> into tensor<1x2x8xf64>
+  %rm = vector.constant_mask [1, 1, 8] : vector<1x2x8xi1>
+  %r = vector.transfer_read %e[%c0, %c0, %c0], %pad, %rm {in_bounds = [true, true, true]} : tensor<1x2x8xf64>, vector<1x2x8xf64>
+  return %r : vector<1x2x8xf64>
+}
+
+// CHECK-LABEL: func.func @keep_masked_f64
+// CHECK: %[[W:.+]] = vector.transfer_write
+// CHECK: %[[E:.+]] = tensor.expand_shape %[[W]]
+// CHECK: vector.transfer_read %[[E]]
+
+// -----
+
+// A 4096-bit f32 write exceeds one vector length and must not be forwarded.
+func.func @keep_masked_over_one_vl(%dst: tensor<1x128xf32>,
+                                   %v: vector<1x128xf32>) -> vector<1x16x8xf32> {
+  %c0 = arith.constant 0 : index
+  %pad = arith.constant 0.0 : f32
+  %wm = vector.constant_mask [1, 64] : vector<1x128xi1>
+  %w = vector.transfer_write %v, %dst[%c0, %c0], %wm {in_bounds = [true, true]} : vector<1x128xf32>, tensor<1x128xf32>
+  %e = tensor.expand_shape %w [[0], [1, 2]] output_shape [1, 16, 8] : tensor<1x128xf32> into tensor<1x16x8xf32>
+  %rm = vector.constant_mask [1, 8, 8] : vector<1x16x8xi1>
+  %r = vector.transfer_read %e[%c0, %c0, %c0], %pad, %rm {in_bounds = [true, true, true]} : tensor<1x16x8xf32>, vector<1x16x8xf32>
+  return %r : vector<1x16x8xf32>
+}
+
+// CHECK-LABEL: func.func @keep_masked_over_one_vl
+// CHECK: %[[W:.+]] = vector.transfer_write
+// CHECK: %[[E:.+]] = tensor.expand_shape %[[W]]
+// CHECK: vector.transfer_read %[[E]]
+
+// -----
+
+// A padding scalar lifted from a 2-D vector would be lowered by
+// VectorToHIVMAVE as a broadcast of that 2-D vector, so keep the pair.
+func.func @keep_extract_padding(%dst: tensor<1x64xf32>, %v: vector<1x64xf32>,
+                                %pv: vector<8x8xf32>) -> vector<1x8x8xf32> {
+  %c0 = arith.constant 0 : index
+  %pad = vector.extract %pv[0, 0] : f32 from vector<8x8xf32>
+  %wm = vector.constant_mask [1, 32] : vector<1x64xi1>
+  %w = vector.transfer_write %v, %dst[%c0, %c0], %wm {in_bounds = [true, true]} : vector<1x64xf32>, tensor<1x64xf32>
+  %e = tensor.expand_shape %w [[0], [1, 2]] output_shape [1, 8, 8] : tensor<1x64xf32> into tensor<1x8x8xf32>
+  %rm = vector.constant_mask [1, 4, 8] : vector<1x8x8xi1>
+  %r = vector.transfer_read %e[%c0, %c0, %c0], %pad, %rm {in_bounds = [true, true, true]} : tensor<1x8x8xf32>, vector<1x8x8xf32>
+  return %r : vector<1x8x8xf32>
+}
+
+// CHECK-LABEL: func.func @keep_extract_padding
+// CHECK: %[[W:.+]] = vector.transfer_write
+// CHECK: %[[E:.+]] = tensor.expand_shape %[[W]]
+// CHECK: vector.transfer_read %[[E]]
+
+// -----
+
+// The padding type must match the element type; i32 padding would make the
+// new vector.broadcast invalid.
+func.func @keep_mixed_padding_type(%dst: tensor<1x64xi32>, %v: vector<1x64xf32>,
+                                   %pad: i32) -> vector<1x8x8xf32> {
+  %c0 = arith.constant 0 : index
+  %wm = vector.constant_mask [1, 32] : vector<1x64xi1>
+  %w = vector.transfer_write %v, %dst[%c0, %c0], %wm {in_bounds = [true, true]} : vector<1x64xf32>, tensor<1x64xi32>
+  %e = tensor.expand_shape %w [[0], [1, 2]] output_shape [1, 8, 8] : tensor<1x64xi32> into tensor<1x8x8xi32>
+  %rm = vector.constant_mask [1, 4, 8] : vector<1x8x8xi1>
+  %r = vector.transfer_read %e[%c0, %c0, %c0], %pad, %rm {in_bounds = [true, true, true]} : tensor<1x8x8xi32>, vector<1x8x8xf32>
+  return %r : vector<1x8x8xf32>
+}
+
+// CHECK-LABEL: func.func @keep_mixed_padding_type
+// CHECK: %[[W:.+]] = vector.transfer_write
+// CHECK: %[[E:.+]] = tensor.expand_shape %[[W]]
+// CHECK: vector.transfer_read %[[E]]

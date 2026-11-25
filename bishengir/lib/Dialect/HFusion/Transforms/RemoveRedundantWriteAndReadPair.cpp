@@ -257,11 +257,11 @@ static bool isScaledBound(OpFoldResult flat, OpFoldResult rows,
 ///
 /// Work around #1071 by forwarding before bufferization introduces copies
 /// that leave a memref result on a vector function. Limit the match to the
-/// layouts, masks, and vector types validated for this fix so forwarding
-/// preserves lane order and padding and can be lowered on A5. Coverage can
-/// grow as more cases are validated. This pattern can be merged with
-/// FoldTransferReadAfterWriteAndInsertSlice once both paths share the same
-/// lane and mask checks.
+/// layouts, masks, vector types, and padding values validated for this fix so
+/// forwarding preserves lane order and padding and can be lowered on A5.
+/// Coverage can grow as more cases are validated. This pattern can be merged
+/// with FoldTransferReadAfterWriteAndInsertSlice once both paths share the
+/// same lane and mask checks.
 ///
 /// The source-order read lane [row, col] must correspond to write lane
 /// row * width + col. Moving unit vector axes does not change this order.
@@ -346,6 +346,21 @@ struct FoldTransferReadOfExpandedWrite
         return failure();
       auto readBounds = getMaskBounds(read.getMask());
       auto writeBounds = getMaskBounds(write.getMask());
+      // The padding is broadcast to the write element type, so it must already
+      // have that type. A scalar lifted from a multi-dimensional vector is
+      // skipped as well: VectorToHIVMAVE rewrites a broadcast of an all-zero
+      // extract into a broadcast of the extract's source vector, which only
+      // lowers for 1-D sources within one vector length.
+      if (read.getPadding().getType() != elementType)
+        return failure();
+      if (auto extract = read.getPadding().getDefiningOp<vector::ExtractOp>()) {
+        auto sourceType = cast<VectorType>(extract.getVector().getType());
+        if (sourceType.getRank() > 1 ||
+            sourceType.getNumElements() *
+                    sourceType.getElementType().getIntOrFloatBitWidth() >
+                static_cast<int64_t>(hivm::util::VL_BITS))
+          return failure();
+      }
       auto isUnit = [](OpFoldResult bound) {
         return getConstantIntValue(bound) == 1;
       };
