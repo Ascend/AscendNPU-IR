@@ -289,7 +289,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
 #endif
        !std::is_same_v<T, float8_e4m3_t> && !std::is_same_v<T, float8_e5m2_t> &&
        isStrideAligned<T>(stride0_ub) &&
-       CEIL_FACTOR(left_padding_num + dst->sizes[1],
+       CEIL_FACTOR(left_padding_num + src->sizes[1],
                    INTR_BYTES_PER_BLOCK / sizeof(T)) <= stride0_ub);
 
   if (left_padding_num != 0 && (stride1_gm != 1 || stride1_ub != 1)) {
@@ -340,7 +340,8 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     const bool is_compact_mode =
         left_padding_num == 0 && stride0_ub == src->sizes[1];
     // NDDMA amortizes its setup over many short rows with small GM gaps.
-    // Its 2D descriptor takes both loop counts from the destination.
+    // In its 2D descriptor both loop counts come from the source, and the
+    // destination extents have to match them so the whole tile is written.
     const int64_t rows = src->sizes[0];
     const int64_t width = src->sizes[1];
     // Short GM pitches benefit from NDDMA at fewer rows.

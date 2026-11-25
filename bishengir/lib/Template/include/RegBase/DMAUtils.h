@@ -2137,8 +2137,19 @@ copy_ubuf_to_cbuf_3d_core_with_contiguous_last_dim(
 
 #if BISHENG_TPL_920R1
 // Common <=32-bit emitter shared by the A6 forms: the ordinary load, the
-// broadcast load and the in-row padded (span) load. span changes only loop0's
-// count and DMA origin. A3/A5 build their descriptors in place below.
+// broadcast load and the in-row padded (span) load. span changes only the
+// DMA origin of loop0. A3/A5 build their descriptors in place below.
+//
+// A loop_desc holds one count per level, and that count applies to both
+// sides of the transfer, so it has to be the extent of the source. For an
+// ordinary load, and for one with a fused transpose, the extent of the
+// destination can still be the extent of the full untrimmed tile. With a
+// count taken from there, the transfer extends past the end of the source
+// window, and the padding that the caller placed around the valid region is
+// overwritten. A broadcast axis is the one exception. On such an axis the
+// source extent is 1, as required by the validity check, and the source
+// step is 0, so the single element is repeated across the destination. The
+// count on a broadcast axis is therefore the extent of the destination.
 template <typename T, size_t Rank>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_by_nddma(memref_t<__gm__ T, Rank> *src,
@@ -2160,11 +2171,12 @@ load_gm_to_ubuf_by_nddma(memref_t<__gm__ T, Rank> *src,
   auto *dp = reinterpret_cast<__ubuf__ DmaType *>(dst->aligned + dst->offset -
                                                   (span ? 0 : lp));
   nddma_desc::loop_desc loop0(
-      span ? src->sizes[Rank - 1] : dst->sizes[Rank - 1],
+      (axes & (1u << (Rank - 1))) ? dst->sizes[Rank - 1] : src->sizes[Rank - 1],
       dst->strides[Rank - 1],
       (axes & (1u << (Rank - 1))) ? 0 : src->strides[Rank - 1], lp, rp);
   nddma_desc::loop_desc loop1(
-      dst->sizes[Rank - 2], dst->strides[Rank - 2],
+      (axes & (1u << (Rank - 2))) ? dst->sizes[Rank - 2] : src->sizes[Rank - 2],
+      dst->strides[Rank - 2],
       (axes & (1u << (Rank - 2))) ? 0 : src->strides[Rank - 2]);
   if constexpr (Rank == 2) {
     nddma_desc desc(loop1, loop0);
@@ -2175,7 +2187,8 @@ load_gm_to_ubuf_by_nddma(memref_t<__gm__ T, Rank> *src,
                 cache);
     }
   } else {
-    nddma_desc::loop_desc loop2(dst->sizes[0], dst->strides[0],
+    nddma_desc::loop_desc loop2((axes & 1) ? dst->sizes[0] : src->sizes[0],
+                                dst->strides[0],
                                 (axes & 1) ? 0 : src->strides[0]);
     nddma_desc desc(loop2, loop1, loop0);
     if (first_elem) {
@@ -2222,19 +2235,31 @@ load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
   //
   // The per-loop placement of the fill (whole-transfer vs per-iteration) is
   // also unconfirmed, so a padded call is sound only when each row's padded
-  // span stays inside the row itself. The caller must guarantee:
+  // span stays inside the row itself. loop0 counts src->sizes[1], so the
+  // span is CEIL_FACTOR(lp + src->sizes[1], 32B/sizeof(T)), and the caller
+  // must guarantee:
   //   1) dst->strides[0] * sizeof(T) is 32B aligned, and
-  //   2) CEIL_FACTOR(lp + sizes[1], 32B/sizeof(T)) <= dst->strides[0].
+  //   2) CEIL_FACTOR(lp + src->sizes[1], 32B/sizeof(T)) <= dst->strides[0].
   // Under both, either fill placement yields identical UB contents (the
   // per-row overlap regions are gaps written with the same pad constant);
   // load_gm_to_ubuf_2d_core enforces exactly these gates.
+  //
+  // Both the gate and the span are therefore measured with the extent of the
+  // source. A destination extent below that one is a violation of the
+  // contract of the copy, which hivm.hir.load rejects only when the two
+  // extents are static (HIVMDMAOps.cpp, "dst last dimension cannot be less
+  // than src's"). This path reads no further than the gate admits, so a
+  // dynamic extent pair in breach of the contract is bounded by the gate
+  // rather than by the relation between the two extents.
   constexpr int64_t npb = UB_ALIGN_BYTES / sizeof(T);
   int64_t lp = 0;
   int64_t rp = 0;
   if (left_padding_num != 0 &&
       (pad_mode == PadMode::Null || pad_mode == PadMode::Value)) {
     lp = left_padding_num;
-    int64_t span = lp + dst->sizes[1];
+    // src->sizes[1] elements are transferred on loop0, so the block
+    // rounding applies to a padded span measured with that same extent.
+    int64_t span = lp + src->sizes[1];
     rp = CEIL_FACTOR(span, npb) - span;
   }
   uint32_t nddma_pad_val = 0;
@@ -2267,9 +2292,11 @@ load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
 #else
     // A3/A5 keep the descriptor built in place, exactly as before the A6
     // shared emitter existed.
-    nddma_desc::loop_desc loop0(dst->sizes[1], dst->strides[1], src->strides[1],
+    // One count per loop level applies to both sides, so every count is the
+    // extent of the source. See the note on the A6 emitter above.
+    nddma_desc::loop_desc loop0(src->sizes[1], dst->strides[1], src->strides[1],
                                 lp, rp);
-    nddma_desc::loop_desc loop1(dst->sizes[0], dst->strides[0],
+    nddma_desc::loop_desc loop1(src->sizes[0], dst->strides[0],
                                 src->strides[0]);
     nddma_desc desc(loop1, loop0);
 
@@ -2289,9 +2316,9 @@ load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
     __gm__ T32 *src_32 = reinterpret_cast<__gm__ T32 *>(src_ptr);
     __ubuf__ T32 *dst_32 = reinterpret_cast<__ubuf__ T32 *>(dst_ptr);
 
-    nddma_desc::loop_desc loop0(dst->sizes[1] * 2, dst->strides[1] * 2,
+    nddma_desc::loop_desc loop0(src->sizes[1] * 2, dst->strides[1] * 2,
                                 src->strides[1] * 2, lp * 2, rp * 2);
-    nddma_desc::loop_desc loop1(dst->sizes[0] * 2, dst->strides[0] * 2,
+    nddma_desc::loop_desc loop1(src->sizes[0] * 2, dst->strides[0] * 2,
                                 src->strides[0] * 2);
     nddma_desc desc(loop1, loop0);
 
@@ -2335,11 +2362,11 @@ load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
 #else
     // A3/A5 keep the descriptor built in place, exactly as before the A6
     // shared emitter existed.
-    nddma_desc::loop_desc loop0(dst->sizes[2], dst->strides[2],
+    nddma_desc::loop_desc loop0(src->sizes[2], dst->strides[2],
                                 src->strides[2]);
-    nddma_desc::loop_desc loop1(dst->sizes[1], dst->strides[1],
+    nddma_desc::loop_desc loop1(src->sizes[1], dst->strides[1],
                                 src->strides[1]);
-    nddma_desc::loop_desc loop2(dst->sizes[0], dst->strides[0],
+    nddma_desc::loop_desc loop2(src->sizes[0], dst->strides[0],
                                 src->strides[0]);
     nddma_desc desc(loop2, loop1, loop0);
 
@@ -2354,11 +2381,11 @@ load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
     __gm__ T32 *src_32 = reinterpret_cast<__gm__ T32 *>(src_ptr);
     __ubuf__ T32 *dst_32 = reinterpret_cast<__ubuf__ T32 *>(dst_ptr);
 
-    nddma_desc::loop_desc loop0(dst->sizes[2] * 2, dst->strides[2] * 2,
+    nddma_desc::loop_desc loop0(src->sizes[2] * 2, dst->strides[2] * 2,
                                 src->strides[2] * 2);
-    nddma_desc::loop_desc loop1(dst->sizes[1] * 2, dst->strides[1] * 2,
+    nddma_desc::loop_desc loop1(src->sizes[1] * 2, dst->strides[1] * 2,
                                 src->strides[1] * 2);
-    nddma_desc::loop_desc loop2(dst->sizes[0] * 2, dst->strides[0] * 2,
+    nddma_desc::loop_desc loop2(src->sizes[0] * 2, dst->strides[0] * 2,
                                 src->strides[0] * 2);
     nddma_desc desc(loop2, loop1, loop0);
 
