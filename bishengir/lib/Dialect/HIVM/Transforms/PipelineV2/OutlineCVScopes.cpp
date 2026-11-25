@@ -706,6 +706,15 @@ LogicalResult CVScopeOutliner::duplicateExtractScalarForCube() {
 
         TCoreType ancCore =
             getCoreType(ancestor).value_or(TCoreType::CUBE_OR_VECTOR);
+        // Nested homogeneous loops are classified in postorder. Their bodies
+        // can capture the scalar even when the loop has no SSA results. Keep
+        // this refinement local: getCoreType deliberately leaves scf.for
+        // unclassified so mixed-kernel ownership analysis recurses into it.
+        if (ancCore == TCoreType::CUBE_OR_VECTOR && isa<scf::ForOp>(ancestor)) {
+          if (auto core = ancestor->getAttrOfType<TCoreTypeAttr>(
+                  kPipelinedLoopCoreTypeAttrName))
+            ancCore = core.getTcoretype();
+        }
         if (ancCore == TCoreType::CUBE) {
           cubeConsumers.insert(ancestor);
           continue;
