@@ -2059,28 +2059,22 @@ static Value cmpLowerToIntrin(VFCmpOp cmpOp,
 template <typename IntrOpTy>
 static Value cmpLowerToIntrin(VFCmpOp cmpOp,
                               ConversionPatternRewriter &rewriter) {
+  Type elementType =
+      cast<VectorType>(cmpOp.getLhs().getType()).getElementType();
+  if (!elementType.isSignlessInteger(8) && !elementType.isSignlessInteger(16) &&
+      !elementType.isSignlessInteger(32))
+    return {};
+
   VectorType vType = cast<VectorType>(cmpOp.getRes().getType());
   auto lhs = getVLRegValueOrSelf(cmpOp.getLhs(), rewriter);
   auto rhs = getVLRegValueOrSelf(cmpOp.getRhs(), rewriter);
   auto loc = cmpOp->getLoc();
-  Type elementType = cast<VectorType>(lhs.getType()).getElementType();
-
   Value mask = getVLRegValueOrSelf(cmpOp.getMask(), rewriter);
 
-  Value result;
   Type intrinMaskType = VectorType::get(
       SmallVector<int64_t>{util::PREDICATE_BITS}, rewriter.getI1Type());
-
-  if (elementType.isSignlessInteger(8) || elementType.isSignlessInteger(16) ||
-      elementType.isSignlessInteger(32)) {
-    result = rewriter.create<IntrOpTy>(loc, intrinMaskType, lhs, rhs, mask);
-  } else {
-    // Handle unsupported element types
-    std::ignore = rewriter.notifyMatchFailure(
-        cmpOp, "Unsupported element type in cmpLowerToIntrin");
-    return Value();
-  }
-  if (result && vType.getShape().back() != util::PREDICATE_BITS)
+  Value result = rewriter.create<IntrOpTy>(loc, intrinMaskType, lhs, rhs, mask);
+  if (vType.getShape().back() != util::PREDICATE_BITS)
     result = rewriter.create<UnrealizedConversionCastOp>(loc, vType, result)
                  ->getResult(0);
   return result;
@@ -2127,7 +2121,67 @@ struct HIVMCmpOpLowering : public ConvertOpToLLVMPattern<VFCmpOp> {
       break;
     }
 
+    if (!res)
+      return rewriter.notifyMatchFailure(
+          cmpOp, "unsupported element type for the compare predicate");
+
     rewriter.replaceOp(cmpOp, res);
+    return success();
+  }
+};
+
+struct HIVMCmpSOpLowering : public ConvertOpToLLVMPattern<VFCmpS> {
+  using ConvertOpToLLVMPattern<VFCmpS>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(VFCmpS op, VFCmpS::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    // Only BF16 scalar comparisons are enabled by this pattern.
+    auto vecType = dyn_cast<VectorType>(op.getVec().getType());
+    auto resultType = dyn_cast<VectorType>(op.getRes().getType());
+    if (!vecType || vecType.getRank() != 1 || !resultType ||
+        !vecType.getElementType().isBF16())
+      return failure();
+
+    // Unsigned integer predicates have no BF16 meaning. Reject before creating
+    // conversion casts, so an unsuccessful match does not leave partial IR.
+    if (op.getCmp() == CmpType::ULE || op.getCmp() == CmpType::UGE ||
+        op.getCmp() == CmpType::ULT || op.getCmp() == CmpType::UGT)
+      return rewriter.notifyMatchFailure(op, "unsigned predicate on BF16");
+
+    auto loc = op.getLoc();
+    Value vec = getVLRegValueOrSelf(op.getVec(), rewriter);
+    Value scalar = op.getScalar();
+    Value mask = getVLRegValueOrSelf(op.getMask(), rewriter);
+    auto predType =
+        VectorType::get({util::PREDICATE_BITS}, rewriter.getI1Type());
+    Value res;
+    switch (op.getCmp()) {
+    case CmpType::EQ:
+      res = rewriter.create<VCmpsSZEqInstrOp>(loc, predType, vec, scalar, mask);
+      break;
+    case CmpType::NE:
+      res = rewriter.create<VCmpsSZNeInstrOp>(loc, predType, vec, scalar, mask);
+      break;
+    case CmpType::GT:
+      res = rewriter.create<VCmpsSZGtInstrOp>(loc, predType, vec, scalar, mask);
+      break;
+    case CmpType::GE:
+      res = rewriter.create<VCmpsSZGeInstrOp>(loc, predType, vec, scalar, mask);
+      break;
+    case CmpType::LT:
+      res = rewriter.create<VCmpsSZLtInstrOp>(loc, predType, vec, scalar, mask);
+      break;
+    case CmpType::LE:
+      res = rewriter.create<VCmpsSZLeInstrOp>(loc, predType, vec, scalar, mask);
+      break;
+    default:
+      llvm_unreachable("unsigned BF16 predicates were rejected above");
+    }
+    if (resultType != predType)
+      res = rewriter.create<UnrealizedConversionCastOp>(loc, resultType, res)
+                .getResult(0);
+    rewriter.replaceOp(op, res);
     return success();
   }
 };
@@ -4245,7 +4299,7 @@ using BinaryVectorScalarRegistry = BinaryVectorScalarRegistryImpl<
         /*S16*/ VaddsSXInstrOp, /*U16*/ VaddsUXInstrOp,
         /*S8*/ VaddsSXInstrOp, /*U8*/ VaddsUXInstrOp,
         /*F32*/ VaddsSXInstrOp, /*S32*/ VaddsSXInstrOp,
-        /*U32*/ VaddsUXInstrOp>,
+        /*U32*/ VaddsUXInstrOp, /*BF16*/ VaddsSXInstrOp>,
     BinaryVectorScalarRegEntry<
         /*OpTy*/ VFMulsOp, /*F16*/ VmulsSXInstrOp,
         /*S16*/ VmulsSXInstrOp, /*U16*/ VmulsUXInstrOp,
@@ -4325,7 +4379,7 @@ void populateHIVMAVEToAVEIntrinPatterns(LLVMTypeConverter &converter,
                HIVMTypeConvertionOpLowering<VFFpToUIntOp>,
                HIVMTypeConvertionOpLowering<VFSIntToFpOp>,
                HIVMTypeConvertionOpLowering<VFUIntToFpOp>,
-               HIVMCmpOpLowering, VectorBitCastLowering,
+               HIVMCmpOpLowering, HIVMCmpSOpLowering, VectorBitCastLowering,
                HIVMVecBrcOpPattern, HIVMPnotOpLowering,
                HIVMPredicateBinaryLogicOpLowering<PregAndOp>,
                HIVMPredicateBinaryLogicOpLowering<PregOrOp>,

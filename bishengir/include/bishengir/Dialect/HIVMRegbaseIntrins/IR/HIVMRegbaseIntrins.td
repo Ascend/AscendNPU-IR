@@ -3506,7 +3506,8 @@ def VaddsUXInstrOp : BinaryVecScalarOp<"hivm.vadds.u.x"> {
     A predicate (MASK) is provided to tell which elements are added in the two vectors.
   }];
 }
-def VaddsSXInstrOp : BinaryVecScalarOp<"hivm.vadds.s.x">;
+def VaddsSXInstrOp : BinaryVecScalarOp<"hivm.vadds.s.x",
+    [AllTypesMatch<["vec", "res"]>], 1>;
 def VaddsUMInstrOp : BinaryVecScalarOp<"hivm.vadds.u.m">;
 def VaddsSMInstrOp  : BinaryVecScalarOp<"hivm.vadds.s.m">;
 
