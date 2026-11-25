@@ -245,9 +245,9 @@ arith::IndexCastOp findTileIdx(Operation *op) {
   for (Value operand : op->getOperands()) {
     if (auto defOp = operand.getDefiningOp()) {
       if (auto indexCastOp = dyn_cast<arith::IndexCastOp>(defOp)) {
-        if (indexCastOp->getParentOp() == op->getParentOp()
-            && dyn_cast<scf::ForOp>(indexCastOp->getParentOp())
-            && scf::getForInductionVarOwner(indexCastOp.getIn())) {
+        if (indexCastOp->getParentOp() == op->getParentOp() &&
+            dyn_cast<scf::ForOp>(indexCastOp->getParentOp()) &&
+            scf::getForInductionVarOwner(indexCastOp.getIn())) {
           return indexCastOp;
         }
       }
@@ -259,7 +259,8 @@ arith::IndexCastOp findTileIdx(Operation *op) {
   return nullptr;
 }
 
-static std::optional<ScratchAccess> matchScratchAccessFromAttrs(Operation *op, Value ptrTensor) {
+static std::optional<ScratchAccess>
+matchScratchAccessFromAttrs(Operation *op, Value ptrTensor) {
   ScratchAccess acc;
   if (op->hasAttrOfType<IntegerAttr>("startConst")) {
     auto intAttr = op->getAttrOfType<IntegerAttr>("startConst");
@@ -311,7 +312,8 @@ static std::optional<ScratchAccess> matchScratchAccessFromAttrs(Operation *op, V
 
   if (op->hasAttrOfType<BoolAttr>("isStatic")) {
     auto boolAttr = op->getAttrOfType<BoolAttr>("isStatic");
-    acc.kind = (boolAttr.getValue() ? ScratchAccess::Kind::STATIC : ScratchAccess::Kind::DYNAMIC);
+    acc.kind = (boolAttr.getValue() ? ScratchAccess::Kind::STATIC
+                                    : ScratchAccess::Kind::DYNAMIC);
   } else {
     LLVM_DEBUG(llvm::dbgs() << "matchScratchAccess: missing isStatic attr\n");
     return std::nullopt;
@@ -319,11 +321,13 @@ static std::optional<ScratchAccess> matchScratchAccessFromAttrs(Operation *op, V
 
   if (acc.kind == ScratchAccess::Kind::DYNAMIC) {
     // Find the tileIdx Value by traversing the operands of the operation
-    arith::IndexCastOp indexCastOp = findTileIdx(ptrTensor.getDefiningOp<triton::AddPtrOp>());
+    arith::IndexCastOp indexCastOp =
+        findTileIdx(ptrTensor.getDefiningOp<triton::AddPtrOp>());
     if (indexCastOp) {
       acc.tileIdx = indexCastOp->getResult(0);
     } else {
-      LLVM_DEBUG(llvm::dbgs() << "matchScratchAccess: missing tileIdx for DYNAMIC access\n");
+      LLVM_DEBUG(llvm::dbgs()
+                 << "matchScratchAccess: missing tileIdx for DYNAMIC access\n");
       return std::nullopt;
     }
   }
@@ -331,8 +335,8 @@ static std::optional<ScratchAccess> matchScratchAccessFromAttrs(Operation *op, V
   return acc;
 }
 
-static std::optional<ScratchAccess> matchScratchAccess(Operation *op, Value ptrTensor,
-                                                       int expectedKAxis = -1) {
+static std::optional<ScratchAccess>
+matchScratchAccess(Operation *op, Value ptrTensor, int expectedKAxis = -1) {
   if (auto acc = matchScratchAccessFromAttrs(op, ptrTensor)) {
     return acc;
   }
@@ -398,8 +402,8 @@ static std::optional<ScratchAccess> matchScratchAccess(Operation *op, Value ptrT
       }
     }
   } else if (expectedKAxis != -1 &&
-             (offsetsTy.getDimSize(1 - expectedKAxis) == 1
-             || offsetsTy.getDimSize(expectedKAxis) == 1)) {
+             (offsetsTy.getDimSize(1 - expectedKAxis) == 1 ||
+              offsetsTy.getDimSize(expectedKAxis) == 1)) {
     expDimOp = offsets.getDefiningOp<triton::ExpandDimsOp>();
     if (!expDimOp) {
       addi = offsets.getDefiningOp<arith::AddIOp>();
@@ -752,92 +756,54 @@ private:
     constexpr llvm::StringLiteral kScratchShmAttr = "bishengir.scratch_shm";
     constexpr llvm::StringLiteral kScratchGlobalAttr =
         "bishengir.scratch_global";
-    constexpr llvm::StringLiteral dotAAttr = "bishengir.dot_A";
-    constexpr llvm::StringLiteral dotBAttr = "bishengir.dot_B";
-    SmallVector<unsigned> scratchAccArgs;
     SmallVector<unsigned> scratchShmAccArgs;
-    SmallVector<unsigned> scratchGlobalAccArgsA;
-    SmallVector<unsigned> scratchGlobalAccArgsB;
+    SmallVector<unsigned> scratchGlobalAccArgs;
     for (unsigned i = 0; i < func.getNumArguments(); ++i) {
       if (func.getArgAttr(i, kScratchShmAttr)) {
         scratchShmAccArgs.push_back(i);
-        scratchAccArgs.push_back(i);
       } else if (func.getArgAttr(i, kScratchGlobalAttr)) {
-        if (func.getArgAttr(i, dotAAttr)) {
-          scratchGlobalAccArgsA.push_back(i);
-        } else if (func.getArgAttr(i, dotBAttr)) {
-          scratchGlobalAccArgsB.push_back(i);
-        }
-        scratchAccArgs.push_back(i);
+        scratchGlobalAccArgs.push_back(i);
       }
     }
     for (unsigned argIdx : scratchShmAccArgs) {
-      int expectedKAxis = -1;
-      if (func.getArgAttr(argIdx, dotAAttr))
-        expectedKAxis = 1; // col-tile
-      else if (func.getArgAttr(argIdx, dotBAttr))
-        expectedKAxis = 0; // row-tile
-      if (failed(handleScratchAccArg(func, argIdx, expectedKAxis)))
+      if (failed(handleScratchAccArg(func, argIdx)))
         return failure();
     }
 
-    SmallVector<int64_t> globalScratchAccSizesA;
-    for (unsigned argIdx : scratchGlobalAccArgsA) {
+    SmallVector<int64_t> globalScratchAccSizes;
+    for (unsigned argIdx : scratchGlobalAccArgs) {
       auto intAttr = dyn_cast<IntegerAttr>(
           func.getArgAttr(argIdx, "bishengir.bytes_needed"));
       assert(intAttr && "missing bishengir.bytes_needed attribute");
       auto totalStageBytes = intAttr.getInt();
-      globalScratchAccSizesA.push_back(totalStageBytes);
-    }
-
-    SmallVector<int64_t> globalScratchAccSizesB;
-    for (unsigned argIdx : scratchGlobalAccArgsB) {
-      auto intAttr = dyn_cast<IntegerAttr>(
-          func.getArgAttr(argIdx, "bishengir.bytes_needed"));
-      assert(intAttr && "missing bishengir.bytes_needed attribute");
-      auto totalStageBytes = intAttr.getInt();
-      globalScratchAccSizesB.push_back(totalStageBytes);
+      globalScratchAccSizes.push_back(totalStageBytes);
     }
 
     Block &entryBlock = func.getBody().front();
     OpBuilder globalScratchMemBuilder(&entryBlock, entryBlock.begin());
-    SmallVector<triton::gpu::GlobalScratchAllocOp> globalAllocOpsA;
-    SmallVector<triton::gpu::GlobalScratchAllocOp> globalAllocOpsB;
-    if (!scratchGlobalAccArgsA.empty()) {
-      for (size_t i = 0; i < scratchGlobalAccArgsA.size(); i++) {
-        globalAllocOpsA.push_back(
+    SmallVector<triton::gpu::GlobalScratchAllocOp> globalAllocOps;
+    if (!scratchGlobalAccArgs.empty()) {
+      for (size_t i = 0; i < scratchGlobalAccArgs.size(); i++) {
+        globalAllocOps.push_back(
             globalScratchMemBuilder.create<triton::gpu::GlobalScratchAllocOp>(
                 func.getLoc(),
-                entryBlock.getArgument(scratchGlobalAccArgsA[i]).getType(),
-                globalScratchAccSizesA[i], 256));
-      }
-    }
-    if (!scratchGlobalAccArgsB.empty()) {
-      for (size_t i = 0; i < scratchGlobalAccArgsB.size(); i++) {
-        globalAllocOpsB.push_back(
-            globalScratchMemBuilder.create<triton::gpu::GlobalScratchAllocOp>(
-                func.getLoc(),
-                entryBlock.getArgument(scratchGlobalAccArgsB[i]).getType(),
-                globalScratchAccSizesB[i], 256));
+                entryBlock.getArgument(scratchGlobalAccArgs[i]).getType(),
+                globalScratchAccSizes[i], 256));
       }
     }
 
-    for (size_t i = 0; i < globalAllocOpsA.size(); i++) {
-      auto allocOpA = globalAllocOpsA[i];
-      auto argIdx = scratchGlobalAccArgsA[i];
+    for (size_t i = 0; i < globalAllocOps.size(); i++) {
+      auto allocOp = globalAllocOps[i];
+      auto argIdx = scratchGlobalAccArgs[i];
       auto arg = entryBlock.getArgument(argIdx);
-      arg.replaceAllUsesWith(allocOpA);
-    }
-    for (size_t i = 0; i < globalAllocOpsB.size(); i++) {
-      auto allocOpB = globalAllocOpsB[i];
-      auto argIdx = scratchGlobalAccArgsB[i];
-      auto arg = entryBlock.getArgument(argIdx);
-      arg.replaceAllUsesWith(allocOpB);
+      arg.replaceAllUsesWith(allocOp);
     }
 
     // Drop the now-converted scratch-acc args from the function signature.
-    if (!scratchAccArgs.empty())
-      removeFunctionArgs(func, scratchAccArgs);
+    if (!scratchShmAccArgs.empty())
+      removeFunctionArgs(func, scratchShmAccArgs);
+    if (!scratchGlobalAccArgs.empty())
+      removeFunctionArgs(func, scratchGlobalAccArgs);
 
     // --- Step 1: Gather all shared-memory load/store ops ----------------
     DenseMap<Value, BasePtrInfo> baseMap;
@@ -1007,10 +973,22 @@ private:
       Operation *op;     // tt.load or tt.store
       ScratchAccess acc; // matched offset structure
     };
-    SmallVector<ClassifiedAccess> classified;
-    int64_t envDimOther = 0;
-    int64_t maxTileSize = 0;
-    int64_t minTileSize = std::numeric_limits<int64_t>::max();
+
+    // From this point on we must keep track of two versions of
+    // every variable, one for when kAxis = 0 and one for when
+    // kAxis = 1. Both of these routes will not be used for every
+    // scratch shm access, and in case the scratch arg is only
+    // every used with one of the two k-axes, the other variable
+    // often remain null or unused.
+    SmallVector<ClassifiedAccess> classifiedAll;
+    SmallVector<ClassifiedAccess> classifiedKAxis0;
+    int64_t envDimOtherKAxis0 = 0;
+    int64_t maxTileSizeKAxis0 = 0;
+    int64_t minTileSizeKAxis0 = std::numeric_limits<int64_t>::max();
+    SmallVector<ClassifiedAccess> classifiedKAxis1;
+    int64_t envDimOtherKAxis1 = 0;
+    int64_t maxTileSizeKAxis1 = 0;
+    int64_t minTileSizeKAxis1 = std::numeric_limits<int64_t>::max();
     int kAxis = -1; // determined by the first matched access; all must agree
 
     auto classify = [&](Operation *op, Value ptrTensor) -> LogicalResult {
@@ -1033,15 +1011,41 @@ private:
       }
       if (kAxis < 0) {
         kAxis = acc->kAxis;
-      } else if (kAxis != acc->kAxis) {
+      } else if (expectedKAxis != -1 && kAxis != acc->kAxis) {
         return op->emitError("scratch-acc accesses disagree on tile axis "
                              "(prior=")
                << kAxis << " here=" << acc->kAxis << ")";
       }
-      envDimOther = std::max(envDimOther, acc->dimOther);
-      maxTileSize = std::max(maxTileSize, acc->tileSize);
-      minTileSize = std::min(minTileSize, acc->tileSize);
-      classified.push_back({op, *acc});
+      kAxis = acc->kAxis;
+      if (auto st = dyn_cast<triton::StoreOp>(op)) {
+        Value storedVal = st->getOperand(1);
+        auto storedTy = dyn_cast<RankedTensorType>(storedVal.getType());
+        ArrayRef<int64_t> storedShape = storedTy.getShape();
+        int64_t stDim0 = storedShape[0];
+        int64_t stDim1 = storedShape[1];
+        envDimOtherKAxis0 = std::max(envDimOtherKAxis0, stDim1);
+        maxTileSizeKAxis0 = std::max(maxTileSizeKAxis0, stDim0);
+        minTileSizeKAxis0 = std::min(minTileSizeKAxis0, stDim0);
+        envDimOtherKAxis1 = std::max(envDimOtherKAxis1, stDim0);
+        maxTileSizeKAxis1 = std::max(maxTileSizeKAxis1, stDim1);
+        minTileSizeKAxis1 = std::min(minTileSizeKAxis1, stDim1);
+        if (kAxis == 0) {
+          classifiedKAxis0.push_back({op, *acc});
+        } else {
+          classifiedKAxis1.push_back({op, *acc});
+        }
+      } else if (kAxis == 0) {
+        envDimOtherKAxis0 = std::max(envDimOtherKAxis0, acc->dimOther);
+        maxTileSizeKAxis0 = std::max(maxTileSizeKAxis0, acc->tileSize);
+        minTileSizeKAxis0 = std::min(minTileSizeKAxis0, acc->tileSize);
+        classifiedKAxis0.push_back({op, *acc});
+      } else {
+        envDimOtherKAxis1 = std::max(envDimOtherKAxis1, acc->dimOther);
+        maxTileSizeKAxis1 = std::max(maxTileSizeKAxis1, acc->tileSize);
+        minTileSizeKAxis1 = std::min(minTileSizeKAxis1, acc->tileSize);
+        classifiedKAxis1.push_back({op, *acc});
+      }
+      classifiedAll.push_back({op, *acc});
       return success();
     };
     for (auto ld : loads)
@@ -1051,25 +1055,57 @@ private:
       if (failed(classify(st, st.getPtr())))
         return failure();
 
-    int64_t envSize = maxTileSize;
-    int64_t tileSize = minTileSize;
-    if (envDimOther == 0 || envSize == 0 || tileSize == 0)
+    bool scratchArgUsedWithKAxis0 = !classifiedKAxis0.empty();
+    int64_t envSizeKAxis0 = maxTileSizeKAxis0;
+    int64_t tileSizeKAxis0 = minTileSizeKAxis0;
+    bool scratchArgUsedWithKAxis1 = !classifiedKAxis1.empty();
+    int64_t envSizeKAxis1 = maxTileSizeKAxis1;
+    int64_t tileSizeKAxis1 = minTileSizeKAxis1;
+    if ((scratchArgUsedWithKAxis0 &&
+         (envDimOtherKAxis0 == 0 || envSizeKAxis0 == 0 ||
+          tileSizeKAxis0 == 0)) ||
+        (scratchArgUsedWithKAxis1 &&
+         (envDimOtherKAxis1 == 0 || envSizeKAxis1 == 0 || tileSizeKAxis1 == 0)))
       return func.emitError("scratch-acc envelope shape unrecognized");
-    for (auto &c : classified) {
-      if (c.acc.rowStride != 0 && c.acc.rowStride != envDimOther)
+
+    for (auto &c : classifiedKAxis0) {
+      if (c.acc.rowStride != 0 && c.acc.rowStride != envDimOtherKAxis0)
         return c.op->emitError("scratch-acc row stride (")
                << c.acc.rowStride << ") disagrees with envelope width ("
-               << envDimOther << ")";
+               << envDimOtherKAxis0 << ")";
     }
-    if (envSize % tileSize != 0)
+    for (auto &c : classifiedKAxis1) {
+      if (c.acc.rowStride != 0 && c.acc.rowStride != envDimOtherKAxis1)
+        return c.op->emitError("scratch-acc row stride (")
+               << c.acc.rowStride << ") disagrees with envelope width ("
+               << envDimOtherKAxis1 << ")";
+    }
+
+    if (scratchArgUsedWithKAxis0 && envSizeKAxis0 % tileSizeKAxis0 != 0)
       return func.emitError("scratch-acc envelope size (")
-             << envSize << ") not a multiple of tile size (" << tileSize << ")";
+             << envSizeKAxis0 << ") not a multiple of tile size ("
+             << tileSizeKAxis0 << ")";
+    if (scratchArgUsedWithKAxis1 && envSizeKAxis1 % tileSizeKAxis1 != 0)
+      return func.emitError("scratch-acc envelope size (")
+             << envSizeKAxis1 << ") not a multiple of tile size ("
+             << tileSizeKAxis1 << ")";
 
     // Identify any envelope-shape access.  TileDotLoads emits a single
     // full-envelope STORE at function entry; envelope-shape LOADs are not
     // expected (post-loop is tile-wise via per-tile tt.make_tensor_ptr).
-    for (auto &c : classified) {
-      bool isEnvelope = (c.acc.tileSize == envSize) && (envSize > tileSize);
+    for (auto &c : classifiedKAxis0) {
+      bool isEnvelope =
+          (c.acc.tileSize == envSizeKAxis0) && (envSizeKAxis0 > tileSizeKAxis0);
+      if (!isEnvelope)
+        continue;
+      if (!isa<triton::StoreOp>(c.op))
+        return c.op->emitError(
+            "scratch-acc envelope-shape LOAD encountered; only the init-zero "
+            "STORE may use the full envelope shape");
+    }
+    for (auto &c : classifiedKAxis1) {
+      bool isEnvelope =
+          (c.acc.tileSize == envSizeKAxis1) && (envSizeKAxis1 > tileSizeKAxis1);
       if (!isEnvelope)
         continue;
       if (!isa<triton::StoreOp>(c.op))
@@ -1111,12 +1147,12 @@ private:
     // placement lets the buffer's live range shrink to the innermost region
     // that actually contains all of its accesses.
     DominanceInfo domInfo(func);
-    Block *home = classified.front().op->getBlock();
-    for (auto &c : classified)
+    Block *home = classifiedAll.front().op->getBlock();
+    for (auto &c : classifiedAll)
       home = domInfo.findNearestCommonDominator(home, c.op->getBlock());
     assert(home && "scratch-acc accesses share no common dominator block");
     Operation *firstUserTop = nullptr;
-    for (auto &c : classified) {
+    for (auto &c : classifiedAll) {
       // Lift each access to its ancestor op that sits directly in `home`
       // (the access itself may be nested deeper, e.g. inside an scf.for).
       Operation *anc = c.op;
@@ -1157,28 +1193,31 @@ private:
     //   order=[2,1,0] → stride[0]=tileSize*dimOther, which matches the
     //   default `product(dst.shape)`. No override needed.
     bool anyDynamic = false;
-    for (auto &c : classified)
+    for (auto &c : classifiedAll)
       if (c.acc.kind == ScratchAccess::DYNAMIC) {
         anyDynamic = true;
         break;
       }
 
-    triton::gpu::MemDescType envMd3DTy;  // only built when anyDynamic
-    triton::gpu::MemDescType tileMd3DTy; // shape after memdesc_index
+    triton::gpu::MemDescType envMd3DTyKAxis0;  // only built when anyDynamic
+    triton::gpu::MemDescType tileMd3DTyKAxis0; // shape after memdesc_index
+    triton::gpu::MemDescType envMd3DTyKAxis1;  // only built when anyDynamic
+    triton::gpu::MemDescType tileMd3DTyKAxis1; // shape after memdesc_index
     if (anyDynamic) {
-      int64_t numTiles = envSize / tileSize;
-      SmallVector<int64_t, 3> envShape3D;
-      SmallVector<unsigned, 3> order3D;
-      SmallVector<int64_t, 2> perTileShape;
-      if (kAxis == 1) {
-        envShape3D = {numTiles, envDimOther, tileSize};
-        order3D = {2u, 0u, 1u};
-        perTileShape = {envDimOther, tileSize};
-      } else {
-        envShape3D = {numTiles, tileSize, envDimOther};
-        order3D = {2u, 1u, 0u};
-        perTileShape = {tileSize, envDimOther};
-      }
+      int64_t numTilesKAxis0 = envSizeKAxis0 / tileSizeKAxis0;
+      SmallVector<int64_t, 3> envShape3DKAxis0 = {
+          numTilesKAxis0, tileSizeKAxis0, envDimOtherKAxis0};
+      SmallVector<unsigned, 3> order3DKAxis0 = {2u, 1u, 0u};
+      SmallVector<int64_t, 2> perTileShapeKAxis0 = {tileSizeKAxis0,
+                                                    envDimOtherKAxis0};
+
+      int64_t numTilesKAxis1 = envSizeKAxis1 / tileSizeKAxis1;
+      SmallVector<int64_t, 3> envShape3DKAxis1 = {
+          numTilesKAxis1, envDimOtherKAxis1, tileSizeKAxis1};
+      SmallVector<unsigned, 3> order3DKAxis1 = {2u, 0u, 1u};
+      SmallVector<int64_t, 2> perTileShapeKAxis1 = {envDimOtherKAxis1,
+                                                    tileSizeKAxis1};
+
       // Bank-conflict swizzle for the DYNAMIC per-tile load path.
       //
       // Both phase axes (2D order=[1,0] and 3D order=[2,0,1]/[2,1,0])
@@ -1206,18 +1245,35 @@ private:
           std::max<unsigned>(1u, (elemTy.getIntOrFloatBitWidth() + 7) / 8);
       // Pick vec = min(8B/elem, tileSize), then snap down to a power
       // of two that divides tileSize.
-      unsigned vec = std::max<unsigned>(1u, 8u / elemBytes);
-      if (static_cast<int64_t>(vec) > tileSize)
-        vec = static_cast<unsigned>(std::max<int64_t>(1, tileSize));
-      while (vec > 1u && tileSize % static_cast<int64_t>(vec) != 0)
-        vec >>= 1;
+      unsigned vecKAxis0 = std::max<unsigned>(1u, 8u / elemBytes);
+      if (static_cast<int64_t>(vecKAxis0) > tileSizeKAxis0)
+        vecKAxis0 = static_cast<unsigned>(std::max<int64_t>(1, tileSizeKAxis0));
+      while (vecKAxis0 > 1u &&
+             tileSizeKAxis0 % static_cast<int64_t>(vecKAxis0) != 0)
+        vecKAxis0 >>= 1;
       // maxPhase ≤ tileSize / vec (and ≤ numBanks for HW utility).
-      unsigned maxPhaseCap = static_cast<unsigned>(
-          std::max<int64_t>(1, tileSize / static_cast<int64_t>(vec)));
-      maxPhaseCap = std::min<unsigned>(maxPhaseCap, /*kNumBanks=*/16u);
-      unsigned maxPhase = 1u;
-      while ((maxPhase << 1) <= maxPhaseCap)
-        maxPhase <<= 1;
+      unsigned maxPhaseCapKAxis0 = static_cast<unsigned>(std::max<int64_t>(
+          1, tileSizeKAxis0 / static_cast<int64_t>(vecKAxis0)));
+      maxPhaseCapKAxis0 =
+          std::min<unsigned>(maxPhaseCapKAxis0, /*kNumBanks=*/16u);
+      unsigned maxPhaseKAxis0 = 1u;
+      while ((maxPhaseKAxis0 << 1) <= maxPhaseCapKAxis0)
+        maxPhaseKAxis0 <<= 1;
+
+      unsigned vecKAxis1 = std::max<unsigned>(1u, 8u / elemBytes);
+      if (static_cast<int64_t>(vecKAxis1) > tileSizeKAxis1)
+        vecKAxis1 = static_cast<unsigned>(std::max<int64_t>(1, tileSizeKAxis1));
+      while (vecKAxis1 > 1u &&
+             tileSizeKAxis1 % static_cast<int64_t>(vecKAxis1) != 0)
+        vecKAxis1 >>= 1;
+      // maxPhase ≤ tileSize / vec (and ≤ numBanks for HW utility).
+      unsigned maxPhaseCapKAxis1 = static_cast<unsigned>(std::max<int64_t>(
+          1, tileSizeKAxis1 / static_cast<int64_t>(vecKAxis1)));
+      maxPhaseCapKAxis1 =
+          std::min<unsigned>(maxPhaseCapKAxis1, /*kNumBanks=*/16u);
+      unsigned maxPhaseKAxis1 = 1u;
+      while ((maxPhaseKAxis1 << 1) <= maxPhaseCapKAxis1)
+        maxPhaseKAxis1 <<= 1;
       // perPhase chooses the row-group size that shares one swizzle
       // phase.  The FA `#linear` (CDITL-assigned) LOAD layout has
       // `lane[4] = [4, 0]` — lane bit 4 contributes +4 to the row,
@@ -1232,25 +1288,51 @@ private:
       // onto different banks.  Correctness constraint for row-tile
       // (kAxis=0): perPhase × maxPhase | tileSize (so the LOAD's
       // phase(t) matches the STORE's phase(iv*tileSize+t)).
-      unsigned perPhase = 1u;
-      if (maxPhase >= 2u &&
-          (tileSize % static_cast<int64_t>(4u * maxPhase)) == 0)
-        perPhase = 4u;
+      unsigned perPhaseKAxis0 = 1u;
+      if (maxPhaseKAxis0 >= 2u &&
+          (tileSizeKAxis0 % static_cast<int64_t>(4u * maxPhaseKAxis0)) == 0)
+        perPhaseKAxis0 = 4u;
       // For the 3D envelope's innermost dim, the encoding's `vec`
       // can't overrun the innermost dim's size (Triton verifier).
-      int64_t innermost3D = envShape3D[order3D[0]];
-      unsigned vec3D = vec;
-      if (static_cast<int64_t>(vec3D) > innermost3D)
-        vec3D = static_cast<unsigned>(std::max<int64_t>(1, innermost3D));
+      int64_t innermost3DKAxis0 = envShape3DKAxis0[order3DKAxis0[0]];
+      unsigned vec3DKAxis0 = vecKAxis0;
+      if (static_cast<int64_t>(vec3DKAxis0) > innermost3DKAxis0)
+        vec3DKAxis0 =
+            static_cast<unsigned>(std::max<int64_t>(1, innermost3DKAxis0));
       SmallVector<unsigned, 3> ones3D(3, 1u);
-      auto ctaLayout3D =
-          triton::gpu::CTALayoutAttr::get(ctx, ones3D, ones3D, order3D);
-      auto enc3D = triton::gpu::SwizzledSharedEncodingAttr::get(
-          ctx, /*vec=*/vec3D, /*perPhase=*/perPhase, /*maxPhase=*/maxPhase,
-          order3D, ctaLayout3D);
+      auto ctaLayout3DKAxis0 =
+          triton::gpu::CTALayoutAttr::get(ctx, ones3D, ones3D, order3DKAxis0);
+      auto enc3DKAxis0 = triton::gpu::SwizzledSharedEncodingAttr::get(
+          ctx, /*vec=*/vec3DKAxis0, /*perPhase=*/perPhaseKAxis0,
+          /*maxPhase=*/maxPhaseKAxis0, order3DKAxis0, ctaLayout3DKAxis0);
       auto smem = triton::gpu::SharedMemorySpaceAttr::get(ctx);
-      envMd3DTy = triton::gpu::MemDescType::get(envShape3D, elemTy, enc3D, smem,
-                                                /*mutableMemory=*/true);
+      if (scratchArgUsedWithKAxis0) {
+        envMd3DTyKAxis0 = triton::gpu::MemDescType::get(
+            envShape3DKAxis0, elemTy, enc3DKAxis0, smem,
+            /*mutableMemory=*/true);
+      }
+
+      unsigned perPhaseKAxis1 = 1u;
+      if (maxPhaseKAxis1 >= 2u &&
+          (tileSizeKAxis1 % static_cast<int64_t>(4u * maxPhaseKAxis1)) == 0)
+        perPhaseKAxis1 = 4u;
+      // For the 3D envelope's innermost dim, the encoding's `vec`
+      // can't overrun the innermost dim's size (Triton verifier).
+      int64_t innermost3DKAxis1 = envShape3DKAxis1[order3DKAxis1[0]];
+      unsigned vec3DKAxis1 = vecKAxis1;
+      if (static_cast<int64_t>(vec3DKAxis1) > innermost3DKAxis1)
+        vec3DKAxis1 =
+            static_cast<unsigned>(std::max<int64_t>(1, innermost3DKAxis1));
+      auto ctaLayout3DKAxis1 =
+          triton::gpu::CTALayoutAttr::get(ctx, ones3D, ones3D, order3DKAxis1);
+      auto enc3DKAxis1 = triton::gpu::SwizzledSharedEncodingAttr::get(
+          ctx, /*vec=*/vec3DKAxis1, /*perPhase=*/perPhaseKAxis1,
+          /*maxPhase=*/maxPhaseKAxis1, order3DKAxis1, ctaLayout3DKAxis1);
+      if (scratchArgUsedWithKAxis1) {
+        envMd3DTyKAxis1 = triton::gpu::MemDescType::get(
+            envShape3DKAxis1, elemTy, enc3DKAxis1, smem,
+            /*mutableMemory=*/true);
+      }
 
       // Per-tile sub-memdesc: rank 2 (after memdesc_index drops dim 0).
       // Same (vec, perPhase, maxPhase) so per-lane byte addresses match
@@ -1259,9 +1341,12 @@ private:
       SmallVector<unsigned, 2> order2D = {1u, 0u};
       auto ctaLayout2D =
           triton::gpu::CTALayoutAttr::get(ctx, ones2D, ones2D, order2D);
-      auto enc2D = triton::gpu::SwizzledSharedEncodingAttr::get(
-          ctx, /*vec=*/vec, /*perPhase=*/perPhase, /*maxPhase=*/maxPhase,
-          order2D, ctaLayout2D);
+      auto enc2DKAxis0 = triton::gpu::SwizzledSharedEncodingAttr::get(
+          ctx, /*vec=*/vecKAxis0, /*perPhase=*/perPhaseKAxis0,
+          /*maxPhase=*/maxPhaseKAxis0, order2D, ctaLayout2D);
+      auto enc2DKAxis1 = triton::gpu::SwizzledSharedEncodingAttr::get(
+          ctx, /*vec=*/vecKAxis1, /*perPhase=*/perPhaseKAxis1,
+          /*maxPhase=*/maxPhaseKAxis1, order2D, ctaLayout2D);
       // CRITICAL: allocShape of the per-tile sub-memdesc must match the
       // ENCODING's RANK (2D) and describe the FULL ENVELOPE's 2D shape.
       // The per-lane address inside the sub-memdesc is computed from the
@@ -1272,15 +1357,22 @@ private:
       // 3D allocShape, the linear-layout falls back to using the per-
       // tile shape's row stride (= tileSize), which is too small by a
       // factor of dimOther/tileSize and gives wrong addresses for r > 0.
-      SmallVector<int64_t, 2> envShape2D;
-      if (kAxis == 1)
-        envShape2D = {envDimOther, envSize};
-      else
-        envShape2D = {envSize, envDimOther};
-      tileMd3DTy =
-          triton::gpu::MemDescType::get(perTileShape, elemTy, enc2D, smem,
-                                        /*mutableMemory=*/true,
-                                        /*allocShape=*/envShape2D);
+      if (scratchArgUsedWithKAxis0) {
+        SmallVector<int64_t, 2> envShape2DKAxis0 = {envSizeKAxis0,
+                                                    envDimOtherKAxis0};
+        tileMd3DTyKAxis0 = triton::gpu::MemDescType::get(
+            perTileShapeKAxis0, elemTy, enc2DKAxis0, smem,
+            /*mutableMemory=*/true,
+            /*allocShape=*/envShape2DKAxis0);
+      }
+      if (scratchArgUsedWithKAxis1) {
+        SmallVector<int64_t, 2> envShape2DKAxis1 = {envDimOtherKAxis1,
+                                                    envSizeKAxis1};
+        tileMd3DTyKAxis1 = triton::gpu::MemDescType::get(
+            perTileShapeKAxis1, elemTy, enc2DKAxis1, smem,
+            /*mutableMemory=*/true,
+            /*allocShape=*/envShape2DKAxis1);
+      }
     }
 
     // For STATIC-only: use the swizzled `buildScratchEnvMemDescType2D`.
@@ -1289,42 +1381,95 @@ private:
     // per-lane address arithmetic agrees byte-for-byte with the
     // per-tile LOAD's.  The 2D-view is a `memdesc_reinterpret` of the
     // 3D parent — same physical bytes, different shape.
-    triton::gpu::MemDescType envMd2DTy;
-    if (anyDynamic) {
-      SmallVector<int64_t, 2> envShape2D;
-      if (kAxis == 1)
-        envShape2D = {envDimOther, envSize};
-      else
-        envShape2D = {envSize, envDimOther};
-      auto smem = triton::gpu::SharedMemorySpaceAttr::get(ctx);
-      // The 2D encoding for the reinterpret view: same vec, no swizzle,
-      // order=[1,0].  Reuse the per-tile encoding (built above in the
-      // anyDynamic branch — same vec/perPhase/maxPhase parameters).
-      envMd2DTy = triton::gpu::MemDescType::get(envShape2D, elemTy,
-                                                tileMd3DTy.getEncoding(), smem,
-                                                /*mutableMemory=*/true,
-                                                /*allocShape=*/envShape2D);
-    } else {
-      envMd2DTy = buildScratchEnvMemDescType2D(ctx, envDimOther, envSize, kAxis,
-                                               tileSize, elemTy);
+    triton::gpu::MemDescType envMd2DTyKAxis0;
+    triton::gpu::MemDescType envMd2DTyKAxis1;
+    if (scratchArgUsedWithKAxis0) {
+      if (anyDynamic) {
+        SmallVector<int64_t, 2> envShape2DKAxis0 = {envSizeKAxis0,
+                                                    envDimOtherKAxis0};
+        auto smem = triton::gpu::SharedMemorySpaceAttr::get(ctx);
+        // The 2D encoding for the reinterpret view: same vec, no swizzle,
+        // order=[1,0].  Reuse the per-tile encoding (built above in the
+        // anyDynamic branch — same vec/perPhase/maxPhase parameters).
+        envMd2DTyKAxis0 = triton::gpu::MemDescType::get(
+            envShape2DKAxis0, elemTy, tileMd3DTyKAxis0.getEncoding(), smem,
+            /*mutableMemory=*/true,
+            /*allocShape=*/envShape2DKAxis0);
+      } else {
+        envMd2DTyKAxis0 = buildScratchEnvMemDescType2D(
+            ctx, envDimOtherKAxis0, envSizeKAxis0, 0, tileSizeKAxis0, elemTy);
+      }
     }
+    if (scratchArgUsedWithKAxis1) {
+      if (anyDynamic) {
+        SmallVector<int64_t, 2> envShape2DKAxis1 = {envDimOtherKAxis1,
+                                                    envSizeKAxis1};
+        auto smem = triton::gpu::SharedMemorySpaceAttr::get(ctx);
+        // The 2D encoding for the reinterpret view: same vec, no swizzle,
+        // order=[1,0].  Reuse the per-tile encoding (built above in the
+        // anyDynamic branch — same vec/perPhase/maxPhase parameters).
+        envMd2DTyKAxis1 = triton::gpu::MemDescType::get(
+            envShape2DKAxis1, elemTy, tileMd3DTyKAxis1.getEncoding(), smem,
+            /*mutableMemory=*/true,
+            /*allocShape=*/envShape2DKAxis1);
+      } else {
+        envMd2DTyKAxis1 = buildScratchEnvMemDescType2D(
+            ctx, envDimOtherKAxis1, envSizeKAxis1, 1, tileSizeKAxis1, elemTy);
+      }
+    }
+
     // Allocate either the 3D envelope (DYNAMIC path) or the 2D envelope
     // (legacy STATIC-only path).  The STORE side reinterprets the 3D
     // back to a byte-equivalent 2D so existing `ttg.local_store` from a
     // 2D source still typechecks.
-    Value shm;
-    Value shm2D; // 2D view (== shm for STATIC, == reinterpret(shm) for DYNAMIC)
+    Value shmKAxis0;
+    Value shmKAxis1;
+    Value shm2DKAxis0; // 2D view (== shm for STATIC, == reinterpret(shm) for
+                       // DYNAMIC)
+    Value shm2DKAxis1; // 2D view (== shm for STATIC, == reinterpret(shm) for
+                       // DYNAMIC)
     if (anyDynamic) {
-      auto allocOp = builder.create<triton::gpu::LocalAllocOp>(loc, envMd3DTy,
-                                                               /*src=*/Value{});
-      shm = allocOp.getResult();
-      shm2D = builder.create<triton::gpu::MemDescReinterpretOp>(loc, envMd2DTy,
-                                                                shm);
-    } else {
-      auto allocOp = builder.create<triton::gpu::LocalAllocOp>(loc, envMd2DTy,
-                                                               /*src=*/Value{});
-      shm = allocOp.getResult();
-      shm2D = shm;
+      if (scratchArgUsedWithKAxis0 && scratchArgUsedWithKAxis1) {
+        auto allocOp = builder.create<triton::gpu::LocalAllocOp>(
+            loc, envMd3DTyKAxis0, /*src=*/Value{});
+        shmKAxis0 = allocOp.getResult();
+        shm2DKAxis0 = builder.create<triton::gpu::MemDescReinterpretOp>(
+            loc, envMd2DTyKAxis0, shmKAxis0);
+        shmKAxis1 = builder.create<triton::gpu::MemDescReinterpretOp>(
+            loc, envMd3DTyKAxis1, shm2DKAxis0);
+        shm2DKAxis1 = builder.create<triton::gpu::MemDescReinterpretOp>(
+            loc, envMd2DTyKAxis1, shmKAxis1);
+      } else if (scratchArgUsedWithKAxis0) {
+        auto allocOp = builder.create<triton::gpu::LocalAllocOp>(
+            loc, envMd3DTyKAxis0, /*src=*/Value{});
+        shmKAxis0 = allocOp.getResult();
+        shm2DKAxis0 = builder.create<triton::gpu::MemDescReinterpretOp>(
+            loc, envMd2DTyKAxis0, shmKAxis0);
+      } else if (scratchArgUsedWithKAxis1) {
+        auto allocOp = builder.create<triton::gpu::LocalAllocOp>(
+            loc, envMd3DTyKAxis1, /*src=*/Value{});
+        shmKAxis1 = allocOp.getResult();
+        shm2DKAxis1 = builder.create<triton::gpu::MemDescReinterpretOp>(
+            loc, envMd2DTyKAxis1, shmKAxis1);
+      }
+    } else if (scratchArgUsedWithKAxis0 && scratchArgUsedWithKAxis1) {
+      auto allocOp = builder.create<triton::gpu::LocalAllocOp>(
+          loc, envMd2DTyKAxis0, /*src=*/Value{});
+      shmKAxis0 = allocOp.getResult();
+      shm2DKAxis0 = shmKAxis0;
+      shmKAxis1 = builder.create<triton::gpu::MemDescReinterpretOp>(
+          loc, envMd2DTyKAxis1, shmKAxis0);
+      shm2DKAxis1 = shmKAxis1;
+    } else if (scratchArgUsedWithKAxis0) {
+      auto allocOp = builder.create<triton::gpu::LocalAllocOp>(
+          loc, envMd2DTyKAxis0, /*src=*/Value{});
+      shmKAxis0 = allocOp.getResult();
+      shm2DKAxis0 = shmKAxis0;
+    } else if (scratchArgUsedWithKAxis1) {
+      auto allocOp = builder.create<triton::gpu::LocalAllocOp>(
+          loc, envMd2DTyKAxis1, /*src=*/Value{});
+      shmKAxis1 = allocOp.getResult();
+      shm2DKAxis1 = shmKAxis1;
     }
 
     // Per-tile view encoding/allocShape (shared across accesses).  The
@@ -1338,22 +1483,44 @@ private:
     // stripe s=1) into a physical bit pattern that's then XOR-combined
     // with each thread's per-element offset.
     auto smem = triton::gpu::SharedMemorySpaceAttr::get(ctx);
-    auto tileMdEnc = envMd2DTy.getEncoding();
-    auto tileMdAllocShape = envMd2DTy.getAllocShape();
+    Attribute tileMdEncKAxis0;
+    llvm::ArrayRef<int64_t> tileMdAllocShapeKAxis0;
+    Attribute tileMdEncKAxis1;
+    llvm::ArrayRef<int64_t> tileMdAllocShapeKAxis1;
+    if (scratchArgUsedWithKAxis0) {
+      tileMdEncKAxis0 = envMd2DTyKAxis0.getEncoding();
+      tileMdAllocShapeKAxis0 = envMd2DTyKAxis0.getAllocShape();
+    }
+    if (scratchArgUsedWithKAxis1) {
+      tileMdEncKAxis1 = envMd2DTyKAxis1.getEncoding();
+      tileMdAllocShapeKAxis1 = envMd2DTyKAxis1.getAllocShape();
+    }
     auto makeTileMdTy = [&](int64_t accDimOther) {
       SmallVector<int64_t, 2> tileShape =
-          (kAxis == 1) ? SmallVector<int64_t, 2>{accDimOther, tileSize}
-                       : SmallVector<int64_t, 2>{tileSize, accDimOther};
-      return triton::gpu::MemDescType::get(tileShape, elemTy, tileMdEnc, smem,
-                                           /*mutableMemory=*/true,
-                                           /*allocShape=*/tileMdAllocShape);
+          (kAxis == 1) ? SmallVector<int64_t, 2>{accDimOther, tileSizeKAxis1}
+                       : SmallVector<int64_t, 2>{tileSizeKAxis0, accDimOther};
+      return triton::gpu::MemDescType::get(
+          tileShape, elemTy, (kAxis == 1) ? tileMdEncKAxis1 : tileMdEncKAxis0,
+          smem,
+          /*mutableMemory=*/true,
+          /*allocShape=*/
+              (kAxis == 1) ? tileMdAllocShapeKAxis1 : tileMdAllocShapeKAxis0);
     };
 
-    for (auto &c : classified) {
+    for (auto &c : classifiedAll) {
       Operation *op = c.op;
       const ScratchAccess &acc = c.acc;
       OpBuilder::InsertionGuard guard(builder);
       builder.setInsertionPoint(op);
+      kAxis = acc.kAxis;
+      int64_t envSize = (kAxis == 1) ? envSizeKAxis1 : envSizeKAxis0;
+      int64_t tileSize = (kAxis == 1) ? tileSizeKAxis1 : tileSizeKAxis0;
+      int64_t envDimOther =
+          (kAxis == 1) ? envDimOtherKAxis1 : envDimOtherKAxis0;
+      Value shm = (kAxis == 1) ? shmKAxis1 : shmKAxis0;
+      Value shm2D = (kAxis == 1) ? shm2DKAxis1 : shm2DKAxis0;
+      triton::gpu::MemDescType tileMd3DTy =
+          (kAxis == 1) ? tileMd3DTyKAxis1 : tileMd3DTyKAxis0;
 
       // Envelope-shape STORE (init store of the full operand): single
       // ttg.local_store directly into the 2D view of the envelope — no

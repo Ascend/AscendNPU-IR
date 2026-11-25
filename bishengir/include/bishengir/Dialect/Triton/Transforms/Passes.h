@@ -21,6 +21,10 @@ namespace bishengir {
 
 namespace triton {
 
+/// Creates a pass that runs at the start of the pipeline to check if a kernel
+/// is unsupported in a way that will not be resolved by the triton pipeline
+std::unique_ptr<mlir::Pass> createCatchUnsupportedKernelsPass();
+
 /// Creates a pass that converts tensors with non power of 2 dimensions
 /// into tensors with power of 2 dimensions
 std::unique_ptr<mlir::Pass> createConvertNonPowerTwoTensorsPass();

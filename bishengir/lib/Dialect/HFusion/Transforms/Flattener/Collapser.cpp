@@ -1965,23 +1965,6 @@ void Flattener::adjustTensorOutOpSource(OpTy tensorOutOp, OpBuilder &builder) {
 }
 
 template <typename OpTy>
-void Flattener::adjustTensorOutOpDest(OpTy tensorOutOp, OpBuilder &builder) {
-  Value dest = tensorOutOp.getDest();
-  if (!utils::getShapeRank(dest).value_or(0))
-    return;
-  if (isValueFromHead(dest))
-    return;
-  if (!hasCollapseGroup(dest))
-    return;
-  auto expandOp = expandForTail(tensorOutOp, dest, builder);
-  if (!failed(expandOp)) {
-    tensorOutOp.getDestMutable().assign(expandOp.value()->getResult(0));
-    return;
-  }
-  llvm::report_fatal_error("tensor expand op collapse out op dest failed");
-}
-
-template <typename OpTy>
 void Flattener::adjustTensorOutOpSrc(OpTy tensorOutOp, OpBuilder &builder) {
   Value source = tensorOutOp.getSrc();
   if (isValueFromHead(source))

@@ -154,6 +154,133 @@ rewritePredicateInterleaveV2(OpTy op, llvm::IRBuilderBase &builder,
   return success();
 }
 
+/// Rewrite a legacy shift intrinsic into the fully typed dav-920r1 (Ascend960)
+/// form.
+///
+/// The legacy forms (`llvm.hivm.vshrs.s.x` / `.u.x` and the vector-amount
+/// variants) take a signed shift amount. The Ascend960 toolchain only registers
+/// the typed, zeroing-mode forms whose shift amount is unsigned:
+///
+///   llvm.hivm.<vshl|vshls|vshr|vshrs>.v<vl><elem><amount>.z
+///
+/// e.g. `llvm.hivm.vshrs.v128s16u16.z`. Those names are not part of the LLVM
+/// dialect's intrinsic table yet, so emit a call to the declared function by
+/// name; the external backend recognizes it as an intrinsic.
+static LogicalResult
+rewriteShiftV2(Operation *op, llvm::IRBuilderBase &builder,
+               LLVM::ModuleTranslation &moduleTranslation) {
+  auto moduleOp = op->getParentOfType<mlir::ModuleOp>();
+  if (!moduleOp || !moduleOp->hasAttr(
+                       hivm_regbaseintrins::kDavinciV2IntrinsicsModuleAttrName))
+    return failure();
+
+  bool isScalar;
+  bool isLeft;
+  bool isSigned;
+  if (isa<hivm_regbaseintrins::VshlsSXInstrOp>(op)) {
+    isScalar = true;
+    isLeft = true;
+    isSigned = true;
+  } else if (isa<hivm_regbaseintrins::VshlsUXInstrOp>(op)) {
+    isScalar = true;
+    isLeft = true;
+    isSigned = false;
+  } else if (isa<hivm_regbaseintrins::VshrsSXInstrOp>(op)) {
+    isScalar = true;
+    isLeft = false;
+    isSigned = true;
+  } else if (isa<hivm_regbaseintrins::VshrsUXInstrOp>(op)) {
+    isScalar = true;
+    isLeft = false;
+    isSigned = false;
+  } else if (isa<hivm_regbaseintrins::VshlSXInstrOp>(op)) {
+    isScalar = false;
+    isLeft = true;
+    isSigned = true;
+  } else if (isa<hivm_regbaseintrins::VshlUXInstrOp>(op)) {
+    isScalar = false;
+    isLeft = true;
+    isSigned = false;
+  } else if (isa<hivm_regbaseintrins::VshrSXInstrOp>(op)) {
+    isScalar = false;
+    isLeft = false;
+    isSigned = true;
+  } else if (isa<hivm_regbaseintrins::VshrUXInstrOp>(op)) {
+    isScalar = false;
+    isLeft = false;
+    isSigned = false;
+  } else {
+    return failure();
+  }
+
+  auto vecType = dyn_cast<VectorType>(op->getResult(0).getType());
+  if (!vecType || !vecType.getElementType().isInteger())
+    return failure();
+
+  unsigned vl;
+  const char *elemSuffix;
+  const char *amountSuffix;
+  unsigned amountBits;
+  switch (vecType.getElementTypeBitWidth()) {
+  case 8:
+    vl = 256;
+    elemSuffix = isSigned ? "s8" : "u8";
+    amountSuffix = "u8";
+    amountBits = 16;
+    break;
+  case 16:
+    vl = 128;
+    elemSuffix = isSigned ? "s16" : "u16";
+    amountSuffix = "u16";
+    amountBits = 16;
+    break;
+  case 32:
+    vl = 64;
+    elemSuffix = isSigned ? "s32" : "u32";
+    amountSuffix = "u32";
+    amountBits = 32;
+    break;
+  case 64:
+    vl = 32;
+    elemSuffix = isSigned ? "s64" : "u64";
+    amountSuffix = "u32";
+    amountBits = 32;
+    break;
+  default:
+    return failure();
+  }
+
+  std::string name = "llvm.hivm.";
+  name += isLeft ? "vshl" : "vshr";
+  if (isScalar)
+    name += "s";
+  name += ".v" + std::to_string(vl) + elemSuffix + amountSuffix + ".z";
+
+  SmallVector<llvm::Value *> args =
+      moduleTranslation.lookupValues(op->getOperands());
+  llvm::Type *resTy = moduleTranslation.convertType(op->getResult(0).getType());
+  llvm::Type *maskTy =
+      moduleTranslation.convertType(op->getOperand(2).getType());
+
+  SmallVector<llvm::Type *> params{resTy};
+  if (isScalar) {
+    llvm::Type *amountTy = builder.getIntNTy(amountBits);
+    if (args[1]->getType() != amountTy)
+      args[1] = builder.CreateZExtOrTrunc(args[1], amountTy);
+    params.push_back(amountTy);
+  } else {
+    params.push_back(resTy);
+  }
+  params.push_back(maskTy);
+
+  auto *fnTy = llvm::FunctionType::get(resTy, params, /*isVarArg=*/false);
+  llvm::FunctionCallee callee =
+      builder.GetInsertBlock()->getModule()->getOrInsertFunction(name, fnTy);
+  llvm::CallInst *call = builder.CreateCall(callee, args);
+  moduleTranslation.mapValue(op->getResult(0), call);
+  return success();
+}
+
 /// Implementation of the dialect interface that converts operations belonging
 /// to the HIVMRegbaseIntrins dialect to LLVM IR.
 class HIVMRegbaseIntrinsDialectLLVMIRTranslationInterface
@@ -230,6 +357,12 @@ public:
       if (succeeded(rewritePredicateInterleaveV2<true>(pdintlvOp, builder,
                                                        moduleTranslation)))
         return success();
+
+    // dav-920r1 (Ascend960) only registers the typed, unsigned-amount shift
+    // intrinsics (`...v<vl><elem><amount>.z`). Rewrite the legacy shift forms
+    // before falling through to the generated conversions.
+    if (succeeded(rewriteShiftV2(op, builder, moduleTranslation)))
+      return success();
 
 #include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseConversions.inc"
 

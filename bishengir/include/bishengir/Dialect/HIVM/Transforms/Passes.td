@@ -48,6 +48,10 @@ def OptimizeRowLoads : HIVMPass<"hivm-optimize-row-loads", "func::FuncOp",
 def InferFuncCoreType : HIVMPass<"hivm-infer-func-core-type", "ModuleOp"> {
   let summary = "Infer the core type of each function";
   let constructor = "mlir::hivm::createInferFuncCoreTypePass()";
+  let options = [
+    Option<"resolveOpPlacement", "resolve-op-placement", "bool", "true",
+           "Resolve flexible operation placement after classifying functions">
+  ];
   let dependentDialects = ["hivm::HIVMDialect", ];
 }
 
@@ -396,7 +400,8 @@ def TcbPoolOpInsertion : HIVMPass<"hivm-tcb-pool-op-insertion", "ModuleOp"> {
 def InjectSync : HIVMPass<"hivm-inject-sync", "func::FuncOp"> {
   let summary = "auto inject sync ";
   let constructor = "mlir::hivm::createInjectSyncPass()";
-  let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect", ];
+  let dependentDialects = ["affine::AffineDialect", "arith::ArithDialect",
+                           "hivm::HIVMDialect", "memref::MemRefDialect"];
   let options = [Option<"syncMode", "sync-mode", "hivm::SyncMode",
                         "hivm::SyncMode::NORMAL",
                         "injetc sync mode (default is inject normal)",

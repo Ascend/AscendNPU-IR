@@ -30,7 +30,7 @@ func.func @carried_ring(%ub: index, %seen: memref<?xf32, #hivm.address_space<gm>
   %result = scf.for %i = %c0 to %ub step %c1
       iter_args(%previous = %init) -> memref<1xf32, #hivm.address_space<ub>> {
     %current = hivm.hir.pointer_cast(%a0, %a1) : memref<1xf32, #hivm.address_space<ub>>
-    annotation.mark %current {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32}
+    annotation.mark %current {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer}
         : memref<1xf32, #hivm.address_space<ub>>
     scope.scope : () -> () {
       %old = memref.load %previous[%c0] : memref<1xf32, #hivm.address_space<ub>>
@@ -71,7 +71,7 @@ func.func @carried_ring_view(%ub: index) -> f32 {
   %result = scf.for %i = %c0 to %ub step %c1
       iter_args(%previous = %init) -> memref<1xf32, #hivm.address_space<ub>> {
     %current = hivm.hir.pointer_cast(%a0, %a1) : memref<2xf32, #hivm.address_space<ub>>
-    annotation.mark %current {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32}
+    annotation.mark %current {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer}
         : memref<2xf32, #hivm.address_space<ub>>
     %next = scope.scope : () -> memref<1xf32, #hivm.address_space<ub>> {
       %view = memref.subview %current[0] [1] [1]
@@ -152,7 +152,7 @@ func.func @carried_ring_vf_writer(%ub: i32,
   %result = scf.for %i = %c0_i32 to %ub step %c1_i32
       iter_args(%previous = %init) -> (memref<8x16xf32, #hivm.address_space<ub>>) : i32 {
     %current = hivm.hir.pointer_cast(%c0_i64, %c2624_i64) : memref<8x16xf32, #hivm.address_space<ub>>
-    annotation.mark %current {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32}
+    annotation.mark %current {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer}
         : memref<8x16xf32, #hivm.address_space<ub>>
     scope.scope : () -> () {
       %tmp = hivm.hir.pointer_cast(%c512_i64) : memref<8x16xf32, #hivm.address_space<ub>>

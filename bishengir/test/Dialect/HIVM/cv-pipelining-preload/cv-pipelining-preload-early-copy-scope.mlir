@@ -13,7 +13,7 @@
 // REGISTRY: = scope.scope : () -> tensor<16x16xf32> {
 // REGISTRY: } {no_inline, "vf-scope"}
 // CHECK-LABEL: func.func @early_copy
-// CHECK-COUNT-3: hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32
+// CHECK-COUNT-3: hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer
 // CHECK: hivm.preload_num = 2 : i32
 // CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<16x16xf16>
 // CHECK: %[[P:.*]] = scope.scope : () -> tensor<16x16xf32> {

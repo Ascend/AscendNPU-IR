@@ -21,6 +21,8 @@
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncCommon.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
 namespace mlir {
@@ -74,12 +76,17 @@ public:
   /// Update whileOp InitArgs and RegionIterArgs alias info.
   void UpdateWhileInitArgsAliasInfo(scf::WhileOp whileOp);
 
+  /// Update whileOp Result and RegionIterArgs alias info.
+  void UpdateWhileResultAliasInfo(scf::WhileOp whileOp);
+
   /// Collect information on result replace source baseAddress and allocate
   /// size.
   void
   UpdateAliasBufferInfo(Value result, Value source,
                         std::optional<std::reference_wrapper<Buffer2MemInfoMap>>
                             buffer2MemInfoMapOpt = {});
+
+  void UpdateCallOp(func::CallOp callOp);
 
   /// Determine whether the loadOp is from tensor extract op.
   bool isTensorExtractLoadOp(Operation *op);
@@ -148,8 +155,21 @@ private:
   void UpdateOpUseVec(DestinationStyleOpInterface dstOp,
                       SmallVector<const BaseMemInfo *> &useVec);
 
+  void UpdateOpDefUseVec(func::CallOp callOp,
+                         SmallVector<const BaseMemInfo *> &defVec,
+                         SmallVector<const BaseMemInfo *> &useVec);
+
+  void UpdateFuncArguments(func::FuncOp funcOp,
+                           Buffer2MemInfoMap &buffer2MemInfoMap);
+
   /// Update the src and dst information of MacroOp.
   void UpdateMacroOpInform(DestinationStyleOpInterface dstOp);
+
+  void UpdateGPULaunchFuncOpInform(gpu::LaunchFuncOp);
+
+  void UpdateOpDefUseVec(gpu::LaunchFuncOp gpuLaunchFunc,
+                         SmallVector<const BaseMemInfo *> &defVec,
+                         SmallVector<const BaseMemInfo *> &useVec);
 
   /// Insert a place-holder instance-element.
   void InsertPlaceHolderInst(InstanceElement *parentScope);

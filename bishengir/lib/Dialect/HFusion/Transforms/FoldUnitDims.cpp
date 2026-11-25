@@ -1351,8 +1351,14 @@ struct DropUnitDimsPrintOpPattern
     }
 
     auto collapsedArg = maybeCollapsedArg.value();
-    rewriter.replaceOpWithNewOp<hfusion::PrintOp>(
+    // Read `is_signed` before replacing the op: replaceOpWithNewOp destroys it.
+    // The attribute records the signedness of the printed value and must
+    // survive the rebuild.
+    auto isSignedAttr = op->getAttrOfType<DenseI32ArrayAttr>("is_signed");
+    auto newPrintOp = rewriter.replaceOpWithNewOp<hfusion::PrintOp>(
         op, op.getPrefix(), op.getHex(), collapsedArg);
+    if (isSignedAttr)
+      newPrintOp->setAttr("is_signed", isSignedAttr);
 
     return success();
   }

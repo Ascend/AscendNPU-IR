@@ -1,4 +1,5 @@
 // RUN: bishengir-opt %s -hivm-infer-func-core-type | FileCheck %s --check-prefix=INFER
+// RUN: bishengir-opt %s -hivm-infer-func-core-type="resolve-op-placement=false" | FileCheck %s --check-prefix=DEFER
 // RUN: bishengir-opt %s -hivm-infer-func-core-type -hivm-split-mix-kernel | FileCheck %s --check-prefix=SPLIT
 // RUN: bishengir-opt %s -hivm-split-mix-kernel | FileCheck %s --check-prefix=DIRECT
 // RUN: bishengir-opt %s -hivm-infer-func-core-type -hivm-split-mix-kernel -hivm-infer-func-core-type -hivm-split-mix-kernel | FileCheck %s --check-prefix=SPLIT
@@ -7,6 +8,9 @@
 // INFER-LABEL: func.func @unmarked(
 // INFER-SAME: hivm.func_core_type = #hivm.func_core_type<AIV>
 // INFER: hivm.tcore_type = #hivm.tcore_type<VECTOR>
+// DEFER-LABEL: func.func @unmarked(
+// DEFER-SAME: hivm.func_core_type = #hivm.func_core_type<AIV>
+// DEFER: hivm.tcore_type = #hivm.tcore_type<CUBE_OR_VECTOR>
 // SPLIT-LABEL: func.func @unmarked(
 // SPLIT: hivm.tcore_type = #hivm.tcore_type<VECTOR>
 // DIRECT-LABEL: func.func @unmarked(

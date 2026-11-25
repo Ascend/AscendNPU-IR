@@ -39,6 +39,12 @@ struct FusableOpInfo {
   DenseSet<Operation *> copyConflicts;
   DenseSet<Operation *> syncConflicts;
   std::shared_ptr<FusedNode> fusedNode = nullptr;
+  // Whether the planner has processed this op, either by merging it into a
+  // FusedNode or by deliberately leaving it standalone.  Today it only drives
+  // the producer traversal; later work is expected to extend its uses, so keep
+  // it a pure "processed" state and do not turn it into a node-membership
+  // query.
+  bool processed = false;
 };
 
 class PlanContext {

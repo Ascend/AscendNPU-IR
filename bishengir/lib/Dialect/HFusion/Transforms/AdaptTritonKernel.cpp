@@ -255,9 +255,17 @@ struct TritonPrintToHFusionPrintPattern
 
     auto prefixAttr = funcOp->getAttrOfType<StringAttr>(prefixAttrName);
     auto hexAttr = funcOp->getAttrOfType<BoolAttr>(hexAttrName);
-    for (Value operand : callOp.getArgOperands()) {
-      rewriter.create<hfusion::PrintOp>(callOp.getLoc(), prefixAttr, hexAttr,
-                                        operand);
+    // triton-ascend records the signedness of every printed argument in the
+    // `isSigned` array of the print function. Keep it on the hfusion op so the
+    // unsigned library entry (uint8_t/uint16_t/uint32_t) can be selected.
+    auto isSignedAttr = funcOp->getAttrOfType<DenseI32ArrayAttr>("isSigned");
+    auto argOperands = callOp.getArgOperands();
+    for (unsigned i = 0; i < argOperands.size(); ++i) {
+      auto printOp = rewriter.create<hfusion::PrintOp>(
+          callOp.getLoc(), prefixAttr, hexAttr, argOperands[i]);
+      if (isSignedAttr && i < isSignedAttr.size())
+        printOp->setAttr("is_signed",
+                         rewriter.getDenseI32ArrayAttr({isSignedAttr[i]}));
     }
     rewriter.eraseOp(callOp);
     rewriter.eraseOp(funcOp);

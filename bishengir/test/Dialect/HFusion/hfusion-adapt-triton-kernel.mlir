@@ -45,6 +45,22 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
 
 // -----
 
+// Signedness recorded by triton-ascend must survive on hfusion.print so that
+// unsigned integers reach the unsigned print library entries.
+// CHECK-LABEL: func.func @print_uint8
+// CHECK: hfusion.print " value: " {{.*}}is_signed = array<i32: 0>{{.*}}: i8
+// CHECK: hfusion.print " value: " {{.*}}is_signed = array<i32: 1>{{.*}}: i8
+module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
+  func.func private @triton_print(i8, i8) attributes
+      {hex = false, isSigned = array<i32: 0, 1>, prefix = " value: "}
+  func.func @print_uint8(%a: i8, %b: i8) {
+    call @triton_print(%a, %b) : (i8, i8) -> ()
+    return
+  }
+}
+
+// -----
+
 // CHECK-LABEL: @rtz_f16
 // CHECK: %[[FINITE:.*]] = hfusion.isfinite %arg0
 // CHECK: %[[SPECIAL:.*]] = hfusion.cast

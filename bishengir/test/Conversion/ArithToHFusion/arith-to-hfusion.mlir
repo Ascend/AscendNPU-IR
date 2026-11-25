@@ -1,4 +1,5 @@
 // RUN: bishengir-opt -convert-arith-to-hfusion %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt -convert-arith-to-hfusion -linalg-generalize-named-ops %s -split-input-file | FileCheck %s --check-prefix=BODY
 
 // CHECK-LABEL: func.func @test_addf
 func.func @test_addf(%arg0 : tensor<6x6xf32>, %arg1 : tensor<6x6xf32>) -> tensor<6x6xf32> {
@@ -258,6 +259,21 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
     // CHECK:       %[[RET:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
     %ret = arith.truncf %arg0 {round_mode = #hfusion.round_mode<rint>} : tensor<6x6xf32> to tensor<6x6xf8E4M3FN>
     return %ret : tensor<6x6xf8E4M3FN>
+  }
+
+  // CHECK-LABEL: func.func @test_truncf_fp8_saturation
+  // BODY-LABEL: func.func @test_truncf_fp8_saturation
+  func.func @test_truncf_fp8_saturation(%src : tensor<64xf32>) -> (tensor<64xf8E4M3FN>, tensor<64xf8E5M2>, tensor<64xf8E5M2>) {
+    // CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_saturate = true, round_mode = #hfusion.round_mode<rint>} {{.*}} -> tensor<64xf8E4M3FN>
+    // BODY: arith.truncf %{{[^ ]+}} {enable_saturate = true, round_mode = #hfusion.round_mode<rint>} : f32 to f8E4M3FN
+    %e4 = arith.truncf %src {enable_saturate = true, round_mode = #hfusion.round_mode<rint>} : tensor<64xf32> to tensor<64xf8E4M3FN>
+    // CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_saturate = true, round_mode = #hfusion.round_mode<rint>} {{.*}} -> tensor<64xf8E5M2>
+    // BODY: arith.truncf %{{[^ ]+}} {enable_saturate = true, round_mode = #hfusion.round_mode<rint>} : f32 to f8E5M2
+    %e5 = arith.truncf %src {enable_saturate = true, round_mode = #hfusion.round_mode<rint>} : tensor<64xf32> to tensor<64xf8E5M2>
+    // CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_saturate = false, round_mode = #hfusion.round_mode<rint>} {{.*}} -> tensor<64xf8E5M2>
+    // BODY: arith.truncf %{{[^ ]+}} {{{(enable_saturate = false, )?}}round_mode = #hfusion.round_mode<rint>} : f32 to f8E5M2
+    %e5_nonsat = arith.truncf %src {enable_saturate = false, round_mode = #hfusion.round_mode<rint>} : tensor<64xf32> to tensor<64xf8E5M2>
+    return %e4, %e5, %e5_nonsat : tensor<64xf8E4M3FN>, tensor<64xf8E5M2>, tensor<64xf8E5M2>
   }
 }
 

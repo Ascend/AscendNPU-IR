@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HIVM/TransformOps/VectorizeResult.h"
 #include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Dialect/Vector/Transforms/VectorRewritePatterns.h"
 #include "mlir/IR/PatternMatch.h"
@@ -28,6 +29,29 @@
 using namespace mlir;
 
 namespace {
+struct ScalarI64Select : OpRewritePattern<arith::SelectOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(arith::SelectOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.getType().isSignlessInteger(64))
+      return failure();
+
+    // A6 SIMD scalar registers have no i64 select. Use the condition once
+    // so an undef condition chooses one arm for the entire value. Freeze the
+    // arms because the bitwise operations also evaluate the unselected arm.
+    auto loc = op.getLoc();
+    auto left = rewriter.create<LLVM::FreezeOp>(loc, op.getTrueValue());
+    auto right = rewriter.create<LLVM::FreezeOp>(loc, op.getFalseValue());
+    auto mask = rewriter.createOrFold<arith::ExtSIOp>(loc, op.getType(),
+                                                      op.getCondition());
+    auto diff = rewriter.createOrFold<arith::XOrIOp>(loc, left, right);
+    auto selected = rewriter.createOrFold<arith::AndIOp>(loc, mask, diff);
+    rewriter.replaceOpWithNewOp<arith::XOrIOp>(op, right, selected);
+    return success();
+  }
+};
+
 struct PredicateExtension : RewritePattern {
   explicit PredicateExtension(MLIRContext *context)
       : RewritePattern(MatchAnyOpTypeTag(), 1, context) {}
@@ -312,10 +336,13 @@ struct UnitBroadcastTransferRead : OpRewritePattern<vector::TransferReadOp> {
 
 LogicalResult
 mlir::hivm::normalizeVectorizerBackendForms(func::FuncOp function) {
-  if (!hacc::utils::isRegBasedArch(function->getParentOfType<ModuleOp>()))
+  auto module = function->getParentOfType<ModuleOp>();
+  if (!hacc::utils::isRegBasedArch(module))
     return success();
   function.getContext()->getOrLoadDialect<hivmave::AVEDialect>();
   RewritePatternSet patterns(function.getContext());
+  if (hacc::utils::isAscend960(module))
+    patterns.add<ScalarI64Select>(function.getContext());
   patterns.add<PredicateExtension, OrderPredicate, NativeReduction,
                SingletonBroadcast, SingletonExtractPattern,
                SingletonExtractElementPattern, SingletonInsertElementPattern,

@@ -308,8 +308,11 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
     auto castAttr = rewriter.getAttr<hfusion::TypeFnAttr>(casting);
     auto typeAttr = rewriter.getNamedAttr("cast", castAttr);
 
-    rewriter.replaceOpWithNewOp<hfusion::CastOp>(
-        op, ValueRange{src}, ValueRange{dsts}, ArrayRef{modeAttr, typeAttr});
+    SmallVector<NamedAttribute> attrs{modeAttr, typeAttr};
+    if (auto saturate = op->template getAttrOfType<BoolAttr>("enable_saturate"))
+      attrs.emplace_back("enable_saturate", saturate);
+    rewriter.replaceOpWithNewOp<hfusion::CastOp>(op, ValueRange{src},
+                                                 ValueRange{dsts}, attrs);
     return success();
   }
 };

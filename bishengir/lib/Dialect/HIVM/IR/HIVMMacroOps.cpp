@@ -43,8 +43,10 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/LogicalResult.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <array>
 #include <cassert>
@@ -2149,21 +2151,43 @@ LogicalResult L12BTOp::verify() {
 
 void L12L0Op::build(OpBuilder &odsBuilder, OperationState &odsState, Value src,
                     Value dst, bool is_transposed) {
-  auto dstType = cast<MemRefType>(dst.getType());
+  if (!src || !dst)
+    llvm::report_fatal_error(
+        "L12L0Op buffer builder requires non-null operands");
+  auto srcType = dyn_cast<MemRefType>(src.getType());
+  auto dstType = dyn_cast<MemRefType>(dst.getType());
+  if (!srcType || !dstType)
+    llvm::report_fatal_error("L12L0Op buffer builder requires memref operands");
+  if (getOptionalHIVMAddressSpace(srcType) != AddressSpace::L1)
+    llvm::report_fatal_error(
+        "L12L0Op buffer builder requires src in L1 (cbuf)");
   auto space = getOptionalHIVMAddressSpace(dstType);
-  assert(space && (*space == AddressSpace::L0A || *space == AddressSpace::L0B));
-  assert(dstType.hasStaticShape() &&
-         (dstType.getRank() == 2 || dstType.getRank() == 4));
-  bool toA = *space == AddressSpace::L0A;
+  if (space != AddressSpace::L0A && space != AddressSpace::L0B)
+    llvm::report_fatal_error(
+        "L12L0Op buffer builder requires dst in L0A (ca) or L0B (cb)");
+  for (MemRefType type : {srcType, dstType}) {
+    if (!type.hasStaticShape() || (type.getRank() != 2 && type.getRank() != 4))
+      llvm::report_fatal_error(
+          "L12L0Op buffer builder requires static rank-2 or rank-4 memrefs");
+    if (llvm::any_of(type.getShape(), [](int64_t size) { return size <= 0; }))
+      llvm::report_fatal_error(
+          "L12L0Op buffer builder requires positive dimensions");
+  }
+  bool toA = space == AddressSpace::L0A;
   // The destination view is the complete copy region, not a larger slot.
   // Its axes are independent of the source transpose flag. Physical L0A/B
   // descriptors both store [K/C0, MN/16, 16, C0].
-  int64_t mn = dstType.getRank() == 2
-                   ? dstType.getDimSize(toA ? 0 : 1)
-                   : dstType.getDimSize(1) * dstType.getDimSize(2);
-  int64_t k = dstType.getRank() == 2
-                  ? dstType.getDimSize(toA ? 1 : 0)
-                  : dstType.getDimSize(0) * dstType.getDimSize(3);
+  int64_t mn, k;
+  if (dstType.getRank() == 2) {
+    mn = dstType.getDimSize(toA ? 0 : 1);
+    k = dstType.getDimSize(toA ? 1 : 0);
+  } else if (llvm::MulOverflow(dstType.getDimSize(1), dstType.getDimSize(2),
+                               mn) ||
+             llvm::MulOverflow(dstType.getDimSize(0), dstType.getDimSize(3),
+                               k)) {
+    llvm::report_fatal_error(
+        "L12L0Op buffer builder copy extents overflow int64_t");
+  }
   auto kAttr = odsBuilder.getI64IntegerAttr(k);
   build(odsBuilder, odsState, /*result_tensor=*/TypeRange{}, src, dst,
         /*k_part_idx=*/odsBuilder.getI64IntegerAttr(0), /*k_part=*/kAttr,

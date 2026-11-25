@@ -76,7 +76,9 @@ LogicalResult classifyKernelAfterPass(Operation *op) {
   clearFuncCoreTypeAttrs(module);
 
   PassManager nested(module->getContext());
-  nested.addPass(createInferFuncCoreTypePass());
+  InferFuncCoreTypeOptions options;
+  options.resolveOpPlacement = false;
+  nested.addPass(createInferFuncCoreTypePass(options));
   return nested.run(module);
 }
 

@@ -16,7 +16,7 @@
 // split, when both producer and consumer stages remain visible.
 // CHECK-LABEL: func.func @chunk_gated_delta_rule_bwd_kernel_dhu_blockdim64
 // CHECK: %[[BUFFER:.*]] = memref.alloc() : memref<32x32xf32, #hivm.address_space<ub>>
-// CHECK-NEXT: annotation.mark %[[BUFFER]] {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32}
+// CHECK-NEXT: annotation.mark %[[BUFFER]] {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer}
 // CHECK: hivm.hir.fixpipe {{.*}} outs(%[[BUFFER]] : memref<32x32xf32, #hivm.address_space<ub>>)
 // CHECK: hivm.preload_num = 1 : i32
 // CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[BUFFER]]

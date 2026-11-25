@@ -58,7 +58,7 @@ private:
                           unsigned endId, unsigned &i);
 
   /// Check if duplicate synchronization matches both if and else.
-  bool CheckLoopBetween(LoopInstanceElement *loopElement,
+  bool CheckLoopBetween(const LoopInstanceElement *loopElement,
                         SyncOperation *setFlag, unsigned &i);
 
   /// Check if duplicate synchronization is matched.

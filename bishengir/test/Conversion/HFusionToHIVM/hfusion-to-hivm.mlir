@@ -1219,3 +1219,19 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     return %0 : tensor<8x16xf32>
   }
 }
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  // The `is_signed` flag must survive the lowering to hivm.hir.debug so that
+  // unsigned integers select the uint8_t print library entry later on.
+  // CHECK-LABEL: func.func @print_is_signed
+  // CHECK: hivm.hir.debug
+  // CHECK-SAME: is_signed = array<i32: 0>
+  // CHECK: hivm.hir.debug
+  // CHECK-SAME: is_signed = array<i32: 1>
+  func.func @print_is_signed(%a: i8, %b: i8) {
+    hfusion.print " u8 =: " {hex = false, is_signed = array<i32: 0>} %a : i8
+    hfusion.print " s8 =: " {hex = false, is_signed = array<i32: 1>} %b : i8
+    return
+  }
+}
