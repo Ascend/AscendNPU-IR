@@ -156,9 +156,9 @@ module {
         // CHECK-NEXT: memref.load
         // CHECK-SAME: : memref<i32>
         %value = memref.load %arg0[] {hivm.tcore_type = #hivm.tcore_type<VECTOR>} : memref<i32>
-      // CHECK-NEXT: }
+      // CHECK-NEXT: } {hivm.keep_control_flow}
       }
-    // CHECK-NEXT: }
+    // CHECK-NEXT: } {hivm.keep_control_flow}
     }
     return
   }
@@ -176,7 +176,7 @@ module {
       // CHECK-NEXT: memref.load
       // CHECK-SAME: : memref<i32>
       %value = memref.load %arg0[] {hivm.tcore_type = #hivm.tcore_type<CUBE>} : memref<i32>
-    // CHECK-NEXT: }
+    // CHECK-NEXT: } {hivm.keep_control_flow}
     }
     return
   }
@@ -258,9 +258,9 @@ module {
         // CHECK-NEXT: memref.load
         // CHECK-SAME: : memref<i32>
         %value = memref.load %arg0[] {hivm.tcore_type = #hivm.tcore_type<VECTOR>} : memref<i32>
-      // CHECK-NEXT: }
+      // CHECK-NEXT: } {hivm.keep_control_flow}
       }
-    // CHECK-NEXT: }
+    // CHECK-NEXT: } {hivm.keep_control_flow}
     }
     return
   }

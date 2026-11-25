@@ -1626,6 +1626,35 @@ def HIVM_BackupFunction
   let description = [{HIVM backup  function attribute}];
 }
 
+//===----------------------------------------------------------------------===//
+// KeepControlFlow
+//===----------------------------------------------------------------------===//
+
+def HIVM_KeepControlFlowAttr
+    : HIVM_Attr<"KeepControlFlow", "keep_control_flow"> {
+  let description = [{
+    Marks an `scf.if` or `scf.for` that canonicalization must neither inline
+    nor erase, even when its condition is a known constant or its trip count
+    is provably zero or one.
+
+    Delayed cross-core GSS pairs the cube and vector clones of a mix function
+    by the control flow around the anchors it records, and splitting a mixed
+    `scf.if` leaves one clone with a constant condition. Folding that region
+    away on one clone only makes the two sides stop corresponding, and the
+    solver then walks an anchor interval that crosses a scope on one side.
+
+    `hivm-insert-anchors-and-backup` sets the attribute and clears it again in
+    its `cleanup` mode; the folds live in llvm-project
+    (`RemoveStaticCondition` and `SimplifyTrivialLoops` in SCF.cpp), which
+    spells this name out because it cannot depend on this dialect.
+
+    FIXME: Remove this once the solver no longer recovers its intervals from
+    the surrounding control flow. Pairing the clones by anchor id rather than
+    by structure would let both clones be canonicalized independently, and
+    this attribute along with the two early exits in SCF.cpp could go away.
+  }];
+}
+
 def HIVM_HasAliaScopesAttr : HIVM_Attr<"HasAliaScopes", "has_alias_scopes"> {
   let description = [{HIVM has alias scopes attribute}];
 }

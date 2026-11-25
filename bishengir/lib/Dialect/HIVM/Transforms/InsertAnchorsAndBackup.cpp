@@ -123,6 +123,10 @@ private:
 
   void eraseAllAnchors(func::FuncOp funcOp);
 
+  void markControlFlow(func::FuncOp funcOp);
+
+  void eraseControlFlowMarkers(func::FuncOp funcOp);
+
   void eraseBackupFuncOps(ModuleOp mod);
 
   bool ignoreOp(Operation *op) const {
@@ -441,6 +445,19 @@ void InsertAnchorsAndBackupPass::eraseAllAnchors(func::FuncOp funcOp) {
   }
 }
 
+void InsertAnchorsAndBackupPass::markControlFlow(func::FuncOp funcOp) {
+  UnitAttr marker = UnitAttr::get(&getContext());
+  funcOp.walk([&](Operation *op) {
+    if (isa<scf::IfOp, scf::ForOp>(op))
+      op->setAttr(hivm::KeepControlFlowAttr::name, marker);
+  });
+}
+
+void InsertAnchorsAndBackupPass::eraseControlFlowMarkers(func::FuncOp funcOp) {
+  funcOp.walk(
+      [&](Operation *op) { op->removeAttr(hivm::KeepControlFlowAttr::name); });
+}
+
 void InsertAnchorsAndBackupPass::eraseBackupFuncOps(ModuleOp mod) {
   SmallVector<func::FuncOp> backupFuncOps;
   mod.walk([&](func::FuncOp funcOp) {
@@ -542,7 +559,10 @@ void InsertAnchorsAndBackupPass::runOnOperation() {
   // and before lowering, so downstream passes never see anchors.
   if (this->cleanup) {
     eraseBackupFuncOps(mod);
-    mod.walk([&](func::FuncOp funcOp) { eraseAllAnchors(funcOp); });
+    mod.walk([&](func::FuncOp funcOp) {
+      eraseAllAnchors(funcOp);
+      eraseControlFlowMarkers(funcOp);
+    });
     return;
   }
 
@@ -561,6 +581,9 @@ void InsertAnchorsAndBackupPass::runOnOperation() {
   llvm::DenseMap<Operation *, func::FuncOp> backupFuncs;
   for (func::FuncOp funcOp : mixFuncOps) {
     createElseBranchesForPreloadSync(funcOp);
+
+    // Before cloning, so the backup and the split clones inherit the markers.
+    markControlFlow(funcOp);
 
     // Anchor ids restart at zero per function: ids only need to be unique
     // within a single (mix, cube, vector) triplet's translator scope.
