@@ -131,6 +131,37 @@ public:
 
 namespace {
 
+// Compare results are predicate vectors, so they cannot use the arithmetic
+// fold, which selects support from the data-vector result element type.
+struct FoldBF16BroadcastInCompare : public OpRewritePattern<hivmave::VFCmpOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivmave::VFCmpOp op,
+                                PatternRewriter &rewriter) const override {
+    auto vecType = dyn_cast<VectorType>(op.getLhs().getType());
+    if (!vecType || vecType.getRank() != 1 ||
+        !vecType.getElementType().isBF16())
+      return failure();
+    if (op.getCmp() == hivmave::CmpType::ULE ||
+        op.getCmp() == hivmave::CmpType::UGE ||
+        op.getCmp() == hivmave::CmpType::ULT ||
+        op.getCmp() == hivmave::CmpType::UGT)
+      return failure();
+    if (auto broadcast =
+            op.getRhs().getDefiningOp<hivmave::VFBroadcastScalarMaskOp>()) {
+      if (broadcast.getMask() != op.getMask())
+        return failure();
+    }
+    Value scalar = foldBroadcastInOperand(op.getRhs(), rewriter);
+    if (!scalar)
+      return failure();
+    rewriter.replaceOpWithNewOp<hivmave::VFCmpS>(op, op.getRes().getType(),
+                                                 op.getCmpAttr(), op.getLhs(),
+                                                 scalar, op.getMask());
+    return success();
+  }
+};
+
 struct ReplaceWithVectorScalarPass
     : public impl::ReplaceWithVectorScalarBase<ReplaceWithVectorScalarPass> {
   using ReplaceWithVectorScalarBase<
@@ -146,8 +177,9 @@ void ReplaceWithVectorScalarPass::runOnOperation() {
   MLIRContext *ctx = &getContext();
   auto funcOp = getOperation();
   RewritePatternSet patterns(ctx);
+  patterns.add<FoldBF16BroadcastInCompare>(ctx);
   patterns
-      .add<FoldBroadcastInBinaryOp<hivmave::VFAddOp, hivmave::VFAddsOp>,
+      .add<FoldBroadcastInBinaryOp<hivmave::VFAddOp, hivmave::VFAddsOp, true>,
            FoldBroadcastInBinaryOp<hivmave::VFMinOp, hivmave::VFMinsOp, true>,
            FoldBroadcastInBinaryOp<hivmave::VFMaxOp, hivmave::VFMaxsOp, true>,
            FoldBroadcastInBinaryOp<hivmave::VMinSIOp, hivmave::VMinsSIOp>,

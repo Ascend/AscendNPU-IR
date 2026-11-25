@@ -435,7 +435,10 @@ def AVE_VFCmpOp : AVE_LibFnOp<"vcmp", [
   let extraClassDeclaration = opNameDeclaration;
 }
 
-def AVE_VFCmpS : AVE_LibFnOp<"vcmps", [Pure,DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>]> {
+def AVE_VFCmpS : AVE_LibFnOp<"vcmps", [Pure,
+    TypesMatchWith<"the scalar should have the same type with the vector's element type",
+                   "vec", "scalar", "getElementType($_self)">,
+    DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>]> {
   let summary = "Compare vector with scalar operation for AVE.";
   let arguments = (ins AVE_CmpTypeAttr:$cmp,
                        AveExtValidVector:$vec,
@@ -1201,7 +1204,7 @@ def AVE_VNmsubOp : AVE_TenaryOp<"vnmsub">;
 //// Vector-Scalar Ops
 //
 //  vadds/vmuls/vlrelu/vmaxs/vmins/vshls/vshrs/vrnds/vsadds
-def AVE_VFAddsOp : AVE_VecScalarOp<"vadds", [DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>]>{
+def AVE_VFAddsOp : AVE_VecScalarOp<"vadds", [DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>], 1>{
   let hasCanonicalizer = 1;
   let extraClassDeclaration = opNameDeclaration;
 }
