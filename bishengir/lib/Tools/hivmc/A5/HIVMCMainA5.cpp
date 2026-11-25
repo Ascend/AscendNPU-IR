@@ -337,10 +337,14 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
 
   // Disable the reserved AscendC UB and raise the VF stack size from the
   // 6 KB default (0x1800) to 8 KB (0x2000) so deep VF-fusion kernels do
-  // not spill past the stack limit.
-  arguments.push_back("--cce-disable-asc-reserved-ubuf");
-  arguments.push_back("-mllvm");
-  arguments.push_back("-cce-vf-stack-size=0x2000");
+  // not spill past the stack limit. Triton frontends only: hivmc also
+  // serves catlass DSL and other producers that must keep the default
+  // reserved-UB layout and stack size.
+  if (config.isTritonFrontend()) {
+    arguments.push_back("--cce-disable-asc-reserved-ubuf");
+    arguments.push_back("-mllvm");
+    arguments.push_back("-cce-vf-stack-size=0x2000");
+  }
 
   if (config.shouldEnableVFFusion())
     arguments.push_back("--cce-simd-vf-fusion=false");
@@ -481,9 +485,13 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
       extraOpts.push_back("-cce-vf-enable-loop-fusion=false");
     }
     // 9. --cce-disable-asc-reserved-ubuf translates to -user-reserved-ub-size=0
-    extraOpts.push_back("-user-reserved-ub-size=0");
-    // 10. -cce-vf-stack-size=0x2000 (manual -mllvm, overrides table 0x1800)
-    extraOpts.push_back("-cce-vf-stack-size=0x2000");
+    // 10. -cce-vf-stack-size=0x2000 (manual -mllvm, overrides table 0x1800).
+    //     Triton frontends only — mirrors the process-path gate above; the
+    //     process argv keeps the driver flag pair gated the same way.
+    if (config.isTritonFrontend()) {
+      extraOpts.push_back("-user-reserved-ub-size=0");
+      extraOpts.push_back("-cce-vf-stack-size=0x2000");
+    }
     // 11. --cce-simd-vf-fusion=false translation (dav-c310 vec+cube: 7 -mllvm).
     //     last-wins: -cce-vf-enable-loop-fusion=false repeats step 8's value
     //     (harmless) and -cce-vf-auto-sync=off overrides step 2's setting.
