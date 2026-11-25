@@ -71,6 +71,37 @@ bool isRank1ToNx1I1Expand(tensor::ExpandShapeOp expandOp,
          reassociation[0][0] == 0 && reassociation[0][1] == 1;
 }
 
+/// Whether `op`'s only result is an `Nx1` i1 value whose single user collapses
+/// it straight back to rank 1 -- a reshape round trip on a mask.
+///
+/// Leaving that round trip in place is not merely untidy. An `Nx1` i1 mask is
+/// laid out in UB with a 256-element row stride (32 bytes at 1 bit per
+/// element), so collapsing it back to rank 1 leaves a single-column,
+/// stride-256 read. That read has to become a gather, and the native gather
+/// has no i1 variant, so `-normalize-vector` rejects it. Rebuilding `op` at
+/// rank 1 keeps the mask contiguous.
+bool producesCollapsedNx1I1Result(linalg::GenericOp op) {
+  if (op->getNumResults() != 1)
+    return false;
+  Value result = op->getResult(0);
+  auto resultType = dyn_cast<RankedTensorType>(result.getType());
+  if (!resultType || !resultType.getElementType().isInteger(1) ||
+      !isStaticNx1Tensor(resultType))
+    return false;
+  // More than one user would keep the `Nx1` form alive anyway.
+  if (!result.hasOneUse())
+    return false;
+  auto collapseOp =
+      dyn_cast<tensor::CollapseShapeOp>(*result.getUsers().begin());
+  if (!collapseOp ||
+      collapseOp.getResultType() != getCollapsedNx1Type(resultType))
+    return false;
+  SmallVector<ReassociationIndices> reassociation =
+      collapseOp.getReassociationIndices();
+  return ArrayRef<ReassociationIndices>(reassociation) ==
+         ArrayRef<ReassociationIndices>(getNx1Reassociation());
+}
+
 bool isSupportedNx1Generic(linalg::GenericOp op) {
   if (!op.hasPureTensorSemantics() || op.getNumLoops() != kNx1Rank)
     return false;
@@ -141,7 +172,11 @@ bool isSupportedNx1Generic(linalg::GenericOp op) {
     }
   }
 
-  return hasExpandedI1Input;
+  // An i1 mask reaches this shape from either side: expanded into the op (a
+  // mask operand) or produced by it and collapsed straight back (a `cmp`
+  // whose operands are the expanded ones, which is what Triton's
+  // `offs[:, None] < n` lowers to). Both leave an `Nx1` i1 mask behind.
+  return hasExpandedI1Input || producesCollapsedNx1I1Result(op);
 }
 
 Value collapseNx1Tensor(Value value, PatternRewriter &rewriter, Location loc) {
