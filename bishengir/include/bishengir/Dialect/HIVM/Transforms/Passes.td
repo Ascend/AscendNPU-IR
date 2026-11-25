@@ -1062,9 +1062,9 @@ def InferBufferSizeFromSlice
   let summary = "Infer buffer size upper bounds from slice chains";
   let description = [{
     Infer buffer_size_in_byte upper bounds and record them with
-    annotation.mark ops: mark the dst of every copy-like op (any
-    CopyOpInterface, e.g. hivm.hir.copy / hivm.hir.load / memref.copy)
-    with the upper bound derived from the op's src defining chain
+    annotation.mark ops: mark the dst of every shape-preserving HIVM
+    elementwise op and HIVM copy-like op with the upper bound derived from
+    the op's src defining chain
     (through extract_slice/subview up to a statically-shaped ancestor),
     so dynamically shaped dsts (e.g. allocs introduced by the
     alloc_tensor(copy) decomposition or by load insertion) get sized. An
