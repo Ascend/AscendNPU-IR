@@ -125,6 +125,12 @@ static bool shouldLegalizeBF16Op(Operation *op) {
           isExcluded |= fun == linalg::BinaryFn::max_unsigned;
           isExcluded |= fun == linalg::BinaryFn::min_unsigned;
         }
+        // Ascend 950 lowers fused multiply-add to the native vmula
+        // instruction (see FmaOpLowering in ArithToHIVMAVE), which supports
+        // BF16 operands.
+        if (auto hfTernaryOp = dyn_cast<hfusion::ElemwiseTernaryOp>(op)) {
+          isExcluded |= hfTernaryOp.getFun() == hfusion::TernaryFn::fma;
+        }
         // Ascend 950 supports native BF16 for vector compare and select.
         // Rank-0 and singleton selects stay on the F32 scalar path; the
         // select_rank_zero / select_singleton regression tests lock that

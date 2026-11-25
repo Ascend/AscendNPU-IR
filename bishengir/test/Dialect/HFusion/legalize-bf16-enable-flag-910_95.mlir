@@ -192,3 +192,28 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
     return %result : tensor<8xbf16>
   }
 }
+
+// -----
+
+// Ascend 950 lowers fused multiply-add to the native vmula instruction for
+// BF16 operands; the ternary op must keep its BF16 element type.
+// DISABLED-LABEL: func.func @test_elemwise_ternary_fma_bf16
+// DISABLED: hfusion.cast
+// DISABLED: hfusion.elemwise_ternary {fun = #hfusion.ternary_fn<fma>}
+// DISABLED-SAME: tensor<8xf32>, tensor<8xf32>, tensor<8xf32>
+// DISABLED: hfusion.cast
+// ENABLED-LABEL: func.func @test_elemwise_ternary_fma_bf16
+// ENABLED-NOT: hfusion.cast
+// ENABLED: hfusion.elemwise_ternary {fun = #hfusion.ternary_fn<fma>}
+// ENABLED-SAME: tensor<8xbf16>, tensor<8xbf16>, tensor<8xbf16>
+// ENABLED-SAME: tensor<8xbf16>) -> tensor<8xbf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
+  func.func @test_elemwise_ternary_fma_bf16(
+      %x: tensor<8xbf16>, %y: tensor<8xbf16>, %z: tensor<8xbf16>,
+      %init: tensor<8xbf16>) -> tensor<8xbf16> {
+    %result = hfusion.elemwise_ternary {fun = #hfusion.ternary_fn<fma>}
+        ins(%x, %y, %z : tensor<8xbf16>, tensor<8xbf16>, tensor<8xbf16>)
+        outs(%init : tensor<8xbf16>) -> tensor<8xbf16>
+    return %result : tensor<8xbf16>
+  }
+}

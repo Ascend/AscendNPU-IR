@@ -1111,11 +1111,11 @@ def AVE_VcpaddOp
 def AVE_VsqzOp
     : AVE_LibFnOp<"vsqz", [AllTypesMatch<["src", "res"]>]> {
   let summary = "AVE squeeze selected lanes toward the low lanes.";
-  let arguments = (ins AveVector<[I8, I16, I32, F16, F32]>:$src,
+  let arguments = (ins AveVector<[I8, I16, I32, BF16, F16, F32]>:$src,
                        AveMaskType:$mask,
                        DefaultValuedAttr<AVE_SqueezeStoreModeAttr,
                                          "SqueezeStoreMode::STORED">:$squeeze_store);
-  let results = (outs AveVector<[I8, I16, I32, F16, F32]>:$res);
+  let results = (outs AveVector<[I8, I16, I32, BF16, F16, F32]>:$res);
   let assemblyFormat = [{
     $src `,` $mask attr-dict `:` type($src) `,` type($mask)
   }];
