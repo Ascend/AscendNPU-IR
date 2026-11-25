@@ -19,6 +19,8 @@ mlir_tablegen(BMUEnums.h.inc -gen-enum-decls ${tblgen_feat_list})
 mlir_tablegen(BMUEnums.cpp.inc -gen-enum-defs ${tblgen_feat_list})
 mlir_tablegen(BMUAttrs.h.inc -gen-attrdef-decls -attrdefs-dialect=bmu ${tblgen_feat_list})
 mlir_tablegen(BMUAttrs.cpp.inc -gen-attrdef-defs -attrdefs-dialect=bmu ${tblgen_feat_list})
+mlir_tablegen(BMUTypes.h.inc -gen-typedef-decls -typedefs-dialect=bmu ${tblgen_feat_list})
+mlir_tablegen(BMUTypes.cpp.inc -gen-typedef-defs -typedefs-dialect=bmu ${tblgen_feat_list})
 add_public_tablegen_target(BiShengIRBMUAttributesIncGen)
 add_dependencies(mlir-headers BiShengIRBMUAttributesIncGen)
 

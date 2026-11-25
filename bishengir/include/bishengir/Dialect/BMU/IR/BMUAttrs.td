@@ -13,6 +13,7 @@
 #define BISHENGIR_DIALECT_BMU_IR_BMUATTRS_TD
 
 include "bishengir/Dialect/BMU/IR/BMUBase.td"
+include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/EnumAttr.td"
 
 //===----------------------------------------------------------------------===//
@@ -79,6 +80,28 @@ def BMU_PipeEnum : I32EnumAttr<
 
 def BMU_PipeAttr : EnumAttr<BMU_Dialect, BMU_PipeEnum, "pipe"> {
   let assemblyFormat = "`<` $value `>`";
+}
+
+//===----------------------------------------------------------------------===//
+// Region token type.
+// A region is a planning-time handle: it is not an address, so it is a type of
+// its own. Materialization turns it into an i64 base (design 3.3.9).
+//===----------------------------------------------------------------------===//
+
+class BMU_Type<string name, string typeMnemonic>
+    : TypeDef<BMU_Dialect, name> {
+  let mnemonic = typeMnemonic;
+}
+
+def BMU_RegionType : BMU_Type<"Region", "region"> {
+  let summary = "planning handle of one BMU region";
+  let description = [{
+    A region token names one reservation of the ring during planning. It carries
+    no bytes and no address: `bmu.region_addr` yields the address of one member
+    and `bmu.region_free` releases the reservation. The materialize pass rewrites
+    the token into the i64 base of `bmu.alloc_region_imm`.
+  }];
+  let assemblyFormat = "";
 }
 
 #endif // BISHENGIR_DIALECT_BMU_IR_BMUATTRS_TD
