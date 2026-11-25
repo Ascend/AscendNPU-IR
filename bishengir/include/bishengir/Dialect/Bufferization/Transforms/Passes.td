@@ -41,47 +41,48 @@ def NormalizeToTensorOp : Pass<"normalize-to-tensor", "mlir::func::FuncOp"> {
                            "mlir::memref::MemRefDialect"];
 }
 
-defvar copyInsertionOptions = [
-    Option<"allowReturnAllocsFromLoops", "allow-return-allocs-from-loops",
-           "bool", /*default=*/"false",
-           "Allows returning/yielding new allocations from a loop.">,
-    Option<"allowUnknownOps", "allow-unknown-ops", "bool",
-           /*default=*/"false",
-           "Allows unknown (not bufferizable) ops in the input IR.">,
-    Option<"analysisFuzzerSeed", "analysis-fuzzer-seed", "unsigned",
-           /*default=*/"0",
-           "Test only: Analyze ops in random order with a given seed (fuzzer)">,
-    Option<"analysisHeuristic", "analysis-heuristic", "std::string",
-           /*default=*/"\"bottom-up\"",
-           "Heuristic that control the IR traversal during analysis">,
-    Option<"bufferizeFunctionBoundaries", "bufferize-function-boundaries",
-           "bool", /*default=*/"false",
-           "Bufferize function boundaries (experimental).">,
-    Option<"checkParallelRegions", "check-parallel-regions", "bool",
-           /*default=*/"true",
-           "Account for parallel regions in RaW analysis.">,
-    Option<"copyBeforeWrite", "copy-before-write", "bool",
-           /*default=*/"false",
-           "Skip the analysis. Make a buffer copy on every write.">,
-    ListOption<"dialectFilter", "dialect-filter", "std::string",
-               "Restrict bufferization to ops from these dialects.">,
-    Option<"dumpAliasSets", "dump-alias-sets", "bool", /*default=*/"false",
-           "Test only: Annotate tensor IR with alias sets">,
-    ListOption<"noAnalysisFuncFilter", "no-analysis-func-filter",
-               "std::string",
-               "Skip analysis of functions with these symbol names."
-               "Set copyBeforeWrite to true when bufferizing them.">,
-    Option<"mustInferMemorySpace", "must-infer-memory-space", "bool",
-           /*default=*/"false",
-           "The memory space of an memref types must always be inferred. If "
-           "unset, a default memory space of 0 is used otherwise.">,
-    Option<"testAnalysisOnly", "test-analysis-only", "bool",
-           /*default=*/"false",
-           "Test only: Only run inplaceability analysis and annotate IR">,
-    Option<"printConflicts", "print-conflicts", "bool",
-           /*default=*/"false",
-           "Test only: Annotate IR with RaW conflicts. Requires "
-           "test-analysis-only.">,
+defvar copyInsertionOptions =
+    [Option<"allowReturnAllocsFromLoops", "allow-return-allocs-from-loops",
+            "bool", /*default=*/"false",
+            "Allows returning/yielding new allocations from a loop.">,
+     Option<"allowUnknownOps", "allow-unknown-ops", "bool",
+            /*default=*/"false",
+            "Allows unknown (not bufferizable) ops in the input IR.">,
+     Option<
+         "analysisFuzzerSeed", "analysis-fuzzer-seed", "unsigned",
+         /*default=*/"0",
+         "Test only: Analyze ops in random order with a given seed (fuzzer)">,
+     Option<"analysisHeuristic", "analysis-heuristic", "std::string",
+            /*default=*/"\"bottom-up\"",
+            "Heuristic that control the IR traversal during analysis">,
+     Option<"bufferizeFunctionBoundaries", "bufferize-function-boundaries",
+            "bool", /*default=*/"false",
+            "Bufferize function boundaries (experimental).">,
+     Option<"checkParallelRegions", "check-parallel-regions", "bool",
+            /*default=*/"true",
+            "Account for parallel regions in RaW analysis.">,
+     Option<"copyBeforeWrite", "copy-before-write", "bool",
+            /*default=*/"false",
+            "Skip the analysis. Make a buffer copy on every write.">,
+     ListOption<"dialectFilter", "dialect-filter", "std::string",
+                "Restrict bufferization to ops from these dialects.">,
+     Option<"dumpAliasSets", "dump-alias-sets", "bool", /*default=*/"false",
+            "Test only: Annotate tensor IR with alias sets">,
+     ListOption<"noAnalysisFuncFilter", "no-analysis-func-filter",
+                "std::string",
+                "Skip analysis of functions with these symbol names."
+                "Set copyBeforeWrite to true when bufferizing them.">,
+     Option<"mustInferMemorySpace", "must-infer-memory-space", "bool",
+            /*default=*/"false",
+            "The memory space of an memref types must always be inferred. If "
+            "unset, a default memory space of 0 is used otherwise.">,
+     Option<"testAnalysisOnly", "test-analysis-only", "bool",
+            /*default=*/"false",
+            "Test only: Only run inplaceability analysis and annotate IR">,
+     Option<"printConflicts", "print-conflicts", "bool",
+            /*default=*/"false",
+            "Test only: Annotate IR with RaW conflicts. Requires "
+            "test-analysis-only.">,
 ];
 
 def InsertLoopInitCopies : Pass<"insert-loop-init-copies", "mlir::ModuleOp"> {
@@ -97,7 +98,8 @@ def InsertLoopInitCopies : Pass<"insert-loop-init-copies", "mlir::ModuleOp"> {
     `hivm-decompose-alloc-tensor-copy` between the two runs. This pass does
     not. `copy-before-write` and `test-analysis-only` leave the IR unchanged.
   }];
-  let constructor = "bishengir::bufferization::createInsertLoopInitCopiesPass()";
+  let constructor =
+      "bishengir::bufferization::createInsertLoopInitCopiesPass()";
   let dependentDialects = ["mlir::bufferization::BufferizationDialect",
                            "mlir::memref::MemRefDialect",
                            "mlir::tensor::TensorDialect",
