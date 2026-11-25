@@ -3,20 +3,14 @@
 // RUN: bishengir-opt -merge-cv-scopes -verify-each -split-input-file %t -o %t.twice
 // RUN: diff %t %t.twice
 
-// Fuse each VECTOR-only wrapper independently. The plain VECTOR scope and
-// the following CUBE scope remain separate from the collapsed wrappers.
-// CHECK-LABEL: func.func @fuse_vector_wrappers_independently
+// Normalize VECTOR-only wrappers first, then fuse the exposed top-level run.
+// The following CUBE scope remains separate.
+// CHECK-LABEL: func.func @fuse_exposed_vector_run
 // CHECK: scf.for
 // CHECK-NEXT: scope.scope
 // CHECK-NEXT: arith.addf
 // CHECK-NEXT: arith.mulf
-// CHECK-NEXT: scope.return
-// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
-// CHECK-NEXT: scope.scope
 // CHECK-NEXT: arith.subf
-// CHECK-NEXT: scope.return
-// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
-// CHECK-NEXT: scope.scope
 // CHECK-NEXT: arith.addf
 // CHECK-NEXT: arith.mulf
 // CHECK-NEXT: scope.return
@@ -26,7 +20,7 @@
 // CHECK-NEXT: scope.return
 // CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
 // CHECK-NEXT: } {hivm.cv_pipelined_loop}
-func.func @fuse_vector_wrappers_independently(%x: f32, %out: memref<1xf32>) {
+func.func @fuse_exposed_vector_run(%x: f32, %out: memref<1xf32>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   scf.for %i = %c0 to %c1 step %c1 {
@@ -66,19 +60,16 @@ func.func @fuse_vector_wrappers_independently(%x: f32, %out: memref<1xf32>) {
 
 // -----
 
-// Independent plain VECTOR scopes have no wrapper to normalize.
-// CHECK-LABEL: func.func @keep_independent_vectors_separate
+// Independent plain VECTOR scopes fuse without a pre-existing wrapper.
+// CHECK-LABEL: func.func @fuse_independent_vectors
 // CHECK: scf.for
 // CHECK-NEXT: scope.scope
 // CHECK-NEXT: arith.addf
-// CHECK-NEXT: scope.return
-// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
-// CHECK-NEXT: scope.scope
 // CHECK-NEXT: arith.mulf
 // CHECK-NEXT: scope.return
 // CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NEXT: } {hivm.cv_pipelined_loop}
-func.func @keep_independent_vectors_separate(%x: f32) {
+func.func @fuse_independent_vectors(%x: f32) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   scf.for %i = %c0 to %c1 step %c1 {
@@ -245,17 +236,14 @@ func.func @isolated_cube_wrapper(%x: f32) {
 
 // -----
 
-// Recursively collapse nested single-core wrappers, preserving the boundary
-// between the original outer wrapper and its following VECTOR sibling.
+// Recursively collapse nested single-core wrappers, then fuse the resulting
+// top-level scope with its following VECTOR sibling.
 // CHECK-LABEL: func.func @nested_vector_wrappers
 // CHECK: scf.for
 // CHECK-NEXT: scope.scope
 // CHECK-NEXT: arith.addf
 // CHECK-NEXT: arith.mulf
 // CHECK-NEXT: arith.subf
-// CHECK-NEXT: scope.return
-// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
-// CHECK-NEXT: scope.scope
 // CHECK-NEXT: arith.divf
 // CHECK-NEXT: scope.return
 // CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
@@ -484,4 +472,204 @@ func.func @cube_wrapper_fusion_before_graph_merge(%x: f32, %y: f32) -> (f32, f32
     scf.yield %pair#1, %difference, %pair#0 : f32, f32, f32
   } {hivm.cv_pipelined_loop}
   return %loop#0, %loop#1, %loop#2 : f32, f32, f32
+}
+
+// -----
+
+// Independent CUBE results must keep their external mapping after fusion.
+// CHECK-LABEL: func.func @independent_cube_results
+// CHECK: %[[LOOP:.*]]:2 = scf.for
+// CHECK-NEXT: %[[PAIR:.*]]:2 = scope.scope
+// CHECK-NEXT: %[[A:.*]] = arith.addf
+// CHECK-NEXT: %[[B:.*]] = arith.mulf
+// CHECK-NEXT: scope.return %[[A]], %[[B]] : f32, f32
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT: scf.yield %[[PAIR]]#1, %[[PAIR]]#0 : f32, f32
+// CHECK-NEXT: } {hivm.cv_pipelined_loop}
+// CHECK-NEXT: return %[[LOOP]]#0, %[[LOOP]]#1 : f32, f32
+func.func @independent_cube_results(%x: f32) -> (f32, f32) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %r:2 = scf.for %i = %c0 to %c1 step %c1 iter_args(%a = %x, %b = %x) -> (f32, f32) {
+    %first = scope.scope : () -> f32 {
+      %sum = arith.addf %x, %x : f32
+      scope.return %sum : f32
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+    %second = scope.scope : () -> f32 {
+      %product = arith.mulf %x, %x : f32
+      scope.return %product : f32
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+    scf.yield %second, %first : f32, f32
+  } {hivm.cv_pipelined_loop}
+  return %r#0, %r#1 : f32, f32
+}
+
+// -----
+
+// Unknown and CUBE_AND_VECTOR scopes interrupt a run, even if their bodies
+// contain only scalar arithmetic. A non-scope operation also interrupts it.
+// CHECK-LABEL: func.func @top_level_run_boundaries
+// CHECK: scf.for
+// CHECK-NEXT: scope.scope
+// CHECK-NEXT: arith.addf
+// CHECK-NEXT: arith.mulf
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: scope.scope
+// CHECK-NEXT: arith.negf
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: }{{$}}
+// CHECK-NEXT: scope.scope
+// CHECK-NEXT: arith.subf
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: scope.scope
+// CHECK-NEXT: arith.negf
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>}
+// CHECK-NEXT: scope.scope
+// CHECK-NEXT: arith.divf
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: arith.constant 4.200000e+01
+// CHECK-NEXT: scope.scope
+// CHECK-NEXT: arith.addf
+// CHECK-NEXT: arith.mulf
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: } {hivm.cv_pipelined_loop}
+func.func @top_level_run_boundaries(%x: f32) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  scf.for %i = %c0 to %c1 step %c1 {
+    scope.scope : () -> () {
+      %v = arith.addf %x, %x : f32
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    scope.scope : () -> () {
+      %v = arith.mulf %x, %x : f32
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    scope.scope : () -> () {
+      %v = arith.negf %x : f32
+      scope.return
+    }
+    scope.scope : () -> () {
+      %v = arith.subf %x, %x : f32
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    scope.scope : () -> () {
+      %v = arith.negf %x : f32
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE_AND_VECTOR>}
+    scope.scope : () -> () {
+      %v = arith.divf %x, %x : f32
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    %marker = arith.constant 42.0 : f32
+    scope.scope : () -> () {
+      %v = arith.addf %x, %x : f32
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    scope.scope : () -> () {
+      %v = arith.mulf %x, %x : f32
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+  } {hivm.cv_pipelined_loop}
+  return
+}
+
+// -----
+
+// Do not enter an unmarked nested loop while processing its pipelined parent.
+// CHECK-LABEL: func.func @nested_loop_boundary
+// CHECK: scf.for
+// CHECK-NEXT: scope.scope
+// CHECK-NEXT: arith.addf
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT: scf.for
+// CHECK-NEXT: scope.scope
+// CHECK-NEXT: arith.mulf
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT: scope.scope
+// CHECK-NEXT: arith.subf
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT: }
+// CHECK-NEXT: scope.scope
+// CHECK-NEXT: arith.divf
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT: } {hivm.cv_pipelined_loop}
+func.func @nested_loop_boundary(%x: f32) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  scf.for %i = %c0 to %c1 step %c1 {
+    scope.scope : () -> () {
+      %v = arith.addf %x, %x : f32
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+    scf.for %j = %c0 to %c1 step %c1 {
+      scope.scope : () -> () {
+        %v = arith.mulf %x, %x : f32
+        scope.return
+      } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+      scope.scope : () -> () {
+        %v = arith.subf %x, %x : f32
+        scope.return
+      } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+    }
+    scope.scope : () -> () {
+      %v = arith.divf %x, %x : f32
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+  } {hivm.cv_pipelined_loop}
+  return
+}
+
+// -----
+
+// The new rule must not fuse disconnected adjacent VECTOR children inside a
+// mixed wrapper: only its containing loop body's first level is scanned.
+// CHECK-LABEL: func.func @mixed_wrapper_keeps_adjacent_children
+// CHECK: scf.for
+// CHECK-NEXT: scope.scope
+// CHECK-NEXT: scope.scope
+// CHECK-NEXT: arith.addf
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: scope.scope
+// CHECK-NEXT: arith.mulf
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NEXT: scope.scope
+// CHECK-NEXT: arith.subf
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NEXT: scope.return
+// CHECK-NEXT: } {cv_merged_scope}
+// CHECK-NEXT: } {hivm.cv_pipelined_loop}
+func.func @mixed_wrapper_keeps_adjacent_children(%x: f32) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  scf.for %i = %c0 to %c1 step %c1 {
+    scope.scope : () -> () {
+      scope.scope : () -> () {
+        %v = arith.addf %x, %x : f32
+        scope.return
+      } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+      scope.scope : () -> () {
+        %v = arith.mulf %x, %x : f32
+        scope.return
+      } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+      scope.scope : () -> () {
+        %v = arith.subf %x, %x : f32
+        scope.return
+      } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+      scope.return
+    } {cv_merged_scope}
+  } {hivm.cv_pipelined_loop}
+  return
 }

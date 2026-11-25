@@ -5,6 +5,8 @@
 // RUN: FileCheck %s --input-file=%t.dir/merged.2-lcd-grouping.nested_mixed_cores.dot --check-prefix=MIXED-DOT
 // RUN: FileCheck %s --input-file=%t.dir/merged.2-lcd-grouping.multi_rule_progression.dot --check-prefix=NESTED-DOT
 // RUN: FileCheck %s --input-file=%t.dir/merged.3-merged-scope-same-core.multi_rule_progression.dot --check-prefix=COLLAPSED-DOT
+// RUN: FileCheck %s --input-file=%t.dir/merged.7-graph-same-core.graph_before_top_level.dot --check-prefix=GRAPH-FIRST
+// RUN: FileCheck %s --input-file=%t.dir/merged.8-top-level-same-core.graph_before_top_level.dot --check-prefix=TOP-LEVEL
 
 // Verify that DOT files are emitted ONLY for rules that actually mutate IR, in
 // alphabetical/execution order:
@@ -13,7 +15,9 @@
 // FILES-NEXT: merged.2-lcd-grouping.nested_mixed_cores.dot
 // FILES-NEXT: merged.3-merged-scope-same-core.multi_rule_progression.dot
 // FILES-NEXT: merged.5-small-vector-merge.multi_rule_progression.dot
-// FILES-NEXT: merged.8-sink-alloca.sink_alloca_only.dot
+// FILES-NEXT: merged.7-graph-same-core.graph_before_top_level.dot
+// FILES-NEXT: merged.8-top-level-same-core.graph_before_top_level.dot
+// FILES-NEXT: merged.9-sink-alloca.sink_alloca_only.dot
 // FILES-NOT: .dot
 
 // Verify nested scope cluster and SSA edge names in @nested_mixed_cores:
@@ -143,4 +147,34 @@ func.func @sink_alloca_only(%val: i32) {
     } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
   } {hivm.cv_pipelined_loop}
   return
+}
+
+// -----
+
+// Graph merging contracts the dependent pair before top-level fusion consumes
+// the independent sibling. Each stage must produce its own changed-IR snapshot.
+// GRAPH-FIRST: label="{Scope 0 (CUBE)
+// GRAPH-FIRST: label="{Scope 1 (CUBE)
+// GRAPH-FIRST-NOT: label="{Scope 2
+// TOP-LEVEL: label="{Scope 0 (CUBE)
+// TOP-LEVEL-NOT: label="{Scope 1
+func.func @graph_before_top_level(%x: f32) -> (f32, f32) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %r:2 = scf.for %i = %c0 to %c1 step %c1 iter_args(%a = %x, %b = %x) -> (f32, f32) {
+    %first = scope.scope : () -> f32 {
+      %v = arith.addf %x, %x : f32
+      scope.return %v : f32
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+    %second = scope.scope : () -> f32 {
+      %v = arith.mulf %first, %first : f32
+      scope.return %v : f32
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+    %third = scope.scope : () -> f32 {
+      %v = arith.subf %x, %x : f32
+      scope.return %v : f32
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+    scf.yield %third, %second : f32, f32
+  } {hivm.cv_pipelined_loop}
+  return %r#0, %r#1 : f32, f32
 }

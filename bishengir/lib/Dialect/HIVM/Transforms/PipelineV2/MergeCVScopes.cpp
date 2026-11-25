@@ -156,6 +156,10 @@ public:
   // scopes across the enclosing wrapper's boundary.
   bool applySingleCoreMergedScopeFusionRule();
 
+  // Fuse adjacent, explicitly typed Cube or Vector scopes directly in the
+  // loop body after graph merging. Do not recurse into remaining wrappers.
+  bool applyTopLevelSameCoreFusionRule();
+
   // Rule 7: Starting from a Cube-and-Vector scope with an alloca inside,
   // trace downward to find its users and sink the alloca, initialization, and
   // loads into the user cube and/or vector scopes.
@@ -179,6 +183,7 @@ private:
   // A single-core `{cv_merged_scope}` is fused internally and collapsed first
   // so it can join that sequence.
   static bool fuseOrderedSameCoreScopes(Block *body);
+  static bool fuseAdjacentSameCoreScopes(Block *body);
   static void collectAllocaScopes(scf::ForOp &loopOp,
                                   SmallVector<ScopeOp> &allocaScopes);
   static void collectAllocaAccesses(
@@ -1662,6 +1667,11 @@ bool LoopScopeMerger::fuseOrderedSameCoreScopes(Block *body) {
     changed |= collapseSingleChildMergedScope(scope);
   }
 
+  return fuseAdjacentSameCoreScopes(body) || changed;
+}
+
+bool LoopScopeMerger::fuseAdjacentSameCoreScopes(Block *body) {
+  bool changed = false;
   ScopeOp previous;
   for (Operation &op : llvm::make_early_inc_range(*body)) {
     if (op.hasTrait<OpTrait::IsTerminator>())
@@ -1698,6 +1708,10 @@ bool LoopScopeMerger::applySingleCoreMergedScopeFusionRule() {
     changed |= collapseSingleChildMergedScope(scope);
   }
   return changed;
+}
+
+bool LoopScopeMerger::applyTopLevelSameCoreFusionRule() {
+  return fuseAdjacentSameCoreScopes(loopOp.getBody());
 }
 
 void LoopScopeMerger::collectAllocaScopes(scf::ForOp &loopOp,
@@ -2063,8 +2077,10 @@ void MergeCVScopesPass::runOnOperation() {
       {&LoopScopeMerger::applySingleCoreMergedScopeFusionRule,
        "merged.6-single-core-wrapper"},
       {&LoopScopeMerger::applyGraphSameCoreRule, "merged.7-graph-same-core"},
+      {&LoopScopeMerger::applyTopLevelSameCoreFusionRule,
+       "merged.8-top-level-same-core"},
       {&LoopScopeMerger::applySinkAllocaInCAVScopeRule,
-       "merged.8-sink-alloca"}};
+       "merged.9-sink-alloca"}};
 
   SmallVector<scf::ForOp> targetLoops;
   funcOp.walk<WalkOrder::PostOrder>([&](scf::ForOp forOp) {
