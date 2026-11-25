@@ -210,8 +210,6 @@ static SmallVector<OpFoldResult> getMaskBounds(Value mask) {
 static bool insertCoversWrite(tensor::InsertSliceOp insert,
                               vector::TransferWriteOp write) {
   if (insert.getDest() != write.getSource() ||
-      cast<RankedTensorType>(insert.getSource().getType()).getRank() !=
-          insert.getDestType().getRank() ||
       !llvm::all_of(insert.getMixedOffsets(),
                     [](OpFoldResult offset) {
                       return getConstantIntValue(offset) == 0;
@@ -303,8 +301,7 @@ struct FoldTransferReadOfExpandedWrite
         readType.getRank() != writeType.getRank() + 1 ||
         writeType.getElementType() != readType.getElementType() ||
         writeType.isScalable() || readType.isScalable() ||
-        !llvm::all_of(writeType.getShape().drop_back(),
-                      [](int64_t dim) { return dim == 1; }))
+        !hivm::util::isOneDimLikeVecType(writeType))
       return failure();
 
     AffineMap permutation = read.getPermutationMap();
@@ -323,8 +320,7 @@ struct FoldTransferReadOfExpandedWrite
         return failure();
       previous = dim;
     }
-    int64_t width =
-        cast<RankedTensorType>(expand.getResult().getType()).getShape().back();
+    int64_t width = expand.getResultType().getShape().back();
     int64_t flatWidth = writeType.getShape().back();
     size_t rowDim = sourceShape.size() - 2;
     if (width <= 0 || sourceShape.back() != width || flatWidth % width != 0 ||
@@ -354,7 +350,7 @@ struct FoldTransferReadOfExpandedWrite
       if (read.getPadding().getType() != elementType)
         return failure();
       if (auto extract = read.getPadding().getDefiningOp<vector::ExtractOp>()) {
-        auto sourceType = cast<VectorType>(extract.getVector().getType());
+        auto sourceType = extract.getSourceVectorType();
         if (sourceType.getRank() > 1 ||
             sourceType.getNumElements() *
                     sourceType.getElementType().getIntOrFloatBitWidth() >
