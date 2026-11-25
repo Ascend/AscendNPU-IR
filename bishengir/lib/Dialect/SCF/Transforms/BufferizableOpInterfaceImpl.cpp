@@ -272,8 +272,8 @@ AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
     aliases.addAlias(AliasingValue(opResult, BufferRelation::Equivalent,
                                    /*isDefinite=*/false));
   } else if (auto whileOp = dyn_cast<scf::WhileOp>(op->getParentOp())) {
-    // Same tying as scf.for: the before arg is the iter arg, and the init
-    // occupies the same slot. WhileOp does not expose loop results through
+    // The before arg is the iter arg, and the init occupies the same slot.
+    // WhileOp does not expose loop results through
     // LoopLikeOpInterface::getLoopResults, so the init is the while operand.
     unsigned idx = opOperand.getOperandNumber();
     auto beforeArg = whileOp.getBeforeArguments()[idx];
@@ -282,12 +282,8 @@ AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
     Value initArg = whileOp.getInits()[idx];
     aliases.addAlias(AliasingValue(initArg, BufferRelation::Equivalent,
                                    /*isDefinite=*/false));
-    // The while result is the value forwarded by scf.condition. Tie the
-    // yield to it as well, matching the scf.for yield.
-    if (idx < whileOp.getNumResults())
-      aliases.addAlias(AliasingValue(whileOp.getResult(idx),
-                                     BufferRelation::Equivalent,
-                                     /*isDefinite=*/false));
+    // The while result is the value forwarded by scf.condition, so it aliases
+    // the condition operand and the after arg. It does not alias this yield.
   } else if (isa<scf::ExecuteRegionOp>(op->getParentOp())) {
     aliases.addAlias(AliasingValue(opResult, BufferRelation::Equivalent));
   }
