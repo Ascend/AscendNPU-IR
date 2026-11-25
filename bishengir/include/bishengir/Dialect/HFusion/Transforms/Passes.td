@@ -843,7 +843,7 @@ def RemoveRedundantWriteAndReadPair
     : Pass<"remove-redundant-write-and-read-pair", "func::FuncOp"> {
   let summary = "Remove remove redundant write and read pair";
   let constructor = "::mlir::hfusion::createRemoveRedundantWriteAndReadPairPass()";
-  let dependentDialects = ["vector::VectorDialect"];
+  let dependentDialects = ["arith::ArithDialect", "vector::VectorDialect"];
 }
 
 def UnrollAndForward
