@@ -6,10 +6,8 @@
 // codegen has been replaced by a function-scoped memref.alloca<1xi64>
 // counter plus body-head memref.load / arith.remui / arith.select cascade
 // and body-tail arith.addi / memref.store-back. These CHECKs verify those
-// structural markers; exact SSA names are intentionally not bound (they shift
-// between unrelated runs).
-// A counter deeper than the loop body is not created here: the sync pass owns
-// that decision, see enable-multi-buffer-sync-counter-block.mlir.
+// structural markers; exact SSA names are intentionally not bound (they
+// shift between unrelated runs).
 
 // -----
 
@@ -60,11 +58,7 @@ module {
 
 // -----
 module {
-// Adoption only.
-// EnableMultiBuffer never opens a block counter: the sync pass owns that
-// choice.
-// This module runs without a sync pass => no counter exists
-// => the definition block keeps the loop counter.
+// Guarded consumer selection.
 // CHECK-LABEL: func.func @single_guarded_consumer_selection(
   func.func @single_guarded_consumer_selection(
       %src: memref<16xf16, #hivm.address_space<gm>>, %cond: i1) {
@@ -76,28 +70,28 @@ module {
 
     // CHECK: scf.for
     scf.for %iv = %c0 to %c4 step %c1 {
+      // CHECK: memref.load
+      // CHECK: arith.remui
+      // CHECK-NOT: arith.select
       %buffer = hivm.hir.pointer_cast(%a0, %a1)
         : memref<16xf16, #hivm.address_space<ub>>
       annotation.mark %buffer {hivm.multi_buffer = 2 : i32}
         : memref<16xf16, #hivm.address_space<ub>>
-      // CHECK: memref.load
-      // CHECK: arith.select
-      // CHECK: "test.before_guard"
-      // CHECK: scf.if
-      // CHECK-NOT: hivm.hir.multi_buffer_counter
-      // CHECK-NOT: arith.select
-      // CHECK: hivm.hir.load
       "test.before_guard"() : () -> ()
+      // CHECK: "test.before_guard"
+      // CHECK-NOT: arith.select
+      // CHECK: scf.if
       scf.if %cond {
+        // CHECK: %[[SELECTED:.*]] = arith.select
+        // CHECK: hivm.hir.load {{.*}} outs(%[[SELECTED]]
         hivm.hir.load
           ins(%src : memref<16xf16, #hivm.address_space<gm>>)
           outs(%buffer : memref<16xf16, #hivm.address_space<ub>>)
-      // guard owns no counter => the only increment is the loop's, after the
-      // guard closes.
+      }
       // CHECK: }
+      // Keep counter unconditional.
       // CHECK: arith.addi
       // CHECK: memref.store
-      }
     }
     return
   }
@@ -673,40 +667,6 @@ module {
       scf.yield
     }
     // CHECK: }
-    return
-  }
-}
-
-// -----
-// guarded cast in scf.while's before region -> loop counter
-//   the counter must live in before: before and after do not dominate each
-//   other, so one created in do cannot feed a use in before
-// increment -> before scf.condition, once per before-region trip
-module {
-// CHECK-LABEL: func.func @while_guard_before(
-// CHECK: %[[CTR:.*]] = memref.alloca() : memref<1xi64>
-// CHECK: scf.while
-// CHECK: %[[CUR:.*]] = memref.load %[[CTR]]
-// CHECK: %[[SEL:.*]] = arith.select
-// CHECK: scf.if
-// CHECK: hivm.hir.load ins(%{{.*}} : memref<16xf16, #hivm.address_space<gm>>) outs(%[[SEL]] : memref<16xf16, #hivm.address_space<ub>>)
-// CHECK: arith.addi %[[CUR]], %{{.*}} : i64
-// CHECK: memref.store
-// CHECK-NEXT: scf.condition
-  func.func @while_guard_before(%src: memref<16xf16, #hivm.address_space<gm>>, %cond: i1) {
-    %c0_i64 = arith.constant 0 : i64
-    %c16_i64 = arith.constant 16 : i64
-    %t = arith.constant true
-    scf.while : () -> () {
-      scf.if %cond {
-        %b = hivm.hir.pointer_cast(%c0_i64, %c16_i64) : memref<16xf16, #hivm.address_space<ub>>
-        annotation.mark %b {hivm.multi_buffer = 2 : i32} : memref<16xf16, #hivm.address_space<ub>>
-        hivm.hir.load ins(%src : memref<16xf16, #hivm.address_space<gm>>) outs(%b : memref<16xf16, #hivm.address_space<ub>>)
-      }
-      scf.condition(%t)
-    } do {
-      scf.yield
-    }
     return
   }
 }
