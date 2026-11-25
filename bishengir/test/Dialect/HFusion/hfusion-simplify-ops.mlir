@@ -1235,10 +1235,11 @@ func.func @fp8ThenBf16RoundTripFeedingCompareKept(%arg0: tensor<f32>, %arg1: ten
 
 // -----
 
-// CHECK-LABEL: @fp8RoundTripNotFeedingCompareFolds
-// CHECK-NOT: hfusion.cast
-// CHECK: return %[[ARG0:.*]] : tensor<f32>
-func.func @fp8RoundTripNotFeedingCompareFolds(%arg0: tensor<f32>) -> tensor<f32> {
+// CHECK-LABEL: @fp8RoundTripNotFeedingCompareKept
+// CHECK: %[[DOWN:.*]] = hfusion.cast ins(%{{.*}} : tensor<f32>) outs(%{{.*}} : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+// CHECK: %[[UP:.*]] = hfusion.cast ins(%[[DOWN]] : tensor<f8E4M3FN>) outs(%{{.*}} : tensor<f32>) -> tensor<f32>
+// CHECK: return %[[UP]] : tensor<f32>
+func.func @fp8RoundTripNotFeedingCompareKept(%arg0: tensor<f32>) -> tensor<f32> {
   %empty_f8 = tensor.empty() : tensor<f8E4M3FN>
   %empty_f32 = tensor.empty() : tensor<f32>
   %0 = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
@@ -1340,10 +1341,11 @@ func.func @fp8RoundTripFeedingNonCompareFolds(%arg0: tensor<f32>) -> tensor<f64>
 
 // -----
 
-// CHECK-LABEL: @contractUpcastFP8RoundTripFeedingCompareFolds
-// CHECK-NOT: hfusion.cast
-// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%[[ARG0:.*]], %{{.*}} : tensor<f32>, tensor<f32>)
-func.func @contractUpcastFP8RoundTripFeedingCompareFolds(%arg0: tensor<f32>, %arg1: tensor<f32>) -> tensor<i1> {
+// CHECK-LABEL: @contractUpcastFP8RoundTripFeedingCompareKept
+// CHECK: %[[DOWN:.*]] = hfusion.cast ins(%{{.*}} : tensor<f32>) outs(%{{.*}} : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+// CHECK: %[[UP:.*]] = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%[[DOWN]] : tensor<f8E4M3FN>) outs(%{{.*}} : tensor<f32>) -> tensor<f32>
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%[[UP]], %{{.*}} : tensor<f32>, tensor<f32>)
+func.func @contractUpcastFP8RoundTripFeedingCompareKept(%arg0: tensor<f32>, %arg1: tensor<f32>) -> tensor<i1> {
   %empty_f8 = tensor.empty() : tensor<f8E4M3FN>
   %empty_f32 = tensor.empty() : tensor<f32>
   %empty_i1 = tensor.empty() : tensor<i1>
