@@ -287,6 +287,43 @@ static unsigned getElementwiseFusionSize(linalg::GenericOp genericOp) {
   return std::max(1u, size);
 }
 
+static bool shouldAvoidBroadcastFusion(linalg::GenericOp consumer,
+                                       OpOperand *operand) {
+  // Preserve broadcast/reduction payload fusion for FlattenReductionRegions;
+  // AutoVectorizeV2 currently has limited support for fusing them back.
+  if (consumer.getNumReductionLoops() != 0)
+    return false;
+
+  AffineMap map = consumer.getMatchingIndexingMap(operand);
+  if (!map.isProjectedPermutation(/*allowZeroInResults=*/true))
+    return false;
+
+  // AutoVectorizeV2 re-fuses a higher-rank producer into the consumer's tile,
+  // so breaking the fusion here keeps the repeated work and only adds store
+  // and load.
+  auto operandType = dyn_cast<RankedTensorType>(operand->get().getType());
+  if (!operandType || !operandType.hasStaticShape() ||
+      operandType.getRank() != 1)
+    return false;
+
+  // A producer narrower than one vector register fits in a single masked
+  // instruction, so few iterations it saves do not cover extra store,
+  // load and vector function.
+  if (operandType.getNumElements() <
+      mlir::utils::getVectorSizeByElementType(operandType.getElementType()))
+    return false;
+
+  bool repeatsComputation = false;
+  for (auto [dim, extent] : llvm::enumerate(consumer.getStaticLoopRanges())) {
+    if (map.isFunctionOfDim(dim))
+      continue;
+    if (extent <= 0)
+      return false;
+    repeatsComputation |= extent > 1;
+  }
+  return repeatsComputation;
+}
+
 // issue 1174
 static bool flowsToCubeCopy(mlir::Operation *startOp, int maxDepth = 6) {
   llvm::SmallVector<std::pair<mlir::Operation *, int>, 8> worklist;
@@ -368,6 +405,10 @@ bool ElemwiseOpFuseControlFn(OpOperand *operand, int maxFusedElementwiseOps,
   if (isYieldGeneric(producerGen, operand)) {
     return true;
   }
+  // Avoid repeating producer computations across broadcast dimensions.
+  if (shouldAvoidBroadcastFusion(consumerGen, operand))
+    return false;
+
   // 4. consumer cannot be producer's ancestor, then if the following
   // is correct, meaning producer & consumer are not under the same for scope.
   auto consumerFor = consumerOp->getParentOfType<scf::ForOp>();
@@ -386,7 +427,8 @@ bool ElemwiseOpFuseControlFn(OpOperand *operand, int maxFusedElementwiseOps,
 
     // Traverse all instructions between start and end ops.
     bool hasSyncBarrier = false;
-    for (auto it = start->getNextNode(); it != end && it != nullptr; it = it->getNextNode()) {
+    for (auto it = start->getNextNode(); it != end && it != nullptr;
+         it = it->getNextNode()) {
       // If a synchronization barrier is found, prohibit fusion to avoid data
       // races.
       if (it->hasTrait<OpTrait::HIVMSyncOpTrait>() ||
@@ -484,8 +526,8 @@ struct HFusionMatmulDecomposePatterns : public OpRewritePattern<MatmulOpTy> {
     int64_t rank = tensorType.getRank();
     bool isFloat = isa<FloatType>(getElementTypeOrSelf(tensorType));
     SmallVector<AffineMap> addMaps(3, rewriter.getMultiDimIdentityMap(rank));
-    SmallVector<utils::IteratorType> addIterators(rank,
-                                                  utils::IteratorType::parallel);
+    SmallVector<utils::IteratorType> addIterators(
+        rank, utils::IteratorType::parallel);
     auto newAddGeneric = rewriter.create<linalg::GenericOp>(
         addLoc, newAddEmpty.getType(),
         ValueRange{newMmad, op.getDpsInitOperand(0)->get()},
@@ -753,8 +795,7 @@ struct ZeroDimToOneDimGenericPattern
 
   LogicalResult matchAndRewrite(linalg::GenericOp op,
                                 PatternRewriter &rewriter) const override {
-    bool isFill =
-        hfusion::isZeroElementLinalgOp(op) && hfusion::isFillOp(op);
+    bool isFill = hfusion::isZeroElementLinalgOp(op) && hfusion::isFillOp(op);
     if (!isFill && op.getNumLoops() != 0) {
       return failure();
     }
@@ -811,8 +852,7 @@ struct ZeroDimToOneDimGenericPattern
           auto newType =
               RankedTensorType::get({1}, tensorType.getElementType());
           Value expanded = rewriter.create<tensor::ExpandShapeOp>(
-              op.getLoc(), newType, input,
-              SmallVector<ReassociationIndices>{});
+              op.getLoc(), newType, input, SmallVector<ReassociationIndices>{});
           newInputs.push_back(expanded);
           newMaps.push_back(outputMap);
         } else {
@@ -822,8 +862,8 @@ struct ZeroDimToOneDimGenericPattern
       }
       newMaps.push_back(outputMap);
       newOp = rewriter.create<linalg::GenericOp>(
-          op.getLoc(), newOutputType, newInputs, ValueRange{newOutput},
-          newMaps, newIteratorTypes);
+          op.getLoc(), newOutputType, newInputs, ValueRange{newOutput}, newMaps,
+          newIteratorTypes);
     }
     rewriter.inlineRegionBefore(op.getRegion(), newOp.getRegion(),
                                 newOp.getRegion().begin());
@@ -854,8 +894,8 @@ static void populatePreVectorizationFusionPatterns(RewritePatternSet &patterns,
   populateFusionPatterns(patterns, maxFusedElementwiseOps, enableVFStackLimit);
   annotation::MarkOp::getCanonicalizationPatterns(patterns,
                                                   patterns.getContext());
-  if (auto *linalgDialect = patterns.getContext()
-                                ->getLoadedDialect<linalg::LinalgDialect>()) {
+  if (auto *linalgDialect =
+          patterns.getContext()->getLoadedDialect<linalg::LinalgDialect>()) {
     linalgDialect->getCanonicalizationPatterns(patterns);
   }
 }
