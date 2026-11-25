@@ -1,5 +1,5 @@
-// RUN: bishengir-opt %s -one-shot-bufferize="allow-return-allocs-from-loops bufferize-function-boundaries analysis-heuristic=top-down function-boundary-type-conversion=identity-layout-map unknown-type-conversion=identity-layout-map" -split-input-file | FileCheck %s
-// RUN: bishengir-opt %s -tensor-copy-insertion="analysis-heuristic=top-down allow-return-allocs-from-loops bufferize-function-boundaries" -hivm-decompose-alloc-tensor-copy -tensor-copy-insertion="allow-return-allocs-from-loops bufferize-function-boundaries analysis-heuristic=top-down" \
+// RUN: bishengir-opt %s -insert-loop-init-copies="analysis-heuristic=top-down allow-return-allocs-from-loops bufferize-function-boundaries" -one-shot-bufferize="allow-return-allocs-from-loops bufferize-function-boundaries analysis-heuristic=top-down function-boundary-type-conversion=identity-layout-map unknown-type-conversion=identity-layout-map" -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -insert-loop-init-copies="analysis-heuristic=top-down allow-return-allocs-from-loops bufferize-function-boundaries" -tensor-copy-insertion="analysis-heuristic=top-down allow-return-allocs-from-loops bufferize-function-boundaries" -hivm-decompose-alloc-tensor-copy -tensor-copy-insertion="allow-return-allocs-from-loops bufferize-function-boundaries analysis-heuristic=top-down" \
 // RUN:   -bufferize-module-op="function-boundary-type-conversion=identity-layout-map unknown-type-conversion=identity-layout-map" -split-input-file | FileCheck %s --check-prefix=CHECK-DOUBLE
 
 // -----
@@ -580,9 +580,9 @@ func.func @test_clone_if_yield_operands_for_extra_uWrite(%arg0: i32, %arg1: tens
 }
 
 // -----
-// Copy the other iter arg first, then the vadd result. Decompose runs before
-// bufferize, so both copies are hivm.hir.copy. The yield is the copied iter
-// arg followed by the copied vadd result.
+// The first run already copies both yielded values: the other iter arg, then
+// the vadd. The second tensor-copy-insertion does not add a copy. Decompose
+// turns the two copies into hivm.hir.copy, so the count stays two.
 // CHECK-LABEL: func.func @test_cross_yield_operands_in_for
 // CHECK-DOUBLE-LABEL: func.func @test_cross_yield_operands_in_for
 func.func @test_cross_yield_operands_in_for(%arg0: i32, %arg1 : tensor<256xf16>,
@@ -597,16 +597,16 @@ func.func @test_cross_yield_operands_in_for(%arg0: i32, %arg1 : tensor<256xf16>,
   %5 = hivm.hir.vbrc ins(%cst_0 : f16) outs(%6 : tensor<256xf16>) -> tensor<256xf16>
   %2:2 = scf.for %arg3 = %c0 to %c4 step %c1 iter_args(%arg4 = %1, %arg5 = %5) -> (tensor<256xf16>, tensor<256xf16>) {
     %3 = tensor.empty() : tensor<256xf16>
-    // CHECK-DOUBLE: %[[INIT0:.*]] = memref.alloc()
-    // CHECK-DOUBLE: hivm.hir.vbrc {{.*}} outs(%[[INIT0]] :
-    // CHECK-DOUBLE: %[[INIT1:.*]] = memref.alloc()
-    // CHECK-DOUBLE: hivm.hir.vbrc {{.*}} outs(%[[INIT1]] :
-    // CHECK-DOUBLE: iter_args(%[[A:.*]] = %[[INIT0]], %[[B:.*]] = %[[INIT1]])
-    // CHECK-DOUBLE: %[[SUM:.*]] = memref.alloc()
-    // CHECK-DOUBLE: hivm.hir.vadd {{.*}} outs(%[[SUM]] :
-    // CHECK-DOUBLE: hivm.hir.copy ins(%[[B]] : {{.*}}) outs(%[[COPIED_B:.*]] :
-    // CHECK-DOUBLE: hivm.hir.copy ins(%[[SUM]] : {{.*}}) outs(%[[COPIED_SUM:.*]] :
-    // CHECK-DOUBLE: scf.yield %[[COPIED_B]], %[[COPIED_SUM]]
+    // CHECK: iter_args(%[[A:.*]] = %{{.*}}, %[[B:.*]] = %{{.*}})
+    // CHECK: hivm.hir.vadd {{.*}} outs(%[[SUM:.*]] :
+    // CHECK: memref.copy %[[B]], %[[COPIED_B:[^ :,]*]]
+    // CHECK: memref.copy %[[SUM]], %[[COPIED_SUM:[^ :,]*]]
+    // CHECK: scf.yield %[[COPIED_B]], %[[COPIED_SUM]]
+
+    // Ensure the number of hivm.hir.copy is not increased by the second run.
+    // CHECK-DOUBLE-COUNT-2: hivm.hir.copy
+    // CHECK-DOUBLE-NOT: hivm.hir.copy
+    // CHECK-DOUBLE-NOT: memref.copy
     %4 = hivm.hir.vadd ins(%arg4, %arg2 : tensor<256xf16>, tensor<256xf16>) outs(%3 : tensor<256xf16>) -> tensor<256xf16>
     scf.yield %arg5, %4 : tensor<256xf16>, tensor<256xf16>
   }
