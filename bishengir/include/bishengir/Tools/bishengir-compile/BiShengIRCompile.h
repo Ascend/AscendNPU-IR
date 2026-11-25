@@ -31,6 +31,7 @@
 #include "llvm/TargetParser/Triple.h"
 
 #include <optional>
+#include <string>
 #include <tuple>
 #include <utility>
 
@@ -40,48 +41,60 @@ using OwningModuleRef = mlir::OwningOpRef<mlir::ModuleOp>;
 
 class BishengAsyncRuntime;
 
-/// Detect the CANN version (major.minor.patch) by reading
-/// {ASCEND_HOME_PATH}/<arch>-linux/ascend_toolkit_install.info, mirroring
-/// triton-ascend's backend/utils.py. The first line containing "version" is
-/// parsed for a "<major>.<minor>[.<patch>]" version string. Returns
-/// std::nullopt when the variable, the file, or a parseable version is
-/// unavailable.
-inline std::optional<std::tuple<unsigned, unsigned, unsigned>>
-detectCannVersion() {
+struct CannVersion {
+  std::tuple<unsigned, unsigned, unsigned> release;
+  std::string prerelease;
+};
+
+/// Read the version field in the CANN toolkit or all-in-one install metadata.
+/// Returns std::nullopt when no parseable version is available.
+inline std::optional<CannVersion> detectCannVersionWithPrerelease() {
   std::optional<std::string> homePath =
       llvm::sys::Process::GetEnv("ASCEND_HOME_PATH");
   if (!homePath || homePath->empty())
     return std::nullopt;
   llvm::Triple hostTriple(llvm::sys::getProcessTriple());
-  llvm::SmallString<256> versionFile(*homePath);
-  llvm::sys::path::append(versionFile,
-                          llvm::Twine(hostTriple.getArchName()) + "-linux",
-                          "ascend_toolkit_install.info");
-  llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> file =
-      llvm::MemoryBuffer::getFile(versionFile);
-  if (std::error_code ec = file.getError())
-    return std::nullopt;
-  llvm::Regex versionPattern("[0-9]+\\.[0-9]+(\\.[0-9]+)?");
-  llvm::SmallVector<llvm::StringRef, 8> lines;
-  (*file)->getBuffer().split(lines, '\n');
-  for (llvm::StringRef line : lines) {
-    if (!line.contains_insensitive("version"))
+  llvm::SmallString<256> infoDir(*homePath);
+  llvm::sys::path::append(infoDir,
+                          llvm::Twine(hostTriple.getArchName()) + "-linux");
+  llvm::Regex versionPattern("^([0-9]+\\.[0-9]+(\\.[0-9]+)?)(-([[:alnum:].-]+))"
+                             "?(\\+[[:alnum:].-]+)?$");
+
+  for (llvm::StringRef name :
+       {"ascend_toolkit_install.info", "ascend_all_cann_install.info"}) {
+    llvm::SmallString<256> path(infoDir);
+    llvm::sys::path::append(path, name);
+    auto file = llvm::MemoryBuffer::getFile(path);
+    if (!file)
       continue;
-    llvm::SmallVector<llvm::StringRef, 2> matches;
-    if (!versionPattern.match(line, &matches) || matches.empty())
-      continue;
-    llvm::SmallVector<llvm::StringRef, 3> parts;
-    matches[0].split(parts, '.');
-    unsigned major = 0;
-    unsigned minor = 0;
-    unsigned patch = 0;
-    if (parts.size() < 2 || parts[0].getAsInteger(10, major) ||
-        parts[1].getAsInteger(10, minor))
-      continue;
-    if (parts.size() > 2 && parts[2].getAsInteger(10, patch))
-      continue;
-    return std::tuple<unsigned, unsigned, unsigned>{major, minor, patch};
+    llvm::SmallVector<llvm::StringRef, 8> lines;
+    (*file)->getBuffer().split(lines, '\n');
+    for (llvm::StringRef line : lines) {
+      auto [key, value] = line.split('=');
+      if (!key.trim().equals_insensitive("version"))
+        continue;
+      llvm::SmallVector<llvm::StringRef, 6> matches;
+      if (!versionPattern.match(value.trim(), &matches))
+        continue;
+      llvm::SmallVector<llvm::StringRef, 3> parts;
+      matches[1].split(parts, '.');
+      unsigned major = 0;
+      unsigned minor = 0;
+      unsigned patch = 0;
+      if (parts[0].getAsInteger(10, major) ||
+          parts[1].getAsInteger(10, minor) ||
+          (parts.size() == 3 && parts[2].getAsInteger(10, patch)))
+        continue;
+      return CannVersion{{major, minor, patch}, matches[4].str()};
+    }
   }
+  return std::nullopt;
+}
+
+inline std::optional<std::tuple<unsigned, unsigned, unsigned>>
+detectCannVersion() {
+  if (auto version = detectCannVersionWithPrerelease())
+    return version->release;
   return std::nullopt;
 }
 
