@@ -32,7 +32,7 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
 
-#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
@@ -56,30 +56,18 @@ using namespace mlir::utils::debugger;
 
 namespace {
 
-// %a = collapse_shape %arg0
-// %b = elemwise_binary(%a, %arg1), outs(%c);
-//
-// |
-// v
-//
-//
-// %arg1_expand = expandOp(%arg1)          (new)
-// %c_expand = expandOp(%c)                (new)
-// %b = elemwise_binary(%arg0, %arg1_expand), outs(%c_expand); (preserve)
-// %c_replacer = collapse_shape %c_expand  (new replaces C)
-// %b_replacer = collapse_shape %b         (new replaces B)
-//
-// |
-// v
-//
-// %arg1_expand = expandOp(%arg1)          (new)
-// %c_expand = expandOp(%c)                (new)
-// %b = elemwise_binary(%arg0, %arg1_expand), outs(%c_expand); (preserve)
-// %c_replacer = collapse_shape %c_expand  (new replaces C)
-// %b_replacer = collapse_shape %b         (new replaces B)
+// Move the elementwise computation to expanded rank and collapse only its
+// result. The original destination and its other users keep their shapes.
 LogicalResult handleElementwiseOp(tensor::CollapseShapeOp collapseOp,
                                   PatternRewriter &rewriter,
                                   Operation *userOp) {
+  Value collapsed = collapseOp.getResult();
+  bool consumesCollapse = llvm::is_contained(userOp->getOperands(), collapsed);
+
+  if (!consumesCollapse)
+    return rewriter.notifyMatchFailure(
+        userOp, "operation no longer consumes the collapse result");
+
   rewriter.setInsertionPointAfter(userOp);
   auto loc = collapseOp.getLoc();
 
@@ -88,7 +76,6 @@ LogicalResult handleElementwiseOp(tensor::CollapseShapeOp collapseOp,
 
   auto resultRank = utils::getShapeRank(collapseOp.getResult()).value_or(0);
   SmallVector<Value> newOperands;
-  auto oldDpsInits = cast<DestinationStyleOpInterface>(userOp).getDpsInits();
 
   for (Value operand : userOp->getOperands()) {
     rewriter.setInsertionPointAfterValue(operand);
@@ -107,7 +94,6 @@ LogicalResult handleElementwiseOp(tensor::CollapseShapeOp collapseOp,
   }
   updateDefiningOp(userOp, rewriter, newOperands);
   collapseAndReplace(rewriter, collapseOp, userOp->getResult(0), userOp);
-  collapseAndReplace(rewriter, collapseOp, *oldDpsInits.begin(), userOp);
   return success();
 }
 
@@ -1235,8 +1221,10 @@ PropagateCollapseDown::matchAndRewrite(tensor::CollapseShapeOp collapseOp,
         collapseOp, "collapse source exceeds the unit-dimension threshold");
   }
   Value result = collapseOp.getResult();
-  auto userRange = result.getUsers();
-  SmallVector<Operation *> users(userRange.begin(), userRange.end());
+  // getUsers() yields the same operation once per operand use. Deduplicate to
+  // avoid rewriting it twice below, keeping use order for a stable rewrite.
+  SetVector<Operation *> users(result.getUsers().begin(),
+                               result.getUsers().end());
   auto *src = collapseOp.getSrc().getDefiningOp();
   if (!src || isStopPropagatable(src))
     return failure();
