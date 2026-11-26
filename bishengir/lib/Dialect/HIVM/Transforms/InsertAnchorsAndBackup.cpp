@@ -51,30 +51,6 @@ using namespace mlir::hivm;
 
 namespace {
 
-// Count work assigned to each core, including operations in nested regions.
-static std::pair<bool, bool> analyzeCoreTypesForAnchors(Block *block) {
-  bool hasCube = false;
-  bool hasVector = false;
-  for (Operation &op : *block) {
-    auto coreType = getCoreType(&op);
-    if (failed(coreType))
-      return {true, true};
-    hasCube |=
-        *coreType == TCoreType::CUBE || *coreType == TCoreType::CUBE_AND_VECTOR;
-    hasVector |= *coreType == TCoreType::VECTOR ||
-                 *coreType == TCoreType::CUBE_AND_VECTOR;
-    for (Region &region : op.getRegions()) {
-      for (Block &nestedBlock : region) {
-        auto [nestedHasCube, nestedHasVector] =
-            analyzeCoreTypesForAnchors(&nestedBlock);
-        hasCube |= nestedHasCube;
-        hasVector |= nestedHasVector;
-      }
-    }
-  }
-  return {hasCube, hasVector};
-}
-
 // Pre-split instrumentation pass for the delayed cross-core GSS flow.
 //
 // Two responsibilities:
@@ -270,22 +246,6 @@ private:
     return false;
   }
 
-  // A result-free if with work on only one core can be removed from the other
-  // split kernel without retaining an anchor-only control-flow skeleton.
-  bool isSingleCoreIf(Operation *op) const {
-    if (this->insertAnchorOpsBeforeAll ||
-        this->insertAnchorOpsBeforeMemEffectOps ||
-        this->insertAnchorOnlyBeforeCubeOps ||
-        this->insertAnchorOnlyBeforeVectorOps) {
-      return false;
-    }
-    auto ifOp = dyn_cast<scf::IfOp>(op);
-    if (!ifOp || ifOp.getNumResults() != 0 || !ifOp.getElseRegion().empty())
-      return false;
-    auto [hasCube, hasVector] = analyzeCoreTypesForAnchors(ifOp.thenBlock());
-    return hasCube != hasVector;
-  }
-
   bool isRegionsToBeAnchored(Operation *op) const {
     if (isCVPipeliningLoop(op) || isCVPreloadingScope(op)) {
       return true;
@@ -294,9 +254,6 @@ private:
       return false;
     }
     if (isOpToBeAnchored(op, /*insertBefore=*/true)) {
-      return false;
-    }
-    if (isSingleCoreIf(op)) {
       return false;
     }
     for (Region &region : op->getRegions()) {
