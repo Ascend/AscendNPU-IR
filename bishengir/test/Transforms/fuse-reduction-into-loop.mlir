@@ -1,4 +1,5 @@
-// RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(fuse-reduction-into-loop))" %s -split-input-file | FileCheck %s
+// RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(fuse-reduction-into-loop))" %s -split-input-file --verify-each | FileCheck %s --check-prefixes=CHECK,ZEROONLY
+// RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(fuse-reduction-into-loop{mode=late}))" %s -split-input-file --verify-each | FileCheck %s --check-prefixes=CHECK,LATE
 
 // Basic case: single 2D accumulator reduced to 1D after the loop.
 //
@@ -7,7 +8,7 @@
 // CHECK:       %[[ZERO:.*]] = arith.constant 0.000000e+00 : f32
 // CHECK:       %[[INIT1D:.*]] = linalg.fill ins(%[[ZERO]] : f32) outs(%[[EMPTY]] : tensor<32xf32>)
 // CHECK:       %[[FOR:.*]] = scf.for {{.*}} iter_args(%[[ACC:.*]] = %[[INIT1D]])
-// CHECK:         %[[REDUCE:.*]] = linalg.reduce ins({{.*}} : tensor<256x32xf32>) outs(%[[INIT1D]] : tensor<32xf32>) dimensions = [0]
+// CHECK:         %[[REDUCE:.*]] = linalg.reduce {{.*}}ins({{.*}} : tensor<256x32xf32>) outs(%[[INIT1D]] : tensor<32xf32>) dimensions = [0]
 // CHECK:           arith.addf
 // CHECK:           linalg.yield
 // CHECK:         %[[ADD:.*]] = arith.addf %[[ACC]], %[[REDUCE]]
@@ -71,9 +72,9 @@ func.func @single_reduce(%arg0: memref<?xbf16>, %arg1: memref<?xbf16>,
 // CHECK:       %[[INIT1:.*]] = linalg.fill {{.*}} -> tensor<32xf32>
 // CHECK:       %[[INIT2:.*]] = linalg.fill {{.*}} -> tensor<32xf32>
 // CHECK:       %[[FOR:.*]]:2 = scf.for {{.*}} iter_args(%[[A1:.*]] = %[[INIT1]], %[[A2:.*]] = %[[INIT2]])
-// CHECK:         %[[R1:.*]] = linalg.reduce ins({{.*}} : tensor<256x32xf32>) outs({{.*}} : tensor<32xf32>) dimensions = [0]
+// CHECK:         %[[R1:.*]] = linalg.reduce {{.*}}ins({{.*}} : tensor<256x32xf32>) outs({{.*}} : tensor<32xf32>) dimensions = [0]
 // CHECK:         %[[S1:.*]] = arith.addf %[[A1]], %[[R1]]
-// CHECK:         %[[R2:.*]] = linalg.reduce ins({{.*}} : tensor<256x32xf32>) outs({{.*}} : tensor<32xf32>) dimensions = [0]
+// CHECK:         %[[R2:.*]] = linalg.reduce {{.*}}ins({{.*}} : tensor<256x32xf32>) outs({{.*}} : tensor<32xf32>) dimensions = [0]
 // CHECK:         %[[S2:.*]] = arith.addf %[[A2]], %[[R2]]
 // CHECK:         scf.yield %[[S1]], %[[S2]]
 // CHECK:       arith.truncf %[[FOR]]#0 : tensor<32xf32>
@@ -229,7 +230,7 @@ func.func @no_transform_multi_use_iterarg() {
 //
 // CHECK-LABEL: func.func @no_transform_multi_user_result
 // CHECK:       %[[R:.*]] = scf.for
-// CHECK:       linalg.reduce ins(%[[R]]
+// CHECK:       linalg.reduce {{.*}}ins(%[[R]]
 // CHECK:       arith.negf %[[R]]
 func.func @no_transform_multi_user_result() {
   %c0_i32 = arith.constant 0 : i32
@@ -259,4 +260,262 @@ func.func @no_transform_multi_user_result() {
     }
   %other = arith.negf %result : tensor<64x32xf32>
   return
+}
+
+// -----
+
+// Unknown initializers require late mode; preserve an output initializer
+// defined after the loop and the middle reduction axis.
+// ZEROONLY-LABEL: func.func @unknown_seed(
+// ZEROONLY: scf.for {{.*}} iter_args(%{{.*}} = %arg0) -> (tensor<4x16x64xf32>)
+// ZEROONLY: linalg.reduce {{.*}}ins(%{{.*}} : tensor<4x16x64xf32>)
+// LATE-LABEL: func.func @unknown_seed(
+// LATE-NOT: linalg.reduce
+// LATE: %[[ZERO:.*]] = linalg.fill {{.*}} -> tensor<4x64xf32>
+// LATE: %[[LOOP:.*]] = scf.for {{.*}} iter_args(%[[ACC:.*]] = %[[ZERO]]) -> (tensor<4x64xf32>)
+// LATE: %[[TILE:.*]] = linalg.reduce {{.*}}ins(%arg1 : tensor<4x16x64xf32>) outs(%[[ZERO]] : tensor<4x64xf32>) dimensions = [1]
+// LATE: arith.addf {{.*}} : f32
+// LATE: %[[NEXT:.*]] = arith.addf %[[ACC]], %[[TILE]]{{.*}} : tensor<4x64xf32>
+// LATE: scf.yield %[[NEXT]] : tensor<4x64xf32>
+// LATE: %[[OUTS:.*]] = arith.negf %arg2
+// LATE: %[[SEED:.*]] = linalg.reduce {{.*}}ins(%arg0 : tensor<4x16x64xf32>) outs(%[[OUTS]] : tensor<4x64xf32>) dimensions = [1]
+// LATE: %[[MERGED:.*]] = arith.addf %[[SEED]], %[[LOOP]]{{.*}} : tensor<4x64xf32>
+// LATE: return %[[MERGED]], %arg0
+func.func @unknown_seed(%seed: tensor<4x16x64xf32>,
+                     %tile: tensor<4x16x64xf32>,
+                     %init: tensor<4x64xf32>, %n: index)
+    -> (tensor<4x64xf32>, tensor<4x16x64xf32>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %loop = scf.for %iv = %c0 to %n step %c1
+      iter_args(%acc = %seed) -> tensor<4x16x64xf32> {
+    %next = arith.addf %tile, %acc : tensor<4x16x64xf32>
+    scf.yield %next : tensor<4x16x64xf32>
+  }
+  %outs = arith.negf %init : tensor<4x64xf32>
+  %result = linalg.reduce ins(%loop : tensor<4x16x64xf32>)
+      outs(%outs : tensor<4x64xf32>) dimensions = [1]
+      (%in: f32, %acc: f32) {
+    %sum = arith.addf %acc, %in : f32
+    linalg.yield %sum : f32
+  }
+  return %result, %seed : tensor<4x64xf32>, tensor<4x16x64xf32>
+}
+
+// Fuse known-zero initialization. Keep the output
+// initializer and loop attributes, including unsigned comparison.
+// CHECK-LABEL: func.func @zero_seed(
+// CHECK: %[[LOOP:.*]] = scf.for unsigned {{.*}} -> (tensor<8xf32>)
+// CHECK: linalg.reduce {{.*}}ins(%arg0 : tensor<4x8xf32>)
+// CHECK: arith.addf {{.*}} : f32
+// CHECK: arith.addf {{.*}} : tensor<8xf32>
+// CHECK: scf.yield
+// CHECK: } {test.loop = "keep"}
+// CHECK-NOT: linalg.reduce
+// CHECK: %[[OUTS:.*]] = arith.negf %arg1 : tensor<8xf32>
+// CHECK: %[[MERGED:.*]] = arith.addf %[[LOOP]], %[[OUTS]]{{.*}} : tensor<8xf32>
+// CHECK: return %[[MERGED]]
+func.func @zero_seed(%tile: tensor<4x8xf32>, %init: tensor<8xf32>,
+                     %n: index) -> tensor<8xf32> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %seed = arith.constant dense<0.0> : tensor<4x8xf32>
+  %loop = scf.for unsigned %iv = %c0 to %n step %c1
+      iter_args(%acc = %seed) -> tensor<4x8xf32> {
+    %next = arith.addf %tile, %acc : tensor<4x8xf32>
+    scf.yield %next : tensor<4x8xf32>
+  } {test.loop = "keep"}
+  %outs = arith.negf %init : tensor<8xf32>
+  %result = linalg.reduce ins(%loop : tensor<4x8xf32>)
+      outs(%outs : tensor<8xf32>) dimensions = [0]
+      (%in: f32, %acc: f32) {
+    %sum = arith.addf %acc, %in : f32
+    linalg.yield %sum : f32
+  }
+  return %result : tensor<8xf32>
+}
+
+// A nonzero fill requires late mode, including FP16 and scalar results.
+// ZEROONLY-LABEL: func.func @nonzero_fill(
+// ZEROONLY: scf.for {{.*}} -> (tensor<4xf16>)
+// ZEROONLY: linalg.reduce {{.*}}ins(%{{.*}} : tensor<4xf16>)
+// LATE-LABEL: func.func @nonzero_fill(
+// LATE: %[[SEED:.*]] = linalg.fill {{.*}} -> tensor<4xf16>
+// LATE: %[[LOOP:.*]] = scf.for {{.*}} -> (tensor<f16>)
+// LATE: scf.yield
+// LATE: %[[RED:.*]] = linalg.reduce {{.*}}ins(%[[SEED]] : tensor<4xf16>)
+// LATE: %[[SUM:.*]] = arith.addf %[[RED]], %[[LOOP]]{{.*}} : tensor<f16>
+// LATE: return %[[SUM]]
+func.func @nonzero_fill(%tile: tensor<4xf16>, %init: tensor<f16>,
+                        %n: index) -> tensor<f16> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %one = arith.constant 1.0 : f16
+  %empty = tensor.empty() : tensor<4xf16>
+  %seed = linalg.fill ins(%one : f16) outs(%empty : tensor<4xf16>) -> tensor<4xf16>
+  %loop = scf.for %iv = %c0 to %n step %c1
+      iter_args(%acc = %seed) -> tensor<4xf16> {
+    %next = arith.addf %acc, %tile : tensor<4xf16>
+    scf.yield %next : tensor<4xf16>
+  }
+  %result = linalg.reduce ins(%loop : tensor<4xf16>)
+      outs(%init : tensor<f16>) dimensions = [0]
+      (%in: f16, %acc: f16) {
+    %sum = arith.addf %in, %acc : f16
+    linalg.yield %sum : f16
+  }
+  return %result : tensor<f16>
+}
+
+// tensor.empty does not mean zero, including for BF16.
+// ZEROONLY-LABEL: func.func @uninitialized_seed(
+// ZEROONLY: scf.for {{.*}} -> (tensor<4x8xbf16>)
+// ZEROONLY: linalg.reduce {{.*}}ins(%{{.*}} : tensor<4x8xbf16>)
+// LATE-LABEL: func.func @uninitialized_seed(
+// LATE: %[[SEED:.*]] = tensor.empty() : tensor<4x8xbf16>
+// LATE: scf.for {{.*}} -> (tensor<8xbf16>)
+// LATE: scf.yield
+// LATE: linalg.reduce {{.*}}ins(%[[SEED]] : tensor<4x8xbf16>)
+func.func @uninitialized_seed(%tile: tensor<4x8xbf16>,
+                              %init: tensor<8xbf16>, %n: index)
+    -> tensor<8xbf16> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %seed = tensor.empty() : tensor<4x8xbf16>
+  %loop = scf.for %iv = %c0 to %n step %c1
+      iter_args(%acc = %seed) -> tensor<4x8xbf16> {
+    %next = arith.addf %acc, %tile : tensor<4x8xbf16>
+    scf.yield %next : tensor<4x8xbf16>
+  }
+  %result = linalg.reduce ins(%loop : tensor<4x8xbf16>)
+      outs(%init : tensor<8xbf16>) dimensions = [0]
+      (%in: bf16, %acc: bf16) {
+    %sum = arith.addf %in, %acc : bf16
+    linalg.yield %sum : bf16
+  }
+  return %result : tensor<8xbf16>
+}
+
+// Reject a combiner that doubles its input and ignores its initializer.
+// CHECK-LABEL: func.func @not_a_sum(
+// CHECK: scf.for {{.*}} -> (tensor<4x8xf32>)
+// CHECK: linalg.reduce
+// CHECK: arith.addf %[[X:.*]], %[[X]]{{.*}} : f32
+func.func @not_a_sum(%tile: tensor<4x8xf32>,
+                     %init: tensor<8xf32>, %n: index) -> tensor<8xf32> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %seed = arith.constant dense<0.0> : tensor<4x8xf32>
+  %loop = scf.for %iv = %c0 to %n step %c1
+      iter_args(%acc = %seed) -> tensor<4x8xf32> {
+    %next = arith.addf %acc, %tile : tensor<4x8xf32>
+    scf.yield %next : tensor<4x8xf32>
+  }
+  %result = linalg.reduce ins(%loop : tensor<4x8xf32>)
+      outs(%init : tensor<8xf32>) dimensions = [0]
+      (%in: f32, %acc: f32) {
+    %sum = arith.addf %in, %in : f32
+    linalg.yield %sum : f32
+  }
+  return %result : tensor<8xf32>
+}
+
+// Another user still needs the full-sized add result.
+// CHECK-LABEL: func.func @extra_add_user(
+// CHECK: scf.for {{.*}} -> (tensor<4x8xf32>)
+// CHECK: arith.negf {{.*}} : tensor<4x8xf32>
+// CHECK: linalg.reduce
+func.func @extra_add_user(%tile: tensor<4x8xf32>,
+                          %init: tensor<8xf32>, %n: index) -> tensor<8xf32> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %seed = arith.constant dense<0.0> : tensor<4x8xf32>
+  %loop = scf.for %iv = %c0 to %n step %c1
+      iter_args(%acc = %seed) -> tensor<4x8xf32> {
+    %next = arith.addf %acc, %tile : tensor<4x8xf32>
+    %side = arith.negf %next : tensor<4x8xf32>
+    scf.yield %next : tensor<4x8xf32>
+  }
+  %result = linalg.reduce ins(%loop : tensor<4x8xf32>)
+      outs(%init : tensor<8xf32>) dimensions = [0]
+      (%in: f32, %acc: f32) {
+    %sum = arith.addf %in, %acc : f32
+    linalg.yield %sum : f32
+  }
+  return %result : tensor<8xf32>
+}
+
+
+// A dynamic reduction extent is allowed when the output has a static shape.
+// CHECK-LABEL: func.func @dynamic_extent(
+// CHECK: scf.for {{.*}} -> (tensor<8xf32>)
+// CHECK: linalg.reduce {{.*}}ins(%arg0 : tensor<?x8xf32>)
+// CHECK: scf.yield
+// CHECK-NOT: linalg.reduce
+// CHECK: return
+func.func @dynamic_extent(%tile: tensor<?x8xf32>, %n: index)
+    -> tensor<8xf32> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %f0 = arith.constant 0.0 : f32
+  %rows = tensor.dim %tile, %c0 : tensor<?x8xf32>
+  %empty = tensor.empty(%rows) : tensor<?x8xf32>
+  %seed = linalg.fill ins(%f0 : f32) outs(%empty : tensor<?x8xf32>) -> tensor<?x8xf32>
+  %init = arith.constant dense<0.0> : tensor<8xf32>
+  %loop = scf.for %iv = %c0 to %n step %c1
+      iter_args(%acc = %seed) -> tensor<?x8xf32> {
+    %next = arith.addf %acc, %tile : tensor<?x8xf32>
+    scf.yield %next : tensor<?x8xf32>
+  }
+  %result = linalg.reduce ins(%loop : tensor<?x8xf32>)
+      outs(%init : tensor<8xf32>) dimensions = [0]
+      (%in: f32, %acc: f32) {
+    %sum = arith.addf %in, %acc : f32
+    linalg.yield %sum : f32
+  }
+  return %result : tensor<8xf32>
+}
+
+// Dynamic output shapes must remain unchanged.
+// CHECK-LABEL: func.func @dynamic_output(
+// CHECK: scf.for {{.*}} -> (tensor<4x?xf32>)
+// CHECK: linalg.reduce
+func.func @dynamic_output(%tile: tensor<4x?xf32>, %init: tensor<?xf32>,
+                          %n: index) -> tensor<?xf32> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %f0 = arith.constant 0.0 : f32
+  %cols = tensor.dim %tile, %c1 : tensor<4x?xf32>
+  %empty = tensor.empty(%cols) : tensor<4x?xf32>
+  %seed = linalg.fill ins(%f0 : f32) outs(%empty : tensor<4x?xf32>) -> tensor<4x?xf32>
+  %loop = scf.for %iv = %c0 to %n step %c1
+      iter_args(%acc = %seed) -> tensor<4x?xf32> {
+    %next = arith.addf %acc, %tile : tensor<4x?xf32>
+    scf.yield %next : tensor<4x?xf32>
+  }
+  %result = linalg.reduce ins(%loop : tensor<4x?xf32>)
+      outs(%init : tensor<?xf32>) dimensions = [0]
+      (%in: f32, %acc: f32) {
+    %sum = arith.addf %in, %acc : f32
+    linalg.yield %sum : f32
+  }
+  return %result : tensor<?xf32>
+}
+
+// CHECK-LABEL: func.func @encoded_output(
+// CHECK: %[[LOOP:.*]] = scf.for {{.*}} -> (tensor<2x4xf32>)
+// CHECK: linalg.reduce {{.*}}ins(%[[LOOP]] : tensor<2x4xf32>) outs({{.*}} : tensor<4xf32, "enc">)
+func.func @encoded_output(%tile: tensor<2x4xf32>, %init: tensor<4xf32, "enc">,
+                          %n: index) -> tensor<4xf32, "enc"> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %zero = arith.constant dense<0.0> : tensor<2x4xf32>
+  %loop = scf.for %iv = %c0 to %n step %c1
+      iter_args(%acc = %zero) -> tensor<2x4xf32> {
+    %next = arith.addf %acc, %tile : tensor<2x4xf32>
+    scf.yield %next : tensor<2x4xf32>
+  }
+  %result = linalg.reduce { arith.addf } ins(%loop : tensor<2x4xf32>)
+      outs(%init : tensor<4xf32, "enc">) dimensions = [0]
+  return %result : tensor<4xf32, "enc">
 }

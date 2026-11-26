@@ -9,6 +9,10 @@
 // FUSE: transform.structured.match attributes {"outlined-loop-target-1"}
 // FUSE: transform.structured.fuse_into_containing_op
 // FUSE-NOT: "outlined-loop-target-2"
+// FUSE: %[[CONSUMER:[^ ]+]] = transform.structured.match attributes {"outlined-loop-target-1"}
+// FUSE-NEXT: %[[PARENT:[^ ]+]] = get_parent_op %[[CONSUMER]]
+// FUSE-NEXT: apply_patterns to %[[PARENT]]
+// FUSE-NOT: "outlined-loop-target-2"
 
 // LIMIT-LABEL: func.func @vf_stack_limit_multi_consumer
 // LIMIT: hivm.hir.vgather

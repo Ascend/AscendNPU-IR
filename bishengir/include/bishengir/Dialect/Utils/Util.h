@@ -37,6 +37,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <numeric>
+#include <optional>
 
 #define CEIL_FACTOR(x, y) (((x) + ((y) - 1)) / (y) * (y))
 #define CEIL_DIV(x, y) (((x) + ((y) - 1)) / (y))
@@ -82,7 +83,22 @@ LogicalResult getStridesAndOffsetCompat(MemRefType type,
 std::pair<SmallVector<int64_t>, int64_t>
 getStridesAndOffsetCompat(MemRefType type);
 
+/// Dump `value` and report a fatal error with `message`. Used to report IR
+/// that a pass cannot handle.
+[[noreturn]] void reportFatalError(Value value, const llvm::Twine &message);
+
+/// Return true if `type` is rank-1 with a static unit stride.
+bool hasStaticUnitStride(MemRefType type);
+
+/// Trace a memref to its alloc and return its static access offset in bits.
+std::optional<std::pair<Value, int64_t>>
+traceStaticMemRefAccess(Value memrefVal);
+
 constexpr static int64_t kUBAlignSizeInBits = 32 * 8;
+
+/// UB-to-UB copy bank alignment period (256 bytes).
+constexpr static int64_t kUBCopyBankSizeInBits = 256 * 8;
+
 static constexpr llvm::StringLiteral kEnableAutoMarkBufferSize =
     "enable_auto_mark_buffer_size";
 /// IntegerAttr on an markOp carrying a static buffer size in bytes (an upper
@@ -201,21 +217,23 @@ std::string getPrettyOpName(Operation *op);
 } // namespace debugger
 
 // Currently dtype cast rules:
-// (1-RINT ) f32 -> f16/bf16/f32
-// (2-RINT ) f16/bf16 -> f32
+// (1-RINT ) f32 -> f16/bf16/f32/fp8
+// (2-RINT ) f16/bf16/fp8 -> f32
 // (3-RINT ) i8 -> f16
 // (4-TRUNC) float -> int
 // (5-RINT ) int -> float
 // (6-RINT ) int -> int
 template <typename T> T selectRoundMode(Type inType, Type outType) {
   if (inType.isF32()) {
-    if (outType.isF16() || outType.isBF16() || outType.isF32()) {
+    if (outType.isF16() || outType.isBF16() || outType.isF32() ||
+        isa<Float8E4M3FNType>(outType) || isa<Float8E5M2Type>(outType)) {
       return T::RINT;
     }
   }
 
   if (outType.isF32()) {
-    if (inType.isF16() || inType.isBF16()) {
+    if (inType.isF16() || inType.isBF16() || isa<Float8E4M3FNType>(inType) ||
+        isa<Float8E5M2Type>(inType)) {
       return T::RINT;
     }
   }
@@ -724,6 +742,15 @@ struct ForOpLegalization : public OpRewritePattern<scf::ForOp> {
 };
 
 ModuleOp getTopLevelModuleOp(Operation *op);
+
+/// Return true if `before` is before `after` in memory view order.
+///
+/// The ops are compared at the closest level where they share a parent block,
+/// so an op and an op nested in one of its regions (e.g. `scf.for` and a write
+/// in its body) are treated as the same level and compare false.
+///
+/// A false result means "not known to be before" and does not imply "after".
+bool isBeforeInMemoryView(Operation *before, Operation *after);
 
 int64_t getArgumentIndex(Value value);
 

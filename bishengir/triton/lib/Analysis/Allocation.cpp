@@ -14,6 +14,7 @@
 #include "triton/Tools/GenericSwizzling.h"
 #include "triton/Tools/LayoutUtils.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Alignment.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -514,9 +515,8 @@ private:
                               Interval{std::max(range.start(), xRange.start()),
                                         std::min(range.end(), xRange.end())}});
 
-              if (superBlockFactor > 1) {
-                currOffset = (currOffset - 1) / 16 * 16 + 16;
-              }
+              
+              currOffset = llvm::alignTo(currOffset, buffer->alignment);
               if (allowGlobalScratch && dyn_cast<gpu::ConvertLayoutOp>(buffer->owner) && smemSize > 0 && static_cast<int64_t>(currOffset) * superBlockFactor > smemSize) {
                 OpBuilder builder(buffer->owner->getContext());
                 StringAttr gmStore = builder.getStringAttr("true");
@@ -682,6 +682,17 @@ private:
       }
       if (colors.lookup(x) != 0)
         x->setOffsetAligned(newOffset);
+#ifdef BSPUB_DAVINCI_BISHENGIR
+      size_t xTotalSize = llvm::alignTo(x->offset + x->size, x->alignment);
+      if (allowGlobalScratch && dyn_cast<gpu::ConvertLayoutOp>(x->owner) && smemSize > 0 && static_cast<int64_t>(xTotalSize) * superBlockFactor > smemSize) {
+        OpBuilder builder(x->owner->getContext());
+        StringAttr gmStore = builder.getStringAttr("true");
+        x->owner->setAttr("store_to_gmem", gmStore);
+        IntegerAttr bytes = builder.getI64IntegerAttr(x->size);
+        x->owner->setAttr("bytes", bytes);
+        continue;
+      }
+#endif
       allocation->sharedMemorySize =
           std::max(allocation->sharedMemorySize, x->offset + x->size);
     }

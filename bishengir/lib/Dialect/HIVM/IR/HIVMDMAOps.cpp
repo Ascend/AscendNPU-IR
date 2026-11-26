@@ -1746,3 +1746,30 @@ void AtomicCasOp::getEffects(
                          SideEffects::DefaultResource::get());
   }
 }
+
+//===----------------------------------------------------------------------===//
+// AtomicXchgOp
+//===----------------------------------------------------------------------===//
+void AtomicXchgOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  // A Read on src keeps the new-value alloc alive in memref-dse. Without it,
+  // eraseDeadAllocAndStores treats this zero-result op as a non-read and
+  // deletes the exchange together with the alloc. The Write on dst keeps the
+  // GM update from being dropped as a read-only dead op.
+  if (isa<MemRefType>(getSrc().getType())) {
+    effects.emplace_back(MemoryEffects::Read::get(), &getSrcMutable(),
+                         SideEffects::DefaultResource::get());
+  }
+  if (isa<MemRefType>(getDst().getType())) {
+    effects.emplace_back(MemoryEffects::Read::get(), &getDstMutable(),
+                         SideEffects::DefaultResource::get());
+    effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                         SideEffects::DefaultResource::get());
+  }
+  for (OpOperand &maskOperand : getMaskMutable()) {
+    if (isa<MemRefType>(maskOperand.get().getType()))
+      effects.emplace_back(MemoryEffects::Read::get(), &maskOperand,
+                           SideEffects::DefaultResource::get());
+  }
+}

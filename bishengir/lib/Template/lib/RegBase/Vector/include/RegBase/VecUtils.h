@@ -38,6 +38,9 @@ DEFINE_VECTOR_MAPPING(float, vector_f32);
 DEFINE_VECTOR_MAPPING(half, vector_f16);
 DEFINE_VECTOR_MAPPING(bfloat16_t, vector_bf16);
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+DEFINE_VECTOR_MAPPING(hifloat8_t, vector_hif8);
+#endif
 DEFINE_VECTOR_MAPPING(float8_e4m3_t, vector_f8e4m3);
 DEFINE_VECTOR_MAPPING(float8_e5m2_t, vector_f8e5m2);
 // 64-bit integers
@@ -62,6 +65,26 @@ DEFINE_VECTOR_MAPPING(uint8_t, vector_u8);
 template <typename T>
 using VectorReg = typename VectorTy<T>::type;
 
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+#define CREATE_MASK_BY_SIZE(MASK, Type, VALUE)                                 \
+  if constexpr (std::is_same<Type, int16_t>::value ||                          \
+                std::is_same<Type, uint16_t>::value ||                         \
+                std::is_same<Type, half>::value ||                             \
+                std::is_same<Type, bfloat16_t>::value)                         \
+    (MASK) = plt_b16(VALUE, POST_UPDATE);                                      \
+  else if constexpr (std::is_same<Type, int32_t>::value ||                     \
+                     std::is_same<Type, uint32_t>::value ||                    \
+                     std::is_same<Type, float>::value)                         \
+    (MASK) = plt_b32(VALUE, POST_UPDATE);                                      \
+  else if constexpr (std::is_same<Type, int8_t>::value ||                      \
+                     std::is_same<Type, uint8_t>::value ||                     \
+                     std::is_same<Type, hifloat8_t>::value ||                  \
+                     std::is_same<Type, float8_e4m3_t>::value ||               \
+                     std::is_same<Type, float8_e5m2_t>::value)                 \
+    (MASK) = plt_b8(VALUE, POST_UPDATE);                                       \
+  else                                                                         \
+    (MASK) = plt_b32(VALUE, POST_UPDATE)
+#else
 #define CREATE_MASK_BY_SIZE(MASK, Type, VALUE)                                 \
   if constexpr (std::is_same<Type, int16_t>::value ||                          \
                 std::is_same<Type, uint16_t>::value ||                         \
@@ -79,6 +102,7 @@ using VectorReg = typename VectorTy<T>::type;
     (MASK) = plt_b8(VALUE, POST_UPDATE);                                       \
   else                                                                         \
     (MASK) = plt_b32(VALUE, POST_UPDATE)
+#endif
 
 #define CREATE_MASK_BY_PAT(MASK, Type, PAT)                                    \
   if constexpr (std::is_same<Type, int16_t>::value ||                          \
@@ -980,25 +1004,22 @@ vdiv_int_scalar(memref_t<__ubuf__ T, dim> *src0,
                                                      other);                   \
   }
 
-#define DECLARE_STRIDE_LOAD(dim, dtype, itype, ...)                            \
+#define DECLARE_STRIDE_LOAD(dim, dtype, itype, othertype, ...)                 \
   __aiv__ __attribute__((always_inline)) void                                  \
-  _mlir_ciface_stride_load_##dim##d_##dtype##_##itype(                         \
-      memref_t<__gm__ dtype, 1> *src, memref_t<__ubuf__ dtype, dim> *dst,      \
-      __VA_ARGS__)
+      _mlir_ciface_stride_load_##dim##d_##dtype##_##itype(                     \
+          memref_t<__gm__ dtype, 1> *src, memref_t<__ubuf__ dtype, dim> *dst,  \
+          itype offset, othertype other, __VA_ARGS__)
 
 #define DECLARE_STRIDE_LOAD_1D(dtype, itype)                                   \
-  DECLARE_STRIDE_LOAD(1, dtype, itype, itype offset, dtype other,              \
-                      itype stride, itype numel)
+  DECLARE_STRIDE_LOAD(1, dtype, itype, dtype, itype stride, itype numel)
 
 #define DECLARE_STRIDE_LOAD_2D(dtype, itype)                                   \
-  DECLARE_STRIDE_LOAD(2, dtype, itype, itype offset, dtype other,              \
-                      itype stride0, itype stride1, itype numel0,              \
-                      itype numel1)
+  DECLARE_STRIDE_LOAD(2, dtype, itype, dtype, itype stride0, itype stride1,    \
+                      itype numel0, itype numel1)
 
 #define DECLARE_STRIDE_LOAD_3D(dtype, itype)                                   \
-  DECLARE_STRIDE_LOAD(3, dtype, itype, itype offset, dtype other,              \
-                      itype stride0, itype stride1, itype stride2,             \
-                      itype numel0, itype numel1, itype numel2)
+  DECLARE_STRIDE_LOAD(3, dtype, itype, dtype, itype stride0, itype stride1,    \
+                      itype stride2, itype numel0, itype numel1, itype numel2)
 
 #define REGISTE_STRIDE_LOAD_1D(dtype, itype)                                   \
   DECLARE_STRIDE_LOAD_1D(dtype, itype) {                                       \
@@ -1015,6 +1036,39 @@ vdiv_int_scalar(memref_t<__ubuf__ T, dim> *src0,
   DECLARE_STRIDE_LOAD_3D(dtype, itype) {                                       \
     stride_load_3d<dtype, itype>(src, dst, offset, other, stride0, stride1,    \
                                  stride2, numel0, numel1, numel2);            \
+  }
+
+#define REGISTE_STRIDE_LOAD_FP8_1D(dtype, itype)                               \
+  DECLARE_STRIDE_LOAD(1, dtype, itype, int8_t, itype stride, itype numel) {    \
+    static_assert(sizeof(dtype) == sizeof(int8_t),                             \
+                  "FP8 stride load requires byte-sized elements");             \
+    stride_load_1d<int8_t, itype>(                                             \
+        reinterpret_cast<memref_t<__gm__ int8_t, 1> *>(src),                   \
+        reinterpret_cast<memref_t<__ubuf__ int8_t, 1> *>(dst), offset, other,  \
+        stride, numel);                                                        \
+  }
+
+#define REGISTE_STRIDE_LOAD_FP8_2D(dtype, itype)                               \
+  DECLARE_STRIDE_LOAD(2, dtype, itype, int8_t, itype stride0, itype stride1,   \
+                      itype numel0, itype numel1) {                            \
+    static_assert(sizeof(dtype) == sizeof(int8_t),                             \
+                  "FP8 stride load requires byte-sized elements");             \
+    stride_load_2d<int8_t, itype>(                                             \
+        reinterpret_cast<memref_t<__gm__ int8_t, 1> *>(src),                   \
+        reinterpret_cast<memref_t<__ubuf__ int8_t, 2> *>(dst), offset, other,  \
+        stride0, stride1, numel0, numel1);                                     \
+  }
+
+#define REGISTE_STRIDE_LOAD_FP8_3D(dtype, itype)                               \
+  DECLARE_STRIDE_LOAD(3, dtype, itype, int8_t, itype stride0, itype stride1,   \
+                      itype stride2, itype numel0, itype numel1,               \
+                      itype numel2) {                                          \
+    static_assert(sizeof(dtype) == sizeof(int8_t),                             \
+                  "FP8 stride load requires byte-sized elements");             \
+    stride_load_3d<int8_t, itype>(                                             \
+        reinterpret_cast<memref_t<__gm__ int8_t, 1> *>(src),                   \
+        reinterpret_cast<memref_t<__ubuf__ int8_t, 3> *>(dst), offset, other,  \
+        stride0, stride1, stride2, numel0, numel1, numel2);                    \
   }
 
 #define DECLARE_STRIDE_STORE(dim, dtype, itype, ...)                           \

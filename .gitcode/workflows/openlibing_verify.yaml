@@ -1,0 +1,37 @@
+name: Openlibing Verify # action上显示的名字
+
+# 说明：
+# 1. 评论事件（/openlibing-verify）与 PR 事件仅触发 openlibing 平台代码同步，
+#    实际校验需在 openlibing 平台手动触发执行，不在本流水线内执行；
+# 2. label 反馈（SC-RUNNING / SC-SUCC / SC-FAIL）需等待 openlibing 平台
+#    任务完成后回写。
+
+on:
+  pull_request_target: # PR 打开 / 更新时自动触发
+    branches: ['*']
+  pull_request_comment: # PR 下评论关键词 → 手动重新触发
+    branches: ['*']
+    types:
+      - created
+      - edited
+      - deleted
+    comments:
+      - '/openlibing-verify'
+
+permissions:
+  repository: read
+  pr: write # 回写 PR 标签的必要权限
+  id-token: write # OIDC 免密换证的必要权限
+
+jobs:
+  sync:
+    name: 同步结果
+    runs-on: ["ubuntu-latest", "x64", "small"]
+    steps:
+      - name: 同步结果
+        uses: openlibing/pr-sync-action@v1.0.2
+        with:
+          label_enabled: "true"
+          running_label: 'SC-RUNNING'
+          success_label: 'SC-SUCC'
+          failure_label: 'SC-FAIL'

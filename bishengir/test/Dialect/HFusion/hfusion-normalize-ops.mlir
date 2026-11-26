@@ -2880,6 +2880,40 @@ func.func @test_maxnumf_normalize(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>) ->
 }
 
 // -----
+// CHECK-LABEL: func.func @test_reduce_maxnumf_normalize
+// CHECK: %[[NEG_INF:.*]] = arith.constant 0xFF800000 : f32
+// CHECK: %[[CMP:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%arg0, %arg0 : tensor<64xf32>, tensor<64xf32>)
+// CHECK: %[[NAN_MASK:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[CMP]] : tensor<64xi1>)
+// CHECK: %[[MASKED:.*]] = hfusion.select ins(%[[NAN_MASK]], %[[NEG_INF]], %arg0 : tensor<64xi1>, f32, tensor<64xf32>)
+// CHECK: %[[REDUCED:.*]] = linalg.reduce { arith.maximumf } ins(%[[MASKED]] : tensor<64xf32>) outs(%{{.*}} : tensor<f32>) dimensions = [0]
+// CHECK: return %[[REDUCED]] : tensor<f32>
+func.func @test_reduce_maxnumf_normalize(%arg0: tensor<64xf32>) -> tensor<f32> {
+  %neg_inf = arith.constant 0xFF800000 : f32
+  %out = tensor.empty() : tensor<f32>
+  %init = linalg.fill ins(%neg_inf : f32) outs(%out : tensor<f32>) -> tensor<f32>
+  %reduced = linalg.reduce { arith.maxnumf }
+      ins(%arg0 : tensor<64xf32>) outs(%init : tensor<f32>) dimensions = [0]
+  return %reduced : tensor<f32>
+}
+
+// -----
+// CHECK-LABEL: func.func @test_reduce_minnumf_normalize
+// CHECK: %[[POS_INF:.*]] = arith.constant 0x7F800000 : f32
+// CHECK: %[[CMP:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%arg0, %arg0 : tensor<64xf32>, tensor<64xf32>)
+// CHECK: %[[NAN_MASK:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[CMP]] : tensor<64xi1>)
+// CHECK: %[[MASKED:.*]] = hfusion.select ins(%[[NAN_MASK]], %[[POS_INF]], %arg0 : tensor<64xi1>, f32, tensor<64xf32>)
+// CHECK: %[[REDUCED:.*]] = linalg.reduce { arith.minimumf } ins(%[[MASKED]] : tensor<64xf32>) outs(%{{.*}} : tensor<f32>) dimensions = [0]
+// CHECK: return %[[REDUCED]] : tensor<f32>
+func.func @test_reduce_minnumf_normalize(%arg0: tensor<64xf32>) -> tensor<f32> {
+  %pos_inf = arith.constant 0x7F800000 : f32
+  %out = tensor.empty() : tensor<f32>
+  %init = linalg.fill ins(%pos_inf : f32) outs(%out : tensor<f32>) -> tensor<f32>
+  %reduced = linalg.reduce { arith.minnumf }
+      ins(%arg0 : tensor<64xf32>) outs(%init : tensor<f32>) dimensions = [0]
+  return %reduced : tensor<f32>
+}
+
+// -----
 // CHECK-LABEL: func.func @test_unsigned_cast_for_uint8_triton_maximum(
 // CHECK: %[[VAL_13:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_8:.*]] : tensor<1024xi8>) outs(%[[VAL_12:.*]] : tensor<1024xf16>) -> tensor<1024xf16>
 // CHECK: %[[VAL_15:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_10:.*]] : tensor<1024xi8>) outs(%[[VAL_14:.*]] : tensor<1024xf16>) -> tensor<1024xf16>

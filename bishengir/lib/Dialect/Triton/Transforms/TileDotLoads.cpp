@@ -33,11 +33,14 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/MathExtras.h"
@@ -1941,8 +1944,8 @@ static BlockArgument appendScratchGlobalArg(triton::FuncOp func, Type elemTy,
       {StringAttr::get(ctx, kScratchGlobalAttr), UnitAttr::get(ctx)},
       {StringAttr::get(ctx, "bishengir.bytes_needed"),
        IntegerAttr::get(IntegerType::get(ctx, 64), bytes)},
-      {StringAttr::get(ctx, kAxis == 1 ? "bishengir.dot_A" : "bishengir.dot_B"),
-       UnitAttr::get(ctx)}};
+      {StringAttr::get(ctx, "bishengir.scratch_k_axis"),
+       IntegerAttr::get(IntegerType::get(ctx, 32), kAxis)}};
   unsigned index = func.getNumArguments();
   func.insertArgument(
       index, triton::PointerType::get(elemTy, kGlobalMemoryAddressSpace),
@@ -2052,6 +2055,19 @@ emitScratchShmAccessPtr(OpBuilder &b, Location loc, Value scratchArg,
   return b.create<triton::AddPtrOp>(loc, fullPtrTy, baseSplat, offsets);
 }
 
+static void attachAttrsForLoweringScratchShmAcc(
+    PatternRewriter &rewriter, Operation *memOp, int64_t startConst,
+    int64_t otherStart, int kAxis, int64_t tileSize, int64_t dimOther,
+    int64_t rowStride, bool isStatic) {
+  memOp->setAttr("startConst", rewriter.getI32IntegerAttr(startConst));
+  memOp->setAttr("otherStart", rewriter.getI32IntegerAttr(otherStart));
+  memOp->setAttr("kAxis", rewriter.getI32IntegerAttr(kAxis));
+  memOp->setAttr("tileSize", rewriter.getI32IntegerAttr(tileSize));
+  memOp->setAttr("dimOther", rewriter.getI32IntegerAttr(dimOther));
+  memOp->setAttr("rowStride", rewriter.getI32IntegerAttr(rowStride));
+  memOp->setAttr("isStatic", rewriter.getBoolAttr(isStatic));
+}
+
 static Value loadStagedScratchTile(PatternRewriter &rewriter, Location loc,
                                    BlockArgument scratchArg, int64_t dimOther,
                                    int64_t tileSize, int64_t envSize, int kAxis,
@@ -2066,15 +2082,130 @@ static Value loadStagedScratchTile(PatternRewriter &rewriter, Location loc,
       triton::CacheModifier::NONE, triton::EvictionPolicy::NORMAL,
       /*isVolatile=*/false);
 
-  loadOp->setAttr("startConst", rewriter.getI32IntegerAttr(0));
-  loadOp->setAttr("otherStart", rewriter.getI32IntegerAttr(0));
-  loadOp->setAttr("kAxis", rewriter.getI32IntegerAttr(kAxis));
-  loadOp->setAttr("tileSize", rewriter.getI32IntegerAttr(tileSize));
-  loadOp->setAttr("dimOther", rewriter.getI32IntegerAttr(dimOther));
-  loadOp->setAttr("rowStride", rewriter.getI32IntegerAttr(dimOther));
-  loadOp->setAttr("isStatic", rewriter.getBoolAttr(false));
+  attachAttrsForLoweringScratchShmAcc(
+      rewriter, loadOp,
+      /*startConst=*/0, /*otherStart=*/0, /*kAxis=*/kAxis,
+      /*tileSize=*/tileSize, /*dimOther=*/dimOther,
+      /*rowStride=*/dimOther, /*isStatic=*/false);
 
   return loadOp.getResult();
+}
+
+//===----------------------------------------------------------------------===//
+// Dot operand liveness analysis helpers. Used to determine which dot ops an
+// operand is live across. Used when deciding where to stage the operand; in
+// shared or global scratch memory. Also used to decide the location that an
+// operand should be staged at in the mlir.
+//===----------------------------------------------------------------------===//
+
+static Block *getLCABlock(triton::FuncOp func, Value value) {
+  DominanceInfo domInfo(func);
+  Block *lcaBlock = nullptr;
+
+  for (OpOperand &use : value.getUses()) {
+    Operation *userOp = use.getOwner();
+    if (!isa<triton::DotOp>(userOp))
+      continue;
+    if (!lcaBlock) {
+      lcaBlock = userOp->getBlock();
+    } else {
+      lcaBlock =
+          domInfo.findNearestCommonDominator(lcaBlock, userOp->getBlock());
+    }
+  }
+  assert(lcaBlock && "Could not find lca block for dotOp uses of value");
+
+  return lcaBlock;
+}
+
+static void setStartAndEndOfShmLiveness(triton::FuncOp func, Value value,
+                                        Block *&lcaBlock, Operation *&shmLivenessStart,
+                                        Operation *&shmLivenessEnd) {
+  lcaBlock = nullptr;
+  shmLivenessStart = nullptr;
+  shmLivenessEnd = nullptr;
+  Operation *valDefOp = value.getDefiningOp();
+
+  if (valDefOp) {
+    shmLivenessStart = valDefOp->getNextNode();
+    lcaBlock = shmLivenessStart->getBlock();
+  } else {
+    lcaBlock = getLCABlock(func, value);
+  }
+
+  // Scan over dot op usages of value to get the earliest and latest
+  // use of the value. These mark the beginning and the end of liveness
+  // of the shared mem used by this value upon staging
+  for (OpOperand &use : value.getUses()) {
+    Operation *userOp = use.getOwner();
+    if (!dyn_cast<triton::DotOp>(userOp))
+      continue;
+    while (userOp && userOp->getBlock() != lcaBlock) {
+      userOp = userOp->getParentOp();
+    }
+
+    // Don't try to find earliest use if value has a defining op
+    // since the value will be staged right after it is defined
+    // and that will be the beginning of its shm use liveness.
+    // Otherwise find the earliest use location since this will
+    // be the staging location, i.e., start of shm liveness
+    if (!valDefOp && userOp &&
+        (!shmLivenessStart ||
+          userOp->isBeforeInBlock(shmLivenessStart))) {
+      shmLivenessStart = userOp;
+    }
+
+    // Find latest dot op use of value to get the end of
+    // shared mem liveness for this value after staging
+    if (userOp &&
+        (!shmLivenessEnd || shmLivenessEnd->isBeforeInBlock(userOp))) {
+      shmLivenessEnd = userOp;
+    }
+  }
+
+  assert(shmLivenessStart &&
+         "Could not find shm liveness start of value");
+  assert(shmLivenessEnd &&
+         "Could not find shm liveness end of value");
+}
+
+static int64_t
+getMaxShmUseOverLiveDots(llvm::DenseSet<Operation *> &liveDots,
+                         const llvm::DenseSet<Operation *> &allDots,
+                         const llvm::DenseMap<Operation *, int64_t> &dotShmUseMap,
+                         Value value, Block *lcaBlock,
+                         Operation *shmLivenessStart,
+                         Operation *shmLivenessEnd) {
+  int64_t maxShmUse = 0;
+  for (auto dotOp : allDots) {
+    while (dotOp && dotOp->getBlock() != lcaBlock) {
+      dotOp = dotOp->getParentOp();
+    }
+    if (dotOp) {
+      bool isSafeOp = dotOp->isBeforeInBlock(shmLivenessStart) ||
+                      shmLivenessEnd->isBeforeInBlock(dotOp) ||
+                      value == dotOp->getResult(0);
+      if (!isSafeOp) {
+        liveDots.insert(dotOp);
+        if (dotShmUseMap.contains(dotOp)) {
+          auto curShmUse = dotShmUseMap.find(dotOp)->second;
+          if (curShmUse > maxShmUse) {
+            maxShmUse = curShmUse;
+          }
+        }
+      }
+    }
+  }
+  return maxShmUse;
+}
+
+static void updateShmUseAtDot(Operation *dotOp, int64_t addedShmUse,
+                             llvm::DenseMap<Operation *, int64_t> &dotShmUseMap) {
+  int64_t newValue = addedShmUse;
+  if (dotShmUseMap.contains(dotOp)) {
+    newValue += dotShmUseMap.find(dotOp)->second;
+  }
+  dotShmUseMap[dotOp] = newValue;
 }
 
 //===----------------------------------------------------------------------===//
@@ -2307,15 +2438,26 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
   /// Per-dot SHM budget in bytes; 0 disables the budget check (cost model
   /// still gates). Wired from the pass's `smem-budget-bytes` option.
   int64_t smemBudgetBytes;
+  llvm::DenseMap<Value, BlockArgument> &scratchMap;
+  llvm::DenseSet<Operation *> &allDots;
+  llvm::DenseMap<Operation *, int64_t> &shmInUseAtDotOp;
+  int superBlockFactor = 1;
   int KTileSize = 0; // 0 = auto-pick K-tile size
   bool enableGlobalScratchAllocation = false;
+  bool stageBothLoadOperands = false;
 
   StageNonLoadOperandPattern(MLIRContext *ctx, int64_t smemBudgetBytes,
-                             int KTileSize = 0,
-                             bool enableGlobalScratchAllocation = false)
+                             llvm::DenseMap<Value, BlockArgument> &scratchMap,
+                             llvm::DenseSet<Operation *> &allDots,
+                             llvm::DenseMap<Operation *, int64_t> &shmInUseAtDotOp,
+                             int superBlockFactor = 1, int KTileSize = 0,
+                             bool enableGlobalScratchAllocation = false,
+                             bool stageBothLoadOperands = false)
       : OpRewritePattern<triton::DotOp>(ctx), smemBudgetBytes(smemBudgetBytes),
-        KTileSize(KTileSize),
-        enableGlobalScratchAllocation(enableGlobalScratchAllocation) {}
+        scratchMap(scratchMap), allDots(allDots), shmInUseAtDotOp(shmInUseAtDotOp),
+        superBlockFactor(superBlockFactor), KTileSize(KTileSize),
+        enableGlobalScratchAllocation(enableGlobalScratchAllocation),
+        stageBothLoadOperands(stageBothLoadOperands) {}
 
   LogicalResult matchAndRewrite(triton::DotOp dot,
                                 PatternRewriter &rewriter) const override {
@@ -2341,8 +2483,8 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
 
     auto aLoad = dot.getA().getDefiningOp<triton::LoadOp>();
     auto bLoad = dot.getB().getDefiningOp<triton::LoadOp>();
-    // TileDotPattern owns the both-loads case.
-    if (aLoad && bLoad)
+    // Allow the TileDotPattern to attempt to handle the both loads case first.
+    if (!stageBothLoadOperands && aLoad && bLoad)
       return failure();
 
     // Largest power-of-two divisor of K with per-tile M*kTile*N <= budget.
@@ -2453,38 +2595,97 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
     auto elemBytes = [](Type ty) -> unsigned {
       return static_cast<unsigned>((ty.getIntOrFloatBitWidth() + 7) / 8);
     };
-    int64_t aEnvBytes =
-        aLoad ? 0 : static_cast<unsigned>(M * K) * elemBytes(aElemTy);
-    int64_t bEnvBytes =
-        bLoad ? 0 : static_cast<unsigned>(N * K) * elemBytes(bElemTy);
+
+    bool alrStagedA = scratchMap.contains(dot.getA());
+    bool alrStagedB = scratchMap.contains(dot.getB());
+
+    int addrSpaceA =
+        alrStagedA ? dyn_cast<PointerType>(scratchMap[dot.getA()].getType())
+                         .getAddressSpace()
+                   : kSharedMemoryAddressSpace;
+    int addrSpaceB =
+        alrStagedB ? dyn_cast<PointerType>(scratchMap[dot.getB()].getType())
+                         .getAddressSpace()
+                   : kSharedMemoryAddressSpace;
+
+    int64_t aEnvBytes = (alrStagedA || aLoad)
+                            ? 0
+                            : static_cast<unsigned>(M * K) * elemBytes(aElemTy);
+    int64_t bEnvBytes = (alrStagedB || bLoad)
+                            ? 0
+                            : static_cast<unsigned>(N * K) * elemBytes(bElemTy);
     int64_t totalStageBytes = aEnvBytes + bEnvBytes;
 
-    int addrSpaceA = kSharedMemoryAddressSpace;
-    int addrSpaceB = kSharedMemoryAddressSpace;
-    if (smemBudgetBytes > 0 && totalStageBytes > smemBudgetBytes) {
+    llvm::DenseSet<Operation *> liveDotsA, liveDotsB;
+    Block *lcaBlockA;
+    Operation *shmLivenessStartA;
+    Operation *shmLivenessEndA;
+    Block *lcaBlockB;
+    Operation *shmLivenessStartB;
+    Operation *shmLivenessEndB;
+    setStartAndEndOfShmLiveness(func, dot.getA(), lcaBlockA, shmLivenessStartA, shmLivenessEndA);
+    setStartAndEndOfShmLiveness(func, dot.getB(), lcaBlockB, shmLivenessStartB, shmLivenessEndB);
+    int64_t maxShmUseA =
+        (alrStagedA || aLoad)
+            ? 0
+            : getMaxShmUseOverLiveDots(liveDotsA, allDots, shmInUseAtDotOp,
+                                       dot.getA(), lcaBlockA, shmLivenessStartA,
+                                       shmLivenessEndA);
+    int64_t maxShmUseB =
+        (alrStagedB || bLoad)
+            ? 0
+            : getMaxShmUseOverLiveDots(liveDotsB, allDots, shmInUseAtDotOp,
+                                       dot.getB(), lcaBlockB, shmLivenessStartB,
+                                       shmLivenessEndB);
+    int64_t maxShmUse = std::max(maxShmUseA, maxShmUseB);
+
+    // Use floor division with superBlockFactor to get a more
+    // conservative estimate for remainingSmemBudgetBytesPerBlock
+    int64_t remainingSmemBudgetBytesPerBlock =
+        smemBudgetBytes / superBlockFactor - maxShmUse;
+    if (smemBudgetBytes > 0 &&
+        totalStageBytes > remainingSmemBudgetBytesPerBlock) {
       LLVM_DEBUG(DBGS() << "[StageNonLoadOperand]   -> staging would need "
-                        << totalStageBytes << " B; SRAM budget is "
-                        << smemBudgetBytes << " B" << '\n');
+                        << totalStageBytes
+                        << " B; remaining SRAM budget per block is "
+                        << remainingSmemBudgetBytesPerBlock << " B" << '\n');
       if (!enableGlobalScratchAllocation) {
         LLVM_DEBUG(DBGS() << "[StageNonLoadOperand]   -> Global scratch memory "
                           << "allocation not allowed; skipping\n");
         return failure();
       }
-      bool canStageA = (!aLoad && (aEnvBytes <= smemBudgetBytes));
-      bool canStageB = (!bLoad && (bEnvBytes <= smemBudgetBytes));
-      if (canStageA && canStageB) {
+      bool canStageA = (aEnvBytes <= remainingSmemBudgetBytesPerBlock);
+      bool canStageB = (bEnvBytes <= remainingSmemBudgetBytesPerBlock);
+
+      if (!alrStagedA && !canStageA) {
+        addrSpaceA = kGlobalMemoryAddressSpace; // stage A through GMEM
+      }
+      if (!alrStagedB && !canStageB) {
+        addrSpaceB = kGlobalMemoryAddressSpace; // stage B through GMEM
+      }
+      if (!alrStagedA && canStageA && !alrStagedB && canStageB) {
         // Prefer staging the larger operand to smem.
         if (aEnvBytes > bEnvBytes)
           addrSpaceB = kGlobalMemoryAddressSpace;
         else
           addrSpaceA = kGlobalMemoryAddressSpace;
       }
+    }
 
-      if (!canStageA) {
-        addrSpaceA = kGlobalMemoryAddressSpace;
+    bool aGotStaged =
+        !aLoad && addrSpaceA == kSharedMemoryAddressSpace && !alrStagedA;
+    bool bGotStaged =
+        !bLoad && addrSpaceB == kSharedMemoryAddressSpace && !alrStagedB;
+
+    if (aGotStaged) {
+      for (auto dotOp : liveDotsA) {
+        updateShmUseAtDot(dotOp, aEnvBytes, shmInUseAtDotOp);
       }
-      if (!canStageB) {
-        addrSpaceB = kGlobalMemoryAddressSpace;
+    }
+
+    if (bGotStaged) {
+      for (auto dotOp : liveDotsB) {
+        updateShmUseAtDot(dotOp, bEnvBytes, shmInUseAtDotOp);
       }
     }
 
@@ -2560,65 +2761,81 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
     // ---- Stage non-load operands via a single full-envelope store ------
     // Store register-produced operands immediately after their definition so
     // the register value can die after the store. Block arguments have no
-    // defining operation and retain the dot-site insertion point.
-    auto setInsertionAfterDefinition = [&](Value value) {
-      if (Operation *def = value.getDefiningOp())
-        rewriter.setInsertionPointAfter(def);
-      else
-        rewriter.setInsertionPoint(dot);
-    };
+    // defining operation and are inserted at the latest point they can be.
 
     BlockArgument scratchArgA;
     if (!aLoad) {
-      scratchArgA =
-          addrSpaceA == kSharedMemoryAddressSpace
-              ? getOrAppendScratchShmArg(func, aElemTy, loc, 1, false, {M, K},
-                                         dot.getOperation())
-              : appendScratchGlobalArg(func, aElemTy, loc, aEnvBytes, 1);
-      setInsertionAfterDefinition(dot.getA());
-      // A:[M, K], K on innermost axis -> col-tile envelope [M, K].
-      Value envPtrs = emitScratchShmAccessPtr(
-          rewriter, loc, scratchArgA, /*dimOther=*/M, /*tileSize=*/K,
-          /*envSize=*/K, /*kAxis=*/1, /*tileIdxI32=*/Value(),
-          /*startConst=*/0, aElemTy, 0, Value(), 0, addrSpaceA);
-      auto storeOp = rewriter.create<triton::StoreOp>(
-          loc, envPtrs, dot.getA(), /*mask=*/Value(),
-          triton::CacheModifier::NONE, triton::EvictionPolicy::NORMAL);
+      if (!scratchMap.contains(dot.getA())) {
+        scratchArgA =
+            addrSpaceA == kSharedMemoryAddressSpace
+                ? getOrAppendScratchShmArg(func, aElemTy, loc, 1, false, {M, K},
+                                           dot.getOperation())
+                : appendScratchGlobalArg(func, aElemTy, loc, aEnvBytes, 1);
+        rewriter.setInsertionPoint(shmLivenessStartA);
+        scratchMap[dot.getA()] = scratchArgA;
+        // A:[M, K], K on innermost axis -> col-tile envelope [M, K].
+        Value envPtrs = emitScratchShmAccessPtr(
+            rewriter, loc, scratchArgA, /*dimOther=*/M, /*tileSize=*/K,
+            /*envSize=*/K, /*kAxis=*/1, /*tileIdxI32=*/Value(),
+            /*startConst=*/0, aElemTy, 0, Value(), 0, addrSpaceA);
+        auto storeOp = rewriter.create<triton::StoreOp>(
+            loc, envPtrs, dot.getA(), /*mask=*/Value(),
+            triton::CacheModifier::NONE, triton::EvictionPolicy::NORMAL);
 
-      storeOp->setAttr("startConst", rewriter.getI32IntegerAttr(0));
-      storeOp->setAttr("otherStart", rewriter.getI32IntegerAttr(0));
-      storeOp->setAttr("kAxis", rewriter.getI32IntegerAttr(1));
-      storeOp->setAttr("tileSize", rewriter.getI32IntegerAttr(K));
-      storeOp->setAttr("dimOther", rewriter.getI32IntegerAttr(M));
-      storeOp->setAttr("rowStride", rewriter.getI32IntegerAttr(M));
-      storeOp->setAttr("isStatic", rewriter.getBoolAttr(true));
+        attachAttrsForLoweringScratchShmAcc(rewriter, storeOp,
+                                            /*startConst=*/0, /*otherStart=*/0,
+                                            /*kAxis=*/1,
+                                            /*tileSize=*/K, /*dimOther=*/M,
+                                            /*rowStride=*/M, /*isStatic=*/true);
+      } else {
+        scratchArgA = scratchMap[dot.getA()];
+        auto parentOp =
+            dyn_cast<triton::FuncOp>(scratchArgA.getOwner()->getParentOp());
+        unsigned argIdx = scratchArgA.getArgNumber();
+        if (auto kAxisAttr = parentOp.getArgAttrOfType<IntegerAttr>(
+                argIdx, "bishengir.scratch_k_axis")) {
+          if (kAxisAttr.getInt() == 0)
+            parentOp.removeArgAttr(argIdx, "bishengir.scratch_k_axis");
+        }
+      }
     }
 
     BlockArgument scratchArgB;
     if (!bLoad) {
-      scratchArgB =
-          addrSpaceB == kSharedMemoryAddressSpace
-              ? getOrAppendScratchShmArg(func, bElemTy, loc, 0, false, {K, N},
-                                         dot.getOperation())
-              : appendScratchGlobalArg(func, bElemTy, loc, bEnvBytes, 0);
-      setInsertionAfterDefinition(dot.getB());
-      // B is [K, N] with K on axis 0 (outermost).  row-tile (kAxis=0):
-      // store envelope [K, N] (tileSize=K, startConst=0).
-      Value envPtrs = emitScratchShmAccessPtr(
-          rewriter, loc, scratchArgB, /*dimOther=*/N, /*tileSize=*/K,
-          /*envSize=*/K, /*kAxis=*/0, /*tileIdxI32=*/Value(),
-          /*startConst=*/0, bElemTy, 0, Value(), 0, addrSpaceB);
-      auto storeOp = rewriter.create<triton::StoreOp>(
-          loc, envPtrs, dot.getB(), /*mask=*/Value(),
-          triton::CacheModifier::NONE, triton::EvictionPolicy::NORMAL);
+      if (!scratchMap.contains(dot.getB())) {
+        scratchArgB =
+            addrSpaceB == kSharedMemoryAddressSpace
+                ? getOrAppendScratchShmArg(func, bElemTy, loc, 0, false, {K, N},
+                                           dot.getOperation())
+                : appendScratchGlobalArg(func, bElemTy, loc, bEnvBytes, 0);
+        rewriter.setInsertionPoint(shmLivenessStartB);
+        scratchMap[dot.getB()] = scratchArgB;
+        // B is [K, N] with K on axis 0 (outermost).  row-tile (kAxis=0):
+        // store envelope [K, N] (tileSize=K, startConst=0).
+        Value envPtrs = emitScratchShmAccessPtr(
+            rewriter, loc, scratchArgB, /*dimOther=*/N, /*tileSize=*/K,
+            /*envSize=*/K, /*kAxis=*/0, /*tileIdxI32=*/Value(),
+            /*startConst=*/0, bElemTy, 0, Value(), 0, addrSpaceB);
+        auto storeOp = rewriter.create<triton::StoreOp>(
+            loc, envPtrs, dot.getB(), /*mask=*/Value(),
+            triton::CacheModifier::NONE, triton::EvictionPolicy::NORMAL);
 
-      storeOp->setAttr("startConst", rewriter.getI32IntegerAttr(0));
-      storeOp->setAttr("otherStart", rewriter.getI32IntegerAttr(0));
-      storeOp->setAttr("kAxis", rewriter.getI32IntegerAttr(0));
-      storeOp->setAttr("tileSize", rewriter.getI32IntegerAttr(K));
-      storeOp->setAttr("dimOther", rewriter.getI32IntegerAttr(N));
-      storeOp->setAttr("rowStride", rewriter.getI32IntegerAttr(N));
-      storeOp->setAttr("isStatic", rewriter.getBoolAttr(true));
+        attachAttrsForLoweringScratchShmAcc(rewriter, storeOp,
+                                            /*startConst=*/0, /*otherStart=*/0,
+                                            /*kAxis=*/0,
+                                            /*tileSize=*/K, /*dimOther=*/N,
+                                            /*rowStride=*/N, /*isStatic=*/true);
+      } else {
+        scratchArgB = scratchMap[dot.getB()];
+        auto parentOp =
+            dyn_cast<triton::FuncOp>(scratchArgB.getOwner()->getParentOp());
+        unsigned argIdx = scratchArgB.getArgNumber();
+        if (auto kAxisAttr = parentOp.getArgAttrOfType<IntegerAttr>(
+                argIdx, "bishengir.scratch_k_axis")) {
+          if (kAxisAttr.getInt() == 1)
+            parentOp.removeArgAttr(argIdx, "bishengir.scratch_k_axis");
+        }
+      }
     }
 
     // ---- Trace base of load-side operands (pre-loop) --------------------
@@ -2733,13 +2950,11 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
           triton::CacheModifier::NONE, triton::EvictionPolicy::NORMAL,
           /*isVolatile=*/false);
 
-      loadOp->setAttr("startConst", rewriter.getI32IntegerAttr(0));
-      loadOp->setAttr("otherStart", rewriter.getI32IntegerAttr(0));
-      loadOp->setAttr("kAxis", rewriter.getI32IntegerAttr(kAxis));
-      loadOp->setAttr("tileSize", rewriter.getI32IntegerAttr(kTile));
-      loadOp->setAttr("dimOther", rewriter.getI32IntegerAttr(dimOther));
-      loadOp->setAttr("rowStride", rewriter.getI32IntegerAttr(dimOther));
-      loadOp->setAttr("isStatic", rewriter.getBoolAttr(false));
+      attachAttrsForLoweringScratchShmAcc(
+          rewriter, loadOp,
+          /*startConst=*/0, /*otherStart=*/0, /*kAxis=*/kAxis,
+          /*tileSize=*/kTile, /*dimOther=*/dimOther,
+          /*rowStride=*/dimOther, /*isStatic=*/false);
 
       return loadOp.getResult();
     };
@@ -2791,7 +3006,20 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
     copyDotAttrs(dot, innerDot.getOperation());
     innerDot->setAttr(kTiledAttr, rewriter.getUnitAttr());
 
-    rewriter.create<scf::YieldOp>(loc, innerDot.getResult());
+    for (NamedAttribute attr : dot->getAttrs()) {
+      if (attr.getName() == kTiledAttr)
+        continue;
+      innerDot->setAttr(attr.getName(), attr.getValue());
+    }
+    if (shmInUseAtDotOp.contains(dot.getOperation())) {
+      shmInUseAtDotOp[innerDot.getOperation()] =
+          shmInUseAtDotOp[dot.getOperation()];
+      shmInUseAtDotOp.erase(dot.getOperation());
+    }
+    allDots.erase(dot);
+    allDots.insert(innerDot);
+
+    rewriter.create<scf::YieldOp>(loc, ValueRange{innerDot.getResult()});
 
     rewriter.setInsertionPointAfter(forOp);
     Value finalAcc = forOp.getResult(0);
@@ -2921,14 +3149,11 @@ struct TileCGroupPattern : public OpRewritePattern<triton::DotOp> {
           loc, envPtrs, v, /*mask=*/Value(), triton::CacheModifier::NONE,
           triton::EvictionPolicy::NORMAL);
       stagedOperands.push_back({v, scratchArg});
-
-      storeOp->setAttr("startConst", rewriter.getI32IntegerAttr(0));
-      storeOp->setAttr("otherStart", rewriter.getI32IntegerAttr(0));
-      storeOp->setAttr("kAxis", rewriter.getI32IntegerAttr(kAxis));
-      storeOp->setAttr("tileSize", rewriter.getI32IntegerAttr(envSize));
-      storeOp->setAttr("dimOther", rewriter.getI32IntegerAttr(dimOther));
-      storeOp->setAttr("rowStride", rewriter.getI32IntegerAttr(dimOther));
-      storeOp->setAttr("isStatic", rewriter.getBoolAttr(true));
+      attachAttrsForLoweringScratchShmAcc(
+          rewriter, storeOp,
+          /*startConst=*/0, /*otherStart=*/0, /*kAxis=*/kAxis,
+          /*tileSize=*/envSize, /*dimOther=*/dimOther,
+          /*rowStride=*/dimOther, /*isStatic=*/true);
       return scratchArg;
     };
 
@@ -3018,16 +3243,14 @@ struct TileCGroupPattern : public OpRewritePattern<triton::DotOp> {
               /*padding=*/std::optional<triton::PaddingOption>(),
               triton::CacheModifier::NONE, triton::EvictionPolicy::NORMAL,
               /*isVolatile=*/false);
-          loadOp->setAttr("startConst", rewriter.getI32IntegerAttr(0));
-          loadOp->setAttr("otherStart", rewriter.getI32IntegerAttr(otherStart));
-          loadOp->setAttr("kAxis", rewriter.getI32IntegerAttr(kAxis));
-          loadOp->setAttr("tileSize", rewriter.getI32IntegerAttr(kTile));
-          loadOp->setAttr("dimOther", rewriter.getI32IntegerAttr(dimOther));
-          loadOp->setAttr("rowStride", rewriter.getI32IntegerAttr(
-                                           (kAxis == 0 && scratchOtherDim > 0)
-                                               ? scratchOtherDim
-                                               : dimOther));
-          loadOp->setAttr("isStatic", rewriter.getBoolAttr(false));
+          attachAttrsForLoweringScratchShmAcc(
+              rewriter, loadOp,
+              /*startConst=*/0, /*otherStart=*/otherStart, /*kAxis=*/kAxis,
+              /*tileSize=*/kTile, /*dimOther=*/dimOther,
+              /*rowStride=*/
+                  (kAxis == 0 && scratchOtherDim > 0) ? scratchOtherDim
+                                                      : dimOther,
+              /*isStatic=*/false);
           return loadOp.getResult();
         }
       return std::nullopt;
@@ -3286,6 +3509,11 @@ struct TileABChainPattern : public OpRewritePattern<triton::DotOp> {
       storeOp->setAttr("dimOther", rewriter.getI32IntegerAttr(dimOther));
       storeOp->setAttr("rowStride", rewriter.getI32IntegerAttr(dimOther));
       storeOp->setAttr("isStatic", rewriter.getBoolAttr(true));
+      attachAttrsForLoweringScratchShmAcc(
+          rewriter, storeOp,
+          /*startConst=*/0, /*otherStart=*/0, /*kAxis=*/kAxis,
+          /*tileSize=*/kAxis == 0 ? rt.getDimSize(0) : rt.getDimSize(1),
+          /*dimOther=*/dimOther, /*rowStride=*/dimOther, /*isStatic=*/true);
       return scratchArg;
     };
 
@@ -3683,10 +3911,19 @@ struct TileDotLoadsPass : public impl::TileDotLoadsBase<TileDotLoadsPass> {
                       << fn.getName() << " ===" << '\n');
 
     // Stage non-load operands before the grouped-dot fusion patterns.
+    llvm::DenseMap<Value, BlockArgument> scratchMap;
+    llvm::DenseSet<Operation *> allDots;
+    llvm::DenseMap<Operation *, int64_t> shmInUseAtDotOp;
+    fn->walk([&](Operation *op) {
+      if (dyn_cast<triton::DotOp>(op)) {
+        allDots.insert(op);
+      }
+    });
     {
       RewritePatternSet p(&getContext());
       p.add<StageNonLoadOperandPattern>(&getContext(), this->smemBudgetBytes,
-                                        this->KTileSize,
+                                        scratchMap, allDots, shmInUseAtDotOp,
+                                        this->superBlockFactor, this->KTileSize,
                                         this->enableGlobalScratchAllocation);
       (void)applyPatternsGreedily(getOperation(), std::move(p));
     }
@@ -3734,13 +3971,13 @@ struct TileDotLoadsPass : public impl::TileDotLoadsBase<TileDotLoadsPass> {
       (void)applyPatternsGreedily(getOperation(), std::move(p));
     }
 
-    // Stage non-load operands (or load operands that weren't tiled) of
-    // over-budget dots through scratch SHM/GM.
+    // Stage load operands that weren't tiled through scratch SHM/GM.
     {
       RewritePatternSet p(&getContext());
-      p.add<StageNonLoadOperandPattern>(&getContext(), this->smemBudgetBytes,
-                                        this->KTileSize,
-                                        this->enableGlobalScratchAllocation);
+      p.add<StageNonLoadOperandPattern>(
+          &getContext(), this->smemBudgetBytes, scratchMap, allDots,
+          shmInUseAtDotOp, this->superBlockFactor, this->KTileSize,
+          this->enableGlobalScratchAllocation, true);
       (void)applyPatternsGreedily(getOperation(), std::move(p));
     }
 

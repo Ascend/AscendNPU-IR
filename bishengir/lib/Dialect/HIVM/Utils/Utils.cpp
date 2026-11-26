@@ -1370,6 +1370,15 @@ LoopLikeOpInterface getParentLoop(Value val) {
 
 BlockArgument getTiedBlockArgument(LoopLikeOpInterface loopOp,
                                    OpOperand &operand) {
+  if (operand.getOwner() != loopOp.getOperation())
+    return nullptr;
+  // While does not expose its init operands through getInitsMutable() on
+  // LoopLikeOpInterface. Its operands initialize the before block directly.
+  if (auto whileOp = dyn_cast<scf::WhileOp>(loopOp.getOperation())) {
+    auto beforeArgs = whileOp.getBeforeArguments();
+    unsigned index = operand.getOperandNumber();
+    return index < beforeArgs.size() ? beforeArgs[index] : BlockArgument{};
+  }
   for (auto barg : loopOp.getRegionIterArgs())
     if (loopOp.getTiedLoopInit(barg) == &operand) {
       return barg;
@@ -1727,26 +1736,6 @@ bool isOneDimLikeVecType(VectorType vecType) {
       return false;
   }
   return true;
-}
-
-bool isBeforeInMemoryView(Operation *before, Operation *after) {
-  auto moduleOp = utils::getTopLevelModuleOp(before);
-  // Cache before's parentOps and blocks.
-  DenseMap<Block *, Operation *> block2Op;
-  for (Operation *beforeParentOp = before; beforeParentOp != moduleOp;
-       beforeParentOp = beforeParentOp->getParentOp()) {
-    block2Op.try_emplace(beforeParentOp->getBlock(), beforeParentOp);
-  }
-  for (Operation *afterParentOp = after; afterParentOp != moduleOp;
-       afterParentOp = afterParentOp->getParentOp()) {
-    auto it = block2Op.find(afterParentOp->getBlock());
-    // Check if after and before has same min ParentBlock.
-    if (it != block2Op.end()) {
-      auto *beforeParentOp = it->second;
-      return beforeParentOp->isBeforeInBlock(afterParentOp);
-    }
-  }
-  return false;
 }
 
 static bool canCombineOneSide(const SmallVectorImpl<MemRefType> &memrefTypes,

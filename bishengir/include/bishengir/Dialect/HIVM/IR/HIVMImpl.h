@@ -546,6 +546,11 @@ isSingleChainCrossLoopMmadToMmad(MmadLikeOpType op) {
 hivm::VBrcOp brcScalar(RewriterBase &rewriter, Location loc,
                        TypedAttr initValue, Value targetTensor);
 
+/// Initialize the destination tile before copying its valid subview.
+LogicalResult initializeLoadPadBuffer(RewriterBase &rewriter, Location loc,
+                                      Value dst, Value padValue,
+                                      Value initCondition);
+
 /// Infer funcOp core type.
 std::optional<TFuncCoreType> queryFuncCoreType(Operation *funcOp);
 

@@ -204,17 +204,17 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
         %70:6 = scf.for %arg26 = %c0_i32 to %31 step %c32_i32 iter_args(%arg27 = %c0_i32, %arg28 = %c0_i32, %arg29 = %69, %arg30 = %69, %arg31 = %c0_i32, %arg32 = %c0_i32) -> (i32, i32, tensor<4x2x16x16xf32>, tensor<4x2x16x16xf32>, i32, i32)  : i32 {
           hivm.hir.anchor {id = 21 : i64}
           %alloc_13 = memref.alloc() : memref<16x64xf32, #hivm.address_space<ub>>
-          annotation.mark %alloc_13 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32} : memref<16x64xf32, #hivm.address_space<ub>>
+          annotation.mark %alloc_13 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer} : memref<16x64xf32, #hivm.address_space<ub>>
           %alloc_14 = memref.alloc() : memref<2x2x16x16xbf16, #hivm.address_space<cbuf>>
-          annotation.mark %alloc_14 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32} : memref<2x2x16x16xbf16, #hivm.address_space<cbuf>>
+          annotation.mark %alloc_14 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer} : memref<2x2x16x16xbf16, #hivm.address_space<cbuf>>
           %alloc_15 = memref.alloc() : memref<2x2x16x16xbf16, #hivm.address_space<cbuf>>
-          annotation.mark %alloc_15 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32} : memref<2x2x16x16xbf16, #hivm.address_space<cbuf>>
+          annotation.mark %alloc_15 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer} : memref<2x2x16x16xbf16, #hivm.address_space<cbuf>>
           %alloc_16 = memref.alloc() : memref<2x2x16x16xbf16, #hivm.address_space<cbuf>>
-          annotation.mark %alloc_16 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32} : memref<2x2x16x16xbf16, #hivm.address_space<cbuf>>
+          annotation.mark %alloc_16 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer} : memref<2x2x16x16xbf16, #hivm.address_space<cbuf>>
           %alloc_17 = memref.alloc() : memref<16x32xf32, #hivm.address_space<ub>>
-          annotation.mark %alloc_17 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32} : memref<16x32xf32, #hivm.address_space<ub>>
+          annotation.mark %alloc_17 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer} : memref<16x32xf32, #hivm.address_space<ub>>
           %alloc_18 = memref.alloc() : memref<16x32xf32, #hivm.address_space<ub>>
-          annotation.mark %alloc_18 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32} : memref<16x32xf32, #hivm.address_space<ub>>
+          annotation.mark %alloc_18 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer} : memref<16x32xf32, #hivm.address_space<ub>>
           hivm.hir.sync_block_wait[<CUBE>, <PIPE_V>, <PIPE_FIX>] flag = 2
           hivm.hir.anchor {id = 22 : i64}
           %75:2 = scope.scope : () -> (i32, i32) {
@@ -608,17 +608,17 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
           %60:3 = scf.for %arg27 = %c0_i32 to %30 step %c32_i32 iter_args(%arg28 = %c0_i32, %arg29 = %c0_i32, %arg30 = %c0_i32) -> (i32, i32, i32)  : i32 {
             hivm.hir.anchor {id = 21 : i64}
             %alloc_12 = memref.alloc() : memref<16x64xf32, #hivm.address_space<ub>>
-            annotation.mark %alloc_12 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32} : memref<16x64xf32, #hivm.address_space<ub>>
+            annotation.mark %alloc_12 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer} : memref<16x64xf32, #hivm.address_space<ub>>
             %alloc_13 = memref.alloc() : memref<2x2x16x16xbf16, #hivm.address_space<cbuf>>
-            annotation.mark %alloc_13 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32} : memref<2x2x16x16xbf16, #hivm.address_space<cbuf>>
+            annotation.mark %alloc_13 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer} : memref<2x2x16x16xbf16, #hivm.address_space<cbuf>>
             %alloc_14 = memref.alloc() : memref<2x2x16x16xbf16, #hivm.address_space<cbuf>>
-            annotation.mark %alloc_14 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32} : memref<2x2x16x16xbf16, #hivm.address_space<cbuf>>
+            annotation.mark %alloc_14 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer} : memref<2x2x16x16xbf16, #hivm.address_space<cbuf>>
             %alloc_15 = memref.alloc() : memref<2x2x16x16xbf16, #hivm.address_space<cbuf>>
-            annotation.mark %alloc_15 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32} : memref<2x2x16x16xbf16, #hivm.address_space<cbuf>>
+            annotation.mark %alloc_15 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer} : memref<2x2x16x16xbf16, #hivm.address_space<cbuf>>
             %alloc_16 = memref.alloc() : memref<16x32xf32, #hivm.address_space<ub>>
-            annotation.mark %alloc_16 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32} : memref<16x32xf32, #hivm.address_space<ub>>
+            annotation.mark %alloc_16 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer} : memref<16x32xf32, #hivm.address_space<ub>>
             %alloc_17 = memref.alloc() : memref<16x32xf32, #hivm.address_space<ub>>
-            annotation.mark %alloc_17 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32} : memref<16x32xf32, #hivm.address_space<ub>>
+            annotation.mark %alloc_17 {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer} : memref<16x32xf32, #hivm.address_space<ub>>
             hivm.hir.anchor {id = 22 : i64}
             scope.scope : () -> () {
               hivm.hir.anchor {id = 23 : i64}

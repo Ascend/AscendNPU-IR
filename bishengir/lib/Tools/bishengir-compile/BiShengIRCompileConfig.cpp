@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/MultiBufferMode.h"
 #include "bishengir/Tools/Utils/Utils.h"
+#include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/bishengir-compile/Config.h"
 
 #if BISHENGIR_ENABLE_TRITON_COMPILE
@@ -370,10 +371,31 @@ static bool hasExplicitCLOption(llvm::StringRef name) {
   return it != opts.end() && it->second->getNumOccurrences() != 0;
 }
 
+static bool isBeforeSIMTDebugSupport(const CannVersion &version) {
+  constexpr auto firstRelease = std::make_tuple(9u, 2u, 0u);
+  if (version.release != firstRelease)
+    return version.release < firstRelease;
+  StringRef prerelease = version.prerelease;
+  if (prerelease == "alpha" || prerelease.starts_with("alpha.") ||
+      prerelease == "beta")
+    return true;
+  unsigned beta;
+  return prerelease.consume_front("beta.") &&
+         !prerelease.getAsInteger(10, beta) && beta < 2;
+}
+
 static void
 applyArchDependentCompileDefaults(BiShengIRCompileMainConfig &config) {
   if (!mlir::hacc::utils::isRegBasedArch(config.getTarget()))
     return;
+  // CANN packages before 9.2.0-beta.2 lack SIMT print support in ccelib.
+  // Explicit flags can still enable debug with a compatible runtime.
+  if (mlir::hacc::utils::isAscend950(config.getTarget()) &&
+      !hasExplicitCLOption("enable-simt-device-debug")) {
+    if (auto version = detectCannVersionWithPrerelease();
+        version && isBeforeSIMTDebugSupport(*version))
+      config.setEnableSIMTDeviceDebug(false);
+  }
   // The A6 memory plan validates simt-vf-dynamic-size against the
   // platform's UB window; the frontend may forward an explicit value
   // tuned for other platforms that the plan rejects, so force the A6

@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "bishengir/Transforms/Passes.h"
 #include "bishengir/Transforms/Transforms.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -586,6 +587,14 @@ void transform::ApplyForwardExtractSlicePatternsOp::populatePatterns(
     RewritePatternSet &patterns) {
   patterns.add<ForwardExtract, BubbleUpExtractSliceThroughExpandShape>(
       patterns.getContext());
+}
+
+DiagnosedSilenceableFailure
+transform::EliminateSingleIterationScfForOp::applyToOne(
+    TransformRewriter &rewriter, func::FuncOp target,
+    ApplyToEachResultList &results, TransformState &state) {
+  bishengir::eliminateSingleIterationScfFors(target, rewriter);
+  return DiagnosedSilenceableFailure::success();
 }
 
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOpsEnums.cpp.inc"

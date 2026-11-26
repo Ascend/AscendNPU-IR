@@ -419,7 +419,7 @@ static FailureOr<Value> insertViewFromByteAlloc(Value alloc, Type elemType,
 /// Returns the memref buffer to initialize via VBrc before load/nd2nz.
 /// Uses the underlying alloc when its element type matches dst; otherwise
 /// inserts a 1-D view on the byte alloc sized from the alloc only.
-static FailureOr<Value> getVBrcPadBuffer(Value dst, PatternRewriter &b) {
+static FailureOr<Value> getVBrcPadBuffer(Value dst, RewriterBase &b) {
   auto maybeAlloc = traceDefOp<memref::AllocOp>(dst);
   if (!maybeAlloc.has_value())
     return failure();
@@ -511,6 +511,23 @@ static FailureOr<Value> getVBrcPadBuffer(Value dst, PatternRewriter &b) {
                                  dstMemRefType.getMemorySpace(), b);
 }
 
+LogicalResult mlir::hivm::initializeLoadPadBuffer(RewriterBase &b, Location loc,
+                                                  Value dst, Value padValue,
+                                                  Value initCondition) {
+  FailureOr<Value> padBuffer = getVBrcPadBuffer(dst, b);
+  if (failed(padBuffer))
+    return failure();
+  OpBuilder::InsertionGuard guard(b);
+  if (initCondition) {
+    auto ifOp = b.create<scf::IfOp>(loc, TypeRange(), initCondition, false);
+    ifOp->setAttr(hivm::UnlikelyConditionAttr::name, b.getUnitAttr());
+    b.setInsertionPointToStart(&ifOp.getThenRegion().front());
+  }
+  b.create<hivm::VBrcOp>(loc, TypeRange(), padValue, *padBuffer,
+                         b.getDenseI64ArrayAttr(ArrayRef<int64_t>{}));
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // LoadOp
 //===----------------------------------------------------------------------===//
@@ -537,22 +554,10 @@ FailureOr<SmallVector<Value>> LoadOp::decomposeOperation(PatternRewriter &b) {
       return failure();
   }
 
-  FailureOr<Value> padBuffer = getVBrcPadBuffer(getDst(), b);
-  if (failed(padBuffer))
-    return failure();
   auto loc = getLoc();
-  if (getInitCondition()) {
-    scf::IfOp ifOp =
-        b.create<scf::IfOp>(getLoc(), TypeRange(), getInitCondition(), false);
-    ifOp->setAttr(hivm::UnlikelyConditionAttr::name, b.getUnitAttr());
-    OpBuilder::InsertionGuard insertionGuard(b);
-    b.setInsertionPointToStart(&ifOp.getThenRegion().front());
-    b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), *padBuffer,
-                           b.getDenseI64ArrayAttr(ArrayRef<int64_t>{}));
-  } else {
-    b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), *padBuffer,
-                           b.getDenseI64ArrayAttr(ArrayRef<int64_t>{}));
-  }
+  if (failed(initializeLoadPadBuffer(b, loc, getDst(), getPadValue(),
+                                     getInitCondition())))
+    return failure();
   b.create<hivm::LoadOp>(loc, TypeRange{}, getSrc(), getDst(), getPadModeAttr(),
                          getPadValue(), getLeftPaddingNum(), false,
                          getMayImplicitTransposeWithLastAxis());
@@ -568,22 +573,10 @@ FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(PatternRewriter &b) {
     return failure();
   if (!getInitOutBuffer())
     return failure();
-  FailureOr<Value> padBuffer = getVBrcPadBuffer(getDst(), b);
-  if (failed(padBuffer))
-    return failure();
   auto loc = getLoc();
-  if (getInitCondition()) {
-    scf::IfOp ifOp =
-        b.create<scf::IfOp>(getLoc(), TypeRange(), getInitCondition(), false);
-    ifOp->setAttr(hivm::UnlikelyConditionAttr::name, b.getUnitAttr());
-    OpBuilder::InsertionGuard insertionGuard(b);
-    b.setInsertionPointToStart(&ifOp.getThenRegion().front());
-    b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), *padBuffer,
-                           b.getDenseI64ArrayAttr(ArrayRef<int64_t>{}));
-  } else {
-    b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), *padBuffer,
-                           b.getDenseI64ArrayAttr(ArrayRef<int64_t>{}));
-  }
+  if (failed(initializeLoadPadBuffer(b, loc, getDst(), getPadValue(),
+                                     getInitCondition())))
+    return failure();
   auto nd2nzOp = b.create<hivm::ND2NZOp>(loc, TypeRange{}, getSrc(), getDst(),
                                          b.getUnitAttr());
   // This replaces the op being decomposed, so it inherits its L2 hint.

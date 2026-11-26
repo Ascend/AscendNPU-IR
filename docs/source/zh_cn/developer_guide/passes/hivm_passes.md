@@ -486,6 +486,14 @@
 
 该Pass借助标量操作完成单点hivm算子的优化，包括`vdiv`和无符号`vmax`、`vmin`等逐元素算子。
 
+## -hivm-optimize-transpose-placement
+
+**功能**：将vtranspose下沉到可吸收的fixpipe（regbase）。
+
+**选项**：
+
+- `-dump-dir`：为每个被分析的候选在该目录中写出一张Mermaid `.mmd`图。为空时关闭导出。
+
 ## -hivm-outline-alloc-in-VF
 
 **功能**：将VF中静态形状的memref.alloc外提（outline）。

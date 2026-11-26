@@ -2415,7 +2415,10 @@ struct ConstantFolding : public OpRewritePattern<hfusion::CastOp> {
     if (inputDataType == outputDataType) {
       return sameFloatTypeCast(roundMode, outputDataType, aPVal);
     }
-    aPVal.convert(getFltSemantics(outputDataType), rMode, &loseInfo);
+    const auto &semantics = getFltSemantics(outputDataType);
+    if (&semantics == &llvm::APFloatBase::Bogus())
+      return failure();
+    aPVal.convert(semantics, rMode, &loseInfo);
     return success();
   }
 
@@ -2469,6 +2472,13 @@ struct ConstantFolding : public OpRewritePattern<hfusion::CastOp> {
 
   LogicalResult matchAndRewrite(hfusion::CastOp castOp,
                                 PatternRewriter &rewriter) const override {
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+    if (isa<HiFloat8Type>(
+            getElementTypeOrSelf(castOp.getInputs()[0].getType())) ||
+        isa<HiFloat8Type>(
+            getElementTypeOrSelf(castOp.getOutputs()[0].getType())))
+      return failure();
+#endif
     auto output = castOp.getOutputs()[0];
     auto tensorEmptyOp = output.getDefiningOp<tensor::EmptyOp>();
     if (!tensorEmptyOp)
@@ -2516,6 +2526,11 @@ void CastOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 LogicalResult CastOp::verify() {
   auto roundMode = getRoundMode();
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+  if (roundMode == hfusion::RoundMode::HYBRID &&
+      !isa<HiFloat8Type>(getElementTypeOrSelf(getOutputs()[0].getType())))
+    return emitOpError("HYBRID rounding requires a HiFloat8 result");
+#endif
   if (roundMode == hfusion::RoundMode::TRUNCWITHOVERFLOW) {
     auto inputType = getElementTypeOrSelf(getInputs()[0].getType());
     auto outputType = getElementTypeOrSelf(getOutputs()[0].getType());
@@ -3825,6 +3840,20 @@ void MatMulMxOp::build(OpBuilder &builder, OperationState &state, Value inputA,
 LogicalResult MatMulMxOp::verify() {
   auto inputATy = mlir::cast<ShapedType>(getInputA().getType());
   auto inputBTy = mlir::cast<ShapedType>(getInputB().getType());
+  auto lhsFormat = getLhsFormat();
+  auto rhsFormat = getRhsFormat();
+  if (lhsFormat.has_value() != rhsFormat.has_value())
+    return emitOpError()
+           << "lhsFormat and rhsFormat must be specified together";
+  if (!lhsFormat && (inputATy.getElementType().isInteger(8) ||
+                     inputBTy.getElementType().isInteger(8)))
+    return emitOpError()
+           << "format attributes are required for 8-bit integer inputs";
+  // Both inputs share the same storage K, so their packing factors must match.
+  if ((lhsFormat == hfusion::Dataformat::FP4E2M1_T) !=
+      (rhsFormat == hfusion::Dataformat::FP4E2M1_T))
+    return emitOpError() << "mixed FP4 and non-FP4 formats are unsupported";
+
   auto scaleATy = mlir::cast<ShapedType>(getScaleA().getType());
   auto scaleBTy = mlir::cast<ShapedType>(getScaleB().getType());
   auto resultTy = mlir::cast<ShapedType>(getResult().getType());
@@ -3865,34 +3894,38 @@ LogicalResult MatMulMxOp::verify() {
 FailureOr<SmallVector<Value>>
 MatMulMxOp::decomposeOperation(PatternRewriter &builder) {
   Value a = getInputA();
-  auto aType = cast<RankedTensorType>(a.getType());
+  Value b = getInputB();
+  auto aType = dyn_cast<RankedTensorType>(a.getType());
+  auto bType = dyn_cast<RankedTensorType>(b.getType());
+  if (!aType || !bType)
+    return failure();
 
-  // If it's not native mmadmx, we try to emulate it using mmad + vmul
-  const auto K = aType.getShape()[1];
-  bool formatsPresent =
-      getLhsFormat().has_value() && getRhsFormat().has_value();
-  uint64_t lhsFormat =
-      formatsPresent ? static_cast<uint64_t>(*getLhsFormat()) : 1;
-  uint64_t rhsFormat =
-      formatsPresent ? static_cast<uint64_t>(*getRhsFormat()) : 1;
-  if (hivm::isNativeMmadMx(getOperation(), getElementTypeOrSelf(a.getType()),
-                           getElementTypeOrSelf(getInputB().getType()),
-                           getElementTypeOrSelf(getScaleA().getType()),
-                           getElementTypeOrSelf(getScaleB().getType()),
-                           getElementTypeOrSelf(getAcc().getType()),
-                           formatsPresent, lhsFormat, rhsFormat, K))
+  auto lhsFormat = getLhsFormat();
+  auto rhsFormat = getRhsFormat();
+  const int64_t storageK = aType.getDimSize(1);
+  const auto defaultFormat = hfusion::Dataformat::FP8E5M2_T;
+  if (hivm::isNativeMmadMx(
+          getOperation(), aType.getElementType(), bType.getElementType(),
+          getElementTypeOrSelf(getScaleA().getType()),
+          getElementTypeOrSelf(getScaleB().getType()),
+          getElementTypeOrSelf(getAcc().getType()), lhsFormat && rhsFormat,
+          static_cast<uint64_t>(lhsFormat.value_or(defaultFormat)),
+          static_cast<uint64_t>(rhsFormat.value_or(defaultFormat)), storageK))
+    return failure();
+
+  // The software path consumes FP8 values directly and cannot unpack inputs.
+  if ((lhsFormat == hfusion::Dataformat::FP4E2M1_T &&
+       rhsFormat == hfusion::Dataformat::FP4E2M1_T) ||
+      !isFP8(aType.getElementType()) || !isFP8(bType.getElementType()))
     return failure();
 
   OpBuilder::InsertionGuard guard(builder);
   builder.setInsertionPoint(getOperation());
   Location location = getLoc();
 
-  Value b = getInputB();
   Value c = getAcc();
   Value scaleA = getScaleA();
   Value scaleB = getScaleB();
-
-  auto bType = cast<RankedTensorType>(b.getType());
 
   auto scaleAType = cast<RankedTensorType>(scaleA.getType());
   auto scaleBType = cast<RankedTensorType>(scaleB.getType());
@@ -3900,9 +3933,6 @@ MatMulMxOp::decomposeOperation(PatternRewriter &builder) {
   auto shapeScaleB = scaleBType.getShape();
 
   // Cast scale to u16 (unsigned)
-  auto modeAttr = builder.getNamedAttr(
-      hfusion::RoundModeAttr::getMnemonic(),
-      builder.getAttr<hfusion::RoundModeAttr>(hfusion::RoundMode::RINT));
   const Type i16Ty = builder.getI16Type();
   Value scaleAI16 =
       castTo(builder, scaleA, i16Ty, hfusion::TypeFn::cast_unsigned,
@@ -3968,26 +3998,16 @@ MatMulMxOp::decomposeOperation(PatternRewriter &builder) {
   Value scaleAF32 = castTo(builder, scaleABF16, f32Ty);
   Value scaleBF32 = castTo(builder, scaleBBF16, f32Ty);
 
-  // If input is fp8, cast to fp16
+  // Convert both FP8 operands to FP16 before applying their scales.
   const Type f16Ty = builder.getF16Type();
-  if (isFP8(aType.getElementType())) {
-    Value emptyAF16 = builder.create<tensor::EmptyOp>(
-        location, RankedTensorType::get(aType.getShape(), f16Ty), ValueRange{});
-    a = builder
-            .create<hfusion::CastOp>(location, ValueRange{a},
-                                     ValueRange{emptyAF16}, modeAttr)
-            .getResult(0);
-    aType = RankedTensorType::get(aType.getShape(), f16Ty);
-  }
-  if (isFP8(bType.getElementType())) {
-    Value emptyBF16 = builder.create<tensor::EmptyOp>(
-        location, RankedTensorType::get(bType.getShape(), f16Ty), ValueRange{});
-    b = builder
-            .create<hfusion::CastOp>(location, ValueRange{b},
-                                     ValueRange{emptyBF16}, modeAttr)
-            .getResult(0);
-    bType = RankedTensorType::get(bType.getShape(), f16Ty);
-  }
+  aType = RankedTensorType::get(aType.getShape(), f16Ty);
+  bType = RankedTensorType::get(bType.getShape(), f16Ty);
+  Value emptyAF16 =
+      builder.create<tensor::EmptyOp>(location, aType, ValueRange{});
+  Value emptyBF16 =
+      builder.create<tensor::EmptyOp>(location, bType, ValueRange{});
+  a = castTo(builder, a, f16Ty, hfusion::RoundMode::RINT, emptyAF16);
+  b = castTo(builder, b, f16Ty, hfusion::RoundMode::RINT, emptyBF16);
 
   // Cast scale to input type
   Value scaleAFinal = castTo(builder, scaleAF32, aType.getElementType());

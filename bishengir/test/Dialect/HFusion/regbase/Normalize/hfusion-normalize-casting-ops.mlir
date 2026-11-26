@@ -1,5 +1,99 @@
 // RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true" %s -split-input-file -verify-diagnostics | FileCheck %s
 // RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true" --hfusion-pre-vectorization-fusion %s -split-input-file | FileCheck %s --check-prefix=INTEGER
+// RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true" %s -split-input-file -mlir-print-op-generic | FileCheck %s --check-prefix=FLAGS
+
+// Decomposed casts select rounding for each step's types, while saturation
+// remains attached to the final step.
+// CHECK-LABEL: @preserve_f16_to_e5m2
+// CHECK: hfusion.cast
+// CHECK-NOT: enable_saturate = true
+// CHECK-SAME: round_mode = #hfusion.round_mode<rint>
+// CHECK-SAME: -> tensor<16xf32>
+// CHECK: hfusion.cast
+// CHECK-SAME: enable_saturate = true
+// CHECK-SAME: round_mode = #hfusion.round_mode<rint>
+// CHECK-SAME: -> tensor<16xf8E5M2>
+// FLAGS-LABEL: sym_name = "preserve_f16_to_e5m2"
+// FLAGS: "arith.truncf"
+// FLAGS-SAME: enable_saturate = true
+// FLAGS-SAME: round_mode = #hfusion.round_mode<rint>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @preserve_f16_to_e5m2(%src: tensor<16xf16>, %init: tensor<16xf8E5M2>) -> tensor<16xf8E5M2> {
+  %0 = hfusion.cast {enable_saturate = true, round_mode = #hfusion.round_mode<trunc>} ins(%src : tensor<16xf16>) outs(%init : tensor<16xf8E5M2>) -> tensor<16xf8E5M2>
+  return %0 : tensor<16xf8E5M2>
+}
+
+// CHECK-LABEL: @preserve_i32_to_f16
+// CHECK: hfusion.cast
+// CHECK-NOT: enable_saturate = true
+// CHECK-SAME: -> tensor<16xf32>
+// CHECK: hfusion.cast
+// CHECK-SAME: enable_saturate = true
+// CHECK-SAME: round_mode = #hfusion.round_mode<rint>
+// CHECK-SAME: -> tensor<16xf16>
+// FLAGS-LABEL: sym_name = "preserve_i32_to_f16"
+// FLAGS: "arith.truncf"
+// FLAGS-SAME: enable_saturate = true
+// FLAGS-SAME: round_mode = #hfusion.round_mode<rint>
+func.func @preserve_i32_to_f16(%src: tensor<16xi32>, %init: tensor<16xf16>) -> tensor<16xf16> {
+  %0 = hfusion.cast {enable_saturate = true, round_mode = #hfusion.round_mode<floor>} ins(%src : tensor<16xi32>) outs(%init : tensor<16xf16>) -> tensor<16xf16>
+  return %0 : tensor<16xf16>
+}
+}
+
+// -----
+
+// CHECK-LABEL: @preserve_disabled_saturation
+// CHECK-NOT: enable_saturate = true
+// CHECK: hfusion.cast
+// CHECK-SAME: -> tensor<16xf32>
+// CHECK-NOT: enable_saturate = true
+// CHECK: hfusion.cast
+// CHECK-SAME: round_mode = #hfusion.round_mode<rint>
+// CHECK-SAME: -> tensor<16xf8E5M2>
+// CHECK-NOT: enable_saturate = true
+// CHECK: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @preserve_disabled_saturation(%src: tensor<16xf16>, %init: tensor<16xf8E5M2>) -> tensor<16xf8E5M2> {
+  %0 = hfusion.cast {enable_saturate = false, round_mode = #hfusion.round_mode<trunc>} ins(%src : tensor<16xf16>) outs(%init : tensor<16xf8E5M2>) -> tensor<16xf8E5M2>
+  return %0 : tensor<16xf8E5M2>
+}
+}
+
+// -----
+
+// CHECK-LABEL: @preserve_bf16_to_e4m3
+// CHECK: hfusion.cast
+// CHECK-NOT: enable_saturate = true
+// CHECK-SAME: -> tensor<16xf32>
+// CHECK: hfusion.cast
+// CHECK-SAME: enable_saturate = true
+// CHECK-SAME: -> tensor<16xf8E4M3FN>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @preserve_bf16_to_e4m3(%src: tensor<16xbf16>, %init: tensor<16xf8E4M3FN>) -> tensor<16xf8E4M3FN> {
+  %0 = hfusion.cast {enable_saturate = true, round_mode = #hfusion.round_mode<trunc>} ins(%src : tensor<16xbf16>) outs(%init : tensor<16xf8E4M3FN>) -> tensor<16xf8E4M3FN>
+  return %0 : tensor<16xf8E4M3FN>
+}
+}
+
+// -----
+
+// CHECK-LABEL: @preserve_i8_to_i64
+// CHECK: hfusion.cast
+// CHECK-NOT: enable_saturate = true
+// CHECK-SAME: -> tensor<16xi32>
+// CHECK: hfusion.cast
+// CHECK-SAME: enable_saturate = true
+// CHECK-SAME: -> tensor<16xi64>
+// CHECK: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @preserve_i8_to_i64(%src: tensor<16xi8>, %init: tensor<16xi64>) -> tensor<16xi64> {
+  %0 = hfusion.cast {enable_saturate = true} ins(%src : tensor<16xi8>) outs(%init : tensor<16xi64>) -> tensor<16xi64>
+  return %0 : tensor<16xi64>
+}
+}
+
+// -----
 
 // CHECK-LABEL: func.func @test_NormalizeCastLowering_cast_f32_to_i1
 // CHECK: %[[arg4:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[arg2:.*]], %[[cst:.*]] : tensor<2x256x12x257xf32>, f32) outs(%[[arg5:.*]] : tensor<2x256x12x257xi1>) -> tensor<2x256x12x257xi1>
@@ -824,5 +918,224 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %0 = tensor.empty() : tensor<16xi8>
     %1 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%arg0 : tensor<16xf32>) outs(%0 : tensor<16xi8>) -> tensor<16xi8>
     return %1 : tensor<16xi8>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: @scalar_f32_to_f8E4M3FN(
+// CHECK: %[[C0:.*]] = arith.constant 0 : index
+// CHECK: %[[INPUT:.*]] = tensor.from_elements %arg0 : tensor<1xf32>
+// CHECK: %[[CAST:.*]] = hfusion.cast {{.*}}round_mode = #hfusion.round_mode<rint>{{.*}} ins(%[[INPUT]] : tensor<1xf32>) outs({{.*}} : tensor<1xf8E4M3FN>) -> tensor<1xf8E4M3FN>
+// CHECK: %[[RESULT:.*]] = tensor.extract %[[CAST]][%[[C0]]] : tensor<1xf8E4M3FN>
+// CHECK-NOT: arith.truncf
+// CHECK: return %[[RESULT]] : f8E4M3FN
+func.func @scalar_f32_to_f8E4M3FN(%arg0: f32) -> f8E4M3FN {
+  %cast = arith.truncf %arg0 : f32 to f8E4M3FN
+  return %cast : f8E4M3FN
+}
+
+// -----
+
+// The broadcast/cast rewrite must still use a tensor conversion for FP8.
+// CHECK-LABEL: @fill_f32_to_f8E4M3FN(
+// CHECK: %[[INPUT:.*]] = tensor.from_elements %arg0 : tensor<1xf32>
+// CHECK: %[[CAST:.*]] = hfusion.cast {{.*}} ins(%[[INPUT]] : tensor<1xf32>) outs({{.*}} : tensor<1xf8E4M3FN>) -> tensor<1xf8E4M3FN>
+// CHECK: %[[SCALAR:.*]] = tensor.extract %[[CAST]][{{.*}}] : tensor<1xf8E4M3FN>
+// CHECK: %[[FILL:.*]] = linalg.fill ins(%[[SCALAR]] : f8E4M3FN) outs({{.*}} : tensor<64xf8E4M3FN>)
+// CHECK: return %[[FILL]]
+func.func @fill_f32_to_f8E4M3FN(%arg0: f32) -> tensor<64xf8E4M3FN> {
+  %empty = tensor.empty() : tensor<64xf32>
+  %filled = linalg.fill ins(%arg0 : f32) outs(%empty : tensor<64xf32>) -> tensor<64xf32>
+  %dst = tensor.empty() : tensor<64xf8E4M3FN>
+  %cast = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%filled : tensor<64xf32>) outs(%dst : tensor<64xf8E4M3FN>) -> tensor<64xf8E4M3FN>
+  return %cast : tensor<64xf8E4M3FN>
+}
+
+// -----
+
+// CHECK-LABEL: @scalar_f32_to_f8E5M2(
+// CHECK: %[[C0:.*]] = arith.constant 0 : index
+// CHECK: %[[INPUT:.*]] = tensor.from_elements %arg0 : tensor<1xf32>
+// CHECK: %[[CAST:.*]] = hfusion.cast {{.*}}round_mode = #hfusion.round_mode<rint>{{.*}} ins(%[[INPUT]] : tensor<1xf32>) outs({{.*}} : tensor<1xf8E5M2>) -> tensor<1xf8E5M2>
+// CHECK: %[[RESULT:.*]] = tensor.extract %[[CAST]][%[[C0]]] : tensor<1xf8E5M2>
+// CHECK-NOT: arith.truncf
+// CHECK: return %[[RESULT]] : f8E5M2
+func.func @scalar_f32_to_f8E5M2(%arg0: f32) -> f8E5M2 {
+  %cast = arith.truncf %arg0 : f32 to f8E5M2
+  return %cast : f8E5M2
+}
+
+// -----
+
+// The broadcast/cast rewrite must still use a tensor conversion for FP8.
+// CHECK-LABEL: @fill_f32_to_f8E5M2(
+// CHECK: %[[INPUT:.*]] = tensor.from_elements %arg0 : tensor<1xf32>
+// CHECK: %[[CAST:.*]] = hfusion.cast {{.*}} ins(%[[INPUT]] : tensor<1xf32>) outs({{.*}} : tensor<1xf8E5M2>) -> tensor<1xf8E5M2>
+// CHECK: %[[SCALAR:.*]] = tensor.extract %[[CAST]][{{.*}}] : tensor<1xf8E5M2>
+// CHECK: %[[FILL:.*]] = linalg.fill ins(%[[SCALAR]] : f8E5M2) outs({{.*}} : tensor<64xf8E5M2>)
+// CHECK: return %[[FILL]]
+func.func @fill_f32_to_f8E5M2(%arg0: f32) -> tensor<64xf8E5M2> {
+  %empty = tensor.empty() : tensor<64xf32>
+  %filled = linalg.fill ins(%arg0 : f32) outs(%empty : tensor<64xf32>) -> tensor<64xf32>
+  %dst = tensor.empty() : tensor<64xf8E5M2>
+  %cast = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%filled : tensor<64xf32>) outs(%dst : tensor<64xf8E5M2>) -> tensor<64xf8E5M2>
+  return %cast : tensor<64xf8E5M2>
+}
+
+// -----
+
+// CHECK-LABEL: @scalar_f32_to_f16(
+// CHECK-NEXT: %[[CAST:.*]] = arith.truncf %arg0 : f32 to f16
+// CHECK-NEXT: return %[[CAST]] : f16
+func.func @scalar_f32_to_f16(%arg0: f32) -> f16 {
+  %cast = arith.truncf %arg0 : f32 to f16
+  return %cast : f16
+}
+
+// -----
+
+// RegBase (A5) has no native i64 -> i16 truncating narrow: the ISA only
+// provides int64_t_to_int16_t_rintmode, so the truncwithoverflow form must be
+// split through i32, where both steps are legal. Without the split the cast
+// reaches hivm.hir.vcast and fails verification with
+// "currently don't support cast int64_t_to_int16_t_truncwithoverflowmode".
+// CHECK-LABEL: @test_NormalizeCastLowering_i64_to_i16_trunc_ascend950(
+// CHECK-SAME: %[[ARG0:.*]]: tensor<16xi64>
+// CHECK: hfusion.cast {{.*}} ins(%[[ARG0]] : tensor<16xi64>) outs({{.*}} : tensor<16xi32>) -> tensor<16xi32>
+// CHECK: hfusion.cast {{.*}} ins({{.*}} : tensor<16xi32>) outs({{.*}} : tensor<16xi16>) -> tensor<16xi16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_NormalizeCastLowering_i64_to_i16_trunc_ascend950(%arg0: tensor<16xi64>) -> tensor<16xi16> {
+    %0 = tensor.empty() : tensor<16xi16>
+    %1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%arg0 : tensor<16xi64>) outs(%0 : tensor<16xi16>) -> tensor<16xi16>
+    return %1 : tensor<16xi16>
+  }
+}
+
+// -----
+
+// The unsigned destination form (i64 -> u16, i.e. plain `.to(tl.uint16)` with no
+// overflow_mode annotation) takes the same split through i32. Both stages must be
+// spelled as signed si2si: the A5 ISA only has the signed truncating vcasts, and
+// a truncating narrow is a pure bit drop, so the destination's unsigned reading
+// is unaffected.
+// An unsigned source must still be split with the signed spelling: the RegBase
+// vcast whitelist has no uint64_t_to_uint32_t / uint32_t_to_uint16_t entry, so
+// inheriting cast_unsigned here would keep the cast uncompilable. Truncation
+// only drops high bits, so the result is unchanged.
+// CHECK-LABEL: @test_NormalizeCastLowering_i64_to_u16_trunc_ascend950(
+// CHECK-SAME: %[[ARG0:.*]]: tensor<16xi64>
+// CHECK: hfusion.cast {{.*}}cast = #hfusion.type_fn<cast_signed>{{.*}} ins(%[[ARG0]] : tensor<16xi64>) outs({{.*}} : tensor<16xi32>) -> tensor<16xi32>
+// CHECK: hfusion.cast {{.*}}cast = #hfusion.type_fn<cast_signed>{{.*}} ins({{.*}} : tensor<16xi32>) outs({{.*}} : tensor<16xi16>) -> tensor<16xi16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_NormalizeCastLowering_i64_to_u16_trunc_ascend950(%arg0: tensor<16xi64>) -> tensor<16xi16> {
+    %0 = tensor.empty() : tensor<16xi16>
+    %1 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%arg0 : tensor<16xi64>) outs(%0 : tensor<16xi16>) -> tensor<16xi16>
+    return %1 : tensor<16xi16>
+  }
+}
+
+// -----
+
+// The rint form of i64 -> i16 is native on RegBase and must stay untouched.
+// CHECK-LABEL: @test_NormalizeCastLowering_i64_to_i16_rint_ascend950(
+// CHECK-SAME: %[[ARG0:.*]]: tensor<16xi64>
+// CHECK: hfusion.cast {{.*}} ins(%[[ARG0]] : tensor<16xi64>) outs({{.*}} : tensor<16xi16>) -> tensor<16xi16>
+// CHECK-NOT: tensor<16xi32>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_NormalizeCastLowering_i64_to_i16_rint_ascend950(%arg0: tensor<16xi64>) -> tensor<16xi16> {
+    %0 = tensor.empty() : tensor<16xi16>
+    %1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<16xi64>) outs(%0 : tensor<16xi16>) -> tensor<16xi16>
+    return %1 : tensor<16xi16>
+  }
+}
+
+// -----
+
+// Bailing out for the native rint form is not a rewrite, so it must not consume
+// the overflow annotation (a rewrite pattern may not mutate on failure).
+// CHECK-LABEL: @test_NormalizeCastLowering_i64_to_i16_rint_keeps_annotation(
+// CHECK: annotation.mark {{.*}} {overflow_mode = "trunc"} : tensor<16xi16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_NormalizeCastLowering_i64_to_i16_rint_keeps_annotation(%arg0: tensor<16xi64>) -> tensor<16xi16> {
+    %0 = tensor.empty() : tensor<16xi16>
+    %1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<16xi64>) outs(%0 : tensor<16xi16>) -> tensor<16xi16>
+    annotation.mark %1 {overflow_mode = "trunc"} : tensor<16xi16>
+    return %1 : tensor<16xi16>
+  }
+}
+
+// -----
+
+// RegBase has no native i64 -> i8 truncating narrow either (only the rint form).
+// i64 -> i8 needs no split: its truncating form is in the regbase vcast
+// whitelist (int64_t_to_int8_t_truncwithoverflowmode), so it stays a single
+// native op. Only the i64 -> i16 truncating narrow is missing and gets split.
+// CHECK-LABEL: @test_NormalizeCastLowering_i64_to_i8_trunc_ascend950(
+// CHECK-SAME: %[[ARG0:.*]]: tensor<16xi64>
+// CHECK: hfusion.cast {{.*}} ins(%[[ARG0]] : tensor<16xi64>) outs({{.*}} : tensor<16xi8>) -> tensor<16xi8>
+// CHECK-NOT: tensor<16xi32>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_NormalizeCastLowering_i64_to_i8_trunc_ascend950(%arg0: tensor<16xi64>) -> tensor<16xi8> {
+    %0 = tensor.empty() : tensor<16xi8>
+    %1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%arg0 : tensor<16xi64>) outs(%0 : tensor<16xi8>) -> tensor<16xi8>
+    return %1 : tensor<16xi8>
+  }
+}
+
+// -----
+
+// The rint form of i64 -> i8 is native on RegBase and must stay untouched.
+// CHECK-LABEL: @test_NormalizeCastLowering_i64_to_i8_rint_ascend950(
+// CHECK-SAME: %[[ARG0:.*]]: tensor<16xi64>
+// CHECK: hfusion.cast {{.*}} ins(%[[ARG0]] : tensor<16xi64>) outs({{.*}} : tensor<16xi8>) -> tensor<16xi8>
+// CHECK-NOT: tensor<16xi32>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_NormalizeCastLowering_i64_to_i8_rint_ascend950(%arg0: tensor<16xi64>) -> tensor<16xi8> {
+    %0 = tensor.empty() : tensor<16xi8>
+    %1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<16xi64>) outs(%0 : tensor<16xi8>) -> tensor<16xi8>
+    return %1 : tensor<16xi8>
+  }
+}
+
+// -----
+
+// Regression guard for DTS2026102126551 (the reason !4077 was reverted by
+// !4367): FoldUnitDims can insert a reshape between the cast and its
+// annotation.mark, which hides the mark from the plain direct-user lookup. The
+// wide-int split must not fire in that case, otherwise the saturating narrow is
+// rebuilt as a plain truncation and the saturation is silently dropped. The
+// cast must stay untouched here, exactly as on master.
+// CHECK-LABEL: @test_NormalizeCastLowering_i64_to_i16_saturate_behind_reshape(
+// CHECK: %[[CAST:.*]] = hfusion.cast {{.*}}round_mode = #hfusion.round_mode<trunc>{{.*}} ins(%arg0 : tensor<1x16xi64>) outs({{.*}} : tensor<1x16xi16>) -> tensor<1x16xi16>
+// CHECK: %[[RESHAPED:.*]] = tensor.collapse_shape %[[CAST]]
+// CHECK: annotation.mark %[[RESHAPED]] {overflow_mode = "saturate"} : tensor<16xi16>
+// CHECK-NOT: tensor<1x16xi32>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_NormalizeCastLowering_i64_to_i16_saturate_behind_reshape(%arg0: tensor<1x16xi64>) -> tensor<16xi16> {
+    %0 = tensor.empty() : tensor<1x16xi16>
+    %1 = hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<trunc>} ins(%arg0 : tensor<1x16xi64>) outs(%0 : tensor<1x16xi16>) -> tensor<1x16xi16>
+    %2 = tensor.collapse_shape %1 [[0, 1]] : tensor<1x16xi16> into tensor<16xi16>
+    annotation.mark %2 {overflow_mode = "saturate"} : tensor<16xi16>
+    return %2 : tensor<16xi16>
+  }
+}
+
+// -----
+
+// An overflow_mode="trunc" annotation is not a saturation request: it describes
+// the plain truncation the split already implements. It must not block the
+// split, otherwise an annotated truncating i64 -> i16 narrow would still fail to
+// compile (issue 957). Only "saturate" blocks it.
+// CHECK-LABEL: @test_NormalizeCastLowering_i64_to_i16_trunc_annotation_splits(
+// CHECK-SAME: %[[ARG0:.*]]: tensor<16xi64>
+// CHECK: hfusion.cast {{.*}} ins(%[[ARG0]] : tensor<16xi64>) outs({{.*}} : tensor<16xi32>) -> tensor<16xi32>
+// CHECK: hfusion.cast {{.*}} ins({{.*}} : tensor<16xi32>) outs({{.*}} : tensor<16xi16>) -> tensor<16xi16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_NormalizeCastLowering_i64_to_i16_trunc_annotation_splits(%arg0: tensor<16xi64>) -> tensor<16xi16> {
+    %0 = tensor.empty() : tensor<16xi16>
+    %1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%arg0 : tensor<16xi64>) outs(%0 : tensor<16xi16>) -> tensor<16xi16>
+    annotation.mark %1 {overflow_mode = "trunc"} : tensor<16xi16>
+    return %1 : tensor<16xi16>
   }
 }

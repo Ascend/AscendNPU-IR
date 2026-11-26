@@ -91,9 +91,47 @@ def FuseReductionIntoLoop : Pass<"fuse-reduction-into-loop",
     (e.g. 2-D) tensors via arith.addf and a subsequent linalg.reduce collapses
     the accumulated result to a lower-rank tensor, this pass moves the
     reduction inside the loop so that the loop carries the smaller accumulator
-    directly.  This reduces on-chip buffer pressure and improves data locality.
+    directly.  This can reduce on-chip buffer pressure and improve data locality.
+
+    The `zero-only` mode (default) requires a known-zero loop initializer.
+    The `late` mode also accepts nonzero or unknown initializers: it accumulates
+    tile sums from zero, then reduces the original initializer and adds its sum
+    after the loop.
+    The separate `linalg.reduce outs` value is included once, even when the
+    loop runs zero times.
+
+    Enable the pass explicitly:
+
+    ```sh
+    bishengir-opt input.mlir --fuse-reduction-into-loop
+    bishengir-compile input.mlir --enable-fuse-reduction-into-loop=true
+
+    bishengir-opt input.mlir --fuse-reduction-into-loop="mode=late"
+    bishengir-compile input.mlir --enable-fuse-reduction-into-loop=true \
+      --fuse-reduction-into-loop-mode=late
+    ```
+
+    Compiler fusion is disabled by default and applies only to Triton kernels
+    on register-based targets. Setting the compiler mode alone does not enable
+    fusion.
+
+    Enabling this pass allows reassociation and ignores the sign of zero.
+    Fusion can change rounding, lose small results, overflow or produce NaNs.
+    Validate numerical accuracy and benchmark runtime and memory against fusion
+    disabled before enabling it; gains are not guaranteed. Late mode keeps the
+    full initializer live across the loop and may use more on-chip memory.
   }];
   let constructor = "bishengir::createFuseReductionIntoLoopPass()";
+  let options = [
+    Option<"mode", "mode", "bishengir::FuseReductionIntoLoopMode",
+           "bishengir::FuseReductionIntoLoopMode::ZeroOnly",
+           "Loop initializer handling: zero-only or late",
+           [{llvm::cl::values(
+             clEnumValN(bishengir::FuseReductionIntoLoopMode::ZeroOnly,
+                        "zero-only", "Fuse only known-zero initializers"),
+             clEnumValN(bishengir::FuseReductionIntoLoopMode::Late,
+                        "late", "Reduce the initializer after the loop"))}]>
+  ];
   let dependentDialects = [
     "mlir::arith::ArithDialect",
     "mlir::linalg::LinalgDialect",

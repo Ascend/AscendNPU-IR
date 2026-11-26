@@ -2332,7 +2332,7 @@ module {
           hivm.hir.vadd ins(%alloc_3, %alloc_4 : memref<16384xi32, #hivm.address_space<ub>>, memref<16384xi32, #hivm.address_space<ub>>) outs(%alloc_5 : memref<16384xi32, #hivm.address_space<ub>>)
           hivm.hir.store ins(%alloc_5 : memref<16384xi32, #hivm.address_space<ub>>) outs(%arg2 : memref<16384xi32, #hivm.address_space<gm>>)
           %alloc_6 = memref.alloc() : memref<4096xi32, #hivm.address_space<ub>>
-          annotation.mark %alloc_6 {hivm.multi_buffer = 4 : i32, hivm.preload_local_buffer = 1 : i32} : memref<4096xi32, #hivm.address_space<ub>>
+          annotation.mark %alloc_6 {hivm.multi_buffer = 4 : i32, hivm.preload_local_buffer} : memref<4096xi32, #hivm.address_space<ub>>
           scf.for %arg9 = %c0 to %c4 step %c1 {
             %alloc_7 = memref.alloc() : memref<4096xi32, #hivm.address_space<ub>>
             hivm.hir.load ins(%arg3 : memref<4096xi32, #hivm.address_space<gm>>) outs(%alloc_7 : memref<4096xi32, #hivm.address_space<ub>>)
@@ -2570,7 +2570,7 @@ module {
     //
     // CHECK: scf.for
     // CHECK: %[[P0:.*]] = hivm.hir.pointer_cast({{.*}}) : memref<81920xi8, #hivm.address_space<ub>>
-    // CHECK: annotation.mark %[[P0]] {{.*}}hivm.multi_buffer = 2 : i32{{.*}}hivm.preload_local_buffer = 1 : i32{{.*}}
+    // CHECK: annotation.mark %[[P0]] {{.*}}hivm.multi_buffer = 2 : i32{{.*}}hivm.preload_local_buffer{{.*}}
     // CHECK: scope.scope
     // CHECK: hivm.hir.load ins(%arg0 : memref<81920xi8, #hivm.address_space<gm>>) outs(%[[P0]] : memref<81920xi8, #hivm.address_space<ub>>)
     // CHECK: hivm.hir.store ins(%[[P0]] : memref<81920xi8, #hivm.address_space<ub>>) outs(%arg1 : memref<81920xi8, #hivm.address_space<gm>>)
@@ -2580,7 +2580,7 @@ module {
         %buf0 = memref.alloc() : memref<81920xi8, #hivm.address_space<ub>>
         annotation.mark %buf0 {
           hivm.multi_buffer = 2 : i32,
-          hivm.preload_local_buffer = 1 : i32
+          hivm.preload_local_buffer
         } : memref<81920xi8, #hivm.address_space<ub>>
 
         hivm.hir.load ins(%src0 : memref<81920xi8, #hivm.address_space<gm>>)
@@ -2599,7 +2599,7 @@ module {
     //
     // CHECK: scf.for
     // CHECK: %[[P1:.*]] = hivm.hir.pointer_cast({{.*}}) : memref<81920xi8, #hivm.address_space<ub>>
-    // CHECK: annotation.mark %[[P1]] {{.*}}hivm.multi_buffer = 2 : i32{{.*}}hivm.preload_local_buffer = 1 : i32{{.*}}
+    // CHECK: annotation.mark %[[P1]] {{.*}}hivm.multi_buffer = 2 : i32{{.*}}hivm.preload_local_buffer{{.*}}
     // CHECK: scope.scope
     // CHECK: hivm.hir.load ins(%arg2 : memref<81920xi8, #hivm.address_space<gm>>) outs(%[[P1]] : memref<81920xi8, #hivm.address_space<ub>>)
     // CHECK: hivm.hir.store ins(%[[P1]] : memref<81920xi8, #hivm.address_space<ub>>) outs(%arg3 : memref<81920xi8, #hivm.address_space<gm>>)
@@ -2609,7 +2609,7 @@ module {
         %buf1 = memref.alloc() : memref<81920xi8, #hivm.address_space<ub>>
         annotation.mark %buf1 {
           hivm.multi_buffer = 2 : i32,
-          hivm.preload_local_buffer = 1 : i32
+          hivm.preload_local_buffer
         } : memref<81920xi8, #hivm.address_space<ub>>
 
         hivm.hir.load ins(%src1 : memref<81920xi8, #hivm.address_space<gm>>)
@@ -2640,16 +2640,16 @@ module {
   // Reused kill-scope buffer must share the preload address and keep
   // hivm.preload_local_buffer so create-preload rotates both casts together.
   // CHECK: %[[TCB:.*]] = hivm.hir.pointer_cast(%[[ADDR:.*]])
-  // CHECK: annotation.mark %[[TCB]] {{.*}}hivm.preload_local_buffer = 1 : i32
+  // CHECK: annotation.mark %[[TCB]] {{.*}}hivm.preload_local_buffer
   // CHECK: %[[ALIAS:.*]] = hivm.hir.pointer_cast(%[[ADDR]])
-  // CHECK: annotation.mark %[[ALIAS]] {{.*}}hivm.preload_local_buffer = 1 : i32
+  // CHECK: annotation.mark %[[ALIAS]] {{.*}}hivm.preload_local_buffer
   func.func @test_preload_reuse_propagates_mark_on_alias(%arg0: memref<256x128xf32, #hivm.address_space<gm>>, %arg1: memref<256x128xf32, #hivm.address_space<gm>>, %arg2: memref<256x128xf32, #hivm.address_space<gm>>, %arg3: memref<256x128xf32, #hivm.address_space<gm>>) {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c4 = arith.constant 4 : index
     scf.for %arg4 = %c0 to %c4 step %c1 {
       %alloc = memref.alloc() : memref<256x128xf32, #hivm.address_space<ub>>
-      annotation.mark %alloc {hivm.preload_local_buffer = 1 : i32} : memref<256x128xf32, #hivm.address_space<ub>>
+      annotation.mark %alloc {hivm.preload_local_buffer} : memref<256x128xf32, #hivm.address_space<ub>>
       scope.scope : () -> () {
         hivm.hir.load ins(%arg0 : memref<256x128xf32, #hivm.address_space<gm>>) outs(%alloc : memref<256x128xf32, #hivm.address_space<ub>>)
       } {hivm.preload_num = 1 : i32}
@@ -2693,11 +2693,11 @@ module {
     // CHECK: scf.for
     scf.for %i = %c0 to %c4 step %c1 {
       // CHECK: %[[TCB:.*]] = hivm.hir.pointer_cast(%[[A0:.*]], %[[A1:.*]]) : memref<160x128xf32
-      // CHECK: annotation.mark %[[TCB]] {{.*}}hivm.preload_local_buffer = 1 : i32
+      // CHECK: annotation.mark %[[TCB]] {{.*}}hivm.preload_local_buffer
       %tcb = memref.alloc() : memref<160x128xf32, #hivm.address_space<ub>>
       annotation.mark %tcb {
         hivm.multi_buffer = 2 : i32,
-        hivm.preload_local_buffer = 1 : i32
+        hivm.preload_local_buffer
       } : memref<160x128xf32, #hivm.address_space<ub>>
 
       scope.scope : () -> () {
@@ -2708,7 +2708,7 @@ module {
 
       // bf16 output folded onto the preload SE: same address list + mark.
       // CHECK: %[[OUT:.*]] = hivm.hir.pointer_cast(%[[A0]], %[[A1]]) : memref<160x128xbf16
-      // CHECK: annotation.mark %[[OUT]] {{.*}}hivm.preload_local_buffer = 1 : i32
+      // CHECK: annotation.mark %[[OUT]] {{.*}}hivm.preload_local_buffer
       scope.scope : () -> () {
         %out = memref.alloc() : memref<160x128xbf16, #hivm.address_space<ub>>
         func.call @vf_reuse_f32_to_bf16(%tcb, %out) {hivm.vector_function, no_inline}
@@ -2769,10 +2769,10 @@ module {
       hivm.hir.store ins(%pad : memref<49152xi8, #hivm.address_space<ub>>)
                      outs(%arg3 : memref<49152xi8, #hivm.address_space<gm>>)
       // CHECK: %[[OUT:.*]] = hivm.hir.pointer_cast(%[[A0:.*]], %[[A1:.*]], %[[A2:.*]]) : memref<12288xf32
-      // CHECK: annotation.mark %[[OUT]] {{.*}}hivm.multi_buffer = 3 : i32{{.*}}hivm.preload_local_buffer = 1 : i32
+      // CHECK: annotation.mark %[[OUT]] {{.*}}hivm.multi_buffer = 3 : i32{{.*}}hivm.preload_local_buffer
       %out = memref.alloc() : memref<12288xf32, #hivm.address_space<ub>>
       annotation.mark %out {
-        hivm.multi_buffer = 3 : i32, hivm.preload_local_buffer = 1 : i32
+        hivm.multi_buffer = 3 : i32, hivm.preload_local_buffer
       } : memref<12288xf32, #hivm.address_space<ub>>
       scope.scope : () -> () {
         %in = memref.alloc() : memref<12288xf32, #hivm.address_space<ub>>
@@ -2849,10 +2849,10 @@ module {
     %c4 = arith.constant 4 : index
     scf.for %i = %c0 to %c4 step %c1 {
       // CHECK: %[[TCB:.*]] = hivm.hir.pointer_cast(%[[A0:.*]], %[[A1:.*]]) : memref<160x128xf32
-      // CHECK: annotation.mark %[[TCB]] {{.*}}hivm.multi_buffer = 2 : i32{{.*}}hivm.preload_local_buffer = 1 : i32
+      // CHECK: annotation.mark %[[TCB]] {{.*}}hivm.multi_buffer = 2 : i32{{.*}}hivm.preload_local_buffer
       %tcb = memref.alloc() : memref<160x128xf32, #hivm.address_space<ub>>
       annotation.mark %tcb {
-        hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32
+        hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer
       } : memref<160x128xf32, #hivm.address_space<ub>>
       scope.scope : () -> () {
         hivm.hir.load ins(%arg0 : memref<160x128xf32, #hivm.address_space<gm>>)
@@ -2866,7 +2866,7 @@ module {
             : (memref<160x128xf32, #hivm.address_space<ub>>,
                memref<160x128xf32, #hivm.address_space<ub>>) -> ()
         // CHECK: %[[TAIL:.*]] = hivm.hir.pointer_cast(%[[A0]], %[[A1]]) : memref<160x128xbf16
-        // CHECK: annotation.mark %[[TAIL]] {{.*}}hivm.preload_local_buffer = 1 : i32
+        // CHECK: annotation.mark %[[TAIL]] {{.*}}hivm.preload_local_buffer
         // CHECK: func.call @vf_preload_chain_tail(%[[TCB]], %[[TAIL]])
         %tail = memref.alloc() : memref<160x128xbf16, #hivm.address_space<ub>>
         func.call @vf_preload_chain_tail(%head, %tail)
@@ -2915,7 +2915,7 @@ func.func @test_preload_reuse_rejects_aliased_vf_arg(
   %c4 = arith.constant 4 : index
   scf.for %i = %c0 to %c4 step %c1 {
     %safe = memref.alloc() : memref<256x128xf32, #hivm.address_space<ub>>
-    annotation.mark %safe {hivm.multi_buffer = 1 : i32, hivm.preload_local_buffer = 1 : i32}
+    annotation.mark %safe {hivm.multi_buffer = 1 : i32, hivm.preload_local_buffer}
         : memref<256x128xf32, #hivm.address_space<ub>>
     scope.scope : () -> () {
       hivm.hir.load ins(%arg0 : memref<256x128xf32, #hivm.address_space<gm>>)

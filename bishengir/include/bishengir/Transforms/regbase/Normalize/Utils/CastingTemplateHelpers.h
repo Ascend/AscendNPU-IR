@@ -20,17 +20,19 @@
 
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Transforms/regbase/Normalize/Utils/Kinds.h"
-#include "llvm/ADT/StringRef.h"
-#include "llvm/Support/ErrorHandling.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
-#include "mlir/IR/Value.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Support/LogicalResult.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/Support/ErrorHandling.h"
 #include <cstdint>
 #include <optional>
 
@@ -111,8 +113,80 @@ bool supportsDirectTruncWithOverflow(OverflowCastKind kind) {
           kind == OverflowCastKind::I16ToI8);
 }
 
+/// True when `op` carries a saturating overflow_mode annotation, following
+/// reshape-only users in addition to direct ones.
+///
+/// The plain lookup (utils::getAnnotateOpWithAttr) only scans direct users.
+/// FoldUnitDims can insert a tensor.collapse_shape / tensor.expand_shape
+/// between the cast and its annotation.mark, hiding the mark from that lookup.
+/// If the split below then treats the cast as unannotated, it rebuilds both
+/// stages with enable_saturate=false and the saturation is silently dropped --
+/// exactly how DTS2026102126551 was introduced by !4077 and why it was reverted
+/// by !4367.
+///
+/// Only a saturating mark blocks the split. An overflow_mode annotation with
+/// any other value (e.g. "trunc") describes the plain truncation the split
+/// already implements, so it must not stand in the way -- otherwise an
+/// annotated truncating i64 -> i16/i8 narrow would still fail to compile (issue
+/// 957).
+template <typename CastOpType>
+bool hasSaturateAnnotationThroughReshapes(CastOpType op) {
+  Value start = getCastPrimaryValue(op);
+  if (!start)
+    return false;
+  SmallVector<Value> worklist{start};
+  DenseSet<Value> seen;
+  while (!worklist.empty()) {
+    Value v = worklist.pop_back_val();
+    if (!seen.insert(v).second)
+      continue;
+    for (Operation *user : v.getUsers()) {
+      if (utils::isAnnotationWithAttr(user, kOverflowModeAttr)) {
+        auto mode = user->getAttrOfType<StringAttr>(kOverflowModeAttr);
+        if (mode && mode.getValue().ends_with("saturate"))
+          return true;
+      }
+      if (isa<tensor::CollapseShapeOp, tensor::ExpandShapeOp,
+              tensor::ReshapeOp>(user)) {
+        for (Value r : user->getResults())
+          worklist.push_back(r);
+      }
+    }
+  }
+  return false;
+}
+
+/// A5/RegBase has no native i64 -> i16 truncating narrow -- the ISA only has
+/// the rint form -- so that cast must be rebuilt through i32. Admit exactly
+/// that cast for normalization, which RegBase otherwise restricts to the
+/// F32ToI16/F32ToI8 float narrows.
+///
+/// i64 -> i8 is deliberately not listed: its truncating form was added to the
+/// regbase whitelist separately (int64_t_to_int8_t_truncwithoverflowmode), so
+/// it is already accepted natively and must stay a single op.
+///
+/// A cast that asks for saturation is deliberately NOT admitted: the split
+/// implements plain truncation, so rebuilding a saturating narrow that way
+/// would silently turn the saturation into a wrap. Saturation can be announced
+/// by the overflow_mode annotation (possibly behind a reshape) or by the
+/// enable_saturate attribute, so both are checked.
+template <typename Traits, typename CastOpType>
+bool requiresWideIntNarrowSplit(CastOpType op, OverflowCastKind kind) {
+  if (!Traits::archIsRegbased())
+    return false;
+  if (kind != OverflowCastKind::I64ToI16)
+    return false;
+  if (Traits::hasSaturateEnabled(op) ||
+      hasSaturateAnnotationThroughReshapes(op))
+    return false;
+  return Traits::matchCastRoundMode(op, CastRoundKind::Trunc) ||
+         Traits::matchCastRoundMode(op, CastRoundKind::TruncWithOverflow);
+}
+
 template <typename Traits, typename CastOpType>
 bool canNormalizeTruncOverflow(CastOpType op, OverflowCastKind kind) {
+  if (requiresWideIntNarrowSplit<Traits>(op, kind))
+    return true;
   if (Traits::archIsRegbased())
     return kind == OverflowCastKind::F32ToI16 ||
            kind == OverflowCastKind::F32ToI8;
@@ -288,14 +362,15 @@ LogicalResult lowerTruncOverflowMode(CastOpType op,
   if (!canNormalizeTruncOverflow<Traits>(op, kind))
     return failure();
 
-  eraseCastAnnotationIfPresent(rewriter, op, kOverflowModeAttr);
-  eraseCastAnnotationIfPresent(rewriter, op, kEnableOverflowAttr);
-
   Location loc = op.getLoc();
   Type outType = getElementTypeOrSelf(op.getDpsInits()[0].getType());
   Value input = op.getDpsInputs()[0];
 
   auto replaceWith = [&rewriter, op](Value value) {
+    // Consume the overflow annotations only once the cast is actually rebuilt:
+    // a case that bails out with failure() must not mutate the IR.
+    eraseCastAnnotationIfPresent(rewriter, op, kOverflowModeAttr);
+    eraseCastAnnotationIfPresent(rewriter, op, kEnableOverflowAttr);
     rewriter.replaceOp(op, value);
     return success();
   };
@@ -355,11 +430,22 @@ LogicalResult lowerTruncOverflowMode(CastOpType op,
   case OverflowCastKind::I64ToI16:
   case OverflowCastKind::I64ToI8: {
     // Split wide integer narrowing through I32 to keep overflow semantics.
-    Value castI32 = Traits::createCastValueFromSourceOp(rewriter, loc, op, input,
-                                      rewriter.getI32Type(),
-                                      CastRoundKind::TruncWithOverflow);
-    return replaceWith(Traits::createCastValueFromSourceOp(rewriter, loc, op, castI32, outType,
-                                         CastRoundKind::TruncWithOverflow));
+    //
+    // Both stages are spelled signed/si2si on purpose. The RegBase vcast
+    // whitelist only carries the signed spellings (int64_t_to_int32_t_...,
+    // int32_t_to_int16_t_..., int32_t_to_int8_t_...) and has no unsigned
+    // counterparts, so inheriting cast_unsigned from the source would produce
+    // unlisted names such as uint64_t_to_uint32_t_... and still fail
+    // verification. Truncation only drops high bits, so the signed spelling
+    // yields the same bits for an unsigned destination as well.
+    Value castI32 = Traits::createCastValueFromSourceOp(
+        rewriter, loc, op, input, rewriter.getI32Type(),
+        CastRoundKind::TruncWithOverflow, CastSignKind::Signed,
+        /*enableSaturate=*/false, CastUnsignedModeKind::SignedToSigned);
+    return replaceWith(Traits::createCastValueFromSourceOp(
+        rewriter, loc, op, castI32, outType, CastRoundKind::TruncWithOverflow,
+        CastSignKind::Signed, /*enableSaturate=*/false,
+        CastUnsignedModeKind::SignedToSigned));
   }
   case OverflowCastKind::Unsupported:
     return failure();
@@ -619,10 +705,11 @@ Value castInToF32ToOut(CastOpType op, PatternRewriter &rewriter) {
   if (dstType.isF32())
     return castSrcToF32;
 
-  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castSrcToF32, dstType,
-                           CastRoundKind::Default,
-                           dstType.isInteger() ? CastSignKind::Signed
-                                               : CastSignKind::Preserve);
+  auto kind =
+      dstType.isInteger() ? CastSignKind::Signed : CastSignKind::Preserve;
+  return Traits::createCastValueFromSourceOp(
+      rewriter, loc, op, castSrcToF32, dstType, CastRoundKind::Default, kind,
+      Traits::hasSaturateEnabled(op));
 }
 
 template <typename Traits, typename CastOpType>
@@ -640,9 +727,10 @@ template <typename Traits, typename CastOpType>
 Value castU32ToI64ToF32ToOut(CastOpType op, Type targetType,
                              PatternRewriter &rewriter) {
   Value u32ToF32Result = castU32ToI64ToF32<Traits>(op, rewriter);
-  return Traits::createCastValueFromSourceOp(rewriter, op.getLoc(), op, u32ToF32Result,
-                           targetType, CastRoundKind::Default,
-                           CastSignKind::Signed);
+  return Traits::createCastValueFromSourceOp(
+      rewriter, op.getLoc(), op, u32ToF32Result, targetType,
+      CastRoundKind::Default, CastSignKind::Signed,
+      Traits::hasSaturateEnabled(op));
 }
 
 template <typename Traits, typename CastOpType>
@@ -660,14 +748,14 @@ Value castSrcToFp16ToTargetType(CastOpType op, Type targetType,
         Traits::createCastValueFromSourceOp(rewriter, loc, op, castSrcToF16, rewriter.getF32Type(),
                           CastRoundKind::Default,
                           CastSignKind::Preserve);
-    return Traits::createCastValueFromSourceOp(rewriter, loc, op, castF16ToF32, targetType,
-                             CastRoundKind::Default,
-                             CastSignKind::Preserve);
+    return Traits::createCastValueFromSourceOp(
+        rewriter, loc, op, castF16ToF32, targetType, CastRoundKind::Default,
+        CastSignKind::Preserve, Traits::hasSaturateEnabled(op));
   }
 
-  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castSrcToF16, targetType,
-                           CastRoundKind::Default,
-                           CastSignKind::Signed);
+  return Traits::createCastValueFromSourceOp(
+      rewriter, loc, op, castSrcToF16, targetType, CastRoundKind::Default,
+      CastSignKind::Signed, Traits::hasSaturateEnabled(op));
 }
 
 template <typename Traits, typename CastOpType>
@@ -704,19 +792,20 @@ Value castI8ToI64(CastOpType op, PatternRewriter &rewriter) {
   if (!Traits::archIsRegbased()) {
     Value i8ToF32Result =
         castSrcToFp16ToTargetType<Traits>(op, rewriter.getF32Type(), rewriter);
-    return Traits::createCastValueFromSourceOp(rewriter, loc, op, i8ToF32Result,
-                             rewriter.getI64Type(),
-                             CastRoundKind::Default,
-                             CastSignKind::Signed);
+    return Traits::createCastValueFromSourceOp(
+        rewriter, loc, op, i8ToF32Result, rewriter.getI64Type(),
+        CastRoundKind::Default, CastSignKind::Signed,
+        Traits::hasSaturateEnabled(op));
   }
 
   Value castValue = Traits::createCastValueFromSourceOp(rewriter, loc, op, op.getDpsInputs()[0],
                                       rewriter.getI32Type(),
                                       CastRoundKind::Default,
                                       CastSignKind::Preserve);
-  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castValue, rewriter.getI64Type(),
-                           CastRoundKind::Default,
-                           CastSignKind::Preserve);
+  return Traits::createCastValueFromSourceOp(
+      rewriter, loc, op, castValue, rewriter.getI64Type(),
+      CastRoundKind::Default, CastSignKind::Preserve,
+      Traits::hasSaturateEnabled(op));
 }
 
 template <typename Traits, typename CastOpType>
@@ -725,8 +814,10 @@ Value castI1ToI32ViaF16(CastOpType op, PatternRewriter &rewriter) {
   Value castF16Value = Traits::createCastValueFromSourceOp(rewriter, loc, op, op.getDpsInputs()[0],
                                          rewriter.getF16Type(),
                                          CastRoundKind::RInt);
-  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castF16Value,
-                           rewriter.getI32Type(), CastRoundKind::RInt);
+  return Traits::createCastValueFromSourceOp(
+      rewriter, loc, op, castF16Value, rewriter.getI32Type(),
+      CastRoundKind::RInt, CastSignKind::Preserve,
+      Traits::hasSaturateEnabled(op));
 }
 
 template <typename Traits, typename CastOpType>
@@ -735,10 +826,10 @@ Value castI1ToI64ViaF32(CastOpType op, PatternRewriter &rewriter) {
   Value castF32Value = Traits::createCastValueFromSourceOp(rewriter, loc, op, op.getDpsInputs()[0],
                                          rewriter.getF32Type(),
                                          CastRoundKind::RInt);
-  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castF32Value,
-                           rewriter.getI64Type(),
-                           CastRoundKind::Default,
-                           CastSignKind::Signed);
+  return Traits::createCastValueFromSourceOp(
+      rewriter, loc, op, castF32Value, rewriter.getI64Type(),
+      CastRoundKind::Default, CastSignKind::Signed,
+      Traits::hasSaturateEnabled(op));
 }
 
 template <typename Traits, typename CastOpType>
@@ -746,8 +837,10 @@ Value castI32ToF16ViaF32(CastOpType op, PatternRewriter &rewriter) {
   Location loc = op.getLoc();
   Value castF32Value = Traits::createCastValueFromSourceOp(rewriter, loc, op, op.getDpsInputs()[0],
                                          rewriter.getF32Type());
-  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castF32Value,
-                           rewriter.getF16Type());
+  return Traits::createCastValueFromSourceOp(
+      rewriter, loc, op, castF32Value, rewriter.getF16Type(),
+      CastRoundKind::Default, CastSignKind::Preserve,
+      Traits::hasSaturateEnabled(op));
 }
 
 template <typename Traits, typename CastOpType>
@@ -765,9 +858,10 @@ Value castI16ToI64(CastOpType op, PatternRewriter &rewriter) {
                                   CastRoundKind::RInt);
   }
 
-  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castValue, rewriter.getI64Type(),
-                           CastRoundKind::Default,
-                           CastSignKind::Preserve);
+  return Traits::createCastValueFromSourceOp(
+      rewriter, loc, op, castValue, rewriter.getI64Type(),
+      CastRoundKind::Default, CastSignKind::Preserve,
+      Traits::hasSaturateEnabled(op));
 }
 
 template <typename Traits, typename CastOpType>
@@ -776,8 +870,10 @@ Value castI16ToI32ViaF32(CastOpType op, PatternRewriter &rewriter) {
   Value castF32Value = Traits::createCastValueFromSourceOp(rewriter, loc, op, op.getDpsInputs()[0],
                                          rewriter.getF32Type(),
                                          CastRoundKind::RInt);
-  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castF32Value,
-                           rewriter.getI32Type());
+  return Traits::createCastValueFromSourceOp(
+      rewriter, loc, op, castF32Value, rewriter.getI32Type(),
+      CastRoundKind::Default, CastSignKind::Preserve,
+      Traits::hasSaturateEnabled(op));
 }
 
 template <typename Traits, typename CastOpType>
@@ -787,9 +883,9 @@ Value castF32ToU32ViaI64(CastOpType op, PatternRewriter &rewriter) {
                                          rewriter.getI64Type(),
                                          CastRoundKind::Default,
                                          CastSignKind::Signed);
-  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castF32ToI64,
-                           rewriter.getI32Type(), CastRoundKind::Default,
-                           CastSignKind::Signed);
+  return Traits::createCastValueFromSourceOp(
+      rewriter, loc, op, castF32ToI64, rewriter.getI32Type(),
+      CastRoundKind::Default, CastSignKind::Signed);
 }
 
 } // namespace mlir

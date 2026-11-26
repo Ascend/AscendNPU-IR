@@ -7,7 +7,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Tools/hivmc/PassPipelineA5.h"
-#include "bishengir/Tools/hivmc/HIVMC.h"
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
@@ -17,8 +16,10 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
 #include "bishengir/Dialect/Triton/Transforms/Passes.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "bishengir/Tools/hivmc/HIVMC.h"
 #include "bishengir/Transforms/Passes.h"
 
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
@@ -29,15 +30,151 @@
 #include "mlir/Conversion/ArithToEmitC/ArithToEmitCPass.h"
 #include "mlir/Conversion/Passes.h"
 #include "mlir/Dialect/Arith/Transforms/Passes.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/Transforms/Passes.h"
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"
+#include "mlir/IR/AttrTypeSubElements.h"
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Target/LLVMIR/ModuleTranslation.h"
 #include "mlir/Transforms/Passes.h"
+#include "llvm/ADT/TypeSwitch.h"
+#include "llvm/BinaryFormat/Dwarf.h"
+#include "llvm/Support/Path.h"
 
 using namespace mlir;
 
 namespace bishengir {
+
+namespace {
+static Location scopeInlinedFiles(Location loc, LLVM::DILocalScopeAttr scope,
+                                  bool inlined = false) {
+  if (auto call = dyn_cast<CallSiteLoc>(loc))
+    return CallSiteLoc::get(
+        scopeInlinedFiles(call.getCallee(), scope, true),
+        scopeInlinedFiles(call.getCaller(), scope, inlined));
+  if (auto fused = dyn_cast<FusedLoc>(loc)) {
+    if (auto explicitScope =
+            dyn_cast_or_null<LLVM::DILocalScopeAttr>(fused.getMetadata()))
+      scope = explicitScope;
+    SmallVector<Location> children;
+    for (Location child : fused.getLocations())
+      children.push_back(scopeInlinedFiles(child, scope, inlined));
+    return FusedLoc::get(children, fused.getMetadata(), loc.getContext());
+  }
+  if (auto named = dyn_cast<NameLoc>(loc))
+    return NameLoc::get(named.getName(),
+                        scopeInlinedFiles(named.getChildLoc(), scope, inlined));
+  if (auto opaque = dyn_cast<OpaqueLoc>(loc))
+    return OpaqueLoc::get(
+        opaque.getUnderlyingLocation(), opaque.getUnderlyingTypeID(),
+        scopeInlinedFiles(opaque.getFallbackLocation(), scope, inlined));
+
+  auto source = dyn_cast<FileLineColLoc>(loc);
+  if (!inlined || !source)
+    return loc;
+  auto scopeFile =
+      llvm::TypeSwitch<LLVM::DILocalScopeAttr, LLVM::DIFileAttr>(scope)
+          .Case<LLVM::DISubprogramAttr, LLVM::DILexicalBlockAttr,
+                LLVM::DILexicalBlockFileAttr>(
+              [](auto attr) { return attr.getFile(); })
+          .Default([](auto) { return LLVM::DIFileAttr(); });
+  StringRef path = source.getFilename().getValue();
+  auto sourceFile =
+      LLVM::DIFileAttr::get(loc.getContext(), llvm::sys::path::filename(path),
+                            llvm::sys::path::parent_path(path));
+  if (sourceFile == scopeFile)
+    return loc;
+
+  // LLVM exports a bare FileLineColLoc using its inherited scope's file.
+  auto fileScope = LLVM::DILexicalBlockFileAttr::get(scope, sourceFile, 0);
+  return FusedLoc::get({loc}, fileScope, loc.getContext());
+}
+
+struct PreserveInlinedSourceFiles
+    : public PassWrapper<PreserveInlinedSourceFiles, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PreserveInlinedSourceFiles)
+
+  void runOnOperation() override {
+    getOperation()->walk([](LLVM::LLVMFuncOp func) {
+      auto subprogram =
+          func.getLoc()->findInstanceOf<FusedLocWith<LLVM::DISubprogramAttr>>();
+      if (!subprogram)
+        return;
+      auto scope = cast<LLVM::DILocalScopeAttr>(subprogram.getMetadata());
+      func.getBody().walk([&](Operation *op) {
+        op->setLoc(scopeInlinedFiles(op->getLoc(), scope));
+      });
+    });
+  }
+};
+
+struct NormalizeBooleanDebugTypes
+    : public PassWrapper<NormalizeBooleanDebugTypes, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(NormalizeBooleanDebugTypes)
+
+  void runOnOperation() override {
+    AttrTypeReplacer replacer;
+    replacer.addReplacement([](LLVM::DIBasicTypeAttr type) {
+      if (type.getTag() != llvm::dwarf::DW_TAG_base_type ||
+          type.getEncoding() != llvm::dwarf::DW_ATE_boolean ||
+          type.getSizeInBits() != 1)
+        return type;
+
+      // CCEC derives DW_AT_byte_size from whole bytes of the DI type.
+      // The source Boolean occupies one byte even when its SSA value is i1.
+      return LLVM::DIBasicTypeAttr::get(type.getContext(), type.getTag(),
+                                        type.getName(), 8, type.getEncoding());
+    });
+    replacer.recursivelyReplaceElementsIn(getOperation(), /*replaceAttrs=*/true,
+                                          /*replaceLocs=*/true);
+  }
+};
+
+struct ExpandSIMTUnsignedMultiplyHigh
+    : public PassWrapper<ExpandSIMTUnsignedMultiplyHigh,
+                         OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ExpandSIMTUnsignedMultiplyHigh)
+
+  void runOnOperation() override {
+    namespace regbase = mlir::hivm_regbaseintrins;
+    constexpr StringLiteral helper = "_mlir_ciface_simt_umulhi_uint32_t";
+    auto declaration = getOperation().lookupSymbol<LLVM::LLVMFuncOp>(helper);
+    if (!declaration || !declaration.isExternal())
+      return;
+
+    // The debug backend can end incoming argument locations around an
+    // out-of-line SIMT call. Expand this fixed-width template operation so
+    // that its arithmetic can be selected directly in the caller.
+    getOperation()->walk([&](LLVM::CallOp call) {
+      if (call.getCallee().value_or("") != helper ||
+          !call->getAttrOfType<regbase::SIMT_CallableAttr>(
+              regbase::kDavinciCallingConvAttrName))
+        return;
+      auto operands = call.getCalleeOperands();
+      if (operands.size() != 2 || !operands[0].getType().isInteger(32) ||
+          !operands[1].getType().isInteger(32) || call.getNumResults() != 1 ||
+          !call.getResult().getType().isInteger(32))
+        return;
+
+      OpBuilder builder(call);
+      Location resultLoc = call.getLoc();
+      Location loc = resultLoc;
+      while (auto named = dyn_cast<NameLoc>(loc))
+        loc = named.getChildLoc();
+      mlir::Type i64 = builder.getI64Type();
+      mlir::Value lhs = builder.create<LLVM::ZExtOp>(loc, i64, operands[0]);
+      mlir::Value rhs = builder.create<LLVM::ZExtOp>(loc, i64, operands[1]);
+      mlir::Value product = builder.create<LLVM::MulOp>(loc, lhs, rhs);
+      mlir::Value bits = builder.create<LLVM::ConstantOp>(loc, i64, 32);
+      mlir::Value high = builder.create<LLVM::LShrOp>(loc, product, bits);
+      mlir::Value result =
+          builder.create<LLVM::TruncOp>(resultLoc, builder.getI32Type(), high);
+      call.getResult().replaceAllUsesWith(result);
+      call.erase();
+    });
+  }
+};
+} // namespace
 
 void buildSIMTPipeline(OpPassManager &pm, const HIVMCMainConfig &config) {
   buildLowerToLLVMPipeline(pm, config);
@@ -61,15 +198,22 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
   if (config.shouldEnableSanitizer()) {
     pm.addPass(createAppendSanitizerDataPass());
   }
-  if (config.shouldEnableSanitizer() || config.shouldEnableDebugInfo() ||
-      config.shouldEnableDebugVariables()) {
+  bool emitDebugInfo = config.shouldEnableSanitizer() ||
+                       config.shouldEnableDebugInfo() ||
+                       config.shouldEnableDebugVariables();
+  if (emitDebugInfo) {
     // Add lineNo debug info to the IR
     // The info here Corresponds to that in the source file.
     pm.addPass(LLVM::createDIScopeForLLVMFuncOpPass());
   }
   if (config.shouldEnableDebugVariables()) {
+    pm.addPass(std::make_unique<ExpandSIMTUnsignedMultiplyHigh>());
     pm.addPass(LLVM::createLLVMDILocalVariablePass());
+    pm.addPass(std::make_unique<NormalizeBooleanDebugTypes>());
   }
+
+  if (emitDebugInfo)
+    pm.addPass(std::make_unique<PreserveInlinedSourceFiles>());
 
   pm.addPass(createAppendUsePrintDebugDataPass());
   const bool ascendDebugLLVM = StringRef(getenv("ASCEND_DEBUG_LLVM")) == "1";

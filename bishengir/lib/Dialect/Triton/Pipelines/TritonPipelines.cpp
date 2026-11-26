@@ -96,15 +96,17 @@ namespace triton {
 #if BISHENGIR_ENABLE_TRITON_COMPILE
 void buildLowerTritonPipeline(OpPassManager &pm,
                               const LowerTritonPipelineOptions &options) {
+  pm.addNestedPass<mlir::triton::FuncOp>(
+      bishengir::triton::createCatchUnsupportedKernelsPass());
   if (!options.enableSIMTDeviceDebug)
     pm.addPass(mlir::triton::ascend::createEraseTritonDebugOps());
 
   bishengir::SetBishengirSimtOptAttrOptions optionsSimtOpt;
   optionsSimtOpt.simtOptimizationMode =
       options.simtOptimizationMode;
-  
+
   pm.addPass(bishengir::triton::createConvertZeroDimTensorsPass());
-  
+
   if (!options.disableSliceOptimizations) {
     pm.addPass(bishengir::triton::createRewriteSliceOpToMemoryOpsPass());
   }
@@ -138,6 +140,7 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   bishengir::TileDotLoadsOptions tileDotLoadsOpts;
   tileDotLoadsOpts.smemBudgetBytes = options.sharedDynamicSize;
   tileDotLoadsOpts.KTileSize = options.KTileSize;
+  tileDotLoadsOpts.superBlockFactor = options.superBlockFactor;
   tileDotLoadsOpts.enableGlobalScratchAllocation = options.enableGlobalScratchAllocation;
   pm.addNestedPass<mlir::triton::FuncOp>(
       bishengir::triton::createTileDotLoadsPass(tileDotLoadsOpts));

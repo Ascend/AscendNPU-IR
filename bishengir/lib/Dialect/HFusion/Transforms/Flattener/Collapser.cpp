@@ -210,6 +210,11 @@ void Flattener::adjustOperations() {
     if (!op || isHeadOperation(op) || isTailOperation(op) ||
         isUnsupportedOp(op))
       continue;
+    // While boundary refs support slice reconstruction inside the regions.
+    // Their signatures retain their ranks and are not rewritten here. In
+    // particular, a boundary ref does not imply that the inits are tracked.
+    if (isa<scf::WhileOp>(op))
+      continue;
     // Whitelist check
     bool allowed = isExplicitlyAllowedCollapseOp(op);
     // Allowed for regbase only
@@ -1320,10 +1325,25 @@ void Flattener::adjustToTensorOp(bufferization::ToTensorOp op,
 void Flattener::adjustToMemrefOp(bufferization::ToMemrefOp op,
                                  mlir::OpBuilder &builder) {
   auto oldType = cast<MemRefType>(op.getMemref().getType());
-  // TODO: adjust the layout instead of using identity
-  MemRefType newType = MemRefType::Builder(oldType)
-                           .setShape(utils::getShape(op.getOperand().getType()))
-                           .setLayout(MemRefLayoutAttrInterface());
+  // The shape is collapsed by the flattener, so the layout has to be collapsed
+  // together with it.
+  auto collapseGroup = getCollapseGroup(op.getMemref());
+  bool guaranteedCollapsible =
+      !collapseGroup.empty() &&
+      memref::CollapseShapeOp::isGuaranteedCollapsible(oldType, collapseGroup);
+  MemRefType newType;
+  if (guaranteedCollapsible) {
+    // The shape is collapsed by the flattener, so the layout has to be
+    // collapsed together with it.
+    newType =
+        memref::CollapseShapeOp::computeCollapsedType(oldType, collapseGroup);
+  } else {
+    MemRefType::Builder typeBuilder(oldType);
+    typeBuilder.setShape(utils::getShape(op.getOperand().getType()));
+    if (!collapseGroup.empty())
+      typeBuilder.setLayout(MemRefLayoutAttrInterface());
+    newType = typeBuilder;
+  }
   LDBG("operation result " << op << " " << newType << "\n");
   op.getMemref().setType(newType);
 }
@@ -1331,10 +1351,21 @@ void Flattener::adjustToMemrefOp(bufferization::ToMemrefOp op,
 void Flattener::adjustToBufferOp(bufferization::ToBufferOp op,
                                  mlir::OpBuilder &builder) {
   auto oldType = cast<MemRefType>(op.getBuffer().getType());
-  // TODO: adjust the layout instead of using identity
-  MemRefType newType = MemRefType::Builder(oldType)
-                           .setShape(utils::getShape(op.getOperand().getType()))
-                           .setLayout(MemRefLayoutAttrInterface());
+  auto collapseGroup = getCollapseGroup(op.getBuffer());
+  bool guaranteedCollapsible =
+      !collapseGroup.empty() &&
+      memref::CollapseShapeOp::isGuaranteedCollapsible(oldType, collapseGroup);
+  MemRefType newType;
+  if (guaranteedCollapsible) {
+    newType =
+        memref::CollapseShapeOp::computeCollapsedType(oldType, collapseGroup);
+  } else {
+    MemRefType::Builder typeBuilder(oldType);
+    typeBuilder.setShape(utils::getShape(op.getOperand().getType()));
+    if (!collapseGroup.empty())
+      typeBuilder.setLayout(MemRefLayoutAttrInterface());
+    newType = typeBuilder;
+  }
   LDBG("operation result " << op << " " << newType << "\n");
   op.getBuffer().setType(newType);
 }
@@ -1834,6 +1865,13 @@ FailureOr<Operation *> Flattener::expandForTail(OpTy &tensorOutOp,
     return failure();
   }
 
+  if (!hasCollapseGroup(collapsedVal)) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "Source is not expandable, collapse group not found"
+               << "\n");
+    return failure();
+  }
+
   CollapseGroup collapseGroup = getCollapseGroup(collapsedVal);
   if (collapseGroup.empty()) {
     LLVM_DEBUG(llvm::dbgs() << "Collapse group invalid"
@@ -1916,6 +1954,8 @@ void Flattener::adjustTensorOutOpSource(OpTy tensorOutOp, OpBuilder &builder) {
     return;
   if (isValueFromHead(source))
     return;
+  if (!hasCollapseGroup(source))
+    return;
   auto expandOp = expandForTail(tensorOutOp, source, builder);
   if (succeeded(expandOp)) {
     tensorOutOp.getSourceMutable().assign(expandOp.value()->getResult(0));
@@ -1925,26 +1965,13 @@ void Flattener::adjustTensorOutOpSource(OpTy tensorOutOp, OpBuilder &builder) {
 }
 
 template <typename OpTy>
-void Flattener::adjustTensorOutOpDest(OpTy tensorOutOp, OpBuilder &builder) {
-  Value dest = tensorOutOp.getDest();
-  if (!utils::getShapeRank(dest).value_or(0))
-    return;
-  if (isValueFromHead(dest))
-    return;
-  auto expandOp = expandForTail(tensorOutOp, dest, builder);
-  if (!failed(expandOp)) {
-    tensorOutOp.getDestMutable().assign(expandOp.value()->getResult(0));
-    return;
-  }
-  llvm::report_fatal_error("tensor expand op collapse out op dest failed");
-}
-
-template <typename OpTy>
 void Flattener::adjustTensorOutOpSrc(OpTy tensorOutOp, OpBuilder &builder) {
   Value source = tensorOutOp.getSrc();
   if (isValueFromHead(source))
     return;
   if (!utils::getShapeRank(source).value_or(0))
+    return;
+  if (!hasCollapseGroup(source))
     return;
   auto expandOp = expandForTail(tensorOutOp, source, builder);
   if (!failed(expandOp)) {
@@ -1960,6 +1987,8 @@ void Flattener::adjustMemrefOutOpSrc(OpTy memrefOutOp, OpBuilder &builder) {
   if (isValueFromHead(source))
     return;
   if (!utils::getShapeRank(source).value_or(0))
+    return;
+  if (!hasCollapseGroup(source))
     return;
   auto expandOp = expandForTail(memrefOutOp, source, builder);
   if (!failed(expandOp)) {

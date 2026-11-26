@@ -1,9 +1,23 @@
 // RUN: bishengir-opt %s -hivm-infer-buffer-size-from-slice -allow-unregistered-dialect -split-input-file | FileCheck %s
 // RUN: bishengir-opt %s -hivm-infer-buffer-size-from-slice -hivm-set-buffer-size -allow-unregistered-dialect -split-input-file | FileCheck %s --check-prefix=CHAIN
 
-// hivm-infer-buffer-size-from-slice marks the dst of every copy-like op
-// with a buffer_size_in_byte upper bound derived from the op's src defining
-// chain (256 * 16bit = 512 bytes).
+// hivm-infer-buffer-size-from-slice marks the dst of a shape-preserving HIVM
+// elementwise op or a copy-like op with a buffer_size_in_byte upper bound
+// derived from the src defining chain. The byte size uses the dst element
+// type, so 256 * 16bit = 512 bytes.
+
+// The dst of a copy-like op is marked from its static src.
+// CHECK-LABEL: func.func @infer_vcast_dst_static_src(
+func.func @infer_vcast_dst_static_src(%arg0: memref<256xi1>, %arg1: index) {
+  %dst = memref.alloc(%arg1) : memref<?xf16>
+  // CHECK: annotation.mark %[[DST:.*]] {buffer_size_in_byte = 512 : i64} : memref<?xf16>
+  // CHECK: hivm.hir.vcast ins(%arg0 : memref<256xi1>) outs(%[[DST]] : memref<?xf16>)
+  hivm.hir.vcast ins(%arg0 : memref<256xi1>) outs(%dst : memref<?xf16>) round_mode = <trunc>
+  return
+}
+
+// -----
+
 // CHECK-LABEL: func.func @infer_copy_dst_static_src(
 func.func @infer_copy_dst_static_src(%arg0: memref<256xf16>, %arg1: index) {
   %dst = memref.alloc(%arg1) : memref<?xf16>
@@ -43,6 +57,49 @@ func.func @infer_load_dst_static_src(%arg0: memref<256xf16, #hivm.address_space<
   // CHAIN: %[[VIEW:.*]] = memref.view %[[ALLOC]][%[[CONST]]][%arg1] : memref<512xi8, #hivm.address_space<ub>> to memref<?xf16, #hivm.address_space<ub>>
   // CHAIN: hivm.hir.load ins(%arg0 : memref<256xf16, #hivm.address_space<gm>>) outs(%[[VIEW]] : memref<?xf16, #hivm.address_space<ub>>)
   hivm.hir.load ins(%arg0 : memref<256xf16, #hivm.address_space<gm>>) outs(%dst : memref<?xf16, #hivm.address_space<ub>>)
+  return
+}
+
+// -----
+
+// A unary shape-preserving elementwise op is marked from its static src.
+// CHECK-LABEL: func.func @infer_vexp_dst_static_src(
+func.func @infer_vexp_dst_static_src(%arg0: memref<256xf16>, %arg1: index) {
+  %dst = memref.alloc(%arg1) : memref<?xf16>
+  // CHECK: annotation.mark %[[DST:.*]] {buffer_size_in_byte = 512 : i64} : memref<?xf16>
+  // CHECK: hivm.hir.vexp ins(%arg0 : memref<256xf16>) outs(%[[DST]] : memref<?xf16>)
+  hivm.hir.vexp ins(%arg0 : memref<256xf16>) outs(%dst : memref<?xf16>)
+  return
+}
+
+// -----
+
+// A binary shape-preserving elementwise op is marked from its static srcs.
+// CHECK-LABEL: func.func @infer_vadd_dst_static_src(
+func.func @infer_vadd_dst_static_src(%arg0: memref<256xf16>,
+                                     %arg1: memref<256xf16>,
+                                     %arg2: index) {
+  %dst = memref.alloc(%arg2) : memref<?xf16>
+  // CHECK: annotation.mark %[[DST:.*]] {buffer_size_in_byte = 512 : i64} : memref<?xf16>
+  // CHECK: hivm.hir.vadd ins(%arg0, %arg1 : memref<256xf16>, memref<256xf16>) outs(%[[DST]] : memref<?xf16>)
+  hivm.hir.vadd ins(%arg0, %arg1 : memref<256xf16>, memref<256xf16>)
+                outs(%dst : memref<?xf16>)
+  return
+}
+
+// -----
+
+// A ternary shape-preserving elementwise op is marked from its static srcs.
+// CHECK-LABEL: func.func @infer_vsel_dst_static_src(
+func.func @infer_vsel_dst_static_src(%arg0: memref<256xi1>,
+                                     %arg1: memref<256xf16>,
+                                     %arg2: memref<256xf16>,
+                                     %arg3: index) {
+  %dst = memref.alloc(%arg3) : memref<?xf16>
+  // CHECK: annotation.mark %[[DST:.*]] {buffer_size_in_byte = 512 : i64} : memref<?xf16>
+  // CHECK: hivm.hir.vsel ins(%arg0, %arg1, %arg2 : memref<256xi1>, memref<256xf16>, memref<256xf16>) outs(%[[DST]] : memref<?xf16>)
+  hivm.hir.vsel ins(%arg0, %arg1, %arg2 : memref<256xi1>, memref<256xf16>, memref<256xf16>)
+                outs(%dst : memref<?xf16>)
   return
 }
 
@@ -168,3 +225,43 @@ func.func @infer_copy_src_no_static_bound(%arg0: memref<?xf16>, %arg1: index) {
   hivm.hir.copy ins(%arg0 : memref<?xf16>) outs(%dst : memref<?xf16>)
   return
 }
+
+// -----
+
+// An elementwise op with an inline broadcast is not shape-preserving; do not
+// derive a dst bound from the smaller broadcasted src.
+// CHECK-LABEL: func.func @infer_vcast_broadcast_dst_not_marked(
+func.func @infer_vcast_broadcast_dst_not_marked(%arg0: memref<1xi1>,
+                                                %arg1: index) {
+  %dst = memref.alloc(%arg1) : memref<?xf16>
+  // CHECK-NOT: annotation.mark
+  hivm.hir.vcast ins(%arg0 : memref<1xi1>) outs(%dst : memref<?xf16>) round_mode = <trunc> cast = <cast_signed> broadcast = [0]
+  return
+}
+
+// -----
+
+// `vbrc` changes the src shape; do not derive a dst bound from the smaller
+// broadcasted src.
+// CHECK-LABEL: func.func @infer_vbrc_dst_not_marked(
+func.func @infer_vbrc_dst_not_marked(%arg0: memref<1xf16>, %arg1: index) {
+  %dst = memref.alloc(%arg1) : memref<?xf16>
+  // CHECK-NOT: annotation.mark
+  hivm.hir.vbrc ins(%arg0 : memref<1xf16>) outs(%dst : memref<?xf16>) broadcast_dims = [0]
+  return
+}
+
+// -----
+
+// `vtranspose` changes the src shape; do not derive a dst bound from it.
+// CHECK-LABEL: func.func @infer_vtranspose_dst_not_marked(
+func.func @infer_vtranspose_dst_not_marked(%arg0: memref<16xf16>,
+                                           %arg1: index) {
+  %dst = memref.alloc(%arg1) : memref<?xf16>
+  // CHECK-NOT: annotation.mark
+  hivm.hir.vtranspose ins(%arg0 : memref<16xf16>)
+                     outs(%dst : memref<?xf16>) permutation = [0]
+  return
+}
+
+// -----

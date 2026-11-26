@@ -1,4 +1,5 @@
-//===--------- FuseReductionIntoLoop.cpp -------------------------*- C++ -*-===//
+//===--------- FuseReductionIntoLoop.cpp -------------------------*- C++
+//-*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -10,6 +11,10 @@
 // When a loop accumulates 2D tensors that are subsequently reduced to 1D
 // outside the loop, this pass transforms the loop to accumulate reduced 1D
 // tensors directly, lowering memory pressure and improving data locality.
+//
+// In zero-only mode, fusion requires a known-zero %init_2d. Enabling this pass
+// allows reassociation even without fast-math flags on the original additions.
+// Reassociation can change rounding or overflow intermediate sums.
 //
 // Before:
 //   %result = scf.for ... iter_args(%acc = %init_2d) {
@@ -23,7 +28,7 @@
 //       linalg.yield %s : f32
 //   }
 //
-// After:
+// After, for a known-zero %init_2d:
 //   %result = scf.for ... iter_args(%acc = %zero_1d) {
 //     %val = ... : tensor<MxNxf32>
 //     %reduced_val = linalg.reduce ins(%val) outs(%zero_1d) dimensions = [0] {
@@ -35,6 +40,12 @@
 //     scf.yield %new_acc
 //   }
 //
+// A nonzero or unknown final reduction initializer is added once after the
+// loop, including when the loop runs zero times.
+// Late mode also accepts nonzero or unknown %init_2d. After the loop, reduce
+// it with the original reduction initializer and add the loop result.
+// Keep the original tensor value: reloading its buffer could read changed data.
+//
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Transforms/Passes.h"
@@ -43,6 +54,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -66,13 +78,26 @@ struct ReduceCandidate {
   linalg::ReduceOp reduceOp;  // the post-loop reduce
   arith::AddFOp addfOp;       // the in-loop accumulation addf
   Value value2D;              // the 2D value being accumulated (not iter_arg)
+  bool zeroInit;              // loop initializer is known to be zero
 };
+
+// New partial sums can overflow or produce NaNs. Do not copy nnan/ninf flags.
+constexpr arith::FastMathFlags fusionFastMath =
+    arith::FastMathFlags::reassoc | arith::FastMathFlags::nsz;
+
+/// Check constants and fills, not runtime data. tensor.empty is not zero.
+bool isZeroTensor(Value value) {
+  if (matchPattern(value, m_AnyZeroFloat()))
+    return true;
+  auto fill = value.getDefiningOp<linalg::FillOp>();
+  return fill && matchPattern(fill.getInputs().front(), m_AnyZeroFloat());
+}
 
 /// Return true if the linalg.reduce combiner is a simple additive reduction:
 ///   ^bb(%in: fT, %init: fT):
 ///     %s = arith.addf %in, %init
 ///     linalg.yield %s
-static bool isAdditiveReduction(linalg::ReduceOp reduceOp) {
+bool isAdditiveReduction(linalg::ReduceOp reduceOp) {
   Region &combiner = reduceOp.getCombiner();
   if (!combiner.hasOneBlock())
     return false;
@@ -86,13 +111,17 @@ static bool isAdditiveReduction(linalg::ReduceOp reduceOp) {
   auto yieldOp = dyn_cast<linalg::YieldOp>(block.getTerminator());
   if (!yieldOp || yieldOp.getNumOperands() != 1)
     return false;
-  return yieldOp.getOperand(0) == addfOp.getResult();
+  Value input = block.getArgument(0);
+  Value init = block.getArgument(1);
+  return yieldOp.getOperand(0) == addfOp.getResult() &&
+         ((addfOp.getLhs() == input && addfOp.getRhs() == init) ||
+          (addfOp.getLhs() == init && addfOp.getRhs() == input));
 }
 
 /// Check whether the yield value at `iterArgIdx` follows the pattern:
 ///   scf.yield ..., arith.addf(%iter_arg, %val), ...
 /// Returns the addf op and the non-iter-arg operand on success.
-static std::optional<std::pair<arith::AddFOp, Value>>
+std::optional<std::pair<arith::AddFOp, Value>>
 matchAccumulationPattern(scf::ForOp forOp, unsigned iterArgIdx) {
   auto yieldOp = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
   Value yieldedValue = yieldOp.getOperand(iterArgIdx);
@@ -118,8 +147,9 @@ matchAccumulationPattern(scf::ForOp forOp, unsigned iterArgIdx) {
 ///   2. Are accumulated inside the loop via arith.addf with the iter_arg.
 ///   3. The iter_arg has only that single addf use.
 ///   4. The reduce output has a static shape.
-static SmallVector<ReduceCandidate>
-findReduceCandidates(scf::ForOp forOp) {
+///   5. The loop initializer is known to be zero, or late mode is selected.
+SmallVector<ReduceCandidate>
+findReduceCandidates(scf::ForOp forOp, FuseReductionIntoLoopMode mode) {
   SmallVector<ReduceCandidate> candidates;
 
   for (OpResult result : forOp.getResults()) {
@@ -144,6 +174,8 @@ findReduceCandidates(scf::ForOp forOp) {
     if (!match)
       continue;
     auto [addfOp, value2D] = *match;
+    if (!addfOp->hasOneUse())
+      continue;
 
     // iter_arg must only be used by the addf.
     BlockArgument iterArg = forOp.getRegionIterArg(idx);
@@ -153,10 +185,14 @@ findReduceCandidates(scf::ForOp forOp) {
     // Require static shapes for the reduced output type.
     auto outType =
         dyn_cast<RankedTensorType>(reduceOp.getResults()[0].getType());
-    if (!outType || !outType.hasStaticShape())
+    if (!outType || !outType.hasStaticShape() || outType.getEncoding())
       continue;
 
-    candidates.push_back({idx, reduceOp, addfOp, value2D});
+    bool zeroInit = isZeroTensor(forOp.getInitArgs()[idx]);
+    if (!zeroInit && mode != FuseReductionIntoLoopMode::Late)
+      continue;
+
+    candidates.push_back({idx, reduceOp, addfOp, value2D, zeroInit});
   }
 
   return candidates;
@@ -168,7 +204,8 @@ findReduceCandidates(scf::ForOp forOp) {
 
 struct FuseReductionIntoLoop
     : public impl::FuseReductionIntoLoopBase<FuseReductionIntoLoop> {
-  explicit FuseReductionIntoLoop() : FuseReductionIntoLoopBase() {}
+  explicit FuseReductionIntoLoop(const FuseReductionIntoLoopOptions &options)
+      : FuseReductionIntoLoopBase(options) {}
 
   void runOnOperation() override {
     func::FuncOp funcOp = getOperation();
@@ -183,7 +220,7 @@ struct FuseReductionIntoLoop
 
 private:
   void transformForOp(scf::ForOp forOp) {
-    auto candidates = findReduceCandidates(forOp);
+    auto candidates = findReduceCandidates(forOp, mode);
     if (candidates.empty())
       return;
 
@@ -230,6 +267,7 @@ private:
         [](OpBuilder &b, Location loc, Value /*iv*/, ValueRange iterArgs) {
           b.create<scf::YieldOp>(loc, iterArgs);
         });
+    newForOp->setAttrs(forOp->getAttrs());
 
     Block *newBody = newForOp.getBody();
     Block *oldBody = forOp.getBody();
@@ -266,13 +304,15 @@ private:
             /*inputs=*/ValueRange{mapped2D},
             /*inits=*/ValueRange{reduceInit}, dims,
             [](OpBuilder &b, Location bodyLoc, ValueRange args) {
-              Value sum = b.create<arith::AddFOp>(bodyLoc, args[0], args[1]);
+              Value sum = b.create<arith::AddFOp>(bodyLoc, args[0], args[1],
+                                                  fusionFastMath);
               b.create<linalg::YieldOp>(bodyLoc, sum);
             });
 
         Value iterArg1D = newBody->getArgument(cand.resultIdx + 1);
         Value newAddf = builder.create<arith::AddFOp>(
-            cand.addfOp.getLoc(), iterArg1D, newReduce.getResults()[0]);
+            cand.addfOp.getLoc(), iterArg1D, newReduce.getResults()[0],
+            fusionFastMath);
 
         mapping.map(cand.addfOp.getResult(), newAddf);
       } else {
@@ -294,11 +334,29 @@ private:
       if (!candOutTypes.count(i))
         forOp.getResult(i).replaceAllUsesWith(newForOp.getResult(i));
     }
-    // Candidate results: the post-loop reduce is now redundant -- the new for
-    // result is already 1D.
+    // Insert the final add at the original reduction, after its initializer
+    // is defined.
     for (auto &cand : candidates) {
-      cand.reduceOp.getResults()[0].replaceAllUsesWith(
-          newForOp.getResult(cand.resultIdx));
+      Value accumulated = newForOp.getResult(cand.resultIdx);
+      if (!cand.zeroInit) {
+        cand.reduceOp.getInputsMutable().assign(
+            ValueRange{forOp.getInitArgs()[cand.resultIdx]});
+        auto addf =
+            cast<arith::AddFOp>(&cand.reduceOp.getCombiner().front().front());
+        addf.setFastmath(fusionFastMath);
+        builder.setInsertionPointAfter(cand.reduceOp);
+        Value reduced = cand.reduceOp.getResults()[0];
+        auto merged = builder.create<arith::AddFOp>(
+            cand.reduceOp.getLoc(), reduced, accumulated, fusionFastMath);
+        reduced.replaceAllUsesExcept(merged.getResult(), merged);
+        continue;
+      }
+      Value reductionInit = cand.reduceOp.getInits().front();
+      builder.setInsertionPoint(cand.reduceOp);
+      if (!isZeroTensor(reductionInit))
+        accumulated = builder.create<arith::AddFOp>(
+            cand.reduceOp.getLoc(), accumulated, reductionInit, fusionFastMath);
+      cand.reduceOp.getResults()[0].replaceAllUsesWith(accumulated);
       cand.reduceOp->erase();
     }
 
@@ -310,8 +368,9 @@ private:
 } // namespace
 
 /// Create FuseReductionIntoLoop pass.
-std::unique_ptr<mlir::Pass> createFuseReductionIntoLoopPass() {
-  return std::make_unique<FuseReductionIntoLoop>();
+std::unique_ptr<mlir::Pass>
+createFuseReductionIntoLoopPass(const FuseReductionIntoLoopOptions &options) {
+  return std::make_unique<FuseReductionIntoLoop>(options);
 }
 
 } // namespace bishengir

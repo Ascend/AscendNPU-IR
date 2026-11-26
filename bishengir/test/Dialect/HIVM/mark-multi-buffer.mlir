@@ -93,13 +93,13 @@ module {
       %p2:2 = scope.scope : () -> (tensor<8x4x16x16xf16>, tensor<8x4x16x16xf16>) {
         // FA bwd preload_num=2 CUBE produces Q and dO as to_tensor(alloc).
         // CHECK: %[[Q_ALLOC:.*]] = memref.alloc() : memref<8x4x16x16xf16>
-        // CHECK-NEXT: annotation.mark %[[Q_ALLOC]] {hivm.multi_buffer = 3 : i32, hivm.preload_local_buffer = 1 : i32}
+        // CHECK-NEXT: annotation.mark %[[Q_ALLOC]] {hivm.multi_buffer = 3 : i32, hivm.preload_local_buffer}
         %q_alloc = memref.alloc() : memref<8x4x16x16xf16>
         hivm.hir.nd2nz {dst_continuous} ins(%q_gm : memref<64x128xf16, #hivm.address_space<gm>>) outs(%q_alloc : memref<8x4x16x16xf16>)
         %q = bufferization.to_tensor %q_alloc restrict writable : memref<8x4x16x16xf16>
 
         // CHECK: %[[DO_ALLOC:.*]] = memref.alloc() : memref<8x4x16x16xf16>
-        // CHECK-NEXT: annotation.mark %[[DO_ALLOC]] {hivm.multi_buffer = 3 : i32, hivm.preload_local_buffer = 1 : i32}
+        // CHECK-NEXT: annotation.mark %[[DO_ALLOC]] {hivm.multi_buffer = 3 : i32, hivm.preload_local_buffer}
         %do_alloc = memref.alloc() : memref<8x4x16x16xf16>
         hivm.hir.nd2nz {dst_continuous} ins(%do_gm : memref<64x128xf16, #hivm.address_space<gm>>) outs(%do_alloc : memref<8x4x16x16xf16>)
         %do = bufferization.to_tensor %do_alloc restrict writable : memref<8x4x16x16xf16>
@@ -260,7 +260,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %1 = scope.scope : () -> i32 {
       // CHECK: annotation.mark
       // CHECK-SAME: hivm.multi_buffer = 2 : i32
-      // CHECK-SAME: hivm.preload_local_buffer = 1 : i32
+      // CHECK-SAME: hivm.preload_local_buffer
       annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>} : memref<128x128xf32, #hivm.address_space<ub>>
       hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%arg3 : tensor<8x8x16x16xf32>) outs(%alloc : memref<128x128xf32, #hivm.address_space<ub>>)
       %2 = arith.addi %arg0, %c128_i32 : i32
@@ -330,7 +330,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @test_for_scope_markmultibuffer_in_scf_if_region(%cond: i1, %fixpipe_input: tensor<8x8x16x16xf32>, %out: memref<128x128xf32, #hivm.address_space<gm>>) {
     // CHECK: annotation.mark
     // CHECK-SAME: hivm.multi_buffer = 2 : i32
-    // CHECK-SAME: hivm.preload_local_buffer = 1 : i32
+    // CHECK-SAME: hivm.preload_local_buffer
     %alloc = memref.alloc() : memref<128x128xf32, #hivm.address_space<ub>>
     scope.scope : () -> () {
       annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<128x128xf32, #hivm.address_space<ub>>

@@ -26,6 +26,7 @@
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
@@ -40,6 +41,186 @@ using namespace mlir;
 using namespace mlir::hivm;
 
 namespace {
+
+/// Find the single writer of an L1 tensor read only by `reader`.
+static CopyOp getPrivateL1Copy(bufferization::ToTensorOp view,
+                               Operation *reader) {
+  if (!view || !view->hasOneUse())
+    return {};
+  auto alloc = view.getMemref().getDefiningOp<memref::AllocOp>();
+  if (!alloc ||
+      getOptionalHIVMAddressSpace(alloc.getType()) != AddressSpace::L1)
+    return {};
+  CopyOp copy;
+  for (Operation *user : alloc->getUsers()) {
+    if (user == view)
+      continue;
+    auto writer = dyn_cast<CopyOp>(user);
+    if (!writer || copy || writer.getDst() != alloc.getResult())
+      return {};
+    copy = writer;
+  }
+  if (!copy || copy.getSrc().getType() != view.getType() ||
+      copy.getResultTensor() || copy.getPadMode() || copy.getPadValue() ||
+      copy.getCollapseReassociation() ||
+      copy->getBlock() != reader->getBlock() || !copy->isBeforeInBlock(reader))
+    return {};
+  return copy;
+}
+
+/// Move a static expand through its private UB-to-L1 copy. This exposes a
+/// direct to_tensor source to the existing layout-conversion rewrite.
+struct MoveExpandBeforeUBToCBufCopy
+    : public OpRewritePattern<tensor::ExpandShapeOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::ExpandShapeOp expand,
+                                PatternRewriter &rewriter) const override {
+    // Static result types can still carry SSA output extents.
+    if (!expand->hasOneUse() || !expand.getType().hasStaticShape() ||
+        !expand.getOutputShape().empty() ||
+        expand.getResultType().getEncoding())
+      return failure();
+    auto convertLayout = dyn_cast<ConvertLayoutOp>(*expand->user_begin());
+    if (!convertLayout || !convertLayout.getOutputShape().empty())
+      return failure();
+    auto convertedType = dyn_cast<RankedTensorType>(convertLayout.getType());
+    if (!convertedType || !convertedType.hasStaticShape() ||
+        convertedType.getEncoding())
+      return failure();
+
+    auto toTensor = expand.getSrc().getDefiningOp<bufferization::ToTensorOp>();
+    auto copy = getPrivateL1Copy(toTensor, expand);
+    if (!copy)
+      return failure();
+    auto alloc = toTensor.getMemref().getDefiningOp<memref::AllocOp>();
+
+    rewriter.setInsertionPoint(alloc);
+    auto expandedType = MemRefType::get(
+        expand.getType().getShape(), expand.getType().getElementType(),
+        MemRefLayoutAttrInterface(), alloc.getType().getMemorySpace());
+    auto expandedAlloc = rewriter.create<memref::AllocOp>(
+        alloc.getLoc(), expandedType, alloc.getAlignmentAttr());
+    auto expandedTensor = rewriter.create<bufferization::ToTensorOp>(
+        toTensor.getLoc(), expandedAlloc, toTensor.getRestrict(),
+        toTensor.getWritable());
+
+    rewriter.modifyOpInPlace(
+        expand, [&] { expand.getSrcMutable().assign(copy.getSrc()); });
+    rewriter.moveOpBefore(expand, copy);
+    rewriter.modifyOpInPlace(copy, [&] {
+      copy.getSrcMutable().assign(expand.getResult());
+      copy.getDstMutable().assign(expandedAlloc);
+    });
+    rewriter.replaceAllUsesExcept(expand.getResult(),
+                                  expandedTensor.getResult(), copy);
+    return success();
+  }
+};
+
+/// Pack a sliced matmul operand at its UB-to-L1 copy. The conversion can
+/// apply to the completed matrix or to the live slice before insertion.
+struct PackSlicedMatmulOperand : OpRewritePattern<ConvertLayoutOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ConvertLayoutOp convert,
+                                PatternRewriter &rewriter) const override {
+    auto type = dyn_cast<RankedTensorType>(convert.getType());
+    if (convert.getSrcLayout().getDataLayout() != hivm::DataLayout::ND ||
+        convert.getDstLayout().getDataLayout() != hivm::DataLayout::Fractal ||
+        !isPropagatingUp(convert) || !convert.getOutputShape().empty() ||
+        !type || type.getRank() != 4 || !type.hasStaticShape() ||
+        type.getEncoding())
+      return failure();
+
+    auto insert = convert.getSource().getDefiningOp<tensor::InsertSliceOp>();
+    bool packMatrix = static_cast<bool>(insert);
+    if (!packMatrix) {
+      if (!convert->hasOneUse())
+        return failure();
+      insert = dyn_cast<tensor::InsertSliceOp>(*convert->user_begin());
+      if (!insert || insert.getSource() != convert.getResult())
+        return failure();
+    }
+    Value packed = packMatrix ? convert.getResult() : insert.getResult();
+    if (llvm::none_of(packed.getUsers(), [](Operation *user) {
+          return isa<LocalMatmulLikeOpInterface>(user);
+        }))
+      return failure();
+
+    auto slice = (packMatrix ? insert.getSource() : convert.getSource())
+                     .getDefiningOp<tensor::ExtractSliceOp>();
+    auto fill = insert.getDest().getDefiningOp<VBrcOp>();
+    // Only static slice coordinates and a scalar fill can be replayed here.
+    if (!slice || slice.getType().getRank() != 2 || !slice->hasOneUse() ||
+        slice->getNumOperands() != 1 || insert->getNumOperands() != 2 ||
+        insert->hasAttr("elide_after_bufferize") ||
+        insert.getType().getRank() != (packMatrix ? 2 : 4) ||
+        !insert.getType().hasStaticShape() || insert.getType().getEncoding() ||
+        !fill || !fill.hasPureTensorSemantics() ||
+        !fill.getSrc().getDefiningOp<arith::ConstantOp>() ||
+        isa<ShapedType>(fill.getSrc().getType()) ||
+        !fill.getDst().getDefiningOp<tensor::EmptyOp>())
+      return failure();
+    auto view = slice.getSource().getDefiningOp<bufferization::ToTensorOp>();
+    auto copy = getPrivateL1Copy(view, slice);
+    if (!copy || copy->getBlock() != insert->getBlock())
+      return failure();
+
+    IRMapping mapping;
+    rewriter.setInsertionPoint(DominanceInfo().properlyDominates(fill, copy)
+                                   ? fill.getOperation()
+                                   : copy.getOperation());
+    rewriter.clone(*fill.getSrc().getDefiningOp(), mapping);
+    auto fillType = insert.getType();
+    auto empty = rewriter.create<tensor::EmptyOp>(
+        fill.getLoc(), fillType.getShape(), fillType.getElementType());
+    mapping.map(fill.getDst(), empty);
+    auto vectorFill = rewriter.clone(*fill, mapping);
+    vectorFill->setAttr(TCoreTypeAttr::name,
+                        rewriter.getAttr<TCoreTypeAttr>(TCoreType::VECTOR));
+
+    rewriter.setInsertionPoint(copy);
+    auto alloc = view.getMemref().getDefiningOp<memref::AllocOp>();
+    auto packedType = cast<RankedTensorType>(packed.getType());
+    auto memType = MemRefType::get(
+        packedType.getShape(), packedType.getElementType(),
+        MemRefLayoutAttrInterface(), alloc.getType().getMemorySpace());
+    auto buffer = rewriter.create<memref::AllocOp>(alloc.getLoc(), memType,
+                                                   alloc.getAlignmentAttr());
+    auto packedView = rewriter.create<bufferization::ToTensorOp>(
+        view.getLoc(), buffer, view.getRestrict(), view.getWritable());
+
+    mapping.map(view.getResult(), copy.getSrc());
+    rewriter.clone(*slice, mapping);
+    if (packMatrix)
+      rewriter.clone(*insert, mapping);
+    auto ubConvert = cast<ConvertLayoutOp>(rewriter.clone(*convert, mapping));
+    markAsNotPropagatingUp(rewriter, ubConvert);
+    if (!packMatrix)
+      rewriter.clone(*insert, mapping);
+    mapping.map(copy.getSrc(), mapping.lookup(packed));
+    mapping.map(copy.getDst(), buffer);
+    rewriter.clone(*copy, mapping);
+
+    if (packMatrix) {
+      // Branches using the same packing can read the same initialized L1 tile.
+      for (Operation *user : llvm::make_early_inc_range(insert->getUsers()))
+        if (user != convert &&
+            OperationEquivalence::isEquivalentTo(
+                convert, user, OperationEquivalence::IgnoreLocations))
+          rewriter.replaceOp(user, packedView.getResult());
+      rewriter.replaceOp(convert, packedView.getResult());
+      if (!insert->use_empty())
+        return success(); // Other readers still need the original ND copy.
+    } else {
+      rewriter.replaceOp(insert, packedView.getResult());
+      rewriter.eraseOp(convert);
+    }
+    rewriter.eraseOp(copy);
+    return success();
+  }
+};
 
 //===----------------------------------------------------------------------===//
 // Move ConvertLayout from UB->CBuf copy destination to its source
@@ -250,6 +431,8 @@ struct PropagateConvertLayoutPass
     // Run these prioritized copy-boundary rewrites before the generic
     // propagation patterns, so later patterns see the intended converted value.
     RewritePatternSet firstPatterns(context);
+    firstPatterns.add<MoveExpandBeforeUBToCBufCopy, PackSlicedMatmulOperand>(
+        context);
     firstPatterns.add<MoveConvertLayoutToSourceOfUBToCBufCopy>(context);
     firstPatterns.add<MoveConvertLayoutBeforeTensorCopy>(context);
     if (failed(applyPatternsGreedily(module, std::move(firstPatterns))))

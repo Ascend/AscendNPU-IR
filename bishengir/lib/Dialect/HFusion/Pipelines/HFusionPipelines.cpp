@@ -100,7 +100,9 @@ static void preProcess(OpPassManager &pm,
   // optimized to lift containing arith op outside its body region
   pm.addPass(createArithToHFusionConversionPass());
   pm.nest<func::FuncOp>().addPass(createConvertGenericToNamedOpPass());
-  pm.nest<func::FuncOp>().addPass(createLegalizeBF16Pass());
+  LegalizeBF16PassOptions legalizeBF16Options;
+  legalizeBF16Options.enableBf16 = options.enableBf16;
+  pm.nest<func::FuncOp>().addPass(createLegalizeBF16Pass(legalizeBF16Options));
   DecomposeOptions decomposeOptions;
   decomposeOptions.hfusionDecomposePhase =
       bishengir::DecomposePhase::NO_CONSTRAINT;
@@ -123,6 +125,7 @@ static void preProcess(OpPassManager &pm,
   //  a) convert scalar-vector ops to vector-scalar ops
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
+  pm.nest<func::FuncOp>().addPass(createLegalizeBF16Pass());
 }
 
 static void preFlattenPass(OpPassManager &pm,

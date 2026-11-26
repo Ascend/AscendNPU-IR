@@ -1379,4 +1379,33 @@ module attributes {"ttg.simt-optimization-mode" = 900101 : i32, "ttg.num-warps" 
     tt.return
   }
 
+  // Preserve signedness for scalar division with the same runtime operands.
+  // CHECK-LABEL: @test_scalar_integer_division
+  // CHECK: [[SIGNED:%[^ ]+]] = ascend_dpx.div [[LHS:%[^ ]+]], [[RHS:%[^ ]+]] : (i32, i32) -> i32
+  // CHECK: [[UNSIGNED:%[^ ]+]] = ascend_dpx.udiv [[LHS]], [[RHS]] : (i32, i32) -> i32
+  tt.func public @test_scalar_integer_division(%signed_out: !tt.ptr<i32>, %unsigned_out: !tt.ptr<i32>, %lhs: i32, %rhs: i32) attributes {noinline = false} {
+    %signed = arith.divsi %lhs, %rhs : i32
+    %unsigned = arith.divui %lhs, %rhs : i32
+    tt.store %signed_out, %signed : !tt.ptr<i32>
+    tt.store %unsigned_out, %unsigned : !tt.ptr<i32>
+    tt.return
+  }
+
+  // Tensor division must use distinct signed and unsigned DPX operations too.
+  // CHECK-LABEL: @test_tensor_integer_division
+  // CHECK: ascend_dpx.div {{%[^ ]+}}, {{%[^ ]+}} : (i32, i32) -> i32
+  // CHECK: ascend_dpx.udiv {{%[^ ]+}}, {{%[^ ]+}} : (i32, i32) -> i32
+  tt.func public @test_tensor_integer_division(%signed_out: !tt.ptr<i32>, %unsigned_out: !tt.ptr<i32>, %lhs: !tt.ptr<i32>, %rhs: !tt.ptr<i32>) attributes {noinline = false} {
+    %lhs_ptrs = tt.splat %lhs : !tt.ptr<i32> -> tensor<1x!tt.ptr<i32>, #blocked>
+    %rhs_ptrs = tt.splat %rhs : !tt.ptr<i32> -> tensor<1x!tt.ptr<i32>, #blocked>
+    %lhs_values = tt.load %lhs_ptrs : tensor<1x!tt.ptr<i32>, #blocked>
+    %rhs_values = tt.load %rhs_ptrs : tensor<1x!tt.ptr<i32>, #blocked>
+    %signed = arith.divsi %lhs_values, %rhs_values : tensor<1xi32, #blocked>
+    %unsigned = arith.divui %lhs_values, %rhs_values : tensor<1xi32, #blocked>
+    %signed_ptrs = tt.splat %signed_out : !tt.ptr<i32> -> tensor<1x!tt.ptr<i32>, #blocked>
+    %unsigned_ptrs = tt.splat %unsigned_out : !tt.ptr<i32> -> tensor<1x!tt.ptr<i32>, #blocked>
+    tt.store %signed_ptrs, %signed : tensor<1x!tt.ptr<i32>, #blocked>
+    tt.store %unsigned_ptrs, %unsigned : tensor<1x!tt.ptr<i32>, #blocked>
+    tt.return
+  }
 }

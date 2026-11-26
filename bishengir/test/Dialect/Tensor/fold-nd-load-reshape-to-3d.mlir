@@ -213,6 +213,62 @@ func.func @fold_same_rank_with_batch_gap(%base: memref<?xf32>) -> tensor<2x32x64
 
 // -----
 
+// Split the Cube view while both prints share the original logical snapshot.
+// Both copies must precede a write to the GM source, even though print follows it.
+// CHECK-LABEL: func.func @print_and_cube_reshape_snapshot
+// CHECK-NOT: memref.copy
+// CHECK: memref.copy %{{.*}}, %[[CUBE_ALLOC:.*]] : memref<4x32x32xbf16> to memref<4x32x32xbf16>
+// CHECK-NEXT: memref.copy %{{.*}}, %[[VECTOR_ALLOC:.*]] : memref<4096xbf16, strided<[1]>> to memref<4096xbf16>
+// CHECK-NEXT: %[[CUBE:.*]] = bufferization.to_tensor %[[CUBE_ALLOC]] restrict writable : memref<4x32x32xbf16>
+// CHECK-NEXT: %[[VECTOR:.*]] = bufferization.to_tensor %[[VECTOR_ALLOC]] restrict writable : memref<4096xbf16>
+// CHECK: memref.store
+// CHECK-NOT: memref.copy
+// CHECK: %[[PRINTED:.*]] = tensor.expand_shape %[[VECTOR]]
+// CHECK-NEXT: hfusion.print "x: " {hex = false} %[[PRINTED]] : tensor<2x2x32x32xbf16>
+// CHECK-NEXT: hfusion.print "flat" {hex = false} %[[VECTOR]] : tensor<4096xbf16>
+// CHECK-NEXT: %[[RESULT:.*]] = linalg.batch_matmul ins(%[[CUBE]],
+// CHECK-NEXT: return %[[RESULT]] : tensor<4x32x32xf32>
+func.func @print_and_cube_reshape_snapshot(%base: memref<?xbf16>, %rhs: tensor<4x32x32xbf16>, %out: tensor<4x32x32xf32>) -> tensor<4x32x32xf32> {
+  %zero = arith.constant 0 : index
+  %value = arith.constant 0.0 : bf16
+  %print_shape = arith.constant dense<[2, 2, 32, 32]> : tensor<4xi64>
+  %cube_shape = arith.constant dense<[4, 32, 32]> : tensor<3xi64>
+  %src = memref.reinterpret_cast %base to offset: [0], sizes: [4096], strides: [1] : memref<?xbf16> to memref<4096xbf16, strided<[1]>>
+  %alloc = memref.alloc() : memref<4096xbf16>
+  memref.copy %src, %alloc : memref<4096xbf16, strided<[1]>> to memref<4096xbf16>
+  %tensor = bufferization.to_tensor %alloc restrict writable : memref<4096xbf16>
+  memref.store %value, %base[%zero] : memref<?xbf16>
+  %cube = tensor.reshape %tensor(%cube_shape) : (tensor<4096xbf16>, tensor<3xi64>) -> tensor<4x32x32xbf16>
+  %printed = tensor.reshape %tensor(%print_shape) : (tensor<4096xbf16>, tensor<4xi64>) -> tensor<2x2x32x32xbf16>
+  hfusion.print "x: " {hex = false} %printed : tensor<2x2x32x32xbf16>
+  hfusion.print "flat" {hex = false} %tensor : tensor<4096xbf16>
+  %result = linalg.batch_matmul ins(%cube, %rhs : tensor<4x32x32xbf16>, tensor<4x32x32xbf16>) outs(%out : tensor<4x32x32xf32>) -> tensor<4x32x32xf32>
+  return %result : tensor<4x32x32xf32>
+}
+
+// -----
+
+// A print view and a direct tensor consumer share the original snapshot.
+// CHECK-LABEL: func.func @print_reshape_keeps_other_snapshot_user
+// CHECK-NOT: memref.copy
+// CHECK: memref.copy
+// CHECK-NEXT: %[[ORIGINAL:.*]] = bufferization.to_tensor %{{.*}} restrict writable : memref<4096xbf16>
+// CHECK-NEXT: %[[PRINTED:.*]] = tensor.expand_shape %[[ORIGINAL]]
+// CHECK-NEXT: hfusion.print "x: " {hex = false} %[[PRINTED]] : tensor<2x2x32x32xbf16>
+// CHECK-NEXT: return %[[ORIGINAL]] : tensor<4096xbf16>
+func.func @print_reshape_keeps_other_snapshot_user(%base: memref<?xbf16>) -> tensor<4096xbf16> {
+  %shape = arith.constant dense<[2, 2, 32, 32]> : tensor<4xi64>
+  %src = memref.reinterpret_cast %base to offset: [0], sizes: [4096], strides: [1] : memref<?xbf16> to memref<4096xbf16, strided<[1]>>
+  %alloc = memref.alloc() : memref<4096xbf16>
+  memref.copy %src, %alloc : memref<4096xbf16, strided<[1]>> to memref<4096xbf16>
+  %tensor = bufferization.to_tensor %alloc restrict writable : memref<4096xbf16>
+  %printed = tensor.reshape %tensor(%shape) : (tensor<4096xbf16>, tensor<4xi64>) -> tensor<2x2x32x32xbf16>
+  hfusion.print "x: " {hex = false} %printed : tensor<2x2x32x32xbf16>
+  return %tensor : tensor<4096xbf16>
+}
+
+// -----
+
 // Coprime dimensions need the strict contiguous flatten fallback because a
 // loose expand/collapse reassociation cannot factor 6x10 directly into 4x15.
 // Also preserve the absence of both to_tensor flags.

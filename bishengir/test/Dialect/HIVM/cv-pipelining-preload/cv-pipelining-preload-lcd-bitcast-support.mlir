@@ -12,7 +12,7 @@
 // CHECK-LABEL:       } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 5 : i32, hivm.preload_num = 1 : i32, no_inline}
 // CHECK-LABEL:       scope.scope : () ->
 // CHECK-LABEL:       } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 5 : i32, hivm.preload_num = 0 : i32, no_inline}
-// CHECK-LABEL:     } {fixpipe_for_mmad_result_already_inserted = true, hivm.cv_pipelined_loop}
+// CHECK-LABEL:     } {fixpipe_for_mmad_result_already_inserted = true, hivm.cv_pipelined_loop, "hivm.legacy-cv-pipeline"}
 
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 func.func @parallel_nsa_compression_fwd_kernel(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.tensor_kind = 0 : i32}, %arg3: memref<?xf16> {tt.tensor_kind = 0 : i32}, %arg4: memref<?xf16> {tt.tensor_kind = 0 : i32}, %arg5: memref<?xf16> {tt.tensor_kind = 1 : i32}, %arg6: memref<?xf32> {tt.tensor_kind = 1 : i32}, %arg7: f32, %arg8: i32, %arg9: i32, %arg10: i32, %arg11: i32, %arg12: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, true, true, true, true, false, false, false, false, false, false]> : vector<13xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix", parallel_mode = "simd"} {

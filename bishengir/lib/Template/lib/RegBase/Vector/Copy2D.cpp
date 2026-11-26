@@ -213,6 +213,21 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
   int64_t stride1_ub = dst->strides[1];
   int64_t stride0_gm = src->strides[0];
   int64_t stride0_ub = dst->strides[0];
+  // A reverse or repeated source row still permits independent row DMAs.
+  // Handle the aligned, unpadded case before the general negative-stride and
+  // transpose fallbacks; otherwise it would become a scalar GM->UB copy.
+  constexpr int64_t num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
+  const int64_t row_size = src->sizes[1];
+  if (stride0_gm <= 0 && stride1_gm == 1 && stride1_ub == 1 &&
+      stride0_ub >= row_size && stride0_ub % num_per_block == 0 &&
+      row_size % num_per_block == 0 &&
+      row_size <= INTRIN_MAX_BURST_LEN / sizeof(T) && left_padding_num == 0 &&
+      pad_mode == PadMode::Null) {
+    load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
+        src, dst, left_padding_num, static_cast<uint8_t>(eviction_policy));
+    return;
+  }
+
   if (stride1_gm < 0 || stride0_gm < 0 || stride1_ub < 0 || stride0_ub < 0)
       [[unlikely]] {
     load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst);
@@ -269,6 +284,9 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
       left_padding_num == 0 ||
       (stride1_ub == 1 && pad_mode != PadMode::FirstElem &&
        !std::is_same_v<T, int64_t> && !std::is_same_v<T, uint64_t> &&
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+       !std::is_same_v<T, hifloat8_t> &&
+#endif
        !std::is_same_v<T, float8_e4m3_t> && !std::is_same_v<T, float8_e5m2_t> &&
        isStrideAligned<T>(stride0_ub) &&
        CEIL_FACTOR(left_padding_num + dst->sizes[1],
@@ -321,6 +339,21 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     // Mirrors is_compact_mode in store_ubuf_to_gm_2d_core.
     const bool is_compact_mode =
         left_padding_num == 0 && stride0_ub == src->sizes[1];
+    // NDDMA amortizes its setup over many short rows with small GM gaps.
+    // Its 2D descriptor takes both loop counts from the destination.
+    const int64_t rows = src->sizes[0];
+    const int64_t width = src->sizes[1];
+    // Short GM pitches benefit from NDDMA at fewer rows.
+    const int64_t min_rows = stride0_gm <= 12 / sizeof(T) ? 128 : 320;
+    if (sizeof(T) <= 4 && is_compact_mode && pad_mode == PadMode::Null &&
+        atomic_kind == AtomicKind::None && rows >= min_rows &&
+        rows <= 0xfffff && width <= 16 / sizeof(T) && stride0_gm > width &&
+        stride0_gm <= 32 / sizeof(T) && rows == dst->sizes[0] &&
+        width == dst->sizes[1]) {
+      load_gm_to_ubuf_2d_by_nddma<T>(src, dst, pad_mode, pad_value, 0,
+                                     l2_cache_ctl);
+      return;
+    }
     if (!is_compact_mode &&
         (!isStrideAligned<T>(stride0_ub) ||
          CEIL_FACTOR(left_padding_num + src->sizes[1],
@@ -968,6 +1001,9 @@ REGISTE_DMA_LOAD(2, half);
 REGISTE_DMA_LOAD(2, float);
 REGISTE_DMA_LOAD(2, bfloat16_t);
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTE_DMA_LOAD_FP8(2, hifloat8_t);
+#endif
 REGISTE_DMA_LOAD_FP8(2, float8_e4m3_t);
 REGISTE_DMA_LOAD_FP8(2, float8_e5m2_t);
 #endif
@@ -986,6 +1022,9 @@ REGISTE_DMA_STORE(2, half);
 REGISTE_DMA_STORE(2, float);
 REGISTE_DMA_STORE(2, bfloat16_t);
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTE_DMA_STORE(2, hifloat8_t);
+#endif
 REGISTE_DMA_STORE(2, float8_e4m3_t);
 REGISTE_DMA_STORE(2, float8_e5m2_t);
 #endif
@@ -1005,6 +1044,9 @@ REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, half)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, float)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, bfloat16_t)
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, hifloat8_t);
+#endif
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, float8_e4m3_t);
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, float8_e5m2_t);
 #endif
@@ -1019,6 +1061,9 @@ REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, int16_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, uint16_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, int32_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, uint32_t)
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, hifloat8_t)
+#endif
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, float8_e4m3_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, float8_e5m2_t)
 REGISTE_DMA_UB_COPY(ubuf, cbuf, 2, half)

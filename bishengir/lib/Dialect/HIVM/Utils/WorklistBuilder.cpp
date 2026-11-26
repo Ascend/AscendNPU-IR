@@ -1012,9 +1012,6 @@ LogicalResult WorklistBuilder::populateDependencies(Operation &separator) {
       }
     }
     for (Value result : op->getResults()) {
-      if (!isa<ShapedType>(result.getType()))
-        continue;
-
       for (OpOperand &use : result.getUses()) {
         Operation *usr = use.getOwner();
 
@@ -1884,10 +1881,8 @@ FailureOr<WorklistBuildResult> WorklistBuilder::build() {
   bool extractionSuccess =
       succeeded(runRoundExtraction()) && toBePipelined.empty();
 
-  // Backup attempt: if loop mode and original extraction failed due to LCD.
-  // Off-registry kernels keep the pre-LCD behavior: leftover core ops fail
-  // the build and CVP leaves the loop un-pipelined. Registered kernels (or
-  // LIT `--bypass-shape-registry`) may retry with LCD-aware extraction.
+  // Registered kernels retain the LCD-aware v1 fallback when standard work
+  // item extraction cannot separate a loop-carried dependence.
   if (isLoopMode && !extractionSuccess && allowPreferredLoopHeuristics) {
     LLVM_DEBUG(dbgs() << "[WorklistBuilder] Standard extraction failed, "
                          "retrying with LCD backup handling\n");

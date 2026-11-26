@@ -141,3 +141,127 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     return
   }
 }
+
+// -----
+
+module {
+  // CHECK-LABEL: func.func @skip_vector_only_if(
+  func.func @skip_vector_only_if(%arg0: memref<i32>) attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    %true = arith.constant true
+    annotation.mark %true {test_marker} : i1
+    // CHECK: scf.if
+    scf.if %true {
+      // CHECK-NEXT: scf.if
+      scf.if %true {
+        // CHECK-NEXT: memref.load
+        // CHECK-SAME: : memref<i32>
+        %value = memref.load %arg0[] {hivm.tcore_type = #hivm.tcore_type<VECTOR>} : memref<i32>
+      // CHECK-NEXT: } {hivm.keep_control_flow}
+      }
+    // CHECK-NEXT: } {hivm.keep_control_flow}
+    }
+    return
+  }
+}
+
+// -----
+
+module {
+  // CHECK-LABEL: func.func @skip_cube_only_if(
+  func.func @skip_cube_only_if(%arg0: memref<i32>) attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    %true = arith.constant true
+    annotation.mark %true {test_marker} : i1
+    // CHECK: scf.if
+    scf.if %true {
+      // CHECK-NEXT: memref.load
+      // CHECK-SAME: : memref<i32>
+      %value = memref.load %arg0[] {hivm.tcore_type = #hivm.tcore_type<CUBE>} : memref<i32>
+    // CHECK-NEXT: } {hivm.keep_control_flow}
+    }
+    return
+  }
+}
+
+// -----
+
+module {
+  // CHECK-LABEL: func.func @keep_mixed_if(
+  func.func @keep_mixed_if(%arg0: memref<i32>, %arg1: memref<i32>) attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    %true = arith.constant true
+    annotation.mark %true {test_marker} : i1
+    // CHECK: scf.if
+    scf.if %true {
+      // CHECK-NEXT: hivm.hir.anchor {id = 2 : i64}
+      // CHECK-NEXT: memref.load
+      %cube = memref.load %arg0[] {hivm.tcore_type = #hivm.tcore_type<CUBE>} : memref<i32>
+      // CHECK-NEXT: hivm.hir.anchor {id = 3 : i64}
+      // CHECK-NEXT: memref.load
+      %vector = memref.load %arg1[] {hivm.tcore_type = #hivm.tcore_type<VECTOR>} : memref<i32>
+      // CHECK-NEXT: hivm.hir.anchor {id = 4 : i64}
+    }
+    return
+  }
+}
+
+// -----
+
+module {
+  // CHECK-LABEL: func.func @keep_shared_core_if(
+  func.func @keep_shared_core_if(%arg0: memref<i32>) attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    %true = arith.constant true
+    annotation.mark %true {test_marker} : i1
+    // CHECK: scf.if
+    scf.if %true {
+      // CHECK-NEXT: hivm.hir.anchor
+      // CHECK-NEXT: memref.load
+      %value = memref.load %arg0[] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
+    }
+    return
+  }
+}
+
+// -----
+
+module {
+  // CHECK-LABEL: func.func @keep_single_core_if_with_else(
+  func.func @keep_single_core_if_with_else(%arg0: memref<i32>) attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    %true = arith.constant true
+    annotation.mark %true {test_marker} : i1
+    // CHECK: scf.if
+    scf.if %true {
+      // CHECK-NEXT: hivm.hir.anchor
+      // CHECK-NEXT: memref.load
+      %then = memref.load %arg0[] {hivm.tcore_type = #hivm.tcore_type<VECTOR>} : memref<i32>
+    // CHECK: } else {
+    } else {
+      // CHECK-NEXT: hivm.hir.anchor
+      // CHECK-NEXT: memref.load
+      %else = memref.load %arg0[] {hivm.tcore_type = #hivm.tcore_type<VECTOR>} : memref<i32>
+    }
+    return
+  }
+}
+
+// -----
+
+module {
+  // CHECK-LABEL: func.func @skip_single_core_if_with_loop(
+  func.func @skip_single_core_if_with_loop(%arg0: memref<i32>) attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    %true = arith.constant true
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    annotation.mark %true {test_marker} : i1
+    // CHECK: scf.if
+    scf.if %true {
+      // CHECK-NEXT: scf.for
+      scf.for %i = %c0 to %c1 step %c1 {
+        // CHECK-NEXT: memref.load
+        // CHECK-SAME: : memref<i32>
+        %value = memref.load %arg0[] {hivm.tcore_type = #hivm.tcore_type<VECTOR>} : memref<i32>
+      // CHECK-NEXT: } {hivm.keep_control_flow}
+      }
+    // CHECK-NEXT: } {hivm.keep_control_flow}
+    }
+    return
+  }
+}

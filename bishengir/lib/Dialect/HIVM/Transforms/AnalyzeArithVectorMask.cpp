@@ -95,6 +95,34 @@ void analyzeUseAndMark(Value val, Operation *maskOp, int maskOpIdx,
       isa<memref::SubViewOp>(valDefOp) || isa<vector::ReductionOp>(valDefOp)) {
     return;
   }
+  // A reached mask describes consumed lanes and can propagate
+  // backward only through flat lane identity. Reordering, offsetting or
+  // duplicating lanes breaks that invariant; shape_cast preserves it.
+  if (isa<vector::DeinterleaveOp, vector::InterleaveOp, vector::ExtractOp,
+          vector::ExtractStridedSliceOp, vector::InsertOp,
+          vector::InsertStridedSliceOp, vector::BroadcastOp,
+          vector::TransposeOp, vector::SplatOp, vector::FromElementsOp,
+          vector::MultiDimReductionOp, vector::ExtractElementOp,
+          vector::InsertElementOp>(valDefOp))
+    return;
+  if (auto shuffleOp = dyn_cast<vector::ShuffleOp>(valDefOp)) {
+    for (auto [index, attr] : llvm::enumerate(shuffleOp.getMask())) {
+      if (cast<IntegerAttr>(attr).getInt() != static_cast<int64_t>(index))
+        return;
+    }
+  }
+  if (auto castOp = dyn_cast<UnrealizedConversionCastOp>(valDefOp)) {
+    if (castOp.getNumOperands() != 1)
+      return;
+    auto getNumElements = [](Type type) -> int64_t {
+      if (auto shapedType = dyn_cast<ShapedType>(type))
+        return shapedType.hasStaticShape() ? shapedType.getNumElements() : -1;
+      return 1;
+    };
+    int64_t inputElements = getNumElements(castOp.getOperand(0).getType());
+    if (inputElements < 0 || inputElements != getNumElements(val.getType()))
+      return;
+  }
   if (isa<vector::TransferReadOp>(valDefOp)) {
     auto transferReadOp = dyn_cast<vector::TransferReadOp>(valDefOp);
     // In transferReadOp, mask is optional

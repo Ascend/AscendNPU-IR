@@ -1,18 +1,19 @@
 // RUN: bishengir-opt %s -create-preload | FileCheck %s
 
 // A CV loop yields a preload-local UB pointer_cast that is stored after the
-// loop. CreatePreload rematerializes that buffer in the body; post-loop users
-// must see a clone after the loop, not the in-loop definition.
+// loop. The guarded loop result retains the final active slot; post-loop users
+// must not reconstruct a ring whose selection belongs to the outer loop.
 // CHECK-LABEL: func.func @yield_preload_local_used_after
 // CHECK-DAG: %[[ADDR0:.*]] = arith.constant 16384 : i64
 // CHECK-DAG: %[[ADDR1:.*]] = arith.constant 65536 : i64
-// CHECK: %[[FOR:.*]] = scf.for
-// CHECK: scf.yield %{{.*}} : memref<64x64xf32, {{.*}}ub{{.*}}>
-// CHECK-NEXT: }
-// CHECK: %[[CLONE:.*]] = hivm.hir.pointer_cast(%[[ADDR0]], %[[ADDR1]])
-// CHECK-NEXT: %[[FLAT:.*]] = memref.collapse_shape %[[CLONE]]
+// CHECK-DAG: %[[OUT_ADDR:.*]] = arith.constant 49152 : i64
+// CHECK: %[[LOOP:.*]] = scf.for {{.*}} iter_args(
+// CHECK: } {hivm.max_preload_num = 2 : i32}
+// CHECK-DAG: %[[OUT_CLONE:.*]] = hivm.hir.pointer_cast(%[[OUT_ADDR]])
+// CHECK: %[[FLAT:.*]] = memref.collapse_shape %[[LOOP]]
 // CHECK: hivm.hir.store ins(%[[FLAT]]
-// CHECK: memref.collapse_shape %[[FOR]]
+// CHECK: %[[OUT_FLAT:.*]] = memref.collapse_shape %[[OUT_CLONE]]
+// CHECK: hivm.hir.store ins(%[[OUT_FLAT]]
 func.func @yield_preload_local_used_after(
     %arg0: memref<?xf32, #hivm.address_space<gm>>,
     %arg1: memref<?xf32, #hivm.address_space<gm>>,
@@ -47,9 +48,11 @@ func.func @yield_preload_local_used_after(
     %tcb = hivm.hir.pointer_cast(%c16384, %c65536)
         : memref<64x64xf32, #hivm.address_space<ub>>
     annotation.mark %tcb {hivm.multi_buffer = 2 : i32,
-                          hivm.preload_local_buffer = 1 : i32}
+                          hivm.preload_local_buffer}
         : memref<64x64xf32, #hivm.address_space<ub>>
     scope.scope : () -> () {
+      hivm.hir.copy ins(%acc_tcb : memref<64x64xf32, #hivm.address_space<ub>>)
+                    outs(%tcb : memref<64x64xf32, #hivm.address_space<ub>>)
       annotation.mark %tcb {effects = ["write", "read"],
           hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>}
           : memref<64x64xf32, #hivm.address_space<ub>>

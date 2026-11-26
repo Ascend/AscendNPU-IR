@@ -114,12 +114,20 @@ traceBatchChainToFixpipe(Operation *op, int64_t batchDim,
 }
 
 RankedTensorType extractNonBatchType(RankedTensorType originType) {
-  if (originType.getRank() != 3)
-    llvm::report_fatal_error("current RankedTensorType must be 3D");
+  if (originType.getRank() < 3)
+    llvm::report_fatal_error(
+        "current RankedTensorType must contain a batch dimension");
 
   // Drop batch dimension
   return RankedTensorType::get(originType.getShape().drop_front(),
                                originType.getElementType());
+}
+
+SmallVector<ReassociationIndices> getBatchReassociation(int64_t rank) {
+  SmallVector<ReassociationIndices> groups{{0, 1}};
+  for (int64_t i = 2; i < rank; ++i)
+    groups.push_back({i});
+  return groups;
 }
 
 Value extractTensorValueWithoutBatch(Location loc, Value originVal,
@@ -128,6 +136,11 @@ Value extractTensorValueWithoutBatch(Location loc, Value originVal,
   auto originType = dyn_cast<RankedTensorType>(originVal.getType());
   assert(originType);
   auto extractType = extractNonBatchType(originType);
+  if (originType.getDimSize(0) == 1) {
+    return rewriter.createOrFold<tensor::CollapseShapeOp>(
+        loc, originVal, getBatchReassociation(originType.getRank()));
+  }
+
   // extract_slice offsets
   SmallVector<OpFoldResult> offsets(originType.getRank(),
                                     rewriter.getIndexAttr(0));
@@ -151,6 +164,12 @@ Value insertTensorValueWithoutBatch(Location loc, Value src, Value into,
                                     Value batchIdx, PatternRewriter &rewriter) {
   auto srcType = dyn_cast<RankedTensorType>(src.getType());
   assert(srcType);
+  auto dstType = cast<RankedTensorType>(into.getType());
+  if (dstType.getDimSize(0) == 1) {
+    // The single matrix fills the entire destination.
+    return rewriter.createOrFold<tensor::ExpandShapeOp>(
+        loc, dstType, src, getBatchReassociation(dstType.getRank()));
+  }
 
   SmallVector<OpFoldResult> offsets;
   offsets.push_back(batchIdx);
@@ -250,9 +269,11 @@ Value createTiledMmadL1(hivm::BatchMmadL1Op batchmmOp,
       matrixB, batchmmOp.getInitCondition(), batchmmOp.getRealM(),
       batchmmOp.getRealK(), batchmmOp.getRealN(), /*C=*/newOutput,
       batchmmOp.getPerChannelBias(), batchmmOp.getATransposeAttr(),
-      batchmmOp.getBTransposeAttr(), batchmmOp.getEnable_HF32Attr(), batchmmOp.getEnable_I4Attr());
-  // Set the batch_matmul attribute on the Mmad
+      batchmmOp.getBTransposeAttr(), batchmmOp.getEnable_HF32Attr(),
+      batchmmOp.getEnable_I4Attr());
   rewriter.modifyOpInPlace(tiledMmad, [&]() -> void {
+    if (Value signal = batchmmOp.getPingPongSignal())
+      tiledMmad.setPingPongSignal(signal);
     tiledMmad->setAttr(hivm::batchMatmulAttr,
                        UnitAttr::get(rewriter.getContext()));
   });

@@ -23,6 +23,44 @@
 
 #if BISHENG_TPL_REGBASE
 
+#if BISHENG_TPL_920R1
+// Keep VF address induction positive. Reverse scans reorder independent groups
+// and rows without changing the operands or stage order of their additions.
+template <typename T>
+__simd_vf__ void sklansky_positive_stride_vf(
+    int32_t nAddFactor, int32_t mFold, uint16_t nLoop, uint16_t groupMainCount,
+    int32_t groupOffset, uint16_t numPerReg, __ubuf__ T *src,
+    int32_t mainSrcOffset, int32_t mainDstOffset, uint16_t addCount,
+    uint16_t rowStride, __ubuf__ T *dst, uint16_t groupTailCount,
+    int32_t tailSrcOffset, int32_t tailDstOffset, uint16_t addTailCount) {
+  VectorReg<T> x1, x2;
+  vector_bool mask;
+  uint32_t totalElements = (uint32_t)nAddFactor * (uint32_t)mFold;
+  for (uint16_t j = 0; j < nLoop; ++j) {
+    CREATE_MASK_BY_SIZE(mask, T, totalElements);
+    for (uint16_t m = 0; m < groupMainCount; ++m) {
+      int32_t group = m * groupOffset + j * numPerReg;
+      vlds(x1, src, mainSrcOffset + group, NORM);
+      for (uint16_t n = 0; n < addCount; ++n) {
+        int32_t offset = mainDstOffset + group + n * rowStride;
+        vlds(x2, src, offset, NORM);
+        vadd(x2, x1, x2, mask);
+        vsts(x2, dst, offset, NORM_B32, mask);
+      }
+    }
+    for (uint16_t m = 0; m < groupTailCount; ++m) {
+      vlds(x1, src, tailSrcOffset + j * numPerReg, NORM);
+      for (uint16_t n = 0; n < addTailCount; ++n) {
+        int32_t offset = tailDstOffset + n * rowStride + j * numPerReg;
+        vlds(x2, src, offset, NORM);
+        vadd(x2, x1, x2, mask, MODE_ZEROING);
+        vsts(x2, dst, offset, NORM_B32, mask);
+      }
+    }
+  }
+}
+#endif
+
 template <typename T>
 __simd_vf__ void
 sklansky_calculation_vf(int32_t nAddFactor, int32_t mFold, uint16_t nLoop,
@@ -90,6 +128,27 @@ sklansky_calculation(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst,
   __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
   uint16_t nLoop = CEIL_DIV(realDupSize, REG_REGISTER_SIZE);
   uint16_t src_stride0 = (uint16_t)src->strides[0];
+#if BISHENG_TPL_920R1
+  if (flag < 0) {
+    int32_t mainSrcOffset = 0;
+    int32_t mainDstOffset = 0;
+    if (groupMainCountu16 != 0) {
+      mainSrcOffset = startOffset - (groupMainCountu16 - 1) * group_offset;
+      mainDstOffset = mainSrcOffset - addCount * src_stride0;
+    }
+    int32_t tailSrcOffset = 0;
+    int32_t tailDstOffset = 0;
+    if (groupTailCountu16 != 0) {
+      tailSrcOffset = startOffset - groupMainCount * group_offset;
+      tailDstOffset = tailSrcOffset - addTailCountu16 * src_stride0;
+    }
+    sklansky_positive_stride_vf<T>(
+        nAddFactor, mFold, nLoop, groupMainCountu16, group_offset, num_per_reg,
+        src_ptr, mainSrcOffset, mainDstOffset, addCount, src_stride0, dst_ptr,
+        groupTailCountu16, tailSrcOffset, tailDstOffset, addTailCountu16);
+    return;
+  }
+#endif
   sklansky_calculation_vf<T>(nAddFactor, mFold, nLoop, groupMainCountu16, flag,
                              group_offset, num_per_reg, src_ptr, startOffset,
                              addCount, src_stride0, dst_ptr, groupTailCountu16,

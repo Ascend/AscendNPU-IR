@@ -46,6 +46,12 @@ template <typename T> struct PadValueType {
 };
 
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+template <> struct PadValueType<hifloat8_t> {
+  using type = float;
+};
+#endif
+
 template <> struct PadValueType<float8_e4m3_t> {
   using type = float;
 };
@@ -880,12 +886,15 @@ load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
   const int64_t stride0_gm = gm->strides[0];
   const int64_t stride0_ub = ub->strides[0];
   constexpr int32_t bytes = sizeof(T);
-  const int64_t ub_gap = (stride0_ub - size1) * bytes;
-  const int64_t gm_gap = (stride0_gm - size1) * bytes;
-  bool is_over_gap = stride0_gm * bytes > INTRIN_MAX_STRIDE;
-  if (is_over_gap || 0 > ub_gap || 0 > gm_gap) [[unlikely]] {
+  // Check element strides before calculating byte gaps. Signed reverse
+  // strides and very large forward strides must not overflow that arithmetic
+  // or reach the unsigned hardware stride fields.
+  const bool invalid_src_stride =
+      stride0_gm < size1 ||
+      static_cast<uint64_t>(stride0_gm) > INTRIN_MAX_STRIDE / bytes;
+  if (invalid_src_stride || stride0_ub < size1) [[unlikely]] {
     // special cases of stride, unlikely used
-    if (stride0_ub * bytes % INTR_BYTES_PER_BLOCK != 0) {
+    if (stride0_ub % (INTR_BYTES_PER_BLOCK / bytes) != 0) {
       load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(gm, ub);
       return;
     }
@@ -908,6 +917,8 @@ load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
     return;
   }
 
+  const int64_t ub_gap = (stride0_ub - size1) * bytes;
+  const int64_t gm_gap = (stride0_gm - size1) * bytes;
   // split burst cnt into main and tail part
   auto gm_ptr = gm->aligned + gm->offset;
   auto ub_ptr = ub->aligned + ub->offset;
@@ -2139,9 +2150,12 @@ load_gm_to_ubuf_by_nddma(memref_t<__gm__ T, Rank> *src,
   static_assert(sizeof(T) <= 4,
                 "NDDMA descriptors are 32-bit granular; widen 64-bit types at "
                 "the call site");
-  using DmaType = std::conditional_t<std::is_same_v<T, float8_e4m3_t> ||
-                                         std::is_same_v<T, float8_e5m2_t>,
-                                     uint8_t, T>;
+  using DmaType = std::conditional_t<
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+      std::is_same_v<T, hifloat8_t> ||
+#endif
+          std::is_same_v<T, float8_e4m3_t> || std::is_same_v<T, float8_e5m2_t>,
+      uint8_t, T>;
   auto *sp = reinterpret_cast<__gm__ DmaType *>(src->aligned + src->offset);
   auto *dp = reinterpret_cast<__ubuf__ DmaType *>(dst->aligned + dst->offset -
                                                   (span ? 0 : lp));
@@ -2188,9 +2202,12 @@ load_gm_to_ubuf_2d_by_nddma(memref_t<__gm__ T, 2> *src,
   // nddma_out_to_ub does not support FP8, and this is only data movement which
   // has no impact on precision. Conversion to U8 is feasible as long as the bit
   // width is the same.
-  using DmaType = std::conditional_t<std::is_same_v<T, float8_e4m3_t> ||
-                                         std::is_same_v<T, float8_e5m2_t>,
-                                     uint8_t, T>;
+  using DmaType = std::conditional_t<
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+      std::is_same_v<T, hifloat8_t> ||
+#endif
+          std::is_same_v<T, float8_e4m3_t> || std::is_same_v<T, float8_e5m2_t>,
+      uint8_t, T>;
 
   // NDDMA expresses padding natively in the descriptor: every loop_desc
   // level carries 8-bit element-granular lp/rp counts, and the pad_val
@@ -2299,9 +2316,12 @@ load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
       "DMA only supports types up to 64-bit. "
       "Larger types (e.g., long double, __int128) are not supported.");
 
-  using DmaType = std::conditional_t<std::is_same_v<T, float8_e4m3_t> ||
-                                         std::is_same_v<T, float8_e5m2_t>,
-                                     uint8_t, T>;
+  using DmaType = std::conditional_t<
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+      std::is_same_v<T, hifloat8_t> ||
+#endif
+          std::is_same_v<T, float8_e4m3_t> || std::is_same_v<T, float8_e5m2_t>,
+      uint8_t, T>;
 
   __gm__ DmaType *src_ptr =
       reinterpret_cast<__gm__ DmaType *>(src->aligned + src->offset);
@@ -2785,6 +2805,9 @@ DECLARE_DMA_LOAD(1, half);
 DECLARE_DMA_LOAD(1, float);
 DECLARE_DMA_LOAD(1, bfloat16_t);
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+DECLARE_DMA_LOAD_FP8(1, hifloat8_t);
+#endif
 DECLARE_DMA_LOAD_FP8(1, float8_e4m3_t);
 DECLARE_DMA_LOAD_FP8(1, float8_e5m2_t);
 #endif
@@ -2804,6 +2827,9 @@ DECLARE_DMA_LOAD(2, half);
 DECLARE_DMA_LOAD(2, float);
 DECLARE_DMA_LOAD(2, bfloat16_t);
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+DECLARE_DMA_LOAD_FP8(2, hifloat8_t);
+#endif
 DECLARE_DMA_LOAD_FP8(2, float8_e4m3_t);
 DECLARE_DMA_LOAD_FP8(2, float8_e5m2_t);
 #endif
@@ -2825,6 +2851,9 @@ DECLARE_DMA_LOAD(3, bfloat16_t);
 DECLARE_DMA_LOAD(3, int8_t);
 DECLARE_DMA_LOAD(3, uint8_t);
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+DECLARE_DMA_LOAD_FP8(3, hifloat8_t);
+#endif
 DECLARE_DMA_LOAD_FP8(3, float8_e4m3_t);
 DECLARE_DMA_LOAD_FP8(3, float8_e5m2_t);
 #endif
@@ -2882,6 +2911,9 @@ DECLARE_DMA_STORE(1, half);
 DECLARE_DMA_STORE(1, float);
 DECLARE_DMA_STORE(1, bfloat16_t);
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+DECLARE_DMA_STORE(1, hifloat8_t);
+#endif
 DECLARE_DMA_STORE(1, float8_e4m3_t);
 DECLARE_DMA_STORE(1, float8_e5m2_t);
 #endif
@@ -2901,6 +2933,9 @@ DECLARE_DMA_STORE(2, half);
 DECLARE_DMA_STORE(2, float);
 DECLARE_DMA_STORE(2, bfloat16_t);
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+DECLARE_DMA_STORE(2, hifloat8_t);
+#endif
 DECLARE_DMA_STORE(2, float8_e4m3_t);
 DECLARE_DMA_STORE(2, float8_e5m2_t);
 #endif
@@ -2919,6 +2954,9 @@ DECLARE_DMA_STORE(3, half);
 DECLARE_DMA_STORE(3, float);
 DECLARE_DMA_STORE(3, bfloat16_t);
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+DECLARE_DMA_STORE(3, hifloat8_t);
+#endif
 DECLARE_DMA_STORE(3, float8_e4m3_t);
 DECLARE_DMA_STORE(3, float8_e5m2_t);
 #endif
@@ -2938,6 +2976,9 @@ DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, half);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, float);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, bfloat16_t);
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, hifloat8_t);
+#endif
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, float8_e4m3_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, float8_e5m2_t);
 #endif
@@ -2958,6 +2999,9 @@ DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, half);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, float);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, bfloat16_t);
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, hifloat8_t);
+#endif
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, float8_e4m3_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, float8_e5m2_t);
 #endif
@@ -2978,6 +3022,9 @@ DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, half);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, float);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, bfloat16_t);
 #if BISHENG_TPL_REGBASE
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, hifloat8_t);
+#endif
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, float8_e4m3_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, float8_e5m2_t);
 #endif
@@ -2992,6 +3039,9 @@ DECLARE_DMA_UB_COPY(ubuf, cbuf, 1, int16_t);
 DECLARE_DMA_UB_COPY(ubuf, cbuf, 1, uint16_t);
 DECLARE_DMA_UB_COPY(ubuf, cbuf, 1, int32_t);
 DECLARE_DMA_UB_COPY(ubuf, cbuf, 1, uint32_t);
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+DECLARE_DMA_UB_COPY(ubuf, cbuf, 1, hifloat8_t);
+#endif
 DECLARE_DMA_UB_COPY(ubuf, cbuf, 1, float8_e4m3_t);
 DECLARE_DMA_UB_COPY(ubuf, cbuf, 1, float8_e5m2_t);
 DECLARE_DMA_UB_COPY(ubuf, cbuf, 1, half);
@@ -3007,6 +3057,9 @@ DECLARE_DMA_UB_COPY(ubuf, cbuf, 2, int16_t);
 DECLARE_DMA_UB_COPY(ubuf, cbuf, 2, uint16_t);
 DECLARE_DMA_UB_COPY(ubuf, cbuf, 2, int32_t);
 DECLARE_DMA_UB_COPY(ubuf, cbuf, 2, uint32_t);
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+DECLARE_DMA_UB_COPY(ubuf, cbuf, 2, hifloat8_t);
+#endif
 DECLARE_DMA_UB_COPY(ubuf, cbuf, 2, float8_e4m3_t);
 DECLARE_DMA_UB_COPY(ubuf, cbuf, 2, float8_e5m2_t);
 DECLARE_DMA_UB_COPY(ubuf, cbuf, 2, half);
@@ -3022,6 +3075,9 @@ DECLARE_DMA_UB_COPY(ubuf, cbuf, 3, int16_t);
 DECLARE_DMA_UB_COPY(ubuf, cbuf, 3, uint16_t);
 DECLARE_DMA_UB_COPY(ubuf, cbuf, 3, int32_t);
 DECLARE_DMA_UB_COPY(ubuf, cbuf, 3, uint32_t);
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+DECLARE_DMA_UB_COPY(ubuf, cbuf, 3, hifloat8_t);
+#endif
 DECLARE_DMA_UB_COPY(ubuf, cbuf, 3, float8_e4m3_t);
 DECLARE_DMA_UB_COPY(ubuf, cbuf, 3, float8_e5m2_t);
 DECLARE_DMA_UB_COPY(ubuf, cbuf, 3, half);

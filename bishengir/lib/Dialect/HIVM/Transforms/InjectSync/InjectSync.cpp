@@ -16,14 +16,15 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/InjectSync.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
-
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncDebug.h"
+
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Transforms/DialectConversion.h"
 
 #define DEBUG_TYPE "hivm-inject-sync"
@@ -128,7 +129,7 @@ void InjectSyncAnalysis::AutoInjectSync(bool enableUnitFlag,
   LLVM_DEBUG(llvm::dbgs() << "RemoveRedundantSync\n");
   LLVM_DEBUG(SyncDebug(syncIR).PrintSyncIr());
 
-  SyncEventIdAllocation eventIdAllocation(syncIR, syncOperations);
+  SyncEventIdAllocation eventIdAllocation(syncIR, syncOperations, {});
   eventIdAllocation.Allocate();
   LLVM_DEBUG(llvm::dbgs() << "SyncEventIdAllocation\n");
   LLVM_DEBUG(SyncDebug(syncIR).PrintSyncIr());
@@ -139,14 +140,44 @@ void InjectSyncAnalysis::AutoInjectSync(bool enableUnitFlag,
   LLVM_DEBUG(SyncDebug(syncIR).PrintSyncIr());
 }
 
+namespace {
+
+/// Materialize the L0 ping-pong state the MMAD templates expect: one
+/// zero-initialized function-scoped signal shared by every local Matmul. Runs
+/// after sync analysis, like the GraphSyncSolver equivalent. The signal is
+/// scalar-written here and scalar-read inside the template, so it needs no
+/// cross-pipe sync, and keeping the alloca out of the analysis avoids handing
+/// the IR translator a buffer without an address space.
+void insertPingPongSignal(func::FuncOp func, IRRewriter &rewriter) {
+  if (func.isExternal() || func.getBody().empty())
+    return;
+
+  SmallVector<LocalMatmulLikeOpInterface> mmads;
+  func.walk([&](LocalMatmulLikeOpInterface op) { mmads.push_back(op); });
+  if (mmads.empty())
+    return;
+
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointToStart(&func.getBody().front());
+  Location loc = func.getLoc();
+  auto memTy = MemRefType::get({}, rewriter.getI32Type());
+  auto alloca = rewriter.create<memref::AllocaOp>(loc, memTy);
+  alloca->setAttr(PingPongSignalAttr::name, rewriter.getUnitAttr());
+  Value signal = alloca.getResult();
+  Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+  rewriter.create<memref::StoreOp>(loc, zero, signal, ValueRange{});
+  for (LocalMatmulLikeOpInterface op : mmads)
+    op.setPingPongSignal(signal);
+}
+
+} // namespace
+
 void InjectSyncPass::runOnOperation() {
   auto func = getOperation();
-  auto moduleOp = func->getParentOfType<ModuleOp>();
-  [[maybe_unused]] bool isMemBasedArch = hacc::utils::isMemBasedArch(moduleOp);
-  bool isRegBasedArch = hacc::utils::isRegBasedArch(moduleOp);
-  if (hacc::utils::isHost(func))
+  if (hacc::utils::isHost(func)) {
     return;
-  if (isRegBasedArch && func->hasAttr(hivm::VectorFunctionAttr::name)) {
+  }
+  if (func->hasAttr(hivm::VectorFunctionAttr::name)) {
     return;
   }
   InjectSyncAnalysis injectsyncAnalysis(func);
@@ -154,8 +185,10 @@ void InjectSyncPass::runOnOperation() {
     injectsyncAnalysis.InjectSyncAll();
   } else if (syncMode == SyncMode::NORMAL) {
     injectsyncAnalysis.AutoInjectSync(enableUnitFlag, assumeAliveLoops);
+    IRRewriter rewriter(func.getContext());
+    insertPingPongSignal(func, rewriter);
   } else {
-    llvm::report_fatal_error("Illegal synchronization mode! ");
+    llvm_unreachable("Illegal synchronization mode! ");
   }
 }
 

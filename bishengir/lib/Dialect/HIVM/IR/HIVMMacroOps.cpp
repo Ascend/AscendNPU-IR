@@ -43,8 +43,10 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/LogicalResult.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <array>
 #include <cassert>
@@ -485,6 +487,21 @@ getLocalMatmulOperandsTargetLayoutImpl(Operation *operation) {
   return valLayoutMap;
 }
 
+// Keep the library signature identical for present and absent signals. The
+// templates recognize a null aligned pointer as the full-L0 fallback.
+Value getLocalMatmulPingPongSignalLibValueImpl(Operation *operation,
+                                               OpBuilder &builder) {
+  auto op = cast<LocalMatmulLikeOpInterface>(operation);
+  if (Value signal = op.getMatmulPingPongSignal())
+    return signal;
+  Value zero = builder.create<arith::ConstantIntOp>(operation->getLoc(), 0, 64);
+  auto type = MemRefType::get({}, builder.getI32Type());
+  auto nullSignal =
+      builder.create<hivm::PointerCastOp>(operation->getLoc(), type, zero);
+  nullSignal->setAttr(hivm::PingPongSignalAttr::name, builder.getUnitAttr());
+  return nullSignal;
+}
+
 } // namespace detail
 } // namespace hivm
 } // namespace mlir
@@ -584,10 +601,10 @@ void MmadL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
                      UnitAttr a_transpose, UnitAttr b_transpose,
                      UnitAttr enable_HF32, UnitAttr enable_i4) {
   build(odsBuilder, odsState, result_tensors, a, b, init_condition, real_m,
-        real_k, real_n, c, /*sync_related_args*/ ValueRange{},
-        /*unit_flag_cond*/ ValueRange{}, per_channel_bias, a_transpose,
-        b_transpose, enable_HF32, enable_i4, /*unit_flag_mode*/ ArrayAttr{},
-        /*unit_flag_group_id*/ IntegerAttr{});
+        real_k, real_n, /*ping_pong_signal*/ Value{}, c,
+        /*sync_related_args*/ ValueRange{}, /*unit_flag_cond*/ ValueRange{},
+        per_channel_bias, a_transpose, b_transpose, enable_HF32, enable_i4,
+        /*unit_flag_mode*/ ArrayAttr{}, /*unit_flag_group_id*/ IntegerAttr{});
 }
 
 int MmadL1Op::getNumSyncRelatedArgs() { return 7; }
@@ -1088,10 +1105,10 @@ void BatchMmadL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
                           UnitAttr a_transpose, UnitAttr b_transpose,
                           UnitAttr enable_HF32, UnitAttr enable_i4) {
   build(odsBuilder, odsState, result_tensors, a, b, init_condition, real_m,
-        real_k, real_n, c, /*sync_related_args*/ ValueRange{},
-        /*unit_flag_cond*/ ValueRange{}, per_channel_bias, a_transpose,
-        b_transpose, enable_HF32, enable_i4, /*unit_flag_mode*/ ArrayAttr{},
-        /*unit_flag_group_id*/ IntegerAttr{});
+        real_k, real_n, /*ping_pong_signal*/ Value{}, c,
+        /*sync_related_args*/ ValueRange{}, /*unit_flag_cond*/ ValueRange{},
+        per_channel_bias, a_transpose, b_transpose, enable_HF32, enable_i4,
+        /*unit_flag_mode*/ ArrayAttr{}, /*unit_flag_group_id*/ IntegerAttr{});
 }
 
 int BatchMmadL1Op::getNumSyncRelatedArgs() { return 7; }
@@ -1300,7 +1317,7 @@ void MmadMxL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
                        UnitAttr a_transpose, UnitAttr b_transpose,
                        Value per_channel_bias) {
   build(odsBuilder, odsState, result_tensors, a, b, scaleA, scaleB,
-        init_condition, real_m, real_k, real_n, c,
+        init_condition, real_m, real_k, real_n, /*ping_pong_signal*/ Value{}, c,
         /*sync_related_args*/ ValueRange{}, per_channel_bias, lhsFormat,
         rhsFormat, a_transpose, b_transpose);
 }
@@ -2132,6 +2149,53 @@ LogicalResult L12BTOp::verify() {
 // L12L0Op
 //===----------------------------------------------------------------------===//
 
+void L12L0Op::build(OpBuilder &odsBuilder, OperationState &odsState, Value src,
+                    Value dst, bool is_transposed) {
+  if (!src || !dst)
+    llvm::report_fatal_error(
+        "L12L0Op buffer builder requires non-null operands");
+  auto srcType = dyn_cast<MemRefType>(src.getType());
+  auto dstType = dyn_cast<MemRefType>(dst.getType());
+  if (!srcType || !dstType)
+    llvm::report_fatal_error("L12L0Op buffer builder requires memref operands");
+  if (getOptionalHIVMAddressSpace(srcType) != AddressSpace::L1)
+    llvm::report_fatal_error(
+        "L12L0Op buffer builder requires src in L1 (cbuf)");
+  auto space = getOptionalHIVMAddressSpace(dstType);
+  if (space != AddressSpace::L0A && space != AddressSpace::L0B)
+    llvm::report_fatal_error(
+        "L12L0Op buffer builder requires dst in L0A (ca) or L0B (cb)");
+  for (MemRefType type : {srcType, dstType}) {
+    if (!type.hasStaticShape() || (type.getRank() != 2 && type.getRank() != 4))
+      llvm::report_fatal_error(
+          "L12L0Op buffer builder requires static rank-2 or rank-4 memrefs");
+    if (llvm::any_of(type.getShape(), [](int64_t size) { return size <= 0; }))
+      llvm::report_fatal_error(
+          "L12L0Op buffer builder requires positive dimensions");
+  }
+  bool toA = space == AddressSpace::L0A;
+  // The destination view is the complete copy region, not a larger slot.
+  // Its axes are independent of the source transpose flag. Physical L0A/B
+  // descriptors both store [K/C0, MN/16, 16, C0].
+  int64_t mn, k;
+  if (dstType.getRank() == 2) {
+    mn = dstType.getDimSize(toA ? 0 : 1);
+    k = dstType.getDimSize(toA ? 1 : 0);
+  } else if (llvm::MulOverflow(dstType.getDimSize(1), dstType.getDimSize(2),
+                               mn) ||
+             llvm::MulOverflow(dstType.getDimSize(0), dstType.getDimSize(3),
+                               k)) {
+    llvm::report_fatal_error(
+        "L12L0Op buffer builder copy extents overflow int64_t");
+  }
+  auto kAttr = odsBuilder.getI64IntegerAttr(k);
+  build(odsBuilder, odsState, /*result_tensor=*/TypeRange{}, src, dst,
+        /*k_part_idx=*/odsBuilder.getI64IntegerAttr(0), /*k_part=*/kAttr,
+        /*k_part_ceil=*/kAttr, /*k_part_loop=*/odsBuilder.getI64IntegerAttr(1),
+        /*k_part_actual=*/kAttr, /*m=*/odsBuilder.getI64IntegerAttr(mn),
+        odsBuilder.getBoolAttr(is_transposed));
+}
+
 SmallVector<IteratorType> L12L0Op::getIteratorTypesArray() {
   SmallVector<IteratorType> iteratorTypes;
   iteratorTypes.push_back(IteratorType::kParallel);
@@ -2143,6 +2207,11 @@ Value L12L0Op::getSource() { return getSrc(); }
 
 Value L12L0Op::getTarget() { return getDst(); }
 
+LogicalResult L12L0Op::fold(FoldAdaptor adaptor,
+                            SmallVectorImpl<OpFoldResult> &results) {
+  return memref::foldMemRefCast(*this);
+}
+
 bool L12L0Op::isToL0A() {
   auto dstSpace = getOptionalHIVMAddressSpace(getDst().getType());
   return dstSpace && *dstSpace == AddressSpace::L0A;
@@ -2151,6 +2220,37 @@ bool L12L0Op::isToL0A() {
 bool L12L0Op::isToL0B() {
   auto dstSpace = getOptionalHIVMAddressSpace(getDst().getType());
   return dstSpace && *dstSpace == AddressSpace::L0B;
+}
+
+llvm::SmallDenseMap<Value, DataLayoutAttr> L12L0Op::getOperandsTargetLayout() {
+  llvm::SmallDenseMap<Value, DataLayoutAttr> layouts;
+  auto blockSizes = getBlockSizes(getSrc());
+  auto makeLayout = [&](DataLayout layout) {
+    return DataLayoutAttr::get(
+        getContext(), layout, nullptr,
+        DenseI64ArrayAttr::get(getContext(), blockSizes));
+  };
+  layouts[getSrc()] =
+      makeLayout(getIsTransposed() ? DataLayout::nZ : DataLayout::zN);
+  layouts[getDst()] = makeLayout(isToL0A() ? DataLayout::zN : DataLayout::nZ);
+  return layouts;
+}
+
+llvm::SmallDenseMap<Value, DataLayoutAttr> L12L0Op::getOperandsCurrentLayout() {
+  auto layouts = getOperandsTargetLayout();
+  if (getSrcOperandType().getRank() == 2) {
+    // Match local matmul: a matching hint already describes normalized axes.
+    bool transpose = getIsTransposed() &&
+                     !sourceCarriesFractalLayoutHint(getSrc(), DataLayout::nZ);
+    layouts[getSrc()] = DataLayoutAttr::get(
+        getContext(), isToL0A() ? DataLayout::DOTA_ND : DataLayout::DOTB_ND,
+        transpose);
+  }
+  if (getDstOperandType().getRank() == 2)
+    layouts[getDst()] = DataLayoutAttr::get(
+        getContext(), isToL0A() ? DataLayout::DOTA_ND : DataLayout::DOTB_ND,
+        /*transpose=*/false);
+  return layouts;
 }
 
 LogicalResult L12L0Op::verify() {

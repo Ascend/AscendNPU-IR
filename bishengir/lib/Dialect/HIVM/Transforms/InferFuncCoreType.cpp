@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/SplitKernelUtils.h"
 #include "bishengir/Target/NPU/NPUArchitectureFeatures.h"
 
 #include "mlir/Analysis/CallGraph.h"
@@ -48,6 +49,8 @@ namespace {
 struct InferFuncCoreTypePass
     : public impl::InferFuncCoreTypeBase<InferFuncCoreTypePass> {
 public:
+  using Base::Base;
+
   enum class CoreTypeConstraint { None = 0, AIC, AIV, MIX };
 
 public:
@@ -73,6 +76,14 @@ public:
                         hivm::TFuncCoreTypeAttr::get(func->getContext(),
                                                      hivm::TFuncCoreType::AIC));
         }
+      });
+      // Coupled targets use an implicit AIV function convention except for
+      // the AIC annotations above. Resolve placement without changing it.
+      if (!resolveOpPlacement)
+        return;
+      module.walk([](func::FuncOp func) {
+        hivm::resolveFlexibleCoreTypes(func, /*specializeBoth=*/false,
+                                       hivm::TFuncCoreType::AIV);
       });
       return;
     }
@@ -174,6 +185,9 @@ public:
 
       func->setAttr(hivm::TFuncCoreTypeAttr::name,
                     hivm::TFuncCoreTypeAttr::get(func->getContext(), e));
+
+      if (resolveOpPlacement)
+        hivm::resolveFlexibleCoreTypes(func);
 
       auto parentModule = func->getParentOfType<ModuleOp>();
       // Materialize the A6 default before sub-block partitioning and MIX
@@ -322,6 +336,9 @@ private:
         return WalkResult::interrupt();
       }
 
+      if (auto core = hivm::getExplicitCoreType(op))
+        refineConstraint(c, *core);
+
       // LoadOp and DebugOp infer a missing core type by walking users, which
       // calls back into this query. An explicit tcoretype is local, so count
       // it. Otherwise skip: other operations determine the constraint.
@@ -441,6 +458,7 @@ private:
 };
 } // namespace
 
-std::unique_ptr<Pass> mlir::hivm::createInferFuncCoreTypePass() {
-  return std::make_unique<InferFuncCoreTypePass>();
+std::unique_ptr<Pass> mlir::hivm::createInferFuncCoreTypePass(
+    const InferFuncCoreTypeOptions &options) {
+  return std::make_unique<InferFuncCoreTypePass>(options);
 }
