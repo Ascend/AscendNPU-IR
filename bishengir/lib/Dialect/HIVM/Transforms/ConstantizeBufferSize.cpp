@@ -17,7 +17,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
-#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
+#include "bishengir/Dialect/Utils/IndexBoundAnalyzer.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -162,12 +162,21 @@ std::optional<ResolvedDim> resolveDynamicDimToBoundImpl(Value dim) {
     auto b = resolveDynamicDimToBoundImpl(minOp.getRhs());
     if (a.has_value() && b.has_value()) {
       int64_t bound = std::min(a->value, b->value);
-      // result is exact if both operands are exact, OR if one exact operand
-      // is <= the other's bound (since then the min is forced to that exact
-      // value)
-      bool exact = (a->isExact && b->isExact) ||
-                   (a->isExact && a->value <= b->value) ||
-                   (b->isExact && b->value <= a->value);
+      // The result is exact if both operands are exact, or an exact operand
+      // is proven to be <= the other operand.
+      utils::IndexBoundAnalyzer analyzer;
+      bool exact =
+          (a->isExact && b->isExact) ||
+          (a->isExact && a->value <= b->value &&
+           analyzer
+               .compare(minOp.getLhs(), utils::BoundComparisonPredicate::LE,
+                        minOp.getRhs())
+               .isSat()) ||
+          (b->isExact && b->value <= a->value &&
+           analyzer
+               .compare(minOp.getRhs(), utils::BoundComparisonPredicate::LE,
+                        minOp.getLhs())
+               .isSat());
       return ResolvedDim{bound, exact};
     }
     if (a.has_value())
@@ -178,16 +187,27 @@ std::optional<ResolvedDim> resolveDynamicDimToBoundImpl(Value dim) {
   }
 
   // --- maxsi(a, b): max = max(max(a), max(b)) ---
-  // Always returns an upper bound (conservative) even if only one operand has a
-  // bound. Exactness: true only if both operands are exact, OR the exact
-  // operand is larger.
+  // Both operands need an upper bound. The result is exact if both are exact,
+  // or an exact operand is at least the other's upper bound.
   if (auto maxOp = dyn_cast<arith::MaxSIOp>(defOp)) {
     auto a = resolveDynamicDimToBoundImpl(maxOp.getLhs());
     auto b = resolveDynamicDimToBoundImpl(maxOp.getRhs());
-    if (!a.has_value() && !b.has_value())
+    if (!a.has_value() && !b.has_value()) {
       return std::nullopt;
-    int64_t bound = std::max(a.has_value() ? a->value : INT64_MIN,
-                             b.has_value() ? b->value : INT64_MIN);
+    } else if (!a.has_value()) {
+      // May not find an upper bound.
+      auto upper = utils::IndexBoundAnalyzer().get(maxOp.getLhs()).upper;
+      if (!upper.has_value())
+        return std::nullopt;
+      a = ResolvedDim{*upper, /*isExact=*/false};
+    } else if (!b.has_value()) {
+      // May not find an upper bound.
+      auto upper = utils::IndexBoundAnalyzer().get(maxOp.getRhs()).upper;
+      if (!upper.has_value())
+        return std::nullopt;
+      b = ResolvedDim{*upper, /*isExact=*/false};
+    }
+    int64_t bound = std::max(a->value, b->value);
     bool exact = false;
     if (a.has_value() && b.has_value()) {
       if (a->isExact && b->isExact)
@@ -196,11 +216,6 @@ std::optional<ResolvedDim> resolveDynamicDimToBoundImpl(Value dim) {
         exact = true;
       else if (b->isExact && b->value >= a->value)
         exact = true;
-    } else if (a.has_value() && a->isExact) {
-      // Only one operand known and it's exact → the max is that exact value
-      exact = true;
-    } else if (b.has_value() && b->isExact) {
-      exact = true;
     }
     return ResolvedDim{bound, exact};
   }
@@ -375,8 +390,8 @@ struct ConstantizeBufferPass
 template <typename AllocLikeOp>
 struct ConstantizeAllocLikeOp : public OpRewritePattern<AllocLikeOp> {
 public:
-  ConstantizeAllocLikeOp(MLIRContext *ctx, bool compareInBytes)
-      : OpRewritePattern<AllocLikeOp>(ctx), compareInBytes(compareInBytes) {}
+  explicit ConstantizeAllocLikeOp(MLIRContext *ctx)
+      : OpRewritePattern<AllocLikeOp>(ctx) {}
 
   LogicalResult matchAndRewrite(AllocLikeOp op,
                                 PatternRewriter &rewriter) const override {
@@ -428,11 +443,7 @@ public:
         llvm::divideCeil(totalBits.value(), utils::kBitsToByte));
     auto bufferSizeInBytes = getAnnotatedBufferSizeInBytes(op.getResult());
     if (bufferSizeInBytes.has_value()) {
-      // 3160: registered / bypass kernels compare bytes vs the byte attr.
-      // Unregistered keep the historical bits-vs-byte-attr check.
-      int64_t measured =
-          compareInBytes ? totalBytes : static_cast<int64_t>(totalBits.value());
-      if (measured > bufferSizeInBytes.value())
+      if (totalBytes > bufferSizeInBytes.value())
         return rewriter.notifyMatchFailure(
             op, " constantized buffer size should not exceed set buffer size");
 
@@ -476,8 +487,6 @@ private:
     for (Operation *user : annotateUsers)
       rewriter.eraseOp(user);
   }
-
-  bool compareInBytes = false;
 };
 
 } // namespace
@@ -490,12 +499,8 @@ void ConstantizeBufferPass::runOnOperation() {
   RewritePatternSet patterns(&getContext());
   if (hacc::utils::isMemBasedArch(funcOp->getParentOfType<ModuleOp>()))
     patterns.add<DistributeAffineMaxOverMin>(patterns.getContext());
-  bool compareInBytes = allowLoopShapeHeuristics(
-      this->bypassShapeRegistry, funcOp.getName(), this->enablePreload,
-      this->workspaceMultiBufferNum);
   patterns.add<ConstantizeAllocLikeOp<memref::AllocOp>,
-               ConstantizeAllocLikeOp<memref::AllocaOp>>(patterns.getContext(),
-                                                         compareInBytes);
+               ConstantizeAllocLikeOp<memref::AllocaOp>>(patterns.getContext());
   (void)applyPatternsGreedily(funcOp, std::move(patterns));
 }
 
