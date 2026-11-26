@@ -434,6 +434,10 @@ struct BoolBinaryFnToLogicOp
     if (!isI1ElemType(lhs.getType()) || !isI1ElemType(rhs.getType())) {
       return failure();
     }
+    if constexpr (OpFn == linalg::BinaryFn::add) {
+      if (!isI1ElemType(op.getResult(0).getType()))
+        return failure();
+    }
 
     Location location = op.getLoc();
 
@@ -683,7 +687,8 @@ void LegalizeBoolPass::runOnOperation() {
 
   ModuleOp mod = getOperation();
 
-  if (mod && hacc::utils::isRegBasedArch(mod)) {
+  const bool isRegBased = hacc::utils::isRegBasedArch(mod);
+  if (isRegBased) {
     // Conditional Execution Branch
     if (this->enableClamp) {
       RewritePatternSet clampPatterns(context);
@@ -708,13 +713,17 @@ void LegalizeBoolPass::runOnOperation() {
     if (failed(applyPatternsGreedily(mod, std::move(castI1Patterns)))) {
       LLVM_DEBUG(llvm::dbgs() << "Legalize Bool CastI1ToSelect Failed\n");
     }
+  }
 
-    // Convert bool MulI and AddI to AndI and OrI
+  if (!enableClamp && (isRegBased || hacc::utils::isMemBasedArch(mod))) {
     RewritePatternSet logicPatterns(context);
     logicPatterns.add<
-        BoolBinaryFnToLogicOp<linalg::BinaryFn::mul, hfusion::BinaryFn::vand>,
         BoolBinaryFnToLogicOp<linalg::BinaryFn::add, hfusion::BinaryFn::vor>>(
         context);
+    if (isRegBased)
+      logicPatterns.add<BoolBinaryFnToLogicOp<linalg::BinaryFn::mul,
+                                              hfusion::BinaryFn::vand>>(
+          context);
     if (failed(applyPatternsGreedily(mod, std::move(logicPatterns)))) {
       LLVM_DEBUG(llvm::dbgs() << "Legalize Bool on linalg::BinaryFn Failed\n");
     }
