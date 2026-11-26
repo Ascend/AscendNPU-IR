@@ -73,6 +73,9 @@ struct InsertAnchorsAndBackupPass
   void runOnOperation() override;
 
 private:
+  // An empty summary means the subtree has no operations to check.
+  llvm::DenseMap<Operation *, std::optional<TCoreType>> subtreeCoreTypes;
+
   // Insert a real `hivm.anchor` op adjacent to `op`. Used for non
   // region-bearing ops where it is safe to splice an additional sibling op into
   // the block.
@@ -132,29 +135,92 @@ private:
     return (succeeded(tryGetCoreType) && tryGetCoreType.value() == coreType);
   }
 
+  static bool hasNonLifetimeMemoryEffects(Operation *op) {
+    auto memoryEffects = dyn_cast<MemoryEffectOpInterface>(op);
+    if (!memoryEffects)
+      return false;
+
+    SmallVector<MemoryEffects::EffectInstance> effects;
+    memoryEffects.getEffects(effects);
+    return llvm::any_of(effects, [](const auto &effect) {
+      return !isa<MemoryEffects::Allocate, MemoryEffects::Free>(
+          effect.getEffect());
+    });
+  }
+
+  // Treat ops as potentially core-specific unless their own work is neutral.
   bool mightHaveCrossCoreMemoryEffect(Operation *op) const {
-    auto tryGetCoreType = getCoreType(op);
-    if (succeeded(tryGetCoreType) &&
-        (tryGetCoreType.value() != TCoreType::CUBE_OR_VECTOR)) {
+    // Metadata has no runtime effect.
+    if (isa<annotation::MarkOp>(op))
+      return false;
+
+    // Treat these ops as potentially core-specific.
+    if (isa<DestinationStyleOpInterface, func::CallOp, memref::LoadOp,
+            memref::StoreOp, affine::AffineLoadOp, affine::AffineStoreOp,
+            tensor::ExtractOp, tensor::InsertOp, tensor::InsertSliceOp,
+            tensor::ExtractSliceOp, hivm::CustomOp, hivm::CustomMacroOp>(op))
       return true;
-    }
-    if (isa<DestinationStyleOpInterface>(op)) {
+
+    // Core placement can still matter when the op itself has neutral effects.
+    auto coreType = getCoreType(op);
+    if (failed(coreType) || coreType.value() != TCoreType::CUBE_OR_VECTOR)
       return true;
-    }
-    if (isa<func::CallOp, hivm::BitcastOp, memref::LoadOp, memref::StoreOp,
-            affine::AffineLoadOp, affine::AffineStoreOp, tensor::ExtractOp,
-            tensor::InsertOp, tensor::InsertSliceOp, tensor::ExtractSliceOp,
-            hivm::CustomOp, hivm::CustomMacroOp>(op)) {
+
+    if (hasNonLifetimeMemoryEffects(op))
       return true;
-    }
-    if (auto mei = dyn_cast<MemoryEffectOpInterface>(op)) {
-      SmallVector<MemoryEffects::EffectInstance> effects;
-      mei.getEffects(effects);
-      if (!effects.empty()) {
-        return true;
-      }
-    }
+
     return false;
+  }
+
+  // Return the op's contribution to the subtree core type. Neutral ops
+  // contribute std::nullopt. Unresolved placement, including failed inference,
+  // contributes CUBE_OR_VECTOR.
+  std::optional<TCoreType> getCoreTypeForAnchorAnalysis(Operation *op) const {
+    FailureOr<TCoreType> coreType = getCoreType(op);
+    if (failed(coreType))
+      return TCoreType::CUBE_OR_VECTOR;
+
+    TCoreType inferredType = coreType.value();
+    if (inferredType != TCoreType::CUBE_OR_VECTOR ||
+        mightHaveCrossCoreMemoryEffect(op))
+      return inferredType;
+
+    return std::nullopt;
+  }
+
+  // Merge the current subtree summary with a child's summary. Empty summaries
+  // contribute no type. CUBE_AND_VECTOR takes precedence when present.
+  // Otherwise, matching types are preserved and conflicting types yield
+  // CUBE_OR_VECTOR.
+  static std::optional<TCoreType>
+  mergeSubtreeCoreTypes(std::optional<TCoreType> accumulated,
+                        std::optional<TCoreType> childType) {
+    if (accumulated == TCoreType::CUBE_AND_VECTOR ||
+        childType == TCoreType::CUBE_AND_VECTOR)
+      return TCoreType::CUBE_AND_VECTOR;
+    if (!accumulated)
+      return childType;
+    if (!childType || accumulated == childType)
+      return accumulated;
+    return TCoreType::CUBE_OR_VECTOR;
+  }
+
+  // Record each op's subtree core type on the function as it stands. Else
+  // branches and anchors inserted afterward are outside this classification.
+  void classifySubtrees(func::FuncOp funcOp) {
+    subtreeCoreTypes.clear();
+    // Post-order, so each child's subtree type is already recorded.
+    funcOp.walk<WalkOrder::PostOrder>([&](Operation *op) {
+      std::optional<TCoreType> coreType = getCoreTypeForAnchorAnalysis(op);
+      for (Region &region : op->getRegions()) {
+        for (Block &block : region) {
+          for (Operation &childOp : block)
+            coreType = mergeSubtreeCoreTypes(coreType,
+                                             subtreeCoreTypes.lookup(&childOp));
+        }
+      }
+      subtreeCoreTypes[op] = coreType;
+    });
   }
 
   bool isOpToBeAnchored(Operation *op, bool isBefore) const {
@@ -234,6 +300,10 @@ private:
     return false;
   }
 
+  bool isUnSkippableCVOp(Operation *op) const {
+    return isCVPipeliningLoop(op) || isCVPreloadingScope(op);
+  }
+
   bool isSIMTScope(Operation *op) const {
     // Skip anchor-insert in simt scope
     if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
@@ -247,7 +317,7 @@ private:
   }
 
   bool isRegionsToBeAnchored(Operation *op) const {
-    if (isCVPipeliningLoop(op) || isCVPreloadingScope(op)) {
+    if (isUnSkippableCVOp(op)) {
       return true;
     }
     if (isSIMTScope(op)) {
@@ -269,7 +339,7 @@ private:
   }
 
   bool isBlockToBeAnchored(Operation *op, Block &block) const {
-    if (isCVPipeliningLoop(op) || isCVPreloadingScope(op)) {
+    if (isUnSkippableCVOp(op)) {
       return true;
     }
     if (isSIMTScope(op)) {
@@ -304,6 +374,21 @@ private:
     }
     return true;
   }
+
+  bool isPureSingleCoreOp(Operation *op) const {
+    assert(subtreeCoreTypes.contains(op) &&
+           "op missing from subtree core type map");
+    TCoreType coreType =
+        subtreeCoreTypes.lookup(op).value_or(TCoreType::CUBE_OR_VECTOR);
+    return coreType == TCoreType::CUBE || coreType == TCoreType::VECTOR;
+  }
+
+  bool isSkippablePureSingleCoreOp(Operation *op) const {
+    if (isUnSkippableCVOp(op)) {
+      return false;
+    }
+    return isPureSingleCoreOp(op);
+  }
 };
 
 void InsertAnchorsAndBackupPass::insertAnchor(Operation *op, OpBuilder &builder,
@@ -322,12 +407,16 @@ void InsertAnchorsAndBackupPass::insertAnchor(Operation *op, OpBuilder &builder,
 void InsertAnchorsAndBackupPass::createElseBranchesForPreloadSync(
     func::FuncOp funcOp) {
   SmallVector<scf::IfOp> conditions;
-  funcOp.walk([&](scf::IfOp ifOp) {
-    if (!ifOp.getElseRegion().empty() || !isInCVPreloadingScope(ifOp) ||
-        !isRegionsToBeAnchored(ifOp)) {
-      return;
+  funcOp.walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (op != funcOp.getOperation() && op->getNumRegions() != 0 &&
+        isSkippablePureSingleCoreOp(op))
+      return WalkResult::skip();
+    if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
+      if (ifOp.getElseRegion().empty() && isInCVPreloadingScope(ifOp) &&
+          isRegionsToBeAnchored(ifOp))
+        conditions.push_back(ifOp);
     }
-    conditions.push_back(ifOp);
+    return WalkResult::advance();
   });
 
   OpBuilder builder(&getContext());
@@ -371,7 +460,7 @@ void InsertAnchorsAndBackupPass::insertAnchorsInBlock(
       }
     }
 
-    if (isRegionsToBeAnchored(op)) {
+    if (isRegionsToBeAnchored(op) && !isSkippablePureSingleCoreOp(op)) {
       for (Region &region : op->getRegions()) {
         for (Block &nestedBlock : region) {
           insertAnchorsInBlock(
@@ -537,6 +626,7 @@ void InsertAnchorsAndBackupPass::runOnOperation() {
   OpBuilder builder(&getContext());
   llvm::DenseMap<Operation *, func::FuncOp> backupFuncs;
   for (func::FuncOp funcOp : mixFuncOps) {
+    classifySubtrees(funcOp);
     createElseBranchesForPreloadSync(funcOp);
 
     // Before cloning, so the backup and the split clones inherit the markers.
