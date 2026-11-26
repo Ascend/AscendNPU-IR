@@ -1,0 +1,24 @@
+# REQUIRES: enable-lir-compile
+# DEFINE: %{input} = %bishengir_src_root/test/Dialect/HIVM/hivm-v2-pipeline-a6-order.mlir
+# DEFINE: %{trace} = --mlir-disable-threading --mlir-print-ir-before=hivm-vectorize,bufferize-module-op,hivm-v2-split-kernel,hivm-split-mix-kernel
+# DEFINE: %{compile} = env BISHENG_BACKEND=process bishengir-compile %{input} %{trace} --link-aicore-bitcode=%t.ll -o %t.out
+# DEFINE: %{v1} = FileCheck %s --input-file=%t.log --check-prefix=V1 --implicit-check-not=hivm-v2-split-kernel
+# DEFINE: %{v2} = FileCheck %s --input-file=%t.log --check-prefix=V2 --implicit-check-not=hivm-split-mix-kernel
+# RUN: echo 'source_filename = "support"' > %t.ll
+# RUN: %{compile} --target=Ascend960 > %t.log 2>&1 && %{v2}
+# RUN: %{compile} --target=Ascend960DT_968B7 --use-pipeline-version=0 > %t.log 2>&1 && %{v2}
+# RUN: %{compile} --target=Ascend960 --use-pipeline-version=1 > %t.log 2>&1 && %{v1}
+# RUN: %{compile} --target=Ascend950PR_9589 > %t.log 2>&1 && %{v1}
+# RUN: %{compile} --target=Ascend950PR_9589 --use-pipeline-version=2 > %t.log 2>&1 && %{v2}
+# With HIVM disabled, the MIX entry is still unsplit at the IR output boundary.
+# RUN: %{compile} --target=Ascend960 --enable-hivm-compile=false --only-run-hivm-pipeline > %t.log 2>&1
+# RUN: not grep 'IR Dump Before' %t.log
+# RUN: FileCheck %s --input-file=%t.out --check-prefix=DISABLED
+
+# V1: (hivm-split-mix-kernel)
+# V2: (hivm-vectorize)
+# V2: (bufferize-module-op)
+# V2: (hivm-v2-split-kernel)
+# V2: (hivm-vectorize)
+# DISABLED: llvm.func @empty_mix()
+# DISABLED-SAME: hivm.func_core_type = #hivm.func_core_type<MIX>

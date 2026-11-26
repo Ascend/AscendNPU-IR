@@ -28,21 +28,27 @@ include "bishengir/Target/NPU/NPUArchitectureFeatures.td"
 // CHECK-NEXT: NPUArchitectureKind architecture;
 // CHECK-NEXT: ::bishengir::npu::CubeVectorDataExchange cubeVectorDataExchange;
 // CHECK-NEXT: ::bishengir::npu::CubeVectorMode cubeVectorMode;
+// CHECK-NEXT: ::bishengir::npu::DefaultHIVMPipeline defaultHivmPipeline;
 // CHECK-NEXT: ::bishengir::npu::ExecutionModel executionModel;
+// CHECK: kDav920R1Profile{
+// CHECK: DefaultHIVMPipeline::kV2,
 // CHECK: kDavC220Profile{
 // CHECK-NEXT: NPUArchitectureKind::kDavC220,
 // CHECK-NEXT: CubeVectorDataExchange::kGlobalMemoryOnly,
 // CHECK-NEXT: CubeVectorMode::kSeparated,
+// CHECK-NEXT: DefaultHIVMPipeline::kV1,
 // CHECK-NEXT: ExecutionModel::kMemBased
 // CHECK: kDavC310Profile{
 // CHECK-NEXT: NPUArchitectureKind::kDavC310,
 // CHECK-NEXT: CubeVectorDataExchange::kOnChipSupported,
 // CHECK-NEXT: CubeVectorMode::kSeparated,
+// CHECK-NEXT: DefaultHIVMPipeline::kV1,
 // CHECK-NEXT: ExecutionModel::kRegBased
 // CHECK: kDavM300Profile{
 // CHECK-NEXT: NPUArchitectureKind::kDavM300,
 // CHECK-NEXT: CubeVectorDataExchange::kOnChipSupported,
 // CHECK-NEXT: CubeVectorMode::kCoupled,
+// CHECK-NEXT: DefaultHIVMPipeline::kV1,
 // CHECK-NEXT: ExecutionModel::kRegBased
 // CHECK: inline CubeVectorDataExchange getCubeVectorDataExchange(
 // CHECK-SAME: NPUArchitectureKind architecture)
