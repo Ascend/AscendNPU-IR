@@ -13,6 +13,7 @@
 #include "bishengir/Target/LLVMIR/Dialect/HIVM/HIVMToLLVMIRTranslation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
+#include "bishengir/Target/LLVMIR/Dialect/HIVMRegbaseIntrins/HIVMRegbaseIntrinsToLLVMIRTranslation.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/Target/LLVMIR/ModuleTranslation.h"
@@ -219,7 +220,7 @@ public:
       // Those VF arguments do not establish independent allocations.
       bool hasScatter =
           func.walk([](Operation *nested) {
-                return isa<hivm_regbaseintrins::VScatterV64S32InstrOp>(nested)
+                return hivm_regbaseintrins::needsScatterMemoryWorkaround(nested)
                            ? WalkResult::interrupt()
                            : WalkResult::advance();
               })

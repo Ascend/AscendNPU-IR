@@ -8,6 +8,7 @@ add_bishengir_translation_library(MLIRHIVMRegbaseIntrinsToLLVMIRTranslation
   Core
 
   LINK_LIBS PUBLIC
+  BiShengIRHACCUtils
   MLIRHIVMRegbaseIntrinsDialect
   MLIRLLVMDialect
   MLIRTargetLLVMIRExport

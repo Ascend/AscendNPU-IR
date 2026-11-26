@@ -112,6 +112,36 @@ inline Value createCorrespondingIntr(OpBuilder &builder, const Location &loc,
   return nullptr;
 }
 
+// An LLVM vector argument carries one packed bit per logical lane. A native
+// predicate has one bit per byte, so lane i occupies bit 2*i for B16 and 4*i
+// for B32. AVE-produced masks already carry a native predicate through a cast.
+static Value getFullRegisterMask(Value mask, VectorType dataType,
+                                 ConversionPatternRewriter &rewriter) {
+  auto arg = dyn_cast<BlockArgument>(mask);
+  unsigned bits = dataType.getElementTypeBitWidth();
+  if (!arg || !arg.getOwner()->isEntryBlock() ||
+      !isa<func::FuncOp>(arg.getOwner()->getParentOp()) ||
+      (bits != 16 && bits != 32) ||
+      dataType.getNumElements() * bits != util::VL_BITS ||
+      mask.getType() != dataType.clone(rewriter.getI1Type()) ||
+      !hacc::utils::isAscend960(
+          arg.getOwner()->getParentOp()->getParentOfType<ModuleOp>()))
+    return getVLRegValueOrSelf(mask, rewriter);
+
+  Location loc = mask.getLoc();
+  VectorType predicateType = createVLVectorType(rewriter.getI1Type());
+  Value unused = rewriter.create<LLVM::PoisonOp>(loc, predicateType);
+  Value packed = rewriter.create<LLVM::vector_insert>(loc, unused, mask, 0);
+  Value lower = rewriter.create<LLVM::ConstantOp>(
+      loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(0));
+  Value predicate =
+      rewriter.create<PunpackInstrOp>(loc, predicateType, packed, lower);
+  if (bits == 32)
+    predicate =
+        rewriter.create<PunpackInstrOp>(loc, predicateType, predicate, lower);
+  return predicate;
+}
+
 /// Base conversion for Binary ops that can be lowered to one of the intrinsics
 /// based on the vector length and vector element type.
 template <typename OpTy, typename IntrV128F16OpTy, typename IntrV128S16OpTy,
@@ -137,7 +167,7 @@ struct BinaryLowerToIntrinsic : public OpConversionPattern<OpTy> {
     uint64_t totalSize = static_cast<uint64_t>(vecType.getNumElements());
     Type elementType = vecType.getElementType();
     auto dataWidth = elementType.getIntOrFloatBitWidth();
-    Value mask = getVLRegValueOrSelf(op.getMask(), rewriter);
+    Value mask = getFullRegisterMask(op.getMask(), vecType, rewriter);
     auto vlLength = util::VL_BITS / dataWidth;
     VectorType oriVecType = vecType;
     if (totalSize != vlLength) {
@@ -1092,6 +1122,202 @@ static Operation *createPstuOp(Value data, Value dataPtr,
   return asResult;
 }
 
+// The hardware PLT consumes an unsigned 32-bit count, capped at one packet.
+// Keep the original SSA value for runtime counts, including tagged VF formals.
+static OpFoldResult getPackedPredicatePrefix(VFMaskedStoreOp store) {
+  if (!store.getVectorType().getElementType().isInteger(1) ||
+      store.getPattern() != StoreDist::NORM_B8)
+    return {};
+  int width = getBitWidthFromAttr(store);
+  if (width != 16 && width != 32)
+    return {};
+
+  unsigned capacity = util::VL_BITS / width;
+  unsigned lanes;
+  if (auto pge = store.getMask().getDefiningOp<VFPgeOp>()) {
+    auto pattern = pge.getPattern();
+    if (pattern == PgePattern::H || pattern == PgePattern::Q) {
+      int maskWidth = getBitWidthFromAttr(pge);
+      if (maskWidth == -1)
+        maskWidth =
+            util::VL_BITS / cast<VectorType>(pge.getType()).getNumElements();
+      lanes = util::VL_BITS / maskWidth / (pattern == PgePattern::H ? 2 : 4);
+    } else {
+      lanes = getNumfromPgePattern(pge);
+    }
+    if (lanes > capacity)
+      return {};
+  } else if (auto plt = store.getMask().getDefiningOp<VFPltOp>()) {
+    Value count = plt.getTrueShape();
+    auto constant = mlir::getConstantIntValue(OpFoldResult(count));
+    if (!constant)
+      return count;
+    lanes = std::min<uint32_t>(*constant, capacity);
+  } else {
+    return {};
+  }
+  return Builder(store.getContext()).getI32IntegerAttr(lanes);
+}
+
+// The alignment annotation also accounts for the base pointer. Check the
+// descriptor offset in bits and the actual indices before using a native store.
+static bool isFullAlignedPredicateStore(VFMaskedStoreOp store, unsigned lanes) {
+  int64_t packetLanes = util::VL_BITS / getBitWidthFromAttr(store);
+  if (lanes != packetLanes || store->hasAttr(UnalignedAttr::name))
+    return false;
+  SmallVector<int64_t> strides;
+  int64_t offset;
+  return succeeded(mlir::utils::getStridesAndOffsetCompat(store.getMemRefType(),
+                                                          strides, offset)) &&
+         !ShapedType::isDynamic(offset) && offset % packetLanes == 0 &&
+         isLoadStoreIndexAligned(store.getBase(), store.getIndices(),
+                                 lanes / util::BITS_PER_BYTE);
+}
+
+// Both the predicate load and store take a byte address. Reject a statically
+// known sub-byte start before partial conversion can leave the AVE op behind.
+template <typename AccessOp>
+static bool startsInsidePredicateByte(AccessOp access) {
+  if (!access || !access.getMemRefType().getElementType().isInteger(1))
+    return false;
+  SmallVector<int64_t> strides;
+  int64_t offset;
+  if (failed(mlir::utils::getStridesAndOffsetCompat(access.getMemRefType(),
+                                                    strides, offset)) ||
+      ShapedType::isDynamic(offset))
+    return false;
+  int64_t bit = offset % util::BITS_PER_BYTE;
+  for (auto [index, stride] : llvm::zip(access.getIndices(), strides)) {
+    if (!ShapedType::isDynamic(stride) && stride % util::BITS_PER_BYTE == 0)
+      continue;
+    auto n = mlir::getConstantIntValue(OpFoldResult(index));
+    if (!n || (ShapedType::isDynamic(stride) && *n % util::BITS_PER_BYTE != 0))
+      return false;
+    bit += (*n % util::BITS_PER_BYTE) * (stride % util::BITS_PER_BYTE);
+  }
+  return bit % util::BITS_PER_BYTE != 0;
+}
+
+// Predicate memrefs count both offsets and strides in bits. Apply the entire
+// displacement before converting the byte-aligned start to a UB byte address.
+template <typename AccessOp>
+static Value getPackedPredicateBytePtr(AccessOp access, Value descriptor,
+                                       ValueRange indices,
+                                       ConversionPatternRewriter &rewriter) {
+  Location loc = access.getLoc();
+  auto [strides, offset] =
+      mlir::utils::getStridesAndOffsetCompat(access.getMemRefType());
+  MemRefDescriptor memref(descriptor);
+  auto constant = [&](int64_t value) -> Value {
+    return rewriter.create<LLVM::ConstantOp>(loc, memref.getIndexType(), value);
+  };
+  Value bitOffset = ShapedType::isDynamic(offset) ? memref.offset(rewriter, loc)
+                                                  : constant(offset);
+  for (auto [i, index] : llvm::enumerate(indices)) {
+    int64_t stride = strides[i];
+    if (stride != 1) {
+      Value step = ShapedType::isDynamic(stride)
+                       ? memref.stride(rewriter, loc, i)
+                       : constant(stride);
+      index = rewriter.create<LLVM::MulOp>(loc, index, step);
+    }
+    bitOffset = rewriter.create<LLVM::AddOp>(loc, bitOffset, index);
+  }
+  Value byteOffset = rewriter.create<LLVM::SDivOp>(
+      loc, bitOffset, constant(util::BITS_PER_BYTE));
+  Value base = memref.alignedPtr(rewriter, loc);
+  return rewriter.create<LLVM::GEPOp>(loc, base.getType(), rewriter.getI8Type(),
+                                      base, ValueRange{byteOffset});
+}
+
+// In PB16, each 32-byte block has 16 lanes. Sum the distinct bit weights
+// selected by those lanes, then collect the low halfword of each block.
+static Value packPredicateBytes(Value data, int width, unsigned prefixBytes,
+                                ConversionPatternRewriter &rewriter) {
+  Location loc = data.getLoc();
+  Type i16 = rewriter.getI16Type(), i32 = rewriter.getI32Type();
+  auto halves = createVLVectorType(i16);
+  Value zero = rewriter.create<LLVM::ConstantOp>(loc, i32, 0);
+  if (width == 32)
+    data = buildPpackOp(loc, zero, data, rewriter)->getResult(0);
+  Value all = buildPgeOp(loc, zero, 16, rewriter)->getResult(0);
+  Value start = rewriter.create<LLVM::ConstantOp>(loc, i16, 0);
+  Value lanes = rewriter.create<VciInstrOp>(loc, halves, start, zero);
+  if (prefixBytes > 2) {
+    Value mask = rewriter.create<LLVM::ConstantOp>(loc, i16, 15);
+    Value lowFourBits = rewriter.create<VbrInstrOp>(loc, halves, mask);
+    lanes = rewriter.create<VandXInstrOp>(loc, halves, lanes, lowFourBits, all);
+  }
+  Value one = rewriter.create<LLVM::ConstantOp>(loc, i16, 1);
+  Value ones = rewriter.create<VbrInstrOp>(loc, halves, one);
+  Value weights = rewriter.create<VshlUXInstrOp>(loc, halves, ones, lanes, all);
+  Value groups = rewriter.create<VcgaddV2V128U16XInstrOp>(
+      loc, createVLVectorType(i32), weights, data);
+  Value packed = rewriter.create<LLVM::BitcastOp>(loc, halves, groups);
+  if (prefixBytes > 2)
+    packed = rewriter.create<VpackV2V128U16XInstrOp>(loc, halves, packed);
+  return packed;
+}
+
+// Merge the final byte only when the prefix ends inside it. Every byte before
+// it has an all-ones packed mask. Bytes after it are outside the VSTUS count.
+static std::pair<Value, Value>
+preparePackedPrefixStore(Value data, Value mask, Value ptr, int width,
+                         OpFoldResult prefix,
+                         ConversionPatternRewriter &rewriter) {
+  Location loc = ptr.getLoc();
+  auto i32 = [&](int64_t n) -> Value {
+    return rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(), n);
+  };
+  auto constant = mlir::getConstantIntValue(prefix);
+  unsigned maxBytes = constant
+                          ? llvm::divideCeil(*constant, util::BITS_PER_BYTE)
+                          : util::VL_BITS / width / util::BITS_PER_BYTE;
+  Value packed = packPredicateBytes(data, width, maxBytes, rewriter);
+  if (constant && *constant % util::BITS_PER_BYTE == 0)
+    return {packed, i32(maxBytes)};
+
+  Value zero = i32(0);
+  Value all = buildPgeOp(loc, zero, 16, rewriter)->getResult(0);
+  Value wholeBytes, byteCount, readMask = all;
+  if (constant) {
+    wholeBytes = i32(*constant / util::BITS_PER_BYTE);
+    byteCount = i32(maxBytes);
+  } else {
+    Value count = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getI32Type(), cast<Value>(prefix));
+    count =
+        rewriter.create<LLVM::UMinOp>(loc, count, i32(util::VL_BITS / width));
+    wholeBytes = rewriter.create<LLVM::LShrOp>(loc, count, i32(3));
+    Value rounded = rewriter.create<LLVM::AddOp>(loc, count, i32(7));
+    byteCount = rewriter.create<LLVM::LShrOp>(loc, rounded, i32(3));
+    Value partial = rewriter.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ne,
+                                                  wholeBytes, byteCount);
+    Value lanes = rewriter.create<LLVM::SelectOp>(
+        loc, partial, i32(util::VL_BITS / 16), zero);
+    Value plt = buildPltOp(loc, lanes, 16, rewriter)->getResult(0);
+    readMask = rewriter.create<LLVM::ExtractValueOp>(loc, plt, 0);
+  }
+
+  // All B8 gather indices are zero: read just the final byte, or nothing for
+  // a whole-byte prefix. Replicate that byte in both halves of each B16 lane.
+  Value last = rewriter.create<LLVM::GEPOp>(
+      loc, ptr.getType(), rewriter.getI8Type(), ptr, ValueRange{wholeBytes});
+  auto indexType = createVLVectorType(rewriter.getI32Type());
+  Value indices = rewriter.create<VbrInstrOp>(loc, indexType, zero);
+  auto halves = packed.getType();
+  Value old = rewriter.create<VGatherV256S8InstrOp>(loc, halves, last, indices,
+                                                    readMask);
+  Value repeat =
+      rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI16Type(), 0x101);
+  old = rewriter.create<VmulsSXInstrOp>(loc, halves, old, repeat, readMask);
+  Value active = packPredicateBytes(mask, width, maxBytes, rewriter);
+  Value changed = rewriter.create<VxorXInstrOp>(loc, halves, packed, old, all);
+  changed = rewriter.create<VandXInstrOp>(loc, halves, changed, active, all);
+  return {rewriter.create<VxorXInstrOp>(loc, halves, old, changed, all),
+          byteCount};
+}
+
 static Operation *createLoadOpFori1Type(Value dataPtr,
                                         PatternRewriter &rewriter,
                                         int elementAlignment) {
@@ -1174,8 +1400,14 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
     auto loc = load->getLoc();
     MemRefType memRefTy = load.getMemRefType();
     auto vtype = cast<VectorType>(this->typeConverter->convertType(vectorTy));
-    Value dataPtr = this->getStridedElementPtr(loc, memRefTy, adaptor.getBase(),
-                                               adaptor.getIndices(), rewriter);
+    auto moduleOp = load->getParentOfType<mlir::ModuleOp>();
+    const bool isAscend960 = hacc::utils::isAscend960(moduleOp);
+    Value dataPtr =
+        isAscend960 && vecElemTy.isInteger(1)
+            ? getPackedPredicateBytePtr(load, adaptor.getBase(),
+                                        adaptor.getIndices(), rewriter)
+            : this->getStridedElementPtr(loc, memRefTy, adaptor.getBase(),
+                                         adaptor.getIndices(), rewriter);
     auto memRefDesc = adaptor.getBase();
     MemRefDescriptor memRefDescriptor(memRefDesc);
 
@@ -1186,9 +1418,7 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
 
     Value dist = rewriter.create<LLVM::ConstantOp>(
         loc, rewriter.getI32Type(), static_cast<uint32_t>(load.getPattern()));
-    auto moduleOp = load->getParentOfType<mlir::ModuleOp>();
-    bool archIs910_95 = hacc::utils::isAscend950(moduleOp) ||
-                        hacc::utils::isAscend960(moduleOp);
+    bool archIs910_95 = hacc::utils::isAscend950(moduleOp) || isAscend960;
 
     if (archIs910_95 && load->hasAttr(UnalignedAttr::name) &&
         !isBRCDist(dist)) {
@@ -1347,8 +1577,25 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
     if (dcastType)
       data = rewriter.create<UnrealizedConversionCastOp>(loc, dcastType, data)
                  ->getResult(0);
-    Value dataPtr = this->getStridedElementPtr(loc, memRefTy, adaptor.getBase(),
-                                               adaptor.getIndices(), rewriter);
+    auto moduleOp = store->getParentOfType<mlir::ModuleOp>();
+    const bool isAscend960 = hacc::utils::isAscend960(moduleOp);
+    bool archIs910_95 = hacc::utils::isAscend950(moduleOp) || isAscend960;
+
+    OpFoldResult prefix =
+        isAscend960 ? getPackedPredicatePrefix(store) : OpFoldResult();
+    auto constant = mlir::getConstantIntValue(prefix);
+    if (constant == 0) {
+      rewriter.eraseOp(store);
+      return success();
+    }
+    Value dataPtr =
+        isAscend960 && dElemType.isInteger(1)
+            ? getPackedPredicateBytePtr(store, adaptor.getBase(),
+                                        adaptor.getIndices(), rewriter)
+            : this->getStridedElementPtr(loc, memRefTy, adaptor.getBase(),
+                                         adaptor.getIndices(), rewriter);
+    if (constant && isFullAlignedPredicateStore(store, *constant))
+      prefix = {};
     Value offset = rewriter.create<LLVM::ConstantOp>(
         loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(0));
     Value mode = rewriter.create<LLVM::ConstantOp>(
@@ -1356,14 +1603,10 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
 
     Value dist = rewriter.create<LLVM::ConstantOp>(
         loc, rewriter.getI32Type(), static_cast<uint32_t>(store.getPattern()));
-    auto moduleOp = store->getParentOfType<mlir::ModuleOp>();
-    bool archIs910_95 = hacc::utils::isAscend950(moduleOp) ||
-                        hacc::utils::isAscend960(moduleOp);
     Value mask = getVLRegValueOrSelf(store.getMask(), rewriter);
-
-    if (archIs910_95 && store->hasAttr(UnalignedAttr::name) &&
-        !isONEPTDist(dist)) {
-      if (dElemType.isInteger(1)) {
+    if (prefix || (archIs910_95 && store->hasAttr(UnalignedAttr::name) &&
+                   !isONEPTDist(dist))) {
+      if (dElemType.isInteger(1) && !prefix) {
         int pbMode = getBitWidthFromAttr(store);
         auto asResult = createPstuOp(data, dataPtr, rewriter, pbMode);
         rewriter.replaceOp(store, asResult);
@@ -1374,8 +1617,14 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
       // vstus have no mask operand. vstus will only store the least significant
       // Sm-byte of Vd. Method getElemSizeByStoreMask will calculate Sm by dist
       // and mask.
-      Value elemSize =
-          getElemSizeByStoreMask(store.getMask(), dElemType, loc, rewriter);
+      Value elemSize;
+      if (prefix) {
+        std::tie(data, elemSize) = preparePackedPrefixStore(
+            data, mask, dataPtr, getBitWidthFromAttr(store), prefix, rewriter);
+      } else {
+        elemSize =
+            getElemSizeByStoreMask(store.getMask(), dElemType, loc, rewriter);
+      }
       VectorType vector32I8Type = VectorType::get(32, rewriter.getI8Type());
       auto alignData =
           rewriter.create<InitVectorAlignDataInstrOp>(loc, vector32I8Type);
@@ -1800,15 +2049,22 @@ struct HIVMScatterOpLowering : public ConvertOpToLLVMPattern<VFScatterOp> {
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = scatter.getLoc();
     auto type = cast<VectorType>(scatter.getVal().getType());
-    auto indexType = VectorType::get({64}, rewriter.getI32Type());
-    if (type.getRank() != 1 || type.getNumElements() != 64 ||
-        !(type.getElementType().isInteger(32) ||
-          type.getElementType().isF32()) ||
-        scatter.getIndexVec().getType() != indexType ||
-        scatter.getMask().getType() !=
-            VectorType::get({64}, rewriter.getI1Type()))
+    Type element = type.getElementType();
+    bool halfword =
+        element.isInteger(16) || element.isF16() || element.isBF16();
+    if (halfword
+            ? !hacc::utils::isAscend960(scatter->getParentOfType<ModuleOp>())
+            : !(element.isInteger(32) || element.isF32()))
       return rewriter.notifyMatchFailure(
-          scatter, "requires full 32-bit data, indices and mask");
+          scatter, "unsupported scatter element type for the target");
+    auto indexType = createVLVectorType(
+        rewriter.getIntegerType(element.getIntOrFloatBitWidth()));
+    if (type.getShape() != indexType.getShape() ||
+        scatter.getIndexVec().getType() != indexType ||
+        scatter.getMask().getType() != indexType.clone(rewriter.getI1Type()))
+      return rewriter.notifyMatchFailure(
+          scatter,
+          "requires full-register data, element indices and lane mask");
     auto memref = cast<MemRefType>(scatter.getBase().getType());
     if (memref.getElementType() != type.getElementType() ||
         scatter.getIndices().size() != static_cast<size_t>(memref.getRank()))
@@ -1819,9 +2075,13 @@ struct HIVMScatterOpLowering : public ConvertOpToLLVMPattern<VFScatterOp> {
     Value value = adaptor.getVal();
     if (value.getType() != indexType)
       value = rewriter.create<LLVM::BitcastOp>(loc, indexType, value);
-    Value mask = getVLRegValueOrSelf(adaptor.getMask(), rewriter);
-    rewriter.create<VScatterV64S32InstrOp>(loc, value, ptr,
-                                           adaptor.getIndexVec(), mask);
+    Value mask = getFullRegisterMask(adaptor.getMask(), type, rewriter);
+    if (halfword)
+      rewriter.create<VScatterV128S16InstrOp>(loc, value, ptr,
+                                              adaptor.getIndexVec(), mask);
+    else
+      rewriter.create<VScatterV64S32InstrOp>(loc, value, ptr,
+                                             adaptor.getIndexVec(), mask);
     rewriter.eraseOp(scatter);
     return success();
   }
@@ -3296,7 +3556,7 @@ struct HIVMVShiftOpLowering : public ConvertOpToLLVMPattern<SourceOp> {
         isSigned = intAttr.getValue().getBoolValue();
       }
     }
-    Value mask = getVLRegValueOrSelf(adaptor.getMask(), rewriter);
+    Value mask = getFullRegisterMask(adaptor.getMask(), resType, rewriter);
 
     uint64_t totalSize = static_cast<uint64_t>(resType.getNumElements());
     auto dataWidth = elemType.getIntOrFloatBitWidth();
@@ -4175,7 +4435,7 @@ struct BinaryVectorScalarLowerToIntrinsic : public OpConversionPattern<OpTy> {
     uint64_t totalSize = static_cast<uint64_t>(vecType.getNumElements());
     Type elementType = vecType.getElementType();
     auto dataWidth = elementType.getIntOrFloatBitWidth();
-    Value mask = getVLRegValueOrSelf(op.getMask(), rewriter);
+    Value mask = getFullRegisterMask(op.getMask(), vecType, rewriter);
 
     auto vlLength = util::VL_BITS / dataWidth;
     VectorType oriVecType = vecType;
@@ -5297,7 +5557,19 @@ struct HIVMAVEToAVEIntrinPass
     // A known target is required for these native register operations. Reject
     // unsupported semantics explicitly rather than leaving AVE ops behind in
     // a partial conversion (in particular, do not use 950 groups on 960).
+    const bool checkPredicateAddresses = hacc::utils::isAscend960(moduleOp);
     auto supported = moduleOp.walk([&](Operation *op) {
+      if (checkPredicateAddresses &&
+          (startsInsidePredicateByte(dyn_cast<VFLoadOp>(op)) ||
+           startsInsidePredicateByte(dyn_cast<VFMaskedStoreOp>(op)))) {
+        // An empty predicate store never accesses its address.
+        if (auto store = dyn_cast<VFMaskedStoreOp>(op);
+            store &&
+            mlir::getConstantIntValue(getPackedPredicatePrefix(store)) == 0)
+          return WalkResult::advance();
+        op->emitOpError("packed predicate access starts inside a byte");
+        return WalkResult::interrupt();
+      }
 #if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
       // VFTruncFOp verifies its own result type. The remaining AVE conversions
       // that share the rounding attribute must not forward HYBRID to CCE.

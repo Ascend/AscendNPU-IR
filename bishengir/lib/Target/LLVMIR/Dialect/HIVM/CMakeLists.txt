@@ -9,6 +9,7 @@ add_bishengir_translation_library(MLIRHIVMToLLVMIRTranslation
 
   LINK_LIBS PUBLIC
   BiShengIRHIVMDialect
+  MLIRHIVMRegbaseIntrinsToLLVMIRTranslation
   MLIRLLVMDialect
   MLIRTargetLLVMIRExport
   )
