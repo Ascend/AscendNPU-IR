@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -135,21 +136,11 @@ private:
     return (succeeded(tryGetCoreType) && tryGetCoreType.value() == coreType);
   }
 
-  static bool hasNonLifetimeMemoryEffects(Operation *op) {
-    auto memoryEffects = dyn_cast<MemoryEffectOpInterface>(op);
-    if (!memoryEffects)
-      return false;
-
-    SmallVector<MemoryEffects::EffectInstance> effects;
-    memoryEffects.getEffects(effects);
-    return llvm::any_of(effects, [](const auto &effect) {
-      return !isa<MemoryEffects::Allocate, MemoryEffects::Free>(
-          effect.getEffect());
-    });
-  }
-
   // Treat ops as potentially core-specific unless their own work is neutral.
   bool mightHaveCrossCoreMemoryEffect(Operation *op) const {
+    if (ignoreOp(op))
+      return false;
+
     // Metadata has no runtime effect.
     if (isa<annotation::MarkOp>(op))
       return false;
@@ -166,7 +157,7 @@ private:
     if (failed(coreType) || coreType.value() != TCoreType::CUBE_OR_VECTOR)
       return true;
 
-    if (hasNonLifetimeMemoryEffects(op))
+    if (utils::hasNonLifetimeMemoryEffects(op))
       return true;
 
     return false;
@@ -176,16 +167,11 @@ private:
   // contribute std::nullopt. Unresolved placement, including failed inference,
   // contributes CUBE_OR_VECTOR.
   std::optional<TCoreType> getCoreTypeForAnchorAnalysis(Operation *op) const {
-    FailureOr<TCoreType> coreType = getCoreType(op);
-    if (failed(coreType))
-      return TCoreType::CUBE_OR_VECTOR;
+    if (!mightHaveCrossCoreMemoryEffect(op)) {
+      return std::nullopt;
+    }
 
-    TCoreType inferredType = coreType.value();
-    if (inferredType != TCoreType::CUBE_OR_VECTOR ||
-        mightHaveCrossCoreMemoryEffect(op))
-      return inferredType;
-
-    return std::nullopt;
+    return getCoreType(op).value_or(TCoreType::CUBE_OR_VECTOR);
   }
 
   // Merge the current subtree summary with a child's summary. Empty summaries
