@@ -310,6 +310,15 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
     arguments.push_back("-mllvm");
     arguments.push_back("--cce-vf-mem-bar-all=true");
   }
+  // msdebug: when compiling with debug variables, force VF memory barriers
+  // so the debugger observes a consistent VF-local memory state. This mirrors
+  // the barrier-all path above; skip it there to avoid a duplicate
+  // (last-wins) option.
+  if (config.shouldEnableDebugVariables() &&
+      !config.shouldInjectBarrierAllSync()) {
+    arguments.push_back("-mllvm");
+    arguments.push_back("--cce-vf-mem-bar-all=true");
+  }
   arguments.push_back("-mllvm");
   arguments.push_back("-cce-aicore-dcci-insert-for-scalar=false");
   // Inline functions from linked modules (e.g. template bitcode) into the
@@ -468,6 +477,13 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
       extraOpts.push_back("-enable-deps-filter=off");
       extraOpts.push_back("--cce-vf-mem-bar-all=true");
     }
+    // 4b. msdebug: when compiling with debug variables, force VF memory
+    //     barriers so the debugger observes a consistent VF-local memory
+    //     state. Same as process mode; skipped under bar-all to avoid a
+    //     duplicate (last-wins) option.
+    if (config.shouldEnableDebugVariables() &&
+        !config.shouldInjectBarrierAllSync())
+      extraOpts.push_back("--cce-vf-mem-bar-all=true");
     // 5. -cce-aicore-dcci-insert-for-scalar=false (manual -mllvm)
     extraOpts.push_back("-cce-aicore-dcci-insert-for-scalar=false");
     // 6. -enable-module-inliner (manual -mllvm)
