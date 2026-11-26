@@ -1,4 +1,5 @@
 // RUN: bishengir-opt -memref-dse -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -memref-dse --mlir-disable-threading -split-input-file %s | FileCheck %s
 
 // CHECK-LABEL: example
 // CHECK: %[[cstOne:.*]] = arith.constant 4.200000
@@ -630,5 +631,55 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     hivm.hir.load ins(%subview : memref<?xf32, strided<[1]>, #hivm.address_space<gm>>) outs(%subview_0 : memref<?xf32, strided<[1]>, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %cst : f32
     hivm.hir.store ins(%alloc : memref<32xf32, #hivm.address_space<ub>>) outs(%arg3 : memref<32xf32, strided<[1]>, #hivm.address_space<gm>>)
     return
+  }
+}
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // CHECK-LABEL: func.func @regbase_forward_loads(
+  // CHECK-NEXT: %[[STACK:.*]] = arith.constant 17 : i32
+  // CHECK-NEXT: %[[HEAP:.*]] = arith.constant 23 : i32
+  // CHECK-NOT: memref.load
+  // CHECK: return %[[STACK]], %[[HEAP]] : i32, i32
+  func.func @regbase_forward_loads() -> (i32, i32) {
+    %c17 = arith.constant 17 : i32
+    %c23 = arith.constant 23 : i32
+    %stack = memref.alloca() : memref<i32>
+    memref.store %c17, %stack[] : memref<i32>
+    %from_stack = memref.load %stack[] : memref<i32>
+    %heap = memref.alloc() : memref<i32>
+    memref.store %c23, %heap[] : memref<i32>
+    %from_heap = memref.load %heap[] : memref<i32>
+    return %from_stack, %from_heap : i32, i32
+  }
+}
+
+// -----
+
+// The serial pipeline runs the same pass instance on both functions.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // CHECK-LABEL: func.func @forward_first(
+  // CHECK-NEXT: %[[FIRST:.*]] = arith.constant 31 : i32
+  // CHECK-NOT: memref.load
+  // CHECK: return %[[FIRST]] : i32
+  func.func @forward_first() -> i32 {
+    %c31 = arith.constant 31 : i32
+    %alloc = memref.alloc() : memref<i32>
+    memref.store %c31, %alloc[] : memref<i32>
+    %value = memref.load %alloc[] : memref<i32>
+    return %value : i32
+  }
+
+  // CHECK-LABEL: func.func @forward_second(
+  // CHECK-NEXT: %[[SECOND:.*]] = arith.constant 47 : i32
+  // CHECK-NOT: memref.load
+  // CHECK: return %[[SECOND]] : i32
+  func.func @forward_second() -> i32 {
+    %c47 = arith.constant 47 : i32
+    %alloc = memref.alloc() : memref<i32>
+    memref.store %c47, %alloc[] : memref<i32>
+    %value = memref.load %alloc[] : memref<i32>
+    return %value : i32
   }
 }

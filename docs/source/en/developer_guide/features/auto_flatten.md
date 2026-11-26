@@ -251,6 +251,47 @@ Each operation type implements `adjustTargetDimensions`:
 | `VFlipOp` | `flip_axis` |
 | `VSortOp` | `sort_axis` |
 | Element-wise operations | `iterator_types` (broadcast, transpose arrays) |
+| `CustomOp` / `CustomMacroOp` | `iterator_types`, `indexing_map`, `symbol` (selected through `flatten_ranks`/`flatten_symbols`) |
+
+### Flattening Custom Ops
+
+The body of `hivm.hir.custom` and `hivm.hir.custom_macro` is opaque to the compiler, so **flattening is driven by what the op author declared** rather than by inference. The declaration has two parts:
+
+- **Loop semantics** — every `iterator_types` entry must be `parallel`. Any other iterator kind leaves the entire op unchanged: a rank alone cannot distinguish different axis semantics after collapsing.
+
+- **Implementation of the collapsed rank** — `flatten_ranks` / `flatten_symbols`: the template library of the native ops is named by rank, so the compiler picks the template itself after collapsing; a custom op is implemented by user bitcode, and the signature behind `symbol` (say `memref_t<T, 2>`) is fixed when that bitcode is built, so the compiler cannot re-rank it. The implementation called before and after flattening may thus differ, and the author provides one for each rank the collapse may produce: once the operands are collapsed to `flatten_ranks[i]`, `flatten_symbols[i]` is called. **A produced rank without an implementation is not collapsed to**; the op then keeps its rank and keeps calling `symbol`.
+
+The implementation falls back to the identity reassociation — leaving the op at its original rank and its original `symbol` — in any of these cases:
+
+| Case | Reason |
+| ------------------------------------------------- | -------------------------------------------------------- |
+| No `iterator_types`, its length differs from the rank, or an element is malformed or non-`parallel` | Loop semantics unknown or inconsistent; must not be guessed |
+| No `flatten_ranks`/`flatten_symbols`, or no entry for the rank the collapse produces | The implementation behind `symbol` reads descriptors of the original rank; the collapsed operands would have nothing to be lowered to |
+| A non-identity `indexing_map`, a malformed one, or one that does not carry exactly one map per structured operand | A permuting/projecting map cannot be replayed on the collapsed space, and a short list leaves the remaining operands undescribed |
+| Builtins (`__builtin_*`) | Bound to a fixed compiler-owned template signature |
+| An operand carries `align_dim` (via `arg_attrs`) | The alignment requirement is anchored to a specific dimension |
+| The op has a shaped result | Only operands are rewritten, so the result would keep the old rank |
+| An operand carries a shaped type that is not a plain `memref`, a `tensor` for one | Only top-level memrefs are collapsed, so such an operand would keep the old rank while its siblings drop to the new one |
+| A temp buffer is also passed as an input or output operand | The rewrite maps values, not operand positions, so collapsing one occurrence rewrites the other |
+| Operands do not agree on the iteration domain dimension by dimension | With identity indexing they walk the same domain; a collapse would paper the disagreement over |
+| Operands disagree on rank | They do not describe a single iteration space |
+| An operand's layout has no stride form | `memref.collapse_shape` does not accept such an operand, and the collapse pipeline builds the collapsed type before any verifier runs |
+
+After flattening, `symbol` is switched to the `flatten_symbols` entry of the produced rank (`bitcode` is unchanged), `iterator_types` is rebuilt from the collapse result (every resulting dimension is `parallel`), and an identity `indexing_map` is rebuilt as the identity of the new rank. `flatten_ranks`/`flatten_symbols` themselves stay on the op.
+
+Temp buffers passed through the `tmps` operand segment are scratch memory outside the iteration space; their shape is unrelated to the collapse and they are **not** collapsed.
+
+An entry promises equivalence for every supported reassociation, shape, offset,
+stride and aliasing relationship, while preserving temporary buffers and
+synchronization. All-`parallel` iteration does not establish this automatically;
+see the full contract in {ref}`Custom Op <flatten-attributes>`.
+
+For example, an all-`parallel` `memref<4x8x16xf32, strided<[320, 40, 1]>>`
+can only merge its first two dimensions, producing
+`memref<32x16xf32, strided<[40, 1]>>`. A rank-2 entry is selected when present;
+a table with only rank 1 leaves the original rank-3 call unchanged. Changing the
+iterators to `[parallel, parallel, reduction]` leaves the op unchanged regardless
+of the ranks in the table.
 
 ## Capabilities and Limitations
 
@@ -272,10 +313,12 @@ Each operation type implements `adjustTargetDimensions`:
 | Limitation | Description | Workaround |
 | ---------------------------- | --------------------------------------------------------- | ------------------------------------------------------- |
 | MemRef types only | Only `MemRefType` operands are collapsed. | Tensors must be bufferized first |
-| Static shape required | Dynamic dimensions may not fold correctly | Run symbolic dialect or shape inference passes first |
+| Limited dynamic shape support | A dynamic extent can be collapsed (`memref<?x7xf32>` is), but the collapsed extent is only known at run time | Run symbolic dialect or shape inference passes first |
+| Strided layout required | A layout without a strided representation, such as `affine_map<(d0, d1) -> (d0 floordiv 2, d0 mod 2, d1)>`, is not accepted by `memref.collapse_shape` | Normalize the layout before flattening |
 | Strict barrier mode | Barrier dimensions (restricted axes) always remain independent | Handled automatically via `getLimitedAxes()` |
 | Transpose backward dimension | The last dimension of certain operations cannot undergo OTF transpose | The algorithm keeps the last dimension unfolded |
 | Non-HIVMStructuredOp | Operations that do not implement the interface return an identity mapping | Implement `FlattenInterface` |
+| Custom operators require declarations | A `CustomOp` without `iterator_types`, or without an implementation for the collapsed rank in `flatten_ranks`/`flatten_symbols`, keeps its rank | Declare `iterator_types` and provide implementations for the ranks the collapse may produce |
 
 **Edge Cases**:
 

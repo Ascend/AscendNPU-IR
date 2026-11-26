@@ -17,43 +17,42 @@
 //
 // This pass normalizes `bufferization.to_tensor` ops before bufferization:
 //
-//  1. Memory-space isolation: when the memref operand carries a memory
-//     space, a `memref.memory_space_cast` is inserted before the `to_tensor`
-//     so that it operates on a memory-space-free memref. This keeps the
-//     memory-space attr out of the tensor bufferization path.
+//  1. Memory-space isolation: insert a `memref.memory_space_cast` before a
+//     `to_tensor` whose memref carries a memory space, so that the attribute
+//     stays out of the tensor bufferization path.
 //
-//  2. Expose memref-level writes: for `to_tensor` ops with the `writable`
-//     attribute whose source memref was written by a DPS op (e.g.,
-//     hivm.hir.load) before the `to_tensor`, such memref-level writes are
-//     invisible to One-Shot Bufferization analysis (it only analyzes
-//     tensor-type operands). The transform replaces:
+//  2. Expose memref-level writes: One-Shot Bufferization only analyzes tensor
+//     operands, so a write performed on the memref before the `to_tensor`
+//     (e.g., a `hivm.hir.load` into a subview) is invisible to it. For
+//     writable `to_tensor` ops whose memref may have been written (a DPS init
+//     operand, a copy target or a store, tracing through view-like and
+//     `arith.select` aliases), rewrite
 //
 //       %alloc = memref.alloc()
 //       hivm.hir.load outs(%subview_of_alloc)   // memref-level write
 //       %t = bufferization.to_tensor %alloc restrict writable
 //
-//     with:
+//     into
+//
 //       %alloc = memref.alloc()
 //       hivm.hir.load outs(%subview_of_alloc)   // memref-level write
 //       %raw = bufferization.to_tensor %alloc restrict writable
 //       %t = bufferization.alloc_tensor() copy(%raw) {to_be_replaced}
 //
-//     This makes the writes of %alloc visible to One-Shot Bufferization
-//     analysis, enabling it to see the tensor-level write and analyze
-//     conflicts on %t.
+//     so that the write becomes visible at tensor level.
 //
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Bufferization/Transforms/Passes.h"
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
-#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/IR/Dominance.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/Interfaces/CopyOpInterface.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -71,12 +70,9 @@ using namespace mlir::bufferization;
 
 namespace {
 
-static constexpr llvm::StringLiteral kWriteExposedAttr = "write_exposed";
 static constexpr llvm::StringLiteral kToBeReplacedAttr = "to_be_replaced";
 
-/// Isolate the memory-space info from a `to_tensor` by inserting a
-/// `memref.memory_space_cast` before it when the memref operand carries a
-/// memory space.
+/// Isolate the memory space of a `to_tensor` operand.
 struct IsolateToTensorMemspacePattern : public OpRewritePattern<ToTensorOp> {
   using OpRewritePattern<ToTensorOp>::OpRewritePattern;
 
@@ -84,13 +80,10 @@ struct IsolateToTensorMemspacePattern : public OpRewritePattern<ToTensorOp> {
                                 PatternRewriter &rewriter) const override {
     Value memref = toTensorOp.getMemref();
     auto memrefType = dyn_cast<MemRefType>(memref.getType());
-    // The memref must carry a memory space; memrefs without one need no
-    // isolation.
     if (!memrefType || !memrefType.getMemorySpace())
       return failure();
 
     rewriter.setInsertionPoint(toTensorOp);
-    // Build a type without the memory-space attribute.
     Type plainType =
         MemRefType::get(memrefType.getShape(), memrefType.getElementType(),
                         memrefType.getLayout());
@@ -103,107 +96,118 @@ struct IsolateToTensorMemspacePattern : public OpRewritePattern<ToTensorOp> {
   }
 };
 
-/// A separated load scope executes its direct body once. Its nested writer
-/// does not structurally dominate a later to_tensor, but the scope does.
-/// Conditional writes inside the scope do not satisfy this check.
-static bool precedesToTensor(Operation *user, Operation *toTensor,
-                             DominanceInfo &domInfo) {
-  if (domInfo.properlyDominates(user, toTensor))
-    return true;
-  auto loadScope = dyn_cast<scope::ScopeOp>(user->getParentOp());
-  if (!loadScope || !loadScope->hasAttr(hivm::LoadPreloadAttr::name))
-    return false;
-  return domInfo.properlyDominates(loadScope, toTensor);
+/// Verify that `current` is rooted in an allocation or a function argument, and
+/// enqueue the values it aliases (the source of a view-like op, or both arms of
+/// a select). Abort on any other defining op, since the write trace cannot
+/// reason about it.
+void verifyAndCollectDefChain(Value current, SmallVector<Value> &worklist) {
+  if (auto bbArg = dyn_cast<BlockArgument>(current)) {
+    auto *ownerOp = bbArg.getOwner()->getParentOp();
+    if (!isa<func::FuncOp>(ownerOp)) {
+      llvm::dbgs() << current << "\n";
+      llvm::report_fatal_error(
+          "unexpected value when check memref written before to_tensor");
+    }
+  } else {
+    auto *defOp = current.getDefiningOp();
+    if (!llvm::isa<bishengir::memref_ext::AllocWorkspaceOp, memref::AllocOp,
+                   arith::SelectOp, ViewLikeOpInterface>(defOp)) {
+      defOp->dump();
+      llvm::report_fatal_error(
+          "unexpected defOp when check memref written before to_tensor");
+    }
+    if (auto viewLikeOp = llvm::dyn_cast<ViewLikeOpInterface>(defOp))
+      worklist.push_back(viewLikeOp.getViewSource());
+    else if (auto selectOp = llvm::dyn_cast<arith::SelectOp>(defOp)) {
+      worklist.push_back(selectOp.getTrueValue());
+      worklist.push_back(selectOp.getFalseValue());
+    }
+  }
 }
 
-/// Check if a memref value (or its aliases via subview/reinterpret_cast/cast)
-/// is written by a DPS op before the given `toTensor` operation. The memref
-/// is traced up to its root, which must be an allocation (memref.alloc /
-/// alloc_workspace) or a function-entry argument.
-static bool isMemrefWrittenBeforeToTensor(Value memref, Operation *toTensor) {
+/// Return true if `memref`, or an alias reached through view-like ops or
+/// `arith.select`, is written before `toTensor` in memory view order.
+///
+/// A DPS init operand, a copy target and a store are definite writes; a call is
+/// not treated as one, so a write performed inside it stays invisible. Also
+/// reports an error when the memref feeds more than one `to_tensor`, which
+/// breaks the `restrict` contract.
+bool isMemrefWrittenBeforeToTensor(Value memref, Operation *toTensor) {
   SmallVector<Value> worklist = {memref};
   DenseSet<Value> visited;
-  DominanceInfo domInfo(toTensor->getParentOfType<func::FuncOp>());
+  bool needExpose = false;
 
   while (!worklist.empty()) {
     Value current = worklist.pop_back_val();
     if (!visited.insert(current).second)
       continue;
-    // Trace the value up to its root: follow view-like defining ops (e.g. a
-    // memory_space_cast inserted by the memspace isolation) to their source,
-    // and accept allocations and function-entry arguments as roots. Anything
-    // else (e.g. a block argument of a nested region) is unexpected.
-    if (auto bbArg = dyn_cast<BlockArgument>(current)) {
-      auto *ownerOp = bbArg.getOwner()->getParentOp();
-      if (!isa<func::FuncOp>(ownerOp)) {
-        llvm::dbgs() << current << "\n";
-        llvm::report_fatal_error(
-            "unexpected value when check memref written before to_tensor");
-      }
-    } else {
-      auto *defOp = current.getDefiningOp();
-      if (auto viewLikeOp = llvm::dyn_cast<ViewLikeOpInterface>(defOp)) {
-        worklist.push_back(viewLikeOp.getViewSource());
-      } else if (!llvm::isa<bishengir::memref_ext::AllocWorkspaceOp,
-                            memref::AllocOp>(defOp)) {
-        llvm::dbgs() << current << "\n";
-        llvm::report_fatal_error(
-            "unexpected value when check memref written before to_tensor");
-      }
-    }
 
+    verifyAndCollectDefChain(current, worklist);
     for (OpOperand &use : current.getUses()) {
       Operation *user = use.getOwner();
-      // Skip the to_tensor itself.
       if (user == toTensor)
         continue;
-      // Only consider users that are properly before to_tensor.
-      // dominanceInfo.properlyDominates returns true if `user` comes before
-      // `to_tensor` in execution order (and they are not the same op).
-      if (!precedesToTensor(user, toTensor, domInfo))
+      if (isa<bufferization::ToTensorOp>(user)) {
+        user->emitOpError()
+            << "illegal usage of to_tensor op and restrict attr : a memref "
+               "should not be converted to multiple tensors, which may cause "
+               "precision error. See more details in definition of to_tensor "
+               "op and restrict attr";
         continue;
-      // If user is a DPS op that writes to current (as a dpsInit operand),
-      // the memref has been written.
+      }
+      if (isa<scf::SCFDialect>(user->getDialect())) {
+        user->dump();
+        llvm::report_fatal_error(
+            "SCF users are not supported in memref-level IR before to_tensor");
+      }
+      bool memrefWritten = false;
       if (auto dpsOp = dyn_cast<DestinationStyleOpInterface>(user)) {
         if (dpsOp.isDpsInit(&use))
-          return true;
-      }
-      // Trace through alias-creating ops to find writes to derived memrefs.
-      if (isa<ViewLikeOpInterface>(user)) {
+          memrefWritten = true;
+      } else if (auto copyOp = dyn_cast<CopyOpInterface>(user)) {
+        if (copyOp.getTarget() == use.get())
+          memrefWritten = true;
+      } else if (auto storeOp = dyn_cast<memref::StoreOp>(user)) {
+        if (storeOp.getMemRef() == use.get())
+          memrefWritten = true;
+      } else if (isa<ViewLikeOpInterface, arith::SelectOp>(user)) {
         worklist.push_back(user->getResult(0));
       }
+
+      if (!memrefWritten)
+        // Read-only use; keep checking the other users.
+        continue;
+
+      if (utils::isBeforeInMemoryView(user, toTensor))
+        needExpose = true;
+      // TODO: A memref-level write after `to_tensor` may invalidate later reads
+      // of the tensor and break tensor value semantics, e.g.:
+      //
+      //   %alloc = memref.alloc()
+      //   load outs(%alloc)                         // Memref-level write.
+      //   %t = bufferization.to_tensor %alloc restrict writable
+      //   read %t
+      //   write outs(%alloc)                        // Overwrites the buffer.
+      //   read %t                                   // May observe new data.
+      //
+      // The write is safe if %t and its aliases are no longer read afterwards.
+      // Ordering tensor reads against memref writes needs extra analysis, so no
+      // error is reported here to avoid noisy diagnostics.
     }
   }
-  return false;
+  return needExpose;
 }
 
-/// Expose a prior memref-level DPS write to tensor-level analysis.
-static void exposeMemrefWriteToTensor(ToTensorOp toTensorOp,
-                                      PatternRewriter &rewriter) {
+/// Copy the `to_tensor` result to expose a possible memref-level write at
+/// tensor level; `to_be_replaced` lets bufferization fold the copy away later.
+void exposeMemrefWriteToTensor(ToTensorOp toTensorOp, IRRewriter &rewriter) {
   rewriter.setInsertionPointAfter(toTensorOp);
   auto allocTensorCopy = utils::createAllocTensorOp(
       rewriter, toTensorOp.getLoc(), toTensorOp.getResult(), /*copy=*/true);
   allocTensorCopy->setAttr(kToBeReplacedAttr, rewriter.getUnitAttr());
   rewriter.replaceAllUsesExcept(toTensorOp.getResult(),
                                 allocTensorCopy.getResult(), allocTensorCopy);
-  rewriter.modifyOpInPlace(toTensorOp, [&]() {
-    toTensorOp->setAttr(kWriteExposedAttr, rewriter.getUnitAttr());
-  });
 }
-
-struct ExposeMemrefWriteToTensorPattern : public OpRewritePattern<ToTensorOp> {
-  using OpRewritePattern<ToTensorOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(ToTensorOp toTensorOp,
-                                PatternRewriter &rewriter) const override {
-    if (!toTensorOp.getWritable() || toTensorOp->hasAttr(kWriteExposedAttr) ||
-        !isMemrefWrittenBeforeToTensor(toTensorOp.getMemref(), toTensorOp))
-      return failure();
-
-    exposeMemrefWriteToTensor(toTensorOp, rewriter);
-    return success();
-  }
-};
 
 struct NormalizeToTensorOpPass
     : public bishengir::bufferization::impl::NormalizeToTensorOpBase<
@@ -213,11 +217,16 @@ struct NormalizeToTensorOpPass
     func::FuncOp funcOp = getOperation();
     MLIRContext *context = funcOp.getContext();
     RewritePatternSet patterns(context);
-    patterns
-        .add<IsolateToTensorMemspacePattern, ExposeMemrefWriteToTensorPattern>(
-            context);
+    patterns.add<IsolateToTensorMemspacePattern>(context);
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns))))
       return signalPassFailure();
+
+    IRRewriter rewriter(context);
+    funcOp.walk([&](ToTensorOp toTensorOp) {
+      if (toTensorOp.getWritable() &&
+          isMemrefWrittenBeforeToTensor(toTensorOp.getMemref(), toTensorOp))
+        exposeMemrefWriteToTensor(toTensorOp, rewriter);
+    });
   }
 };
 

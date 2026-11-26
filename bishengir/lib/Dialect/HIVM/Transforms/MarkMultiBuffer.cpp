@@ -241,8 +241,7 @@ static void mark(mlir::Operation *op, PatternRewriter &rewriter,
   markOp->setAttr(hivm::MultiBufferAttr::name,
                   rewriter.getI32IntegerAttr(numBuffer));
   if (isPreload) {
-    markOp->setAttr(hivm::PreloadLocalBufferAttr::name,
-                    rewriter.getI32IntegerAttr(1));
+    markOp->setAttr(hivm::PreloadLocalBufferAttr::name, rewriter.getUnitAttr());
   }
 }
 

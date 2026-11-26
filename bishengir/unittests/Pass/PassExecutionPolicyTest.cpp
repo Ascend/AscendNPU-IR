@@ -17,6 +17,8 @@
 
 #include "bishengir/Pass/PassExecutionPolicy.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Pipelines/regbase/Passes.h"
 #include "bishengir/Pass/PassManager.h"
@@ -30,6 +32,7 @@
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/Pass/Pass.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "gtest/gtest.h"
 #include <optional>
 #include <string>
@@ -124,7 +127,10 @@ struct RetagModuleCoreTypePass
 class PassExecutionPolicyTest : public ::testing::Test {
 protected:
   void SetUp() override {
-    context.loadDialect<func::FuncDialect, hivm::HIVMDialect,
+    DialectRegistry registry;
+    hacc::func_ext::registerHACCDialectExtension(registry);
+    context.appendDialectRegistry(registry);
+    context.loadDialect<hacc::HACCDialect, func::FuncDialect, hivm::HIVMDialect,
                         mlir::annotation::AnnotationDialect>();
     builder = std::make_unique<OpBuilder>(&context);
     registerTestKernelKinds();
@@ -523,6 +529,9 @@ TEST_F(PassExecutionPolicyTest, ClassifyKernelCallbackRunsAfterPass) {
   bishengir::registerKernelKindPasses(bishengir::PipelineMode::Aic,
                                       {"test-classify-kernel-pass"});
   bishengir::registerClassifyKernelPasses({"test-classify-kernel-pass"});
+  auto savedCallback = bishengir::getClassifyKernelCallback();
+  auto restore = llvm::make_scope_exit(
+      [&] { bishengir::registerClassifyKernelCallback(savedCallback); });
   bishengir::registerClassifyKernelCallback([](Operation *op) -> LogicalResult {
     op->setAttr("classified", UnitAttr::get(op->getContext()));
     return success();
@@ -547,6 +556,9 @@ TEST_F(PassExecutionPolicyTest, SkippedAivPassDoesNotClassify) {
   bishengir::registerKernelKindPasses(bishengir::PipelineMode::Aic,
                                       {"test-classify-kernel-pass"});
   bishengir::registerClassifyKernelPasses({"test-classify-kernel-pass"});
+  auto savedCallback = bishengir::getClassifyKernelCallback();
+  auto restore = llvm::make_scope_exit(
+      [&] { bishengir::registerClassifyKernelCallback(savedCallback); });
   bishengir::registerClassifyKernelCallback([](Operation *op) -> LogicalResult {
     op->setAttr("classified", UnitAttr::get(op->getContext()));
     return success();
@@ -607,6 +619,8 @@ TEST_F(PassExecutionPolicyTest, InlineFixpipeReplacesFuncCoreType) {
 
   auto loc = builder->getUnknownLoc();
   OwningOpRef<ModuleOp> mod = builder->create<ModuleOp>(loc);
+  auto flexible =
+      hivm::TCoreTypeAttr::get(&context, hivm::TCoreType::CUBE_OR_VECTOR);
   {
     OpBuilder::InsertionGuard g(*builder);
     builder->setInsertionPointToEnd(mod.get().getBody());
@@ -616,10 +630,12 @@ TEST_F(PassExecutionPolicyTest, InlineFixpipeReplacesFuncCoreType) {
     func->setAttr(
         hivm::TFuncCoreTypeAttr::name,
         hivm::TFuncCoreTypeAttr::get(&context, hivm::TFuncCoreType::MIX));
+    hacc::utils::setDeviceEntry(func);
     func.addEntryBlock();
     builder->setInsertionPointToEnd(&func.getBody().front());
-    builder->create<hivm::LoadOp>(loc, TypeRange{}, func.getArgument(0),
-                                  func.getArgument(1));
+    auto load = builder->create<hivm::LoadOp>(
+        loc, TypeRange{}, func.getArgument(0), func.getArgument(1));
+    load.setTcoretypeAttr(flexible);
     builder->create<func::ReturnOp>(loc);
   }
 
@@ -633,6 +649,9 @@ TEST_F(PassExecutionPolicyTest, InlineFixpipeReplacesFuncCoreType) {
       hivm::TFuncCoreTypeAttr::name);
   ASSERT_TRUE(coreType);
   EXPECT_EQ(coreType.getFuncCoreType(), hivm::TFuncCoreType::AIV);
+  auto loads = func.getOps<hivm::LoadOp>();
+  ASSERT_FALSE(loads.empty());
+  EXPECT_EQ((*loads.begin()).getTcoretypeAttr(), flexible);
 }
 
 // A function already split out of a mix kernel keeps its core type. That
@@ -657,6 +676,7 @@ TEST_F(PassExecutionPolicyTest, PartOfMixCoreTypeIsNotCleared) {
         hivm::TFuncCoreTypeAttr::name,
         hivm::TFuncCoreTypeAttr::get(&context, hivm::TFuncCoreType::AIC));
     func->setAttr(hivm::TPartOfMixAttr::name, UnitAttr::get(&context));
+    hacc::utils::setDeviceEntry(func);
     func.addEntryBlock();
     builder->setInsertionPointToEnd(&func.getBody().front());
     builder->create<hivm::LoadOp>(loc, TypeRange{}, func.getArgument(0),
@@ -671,6 +691,7 @@ TEST_F(PassExecutionPolicyTest, PartOfMixCoreTypeIsNotCleared) {
     func->setAttr(
         hivm::TFuncCoreTypeAttr::name,
         hivm::TFuncCoreTypeAttr::get(&context, hivm::TFuncCoreType::MIX));
+    hacc::utils::setDeviceEntry(func);
     func.addEntryBlock();
     builder->setInsertionPointToEnd(&func.getBody().front());
     builder->create<hivm::LoadOp>(loc, TypeRange{}, func.getArgument(0),

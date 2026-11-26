@@ -849,7 +849,78 @@ static void modifyDebugOpToSliced(RewriterBase &rewriter, hivm::DebugOp debugOp,
   });
 }
 
-/// try to tile debug ops and bind sub block mapping
+class TileAndSliceExtract : public OpRewritePattern<tensor::ExtractOp> {
+public:
+  TileAndSliceExtract(MLIRContext *context,
+                      hivm::detail::DimensionAnalyzer &analyzer)
+      : OpRewritePattern<tensor::ExtractOp>(context), analyzer(analyzer) {}
+
+  LogicalResult matchAndRewrite(tensor::ExtractOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op->hasAttr("DiscreteMemAccess") || op->hasAttr(tiledOp))
+      return failure();
+    auto parallelLoop = dyn_cast<scf::ForOp>(op->getParentOp());
+    if (!parallelLoop || !parallelLoop->hasAttr(hivm::ParallelLoopAttr::name))
+      return failure();
+
+    Value source = op.getTensor();
+    int64_t dim = analyzer.getTilingDim(source);
+    auto containingLoop = findContainingSubblockLoop(op);
+    if (dim < 0 || failed(containingLoop))
+      return failure();
+    auto loc = op.getLoc();
+    auto tileSize =
+        getSingleTileSize(rewriter, loc, source, dim, *containingLoop);
+    if (failed(tileSize))
+      return failure();
+
+    rewriter.setInsertionPointToStart(containingLoop->getBody());
+    auto offset =
+        calculateOffsetAtTilingDim(rewriter, loc, *containingLoop, source, dim);
+    rewriter.setInsertionPoint(op);
+    Value sliced =
+        sliceExtractSource(source, dim, offset, *tileSize, loc, rewriter);
+    Value offsetValue = getValueOrCreateConstantIndexOp(rewriter, loc, offset);
+    Value localIndex =
+        rewriter.create<arith::SubIOp>(loc, op.getIndices()[dim], offsetValue);
+    rewriter.modifyOpInPlace(op, [&]() {
+      op.getTensorMutable().set(sliced);
+      op.getIndicesMutable()[dim].set(localIndex);
+      op->setAttr(tiledOp, rewriter.getUnitAttr());
+    });
+    return success();
+  }
+
+private:
+  static Value sliceExtractSource(Value source, int64_t dim,
+                                  OpFoldResult tiledOffset,
+                                  OpFoldResult tiledSize, Location loc,
+                                  PatternRewriter &rewriter) {
+    auto shapedType = cast<RankedTensorType>(source.getType());
+    int64_t rank = shapedType.getRank();
+    SmallVector<OpFoldResult> offsets(rank, rewriter.getIndexAttr(0));
+    SmallVector<OpFoldResult> sizes;
+    SmallVector<OpFoldResult> strides(rank, rewriter.getIndexAttr(1));
+    offsets[dim] = tiledOffset;
+    for (int64_t i = 0; i < rank; ++i) {
+      if (i == dim)
+        sizes.push_back(tiledSize);
+      else if (shapedType.isDynamicDim(i))
+        sizes.push_back(getAsOpFoldResult(
+            rewriter.createOrFold<tensor::DimOp>(loc, source, i)));
+      else
+        sizes.push_back(rewriter.getIndexAttr(shapedType.getDimSize(i)));
+    }
+    auto sliceOp = rewriter.create<tensor::ExtractSliceOp>(loc, source, offsets,
+                                                           sizes, strides);
+    markCreatedExtractSliceOp(rewriter, sliceOp);
+    return sliceOp;
+  }
+
+  hivm::detail::DimensionAnalyzer &analyzer;
+};
+
+/// Try to tile debug ops and bind sub-block mapping.
 class TileAndSliceDebugOp : public OpRewritePattern<hivm::DebugOp> {
 public:
   hivm::detail::DimensionAnalyzer &analyzer;
@@ -1000,7 +1071,10 @@ public:
       // customs. Presence alone does not imply a GM side effect: guarding an
       // NZ softmax here would skip the second AIV's independent row slice.
       auto gmArgs = op.getGMAddrArgsIndices();
-      if (!gmArgs || gmArgs->empty())
+      // Distributed calls can mutate remote memory or queue state even when
+      // their GM-address metadata is empty. Keep their single-lane contract.
+      if (!gmArgs ||
+          (gmArgs->empty() && !isDistributedTypeCustomOp(op.getOperation())))
         return failure();
     }
 
@@ -1248,14 +1322,14 @@ tileAndSliceOp(func::FuncOp func,
   // when no Store/Copy anchor exists, plus a leaf-aware success criterion.
   // CustomOp tiling in this version must be driven by a downstream Store/Copy
   // slice and handled later by CustomOpBubbleUpStrategy.
-  patterns.add<TileAndSliceStoreCopyOp<hivm::StoreOp>,
-               TileAndSliceStoreCopyOp<hivm::CopyOp>,
-               TileAndSliceStoreCopyOp<
-                   bufferization::MaterializeInDestinationOp>,
-               TileAndSliceIndirectStore, TileAndSliceStrideStore,
-               TileAndSliceDebugOp,
-               TileAndSliceLeaf<scf::ForOp>, TileAndSliceLeaf<scf::WhileOp>,
-               TileAndSliceLeaf<scf::IfOp>>(func->getContext(), analyzer);
+  patterns
+      .add<TileAndSliceStoreCopyOp<hivm::StoreOp>,
+           TileAndSliceStoreCopyOp<hivm::CopyOp>,
+           TileAndSliceStoreCopyOp<bufferization::MaterializeInDestinationOp>,
+           TileAndSliceIndirectStore, TileAndSliceStrideStore,
+           TileAndSliceDebugOp, TileAndSliceExtract,
+           TileAndSliceLeaf<scf::ForOp>, TileAndSliceLeaf<scf::WhileOp>,
+           TileAndSliceLeaf<scf::IfOp>>(func->getContext(), analyzer);
   if (hacc::utils::isRegBasedArch(func->getParentOfType<ModuleOp>())) {
     patterns.add<TileAndSliceReduceOp>(func->getContext(), analyzer);
   }

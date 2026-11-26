@@ -454,7 +454,7 @@ void InjectBlockSyncAnalysis::InjectBlockMixSync(bool assumeAliveLoops) {
   LLVM_DEBUG(llvm::dbgs() << "RemoveRedundantSync\n");
   LLVM_DEBUG(SyncDebug(syncIR).PrintSyncIr());
 
-  SyncEventIdAllocation eventIdAllocation(syncIR, syncOperations);
+  SyncEventIdAllocation eventIdAllocation(syncIR, syncOperations, {});
   eventIdAllocation.Allocate();
   LLVM_DEBUG(llvm::dbgs() << "SyncEventIdAllocation\n");
   LLVM_DEBUG(SyncDebug(syncIR).PrintSyncIr());

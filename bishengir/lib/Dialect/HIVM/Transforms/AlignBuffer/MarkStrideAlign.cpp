@@ -120,11 +120,20 @@ static bool isNotTailJumpOrStrideAlign(MemRefType type) {
   int64_t dataWidth = type.getElementTypeBitWidth();
   if (dim == 1)
     return true;
-  if (succeeded(successStrides) && !strides.empty() &&
-      !type.isDynamicDim(dim - 1))
-    return (type.getDimSize(dim - 1) == strides[dim - 2]) ||
-           (strides[dim - 2] * dataWidth % hwAlignBits == 0);
-  return false;
+  if (failed(successStrides) || strides.empty())
+    return false;
+  // A hardware-aligned sub-low stride puts every row on an aligned boundary no
+  // matter how many elements a row actually carries, so this half of the test
+  // holds for a dynamic lowest dimension too. A dynamic stride carries the
+  // ShapedType::kDynamic sentinel, which must not reach the modulo.
+  if (!ShapedType::isDynamic(strides[dim - 2]) &&
+      strides[dim - 2] * dataWidth % hwAlignBits == 0)
+    return true;
+  // The tail-jump half compares the lowest dimension against that stride and
+  // needs both to be static.
+  if (type.isDynamicDim(dim - 1))
+    return false;
+  return type.getDimSize(dim - 1) == strides[dim - 2];
 }
 
 // Return "true" if the dim of the given type greater than 2 and the stride of
@@ -491,23 +500,24 @@ static int findArgNeedMark(vector::TransferWriteOp writeOp) {
   return res;
 }
 
-// Davinci recommends the vsstb stride align to (512*N + 32) Byte.
-// In isTransferWriteSuitForStoreWithStride, the memref last dim has been
-// guaranteed always 32 Byte (256 bit / element bit width).
-// So the alignment of the sub-tail dim is derived as (16*N + 1) elements,
-// where 16 = 512 Byte / 32 Byte (the ratio of alignment to last-dim size).
-static constexpr int32_t kVsstbBankConflictAlignUnit = 16;
+// Davinci recommends the vsstb stride align to (32*bankGroupCount*N + 32)
+// Byte, i.e. (512*N + 32) Byte with 16 bank groups and (1024*N + 32) Byte
+// with 32 bank groups. In isTransferWriteSuitForStoreWithStride, the memref
+// last dim has been guaranteed always 32 Byte (256 bit / element bit width).
+// So the alignment of the sub-tail dim is derived as
+// (bankGroupCount*N + 1) elements, where bankGroupCount is the ratio of
+// alignment to last-dim size.
 static constexpr int32_t kVsstbSubTailDimOffset = 2;
 
 // calculate align size to avoid bank conflict
-static int32_t alignSizeForBankConflict(MemRefType memrefTy) {
+static int32_t alignSizeForBankConflict(MemRefType memrefTy,
+                                        int32_t bankGroupCount) {
   ArrayRef<int64_t> shape = memrefTy.getShape();
   int32_t alignDim =
       static_cast<int32_t>(memrefTy.getRank()) - kVsstbSubTailDimOffset;
-  int32_t alignSize =
-      shape[alignDim] * kVsstbBankConflictAlignUnit /
-          std::gcd(shape[alignDim], kVsstbBankConflictAlignUnit) +
-      1;
+  int32_t alignSize = shape[alignDim] * bankGroupCount /
+                          std::gcd(shape[alignDim], bankGroupCount) +
+                      1;
   // In enable-stride-align, the alignSize will be divided by type width.
   // So the marked align size will be multiplied by type width.
   int64_t dataWidth = memrefTy.getElementTypeBitWidth() / utils::kBitsToByte;
@@ -529,7 +539,11 @@ static void markForVsstb(OpBuilder &builder, func::CallOp &callOp,
                          ModuleOp moduleOp) {
   StringRef callee = callOp.getCallee();
   if (auto func = moduleOp.lookupSymbol<func::FuncOp>(callee)) {
-    func->walk([&builder, &callOp](vector::TransferWriteOp writeOp) {
+    int32_t bankGroupCount =
+        static_cast<int32_t>(hacc::utils::getBankGroupCount(moduleOp));
+    const bool archIs960 = hacc::utils::isAscend960(moduleOp);
+    func->walk([&builder, &callOp, bankGroupCount,
+                archIs960](vector::TransferWriteOp writeOp) {
       if (!utils::isTransferWriteSuitForStoreWithStride(writeOp))
         return WalkResult::skip();
       int argIdx = findArgNeedMark(writeOp);
@@ -542,6 +556,25 @@ static void markForVsstb(OpBuilder &builder, func::CallOp &callOp,
       auto memrefTy = dyn_cast<MemRefType>(operand.getType());
       if (!memrefTy)
         return WalkResult::skip();
+      // Conservative guards for the newly enabled Ascend960 path. They are
+      // gated to Ascend960 so Ascend950 behavior is left untouched.
+      if (archIs960) {
+        // A rank-reducing subview between the call operand and the write
+        // invalidates the rank-2 based dim mapping (findArgNeedMark only
+        // recovers the argument number). Skip rather than pad a wrong
+        // dimension.
+        auto writeMemrefTy =
+            dyn_cast<MemRefType>(writeOp.getSource().getType());
+        if (!writeMemrefTy || writeMemrefTy.getRank() != memrefTy.getRank())
+          return WalkResult::skip();
+        // A sub-tail dim already of the form (bankGroupCount*N + 1) needs no
+        // padding; applying the lcm formula would inflate the allocation by
+        // up to bankGroupCount times.
+        int32_t subTailDim =
+            static_cast<int32_t>(memrefTy.getRank()) - kVsstbSubTailDimOffset;
+        if (memrefTy.getShape()[subTailDim] % bankGroupCount == 1)
+          return WalkResult::skip();
+      }
       // TODO: Currently vsstb can make continuous shape into discontinous
       // shape, which may cause reshape & collaspse operation users that not
       // correct, because these operation relys on continous shape feature. So
@@ -557,7 +590,7 @@ static void markForVsstb(OpBuilder &builder, func::CallOp &callOp,
       int32_t alignDim =
           static_cast<int32_t>(memrefTy.getRank()) - kVsstbSubTailDimOffset;
       createAlignMarkOp(builder, callOp->getLoc(), operand, {alignDim},
-                        {alignSizeForBankConflict(memrefTy)});
+                        {alignSizeForBankConflict(memrefTy, bankGroupCount)});
       return WalkResult::advance();
     });
   }
@@ -849,6 +882,12 @@ void MarkStrideAlignPass::runOnOperation() {
   auto moduleOp = funcOp->getParentOfType<ModuleOp>();
   bool archIsRegbased = hacc::utils::isRegBasedArch(moduleOp);
   bool archIs950 = hacc::utils::isAscend950(moduleOp);
+  // Ascend960 shares the regbased UB bank-group layout of the A5 family, so
+  // UB call operands whose element width is not 1 must skip the plain
+  // stride-align pre-marking here as well. Otherwise the operand is already
+  // marked when markForVsstb runs and the bank-conflict aware align size
+  // computed by alignSizeForBankConflict is never applied.
+  bool skipUbCallPreMark = archIs950 || hacc::utils::isAscend960(moduleOp);
   WalkResult result = funcOp->walk([&builder, archIsRegbased,
                                     archIs950](Operation *op) {
     LDBG("Walk operation : " << *op);
@@ -1069,7 +1108,8 @@ void MarkStrideAlignPass::runOnOperation() {
 
   if (archIsRegbased) {
     WalkResult resultVF = funcOp->walk([&builder, &moduleOp, archIsRegbased,
-                                        archIs950](func::CallOp callOp) {
+                                        archIs950, skipUbCallPreMark](
+                                           func::CallOp callOp) {
       for (Value operand : callOp.getArgOperands()) {
         if (isMarked(operand))
           continue;
@@ -1086,7 +1126,7 @@ void MarkStrideAlignPass::runOnOperation() {
           continue;
         if (!isAnyOfLocalBuffer(memrefTypes))
           continue;
-        if (archIs950) {
+        if (skipUbCallPreMark) {
           if (llvm::any_of(memrefTypes, [](MemRefType mtype) {
                 auto elemWidth = mtype.getElementType().getIntOrFloatBitWidth();
                 return elemWidth != 1;

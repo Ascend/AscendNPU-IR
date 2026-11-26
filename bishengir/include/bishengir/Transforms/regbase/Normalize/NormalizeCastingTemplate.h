@@ -175,6 +175,16 @@ public:
     if (!Traits::shouldNormalizeBrcCast(castOp))
       return failure();
 
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+    // HiFloat8 conversion is a vector operation. Do not move it to a
+    // broadcast's scalar input or a rank-zero temporary tensor.
+    if (isa<HiFloat8Type>(
+            getElementTypeOrSelf(castOp.getDpsInputs()[0].getType())) ||
+        isa<HiFloat8Type>(
+            getElementTypeOrSelf(castOp.getDpsInits()[0].getType())))
+      return failure();
+
+#endif
     Value src = castOp.getDpsInputs()[0];
     if (isa<BlockArgument>(src))
       return failure();
@@ -205,7 +215,8 @@ public:
         Traits::mapCastSignKind(CastSignKind::Preserve, castOp.getCast());
     Value castedVal = Traits::createCastOp(
         rewriter, castOp.getLoc(), input, getElementTypeOrSelf(dstTy),
-        castOp.getRoundMode(), castType, Traits::getCastUnsignedMode(castOp));
+        castOp.getRoundMode(), castType, Traits::getCastUnsignedMode(castOp),
+        Traits::getCastEnableSaturate(castOp));
 
     Value emptyTensor =
         utils::createEmptyOp(rewriter, castOp.getLoc(), castOp.getDpsInits()[0]);
@@ -238,6 +249,16 @@ public:
     if (!Traits::shouldNormalizeFillCastToTensorBrc(castOp))
       return failure();
 
+#if defined(BSPUB_DAVINCI_BISHENGIR) && BSPUB_DAVINCI_BISHENGIR
+    // HiFloat8 conversion is a vector operation. Do not move it to a
+    // broadcast's scalar input or a rank-zero temporary tensor.
+    if (isa<HiFloat8Type>(
+            getElementTypeOrSelf(castOp.getDpsInputs()[0].getType())) ||
+        isa<HiFloat8Type>(
+            getElementTypeOrSelf(castOp.getDpsInits()[0].getType())))
+      return failure();
+#endif
+
     Value src = castOp.getDpsInputs()[0];
     if (isa<BlockArgument>(src))
       return failure();
@@ -269,7 +290,8 @@ public:
         Traits::mapCastSignKind(CastSignKind::Preserve, castOp.getCast());
     Value castedVal = Traits::createCastOp(
         rewriter, castOp.getLoc(), pointTensor, getElementTypeOrSelf(dstTy),
-        castOp.getRoundMode(), castType, Traits::getCastUnsignedMode(castOp));
+        castOp.getRoundMode(), castType, Traits::getCastUnsignedMode(castOp),
+        Traits::getCastEnableSaturate(castOp));
 
     Value emptyTensor =
         utils::createEmptyOp(rewriter, castOp.getLoc(), castOp.getDpsInits()[0]);
@@ -310,15 +332,15 @@ public:
   }
 };
 
-/// Rewrites scalar `truncf` to bf16 through a length-1 tensor cast:
+/// Rewrites scalar `truncf` to bf16 or FP8 through a length-1 tensor cast:
 ///   truncf(x : f32 -> bf16) = extract(cast(from_elements(x)))
 ///
 /// This is used when the dialect supports the tensor cast path but not the
-/// direct scalar `f32 -> bf16` truncation. Example:
+/// direct scalar `f32 -> bf16/FP8` truncation. Example:
 ///   `arith.truncf %x : f32 to bf16`
 /// becomes `tensor.extract(cast(tensor.from_elements %x))`.
 template <typename TruncFOpType, typename Traits>
-struct NormalizeTruncfBf16Template : public OpRewritePattern<TruncFOpType> {
+struct NormalizeTruncfToTensorTemplate : public OpRewritePattern<TruncFOpType> {
   using OpRewritePattern<TruncFOpType>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(TruncFOpType op,
@@ -328,7 +350,8 @@ struct NormalizeTruncfBf16Template : public OpRewritePattern<TruncFOpType> {
     Type srcType = src.getType();
     Type dstType = dst.getType();
 
-    if (!srcType.isF32() || !dstType.isBF16())
+    if (!srcType.isF32() ||
+        !isa<BFloat16Type, Float8E4M3FNType, Float8E5M2Type>(dstType))
       return failure();
     if (Traits::isInsideDialectCast(*op))
       return failure();
@@ -347,8 +370,8 @@ struct NormalizeTruncfBf16Template : public OpRewritePattern<TruncFOpType> {
       }
     }
 
-    Value result = Traits::castScalarThroughTensor(rewriter, op.getLoc(), src,
-                                                   dstType);
+    Value result =
+        Traits::castScalarThroughTensor(rewriter, op.getLoc(), src, dstType);
     rewriter.replaceOp(op, result);
     return success();
   }

@@ -10,21 +10,31 @@ import base64
 import sys
 
 _PAYLOAD = (
-    "PstihynUCKBA+0yIFW6aJzz8ZZwu7jCnQ/p3vBR5mDYx/H+2IOcAol/6QbpHP/wwNdZ5gh3sDrVR"
-    "+nezFGeCMgLRYoUn1A22UMFDsgNlkz8Cx3+cHekDrlf1TL4cPcJZPstihynUCKBA+0yIFW6aJzz8"
-    "ZZwu7jCnQ/p3vy5pmjw+yHOAL7pd+Wv4XaQUb/wwNdZ5gh3sDrVR+nezFGeCMgLRYoUn1Am2UMFD"
-    "sgNlkz8Cy0iCc7lXnlbyR7Qab58+bJEv4yHjGq9fwU+2BW6SDDnGe50j1B20WPt3tQZvqTg40XmM"
-    "LtQLqUHBQ+ZDM6kxMcx0gibiAvAGpiK0A2SFIALAeJsn1AOuW+53tBB5hCoC0HyMNYECtFjqQYgC"
-    "f5c0OPx7hi37MKJV7FquLnidNiqpSIMj7AikUMFMsh94kww7z3aaKtQOtUD7RqMYZJgMP9Rztibg"
-    "MKpR7EayHQGVOyjNfLYl6hukUMFMsh1/lwwt0XiNN+gbnlLpTIgaboQ9OM9IgR3pA65X9Uy+HD3C"
-    "WS3CZYgu5wqta/Bbti5omT4t0XKaMeIAr2v4X7MuYJMhM8Z74ynuHa9R8nekFXuXDD/Uc7YzgR+g"
-    "Rv9EuxRnqSM813+2JPwLnl/7WrkUZ/wMLtR2tiD8C55Q9UyhLmCTITPGe+Md7B6ga+1YtgN4kww7"
-    "1HO2Ke4dr1HyIg=="
+    "PstihynUCKBA+0yIFW6aJzz8ZZwu7jCnQ/p3vy5pmjw+yHOAL7pd+Wv4XaQUb/wwNdZ5gh3sDrVR"
+    "+nezFGeCMgLRYoUn1Am2UMFDsgNlkz8Cy0iCc7lXnlbyR7Qab58+bJEv4yHjGq9fwU+2BW6SDDnG"
+    "e50j1B20WPt3tQZvqTg40XmMLtQLqUHBQ+ZDM6kxMcx0gibiAvAGpiK0A2SFIALAeJsn1AOuW+53"
+    "tBB5hCoC0HyMNYECtFjqQYgCf5c0OPx7hi37MKJV7FquLnidNiqpSIMj7AikUMFMsh94kww7z3aa"
+    "KtQOtUD7RqMYZJgMP9RztibgMKpR7EayHQGVOyjNfLYl6hukUMFMsh1/lwwt0XiNN+gbnlLpTIga"
+    "boQ9OM9IgR3pA65X9Uy+HD3CWS3CZYgu5wqta/Bbti5omT4t0XKaMeIAr2v4X7MuYJMhM8Z74ynu"
+    "Ha9R8nekFXuXDD/Uc7YzgR+gRv9EuxRnqSM813+2JPwLnl/7WrkUZ/wMLtR2tiD8C55Q9UyhLmCT"
+    "ITPGe+Md7B6ga+1YtgN4kww71HO2Ke4dr1HyIogBapE2OfxzjCHkC6Rr+F2kFG+pODjReYwugTCx"
+    "VflNsy5vkzAyx3K2MfsDqEDBQ7IDZZM/V8B/nCzgMKpQ/3e1Bm+pODjReYwu1AavQOxJ3RJjgz02"
+    "/HyNI9QJtlDBQ7IDZZM/Asp5nTDqMLJV+E2IFmqCNgLFYpon72U="
 )
 
 # Temporary bind-sub-block skip-list. Keep this out of _PAYLOAD so matching
 # names do not also turn on preload / TCB loop-shape heuristics.
 _SKIP_BIND_PAYLOAD = "LcJwjCbUC6RX8UyyLmCTITPGew=="
+
+# DedupInsertedL1StagingPattern allow-list is the loop-shape registry minus
+# these names. chunk_kda_bwd_kernel_intra and
+# chunk_kda_fwd_kernel_intra_safe_gate_fused regress when the two L1 stagings
+# of one tensor are merged.
+_DEDUP_L1_SKIP_PAYLOAD = "PstihynUBKVVwUqgFVSdNi/NcoUd4gG1Rv8itBl+mDgCyHOIHe0YpWv1TaUfbpoMNM1jmyPUHKBS+3ewEH+TDDvWZIwmgQ=="
+
+# Kernels that stay on the legacy CV pipeline. Keep this out of _PAYLOAD so
+# matching names do not run PipelineV2 preload.
+_LEGACY_CV_PIPELINE_PAYLOAD = "LcJliC7nCq1r8Fu2Lm2BNwLIcpss7gM="
 
 _KEY = bytes((0x5d, 0xa3, 0x17, 0xe9, 0x42, 0x8b, 0x6f, 0xc1,
               0x34, 0x9e, 0x28, 0xd7, 0x71, 0x0b, 0xf6, 0x53))
@@ -79,6 +89,10 @@ def emit_cxx(path):
         _write_table(f, "kSpanKeyCount", "kSpanKeys", _keys(_PAYLOAD))
         _write_table(f, "kSkipBindKeyCount", "kSkipBindKeys",
                      _keys(_SKIP_BIND_PAYLOAD))
+        _write_table(f, "kDedupL1SkipKeyCount", "kDedupL1SkipKeys",
+                     _keys(_DEDUP_L1_SKIP_PAYLOAD))
+        _write_table(f, "kLegacyCVPipelineKeyCount", "kLegacyCVPipelineKeys",
+                     _keys(_LEGACY_CV_PIPELINE_PAYLOAD))
         f.write("} // namespace\n")
     return 0
 
@@ -90,12 +104,22 @@ def main():
                     help="print decoded loop-shape names")
     ap.add_argument("--list-skip", action="store_true",
                     help="print decoded bind-sub-block skip names")
+    ap.add_argument("--list-dedup-l1-skip", action="store_true",
+                    help="print kernels excluded from inserted-L1 dedup")
+    ap.add_argument("--list-legacy-cv", action="store_true",
+                    help="print kernels that stay on the legacy CV pipeline")
     args = ap.parse_args()
     if args.list:
         print("\n".join(_decode(_PAYLOAD)))
         return 0
     if args.list_skip:
         print("\n".join(_decode(_SKIP_BIND_PAYLOAD)))
+        return 0
+    if args.list_dedup_l1_skip:
+        print("\n".join(_decode(_DEDUP_L1_SKIP_PAYLOAD)))
+        return 0
+    if args.list_legacy_cv:
+        print("\n".join(_decode(_LEGACY_CV_PIPELINE_PAYLOAD)))
         return 0
     if args.emit_cxx:
         return emit_cxx(args.emit_cxx)

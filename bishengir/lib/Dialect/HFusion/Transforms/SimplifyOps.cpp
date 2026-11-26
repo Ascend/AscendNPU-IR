@@ -46,55 +46,6 @@ public:
   void runOnOperation() final;
 };
 
-bool involvesLinalgMatmulImpl(
-    mlir::Value value, llvm::SmallPtrSetImpl<mlir::Value> &seenValues,
-    llvm::SmallPtrSetImpl<mlir::Operation *> &seenOps) {
-  if (!seenValues.insert(value).second)
-    return false;
-
-  auto defOp = value.getDefiningOp();
-  if (!defOp)
-    return false;
-
-  if (!seenOps.insert(defOp).second)
-    return false;
-
-  if (llvm::isa<mlir::linalg::MatmulOp>(defOp))
-    return true;
-
-  if (auto forOp = llvm::dyn_cast<mlir::scf::ForOp>(defOp)) {
-    auto result = llvm::cast<mlir::OpResult>(value);
-    unsigned resultNumber = result.getResultNumber();
-
-    auto yieldOp =
-        llvm::cast<mlir::scf::YieldOp>(forOp.getBody()->getTerminator());
-
-    if (involvesLinalgMatmulImpl(yieldOp.getOperand(resultNumber), seenValues,
-                                 seenOps))
-      return true;
-
-    if (resultNumber < forOp.getInitArgs().size() &&
-        involvesLinalgMatmulImpl(forOp.getInitArgs()[resultNumber], seenValues,
-                                 seenOps))
-      return true;
-
-    return false;
-  }
-
-  for (mlir::Value operand : defOp->getOperands()) {
-    if (involvesLinalgMatmulImpl(operand, seenValues, seenOps))
-      return true;
-  }
-
-  return false;
-}
-
-bool involvesLinalgMatmul(mlir::Value value) {
-  llvm::SmallPtrSet<mlir::Value, 32> seenValues;
-  llvm::SmallPtrSet<mlir::Operation *, 32> seenOps;
-  return involvesLinalgMatmulImpl(value, seenValues, seenOps);
-}
-
 // TODO: Optimize to solve it generally by canonicalize
 bool isSafeToSimplifyCast(CastOp castOp) {
   auto inputType = getElementTypeOrSelf(castOp.getInputs().front());
@@ -315,16 +266,24 @@ static bool isRangePreservingCastChain(ArrayRef<CastOp> castChain) {
 // Precision rank of a floating point type (higher == more precision). Returns
 // -1 for non float types so that the float-only checks below skip integer
 // casts.
+//
+// The rank is the significand width, which is what a down/up round trip is
+// about: a narrow significand rounds every value it sees and widening it
+// afterwards cannot restore the lost low bits. Deriving the rank from the type
+// instead of tabulating a few named types keeps every float type on the same
+// scale. A hardcoded table silently falls through to the -1 sentinel for any
+// type it does not list, and hasPrecisionDownUpPattern then treats those hops
+// as "not a float" and skips them -- which is exactly how `f32 -> f8E4M3FN ->
+// f32` used to escape the check: fp8 was missing from the table, both hops were
+// skipped, CastOpPattern folded the pair away and the fp8 quantization
+// disappeared, including its saturation to +-448 and its 3-bit significand
+// rounding. Ranking by width also keeps low precision types such as f6/f4 or
+// the fp8 variants from ever ranking above f64.
 static int getPrecisionRank(Type type) {
-  if (type.isBF16())
-    return 0; // lowest precision
-  if (type.isF16())
-    return 1;
-  if (type.isF32())
-    return 2;
-  if (type.isF64())
-    return 3; // highest precision
-  return -1;  // non-float type
+  auto floatType = dyn_cast<FloatType>(type);
+  if (!floatType)
+    return -1; // non-float type
+  return static_cast<int>(floatType.getFPMantissaWidth());
 }
 
 // Helper to test for fastmath<contract> attribute.
@@ -338,6 +297,70 @@ static bool hasFastMathContract(CastOp op) {
   FastMathFlags flags = fastMathAttr.getValue();
 
   return mlir::arith::bitEnumContainsAll(flags, FastMathFlags::contract);
+}
+
+// Returns true when the value affects a comparison, possibly through casts,
+// view-only tensor operations, or elementwise operations.
+static bool reachesCompare(Value root) {
+  SmallVector<Value> worklist{root};
+  llvm::SmallPtrSet<Value, 8> seen;
+
+  while (!worklist.empty()) {
+    Value value = worklist.pop_back_val();
+    if (!seen.insert(value).second)
+      continue;
+
+    for (OpOperand &use : value.getUses()) {
+      Operation *user = use.getOwner();
+      if (isa<CompareOp>(user))
+        return true;
+
+      if (isa<CastOp, tensor::ExpandShapeOp, tensor::CollapseShapeOp,
+              tensor::ReshapeOp>(user)) {
+        llvm::append_range(worklist, user->getResults());
+        continue;
+      }
+
+      if (auto elementwise = dyn_cast<DestinationStyleOpInterface>(user)) {
+        if (elementwise.isDpsInput(&use) &&
+            isa<linalg::ElemwiseUnaryOp, linalg::ElemwiseBinaryOp,
+                hfusion::ElemwiseUnaryOp, hfusion::ElemwiseBinaryOp>(user))
+          llvm::append_range(worklist, user->getResults());
+      }
+    }
+  }
+
+  return false;
+}
+
+// Checks for a floating-point narrowing followed by a widening before a
+// comparison. Mantissa widths cover types such as FP8 that are intentionally
+// outside the generic floating-point precision-rank policy.
+static bool hasLossyFloatCastChainBeforeCompare(ArrayRef<CastOp> castChain) {
+  if (!reachesCompare(castChain.front()->getResult(0)))
+    return false;
+
+  bool hasNarrowing = false;
+  for (CastOp castOp : llvm::reverse(castChain)) {
+    auto inputType = dyn_cast<FloatType>(
+        getElementTypeOrSelf(castOp.getInputs().front().getType()));
+    auto outputType = dyn_cast<FloatType>(
+        getElementTypeOrSelf(castOp.getOutputs().front().getType()));
+    if (!inputType || !outputType)
+      continue;
+
+    if (outputType.getFPMantissaWidth() < inputType.getFPMantissaWidth() &&
+        !hasFastMathContract(castOp)) {
+      hasNarrowing = true;
+      continue;
+    }
+
+    if (outputType.getFPMantissaWidth() > inputType.getFPMantissaWidth() &&
+        hasNarrowing && !hasFastMathContract(castOp))
+      return true;
+  }
+
+  return false;
 }
 
 // Check if the chain has a precision down-then-up pattern.
@@ -452,9 +475,10 @@ getCastChainBlockReason(ArrayRef<CastOp> castChain) {
   // precision policy.
   if (crossesIntegerDomain(castChain))
     return CastChainBlockReason::CrossDomainWithoutIntegrality;
+  if (hasLossyFloatCastChainBeforeCompare(castChain))
+    return CastChainBlockReason::FloatPrecisionLoss;
   if (hasPrecisionDownUpPattern(castChain) &&
-      !allHaveFastMathContract(castChain) &&
-      !involvesLinalgMatmul(castChain.front()->getOperand(0)))
+      !allHaveFastMathContract(castChain))
     return CastChainBlockReason::FloatPrecisionLoss;
   return CastChainBlockReason::None;
 }
@@ -572,6 +596,71 @@ inline bool isSimpleCastOp(CastOp op) {
   return op.getOutputs()[0].getDefiningOp<mlir::tensor::EmptyOp>();
 }
 
+// ---------------------------------------------------------------------------
+// Loop cast hoisting guard
+//
+// LoopedCastOpPattern hoists the entry cast of a loop-carried value in front
+// of the scf.for and sinks the exit cast behind it, so the carried value
+// stays in the body type across iterations. Before the rewrite every
+// iteration sends the value through `cast(carried -> body) ... cast(body ->
+// carried)`; the deleted rounding is unobservable only when the value
+// survives that back-edge round trip unchanged, whose type-level requirement
+// is that the carried element type can represent every value of the in-loop
+// element type. A narrower carried type rounds on every iteration: a bf16
+// accumulator updated in f32 loses one rounding per iteration and drifts
+// against the per-iteration-bf16 reference. Mantissa width alone is not
+// enough: f16 carries more mantissa but far less exponent range than bf16,
+// so neither of the two represents the other exactly.
+//
+// fastmath<contract> on the casts is not permission for this rewrite.
+// Contraction licenses fusing adjacent floating point operations (FMA
+// formation), not dropping a rounding on the loop back edge, and the body
+// operations carry no such flag anyway. Same-type casts stay inside the loop
+// as well: like the chain split in CastOpPattern, a cast with identical
+// input and output type represents an intended change in value (e.g. a rint
+// rounding).
+// ---------------------------------------------------------------------------
+
+// Type-level capacity check for the loop back edge `body -> carried -> body`
+// (compute_ty -> arg_ty -> compute_ty): true when every value of the in-loop
+// element type is exactly representable in the carried element type and the
+// two types differ (same-type casts are intentional value changes, see
+// above). This inspects types only, not the concrete cast attributes
+// (saturation, signedness), so it is a necessary condition for the hoist,
+// not a proof that the concrete cast pair or the rewrite as a whole
+// preserves values.
+static bool canRepresentLoopBodyTypeWithoutLoss(Type carried, Type body) {
+  if (carried == body)
+    return false;
+  if (auto carriedFloat = dyn_cast<FloatType>(carried)) {
+    auto bodyFloat = dyn_cast<FloatType>(body);
+    if (!bodyFloat)
+      return false;
+    auto exponentWidth = [](FloatType type) {
+      return type.getIntOrFloatBitWidth() - type.getFPMantissaWidth();
+    };
+    return carriedFloat.getFPMantissaWidth() >=
+               bodyFloat.getFPMantissaWidth() &&
+           exponentWidth(carriedFloat) >= exponentWidth(bodyFloat);
+  }
+  if (auto carriedInt = dyn_cast<IntegerType>(carried)) {
+    auto bodyInt = dyn_cast<IntegerType>(body);
+    return bodyInt && carriedInt.getWidth() >= bodyInt.getWidth();
+  }
+  return false;
+}
+
+// TODO: share one value-preservation analysis with the cast-chain folding
+// above. It should answer whether an abstract sequence of casts preserves
+// the source value, taking the concrete CastOps in execution order so that
+// type, saturation, and signedness attributes are all visible, without
+// requiring the casts to be SSA-connected; the loop back edge would pass
+// {exitCast, entryCast}, i.e. `body -> carried -> body`. The width-only
+// integer comparison above does not cover all attribute combinations, and
+// getCastChainBlockReason() mixes in the contract/matmul escape policy, so
+// neither serves as a strict identity proof today; separate the pure
+// semantic check from that policy when unifying.
+
 struct LoopedCastOpPattern : public OpRewritePattern<CastOp> {
 public:
   using OpRewritePattern<CastOp>::OpRewritePattern;
@@ -617,6 +706,26 @@ public:
     if (!lastCast || lastCast == castOp || !isSimpleCastOp(lastCast))
       return failure();
     if (castOp->getResultTypes() != lastCast.getInputs().getTypes())
+      return failure();
+
+    // The rewrite deletes the per-iteration rounding to the carried element
+    // type on the loop back edge. That is unobservable only when the carried
+    // element type can represent every value of the in-loop element type;
+    // see the loop cast hoisting guard above for why fastmath<contract>
+    // does not license the lossy case.
+    //
+    // TODO: zero-trip loops. The check below covers only the deleted back
+    // edge (exitCast -> entryCast); when the loop runs at least once, the
+    // first entry cast and the final exit cast still both execute. A loop
+    // that runs zero times used to return the initializer directly, but
+    // after the hoist the initializer goes through entryCast -> exitCast,
+    // the opposite-direction round trip, which may change the value (an f32
+    // initializer converted through bf16 and back to f32 is not necessarily
+    // preserved). Either prove the loop executes at least once, or prove
+    // the initializer's entryCast -> exitCast round trip separately.
+    if (!canRepresentLoopBodyTypeWithoutLoss(
+            getElementTypeOrSelf(castSrc),
+            getElementTypeOrSelf(castOp.getResults().front())))
       return failure();
 
     // Check that the exit cast's result is only used by the yield op inside

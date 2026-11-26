@@ -72,6 +72,10 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type opt_leve
         BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON")
         list(APPEND bisheng_args -mllvm -cce-aicore-addr-transform=false)
     endif ()
+    if(BSPUB_DAVINCI_BISHENGIR AND
+        cpp_with_path MATCHES "/RegBase/(Cube/(LocalMmad|nd2nz)|Vector/Copy[123]D)[.]cpp$")
+        list(APPEND bisheng_args -DBSPUB_DAVINCI_BISHENGIR)
+    endif()
     if (DEFINED EXTRA_BISHENG_DEFINES)
         list(APPEND bisheng_args ${EXTRA_BISHENG_DEFINES})
     endif()

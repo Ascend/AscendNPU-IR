@@ -47,8 +47,8 @@ static LogicalResult verifyIfWithElseAndResults(scf::IfOp ifOp,
 }
 
 static bool equivalentConvertMeta(ConvertLayoutOp a, ConvertLayoutOp b) {
-  // Strict check: all attributes must match.
-  return a.getDstLayout() == b.getDstLayout();
+  return a->getAttrDictionary() == b->getAttrDictionary() &&
+         a.getOutputShape() == b.getOutputShape();
 }
 
 static SmallVector<Value> buildYieldOperands(scf::YieldOp oldYield,
@@ -178,9 +178,12 @@ struct PropagateConvertLayoutScfIfYieldDown
       return rewriter.notifyMatchFailure(convertOp,
                                          "branch conversion is not down");
 
-    if (!thenConv.getResult().hasOneUse() || !elseConv.getResult().hasOneUse())
+    // A conversion defined outside the if survives the branch rewrite and can
+    // still serve its other users, such as a Fixpipe reading the accumulator.
+    auto siblingConv = thisYield == thenYield ? elseConv : thenConv;
+    if (!siblingConv->hasOneUse() && ifOp->isProperAncestor(siblingConv))
       return rewriter.notifyMatchFailure(
-          convertOp, "branch convert result has extra users");
+          convertOp, "branch-local convert result has extra users");
 
     if (!equivalentConvertMeta(thenConv, elseConv))
       return rewriter.notifyMatchFailure(convertOp,

@@ -15,6 +15,7 @@
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/TilingUtils.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Attrs.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/LiftScalarProducer.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/PlanContext.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Verify.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
@@ -42,6 +43,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
+#include "mlir/IR/Verifier.h"
 #include "mlir/Pass/PassManager.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
@@ -338,8 +340,9 @@ findBestFusedNodeForProducer(Block *block, Operation *producer,
   for (auto *user : producer->getUsers()) {
     if (!isOpInBlock(user, block) || !isFusableOp(user) || !isBetter(user))
       continue;
+    // A user the planner left standalone has no node to host the producer.
     if (auto node = ctx.getInfo(user).fusedNode;
-        node->canAccept(producer, AcceptContext::Producer) &&
+        node && node->canAccept(producer, AcceptContext::Producer) &&
         node->canFuseProducer(producer))
       bestFusedNode = node;
   }
@@ -650,6 +653,10 @@ static Value tileReductionOpTreeReduce(
   auto cleanup = [&builder](Value loop) {
     builder.create<transform::ApplyPatternsOp>(loop, [](OpBuilder &innerBuilder,
                                                         Location loc) {
+      innerBuilder.create<transform::ApplyCanonicalizationPatternsOp>(loc);
+      innerBuilder
+          .create<transform::ApplyMergeConsecutiveInsertExtractSlicePatternsOp>(
+              loc);
       innerBuilder.create<transform::ApplyForwardExtractSlicePatternsOp>(loc);
     });
   };
@@ -860,7 +867,7 @@ private:
       SmallVector<std::pair<std::string, SmallVector<int64_t>>>
           &otherVectorizableOps,
       PlanContext &result);
-  Value getOpTransformHandle(std::string label, OpBuilder &builder,
+  Value getOpTransformHandle(StringRef label, OpBuilder &builder,
                              transform::SequenceOp seqOp);
   void planFuseSiblingForLeafNodes(Block *block, PlanContext &result);
   void planFuseProducersIntoConsumers(Block *block, PlanContext &result);
@@ -871,11 +878,11 @@ private:
       SmallVector<std::pair<std::string, SmallVector<int64_t>>>
           &otherVectorizableOps);
   void fuseProducersIntoConsumers(
-      OpBuilder &builder, transform::SequenceOp seqOp, Block *block,
-      PlanContext &result,
+      OpBuilder &builder, transform::SequenceOp seqOp, PlanContext &result,
       SmallVector<std::pair<std::string, SmallVector<int64_t>>>
           &otherVectorizableOps);
-  void applyCleanUp(OpBuilder &builder, transform::SequenceOp seqOp);
+  void applyCleanUp(OpBuilder &builder, transform::SequenceOp seqOp,
+                    StringRef tiledLoopLabel = {});
   void sortFunc(func::FuncOp func);
   transform::SequenceOp buildTransformSequence(func::FuncOp func,
                                                RetriedOptions &retryCtx,
@@ -946,19 +953,21 @@ void AutoVectorizeV2::planFuseProducersIntoConsumers(Block *block,
     for (Value operand : consumer->getOperands()) {
       Operation *producer = operand.getDefiningOp();
       if (isFusableOp(producer)) {
-        // It means that current producer has been handled if the value of
-        // ctx.getInfo(producer).fusedNode is not nullptr.
-        if (!isOpInBlock(producer, block) || ctx.getInfo(producer).fusedNode)
+        // This producer has already been processed in the traversal.
+        if (!isOpInBlock(producer, block) || ctx.getInfo(producer).processed)
           continue;
 
-        // If all users of the producer has been handled, we can fuse this
-        // producer into proper fused node.
+        // Traverse only after every fusable user has been processed, whether
+        // it was merged into a node or deliberately left standalone.
         if (llvm::all_of(producer->getUsers(), [&](Operation *user) {
               if (isFusableOp(user))
-                return ctx.getInfo(user).fusedNode != nullptr;
+                return ctx.getInfo(user).processed;
               return true;
             })) {
           planFuseProducerIntoFusedNode(block, producer, ctx);
+          // Record that the traversal handled this producer, regardless of
+          // whether it was merged into a node.
+          ctx.getInfo(producer).processed = true;
           queue.push(producer);
         }
       }
@@ -1017,6 +1026,8 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(Block *block,
   } else {
     // expand_shape has no tile transform of its own — only vsstb-fused paths
     // can tile it.
+    // Leaving it standalone is fine: the caller marks it processed, so it no
+    // longer blocks its producers.
     if (isExpandShapeOpCanFuseIntoVsstbPatternTranspose(producer))
       return;
 
@@ -1040,8 +1051,7 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(Block *block,
   }
 }
 
-Value AutoVectorizeV2::getOpTransformHandle(std::string label,
-                                            OpBuilder &builder,
+Value AutoVectorizeV2::getOpTransformHandle(StringRef label, OpBuilder &builder,
                                             transform::SequenceOp seqOp) {
   DictionaryAttr opAttr = builder.getDictionaryAttr(
       builder.getNamedAttr(label, builder.getUnitAttr()));
@@ -1130,8 +1140,7 @@ void AutoVectorizeV2::tileAndFuseSiblingForLeafNodes(
 }
 
 void AutoVectorizeV2::fuseProducersIntoConsumers(
-    OpBuilder &builder, transform::SequenceOp seqOp, Block *block,
-    PlanContext &ctx,
+    OpBuilder &builder, transform::SequenceOp seqOp, PlanContext &ctx,
     SmallVector<std::pair<std::string, SmallVector<int64_t>>>
         &otherVectorizableOps) {
   auto loc = seqOp.getLoc();
@@ -1182,11 +1191,9 @@ void AutoVectorizeV2::fuseProducersIntoConsumers(
       Value funcHandle = builder.create<transform::MatchOp>(
           loc, seqOp.getBodyBlock()->getArguments().front(),
           ArrayRef<StringRef>({func::FuncOp::getOperationName()}));
-      builder.create<transform::ApplyRegisteredPassOp>(
-          loc, builder.getType<transform::AnyOpType>(), funcHandle,
-          builder.getStringAttr("eliminate-single-iteration-scf-for"));
-      // Re-match all loops after the pass instead of reusing erased handles.
-      applyCleanUp(builder, seqOp);
+      builder.create<transform::EliminateSingleIterationScfForOp>(loc,
+                                                                  funcHandle);
+      applyCleanUp(builder, seqOp, fusedNode->getLabel());
     }
 }
 
@@ -1199,6 +1206,12 @@ void AutoVectorizeV2::buildTileAndFuseTransformSequenceForBlock(
   ctx.constraint().compute(block, ctx);
   planFuseSiblingForLeafNodes(block, ctx);
   planFuseProducersIntoConsumers(block, ctx);
+  // Only multi-op nodes went through consolidation. Verify their common
+  // parent once, after both planning steps have finished reordering the block.
+  if (llvm::any_of(ctx.nodes(),
+                   [](const auto &node) { return node->size() > 1; }) &&
+      failed(verify(block->getParentOp())))
+    llvm::report_fatal_error("AV2 fusion planning produced invalid IR");
   ctx.computeTileSize();
 #ifndef NDEBUG
   LLVM_DEBUG(llvm::dbgs() << "========Dumping LeafNodeGroups begin========\n");
@@ -1235,7 +1248,7 @@ void AutoVectorizeV2::buildTileAndFuseTransformSequenceForBlock(
   }
 #endif
   tileAndFuseSiblingForLeafNodes(builder, seqOp, ctx, otherVectorizableOps);
-  fuseProducersIntoConsumers(builder, seqOp, block, ctx, otherVectorizableOps);
+  fuseProducersIntoConsumers(builder, seqOp, ctx, otherVectorizableOps);
 }
 
 void AutoVectorizeV2::buildVectorizeTransformSequence(
@@ -1245,6 +1258,9 @@ void AutoVectorizeV2::buildVectorizeTransformSequence(
     PlanContext &result) {
   auto loc = seqOp.getLoc();
   for (auto info : result.opInfos()) {
+    // Standalone processed ops carry no tile size; do not vectorize them.
+    if (info.second.processed && !info.second.fusedNode)
+      continue;
     // Here only vectorize LinalgOp, interleave/deinterleave will be vectorized
     // in convert-hfusion-to-hivmave pass.
     if (isa<linalg::LinalgOp>(info.first)) {
@@ -1264,7 +1280,8 @@ void AutoVectorizeV2::buildVectorizeTransformSequence(
 }
 
 void AutoVectorizeV2::applyCleanUp(OpBuilder &builder,
-                                   transform::SequenceOp seqOp) {
+                                   transform::SequenceOp seqOp,
+                                   StringRef tiledLoopLabel) {
   auto loopLikeAttr = transform::MatchInterfaceEnumAttr::get(
       builder.getContext(), transform::MatchInterfaceEnum::LoopLikeInterface);
   Value loopLikeHandle = builder
@@ -1278,10 +1295,21 @@ void AutoVectorizeV2::applyCleanUp(OpBuilder &builder,
   builder.create<transform::ApplyLoopInvariantCodeMotionWithSliceBoundaryOp>(
       loopLikeHandle.getLoc(), loopLikeHandle);
 
-  Value funcHandle = builder.create<transform::MatchOp>(
-      builder.getInsertionPoint()->getLoc(),
-      seqOp.getBodyBlock()->getArguments().front(),
-      ArrayRef<StringRef>({func::FuncOp::getOperationName()}));
+  Location loc = seqOp.getLoc();
+  Value target;
+  if (tiledLoopLabel.empty()) {
+    target = builder.create<transform::MatchOp>(
+        loc, seqOp.getBodyBlock()->getArgument(0),
+        ArrayRef<StringRef>({func::FuncOp::getOperationName()}));
+  } else {
+    // Loop promotion consumes the function handle. Match the labeled consumer
+    // again to find its current parent.
+    Value tiledLoop = getOpTransformHandle(tiledLoopLabel, builder, seqOp);
+    target = builder.create<transform::GetParentOp>(
+        loc, builder.getType<transform::AnyOpType>(), tiledLoop,
+        /*isolated_from_above=*/false, /*allow_empty_results=*/false,
+        /*op_name=*/nullptr);
+  }
   auto bodyBuilder = [](OpBuilder &innerBuilder, Location loc) {
     innerBuilder.create<transform::ApplyCanonicalizationPatternsOp>(loc);
     innerBuilder
@@ -1289,9 +1317,7 @@ void AutoVectorizeV2::applyCleanUp(OpBuilder &builder,
             loc);
   };
   transform::ApplyPatternsOp applyPatternsOp =
-      builder.create<transform::ApplyPatternsOp>(funcHandle.getLoc(),
-                                                 /*target=*/funcHandle,
-                                                 /*bodyBuilder=*/bodyBuilder);
+      builder.create<transform::ApplyPatternsOp>(loc, target, bodyBuilder);
   applyPatternsOp.setApplyCse(true);
   applyPatternsOp.setDisablePatternsAttr(builder.getArrayAttr(
       SmallVector<Attribute>{builder.getStringAttr("SimplifyTrivialLoops")}));
@@ -1346,10 +1372,14 @@ LogicalResult AutoVectorizeV2::vectorize(func::FuncOp func,
   LogicalResult result = transform::applyTransformNamedSequence(
       func, seqOp, func->getParentOfType<ModuleOp>(), transformOptions);
   seqOp->erase();
+  if (failed(result))
+    return failure();
+
+  if (failed(hfusion::liftScalarProducers(func)))
+    return failure();
 
   hfusion::AutoVectorizeVerifier verifier;
   return failure(
-      failed(result) ||
       failed(verifier.verifyFreeVectorRegion(true).emitDiagnostics(false).check(
           func)));
 }

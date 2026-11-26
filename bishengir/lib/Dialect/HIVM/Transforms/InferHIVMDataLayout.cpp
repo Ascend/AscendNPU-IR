@@ -189,8 +189,18 @@ inline IntegerAttr l2CacheModeOf(Operation &originalOp) {
   return l2CacheModeFromAnnotation(originalOp);
 }
 
-void convertToBatchND2NZOp(Value src, Value dst, Operation &originalOp,
-                           OpBuilder &builder, bool batchMatmul) {
+LogicalResult convertToBatchND2NZOp(Value src, Value dst, Operation &originalOp,
+                                    OpBuilder &builder, bool batchMatmul) {
+  // Initialize the whole destination tile once, including masked batch slices.
+  if (auto load = dyn_cast<hivm::LoadOp>(originalOp);
+      load && load.getInitOutBuffer()) {
+    IRRewriter rewriter(builder);
+    if (failed(initializeLoadPadBuffer(rewriter, load.getLoc(), dst,
+                                       load.getPadValue(),
+                                       load.getInitCondition())))
+      return failure();
+  }
+
   // Regbase keeps the batch dimension on the op so that the library call can
   // fold it into a single MTE2 descriptor; other architectures still need one
   // ND2NZ per batch.
@@ -207,7 +217,7 @@ void convertToBatchND2NZOp(Value src, Value dst, Operation &originalOp,
                                             /*dst=*/dst, builder.getUnitAttr());
     if (modeAttr)
       op.setL2CacheModeAttr(modeAttr);
-    return;
+    return success();
   }
 
   auto buildLoopBody = [&src, &dst, &builder,
@@ -248,6 +258,7 @@ void convertToBatchND2NZOp(Value src, Value dst, Operation &originalOp,
   std::set<int> loopDims;
   loopDims.insert(0);
   createNestedLoops(builder, src.getLoc(), src, loopDims, buildLoopBody);
+  return success();
 }
 
 void convertToND2NZOp(Value src, Value dst, Operation &originalOp,
@@ -1553,13 +1564,10 @@ DataLayoutInferAndPropagateHelper::tryFoldLayoutConversionIntoCopy(
         2)
       llvm::report_fatal_error("Unsupported operand shape when convert copy to ND2NZ");
     bool batchFlag = (llvm::dyn_cast<ShapedType>(src.getType()).getRank() == 3);
-    if (batchFlag) {
-      convertToBatchND2NZOp(src, dst, originalOp, builder, batchMatmul_);
-      return success();
-    } else {
-      convertToND2NZOp(src, dst, originalOp, batchMatmul_, builder);
-      return success();
-    }
+    if (batchFlag)
+      return convertToBatchND2NZOp(src, dst, originalOp, builder, batchMatmul_);
+    convertToND2NZOp(src, dst, originalOp, batchMatmul_, builder);
+    return success();
   }
   case LayoutConversionKind::DOT_SCALE_ND_TO_zZ:
   case LayoutConversionKind::DOT_SCALE_DN_TO_nN:

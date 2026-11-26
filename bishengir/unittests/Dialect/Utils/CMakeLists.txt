@@ -1,6 +1,7 @@
 add_bishengir_unittest(BiShengIRDialectUtilsTests
   ReportFatalErrorDeathTest.cpp
   SelectRoundModeTest.cpp
+  L12L0BuilderTest.cpp
   IntermediateValuesAnalyzerTest.cpp
   UnionFindTest.cpp
 )

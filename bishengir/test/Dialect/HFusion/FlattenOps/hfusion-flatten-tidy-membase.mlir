@@ -1874,3 +1874,61 @@ func.func @dynamic_flatten_dependency(%arg0: tensor<?x4096xbf16>, %arg1: i64) ->
   %collapsed = tensor.collapse_shape %6 [[0], [1], [2, 3], [4]] : tensor<1x16x1x?x128xbf16> into tensor<1x16x?x128xbf16>
   return %collapsed : tensor<1x16x?x128xbf16>
 }
+
+// -----
+
+// The to_memref result keeps the strided layout of the collapsed memref.
+// Resetting it to identity would make the following subview result layout
+// inconsistent with its source type and fail verification.
+// CHECK-LABEL: func.func @to_memref_keeps_collapsed_layout
+// CHECK: %[[TO_MEMREF:.*]] = bufferization.to_memref %{{.*}} : memref<256xi64, strided<[1], offset: ?>>
+// CHECK: %[[SUBVIEW:.*]] = memref.subview %[[TO_MEMREF]][0] [%{{.*}}] [1] : memref<256xi64, strided<[1], offset: ?>> to memref<?xi64, strided<[1], offset: ?>>
+func.func @to_memref_keeps_collapsed_layout(%arg0: memref<?xi64>, %arg1: i32, %arg2: i32) {
+  %c256 = arith.constant 256 : index
+  %c256_i32 = arith.constant 256 : i32
+  %0 = arith.muli %arg2, %c256_i32 : i32
+  %1 = arith.index_cast %0 : i32 to index
+  %2 = arith.addi %1, %c256 : index
+  %3 = arith.index_cast %arg1 : i32 to index
+  %4 = arith.maxsi %1, %3 : index
+  %5 = arith.minsi %2, %4 : index
+  %6 = arith.subi %5, %1 : index
+  %7 = tensor.empty() : tensor<256xi64>
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%1], sizes: [256], strides: [1] : memref<?xi64> to memref<256xi64, strided<[1], offset: ?>>
+  %8 = bufferization.to_memref %7 : memref<256xi64, strided<[1], offset: ?>>
+  %subview = memref.subview %8[0] [%6] [1] : memref<256xi64, strided<[1], offset: ?>> to memref<?xi64, strided<[1], offset: ?>>
+  %alloc = memref.alloc() : memref<256xi64>
+  %subview_0 = memref.subview %alloc[0] [%6] [1] : memref<256xi64> to memref<?xi64, strided<[1]>>
+  memref.copy %subview, %subview_0 : memref<?xi64, strided<[1], offset: ?>> to memref<?xi64, strided<[1]>>
+  return
+}
+
+// -----
+
+// A to_memref result may carry a layout that cannot be collapsed along the
+// dimension-DSU collapse group (here every stride is 1, so collapsing dims
+// [0, 1] is not stride-consistent). computeCollapsedType asserts on such
+// groups; the flattener must fall back to resetting the layout to identity.
+// CHECK-LABEL: func.func @to_memref_non_collapsible_layout
+// CHECK: %[[COLLAPSED:.*]] = tensor.collapse_shape %{{.*}} {{\[\[}}0, 1]] : tensor<256x16xi64> into tensor<4096xi64>
+// CHECK: bufferization.to_memref %[[COLLAPSED]] : memref<4096xi64>
+func.func @to_memref_non_collapsible_layout(%arg0: memref<?xi64>) {
+  %7 = tensor.empty() : tensor<256x16xi64>
+  %8 = bufferization.to_memref %7 : memref<256x16xi64, strided<[1, 1], offset: ?>>
+  memref.dealloc %8 : memref<256x16xi64, strided<[1, 1], offset: ?>>
+  return
+}
+
+// -----
+
+// A contiguous strided layout is guaranteed collapsible and must keep its
+// collapsed layout instead of falling back to identity.
+// CHECK-LABEL: func.func @to_memref_contiguous_strided_layout
+// CHECK: %[[COLLAPSED:.*]] = tensor.collapse_shape %{{.*}} {{\[\[}}0, 1]] : tensor<256x16xi64> into tensor<4096xi64>
+// CHECK: bufferization.to_memref %[[COLLAPSED]] : memref<4096xi64, strided<[1], offset: ?>>
+func.func @to_memref_contiguous_strided_layout(%arg0: memref<?xi64>) {
+  %7 = tensor.empty() : tensor<256x16xi64>
+  %8 = bufferization.to_memref %7 : memref<256x16xi64, strided<[16, 1], offset: ?>>
+  memref.dealloc %8 : memref<256x16xi64, strided<[16, 1], offset: ?>>
+  return
+}

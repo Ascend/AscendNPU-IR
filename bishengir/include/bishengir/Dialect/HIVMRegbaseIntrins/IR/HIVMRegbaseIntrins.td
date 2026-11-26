@@ -236,14 +236,16 @@ class ElementwiseTenaryInstrOp<string mnemonic,
 // Generic vector scalar binary arithmetic op.
 //
 class BinaryVecScalarOp<string mnemonic,
-  list<Trait> traits = [AllTypesMatch<["vec", "res"]>]> :
+  list<Trait> traits = [AllTypesMatch<["vec", "res"]>],
+  bit supportsBF16 = 0> :
   HIVMRegbaseIntrins_Op</*string opName=*/mnemonic,
                 /*list<int> overloadedResults=*/[0],
                 /*list<int> overloadedOperands=*/[],
                 /*list<Trait> traits=*/traits,
                 /*int numResults=*/1> {
   let arguments = (ins ValidVector:$vec,
-      AnyTypeOf<[I8, I16, I32, F16, F32]>:$scalar, predicateVector:$mask);
+      AnyTypeOf<!if(supportsBF16, [I8, I16, I32, BF16, F16, F32],
+                    [I8, I16, I32, F16, F32])>:$scalar, predicateVector:$mask);
   let results = (outs ValidVector:$res);
 }
 
@@ -1019,6 +1021,111 @@ def VmulaSMInstrOp : ElementwiseTenaryInstrOp<"hivm.vmula.s.m"> {
   }];
 }
 def VmulaUMInstrOp : ElementwiseTenaryInstrOp<"hivm.vmula.u.m">;
+
+def VfmaInstrOp : ElementwiseTenaryInstrOp<"hivm.vfma.m"> {
+  let summary = "A V300/A6 vector fused multiply-and-add instruction";
+  let description = [{
+    Fused vector multiply-and-add, dst = src1 * src2 + dst (addend as dst).
+    A predicate (MASK) is provided to tell which elements are involved in the three vectors.
+
+    #### Examples:
+
+    ```mlir
+    %0 = "hivm.intr.hivm.vfma.m"(%dst, %src1, %src2, %preg) : (vector<64xf32>, vector<64xf32>, vector<64xf32>, vector<256xi1>)-> (vector<64xf32>)
+    ```
+  }];
+}
+def VfmsInstrOp : ElementwiseTenaryInstrOp<"hivm.vfms.m"> {
+  let summary = "A V300/A6 vector fused multiply-and-subtract instruction";
+  let description = [{
+    Fused vector multiply-and-subtract, dst = src1 * src2 - dst.
+    A predicate (MASK) is provided to tell which elements are involved in the three vectors.
+
+    #### Examples:
+
+    ```mlir
+    %0 = "hivm.intr.hivm.vfms.m"(%dst, %src1, %src2, %preg) : (vector<64xf32>, vector<64xf32>, vector<64xf32>, vector<256xi1>)-> (vector<64xf32>)
+    ```
+  }];
+}
+def VfnmaInstrOp : ElementwiseTenaryInstrOp<"hivm.vfnma.m"> {
+  let summary = "A V300/A6 vector fused negate-multiply-and-add instruction";
+  let description = [{
+    Fused vector negate-multiply-and-add, dst = -(src1 * src2) + dst.
+    A predicate (MASK) is provided to tell which elements are involved in the three vectors.
+
+    #### Examples:
+
+    ```mlir
+    %0 = "hivm.intr.hivm.vfnma.m"(%dst, %src1, %src2, %preg) : (vector<64xf32>, vector<64xf32>, vector<64xf32>, vector<256xi1>)-> (vector<64xf32>)
+    ```
+  }];
+}
+def VfnmsInstrOp : ElementwiseTenaryInstrOp<"hivm.vfnms.m"> {
+  let summary = "A V300/A6 vector fused negate-multiply-and-subtract instruction";
+  let description = [{
+    Fused vector negate-multiply-and-subtract, dst = -(src1 * src2) - dst.
+    A predicate (MASK) is provided to tell which elements are involved in the three vectors.
+
+    #### Examples:
+
+    ```mlir
+    %0 = "hivm.intr.hivm.vfnms.m"(%dst, %src1, %src2, %preg) : (vector<64xf32>, vector<64xf32>, vector<64xf32>, vector<256xi1>)-> (vector<64xf32>)
+    ```
+  }];
+}
+def VmaddInstrOp : ElementwiseTenaryInstrOp<"hivm.vmadd.m"> {
+  let summary = "A V300/A6 vector multiply-and-add instruction";
+  let description = [{
+    Vector multiply-and-add, dst = src1 * src2 + dst.
+    A predicate (MASK) is provided to tell which elements are involved in the three vectors.
+
+    #### Examples:
+
+    ```mlir
+    %0 = "hivm.intr.hivm.vmadd.m"(%dst, %src1, %src2, %preg) : (vector<64xf32>, vector<64xf32>, vector<64xf32>, vector<256xi1>)-> (vector<64xf32>)
+    ```
+  }];
+}
+def VmsubInstrOp : ElementwiseTenaryInstrOp<"hivm.vmsub.m"> {
+  let summary = "A V300/A6 vector multiply-and-subtract instruction";
+  let description = [{
+    Vector multiply-and-subtract, dst = src1 * src2 - dst.
+    A predicate (MASK) is provided to tell which elements are involved in the three vectors.
+
+    #### Examples:
+
+    ```mlir
+    %0 = "hivm.intr.hivm.vmsub.m"(%dst, %src1, %src2, %preg) : (vector<64xf32>, vector<64xf32>, vector<64xf32>, vector<256xi1>)-> (vector<64xf32>)
+    ```
+  }];
+}
+def VnmaddInstrOp : ElementwiseTenaryInstrOp<"hivm.vnmadd.m"> {
+  let summary = "A V300/A6 vector negate-multiply-and-add instruction";
+  let description = [{
+    Vector negate-multiply-and-add, dst = -(src1 * src2) + dst.
+    A predicate (MASK) is provided to tell which elements are involved in the three vectors.
+
+    #### Examples:
+
+    ```mlir
+    %0 = "hivm.intr.hivm.vnmadd.m"(%dst, %src1, %src2, %preg) : (vector<64xf32>, vector<64xf32>, vector<64xf32>, vector<256xi1>)-> (vector<64xf32>)
+    ```
+  }];
+}
+def VnmsubInstrOp : ElementwiseTenaryInstrOp<"hivm.vnmsub.m"> {
+  let summary = "A V300/A6 vector negate-multiply-and-subtract instruction";
+  let description = [{
+    Vector negate-multiply-and-subtract, dst = -(src1 * src2) - dst.
+    A predicate (MASK) is provided to tell which elements are involved in the three vectors.
+
+    #### Examples:
+
+    ```mlir
+    %0 = "hivm.intr.hivm.vnmsub.m"(%dst, %src1, %src2, %preg) : (vector<64xf32>, vector<64xf32>, vector<64xf32>, vector<256xi1>)-> (vector<64xf32>)
+    ```
+  }];
+}
 
 def Vadd3SInstrOp : ElementwiseTenaryInstrOp<"hivm.vadd3.s.m"> {
   let summary = "A V300 vector addition with 3 source operands instruction";
@@ -2448,6 +2555,11 @@ class VcvtffTruncInstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
 
 def VcvtffF322F16InstrOp: VcvtffTruncInstrOp<"hivm.vcvtff.f322f16.x">;
 def VcvtffF322BF16InstrOp: VcvtffTruncInstrOp<"hivm.vcvtff.f322bf16.x">;
+#ifdef BSPUB_DAVINCI_BISHENGIR
+def VcvtffF322HiF8InstrOp : VcvtffTruncInstrOp<"hivm.vcvtff.f322hif8.x"> {
+  let results = (outs VectorOfLengthAndType<[256], [HiF8]>:$res);
+}
+#endif
 def VcvtffF322F8E4M3InstrOp: VcvtffTruncInstrOp<"hivm.vcvtff.f322f8e4m3.x">;
 def VcvtffF322F8E5M2InstrOp: VcvtffTruncInstrOp<"hivm.vcvtff.f322f8e5m2.x">;
 
@@ -2468,6 +2580,13 @@ class VcvtffExtInstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
 
 def VcvtffF162F32InstrOp: VcvtffExtInstrOp<"hivm.vcvtff.f162f32.x">;
 def VcvtffBF162F32InstrOp: VcvtffExtInstrOp<"hivm.vcvtff.bf162f32.x">;
+#ifdef BSPUB_DAVINCI_BISHENGIR
+def VcvtffHiF82F32InstrOp : VcvtffExtInstrOp<"hivm.vcvtff.hif82f32.x"> {
+  let arguments = (ins VectorOfLengthAndType<[256], [HiF8]>:$src,
+                       predicateVector:$mask,
+                       I32:$part);
+}
+#endif
 def VcvtffF8E4M32F32InstrOp: VcvtffExtInstrOp<"hivm.vcvtff.f8e4m32f32.x">;
 def VcvtffF8E5M22F32InstrOp: VcvtffExtInstrOp<"hivm.vcvtff.f8e5m22f32.x">;
 
@@ -2505,6 +2624,127 @@ class VcvtffBF16ToF16InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
 }
 
 def VcvtffBF162F16InstrOp: VcvtffBF16ToF16InstrOp<"hivm.vcvtff.bf162f16.x">;
+
+// 16-bit float <-> fp8 conversions.
+class Vcvtff16F2F8InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins VectorOfLengthAndType<[128, 128],
+                                            [F16, BF16]>:$src,
+                       predicateVector:$mask,
+                       I32:$round,
+                       I32:$sat,
+                       I32:$part,
+                       I32:$mode);
+  let results = (outs VectorOfLengthAndType<[256, 256],
+                                            [F8E4M3FN, F8E5M2]>:$res);
+
+}
+
+def VcvtffF162F8E4M3InstrOp: Vcvtff16F2F8InstrOp<"hivm.vcvtff.f162f8e4m3.x">;
+def VcvtffF162F8E5M2InstrOp: Vcvtff16F2F8InstrOp<"hivm.vcvtff.f162f8e5m2.x">;
+def VcvtffBF162F8E4M3InstrOp: Vcvtff16F2F8InstrOp<"hivm.vcvtff.bf162f8e4m3.x">;
+def VcvtffBF162F8E5M2InstrOp: Vcvtff16F2F8InstrOp<"hivm.vcvtff.bf162f8e5m2.x">;
+
+class VcvtffF8To16InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins VectorOfLengthAndType<[256, 256],
+                                            [F8E4M3FN, F8E5M2]>:$src,
+                       predicateVector:$mask,
+                       I32:$part);
+  let results = (outs VectorOfLengthAndType<[128, 128],
+                                            [F16, BF16]>:$res);
+
+}
+
+def VcvtffF8E4M32F16InstrOp: VcvtffF8To16InstrOp<"hivm.vcvtff.f8e4m32f16.x">;
+def VcvtffF8E4M32BF16InstrOp: VcvtffF8To16InstrOp<"hivm.vcvtff.f8e4m32bf16.x">;
+def VcvtffF8E5M22F16InstrOp: VcvtffF8To16InstrOp<"hivm.vcvtff.f8e5m22f16.x">;
+def VcvtffF8E5M22BF16InstrOp: VcvtffF8To16InstrOp<"hivm.vcvtff.f8e5m22bf16.x">;
+
+// V121 (dav-920r1) e8m0/e6m2/rcpe6m2 <-> bf16 conversions. e8m0/e6m2/rcpe6m2
+// are stored as vector_u8 (VectorOfLengthAndType<[256],[UI8]>).
+class VcvtffE8M0ToBF16InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins VectorOfLengthAndType<[256],
+                                            [UI8]>:$src,
+                       predicateVector:$mask,
+                       I32:$part,
+                       I32:$mode);
+  let results = (outs VectorOfLengthAndType<[128],
+                                            [BF16]>:$res);
+
+}
+
+def VcvtffE8M02BF16InstrOp: VcvtffE8M0ToBF16InstrOp<"hivm.vcvtff.e8m02bf16.x">;
+
+class VcvtffBF16ToE8M0InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins VectorOfLengthAndType<[128],
+                                            [BF16]>:$src,
+                       predicateVector:$mask,
+                       I32:$round,
+                       I32:$sat,
+                       I32:$part,
+                       I32:$mode);
+  let results = (outs VectorOfLengthAndType<[256],
+                                            [UI8]>:$res);
+
+}
+
+def VcvtffBF162E8M0InstrOp: VcvtffBF16ToE8M0InstrOp<"hivm.vcvtff.bf162e8m0.x">;
+
+class VcvtffE6M2ToBF16InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins VectorOfLengthAndType<[256],
+                                            [UI8]>:$src,
+                       predicateVector:$mask,
+                       I32:$part);
+  let results = (outs VectorOfLengthAndType<[128],
+                                            [BF16]>:$res);
+
+}
+
+def VcvtffE6M22BF16InstrOp: VcvtffE6M2ToBF16InstrOp<"hivm.vcvtff.e6m22bf16.x">;
+def VcvtffRcpe6M22BF16InstrOp: VcvtffE6M2ToBF16InstrOp<"hivm.vcvtff.rcpe6m22bf16.x">;
+
+class VcvtffBF16ToE6M2InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins VectorOfLengthAndType<[128],
+                                            [BF16]>:$src,
+                       predicateVector:$mask,
+                       I32:$round,
+                       I32:$part,
+                       I32:$mode);
+  let results = (outs VectorOfLengthAndType<[256],
+                                            [UI8]>:$res);
+
+}
+
+def VcvtffBF162E6M2InstrOp: VcvtffBF16ToE6M2InstrOp<"hivm.vcvtff.bf162e6m2.x">;
 
 class VtrcInstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
                                           /*string opName=*/mnemonic,
@@ -2611,6 +2851,54 @@ class PDintlvInstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
 def PDintlvB32InstrOp: PDintlvInstrOp<"hivm.pdintlv.b32">;
 def PDintlvB16InstrOp: PDintlvInstrOp<"hivm.pdintlv.b16">;
 def PDintlvB8InstrOp: PDintlvInstrOp<"hivm.pdintlv.b8">;
+
+class Pintlvv2InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[0],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins predicateVector:$src0,
+                       predicateVector:$src1,
+                       I32:$part
+                       );
+  let results = (outs predicateVector:$res);
+}
+
+def Pintlvv2B32InstrOp: Pintlvv2InstrOp<"hivm.pintlvv2.b32">;
+def Pintlvv2B16InstrOp: Pintlvv2InstrOp<"hivm.pintlvv2.b16">;
+def Pintlvv2B8InstrOp: Pintlvv2InstrOp<"hivm.pintlvv2.b8">;
+
+class PDintlvv2InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[0],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins predicateVector:$src0,
+                       predicateVector:$src1,
+                       I32:$part
+                       );
+  let results = (outs predicateVector:$res);
+}
+
+def PDintlvv2B32InstrOp: PDintlvv2InstrOp<"hivm.pdintlvv2.b32">;
+def PDintlvv2B16InstrOp: PDintlvv2InstrOp<"hivm.pdintlvv2.b16">;
+def PDintlvv2B8InstrOp: PDintlvv2InstrOp<"hivm.pdintlvv2.b8">;
+
+class Vselrv2InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[0],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins ValidVector:$src0,
+                       ValidVector:$src1
+                       );
+  let results = (outs ValidVector:$res);
+}
+
+def Vselrv2InstrOp: Vselrv2InstrOp<"hivm.vselrv2">;
 
 class VpackInstrOp<string mnemonic>
     : HIVMRegbaseIntrins_Op</*string opName=*/mnemonic,
@@ -3218,7 +3506,8 @@ def VaddsUXInstrOp : BinaryVecScalarOp<"hivm.vadds.u.x"> {
     A predicate (MASK) is provided to tell which elements are added in the two vectors.
   }];
 }
-def VaddsSXInstrOp : BinaryVecScalarOp<"hivm.vadds.s.x">;
+def VaddsSXInstrOp : BinaryVecScalarOp<"hivm.vadds.s.x",
+    [AllTypesMatch<["vec", "res"]>], 1>;
 def VaddsUMInstrOp : BinaryVecScalarOp<"hivm.vadds.u.m">;
 def VaddsSMInstrOp  : BinaryVecScalarOp<"hivm.vadds.s.m">;
 
@@ -3250,7 +3539,8 @@ def VmaxsUXInstrOp : BinaryVecScalarOp<"hivm.vmaxs.u.x"> {
     A predicate (MASK) is provided to tell which elements are involved in the two vectors.
   }];
 }
-def VmaxsSXInstrOp : BinaryVecScalarOp<"hivm.vmaxs.s.x">;
+def VmaxsSXInstrOp : BinaryVecScalarOp<"hivm.vmaxs.s.x",
+    [AllTypesMatch<["vec", "res"]>], 1>;
 def VmaxsUMInstrOp : BinaryVecScalarOp<"hivm.vmaxs.u.m">;
 def VmaxsSMInstrOp : BinaryVecScalarOp<"hivm.vmaxs.s.m">;
 
@@ -3262,7 +3552,8 @@ def VminsUXInstrOp : BinaryVecScalarOp<"hivm.vmins.u.x"> {
     A predicate (MASK) is provided to tell which elements are involved in the two vectors.
   }];
 }
-def VminsSXInstrOp : BinaryVecScalarOp<"hivm.vmins.s.x">;
+def VminsSXInstrOp : BinaryVecScalarOp<"hivm.vmins.s.x",
+    [AllTypesMatch<["vec", "res"]>], 1>;
 def VminsUMInstrOp : BinaryVecScalarOp<"hivm.vmins.u.m">;
 def VminsSMInstrOp : BinaryVecScalarOp<"hivm.vmins.s.m">;
 

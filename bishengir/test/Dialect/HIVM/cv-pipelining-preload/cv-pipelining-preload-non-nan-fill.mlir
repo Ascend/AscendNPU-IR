@@ -8,9 +8,10 @@
 // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>
 // CHECK: scope.scope
 // CHECK:   %[[ZERO:.*]] = hivm.hir.vbrc
-// CHECK:   %[[MASKED:.*]] = hivm.hir.vsel
+// CHECK:   %[[MAX:.*]] = hivm.hir.vmax ins(%{{.*}}, %[[ZERO]]
+// CHECK:   %[[RESULT:.*]] = hivm.hir.vsel ins(%{{.*}}, %[[ZERO]], %[[MAX]]
 // CHECK-NOT:   hivm.hir.vsel
-// CHECK:   hivm.hir.vmax ins(%[[MASKED]], %[[ZERO]]
+// CHECK:   hivm.hir.store ins(%[[RESULT]]
 // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @preload_non_nan_fill(

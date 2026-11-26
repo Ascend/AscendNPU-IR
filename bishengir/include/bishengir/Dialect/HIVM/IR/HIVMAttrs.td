@@ -448,6 +448,10 @@ def HIVM_FLOOR : I32EnumAttrCase<"FLOOR", 2, "floor">;
 def HIVM_CEIL : I32EnumAttrCase<"CEIL", 3, "ceil">;
 def HIVM_TRUNC : I32EnumAttrCase<"TRUNC", 4, "trunc">;
 def HIVM_ODD : I32EnumAttrCase<"ODD", 5, "odd">;
+#ifdef BSPUB_DAVINCI_BISHENGIR
+def HIVM_HYBRID : I32EnumAttrCase<"HYBRID", 7, "hybrid">;
+
+#endif
 def HIVM_TRUNCWITHOVERFLOW : I32EnumAttrCase<"TRUNCWITHOVERFLOW", 6, "truncwithoverflow">;
 
 def HIVM_RoundModeEnum : HIVM_I32Enum<
@@ -459,6 +463,9 @@ def HIVM_RoundModeEnum : HIVM_I32Enum<
     HIVM_TRUNC,
     HIVM_ODD,
     HIVM_TRUNCWITHOVERFLOW
+#ifdef BSPUB_DAVINCI_BISHENGIR
+    , HIVM_HYBRID
+#endif
   ]>;
 
 def HIVM_RoundModeAttr : HIVM_I32EnumAttr<"round_mode", HIVM_RoundModeEnum> {
@@ -1158,10 +1165,14 @@ def HIVM_LocalMatmul_BiasModeEnum : HIVM_I32Enum<"MatmulBiasMode", "bias mode fo
 def HIVM_MatmulFormat_FP8E5M2 : I32EnumAttrCase<"FP8E5M2_T", 1, "fp8_e5m2_t">;
 def HIVM_MatmulFormat_FP8E4M3 : I32EnumAttrCase<"FP8E4M3_T", 2, "fp8_e4m3_t">;
 def HIVM_MatmulFormat_FP4E2M1 : I32EnumAttrCase<"FP4E2M1_T", 3, "fp4_e2m1_t">;
+def HIVM_MatmulFormat_HIF4 : I32EnumAttrCase<"HIF4_T", 4, "fp4_hif4_t">;
+def HIVM_MatmulFormat_FP16 : I32EnumAttrCase<"FP16_T", 5, "fp16">;
+def HIVM_MatmulFormat_BF16 : I32EnumAttrCase<"BF16_T", 6, "bf16">;
 def HIVM_LocalMatmulMx_DataFormat
     : HIVM_I32Enum<"HIVMMatmulDataformat", "",
                    [HIVM_MatmulFormat_FP8E5M2, HIVM_MatmulFormat_FP8E4M3,
-                    HIVM_MatmulFormat_FP4E2M1]>;
+                    HIVM_MatmulFormat_FP4E2M1, HIVM_MatmulFormat_HIF4,
+                    HIVM_MatmulFormat_FP16, HIVM_MatmulFormat_BF16]>;
 
 //===----------------------------------------------------------------------===//
 // Metadata
@@ -1310,6 +1321,18 @@ def HIVM_CVPipelinedMultiBufferAttr
   }];
 }
 
+def HIVM_PingPongSignalAttr : HIVM_Attr<"PingPongSignal", "ping_pong_signal"> {
+  let description = [{
+    Marks the function-scoped `memref.alloca` holding the L0 ping-pong
+    signal shared by every MMAD op in the function. The alloca is a
+    `memref<i32>` and is zeroed at function entry.
+
+    Also marks the null `hivm.hir.pointer_cast` descriptor passed when a signal
+    is absent. CPU lowering must preserve this sentinel instead of replacing
+    it with an uninitialized allocation.
+  }];
+}
+
 def HIVM_StrideAlignValueAttr : HIVM_Attr<"StrideAlignDims", "stride_align_dims"> {
   let description = [{
     HIVM stride align dims.
@@ -1379,10 +1402,34 @@ def HIVM_ParallelLoopAttr : HIVM_Attr<"ParallelLoop", "parallel_loop"> {
   }];
 }
 
+def HIVM_EnableL1GatherAttr : HIVM_Attr<"EnableL1Gather", "enable_l1_gather"> {
+  let description = [{
+    Opt in to direct GM-to-L1 gathering for a tensor consumed by matmul.
+    Set by compile_hint(tensor, "hivm.enable_l1_gather", true).
+    Unsupported access patterns retain their original lowering.
+  }];
+}
+
 def HIVM_CVPipelinedLoopAttr
     : HIVM_Attr<"CVPipelinedLoop", "cv_pipelined_loop"> {
   let description = [{
     Marks a loop as a CV-pipelined loop.
+  }];
+}
+
+// TODO: Temporary transition measure while migrating from legacy CVPipelining
+// to PipelineV2. Remove once legacy CVPipelining and ShapeRegistry are retired.
+def HIVM_LegacyCVPipelineAttr
+    : HIVM_Attr<"LegacyCVPipeline", "legacy-cv-pipeline"> {
+  let description = [{
+    Marks a loop as pipelined by the legacy CV-pipelining pass.
+  }];
+}
+
+def HIVM_FusedLCDAttr
+    : HIVM_Attr<"FusedLCD", "fused_lcd"> {
+  let description = [{
+    Marks a scope as a fused scope of loop-carried dependent scopes.
   }];
 }
 
@@ -1577,6 +1624,35 @@ def HIVM_IsDistributedAttr : HIVM_Attr<"IsDistributed", "is_distributed"> {
 def HIVM_BackupFunction
     : HIVM_Attr<"BackupFunction", "backup_function"> {
   let description = [{HIVM backup  function attribute}];
+}
+
+//===----------------------------------------------------------------------===//
+// KeepControlFlow
+//===----------------------------------------------------------------------===//
+
+def HIVM_KeepControlFlowAttr
+    : HIVM_Attr<"KeepControlFlow", "keep_control_flow"> {
+  let description = [{
+    Marks an `scf.if` or `scf.for` that canonicalization must neither inline
+    nor erase, even when its condition is a known constant or its trip count
+    is provably zero or one.
+
+    Delayed cross-core GSS pairs the cube and vector clones of a mix function
+    by the control flow around the anchors it records, and splitting a mixed
+    `scf.if` leaves one clone with a constant condition. Folding that region
+    away on one clone only makes the two sides stop corresponding, and the
+    solver then walks an anchor interval that crosses a scope on one side.
+
+    `hivm-insert-anchors-and-backup` sets the attribute and clears it again in
+    its `cleanup` mode; the folds live in llvm-project
+    (`RemoveStaticCondition` and `SimplifyTrivialLoops` in SCF.cpp), which
+    spells this name out because it cannot depend on this dialect.
+
+    FIXME: Remove this once the solver no longer recovers its intervals from
+    the surrounding control flow. Pairing the clones by anchor id rather than
+    by structure would let both clones be canonicalized independently, and
+    this attribute along with the two early exits in SCF.cpp could go away.
+  }];
 }
 
 def HIVM_HasAliaScopesAttr : HIVM_Attr<"HasAliaScopes", "has_alias_scopes"> {

@@ -480,7 +480,7 @@ __aicore__ inline void MmadCal(
 #endif
     }
 }
-#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201)
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 template <typename DstT, typename Src0T, typename Src1T>
 __aicore__ inline void MmadCal(__cc__ DstT* c, __ca__ Src0T* a, __cb__ Src1T* b, const MmadParams& mmadParams)
 {
@@ -546,6 +546,38 @@ __aicore__ inline void MmadCal(
         }
 #endif
     }
+}
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+// On A6, LocalMmadMx.cpp emits mad_mx for explicitly scaled operations.
+template <typename DstT, typename Src0T, typename Src1T>
+__aicore__ inline void MmadCal(__cc__ DstT *c, __ca__ Src0T *a, __cb__ Src1T *b,
+                               const MmadParams &mmadParams) {
+  if ASCEND_IS_AIC {
+    bool cmatrixInitVal = mmadParams.cmatrixInitVal && (!mmadParams.isBias);
+    mad(c, a, b, mmadParams.m, mmadParams.k, mmadParams.n, mmadParams.unitFlag,
+        mmadParams.disableGemv, mmadParams.cmatrixSource, cmatrixInitVal);
+  }
+}
+
+template <typename DstT, typename Src0T, typename Src1T>
+__aicore__ inline void MmadCal(__cc__ DstT *c, __ca__ Src0T *a, __cb__ Src1T *b,
+                               uint64_t bias, const MmadParams &mmadParams,
+                               bool cmatrixSource) {
+  if ASCEND_IS_AIC {
+    bool cmatrixInitVal = mmadParams.cmatrixInitVal && (!mmadParams.isBias);
+#if defined(ASCENDC_CPU_DEBUG) && ASCENDC_CPU_DEBUG == 1
+    mad(c, a, b, bias, mmadParams.m, mmadParams.k, mmadParams.n,
+        mmadParams.unitFlag, mmadParams.disableGemv, cmatrixSource,
+        cmatrixInitVal);
+#else
+    // Xd packs the bias table address above the 32-bit L0C address.
+    uint64_t xd =
+        ((uint64_t)c) & 0xffffffffULL | ((bias & 0xffffffffULL) << 32);
+    mad((__cc__ DstT *)xd, a, b, mmadParams.m, mmadParams.k, mmadParams.n,
+        mmadParams.unitFlag, mmadParams.disableGemv, cmatrixSource,
+        cmatrixInitVal);
+#endif
+  }
 }
 #endif
 

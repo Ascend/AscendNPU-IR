@@ -12,6 +12,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Triton/Pipelines/Passes.h"
 #include "bishengir/Pass/PassManager.h"
+#include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/hivmc/AdapterSanitizer.h"
 #include "bishengir/Tools/hivmc/BishengAsyncRuntime.h"
 #include "bishengir/Tools/hivmc/BishengLlcBridge.h"
@@ -235,7 +236,6 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
                     SubCoreTarget coreType, const HIVMCMainConfig &config,
                     bool isMixKernel, bool mixKernelHasDebugOrShmem,
                     const std::map<SubCoreTarget, std::string> &bitcodePaths) {
-  BishengAsyncRuntime *runtime = config.getRuntime();
   bool regbaseCompile = hacc::utils::isRegBasedArch(config.getTargetBackend());
   std::string extension = config.shouldSaveLinkedIR() ? ".ll" : ".o";
   std::string outputPath = config.shouldSaveLinkedIR()
@@ -313,9 +313,13 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
   arguments.push_back("-mllvm");
   arguments.push_back("-cce-aicore-dcci-insert-for-scalar=false");
   // Inline functions from linked modules (e.g. template bitcode) into the
-  // kernel during device compilation.
-  arguments.push_back("-mllvm");
-  arguments.push_back("-enable-module-inliner");
+  // kernel during device compilation. The module inliner requires CANN 9.2.0
+  // or newer; keep passing it when the toolkit version is unavailable.
+  if (auto version = detectCannVersion();
+      !version || *version >= std::make_tuple(9u, 2u, 0u)) {
+    arguments.push_back("-mllvm");
+    arguments.push_back("-enable-module-inliner");
+  }
   // IndVarSimplify can rewrite an i64 loop accumulator into a closed form
   // that needs an i65 multiply. ccec lowers it to
   // unsupported __multi3 helper, so keep Triton loops iterative.
@@ -333,10 +337,14 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
 
   // Disable the reserved AscendC UB and raise the VF stack size from the
   // 6 KB default (0x1800) to 8 KB (0x2000) so deep VF-fusion kernels do
-  // not spill past the stack limit.
-  arguments.push_back("--cce-disable-asc-reserved-ubuf");
-  arguments.push_back("-mllvm");
-  arguments.push_back("-cce-vf-stack-size=0x2000");
+  // not spill past the stack limit. Triton frontends only: hivmc also
+  // serves catlass DSL and other producers that must keep the default
+  // reserved-UB layout and stack size.
+  if (config.isTritonFrontend()) {
+    arguments.push_back("--cce-disable-asc-reserved-ubuf");
+    arguments.push_back("-mllvm");
+    arguments.push_back("-cce-vf-stack-size=0x2000");
+  }
 
   if (config.shouldEnableVFFusion())
     arguments.push_back("--cce-simd-vf-fusion=false");
@@ -375,6 +383,8 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
 
   StringRef bishengBin = getBiShengCompilerName();
 
+#if BISHENGIR_HAVE_BISHENG_LLC
+  BishengAsyncRuntime *runtime = config.getRuntime();
   // ---- Native (libbisheng-llc.so) backend path --------------------------
   // Active iff a runtime was created (BISHENG_BACKEND=native && !CPURunner).
   // Never falls back to Process.
@@ -461,7 +471,9 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
     // 5. -cce-aicore-dcci-insert-for-scalar=false (manual -mllvm)
     extraOpts.push_back("-cce-aicore-dcci-insert-for-scalar=false");
     // 6. -enable-module-inliner (manual -mllvm)
-    extraOpts.push_back("-enable-module-inliner");
+    if (auto version = detectCannVersion();
+        !version || *version >= std::make_tuple(9u, 2u, 0u))
+      extraOpts.push_back("-enable-module-inliner");
     // 7. keep Triton loops iterative: IndVarSimplify can introduce an i65
     //    multiply that ccec lowers to unsupported __multi3.
     if (config.shouldCompileTriton())
@@ -473,9 +485,13 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
       extraOpts.push_back("-cce-vf-enable-loop-fusion=false");
     }
     // 9. --cce-disable-asc-reserved-ubuf translates to -user-reserved-ub-size=0
-    extraOpts.push_back("-user-reserved-ub-size=0");
-    // 10. -cce-vf-stack-size=0x2000 (manual -mllvm, overrides table 0x1800)
-    extraOpts.push_back("-cce-vf-stack-size=0x2000");
+    // 10. -cce-vf-stack-size=0x2000 (manual -mllvm, overrides table 0x1800).
+    //     Triton frontends only — mirrors the process-path gate above; the
+    //     process argv keeps the driver flag pair gated the same way.
+    if (config.isTritonFrontend()) {
+      extraOpts.push_back("-user-reserved-ub-size=0");
+      extraOpts.push_back("-cce-vf-stack-size=0x2000");
+    }
     // 11. --cce-simd-vf-fusion=false translation (dav-c310 vec+cube: 7 -mllvm).
     //     last-wins: -cce-vf-enable-loop-fusion=false repeats step 8's value
     //     (harmless) and -cce-vf-auto-sync=off overrides step 2's setting.
@@ -588,13 +604,16 @@ compileDeviceKernel(StringRef bishengPath, const llvm::Module *llvmModule,
       // Map the vendor's recoverable VF-stack overflow code to the same
       // VFStackOverflowError the Process path raises, so the regbase retry
       // loop's isVFStackOverflowError() fires under both backends.
+#if BISHENGIR_HAVE_BISHENG_LLC
       if (res.vendorStatus == BISHENG_LLC_VF_STACK_OVERFLOW)
         return llvm::make_error<VFStackOverflowError>();
+#endif
       return llvm::make_error<DeviceCompileError>();
     }
     return outputBin;
   }
   // ---- End Native path --------------------------------------------------
+#endif
 
   // Debug: dump process-mode IR for offline replay comparison.
   if (getenv("BISHENG_NATIVE_DUMP")) {
@@ -829,6 +848,18 @@ lowerDeviceToBinary(const SmallVector<IRModulePair> &llvmModules,
   // fallback.  The planned output paths are the per-Lane `.o` paths (MixCV)
   // or the single `outputFile` (single Lane).
   if (llvm::Error err = joinDeviceFailures(errors)) {
+    // A VF stack overflow is the one failure the RegBase driver retries with
+    // adjusted parameters.  Keep the lane alive (it is `Consumed` after the
+    // failed Compile) so the retry's recreateLane path can rebuild it;
+    // shutting the Worker down here would leave it `Stopped`, which the retry
+    // boundary treats as unrecoverable.  The planned outputs are still
+    // unlinked so the retry cannot observe a stale `.o` from this attempt.
+    // Every other error is terminal: drain + join the lanes as before.
+    // VF stack overflow is currently the only retryable device-compile error
+    // (the RegBase driver's tryVFStackRetry).  If more retryable error kinds
+    // are added, extend this predicate to match the driver's retry policy so
+    // the lane is preserved for every failure the driver will re-enter on.
+    bool retryable = isVFStackOverflowError(err);
     if (runtime && runtime->isActive()) {
       std::vector<std::string> plannedOutputs;
       for (size_t i = 0, e = llvmModules.size(); i != e; ++i)
@@ -839,7 +870,8 @@ lowerDeviceToBinary(const SmallVector<IRModulePair> &llvmModules,
               ? LaneMask::Both
               : (llvmModules[0].second == SubCoreTarget::AIC ? LaneMask::AIC
                                                              : LaneMask::AIV);
-      runtime->cleanupAfterLaneFailure(mask, plannedOutputs);
+      runtime->cleanupAfterLaneFailure(mask, plannedOutputs,
+                                       /*shutdownLanes=*/!retryable);
     }
     return err;
   }
@@ -898,9 +930,8 @@ translateDeviceKernelToLLVM(const SmallVector<ModuleOp, 2> &modulesToLower,
     if (!llvmModule) {
       m->emitError(
           "Failed to translate module from LLVM Dialect IR to BiShengLIR\n");
-    }
-    if (config.shouldEnableSanitizer() &&
-        failed(setSanitizerAddrArgName(m, llvmModule))) {
+    } else if (config.shouldEnableSanitizer() &&
+               failed(setSanitizerAddrArgName(m, llvmModule))) {
       m->emitError("Sanitizer arg rename failed \n");
     }
     result.push_back(std::make_pair(std::move(llvmModule), target));
@@ -1061,7 +1092,7 @@ llvm::Error runDeviceBiShengLIRCompile(
         // overflows) or abort.
         llvm::errs() << "[ERROR] Native lane "
                      << (lane == LaneKind::AIC ? "AIC" : "AIV")
-                     << " in unrecoverable state " << static_cast<int>(wst)
+                     << " in unrecoverable state " << workerStateName(wst)
                      << " at retry boundary; aborting\n";
         return llvm::make_error<DeviceCompileError>();
       }

@@ -1,4 +1,5 @@
 // RUN: bishengir-opt %s -split-input-file -verify-diagnostics
+// RUN: bishengir-opt %s -hivm-infer-func-core-type -hivm-split-mix-kernel -split-input-file -verify-diagnostics
 
 func.func @constant_vector_range() {
   %id = arith.constant 16 : i64

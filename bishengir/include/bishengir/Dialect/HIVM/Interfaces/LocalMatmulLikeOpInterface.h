@@ -9,6 +9,7 @@
 #ifndef BISHENGIR_DIALECT_HIVM_INTERFACES_LOCALMATMULLIKEOPINTERFACE_H
 #define BISHENGIR_DIALECT_HIVM_INTERFACES_LOCALMATMULLIKEOPINTERFACE_H
 
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Operation.h"
@@ -29,6 +30,8 @@ llvm::SmallDenseMap<Value, DataLayoutAttr>
 getLocalMatmulOperandsCurrentLayoutImpl(Operation *op);
 llvm::SmallDenseMap<Value, DataLayoutAttr>
 getLocalMatmulOperandsTargetLayoutImpl(Operation *op);
+Value getLocalMatmulPingPongSignalLibValueImpl(Operation *op,
+                                               OpBuilder &builder);
 
 } // namespace detail
 } // namespace hivm

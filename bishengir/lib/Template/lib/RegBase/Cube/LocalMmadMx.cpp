@@ -45,20 +45,29 @@ template <> struct TransToTag<true> {
   using tag = layout::nZ;
 };
 
-__aicore__ inline uint32_t getL1MmadPingPongId() {
-  static uint32_t pingPongId = 1;
-  pingPongId = 1 - pingPongId;
+__aicore__ inline int32_t
+getPingPongSignal(memref_t<int32_t, 0> *pingPongSignal) {
+  // Only called when enableDoubleBuffer is true (see L1MxMmad below), which
+  // requires a non-null signal data pointer and a viable half-L0 tile size.
+  int32_t &pingPongId = pingPongSignal->aligned[pingPongSignal->offset];
+  // Normalize supplied state before flipping to keep the half id in range.
+  pingPongId = 1 - (pingPongId != 0);
   return pingPongId;
 }
 
+// Must stay in sync with HIVM_LocalMatmulMx_DataFormat in HIVMAttrs.td.
 enum class HIVMMatmulDataformat : uint32_t {
   FP8E5M2_T = 1,
   FP8E4M3_T = 2,
   FP4E2M1_T = 3,
+  HIF4_T = 4,
+  FP16_T = 5,
+  BF16_T = 6,
 };
 
 CATLASS_DEVICE bool isFp4Format(HIVMMatmulDataformat format) {
-  return format == HIVMMatmulDataformat::FP4E2M1_T;
+  return format == HIVMMatmulDataformat::FP4E2M1_T ||
+         format == HIVMMatmulDataformat::HIF4_T;
 }
 
 CATLASS_DEVICE uint32_t getMxFormatKFactor(HIVMMatmulDataformat format) {
@@ -155,6 +164,91 @@ packCWithBiasAddr(__cc__ ElementACC *l0CPhyAddr, uint64_t biasAddr,
   return reinterpret_cast<__cc__ ElementACC *>(xd);
 }
 
+// A-side storage K handling: only an int8_t-packed A (legacy fp8/fp4 and the
+// hif4hif4 form) is sub-byte packed; a native f16/bf16/fp8 A keeps the logical
+// K, so the A-side k factor stays 1 regardless of the lhsFormat attribute.
+// NOTE: the native-A element type set (half/bfloat16_t/float8_e4m3_t) is a
+// provisional placeholder — the frontend has not finalized the concrete types
+// for the Ascend960 heterogeneous forms yet, so revisit this dispatch once the
+// frontend contract lands.
+template <class ElementA>
+CATLASS_DEVICE uint32_t getMxAKFactor(HIVMMatmulDataformat format) {
+  if constexpr (std::is_same_v<ElementA, int8_t>)
+    return getMxFormatKFactor(format);
+  return 1;
+}
+
+template <class ElementA>
+CATLASS_DEVICE uint32_t toMxAStorageK(uint32_t logicalK,
+                                      HIVMMatmulDataformat format) {
+  if constexpr (std::is_same_v<ElementA, int8_t>)
+    return toMxStorageK(logicalK, format);
+  return logicalK;
+}
+
+// One typed mad_mx call. The operand element types are fixed at compile time,
+// which is what the intrinsic overload resolution needs.
+template <class ElementA, class ElementB, class ElementACC>
+CATLASS_DEVICE void
+invokeMxMmad(__cc__ ElementACC *cAddr, uint64_t l0APhyAddr, uint64_t l0BPhyAddr,
+             uint32_t actualM, uint32_t kL0Actual, uint32_t actualN,
+             uint8_t unitFlag, bool cmatrixSource, bool cmatrixInitVal) {
+  INTRINSIC(mad_mx, cAddr, (__ca__ ElementA *)l0APhyAddr,
+            (__cb__ ElementB *)l0BPhyAddr, actualM, kL0Actual, actualN,
+            unitFlag, true, cmatrixSource, cmatrixInitVal);
+}
+
+template <class ElementACC>
+using MxMmadFn = void (*)(__cc__ ElementACC *cAddr, uint64_t l0APhyAddr,
+                          uint64_t l0BPhyAddr, uint32_t actualM,
+                          uint32_t kL0Actual, uint32_t actualN,
+                          uint8_t unitFlag, bool cmatrixSource,
+                          bool cmatrixInitVal);
+
+// One row of the (lhs, rhs) format-pair dispatch table used by madMxByFormat.
+template <class ElementACC> struct MxMmadFormatEntry {
+  HIVMMatmulDataformat lhsFormat;
+  HIVMMatmulDataformat rhsFormat;
+  MxMmadFn<ElementACC> mxMmadFn;
+};
+
+// The lhs/rhs format pair alone determines the operand types of the mad_mx
+// intrinsic: for a packed A the pair names the sub-byte format stored in the
+// int8 buffer, and for a heterogeneous A/B the lhs format names the native A
+// element. Supporting a new pair only needs one more row here.
+template <class ElementACC>
+constexpr MxMmadFormatEntry<ElementACC> MX_MMAD_FORMAT_TABLE[] = {
+    {HIVMMatmulDataformat::FP8E5M2_T, HIVMMatmulDataformat::FP8E5M2_T,
+     &invokeMxMmad<float8_e5m2_t, float8_e5m2_t, ElementACC>},
+    {HIVMMatmulDataformat::FP8E5M2_T, HIVMMatmulDataformat::FP8E4M3_T,
+     &invokeMxMmad<float8_e5m2_t, float8_e4m3_t, ElementACC>},
+    {HIVMMatmulDataformat::FP8E4M3_T, HIVMMatmulDataformat::FP8E5M2_T,
+     &invokeMxMmad<float8_e4m3_t, float8_e5m2_t, ElementACC>},
+    {HIVMMatmulDataformat::FP8E4M3_T, HIVMMatmulDataformat::FP8E4M3_T,
+     &invokeMxMmad<float8_e4m3_t, float8_e4m3_t, ElementACC>},
+    {HIVMMatmulDataformat::FP4E2M1_T, HIVMMatmulDataformat::FP4E2M1_T,
+     &invokeMxMmad<fp4x2_e2m1_t, fp4x2_e2m1_t, ElementACC>},
+#if BISHENG_TPL_920R1
+    // Heterogeneous A/B (Ascend960 only): a native A operand against a packed
+    // sub-byte B operand, plus the hif4 x hif4 form whose operands are both
+    // packed in int8 storage.
+    {HIVMMatmulDataformat::HIF4_T, HIVMMatmulDataformat::HIF4_T,
+     &invokeMxMmad<hifloat4x2_t, hifloat4x2_t, ElementACC>},
+    {HIVMMatmulDataformat::FP16_T, HIVMMatmulDataformat::FP4E2M1_T,
+     &invokeMxMmad<half, fp4x2_e2m1_t, ElementACC>},
+    {HIVMMatmulDataformat::FP16_T, HIVMMatmulDataformat::HIF4_T,
+     &invokeMxMmad<half, hifloat4x2_t, ElementACC>},
+    {HIVMMatmulDataformat::BF16_T, HIVMMatmulDataformat::FP4E2M1_T,
+     &invokeMxMmad<bfloat16_t, fp4x2_e2m1_t, ElementACC>},
+    {HIVMMatmulDataformat::BF16_T, HIVMMatmulDataformat::HIF4_T,
+     &invokeMxMmad<bfloat16_t, hifloat4x2_t, ElementACC>},
+    {HIVMMatmulDataformat::FP8E4M3_T, HIVMMatmulDataformat::FP4E2M1_T,
+     &invokeMxMmad<float8_e4m3_t, fp4x2_e2m1_t, ElementACC>},
+    {HIVMMatmulDataformat::FP8E4M3_T, HIVMMatmulDataformat::HIF4_T,
+     &invokeMxMmad<float8_e4m3_t, hifloat4x2_t, ElementACC>},
+#endif
+};
+
 template <class ElementACC, class L0CPhyAddr, class L0APhyAddr,
           class L0BPhyAddr>
 CATLASS_DEVICE void
@@ -168,34 +262,16 @@ madMxByFormat(L0CPhyAddr l0CPhyAddr, L0APhyAddr l0APhyAddr,
   const bool cmatrixInitVal = initC && !hasBias;
   auto *cAddr = packCWithBiasAddr<ElementACC>((__cc__ ElementACC *)l0CPhyAddr,
                                               biasAddr, hasBias);
-  if (lhsFormat == HIVMMatmulDataformat::FP8E5M2_T &&
-      rhsFormat == HIVMMatmulDataformat::FP8E5M2_T) {
-    INTRINSIC(mad_mx, cAddr, (__ca__ float8_e5m2_t *)l0APhyAddr,
-              (__cb__ float8_e5m2_t *)l0BPhyAddr, actualM, kL0Actual, actualN,
-              unitFlag, true, cmatrixSource, cmatrixInitVal);
-  } else if (lhsFormat == HIVMMatmulDataformat::FP8E5M2_T &&
-             rhsFormat == HIVMMatmulDataformat::FP8E4M3_T) {
-    INTRINSIC(mad_mx, cAddr, (__ca__ float8_e5m2_t *)l0APhyAddr,
-              (__cb__ float8_e4m3_t *)l0BPhyAddr, actualM, kL0Actual, actualN,
-              unitFlag, true, cmatrixSource, cmatrixInitVal);
-  } else if (lhsFormat == HIVMMatmulDataformat::FP8E4M3_T &&
-             rhsFormat == HIVMMatmulDataformat::FP8E5M2_T) {
-    INTRINSIC(mad_mx, cAddr, (__ca__ float8_e4m3_t *)l0APhyAddr,
-              (__cb__ float8_e5m2_t *)l0BPhyAddr, actualM, kL0Actual, actualN,
-              unitFlag, true, cmatrixSource, cmatrixInitVal);
-  } else if (lhsFormat == HIVMMatmulDataformat::FP8E4M3_T &&
-             rhsFormat == HIVMMatmulDataformat::FP8E4M3_T) {
-    INTRINSIC(mad_mx, cAddr, (__ca__ float8_e4m3_t *)l0APhyAddr,
-              (__cb__ float8_e4m3_t *)l0BPhyAddr, actualM, kL0Actual, actualN,
-              unitFlag, true, cmatrixSource, cmatrixInitVal);
-  } else if (lhsFormat == HIVMMatmulDataformat::FP4E2M1_T &&
-             rhsFormat == HIVMMatmulDataformat::FP4E2M1_T) {
-    INTRINSIC(mad_mx, cAddr, (__ca__ fp4x2_e2m1_t *)l0APhyAddr,
-              (__cb__ fp4x2_e2m1_t *)l0BPhyAddr, actualM, kL0Actual, actualN,
-              unitFlag, true, cmatrixSource, cmatrixInitVal);
-  } else {
-    // Mixed FP8/FP4 formats are not registered by the template library.
+  // The lhs/rhs format pair selects the operand types.
+  for (auto const &entry : MX_MMAD_FORMAT_TABLE<ElementACC>) {
+    if (entry.lhsFormat == lhsFormat && entry.rhsFormat == rhsFormat) {
+      entry.mxMmadFn(cAddr, static_cast<uint64_t>(l0APhyAddr),
+                     static_cast<uint64_t>(l0BPhyAddr), actualM, kL0Actual,
+                     actualN, unitFlag, cmatrixSource, cmatrixInitVal);
+      return;
+    }
   }
+  // A pair missing from the table has no mad_mx form in the template library.
 }
 
 template <class ElementA, class ElementB, class ElementBias, class ElementACC,
@@ -205,7 +281,8 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
          __cbuf__ ElementMxScaleA *l1MxScaleA,
          __cbuf__ ElementMxScaleB *l1MxScaleB, __cbuf__ ElementBias *l1Bias,
          uint32_t l1M, uint32_t l1K, uint32_t l1N, uint32_t actualM,
-         uint32_t actualK, uint32_t actualN, uint32_t l1AMTE2MTE1EventId,
+         uint32_t actualK, uint32_t actualN,
+         memref_t<int32_t, 0> *pingPongSignal, uint32_t l1AMTE2MTE1EventId,
          uint32_t l1ScaleAMTE2MTE1EventId, uint32_t l1BMTE2MTE1EventId,
          uint32_t l1ScaleBMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,
          uint32_t l1ScaleAMTE1MTE2EventId, uint32_t l1BMTE1MTE2EventId,
@@ -303,13 +380,19 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
   AscendCBisheng::LocalTensor<ElementACC> btTile = bTTensor;
 
   bool enableDoubleBuffer = true;
-  uint32_t l0K =
-      RoundDown<64>(min(L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
-                            RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) /
-                            L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
-                        L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
-                            RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
-                            L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
+  if (pingPongSignal == nullptr || pingPongSignal->aligned == nullptr) {
+    enableDoubleBuffer = false;
+  }
+
+  uint32_t l0K = 0;
+  if (enableDoubleBuffer) {
+    l0K = RoundDown<64>(min(L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
+                                RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) /
+                                L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
+                            L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
+                                RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
+                                L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
+  }
   if (l0K == 0) {
     enableDoubleBuffer = false;
     l0K = RoundDown<64>(min(2 * L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
@@ -319,6 +402,14 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
                                 RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
                                 L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
   }
+  if (l0K == 0) {
+    trap();
+  }
+
+  // Reserve the other half; each iteration waits on event 0.
+  if (!enableDoubleBuffer) {
+    AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(EVENT_ID1);
+  }
 
   uint32_t kL0Loop = CeilDiv(actualK, l0K);
 
@@ -326,7 +417,8 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     uint32_t kL0Actual =
         (kL0Idx < kL0Loop - 1) ? l0K : (actualK - kL0Idx * l0K);
     // Get ping/pong id (0 or 1) — unified with L1Mmad using ID0/ID1
-    uint32_t pingPongId = enableDoubleBuffer ? getL1MmadPingPongId() : 0;
+    uint32_t pingPongId =
+        enableDoubleBuffer ? getPingPongSignal(pingPongSignal) : 0;
     uint32_t l0EventId = !pingPongId ? EVENT_ID0 : EVENT_ID1;
 
     // Wait for mmad finished
@@ -474,12 +566,17 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
         applyBias ? (uint64_t)tensorL0Bias.data().GetPhyAddr() : 0, applyBias);
     INTRINSIC(mad_mx, cAddr, (__ca__ ElementA *)tensorL0A.data().GetPhyAddr(),
               (__cb__ ElementB *)tensorL0B.data().GetPhyAddr(), actualM,
-              kL0Actual, actualN,
-              /* unitFlag = */ 0b00, true, /* cmatrixSource = */ applyBias,
+              kL0Actual, actualN, /* unitFlag = */ 0b00, true,
+              /* cmatrixSource = */ applyBias,
               /* cmatrixInitVal = */ initC && !applyBias);
 
     // Notify to move the next L0B tile
     AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::M_MTE1>(l0EventId);
+  }
+
+  // Restore event 1 after the last full-L0 MMAD for subsequent half reuse.
+  if (!enableDoubleBuffer) {
+    AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::M_MTE1>(EVENT_ID1);
   }
 
   if constexpr (HF32) {
@@ -495,7 +592,8 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
          __cbuf__ ElementMxScaleA *l1MxScaleA,
          __cbuf__ ElementMxScaleB *l1MxScaleB, __cbuf__ ElementBias *l1Bias,
          uint32_t l1M, uint32_t l1K, uint32_t l1N, uint32_t actualM,
-         uint32_t actualK, uint32_t actualN, uint32_t l1AMTE2MTE1EventId,
+         uint32_t actualK, uint32_t actualN,
+         memref_t<int32_t, 0> *pingPongSignal, uint32_t l1AMTE2MTE1EventId,
          uint32_t l1ScaleAMTE2MTE1EventId, uint32_t l1BMTE2MTE1EventId,
          uint32_t l1ScaleBMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,
          uint32_t l1ScaleAMTE1MTE2EventId, uint32_t l1BMTE1MTE2EventId,
@@ -554,8 +652,8 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
       l1K * l1N};
   AscendCBisheng::LocalTensor<ElementMxScaleA> l1MxScaleATensor{
       AscendCBisheng::TPosition::A1,
-      (uint32_t)reinterpret_cast<int64_t>(l1MxScaleA),
-      l1M * l1K * getMxFormatKFactor(lhsFormat) / MX_SCALE_GROUP_NUM};
+      (uint32_t) reinterpret_cast<int64_t>(l1MxScaleA),
+      l1M * l1K * getMxAKFactor<ElementA>(lhsFormat) / MX_SCALE_GROUP_NUM};
   AscendCBisheng::LocalTensor<ElementMxScaleB> l1MxScaleBTensor{
       AscendCBisheng::TPosition::A1,
       (uint32_t)reinterpret_cast<int64_t>(l1MxScaleB),
@@ -576,7 +674,7 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
   auto tensorL1B = tla::MakeTensor(l1BTensor, layoutBInL1, Arch::PositionL1{});
   auto layoutMxScaleAInL1 =
       tla::MakeMxScaleLayout<ElementMxScaleA, LayoutTagL1MxScaleA, false>(
-          l1M, l1K * getMxFormatKFactor(lhsFormat) / MX_SCALE_GROUP_NUM);
+          l1M, l1K * getMxAKFactor<ElementA>(lhsFormat) / MX_SCALE_GROUP_NUM);
   auto tensorL1MxScaleA =
       tla::MakeTensor(l1MxScaleATensor, layoutMxScaleAInL1, Arch::PositionL1{});
   auto layoutMxScaleBInL1 =
@@ -595,15 +693,22 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
 
   AscendCBisheng::LocalTensor<ElementACC> btTile = bTTensor;
 
-  actualK *= getMxFormatKFactor(lhsFormat);
+  actualK *= getMxAKFactor<ElementA>(lhsFormat);
+
   bool enableDoubleBuffer = true;
-  uint32_t l0K =
-      RoundDown<64>(min(L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
-                            RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) /
-                            L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
-                        L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
-                            RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
-                            L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
+  if (pingPongSignal == nullptr || pingPongSignal->aligned == nullptr) {
+    enableDoubleBuffer = false;
+  }
+
+  uint32_t l0K = 0;
+  if (enableDoubleBuffer) {
+    l0K = RoundDown<64>(min(L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
+                                RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) /
+                                L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
+                            L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
+                                RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
+                                L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
+  }
   if (l0K == 0) {
     enableDoubleBuffer = false;
     l0K = RoundDown<64>(min(2 * L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
@@ -613,14 +718,22 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
                                 RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
                                 L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
   }
+  if (l0K == 0) {
+    trap();
+  }
+
+  // Reserve the other half; each iteration waits on event 0.
+  if (!enableDoubleBuffer) {
+    AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(EVENT_ID1);
+  }
 
   uint32_t kL0Loop = CeilDiv(actualK, l0K);
-
   for (int kL0Idx = 0; kL0Idx < kL0Loop; kL0Idx++) {
     uint32_t kL0Actual =
         (kL0Idx < kL0Loop - 1) ? l0K : (actualK - kL0Idx * l0K);
     // Get ping/pong id (0 or 1) — unified with L1Mmad using ID0/ID1
-    uint32_t pingPongId = enableDoubleBuffer ? getL1MmadPingPongId() : 0;
+    uint32_t pingPongId =
+        enableDoubleBuffer ? getPingPongSignal(pingPongSignal) : 0;
     uint32_t l0EventId = !pingPongId ? EVENT_ID0 : EVENT_ID1;
 
     // Wait for mmad finished
@@ -629,13 +742,15 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     // Locate the current tile on L0A
     auto l0ATile =
         l0ATensor[pingPongId * L0A_PINGPONG_BUF_SIZE / sizeof(ElementA)];
-    const uint32_t kL0AStorageActual = toMxStorageK(kL0Actual, lhsFormat);
+    const uint32_t kL0AStorageActual =
+        toMxAStorageK<ElementA>(kL0Actual, lhsFormat);
     auto layoutAInL0 =
         tla::MakeLayout<ElementA, LayoutTagL0A>(actualM, kL0AStorageActual);
     auto tensorL0A = tla::MakeTensor(l0ATile, layoutAInL0, Arch::PositionL0A{});
     // Locate the current tile of matrix A on L1
     auto tensorTileL1A = GetTile(
-        tensorL1A, tla::MakeCoord(0, toMxStorageK(kL0Idx * l0K, lhsFormat)),
+        tensorL1A,
+        tla::MakeCoord(0, toMxAStorageK<ElementA>(kL0Idx * l0K, lhsFormat)),
         tla::MakeShape(actualM, kL0AStorageActual));
     // Locate the current tile of matrix mxScaleA on L1
     auto tensorTileL1MxScaleA = GetTile(
@@ -790,6 +905,11 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::M_MTE1>(l0EventId);
   }
 
+  // Restore event 1 after the last full-L0 MMAD for subsequent half reuse.
+  if (!enableDoubleBuffer) {
+    AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::M_MTE1>(EVENT_ID1);
+  }
+
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(false);
     AscendCBisheng::SetHF32TransMode(false);
@@ -805,11 +925,11 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
     memref_t<__cbuf__ B_TYPE, 4> *mb,
     memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
     memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init, int64_t m,
-    int64_t k, int64_t n, int64_t mmad_l1_wait_l1a_event,
-    int64_t mmad_l1_wait_l1scalea_event, int64_t mmad_l1_wait_l1b_event,
-    int64_t mmad_l1_wait_l1scaleb_event, int64_t l1a_wait_mmad_l1_event,
-    int64_t l1scalea_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,
-    int64_t l1scaleb_wait_mmad_l1_event) {
+    int64_t k, int64_t n, memref_t<int32_t, 0> *ping_pong_signal,
+    int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1scalea_event,
+    int64_t mmad_l1_wait_l1b_event, int64_t mmad_l1_wait_l1scaleb_event,
+    int64_t l1a_wait_mmad_l1_event, int64_t l1scalea_wait_mmad_l1_event,
+    int64_t l1b_wait_mmad_l1_event, int64_t l1scaleb_wait_mmad_l1_event) {
   Catlass::Gemm::L1MxMmad<A_TYPE, B_TYPE, BIAS_TYPE, DST_TYPE, TA, TB, false>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
       mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
@@ -817,10 +937,69 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
       (TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2])),
       (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
       (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])), m,
-      k, n, mmad_l1_wait_l1a_event, mmad_l1_wait_l1scalea_event,
-      mmad_l1_wait_l1b_event, mmad_l1_wait_l1scaleb_event,
-      l1a_wait_mmad_l1_event, l1scalea_wait_mmad_l1_event,
-      l1b_wait_mmad_l1_event, l1scaleb_wait_mmad_l1_event, init, true, false,
+      k, n, ping_pong_signal, mmad_l1_wait_l1a_event,
+      mmad_l1_wait_l1scalea_event, mmad_l1_wait_l1b_event,
+      mmad_l1_wait_l1scaleb_event, l1a_wait_mmad_l1_event,
+      l1scalea_wait_mmad_l1_event, l1b_wait_mmad_l1_event,
+      l1scaleb_wait_mmad_l1_event, init, true, false, false);
+}
+
+template <typename A_TYPE, typename B_TYPE, typename DST_TYPE,
+          typename BIAS_TYPE, bool TA = false, bool TB = false>
+__aicore__ __attribute__((always_inline)) void mmamx_tile_bias(
+    memref_t<__cc__ DST_TYPE, 4> *mc, memref_t<__cbuf__ A_TYPE, 4> *ma,
+    memref_t<__cbuf__ B_TYPE, 4> *mb,
+    memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
+    memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init, int64_t m,
+    int64_t k, int64_t n, memref_t<__cbuf__ BIAS_TYPE, 4> *bias,
+    memref_t<int32_t, 0> *ping_pong_signal, int64_t mmad_l1_wait_l1a_event,
+    int64_t mmad_l1_wait_l1scalea_event, int64_t mmad_l1_wait_l1b_event,
+    int64_t mmad_l1_wait_l1scaleb_event, int64_t l1a_wait_mmad_l1_event,
+    int64_t l1scalea_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,
+    int64_t l1scaleb_wait_mmad_l1_event) {
+  Catlass::Gemm::L1MxMmad<A_TYPE, B_TYPE, BIAS_TYPE, DST_TYPE, TA, TB, false>(
+      mc->aligned + mc->offset, ma->aligned + ma->offset,
+      mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
+      l1MxScaleB->aligned + l1MxScaleB->offset, bias->aligned + bias->offset,
+      (TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2])),
+      (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
+      (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])), m,
+      k, n, ping_pong_signal, mmad_l1_wait_l1a_event,
+      mmad_l1_wait_l1scalea_event, mmad_l1_wait_l1b_event,
+      mmad_l1_wait_l1scaleb_event, l1a_wait_mmad_l1_event,
+      l1scalea_wait_mmad_l1_event, l1b_wait_mmad_l1_event,
+      l1scaleb_wait_mmad_l1_event, init, true, false, true);
+}
+
+// Heterogeneous A/B variants: the two operands have distinct storage types
+// (a native A element versus a packed sub-byte B), so the format-dispatching
+// entry cannot reuse the single-SRC_TYPE overloads below.
+template <typename A_TYPE, typename B_TYPE, typename DST_TYPE,
+          typename BIAS_TYPE, bool TA = false, bool TB = false>
+__aicore__ __attribute__((always_inline)) void mmamx_tile_core(
+    memref_t<__cc__ DST_TYPE, 4> *mc, memref_t<__cbuf__ A_TYPE, 4> *ma,
+    memref_t<__cbuf__ B_TYPE, 4> *mb,
+    memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
+    memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init, int64_t m,
+    int64_t k, int64_t n, memref_t<int32_t, 0> *ping_pong_signal,
+    int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1scalea_event,
+    int64_t mmad_l1_wait_l1b_event, int64_t mmad_l1_wait_l1scaleb_event,
+    int64_t l1a_wait_mmad_l1_event, int64_t l1scalea_wait_mmad_l1_event,
+    int64_t l1b_wait_mmad_l1_event, int64_t l1scaleb_wait_mmad_l1_event,
+    Catlass::Gemm::HIVMMatmulDataformat lhsFormat,
+    Catlass::Gemm::HIVMMatmulDataformat rhsFormat) {
+  Catlass::Gemm::L1MxMmad<A_TYPE, B_TYPE, BIAS_TYPE, DST_TYPE, TA, TB, false>(
+      mc->aligned + mc->offset, ma->aligned + ma->offset,
+      mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
+      l1MxScaleB->aligned + l1MxScaleB->offset, nullptr,
+      (TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2])),
+      (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
+      (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])), m,
+      k, n, ping_pong_signal, mmad_l1_wait_l1a_event,
+      mmad_l1_wait_l1scalea_event, mmad_l1_wait_l1b_event,
+      mmad_l1_wait_l1scaleb_event, l1a_wait_mmad_l1_event,
+      l1scalea_wait_mmad_l1_event, l1b_wait_mmad_l1_event,
+      l1scaleb_wait_mmad_l1_event, init, true, false, lhsFormat, rhsFormat,
       false);
 }
 
@@ -832,10 +1011,13 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_bias(
     memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
     memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init, int64_t m,
     int64_t k, int64_t n, memref_t<__cbuf__ BIAS_TYPE, 4> *bias,
-    int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1scalea_event,
-    int64_t mmad_l1_wait_l1b_event, int64_t mmad_l1_wait_l1scaleb_event,
-    int64_t l1a_wait_mmad_l1_event, int64_t l1scalea_wait_mmad_l1_event,
-    int64_t l1b_wait_mmad_l1_event, int64_t l1scaleb_wait_mmad_l1_event) {
+    memref_t<int32_t, 0> *ping_pong_signal, int64_t mmad_l1_wait_l1a_event,
+    int64_t mmad_l1_wait_l1scalea_event, int64_t mmad_l1_wait_l1b_event,
+    int64_t mmad_l1_wait_l1scaleb_event, int64_t l1a_wait_mmad_l1_event,
+    int64_t l1scalea_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,
+    int64_t l1scaleb_wait_mmad_l1_event,
+    Catlass::Gemm::HIVMMatmulDataformat lhsFormat,
+    Catlass::Gemm::HIVMMatmulDataformat rhsFormat) {
   Catlass::Gemm::L1MxMmad<A_TYPE, B_TYPE, BIAS_TYPE, DST_TYPE, TA, TB, false>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
       mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
@@ -843,10 +1025,11 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_bias(
       (TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2])),
       (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
       (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])), m,
-      k, n, mmad_l1_wait_l1a_event, mmad_l1_wait_l1scalea_event,
-      mmad_l1_wait_l1b_event, mmad_l1_wait_l1scaleb_event,
-      l1a_wait_mmad_l1_event, l1scalea_wait_mmad_l1_event,
-      l1b_wait_mmad_l1_event, l1scaleb_wait_mmad_l1_event, init, true, false,
+      k, n, ping_pong_signal, mmad_l1_wait_l1a_event,
+      mmad_l1_wait_l1scalea_event, mmad_l1_wait_l1b_event,
+      mmad_l1_wait_l1scaleb_event, l1a_wait_mmad_l1_event,
+      l1scalea_wait_mmad_l1_event, l1b_wait_mmad_l1_event,
+      l1scaleb_wait_mmad_l1_event, init, true, false, lhsFormat, rhsFormat,
       true);
 }
 
@@ -857,36 +1040,7 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
     memref_t<__cbuf__ SRC_TYPE, 4> *mb,
     memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
     memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init, int64_t m,
-    int64_t k, int64_t n, int64_t mmad_l1_wait_l1a_event,
-    int64_t mmad_l1_wait_l1scalea_event, int64_t mmad_l1_wait_l1b_event,
-    int64_t mmad_l1_wait_l1scaleb_event, int64_t l1a_wait_mmad_l1_event,
-    int64_t l1scalea_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,
-    int64_t l1scaleb_wait_mmad_l1_event,
-    Catlass::Gemm::HIVMMatmulDataformat lhsFormat,
-    Catlass::Gemm::HIVMMatmulDataformat rhsFormat) {
-  Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
-                          false>(
-      mc->aligned + mc->offset, ma->aligned + ma->offset,
-      mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
-      l1MxScaleB->aligned + l1MxScaleB->offset, nullptr,
-      (TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2])),
-      (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
-      (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])), m,
-      k, n, mmad_l1_wait_l1a_event, mmad_l1_wait_l1scalea_event,
-      mmad_l1_wait_l1b_event, mmad_l1_wait_l1scaleb_event,
-      l1a_wait_mmad_l1_event, l1scalea_wait_mmad_l1_event,
-      l1b_wait_mmad_l1_event, l1scaleb_wait_mmad_l1_event, init, true, false,
-      lhsFormat, rhsFormat, false);
-}
-
-template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE,
-          bool TA = false, bool TB = false>
-__aicore__ __attribute__((always_inline)) void mmamx_tile_bias(
-    memref_t<__cc__ DST_TYPE, 4> *mc, memref_t<__cbuf__ SRC_TYPE, 4> *ma,
-    memref_t<__cbuf__ SRC_TYPE, 4> *mb,
-    memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
-    memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init, int64_t m,
-    int64_t k, int64_t n, memref_t<__cbuf__ BIAS_TYPE, 4> *bias,
+    int64_t k, int64_t n, memref_t<int32_t, 0> *ping_pong_signal,
     int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1scalea_event,
     int64_t mmad_l1_wait_l1b_event, int64_t mmad_l1_wait_l1scaleb_event,
     int64_t l1a_wait_mmad_l1_event, int64_t l1scalea_wait_mmad_l1_event,
@@ -897,15 +1051,47 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_bias(
                           false>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
       mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
+      l1MxScaleB->aligned + l1MxScaleB->offset, nullptr,
+      (TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2])),
+      (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
+      (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])), m,
+      k, n, ping_pong_signal, mmad_l1_wait_l1a_event,
+      mmad_l1_wait_l1scalea_event, mmad_l1_wait_l1b_event,
+      mmad_l1_wait_l1scaleb_event, l1a_wait_mmad_l1_event,
+      l1scalea_wait_mmad_l1_event, l1b_wait_mmad_l1_event,
+      l1scaleb_wait_mmad_l1_event, init, true, false, lhsFormat, rhsFormat,
+      false);
+}
+
+template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE,
+          bool TA = false, bool TB = false>
+__aicore__ __attribute__((always_inline)) void mmamx_tile_bias(
+    memref_t<__cc__ DST_TYPE, 4> *mc, memref_t<__cbuf__ SRC_TYPE, 4> *ma,
+    memref_t<__cbuf__ SRC_TYPE, 4> *mb,
+    memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
+    memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init, int64_t m,
+    int64_t k, int64_t n, memref_t<__cbuf__ BIAS_TYPE, 4> *bias,
+    memref_t<int32_t, 0> *ping_pong_signal, int64_t mmad_l1_wait_l1a_event,
+    int64_t mmad_l1_wait_l1scalea_event, int64_t mmad_l1_wait_l1b_event,
+    int64_t mmad_l1_wait_l1scaleb_event, int64_t l1a_wait_mmad_l1_event,
+    int64_t l1scalea_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,
+    int64_t l1scaleb_wait_mmad_l1_event,
+    Catlass::Gemm::HIVMMatmulDataformat lhsFormat,
+    Catlass::Gemm::HIVMMatmulDataformat rhsFormat) {
+  Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
+                          false>(
+      mc->aligned + mc->offset, ma->aligned + ma->offset,
+      mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
       l1MxScaleB->aligned + l1MxScaleB->offset, bias->aligned + bias->offset,
       (TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2])),
       (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
       (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])), m,
-      k, n, mmad_l1_wait_l1a_event, mmad_l1_wait_l1scalea_event,
-      mmad_l1_wait_l1b_event, mmad_l1_wait_l1scaleb_event,
-      l1a_wait_mmad_l1_event, l1scalea_wait_mmad_l1_event,
-      l1b_wait_mmad_l1_event, l1scaleb_wait_mmad_l1_event, init, true, false,
-      lhsFormat, rhsFormat, true);
+      k, n, ping_pong_signal, mmad_l1_wait_l1a_event,
+      mmad_l1_wait_l1scalea_event, mmad_l1_wait_l1b_event,
+      mmad_l1_wait_l1scaleb_event, l1a_wait_mmad_l1_event,
+      l1scalea_wait_mmad_l1_event, l1b_wait_mmad_l1_event,
+      l1scaleb_wait_mmad_l1_event, init, true, false, lhsFormat, rhsFormat,
+      true);
 }
 
 #endif // CATLASS_GEMM_L1MMAD_HPP
@@ -1109,4 +1295,56 @@ REGISTER_MMA_MX_BIAS_FORMAT_TRANS(
     int8_t, float, float, fp4x2_e2m1_t, fp4x2_e2m1_t, _ta_tb, true, true,
     Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T,
     Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T);
+
+// Heterogeneous A/B MX forms.  Ascend960 (920r1) is the only target that
+// exposes these MMAD_MX variants, so the whole block is compile-time gated.
+// The A operand is a native element (f16/bf16/fp8) while B is a packed
+// sub-byte format, so A and B have distinct storage types in the library
+// symbol.  The A-side format is passed as the real matching enumerator
+// (FP16_T/BF16_T/FP8E4M3_T) so the runtime value agrees with the element
+// type; madMxByFormat selects the A intrinsic type from lhsFormat.
+// NOTE: the ElementA type set below (half/bfloat16_t/float8_e4m3_t) is a
+// provisional placeholder — the frontend has not finalized the concrete A
+// operand types for the Ascend960 heterogeneous forms yet, so revisit these
+// registrations once the frontend contract lands.
+#if BISHENG_TPL_920R1
+#define REGISTER_MMA_MX_HETERO(a_type, b_type, dst_type, bias_type, a_format,  \
+                               b_format, lhs_format, rhs_format)               \
+  REGISTER_MMA_MX_HETERO_FORMAT(a_type, b_type, dst_type, bias_type, a_format, \
+                                b_format, lhs_format, rhs_format);             \
+  REGISTER_MMA_MX_HETERO_BIAS_FORMAT(a_type, b_type, dst_type, bias_type,      \
+                                     a_format, b_format, lhs_format,           \
+                                     rhs_format)
+
+REGISTER_MMA_MX_HETERO(half, int8_t, float, float, fp16, fp4x2_e2m1_t,
+                       Catlass::Gemm::HIVMMatmulDataformat::FP16_T,
+                       Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T);
+REGISTER_MMA_MX_HETERO(half, int8_t, float, float, fp16, fp4_hif4_t,
+                       Catlass::Gemm::HIVMMatmulDataformat::FP16_T,
+                       Catlass::Gemm::HIVMMatmulDataformat::HIF4_T);
+REGISTER_MMA_MX_HETERO(bfloat16_t, int8_t, float, float, bf16, fp4x2_e2m1_t,
+                       Catlass::Gemm::HIVMMatmulDataformat::BF16_T,
+                       Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T);
+REGISTER_MMA_MX_HETERO(bfloat16_t, int8_t, float, float, bf16, fp4_hif4_t,
+                       Catlass::Gemm::HIVMMatmulDataformat::BF16_T,
+                       Catlass::Gemm::HIVMMatmulDataformat::HIF4_T);
+REGISTER_MMA_MX_HETERO(float8_e4m3_t, int8_t, float, float, fp8_e4m3_t,
+                       fp4x2_e2m1_t,
+                       Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+                       Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T);
+REGISTER_MMA_MX_HETERO(float8_e4m3_t, int8_t, float, float, fp8_e4m3_t,
+                       fp4_hif4_t,
+                       Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+                       Catlass::Gemm::HIVMMatmulDataformat::HIF4_T);
+
+// hif4 x hif4 keeps the packed i8 storage on both sides, so it reuses the
+// existing int8-to-int8 symbol form with both formats set to hif4.
+REGISTER_MMA_MX_FORMAT(int8_t, float, float, fp4_hif4_t, fp4_hif4_t,
+                       Catlass::Gemm::HIVMMatmulDataformat::HIF4_T,
+                       Catlass::Gemm::HIVMMatmulDataformat::HIF4_T);
+REGISTER_MMA_MX_BIAS_FORMAT(int8_t, float, float, fp4_hif4_t, fp4_hif4_t,
+                            Catlass::Gemm::HIVMMatmulDataformat::HIF4_T,
+                            Catlass::Gemm::HIVMMatmulDataformat::HIF4_T);
+#undef REGISTER_MMA_MX_HETERO
+#endif // BISHENG_TPL_920R1
 }

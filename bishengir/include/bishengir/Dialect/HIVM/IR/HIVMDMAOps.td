@@ -27,6 +27,7 @@ include "bishengir/Dialect/HIVM/IR/HIVMBase.td"
 include "bishengir/Dialect/HIVM/IR/HIVMAttrs.td"
 include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.td"
 include "bishengir/Dialect/HIVM/IR/HIVMTraits.td"
+include "bishengir/Dialect/HIVM/Interfaces/OpLayoutInterface.td"
 
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
@@ -70,9 +71,13 @@ def LoadOp
            UniformReassociationFlattenTrait,
            DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
            // TODO: Use trait to avoid writing duplicate type constraints
-           OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8, I16,
-                                         UI16, F16, BF16, I32, UI32, F32, F64,
-                                         UI64, I64]>,
+           OperElemTypeConstraints<[0], [
+#ifdef BSPUB_DAVINCI_BISHENGIR
+               HiF8,
+#endif
+               F8E4M3FN, F8E5M2, I1, I8, UI8, I16,
+               UI16, F16, BF16, I32, UI32, F32, F64,
+               UI64, I64]>,
            DeclareOpInterfaceMethods<
                BiShengIRAggregatedOpInterface, ["decomposeOperation",
                                                 "getDecomposePhase"]>,
@@ -116,8 +121,9 @@ def LoadOp
     In-row, A6 only: the pad elements are part of the destination row, so
     `D = lp + W + rp`. The row is written exactly as declared and its end does
     not have to fall on a 32-byte boundary. This form is selected when the
-    target is A6 and `right_padding_num` is present with a value that is not
-    zero; a left count that is omitted reads as zero.
+    target is A6 and `right_padding_num` is present, including an explicit
+    zero. Without that operand the legacy form is used. An omitted left count
+    reads as zero; canonicalization preserves the explicit right operand.
 
     ### Attributes
     #### `broadcast_axes`
@@ -242,7 +248,11 @@ def StoreOp : HIVM_DmaOp<"store", [
   // Will automatically use the default uniform reassociation impl
   UniformReassociationFlattenTrait,
   DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
-  OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8,
+  OperElemTypeConstraints<[0], [
+#ifdef BSPUB_DAVINCI_BISHENGIR
+      HiF8,
+#endif
+      F8E4M3FN, F8E5M2, I1, I8, UI8,
     I16, UI16, F16, BF16, I32, UI32, F32, UI64, I64]>,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
   DeclareOpInterfaceMethods<StoreLikeOpInterface>,
@@ -289,7 +299,11 @@ def CopyOp : HIVM_DmaOp<"copy", [
   // Will automatically use the default uniform reassociation impl
   UniformReassociationFlattenTrait,
   DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
-  OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8,
+  OperElemTypeConstraints<[0], [
+#ifdef BSPUB_DAVINCI_BISHENGIR
+      HiF8,
+#endif
+      F8E4M3FN, F8E5M2, I1, I8, UI8,
     I16, UI16, F16, BF16, I32, UI32, F32, UI64, I64]>,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
 ]> {
@@ -568,11 +582,28 @@ def LoadMXScaleOp : HIVM_DmaOp<"load_scale", [
 def L12L0Op: HIVM_DmaOp<"l12l0",
     [StaticMaxRankTrait<2>,
      SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_MTE1">,
-     HIVMCoreTypeInterface, CubeCoreTypeTrait
+     HIVMCoreTypeInterface, CubeCoreTypeTrait,
+     DeclareOpInterfaceMethods<OpLayoutInterface>
     ]> {
   let summary = "HIVM data copy operation from L1 to L0A or L0B Buffer";
   let description = [{
     Copy data from L1 to L0A or L0B buffer.
+    The partition attributes retain their existing meaning. A frontend that
+    exposes only src/dst views can use the buffer builder to encode a single
+    aligned copy: k_part_idx=0, k_part_loop=1, k_part=k_part_ceil=k_part_actual=K,
+    and m=M for L0A or N for L0B. The views already carry the copy origin.
+    This buffer builder requires non-null memrefs with positive static rank-2
+    or rank-4 shapes, src in L1 and dst in L0A or L0B. Violations of these
+    preconditions or overflowing copy extents produce a fatal error in all
+    build modes.
+    The frontend validates the shapes, layouts, alignment, strides and storage;
+    this builder neither pads the copy nor introduces a tail protocol.
+    actual_batch=None/1 is normalized by the frontend to a single copy and
+    is not emitted as an attribute. Batch copies are not implemented here.
+
+    Logical destination axes are [M,K] for L0A and [K,N] for L0B. Layout
+    inference uses the local-matmul source transpose/hint convention and
+    preserves all partition attributes while converting allocs and subviews.
     The destination is distinguished by the dst address space:
       - L0A: `#hivm.address_space<ca>`
       - L0B: `#hivm.address_space<cb>`
@@ -597,6 +628,13 @@ def L12L0Op: HIVM_DmaOp<"l12l0",
     `}`
     (`->` type($result_tensor)^)?
   }];
+  let builders = [
+    // Convenience builder for frontend-validated, static buffer views.
+    // The existing builders accepting explicit partition attributes remain.
+    OpBuilder<(ins "Value":$src, "Value":$dst,
+                   CArg<"bool", "false">:$is_transposed)>
+  ];
+  let hasFolder = 1;
   let hasVerifier = 1;
   let extraClassDeclaration = DmaOpBaseDecl # [{
     bool isToL0A();
@@ -726,10 +764,12 @@ def AtomicCasOp : HIVM_Op<"atomic_cas", [
   }];
 }
 
-def AtomicXchgOp : HIVM_Op<"atomic_xchg", [
-  NoLibraryFunctionTrait,
-  OperElemTypeConstraints<[0], [I8, I16, I32, F16, F32, I64, BF16]>
-]> {
+def AtomicXchgOp
+    : HIVM_Op<
+          "atomic_xchg",
+          [NoLibraryFunctionTrait,
+           OperElemTypeConstraints<[0], [I8, I16, I32, F16, F32, I64, BF16]>,
+           DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "Atomic Exchange Op";
   let description = [{
     Atomic exchange is an atomic operation that consists of three steps:

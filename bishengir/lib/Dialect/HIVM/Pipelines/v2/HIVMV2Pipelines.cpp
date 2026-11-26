@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Pipelines/HIVMBufferizationPipeline.h"
 #include "bishengir/Dialect/HIVM/Pipelines/regbase/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/HIVMVectorizeBuffers.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/MemRef/Transforms/Passes.h"
 #include "bishengir/Dialect/SCF/Transforms/Passes.h"
@@ -56,7 +57,8 @@ static hacc::TargetDevice resolveTarget(const V2PipelineOptions &options) {
 static void buildPreVectorizationPhase(OpPassManager &pm,
                                        const V2PipelineOptions &options) {
   regbase::registerKernelKindPassesForRegbase();
-  addFuncPass(pm, createInitEntryKernelPass());
+  if (!options.enableAutoBlockifyLoop)
+    addFuncPass(pm, createInitEntryKernelPass());
   canonicalizationHIVMPipeline(pm);
   pm.addPass(createNormalizeMatmulPass());
 
@@ -94,6 +96,13 @@ static void buildPreVectorizationPhase(OpPassManager &pm,
   // CV 1:2 needs operand-parallel sub-block partitioning; 1:1 targets skip it.
   if (needsCV12(hacc::symbolizeTargetDeviceEnum(options.target)))
     pm.addPass(createPartitionAndBindSubBlockPass());
+
+  if (options.enableAutoBlockifyLoop) {
+    pm.addPass(createInferFuncCoreTypePass());
+    addFuncPass(pm, createAutoBlockifyParallelLoopPass());
+    // Keep entry and exit CTRL writes outside the logical block loop.
+    addFuncPass(pm, createInitEntryKernelPass());
+  }
 }
 
 /// Tensor phase on the unsplit MIX.
@@ -101,6 +110,8 @@ void buildV2TensorPhase(OpPassManager &pm, const V2PipelineOptions &options) {
   buildPreVectorizationPhase(pm, options);
 
   pm.addPass(createHIVMVectorizePass());
+  // Fold tensor transfer pairs before bufferization introduces copies.
+  pm.addPass(createCanonicalizerPass());
 }
 
 /// The tensor -> memref anchor.
@@ -121,6 +132,7 @@ void buildV2BufferizationPhase(OpPassManager &pm,
 
 static void buildAlignStorage(OpPassManager &pm) {
   pm.addPass(createAlignAllocSizePass());
+  pm.addPass(createHIVMVectorizePhasePass("align"));
   addFuncPass(pm, memref::createFoldAllocReshapePass());
   pm.addPass(createEnableStrideAlignPass());
 }
@@ -149,11 +161,20 @@ static void hivmCrossCoreAutoSyncPipeline(OpPassManager &pm,
   if (options.disableAutoInjectBlockSync)
     return;
 
+  MarkRealCoreTypeOptions markOptions;
+  markOptions.enablePreload = options.enablePreload;
+  markOptions.workspaceMultiBufferNum = options.enableMultiBuffer ? 1 : 0;
+  pm.addPass(createMarkRealCoreTypePass(markOptions));
+
   CrossCoreGSSOptions crossCoreOptions;
   crossCoreOptions.forceIsRegBased = true;
   crossCoreOptions.blockAllSync = options.enableHIVMInjectBlockAllSync;
   crossCoreOptions.solverVersion = options.hivmSyncSolverVersion;
   addFuncPass(pm, createCrossCoreGSSPass(crossCoreOptions));
+
+  MarkRealCoreTypeOptions cleanupOptions = markOptions;
+  cleanupOptions.removeCoreTypeAttrs = true;
+  pm.addPass(createMarkRealCoreTypePass(cleanupOptions));
 }
 
 /// Post-bufferization: both memory plans and the solve see the unsplit MIX.
@@ -164,6 +185,7 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
   addFuncPass(pm, scf::createMapForToForallPass());
   addFuncPass(pm, createHIVMMapForallToBlocksPass());
   addFuncPass(pm, createHIVMDecomposeOpPass());
+  pm.addPass(createHIVMVectorizePhasePass("prepare-buffers"));
   pm.addPass(createNonContiguousReshapeToCopyPass());
   pm.addPass(createInferHIVMMemScopePass());
   addFuncPass(pm, createHIVMDecomposeOpPass());
@@ -204,6 +226,7 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
   canonicalizationHIVMPipeline(pm);
 
   // GLOBAL workspace plan on the unsplit MIX.
+  pm.addPass(createHIVMVectorizePhasePass("buffers"));
   PlanMemoryOptions globalPlanOptions;
   globalPlanOptions.memMode = MemPlanMode::GLOBAL_WORKSPACE_PLAN;
   pm.addPass(createPlanMemoryPass(globalPlanOptions));
@@ -217,10 +240,13 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
 
   // LOCAL plan on the unsplit MIX.
   PlanMemoryOptions localPlanOptions;
+  localPlanOptions.planMemoryUBCopyBankMode = options.planMemoryUBCopyBankMode;
   pm.addPass(createPlanMemoryPass(localPlanOptions));
 
-  // Expand slots before the split clones the counters.
-  if (options.enableMultiBuffer)
+  // CreatePreload needs the complete address list to rotate each stage.
+  bool expandAfterPreload =
+      options.enablePreload && hacc::utils::isAscend960(options.target);
+  if (options.enableMultiBuffer && !expandAfterPreload)
     addFuncPass(pm, createEnableMultiBufferPass());
 
   // Single-shot cross-core solve on the MIX.
@@ -231,6 +257,8 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
     CreatePreloadOptions preloadOptions;
     preloadOptions.enablePreload = true;
     pm.addPass(createCreatePreloadPass(preloadOptions));
+    if (options.enableMultiBuffer && expandAfterPreload)
+      addFuncPass(pm, createEnableMultiBufferPass());
   }
 
   // Last structural pass.
@@ -241,6 +269,7 @@ void buildV2PostBufferizationPhase(OpPassManager &pm,
 void buildV2PerCoreTail(OpPassManager &pm, const V2PipelineOptions &options) {
   addFuncPass(pm, createHIVMLowerToLoopsPass());
   addFuncPass(pm, createHIVMDecomposeOpPass());
+  pm.addPass(createHIVMVectorizePhasePass("prepare-buffers"));
   pm.addPass(createInferHIVMMemScopePass());
 
   hivmIntraCoreSyncPipeline(pm, options);
@@ -249,6 +278,7 @@ void buildV2PerCoreTail(OpPassManager &pm, const V2PipelineOptions &options) {
   addFuncPass(pm, createLowerMultiBufferCounterPass());
   addFuncPass(pm, createLiftLowestStridePass());
   canonicalizationHIVMPipeline(pm);
+  pm.addPass(createHIVMVectorizePhasePass("tail"));
 }
 
 void buildV2HIVMPipeline(OpPassManager &pm, const V2PipelineOptions &options) {
@@ -265,6 +295,7 @@ void buildV2HIVMPipeline(OpPassManager &pm, const V2PipelineOptions &options) {
 }
 
 void registerV2HIVMPipelines() {
+  registerHIVMVectorizeBuffersPass();
   PassPipelineRegistration<V2PipelineOptions>(
       "hivm-v2-pre-vectorize-pipeline",
       "Prepare HIVM tensor IR up to the v2 vectorization boundary",

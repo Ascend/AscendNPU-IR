@@ -23,12 +23,12 @@
 // CHECK: hivm.hir.set_ctrl false at ctrl[60]
 // CHECK-NEXT: hivm.hir.set_ctrl true at ctrl[48]
 // CHECK: %[[CM:.*]] = hivm.hir.pointer_cast{{.*}}memref<{{(44|47)}}xi32, #hivm.address_space<ssbuf>>
-// PARTITION: hivm.hir.tcb_pool_init {{.*}}flag_mask = 76 : i32{{.*}}search_begin = array<i32: 0, 4>{{.*}}search_end = array<i32: 4, 5>
-// SHARED: hivm.hir.tcb_pool_init {{.*}}flag_mask = 108 : i32{{.*}}search_begin = array<i32: 0, 0>{{.*}}search_end = array<i32: 5, 5>
+// PARTITION: hivm.hir.experimental.tcb_pool_init {{.*}}flag_mask = 76 : i32{{.*}}search_begin = array<i32: 0, 4>{{.*}}search_end = array<i32: 4, 5>
+// SHARED: hivm.hir.experimental.tcb_pool_init {{.*}}flag_mask = 108 : i32{{.*}}search_begin = array<i32: 0, 0>{{.*}}search_end = array<i32: 5, 5>
 // CHECK: scf.for
 // CHECK: %[[CP:.*]] = hivm.hir.pointer_cast{{.*}}memref<163840xi8, #hivm.address_space<ub>>
 // CHECK: scf.for
-// CHECK: %[[A0:.*]], %[[ID0:.*]] = hivm.hir.tcb_pool_alloc %[[CM]], %[[CP]] {segment = 0 : i32}
+// CHECK: %[[A0:.*]], %[[ID0:.*]] = hivm.hir.experimental.tcb_pool_alloc %[[CM]], %[[CP]] {segment = 0 : i32}
 // CHECK: %[[F0:.*]] = arith.extui %[[ID0]] : i32 to i64
 // CHECK: scf.if
 // CHECK: hivm.hir.pointer_cast(%[[A0]])
@@ -38,7 +38,7 @@
 // CHECK: hivm.hir.pointer_cast(%[[A0]])
 // CHECK: hivm.hir.fixpipe
 // CHECK-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_V>] flag = %[[F0]]
-// CHECK: %[[A1:.*]], %[[ID1:.*]] = hivm.hir.tcb_pool_alloc %[[CM]], %[[CP]] {segment = 1 : i32}
+// CHECK: %[[A1:.*]], %[[ID1:.*]] = hivm.hir.experimental.tcb_pool_alloc %[[CM]], %[[CP]] {segment = 1 : i32}
 // CHECK-NEXT: %[[F1:.*]] = arith.extui %[[ID1]] : i32 to i64
 // CHECK: scf.if
 // CHECK: hivm.hir.pointer_cast(%[[A1]])
@@ -48,28 +48,28 @@
 // CHECK: hivm.hir.pointer_cast(%[[A1]])
 // CHECK: hivm.hir.fixpipe
 // CHECK-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_V>] flag = %[[F1]]
-// CHECK: hivm.hir.tcb_pool_release %[[CM]]
+// CHECK: hivm.hir.experimental.tcb_pool_release %[[CM]]
 // CHECK-NEXT: hivm.hir.set_ctrl true at ctrl[60]
 // CHECK-NEXT: return
 // CHECK-LABEL: func.func @vector
 // CHECK: %[[VM:.*]] = hivm.hir.pointer_cast{{.*}}memref<{{(44|47)}}xi32, #hivm.address_space<ssbuf>>
-// CHECK-NOT: hivm.hir.tcb_pool_init
+// CHECK-NOT: hivm.hir.experimental.tcb_pool_init
 // CHECK: scf.for
 // CHECK: %[[VP:.*]] = hivm.hir.pointer_cast{{.*}}memref<163840xi8, #hivm.address_space<ub>>
 // CHECK: scf.for
-// CHECK: %[[G0:.*]], %[[VID0:.*]] = hivm.hir.tcb_pool_get %[[VM]], %[[VP]] {segment = 0 : i32}
+// CHECK: %[[G0:.*]], %[[VID0:.*]] = hivm.hir.experimental.tcb_pool_get %[[VM]], %[[VP]] {segment = 0 : i32}
 // CHECK-NEXT: %[[VF0:.*]] = arith.extui %[[VID0]] : i32 to i64
 // CHECK: %[[D0:.*]] = hivm.hir.pointer_cast(%[[G0]])
 // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>] flag = %[[VF0]]
 // CHECK-NEXT: call @consume0(%[[D0]])
 // CHECK-NEXT: hivm.hir.sync_block_set[<VECTOR>, <PIPE_V>, <PIPE_FIX>] flag = %[[VF0]]
-// CHECK: %[[G1:.*]], %[[VID1:.*]] = hivm.hir.tcb_pool_get %[[VM]], %[[VP]] {segment = 1 : i32}
+// CHECK: %[[G1:.*]], %[[VID1:.*]] = hivm.hir.experimental.tcb_pool_get %[[VM]], %[[VP]] {segment = 1 : i32}
 // CHECK-NEXT: %[[VF1:.*]] = arith.extui %[[VID1]] : i32 to i64
 // CHECK: %[[D1:.*]] = hivm.hir.pointer_cast(%[[G1]])
 // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>] flag = %[[VF1]]
 // CHECK-NEXT: call @consume1(%[[D1]])
 // CHECK-NEXT: hivm.hir.sync_block_set[<VECTOR>, <PIPE_V>, <PIPE_FIX>] flag = %[[VF1]]
-// CHECK-NOT: hivm.hir.tcb_pool_release
+// CHECK-NOT: hivm.hir.experimental.tcb_pool_release
 
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.tcb_pool_hint = 0 : i32, hivm.tcb_pool_plan = {pool_bytes = 163840 : i64, slot_bytes = 32768 : i64, queues = [array<i32: 1, 5>, array<i32: 2, 4>]}} {
   func.func private @consume0(memref<64x256xf32, #hivm.address_space<ub>>) attributes {hivm.vector_function}
@@ -187,16 +187,16 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.tcb_pool
 
 // CHECK-LABEL: func.func @cube_while
 // CHECK: %[[CM:.*]] = hivm.hir.pointer_cast{{.*}}memref<{{(44|47)}}xi32, #hivm.address_space<ssbuf>>
-// CHECK: hivm.hir.tcb_pool_init %[[CM]]
+// CHECK: hivm.hir.experimental.tcb_pool_init %[[CM]]
 // CHECK: scf.for
 // CHECK: %[[CP:.*]] = hivm.hir.pointer_cast{{.*}}memref<163840xi8, #hivm.address_space<ub>>
 // CHECK: scf.while
-// CHECK-NOT: hivm.hir.tcb_pool_alloc
+// CHECK-NOT: hivm.hir.experimental.tcb_pool_alloc
 // CHECK: scf.condition
 // CHECK: } do {
 // CHECK: ^bb0(%[[C0:.*]]: index, %[[C1:.*]]: index):
 // CHECK: %[[NEXT0:.*]] = scf.if {{.*}} -> (index) {
-// CHECK: %[[A0:.*]], %[[ID0:.*]] = hivm.hir.tcb_pool_alloc %[[CM]], %[[CP]] {segment = 0 : i32}
+// CHECK: %[[A0:.*]], %[[ID0:.*]] = hivm.hir.experimental.tcb_pool_alloc %[[CM]], %[[CP]] {segment = 0 : i32}
 // CHECK-NEXT: %[[F0:.*]] = arith.extui %[[ID0]] : i32 to i64
 // CHECK-NEXT: %[[D0:.*]] = hivm.hir.pointer_cast(%[[A0]])
 // CHECK-NEXT: hivm.hir.fixpipe {{.*}}outs(%[[D0]] :
@@ -205,7 +205,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.tcb_pool
 // CHECK: } else {
 // CHECK-NEXT: scf.yield %[[C0]] : index
 // CHECK: %[[NEXT1:.*]] = scf.if {{.*}} -> (index) {
-// CHECK: %[[A1:.*]], %[[ID1:.*]] = hivm.hir.tcb_pool_alloc %[[CM]], %[[CP]] {segment = 1 : i32}
+// CHECK: %[[A1:.*]], %[[ID1:.*]] = hivm.hir.experimental.tcb_pool_alloc %[[CM]], %[[CP]] {segment = 1 : i32}
 // CHECK-NEXT: %[[F1:.*]] = arith.extui %[[ID1]] : i32 to i64
 // CHECK-NEXT: %[[D1:.*]] = hivm.hir.pointer_cast(%[[A1]])
 // CHECK-NEXT: hivm.hir.fixpipe {{.*}}outs(%[[D1]] :
@@ -216,21 +216,21 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.tcb_pool
 // CHECK: scf.yield %[[NEXT0]], %[[NEXT1]] : index, index
 // CHECK-NEXT: }
 // CHECK-NEXT: }
-// CHECK-NEXT: hivm.hir.tcb_pool_release %[[CM]]
+// CHECK-NEXT: hivm.hir.experimental.tcb_pool_release %[[CM]]
 // CHECK-NEXT: return
 
 // CHECK-LABEL: func.func @vector_while
 // CHECK: %[[VM:.*]] = hivm.hir.pointer_cast{{.*}}memref<{{(44|47)}}xi32, #hivm.address_space<ssbuf>>
-// CHECK-NOT: hivm.hir.tcb_pool_init
+// CHECK-NOT: hivm.hir.experimental.tcb_pool_init
 // CHECK: scf.for
 // CHECK: %[[VP:.*]] = hivm.hir.pointer_cast{{.*}}memref<163840xi8, #hivm.address_space<ub>>
 // CHECK: scf.while
-// CHECK-NOT: hivm.hir.tcb_pool_get
+// CHECK-NOT: hivm.hir.experimental.tcb_pool_get
 // CHECK: scf.condition
 // CHECK: } do {
 // CHECK: ^bb0(%[[V0:.*]]: index, %[[V1:.*]]: index):
 // CHECK: %[[VNEXT0:.*]] = scf.if {{.*}} -> (index) {
-// CHECK: %[[G0:.*]], %[[VID0:.*]] = hivm.hir.tcb_pool_get %[[VM]], %[[VP]] {segment = 0 : i32}
+// CHECK: %[[G0:.*]], %[[VID0:.*]] = hivm.hir.experimental.tcb_pool_get %[[VM]], %[[VP]] {segment = 0 : i32}
 // CHECK-NEXT: %[[VF0:.*]] = arith.extui %[[VID0]] : i32 to i64
 // CHECK-NEXT: %[[VD0:.*]] = hivm.hir.pointer_cast(%[[G0]])
 // CHECK-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>] flag = %[[VF0]]
@@ -239,7 +239,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.tcb_pool
 // CHECK: } else {
 // CHECK-NEXT: scf.yield %[[V0]] : index
 // CHECK: %[[VNEXT1:.*]] = scf.if {{.*}} -> (index) {
-// CHECK: %[[G1:.*]], %[[VID1:.*]] = hivm.hir.tcb_pool_get %[[VM]], %[[VP]] {segment = 1 : i32}
+// CHECK: %[[G1:.*]], %[[VID1:.*]] = hivm.hir.experimental.tcb_pool_get %[[VM]], %[[VP]] {segment = 1 : i32}
 // CHECK-NEXT: %[[VF1:.*]] = arith.extui %[[VID1]] : i32 to i64
 // CHECK-NEXT: %[[VD1:.*]] = hivm.hir.pointer_cast(%[[G1]])
 // CHECK-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>] flag = %[[VF1]]
@@ -250,7 +250,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.tcb_pool
 // CHECK: scf.yield %[[VNEXT0]], %[[VNEXT1]] : index, index
 // CHECK-NEXT: }
 // CHECK-NEXT: }
-// CHECK-NOT: hivm.hir.tcb_pool_release
+// CHECK-NOT: hivm.hir.experimental.tcb_pool_release
 // CHECK-NEXT: return
 
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.tcb_pool_hint = 0 : i32, hivm.tcb_pool_plan = {pool_bytes = 163840 : i64, slot_bytes = 32768 : i64, queues = [array<i32: 1, 5>, array<i32: 2, 4>]}} {

@@ -245,6 +245,10 @@ def ConvertTritonAscendGPUToLLVM : Pass<"convert-triton-ascend-gpu-to-llvm", "ml
     Option<"enableCGroupingDotTileLowering", "enable-c-grouping-dot-tile-lowering",
            "bool", /*default*/"false",
            "enable grouped dot tile lowering during LLVM conversion">,
+    Option<"enableA5BankAwareSwizzle", "enable-a5-bank-aware-swizzle", "bool",
+           /*default=*/"false",
+           "Experimentally refine 32-bit UB scratch layouts using the A5 "
+           "bank-word model. Address-calculation profitability is not modeled.">
   ];
 
   let dependentDialects = [

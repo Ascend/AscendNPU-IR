@@ -51,6 +51,30 @@ using namespace mlir::hivm;
 
 namespace {
 
+// Count work assigned to each core, including operations in nested regions.
+static std::pair<bool, bool> analyzeCoreTypesForAnchors(Block *block) {
+  bool hasCube = false;
+  bool hasVector = false;
+  for (Operation &op : *block) {
+    auto coreType = getCoreType(&op);
+    if (failed(coreType))
+      return {true, true};
+    hasCube |=
+        *coreType == TCoreType::CUBE || *coreType == TCoreType::CUBE_AND_VECTOR;
+    hasVector |= *coreType == TCoreType::VECTOR ||
+                 *coreType == TCoreType::CUBE_AND_VECTOR;
+    for (Region &region : op.getRegions()) {
+      for (Block &nestedBlock : region) {
+        auto [nestedHasCube, nestedHasVector] =
+            analyzeCoreTypesForAnchors(&nestedBlock);
+        hasCube |= nestedHasCube;
+        hasVector |= nestedHasVector;
+      }
+    }
+  }
+  return {hasCube, hasVector};
+}
+
 // Pre-split instrumentation pass for the delayed cross-core GSS flow.
 //
 // Two responsibilities:
@@ -98,6 +122,10 @@ private:
       llvm::DenseMap<Operation *, func::FuncOp> &backupFuncs);
 
   void eraseAllAnchors(func::FuncOp funcOp);
+
+  void markControlFlow(func::FuncOp funcOp);
+
+  void eraseControlFlowMarkers(func::FuncOp funcOp);
 
   void eraseBackupFuncOps(ModuleOp mod);
 
@@ -242,6 +270,22 @@ private:
     return false;
   }
 
+  // A result-free if with work on only one core can be removed from the other
+  // split kernel without retaining an anchor-only control-flow skeleton.
+  bool isSingleCoreIf(Operation *op) const {
+    if (this->insertAnchorOpsBeforeAll ||
+        this->insertAnchorOpsBeforeMemEffectOps ||
+        this->insertAnchorOnlyBeforeCubeOps ||
+        this->insertAnchorOnlyBeforeVectorOps) {
+      return false;
+    }
+    auto ifOp = dyn_cast<scf::IfOp>(op);
+    if (!ifOp || ifOp.getNumResults() != 0 || !ifOp.getElseRegion().empty())
+      return false;
+    auto [hasCube, hasVector] = analyzeCoreTypesForAnchors(ifOp.thenBlock());
+    return hasCube != hasVector;
+  }
+
   bool isRegionsToBeAnchored(Operation *op) const {
     if (isCVPipeliningLoop(op) || isCVPreloadingScope(op)) {
       return true;
@@ -250,6 +294,9 @@ private:
       return false;
     }
     if (isOpToBeAnchored(op, /*insertBefore=*/true)) {
+      return false;
+    }
+    if (isSingleCoreIf(op)) {
       return false;
     }
     for (Region &region : op->getRegions()) {
@@ -398,6 +445,19 @@ void InsertAnchorsAndBackupPass::eraseAllAnchors(func::FuncOp funcOp) {
   }
 }
 
+void InsertAnchorsAndBackupPass::markControlFlow(func::FuncOp funcOp) {
+  UnitAttr marker = UnitAttr::get(&getContext());
+  funcOp.walk([&](Operation *op) {
+    if (isa<scf::IfOp, scf::ForOp>(op))
+      op->setAttr(hivm::KeepControlFlowAttr::name, marker);
+  });
+}
+
+void InsertAnchorsAndBackupPass::eraseControlFlowMarkers(func::FuncOp funcOp) {
+  funcOp.walk(
+      [&](Operation *op) { op->removeAttr(hivm::KeepControlFlowAttr::name); });
+}
+
 void InsertAnchorsAndBackupPass::eraseBackupFuncOps(ModuleOp mod) {
   SmallVector<func::FuncOp> backupFuncOps;
   mod.walk([&](func::FuncOp funcOp) {
@@ -499,7 +559,10 @@ void InsertAnchorsAndBackupPass::runOnOperation() {
   // and before lowering, so downstream passes never see anchors.
   if (this->cleanup) {
     eraseBackupFuncOps(mod);
-    mod.walk([&](func::FuncOp funcOp) { eraseAllAnchors(funcOp); });
+    mod.walk([&](func::FuncOp funcOp) {
+      eraseAllAnchors(funcOp);
+      eraseControlFlowMarkers(funcOp);
+    });
     return;
   }
 
@@ -518,6 +581,9 @@ void InsertAnchorsAndBackupPass::runOnOperation() {
   llvm::DenseMap<Operation *, func::FuncOp> backupFuncs;
   for (func::FuncOp funcOp : mixFuncOps) {
     createElseBranchesForPreloadSync(funcOp);
+
+    // Before cloning, so the backup and the split clones inherit the markers.
+    markControlFlow(funcOp);
 
     // Anchor ids restart at zero per function: ids only need to be unique
     // within a single (mix, cube, vector) triplet's translator scope.

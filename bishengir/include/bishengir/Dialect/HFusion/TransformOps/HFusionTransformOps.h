@@ -18,6 +18,7 @@
 #ifndef BISHENGIR_DIALECT_HFUSION_TRANSFORMOPS_HFUSIONTRANSFORMOPS_H
 #define BISHENGIR_DIALECT_HFUSION_TRANSFORMOPS_HFUSIONTRANSFORMOPS_H
 
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Transform/IR/TransformTypes.h"
 
 #include "mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.h"

@@ -1,5 +1,27 @@
 // RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(hivm-cross-core-gss{solver-version=v1}))" %s | FileCheck %s
 // RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(hivm-cross-core-gss{solver-version=v2}))" %s | FileCheck %s
+// RUN: sed 's/hivm.preload_num = 0/hivm.preload_num = 1/g' %s | bishengir-opt -hivm-cross-core-gss=solver-version=v1 | FileCheck %s --check-prefix=SAME
+// RUN: sed 's/hivm.preload_num = 0/hivm.preload_num = 1/g' %s | bishengir-opt -hivm-cross-core-gss=solver-version=v2 | FileCheck %s --check-prefix=SAME
+
+// Separate scopes may share a preload stage. Keep the forward notification
+// from the producing fixpipe to the consuming copy for both flat and nested
+// scopes, as well as the reverse notification protecting buffer reuse.
+// SAME-LABEL: func.func @k_flat
+// SAME: hivm.hir.sync_block_wait[<CUBE>, <PIPE_V>, <PIPE_FIX>]
+// SAME-NEXT: hivm.hir.fixpipe
+// SAME-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_V>]
+// SAME: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>]
+// SAME-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>]
+// SAME-NEXT: hivm.hir.copy
+// SAME-NEXT: hivm.hir.sync_block_set[<VECTOR>, <PIPE_V>, <PIPE_FIX>]
+// SAME-LABEL: func.func @k_nested
+// SAME: hivm.hir.sync_block_wait[<CUBE>, <PIPE_V>, <PIPE_FIX>]
+// SAME-NEXT: hivm.hir.fixpipe
+// SAME-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_V>]
+// SAME: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>]
+// SAME-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>]
+// SAME-NEXT: hivm.hir.copy
+// SAME-NEXT: hivm.hir.sync_block_set[<VECTOR>, <PIPE_V>, <PIPE_FIX>]
 
 // cv-preloading set/wait placement on the non-delayed cross-core path, flat
 // preload scope vs. one extra scope level in between. This is the same pair of
@@ -38,7 +60,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     %cbB = hivm.hir.pointer_cast(%c65536_i64) : memref<2x2x16x16xf16, #hivm.address_space<cbuf>>
     scf.for %arg9 = %c0_i32 to %c8_i32 step %c1_i32  : i32 {
       %ubA = hivm.hir.pointer_cast(%c0_i64, %c32768_i64) : memref<32x32xf32, #hivm.address_space<ub>>
-      annotation.mark %ubA {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32} : memref<32x32xf32, #hivm.address_space<ub>>
+      annotation.mark %ubA {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer} : memref<32x32xf32, #hivm.address_space<ub>>
       %ccA = hivm.hir.pointer_cast(%c0_i64, %c65536_i64) : memref<2x4x16x16xf32, #hivm.address_space<cc>>
       annotation.mark %ccA {hivm.multi_buffer = 2 : i32} : memref<2x4x16x16xf32, #hivm.address_space<cc>>
       %ccB = hivm.hir.pointer_cast(%c131072_i64, %c196608_i64) : memref<2x4x16x16xf32, #hivm.address_space<cc>>
@@ -101,7 +123,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     %cbB = hivm.hir.pointer_cast(%c65536_i64) : memref<2x2x16x16xf16, #hivm.address_space<cbuf>>
     scf.for %arg9 = %c0_i32 to %c8_i32 step %c1_i32  : i32 {
       %ubA = hivm.hir.pointer_cast(%c0_i64, %c32768_i64) : memref<32x32xf32, #hivm.address_space<ub>>
-      annotation.mark %ubA {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32} : memref<32x32xf32, #hivm.address_space<ub>>
+      annotation.mark %ubA {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer} : memref<32x32xf32, #hivm.address_space<ub>>
       %ccA = hivm.hir.pointer_cast(%c0_i64, %c65536_i64) : memref<2x4x16x16xf32, #hivm.address_space<cc>>
       annotation.mark %ccA {hivm.multi_buffer = 2 : i32} : memref<2x4x16x16xf32, #hivm.address_space<cc>>
       %ccB = hivm.hir.pointer_cast(%c131072_i64, %c196608_i64) : memref<2x4x16x16xf32, #hivm.address_space<cc>>

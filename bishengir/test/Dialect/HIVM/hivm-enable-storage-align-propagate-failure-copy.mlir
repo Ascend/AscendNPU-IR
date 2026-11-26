@@ -309,3 +309,362 @@ module attributes {
     return
   }
 }
+
+// -----
+
+// A tightly-coupled buffer is written by the other core, so this walk sees no
+// write to it and the refresh copy depends on matching the completion
+// handshake - which findWriteOp scans for linearly within one block. Here the
+// producer completes inside the work loop, out of reach of that scan, so the
+// seed copy has to stay at the consumption point: one copy per iteration,
+// after the wait, rather than one snapshot of the uninitialized buffer before
+// the loop.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @producer_loop_tcb(%n: index) attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %cc = memref.alloc() : memref<4x4xf32, #hivm.address_space<cc>>
+    %ub = memref.alloc() : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<25>} : memref<4x4xf32, #hivm.address_space<ub>>
+    scf.for %i = %c0 to %n step %c1 {
+      hivm.hir.sync_block_wait[<CUBE>, <PIPE_V>, <PIPE_FIX>] flag = 3
+      hivm.hir.fixpipe ins(%cc : memref<4x4xf32, #hivm.address_space<cc>>) outs(%ub : memref<4x4xf32, #hivm.address_space<ub>>)
+      hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_V>] flag = 3
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @consumer_loop_tcb
+  // CHECK: %[[PHYSICAL:.*]] = memref.alloc() : memref<4x8x1xf32, #hivm.address_space<ub>>
+  // CHECK: %[[ALIGNED:.*]] = memref.subview %[[PHYSICAL]]
+  // The buffer is allocated where it dominates the use; the copy is not.
+  // CHECK: %[[SHARED:.*]] = memref.alloc() : memref<4x4xf32, #hivm.address_space<ub>>
+  // CHECK-NOT: hivm.hir.copy
+  // CHECK: scf.for
+  // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>] flag = 3
+  // CHECK-NEXT: hivm.hir.copy ins(%[[ALIGNED]]{{.*}}) outs(%[[SHARED]]
+  // CHECK-NEXT: arith.select %{{.*}}, %[[SHARED]], %{{.*}}
+  func.func @consumer_loop_tcb(%n: index, %has_blocks: i1, %zero: memref<4x4xf32, #hivm.address_space<ub>>, %out: memref<4x4xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %ub = memref.alloc() : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<25>} : memref<4x4xf32, #hivm.address_space<ub>>
+    hivm.hir.sync_block_set[<VECTOR>, <PIPE_V>, <PIPE_FIX>] flag = 3
+    scf.for %i = %c0 to %n step %c1 {
+      hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>] flag = 3
+      %selected = arith.select %has_blocks, %ub, %zero : memref<4x4xf32, #hivm.address_space<ub>>
+      hivm.hir.copy ins(%selected : memref<4x4xf32, #hivm.address_space<ub>>) outs(%out : memref<4x4xf32, #hivm.address_space<ub>>)
+      hivm.hir.sync_block_set[<VECTOR>, <PIPE_V>, <PIPE_FIX>] flag = 3
+    }
+    return
+  }
+}
+
+// -----
+
+// Same cross-core buffer, other control flow: the producer writes in a nested
+// branch and signals completion outside it, where the scan that starts at the
+// `hivm.hir.fixpipe` stops at the region terminator. The seed copy stays at
+// the yield that consumes the result.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @producer_nested_if_tcb(%flag: i1, %flag1: i1) attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
+    %cc = memref.alloc() : memref<4x4xf32, #hivm.address_space<cc>>
+    %ub = memref.alloc() : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<26>} : memref<4x4xf32, #hivm.address_space<ub>>
+    scf.if %flag {
+      scf.if %flag1 {
+        hivm.hir.fixpipe ins(%cc : memref<4x4xf32, #hivm.address_space<cc>>) outs(%ub : memref<4x4xf32, #hivm.address_space<ub>>)
+      }
+    }
+    hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_MTE3>] flag = 2
+    return
+  }
+
+  // CHECK-LABEL: func.func @consumer_nested_if_tcb
+  // CHECK: %[[PHYSICAL:.*]] = memref.alloc() : memref<4x8x1xf32, #hivm.address_space<ub>>
+  // CHECK: %[[ALIGNED:.*]] = memref.subview %[[PHYSICAL]]
+  // CHECK: %[[SHARED:.*]] = memref.alloc() : memref<4x4xf32, #hivm.address_space<ub>>
+  // CHECK-NOT: hivm.hir.copy
+  // CHECK: scf.if
+  // CHECK: scf.if
+  // CHECK: hivm.hir.copy ins(%[[ALIGNED]]{{.*}}) outs(%[[SHARED]]
+  // CHECK-NEXT: scf.yield %[[SHARED]]
+  func.func @consumer_nested_if_tcb(%flag: i1, %flag1: i1, %zero: memref<4x4xf32, #hivm.address_space<ub>>, %out: memref<4x4xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %ub = memref.alloc() : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<26>} : memref<4x4xf32, #hivm.address_space<ub>>
+    %res = scf.if %flag -> (memref<4x4xf32, #hivm.address_space<ub>>) {
+      %inner = scf.if %flag1 -> (memref<4x4xf32, #hivm.address_space<ub>>) {
+        scf.yield %ub : memref<4x4xf32, #hivm.address_space<ub>>
+      } else {
+        scf.yield %zero : memref<4x4xf32, #hivm.address_space<ub>>
+      }
+      scf.yield %inner : memref<4x4xf32, #hivm.address_space<ub>>
+    } else {
+      scf.yield %zero : memref<4x4xf32, #hivm.address_space<ub>>
+    }
+    hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_MTE3>] flag = 2
+    hivm.hir.copy ins(%res : memref<4x4xf32, #hivm.address_space<ub>>) outs(%out : memref<4x4xf32, #hivm.address_space<ub>>)
+    return
+  }
+}
+
+// -----
+
+// Two failing uses of one cross-core buffer. They share a single compact
+// buffer - a buffer per use would cut the data flow through it - and each
+// consumption point carries its own seed copy.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  // CHECK-LABEL: func.func @consumer_two_failing_uses_tcb
+  // CHECK: %[[PHYSICAL:.*]] = memref.alloc() : memref<4x8x1xf32, #hivm.address_space<ub>>
+  // CHECK: %[[ALIGNED:.*]] = memref.subview %[[PHYSICAL]]
+  // CHECK-NOT: memref.alloc
+  // CHECK-NOT: hivm.hir.copy
+  // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>] flag = 4
+  // CHECK-NEXT: %[[SHARED:.*]] = memref.alloc() : memref<4x4xf32, #hivm.address_space<ub>>
+  // CHECK-NEXT: hivm.hir.copy ins(%[[ALIGNED]]{{.*}}) outs(%[[SHARED]]
+  // CHECK-NEXT: arith.select %{{.*}}, %[[SHARED]], %{{.*}}
+  // CHECK: scf.if
+  // CHECK-NEXT: hivm.hir.copy ins(%[[ALIGNED]]{{.*}}) outs(%[[SHARED]]
+  // CHECK-NEXT: scf.yield %[[SHARED]]
+  func.func @consumer_two_failing_uses_tcb(%c: i1, %zero: memref<4x4xf32, #hivm.address_space<ub>>, %out0: memref<4x4xf32, #hivm.address_space<ub>>, %out1: memref<4x4xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %ub = memref.alloc() : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<4x4xf32, #hivm.address_space<ub>>
+    annotation.mark %ub {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<27>} : memref<4x4xf32, #hivm.address_space<ub>>
+    hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>] flag = 4
+    %selected = arith.select %c, %ub, %zero : memref<4x4xf32, #hivm.address_space<ub>>
+    hivm.hir.copy ins(%selected : memref<4x4xf32, #hivm.address_space<ub>>) outs(%out0 : memref<4x4xf32, #hivm.address_space<ub>>)
+    %res = scf.if %c -> (memref<4x4xf32, #hivm.address_space<ub>>) {
+      scf.yield %ub : memref<4x4xf32, #hivm.address_space<ub>>
+    } else {
+      scf.yield %zero : memref<4x4xf32, #hivm.address_space<ub>>
+    }
+    hivm.hir.copy ins(%res : memref<4x4xf32, #hivm.address_space<ub>>) outs(%out1 : memref<4x4xf32, #hivm.address_space<ub>>)
+    return
+  }
+}
+
+// -----
+
+// A single failing collapse needs its compact buffer only after both source
+// writes. Seeding at the cast would keep an unused compact buffer live across
+// the fill and load, and require two redundant refreshes. In a kernel with
+// hundreds of such inputs, that lifetime overlap makes memory planning costly.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @fill_for_single_collapse(%dst: memref<8x2x8xf16, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %zero = arith.constant dense<0.0> : vector<1x1x8xf16>
+    scf.for %i = %c0 to %c8 step %c1 {
+      scf.for %j = %c0 to %c2 step %c1 {
+        %row = memref.subview %dst[%i, %j, 0] [1, 1, 8] [1, 1, 1] : memref<8x2x8xf16, #hivm.address_space<ub>> to memref<1x1x8xf16, strided<[16, 8, 1], offset: ?>, #hivm.address_space<ub>>
+        vector.transfer_write %zero, %row[%c0, %c0, %c0] {in_bounds = [true, true, true]} : vector<1x1x8xf16>, memref<1x1x8xf16, strided<[16, 8, 1], offset: ?>, #hivm.address_space<ub>>
+      }
+    }
+    return
+  }
+  // CHECK-LABEL: func.func @single_collapse_after_source_writes
+  // CHECK: %[[PHYSICAL:.*]] = memref.alloc() : memref<8x2x16x1xf16, #hivm.address_space<ub>>
+  // CHECK: %[[ALIGNED:.*]] = memref.subview %[[PHYSICAL]]
+  // CHECK-NOT: memref.alloc
+  // CHECK-NOT: hivm.hir.copy
+  // CHECK: scf.if
+  // CHECK-NEXT: func.call @fill_for_single_collapse(%[[ALIGNED]])
+  // CHECK-NEXT: {{^ *}}}
+  // CHECK-NOT: memref.alloc
+  // CHECK-NOT: hivm.hir.copy
+  // CHECK: hivm.hir.load
+  // CHECK-NEXT: %[[DENSE:.*]] = memref.alloc() : memref<8x2x8xf16, #hivm.address_space<ub>>
+  // CHECK-NEXT: hivm.hir.copy ins(%[[ALIGNED]]{{.*}}) outs(%[[DENSE]]
+  // CHECK-NEXT: %[[FLAT:.*]] = memref.collapse_shape %[[DENSE]]
+  // CHECK-NEXT: hivm.hir.store ins(%[[FLAT]]
+  // CHECK-NEXT: return
+  func.func @single_collapse_after_source_writes(%gm: memref<8x2x8xf16, #hivm.address_space<gm>>, %out: memref<128xf16, #hivm.address_space<gm>>, %tail: i1, %n0: index, %n1: index, %n2: index) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %zero = arith.constant 0.0 : f16
+    %p = memref.alloc() : memref<8x2x8xf16, #hivm.address_space<ub>>
+    annotation.mark %p {hivm.stride_align_dims = array<i32: 2>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<8x2x8xf16, #hivm.address_space<ub>>
+    scf.if %tail {
+      func.call @fill_for_single_collapse(%p) {hivm.vector_function, no_inline} : (memref<8x2x8xf16, #hivm.address_space<ub>>) -> ()
+    }
+    %src = memref.subview %gm[0, 0, 0] [%n0, %n1, %n2] [1, 1, 1] : memref<8x2x8xf16, #hivm.address_space<gm>> to memref<?x?x?xf16, strided<[16, 8, 1]>, #hivm.address_space<gm>>
+    %dst = memref.subview %p[0, 0, 0] [%n0, %n1, %n2] [1, 1, 1] : memref<8x2x8xf16, #hivm.address_space<ub>> to memref<?x?x?xf16, strided<[16, 8, 1]>, #hivm.address_space<ub>>
+    hivm.hir.load ins(%src : memref<?x?x?xf16, strided<[16, 8, 1]>, #hivm.address_space<gm>>) outs(%dst : memref<?x?x?xf16, strided<[16, 8, 1]>, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %zero : f16
+    %flat = memref.collapse_shape %p [[0, 1, 2]] : memref<8x2x8xf16, #hivm.address_space<ub>> into memref<128xf16, #hivm.address_space<ub>>
+    hivm.hir.store ins(%flat : memref<128xf16, #hivm.address_space<ub>>) outs(%out : memref<128xf16, #hivm.address_space<gm>>)
+    return
+  }
+
+  // Delaying the seed must not drop synchronization after consumption begins:
+  // a later conditional fill refreshes the compact buffer, and a partial load
+  // through the flat view copies back without losing the filled tail.
+  // CHECK-LABEL: func.func @single_collapse_later_writes
+  // CHECK: %[[PHYSICAL:.*]] = memref.alloc() : memref<8x2x16x1xf16, #hivm.address_space<ub>>
+  // CHECK: %[[ALIGNED:.*]] = memref.subview %[[PHYSICAL]]
+  // CHECK-NOT: memref.alloc
+  // CHECK-NOT: hivm.hir.copy
+  // CHECK: hivm.hir.load {{.*}} outs(%[[ALIGNED]]
+  // CHECK-NEXT: %[[DENSE:.*]] = memref.alloc() : memref<8x2x8xf16, #hivm.address_space<ub>>
+  // CHECK-NEXT: hivm.hir.copy ins(%[[ALIGNED]]{{.*}}) outs(%[[DENSE]]
+  // CHECK-NEXT: %[[FLAT:.*]] = memref.collapse_shape %[[DENSE]]
+  // CHECK-NEXT: scf.if
+  // CHECK-NEXT: func.call @fill_for_single_collapse(%[[ALIGNED]])
+  // CHECK-NEXT: hivm.hir.copy ins(%[[ALIGNED]]{{.*}}) outs(%[[DENSE]]
+  // CHECK-NEXT: {{^ *}}}
+  // CHECK-NEXT: %[[TAIL:.*]] = memref.subview %[[FLAT]][0] [17] [1]
+  // CHECK-NEXT: hivm.hir.load {{.*}} outs(%[[TAIL]]
+  // CHECK-NEXT: hivm.hir.copy ins(%[[DENSE]]{{.*}}) outs(%[[ALIGNED]]
+  // CHECK-NEXT: hivm.hir.store ins(%[[FLAT]]
+  // CHECK-NEXT: return
+  func.func @single_collapse_later_writes(%gm: memref<8x2x8xf16, #hivm.address_space<gm>>, %partial: memref<17xf16, #hivm.address_space<gm>>, %out: memref<128xf16, #hivm.address_space<gm>>, %refill: i1) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %p = memref.alloc() : memref<8x2x8xf16, #hivm.address_space<ub>>
+    annotation.mark %p {hivm.stride_align_dims = array<i32: 2>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<8x2x8xf16, #hivm.address_space<ub>>
+    hivm.hir.load ins(%gm : memref<8x2x8xf16, #hivm.address_space<gm>>) outs(%p : memref<8x2x8xf16, #hivm.address_space<ub>>)
+    %flat = memref.collapse_shape %p [[0, 1, 2]] : memref<8x2x8xf16, #hivm.address_space<ub>> into memref<128xf16, #hivm.address_space<ub>>
+    scf.if %refill {
+      func.call @fill_for_single_collapse(%p) {hivm.vector_function, no_inline} : (memref<8x2x8xf16, #hivm.address_space<ub>>) -> ()
+    }
+    %tail = memref.subview %flat[0] [17] [1] : memref<128xf16, #hivm.address_space<ub>> to memref<17xf16, #hivm.address_space<ub>>
+    hivm.hir.load ins(%partial : memref<17xf16, #hivm.address_space<gm>>) outs(%tail : memref<17xf16, #hivm.address_space<ub>>)
+    hivm.hir.store ins(%flat : memref<128xf16, #hivm.address_space<ub>>) outs(%out : memref<128xf16, #hivm.address_space<gm>>)
+    return
+  }
+}
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // Both views share one allocation after the first source load; the second
+  // source load must still refresh it before the later view is read.
+  // CHECK-LABEL: func.func @two_flat_users
+  // CHECK: %[[P:.*]] = memref.alloc() : memref<2x8x1xf32
+  // CHECK: %[[V:.*]] = memref.subview %[[P]]
+  // CHECK-NOT: memref.alloc
+  // CHECK-NOT: hivm.hir.copy
+  // CHECK: hivm.hir.load {{.*}} outs(%[[V]]
+  // CHECK-NEXT: %[[S:.*]] = memref.alloc() : memref<2x3xf32
+  // CHECK-NEXT: hivm.hir.copy ins(%[[V]]{{.*}}) outs(%[[S]]
+  // CHECK-NEXT: %[[FLAT0:.*]] = memref.collapse_shape %[[S]]
+  // CHECK-NEXT: hivm.hir.store ins(%[[FLAT0]]
+  // CHECK-NEXT: hivm.hir.load {{.*}} outs(%[[V]]
+  // CHECK-NEXT: hivm.hir.copy ins(%[[V]]{{.*}}) outs(%[[S]]
+  // CHECK-NEXT: %[[FLAT1:.*]] = memref.collapse_shape %[[S]]
+  // CHECK-NEXT: hivm.hir.store ins(%[[FLAT1]]
+  // CHECK-NEXT: return
+  func.func @two_flat_users(%gm: memref<2x3xf32, #hivm.address_space<gm>>, %out: memref<6xf32, #hivm.address_space<gm>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %p = memref.alloc() : memref<2x3xf32, #hivm.address_space<ub>>
+    annotation.mark %p {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x3xf32, #hivm.address_space<ub>>
+    hivm.hir.load ins(%gm : memref<2x3xf32, #hivm.address_space<gm>>) outs(%p : memref<2x3xf32, #hivm.address_space<ub>>)
+    %flat0 = memref.collapse_shape %p [[0, 1]] : memref<2x3xf32, #hivm.address_space<ub>> into memref<6xf32, #hivm.address_space<ub>>
+    hivm.hir.store ins(%flat0 : memref<6xf32, #hivm.address_space<ub>>) outs(%out : memref<6xf32, #hivm.address_space<gm>>)
+    hivm.hir.load ins(%gm : memref<2x3xf32, #hivm.address_space<gm>>) outs(%p : memref<2x3xf32, #hivm.address_space<ub>>)
+    %flat1 = memref.collapse_shape %p [[0, 1]] : memref<2x3xf32, #hivm.address_space<ub>> into memref<6xf32, #hivm.address_space<ub>>
+    hivm.hir.store ins(%flat1 : memref<6xf32, #hivm.address_space<ub>>) outs(%out : memref<6xf32, #hivm.address_space<gm>>)
+    return
+  }
+  // Uses in separate branches map to the same enclosing if. Keep their
+  // shared allocation outside the branches, but after the earlier load.
+  // CHECK-LABEL: func.func @two_branch_users
+  // CHECK: %[[P:.*]] = memref.alloc() : memref<2x8x1xf32
+  // CHECK: %[[V:.*]] = memref.subview %[[P]]
+  // CHECK-NOT: memref.alloc
+  // CHECK-NOT: hivm.hir.copy
+  // CHECK: hivm.hir.load {{.*}} outs(%[[V]]
+  // CHECK-NEXT: %[[S:.*]] = memref.alloc() : memref<2x3xf32
+  // CHECK-NEXT: hivm.hir.copy ins(%[[V]]{{.*}}) outs(%[[S]]
+  // CHECK-NEXT: scf.if
+  // CHECK-NEXT: %[[THEN:.*]] = memref.collapse_shape %[[S]]
+  // CHECK-NEXT: hivm.hir.store ins(%[[THEN]]
+  // CHECK-NEXT: {{^ *}}} else {
+  // CHECK-NEXT: %[[ELSE:.*]] = memref.collapse_shape %[[S]]
+  // CHECK-NEXT: hivm.hir.store ins(%[[ELSE]]
+  // CHECK-NEXT: {{^ *}}}
+  // CHECK-NEXT: return
+  func.func @two_branch_users(%cond: i1, %gm: memref<2x3xf32, #hivm.address_space<gm>>, %out: memref<6xf32, #hivm.address_space<gm>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %p = memref.alloc() : memref<2x3xf32, #hivm.address_space<ub>>
+    annotation.mark %p {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x3xf32, #hivm.address_space<ub>>
+    hivm.hir.load ins(%gm : memref<2x3xf32, #hivm.address_space<gm>>) outs(%p : memref<2x3xf32, #hivm.address_space<ub>>)
+    scf.if %cond {
+      %flat0 = memref.collapse_shape %p [[0, 1]] : memref<2x3xf32, #hivm.address_space<ub>> into memref<6xf32, #hivm.address_space<ub>>
+      hivm.hir.store ins(%flat0 : memref<6xf32, #hivm.address_space<ub>>) outs(%out : memref<6xf32, #hivm.address_space<gm>>)
+    } else {
+      %flat1 = memref.collapse_shape %p [[0, 1]] : memref<2x3xf32, #hivm.address_space<ub>> into memref<6xf32, #hivm.address_space<ub>>
+      hivm.hir.store ins(%flat1 : memref<6xf32, #hivm.address_space<ub>>) outs(%out : memref<6xf32, #hivm.address_space<gm>>)
+    }
+    return
+  }
+}
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // A failing yield forwards the compact buffer outside the if. Keeping
+  // its allocation and seed in the cast's block preserves the later copy-back.
+  // CHECK-LABEL: func.func @yield_then_write
+  // CHECK: %[[P:.*]] = memref.alloc() : memref<2x8x1xf32
+  // CHECK: %[[V:.*]] = memref.subview %[[P]]
+  // CHECK-NOT: memref.alloc
+  // CHECK-NOT: hivm.hir.copy
+  // CHECK: hivm.hir.load {{.*}} outs(%[[V]]
+  // CHECK-NEXT: %[[S:.*]] = memref.alloc() : memref<2x3xf32
+  // CHECK-NEXT: hivm.hir.copy ins(%[[V]]{{.*}}) outs(%[[S]]
+  // CHECK-NEXT: %[[R:.*]] = scf.if
+  // CHECK-NEXT: scf.yield %[[S]]
+  // CHECK: hivm.hir.load {{.*}} outs(%[[R]]
+  // CHECK-NEXT: hivm.hir.copy ins(%[[S]]{{.*}}) outs(%[[V]]
+  // CHECK-NEXT: hivm.hir.store ins(%[[V]]
+  // CHECK-NEXT: return
+  func.func @yield_then_write(%cond: i1, %input: memref<2x3xf32, #hivm.address_space<gm>>, %update: memref<2x3xf32, #hivm.address_space<gm>>, %out: memref<2x3xf32, #hivm.address_space<gm>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %p = memref.alloc() : memref<2x3xf32, #hivm.address_space<ub>>
+    annotation.mark %p {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x3xf32, #hivm.address_space<ub>>
+    hivm.hir.load ins(%input : memref<2x3xf32, #hivm.address_space<gm>>) outs(%p : memref<2x3xf32, #hivm.address_space<ub>>)
+    %r = scf.if %cond -> (memref<2x3xf32, #hivm.address_space<ub>>) {
+      scf.yield %p : memref<2x3xf32, #hivm.address_space<ub>>
+    } else {
+      %other = memref.alloc() : memref<2x3xf32, #hivm.address_space<ub>>
+      scf.yield %other : memref<2x3xf32, #hivm.address_space<ub>>
+    }
+    hivm.hir.load ins(%update : memref<2x3xf32, #hivm.address_space<gm>>) outs(%r : memref<2x3xf32, #hivm.address_space<ub>>)
+    hivm.hir.store ins(%p : memref<2x3xf32, #hivm.address_space<ub>>) outs(%out : memref<2x3xf32, #hivm.address_space<gm>>)
+    return
+  }
+}
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // A use nested in a loop anchors the allocation before the loop, not in
+  // its body. Each write through the flat view must still reach the source.
+  // CHECK-LABEL: func.func @nested_loop_flat_write
+  // CHECK: %[[P:.*]] = memref.alloc() : memref<2x8x1xf32
+  // CHECK: %[[V:.*]] = memref.subview %[[P]]
+  // CHECK-NOT: memref.alloc
+  // CHECK-NOT: hivm.hir.copy
+  // CHECK: hivm.hir.load {{.*}} outs(%[[V]]
+  // CHECK-NEXT: %[[S:.*]] = memref.alloc() : memref<2x3xf32
+  // CHECK-NEXT: hivm.hir.copy ins(%[[V]]{{.*}}) outs(%[[S]]
+  // CHECK-NEXT: scf.for
+  // CHECK-NEXT: %[[FLAT:.*]] = memref.collapse_shape %[[S]]
+  // CHECK-NEXT: hivm.hir.load {{.*}} outs(%[[FLAT]]
+  // CHECK-NEXT: hivm.hir.copy ins(%[[S]]{{.*}}) outs(%[[V]]
+  // CHECK-NEXT: {{^ *}}}
+  // CHECK-NEXT: hivm.hir.store ins(%[[V]]
+  // CHECK-NEXT: return
+  func.func @nested_loop_flat_write(%n: index, %initial: memref<2x3xf32, #hivm.address_space<gm>>, %update: memref<6xf32, #hivm.address_space<gm>>, %out: memref<2x3xf32, #hivm.address_space<gm>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %p = memref.alloc() : memref<2x3xf32, #hivm.address_space<ub>>
+    annotation.mark %p {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x3xf32, #hivm.address_space<ub>>
+    hivm.hir.load ins(%initial : memref<2x3xf32, #hivm.address_space<gm>>) outs(%p : memref<2x3xf32, #hivm.address_space<ub>>)
+    scf.for %i = %c0 to %n step %c1 {
+      %flat = memref.collapse_shape %p [[0, 1]] : memref<2x3xf32, #hivm.address_space<ub>> into memref<6xf32, #hivm.address_space<ub>>
+      hivm.hir.load ins(%update : memref<6xf32, #hivm.address_space<gm>>) outs(%flat : memref<6xf32, #hivm.address_space<ub>>)
+    }
+    hivm.hir.store ins(%p : memref<2x3xf32, #hivm.address_space<ub>>) outs(%out : memref<2x3xf32, #hivm.address_space<gm>>)
+    return
+  }
+}

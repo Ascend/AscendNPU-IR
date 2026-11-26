@@ -24,10 +24,10 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/Math/IR/Math.h"
-#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/DeviceMappingInterface.h"
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Dialect.h"
@@ -92,12 +92,11 @@
 #define GET_OP_CLASSES
 #include "bishengir/Dialect/HIVM/IR/HIVMSynchronizationOps.h.inc"
 
-#if !defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) && \
+#if !defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) &&                          \
     !defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__)
 #define GET_OP_CLASSES
 #include "bishengir/Dialect/HIVM/IR/HIVMIntrinOps.h.inc"
 #endif
-
 
 namespace mlir {
 class TypeConverter;
@@ -178,16 +177,15 @@ template <typename GlobalMixMatmulTy>
 std::optional<TCoreType>
 inferCoreTypeForGlobalMixMatmulOps(GlobalMixMatmulTy *mixMatmulOp);
 
-constexpr llvm::StringLiteral kCVUnrolledLoopName =
-    "cv_unrolled_loop";
+constexpr llvm::StringLiteral kCVUnrolledLoopName = "cv_unrolled_loop";
+constexpr llvm::StringLiteral kCVMergedScopeAttrName = "cv_merged_scope";
+constexpr llvm::StringLiteral kVFScopeAttrName = "vf-scope";
 constexpr llvm::StringLiteral kMultibufferUnrollAttrName =
     "multibuffer_unroll_factor";
 constexpr llvm::StringLiteral kPipelinedLoopCoreTypeAttrName =
     "hivm.loop_core_type";
-constexpr llvm::StringLiteral kPreLoadAttrName =
-    "preload_num";
-constexpr llvm::StringLiteral kConvolutionGroupsAttrName =
-    "convolution_groups";
+constexpr llvm::StringLiteral kPreLoadAttrName = "preload_num";
+constexpr llvm::StringLiteral kConvolutionGroupsAttrName = "convolution_groups";
 
 /// Suffixes appended by SplitMixKernel when cloning a MIX function into AIC/AIV
 /// copies (e.g. `kernel` -> `kernel_mix_aic` / `kernel_mix_aiv`).

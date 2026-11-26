@@ -87,7 +87,7 @@ foldBroadcastInOperands(HivmVFVVOp op, PatternRewriter &rewriter) {
 
 } // namespace
 
-template <typename HivmVFVVOp, typename HivmVFVSOp>
+template <typename HivmVFVVOp, typename HivmVFVSOp, bool SupportsBF16 = false>
 struct FoldBroadcastInBinaryOp : public OpRewritePattern<HivmVFVVOp> {
 public:
   using OpRewritePattern<HivmVFVVOp>::OpRewritePattern;
@@ -105,6 +105,19 @@ public:
     if (!resVecType || resVecType.getRank() != 1) {
       return failure();
     }
+    if (!SupportsBF16 && resVecType.getElementType().isBF16()) {
+      return failure();
+    }
+    // A masked broadcast only supplies the scalar on its active lanes.
+    // For BF16, conservatively require the consumer to use the same mask.
+    if (resVecType.getElementType().isBF16()) {
+      if (auto broadcast =
+              op.getOperands()[1]
+                  .template getDefiningOp<hivmave::VFBroadcastScalarMaskOp>()) {
+        if (broadcast.getMask() != op.getMask())
+          return failure();
+      }
+    }
     auto new_operands = foldBroadcastInOperands(op, rewriter);
     if (new_operands) {
       auto replacer =
@@ -117,6 +130,37 @@ public:
 };
 
 namespace {
+
+// Compare results are predicate vectors, so they cannot use the arithmetic
+// fold, which selects support from the data-vector result element type.
+struct FoldBF16BroadcastInCompare : public OpRewritePattern<hivmave::VFCmpOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivmave::VFCmpOp op,
+                                PatternRewriter &rewriter) const override {
+    auto vecType = dyn_cast<VectorType>(op.getLhs().getType());
+    if (!vecType || vecType.getRank() != 1 ||
+        !vecType.getElementType().isBF16())
+      return failure();
+    if (op.getCmp() == hivmave::CmpType::ULE ||
+        op.getCmp() == hivmave::CmpType::UGE ||
+        op.getCmp() == hivmave::CmpType::ULT ||
+        op.getCmp() == hivmave::CmpType::UGT)
+      return failure();
+    if (auto broadcast =
+            op.getRhs().getDefiningOp<hivmave::VFBroadcastScalarMaskOp>()) {
+      if (broadcast.getMask() != op.getMask())
+        return failure();
+    }
+    Value scalar = foldBroadcastInOperand(op.getRhs(), rewriter);
+    if (!scalar)
+      return failure();
+    rewriter.replaceOpWithNewOp<hivmave::VFCmpS>(op, op.getRes().getType(),
+                                                 op.getCmpAttr(), op.getLhs(),
+                                                 scalar, op.getMask());
+    return success();
+  }
+};
 
 struct ReplaceWithVectorScalarPass
     : public impl::ReplaceWithVectorScalarBase<ReplaceWithVectorScalarPass> {
@@ -133,17 +177,18 @@ void ReplaceWithVectorScalarPass::runOnOperation() {
   MLIRContext *ctx = &getContext();
   auto funcOp = getOperation();
   RewritePatternSet patterns(ctx);
-  patterns.add<FoldBroadcastInBinaryOp<hivmave::VFAddOp, hivmave::VFAddsOp>,
-               FoldBroadcastInBinaryOp<hivmave::VFMinOp, hivmave::VFMinsOp>,
-               FoldBroadcastInBinaryOp<hivmave::VFMaxOp, hivmave::VFMaxsOp>,
-               FoldBroadcastInBinaryOp<hivmave::VMinSIOp, hivmave::VMinsSIOp>,
-               FoldBroadcastInBinaryOp<hivmave::VMaxSIOp, hivmave::VMaxsSIOp>,
-               FoldBroadcastInBinaryOp<hivmave::VMinUIOp, hivmave::VMinsUIOp>,
-               FoldBroadcastInBinaryOp<hivmave::VMaxUIOp, hivmave::VMaxsUIOp>,
-               FoldBroadcastInBinaryOp<hivmave::VFMulOp, hivmave::VFMulsOp>,
-               FoldBroadcastInBinaryOp<hivmave::VFShrOp, hivmave::VFShrsOp>,
-               FoldBroadcastInBinaryOp<hivmave::VFShlOp, hivmave::VFShlsOp>>(
-      ctx);
+  patterns.add<FoldBF16BroadcastInCompare>(ctx);
+  patterns
+      .add<FoldBroadcastInBinaryOp<hivmave::VFAddOp, hivmave::VFAddsOp, true>,
+           FoldBroadcastInBinaryOp<hivmave::VFMinOp, hivmave::VFMinsOp, true>,
+           FoldBroadcastInBinaryOp<hivmave::VFMaxOp, hivmave::VFMaxsOp, true>,
+           FoldBroadcastInBinaryOp<hivmave::VMinSIOp, hivmave::VMinsSIOp>,
+           FoldBroadcastInBinaryOp<hivmave::VMaxSIOp, hivmave::VMaxsSIOp>,
+           FoldBroadcastInBinaryOp<hivmave::VMinUIOp, hivmave::VMinsUIOp>,
+           FoldBroadcastInBinaryOp<hivmave::VMaxUIOp, hivmave::VMaxsUIOp>,
+           FoldBroadcastInBinaryOp<hivmave::VFMulOp, hivmave::VFMulsOp>,
+           FoldBroadcastInBinaryOp<hivmave::VFShrOp, hivmave::VFShrsOp>,
+           FoldBroadcastInBinaryOp<hivmave::VFShlOp, hivmave::VFShlsOp>>(ctx);
 
   if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
     signalPassFailure();

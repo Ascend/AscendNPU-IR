@@ -56,9 +56,13 @@ inline bool isNativeMmadMx(Operation *anchor, Type aElementType,
                            Type bElementType, Type scaleAElementType,
                            Type scaleBElementType, Type cElementType,
                            bool formatsPresent, uint64_t lhsFormat,
-                           uint64_t rhsFormat, int64_t k) {
-  // For some targets, it's only native when K is multiple of 64.
-  bool kMultipleOf64 = !ShapedType::isDynamic(k) && k > 0 && k % 64 == 0;
+                           uint64_t rhsFormat, int64_t storageK) {
+  // Some targets require logical K to be a multiple of 64. Packed FP4
+  // stores two elements per byte, so its storage K need only align to 32.
+  const auto fp4 = static_cast<uint64_t>(HIVMMatmulDataformat::FP4E2M1_T);
+  const int64_t storageKAlignment =
+      formatsPresent && lhsFormat == fp4 && rhsFormat == fp4 ? 32 : 64;
+  bool kMultipleOf64 = storageK > 0 && storageK % storageKAlignment == 0;
   Type f32 = Float32Type::get(anchor->getContext());
   return isNativeMmadRequest(
       anchor,

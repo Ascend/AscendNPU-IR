@@ -137,6 +137,16 @@ class HIVM_LocalMmadLikeOperandDags {
       Matrix B is transposed before load
     }]>:$b_transpose
   );
+
+  dag mmadPingPongSignal = (ins
+    Arg<Optional<MemRefRankOf<[I32], [0]>>, [{
+      Function-scoped stack scalar (memref<i32>, one uint32) holding the
+      L0 ping-pong id shared by every MMAD in this function. Read and
+      flipped by the MMAD template. When absent, lowering passes a descriptor
+      with a null data pointer. The template assumes ping (0), disables double
+      buffering, and uses the full L0 buffer.
+    }]>:$ping_pong_signal
+  );
 }
 
 def HIVM_LocalMmadLikeOperands : HIVM_LocalMmadLikeOperandDags;
@@ -154,6 +164,7 @@ class HIVM_L1MmadOp<string mnemonic, list<Trait> traits = []> :
   let arguments = !con(
     HIVM_LocalMmadLikeOperands.mmadCommonAB,
     HIVM_LocalMmadLikeOperands.localMmadLikeArgs,
+    HIVM_LocalMmadLikeOperands.mmadPingPongSignal,
     HIVM_LocalMmadLikeOperands.mmadCommonCL1,
     HIVM_LocalMmadLikeOperands.localMmadLikeSyncArgs,
     HIVM_LocalMmadLikeOperands.mmadCommonUnitFlagCond,
@@ -207,6 +218,7 @@ class HIVM_L1MmadOp<string mnemonic, list<Trait> traits = []> :
     `,` type($real_n)
     (`,` type($per_channel_bias)^)? `)`
     `outs` `(` $c `:` type($c) `)`
+    (`ping_pong_signal` `(` $ping_pong_signal^ `:` type($ping_pong_signal) `)`)?
     (`sync_related_args` `(` $sync_related_args^ `:` type($sync_related_args) `)`)?
     (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
     (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?
@@ -386,11 +398,20 @@ def MmadL0Op
 class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
   HIVM_MacroOp<mnemonic, !listconcat([HIVMLocalMatmulLikeOpTraits], traits)> {
   let arguments = !con((ins
-      Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>, "Matrix A">:$a,
-      Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>, "Matrix B">:$b,
+      Arg<ShapedTypeOf<[
+#ifdef BSPUB_DAVINCI_BISHENGIR
+          HiF8,
+#endif
+          F8E4M3FN, F8E5M2, UI8, I8, F16, BF16]>, "Matrix A">:$a,
+      Arg<ShapedTypeOf<[
+#ifdef BSPUB_DAVINCI_BISHENGIR
+          HiF8,
+#endif
+          F8E4M3FN, F8E5M2, UI8, I8, F16, BF16]>, "Matrix B">:$b,
       Arg<ShapedTypeOf<[UI8, I8]>, "Matrix ScaleA">:$scaleA,
       Arg<ShapedTypeOf<[UI8, I8]>, "Matrix ScaleB">:$scaleB),
     HIVM_LocalMmadLikeOperands.localMmadLikeArgs,
+    HIVM_LocalMmadLikeOperands.mmadPingPongSignal,
     (ins Arg<ShapedTypeOf<[AnyFloat]>, "Matrix C">:$c),
     HIVM_LocalMmadLikeOperands.localMmadLikeSyncArgs,
     (ins Optional<TensorOrMemref>:$per_channel_bias,
@@ -449,6 +470,7 @@ class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
     (`,` type($per_channel_bias)^)?
     `)`
     `outs` `(` $c `:` type($c) `)`
+    (`ping_pong_signal` `(` $ping_pong_signal^ `:` type($ping_pong_signal) `)`)?
     (`sync_related_args` `(` $sync_related_args^ `:` type($sync_related_args) `)`)?
     (`->` type($result_tensors)^)?
   }];

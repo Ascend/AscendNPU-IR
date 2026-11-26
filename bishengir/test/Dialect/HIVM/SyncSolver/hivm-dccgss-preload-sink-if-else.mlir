@@ -94,7 +94,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     hivm.hir.anchor {id = 1 : i64}
     scf.for %arg9 = %c0_i32 to %c8_i32 step %c1_i32  : i32 {
       %ubA = hivm.hir.pointer_cast(%c0_i64, %c32768_i64) : memref<32x32xf32, #hivm.address_space<ub>>
-      annotation.mark %ubA {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32} : memref<32x32xf32, #hivm.address_space<ub>>
+      annotation.mark %ubA {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer} : memref<32x32xf32, #hivm.address_space<ub>>
       %ccA = hivm.hir.pointer_cast(%c0_i64, %c65536_i64) : memref<2x4x16x16xf32, #hivm.address_space<cc>>
       annotation.mark %ccA {hivm.multi_buffer = 2 : i32} : memref<2x4x16x16xf32, #hivm.address_space<cc>>
       %ccB = hivm.hir.pointer_cast(%c131072_i64, %c196608_i64) : memref<2x4x16x16xf32, #hivm.address_space<cc>>
@@ -185,7 +185,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     hivm.hir.anchor {id = 1 : i64}
     scf.for %arg9 = %c0_i32 to %c8_i32 step %c1_i32  : i32 {
       %ubA = hivm.hir.pointer_cast(%c0_i64, %c32768_i64) : memref<32x32xf32, #hivm.address_space<ub>>
-      annotation.mark %ubA {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32} : memref<32x32xf32, #hivm.address_space<ub>>
+      annotation.mark %ubA {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer} : memref<32x32xf32, #hivm.address_space<ub>>
       %ubV1 = hivm.hir.pointer_cast(%c65536_i64) : memref<32x32xf32, #hivm.address_space<ub>>
       %ubV1b = hivm.hir.pointer_cast(%c69632_i64) : memref<32x32xf32, #hivm.address_space<ub>>
       %ubV2 = hivm.hir.pointer_cast(%c77824_i64) : memref<32x32xf32, #hivm.address_space<ub>>

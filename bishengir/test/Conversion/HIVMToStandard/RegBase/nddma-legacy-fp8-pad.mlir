@@ -1,6 +1,8 @@
 // RUN: bishengir-opt %s -convert-hivm-to-std | FileCheck %s
-// The legacy ABI has no bit-preserving FP8 pad carrier, so the pad value
-// collapses to a zero f32 constant and the call keeps the plain symbol.
+// The legacy anchor keeps the plain symbol, without the _span suffix. Its FP8
+// pad value rides the same f32 bit carrier as the span anchor's, so a zero pad
+// yields a zero carrier. A non-zero pad on this anchor must survive too; see
+// nddma-fp8-pad-value.mlir.
 module attributes {hacc.target = #hacc.target<"Ascend950">} {
  // CHECK-LABEL: func.func @legacy_fp8_pad(
  // CHECK: arith.constant 0.000000e+00 : f32

@@ -77,25 +77,31 @@ def OnChipSupported
     : EnumArchitectureFeatureValue<CubeVectorDataExchangeFeature,
                                    "OnChipSupported">;
 
+// Compiler default when the caller leaves the HIVM pipeline unspecified.
+def DefaultHIVMPipelineFeature : EnumArchitectureFeature<"DefaultHIVMPipeline">;
+def HIVMPipelineV1
+    : EnumArchitectureFeatureValue<DefaultHIVMPipelineFeature, "V1">;
+def HIVMPipelineV2
+    : EnumArchitectureFeatureValue<DefaultHIVMPipelineFeature, "V2">;
+
 //===----------------------------------------------------------------------===//
 // Architecture feature profiles
 //===----------------------------------------------------------------------===//
 
-// Keep the three dimensions explicit: none is inferred from another.
 def Dav_C220FeatureProfile
     : ArchitectureFeatureProfile<Dav_C220, [MemBased, Separated,
-                                            GlobalMemoryOnly]>;
+                                            GlobalMemoryOnly, HIVMPipelineV1]>;
 def Dav_M300FeatureProfile
-    : ArchitectureFeatureProfile<Dav_M300, [RegBased, Coupled,
-                                            OnChipSupported]>;
+    : ArchitectureFeatureProfile<Dav_M300, [RegBased, Coupled, OnChipSupported,
+                                            HIVMPipelineV1]>;
 def Dav_C310FeatureProfile
     : ArchitectureFeatureProfile<Dav_C310, [RegBased, Separated,
-                                            OnChipSupported]>;
+                                            OnChipSupported, HIVMPipelineV1]>;
 // dav-920r1 (Ascend960 / A6) follows the dav-c310 reg-based lineage: vector
 // register execution model, separated Cube/Vector cores, and on-chip
 // Cube/Vector data exchange paths (UB <-> L1, Fixpipe -> UB).
 def Dav_920R1FeatureProfile
     : ArchitectureFeatureProfile<Dav_920R1, [RegBased, Separated,
-                                             OnChipSupported]>;
+                                             OnChipSupported, HIVMPipelineV2]>;
 
 #endif // BISHENGIR_TARGET_NPU_NPUARCHITECTUREFEATURES_TD

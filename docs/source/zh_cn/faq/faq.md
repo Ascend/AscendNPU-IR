@@ -37,6 +37,15 @@
 - **bishengir测试**：`ninja check-bishengir`或`cmake --build . --target check-bishengir`
 - **LIT测试套**：`./bin/llvm-lit ../bishengir/test`（路径以实际仓库与构建目录为准）
 
+如需临时跳过带`REQUIRES: execution-engine`的用例（例如本地缺少`mlir-cpu-runner`运行时依赖），
+可设置环境变量，这些用例会被标记为UNSUPPORTED而不是失败：
+
+```bash
+BISHENGIR_SKIP_EXECUTION_ENGINE_TESTS=1 ninja check-bishengir
+# 或直接调用lit：
+BISHENGIR_SKIP_EXECUTION_ENGINE_TESTS=1 ./bin/llvm-lit ../bishengir/test
+```
+
 详见[安装与构建-运行测试](../introduction/quick_start/installing_guide.md#运行测试)。
 
 **Q：上板运行需要什么环境？**
