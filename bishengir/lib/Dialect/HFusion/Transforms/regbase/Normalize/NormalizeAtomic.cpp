@@ -116,6 +116,30 @@ struct HardwareAtomicStoreSnapshotSync : OpRewritePattern<hfusion::StoreOp> {
   }
 };
 
+/// A3 linalg atomics arrive as `hfusion.atomic_rmw`. Nothing after this pass
+/// treats that op differently from an atomic store: HIVM rewrites a result-free
+/// RMW into `hivm.store` with the same kind. Do that rewrite here so the store
+/// patterns above decompose software kinds and lock a returned GM snapshot.
+/// An SSA result is the old GM value and still lowers through HIVM.
+struct AtomicRMWToStore : OpRewritePattern<hfusion::AtomicRMWOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::AtomicRMWOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.getResults().empty())
+      return rewriter.notifyMatchFailure(
+          op, "result is the old GM value and is not a store");
+
+    auto store = rewriter.create<hfusion::StoreOp>(
+        op.getLoc(), ValueRange{op.getInput()}, ValueRange{op.getDst()});
+    store.setAtomicKindAttr(op.getAtomicKindAttr());
+    if (Attribute alreadySync = op->getAttr(kAtomicAlreadySync))
+      store->setAttr(kAtomicAlreadySync, alreadySync);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 } // namespace NormalizeAtomicOps
 
 void populateNormalizeAtomicPatterns(RewritePatternSet &patterns,
@@ -126,6 +150,7 @@ void populateNormalizeAtomicPatterns(RewritePatternSet &patterns,
     patterns.add<NormalizeAtomicOps::CAS>(ctx);
     patterns.add<NormalizeAtomicOps::XCHG>(ctx);
     patterns.add<NormalizeAtomicOps::HardwareAtomicStoreSnapshotSync>(ctx);
+    patterns.add<NormalizeAtomicOps::AtomicRMWToStore>(ctx);
   }
 }
 
