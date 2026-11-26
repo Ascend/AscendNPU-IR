@@ -123,12 +123,24 @@ RankedTensorType extractNonBatchType(RankedTensorType originType) {
                                originType.getElementType());
 }
 
+SmallVector<ReassociationIndices> getBatchReassociation(int64_t rank) {
+  SmallVector<ReassociationIndices> groups{{0, 1}};
+  for (int64_t i = 2; i < rank; ++i)
+    groups.push_back({i});
+  return groups;
+}
+
 Value extractTensorValueWithoutBatch(Location loc, Value originVal,
                                      Value batchIdx,
                                      PatternRewriter &rewriter) {
   auto originType = dyn_cast<RankedTensorType>(originVal.getType());
   assert(originType);
   auto extractType = extractNonBatchType(originType);
+  if (originType.getDimSize(0) == 1) {
+    return rewriter.createOrFold<tensor::CollapseShapeOp>(
+        loc, originVal, getBatchReassociation(originType.getRank()));
+  }
+
   // extract_slice offsets
   SmallVector<OpFoldResult> offsets(originType.getRank(),
                                     rewriter.getIndexAttr(0));
@@ -152,6 +164,12 @@ Value insertTensorValueWithoutBatch(Location loc, Value src, Value into,
                                     Value batchIdx, PatternRewriter &rewriter) {
   auto srcType = dyn_cast<RankedTensorType>(src.getType());
   assert(srcType);
+  auto dstType = cast<RankedTensorType>(into.getType());
+  if (dstType.getDimSize(0) == 1) {
+    // The single matrix fills the entire destination.
+    return rewriter.createOrFold<tensor::ExpandShapeOp>(
+        loc, dstType, src, getBatchReassociation(dstType.getRank()));
+  }
 
   SmallVector<OpFoldResult> offsets;
   offsets.push_back(batchIdx);
