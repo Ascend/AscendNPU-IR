@@ -6,8 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// For each 32-bit integer division whose divisor is a function argument (or a
-// tt.splat of one), this pass replaces the division with:
+// For each 32-bit integer division whose divisor is a function argument or an
+// arith.constant (or a tt.splat of either), this pass replaces the division
+// with:
 //
 //   shift = _mlir_ciface_simt_div_magic_shift_uint32_t(divisor)
 //   magic = _mlir_ciface_simt_div_magic_mul_uint32_t(divisor, shift)
@@ -28,8 +29,6 @@
 //     the dividend's own encoding.  BroadcastOp (which requires matching
 //     encodings on source and result) then broadcasts tensor<1xi32,#enc> to
 //     tensor<Nxi32,#enc>, giving element-wise magic multiply and shift.
-// Compile-time constant divisors are left to backend constant lowering, which
-// avoids runtime magic computation and shared-memory traffic.
 //
 //===----------------------------------------------------------------------===//
 
@@ -89,6 +88,20 @@ static BlockArgument getI32FuncArgDivisor(Value divisor) {
     if (ba.getType().isInteger(32) && isFuncArg(ba))
       return ba;
   return {};
+}
+
+/// Returns the compile-time i32 value if \p divisor is an arith.constant
+/// (direct or via tt.splat). Returns std::nullopt otherwise.
+static std::optional<int32_t> getI32ConstDivisor(Value divisor) {
+  Value scalar = divisor;
+  if (auto splat = divisor.getDefiningOp<SplatOp>())
+    scalar = splat.getSrc();
+  if (!scalar.getType().isInteger(32))
+    return std::nullopt;
+  if (auto constOp = scalar.getDefiningOp<arith::ConstantOp>())
+    if (auto intAttr = dyn_cast<IntegerAttr>(constOp.getValue()))
+      return static_cast<int32_t>(intAttr.getInt());
+  return std::nullopt;
 }
 
 /// Insert a private llvm.func declaration in the module if it does not exist.
@@ -180,13 +193,16 @@ public:
 
     // ------------------------------------------------------------------
     // 1. Walk the function and gather every 32-bit integer division or
-    //    remainder whose divisor traces back to a function argument.
+    //    remainder whose divisor traces back to a function argument or
+    //    an arith.constant.
     // ------------------------------------------------------------------
     struct DivRemWork {
       Operation *op;
       bool isTensor;
-      bool isRem; ///< true for remainder, false for division
-      BlockArgument divisorArg;
+      bool isConst;
+      bool isRem;               ///< true for remainder, false for division
+      BlockArgument divisorArg; ///< valid when !isConst
+      int32_t constVal;         ///< valid when isConst
     };
     SmallVector<DivRemWork> work;
 
@@ -216,7 +232,9 @@ public:
       }
 
       if (auto arg = getI32FuncArgDivisor(divisor))
-        work.push_back({op, isTensor, isRem, arg});
+        work.push_back({op, isTensor, /*isConst=*/false, isRem, arg, 0});
+      else if (auto cv = getI32ConstDivisor(divisor))
+        work.push_back({op, isTensor, /*isConst=*/true, isRem, {}, *cv});
     });
 
     if (work.empty())
@@ -245,14 +263,17 @@ public:
     // ------------------------------------------------------------------
     // 3. For each unique (divisor, rank) pair, emit local_alloc +
     //    call_scalar at the very start of the function entry block.
-    //    Deduplication is keyed by (argument number, tensor rank).
+    //    Deduplication is keyed by (argument number, tensor rank) for
+    //    func args, or (constant value, tensor rank) for constants.
     //    Different ranks need separate memdesc types so that the
     //    local_load result shape matches.
     // ------------------------------------------------------------------
     builder.setInsertionPointToStart(&func.getBody().front());
 
     using ArgKey = std::pair<unsigned, unsigned>;
+    using ConstKey = std::pair<int32_t, unsigned>;
     llvm::SmallDenseMap<ArgKey, MagicInfo> argToMagic;
+    llvm::SmallDenseMap<ConstKey, MagicInfo> constToMagic;
 
     // Emit the local_alloc + call_scalar pair for a given scalar i32 value.
     auto emitMagic = [&](Value scalarDivisor, unsigned rank) -> MagicInfo {
@@ -282,9 +303,18 @@ public:
       unsigned rank = 1;
       if (d.isTensor)
         rank = cast<RankedTensorType>(d.op->getResultTypes()[0]).getRank();
-      ArgKey key{d.divisorArg.getArgNumber(), rank};
-      if (!argToMagic.count(key))
-        argToMagic[key] = emitMagic(d.divisorArg, rank);
+      if (!d.isConst) {
+        ArgKey key{d.divisorArg.getArgNumber(), rank};
+        if (!argToMagic.count(key))
+          argToMagic[key] = emitMagic(d.divisorArg, rank);
+      } else {
+        ConstKey key{d.constVal, rank};
+        if (!constToMagic.count(key)) {
+          Value constV = builder.create<arith::ConstantOp>(
+              loc, builder.getIntegerAttr(i32Ty, d.constVal));
+          constToMagic[key] = emitMagic(constV, rank);
+        }
+      }
     }
 
     // ------------------------------------------------------------------
@@ -301,7 +331,9 @@ public:
       unsigned rank = 1;
       if (d.isTensor)
         rank = cast<RankedTensorType>(d.op->getResultTypes()[0]).getRank();
-      MagicInfo &mi = argToMagic[{d.divisorArg.getArgNumber(), rank}];
+      MagicInfo &mi = d.isConst
+                          ? constToMagic[{d.constVal, rank}]
+                          : argToMagic[{d.divisorArg.getArgNumber(), rank}];
       builder.setInsertionPoint(d.op);
       // Keep the source location of the original division so the expanded
       // magic-multiply sequence is attributed to the original line instead
