@@ -45,9 +45,22 @@ def BMU_Dialect : Dialect {
     only usable with an A6-enabled LLVM build (BSPUB_DAVINCI_BISHENGIR_A6).
   }];
   let cppNamespace = "::mlir::bmu";
-  let dependentDialects = ["::mlir::LLVM::LLVMDialect"];
+  let dependentDialects = ["::mlir::LLVM::LLVMDialect",
+                           "::mlir::hivm::HIVMDialect"];
   let useDefaultAttributePrinterParser = 1;
+  let useDefaultTypePrinterParser = 1;
 }
+
+//===----------------------------------------------------------------------===//
+// BMU buffer handle type.
+//===----------------------------------------------------------------------===//
+
+// A handle on an allocation: a ranked memref whose memory space is the HIVM
+// address space of the buffer (`#hivm.address_space<ub>` for UB, and so on), so
+// that the allocation is usable by memref and HIVM operations; or an i64 scalar
+// address for BT — BT is addressed by a value (proto "ULi") and has no address
+// space. The per-op verifier checks that the handle form matches the buffer.
+def BMU_BufferHandle : AnyTypeOf<[AnyMemRef, I64]>;
 
 //===----------------------------------------------------------------------===//
 // BMU base operation classes.

@@ -236,14 +236,16 @@ class ElementwiseTenaryInstrOp<string mnemonic,
 // Generic vector scalar binary arithmetic op.
 //
 class BinaryVecScalarOp<string mnemonic,
-  list<Trait> traits = [AllTypesMatch<["vec", "res"]>]> :
+  list<Trait> traits = [AllTypesMatch<["vec", "res"]>],
+  bit supportsBF16 = 0> :
   HIVMRegbaseIntrins_Op</*string opName=*/mnemonic,
                 /*list<int> overloadedResults=*/[0],
                 /*list<int> overloadedOperands=*/[],
                 /*list<Trait> traits=*/traits,
                 /*int numResults=*/1> {
   let arguments = (ins ValidVector:$vec,
-      AnyTypeOf<[I8, I16, I32, F16, F32]>:$scalar, predicateVector:$mask);
+      AnyTypeOf<!if(supportsBF16, [I8, I16, I32, BF16, F16, F32],
+                    [I8, I16, I32, F16, F32])>:$scalar, predicateVector:$mask);
   let results = (outs ValidVector:$res);
 }
 
@@ -3504,7 +3506,8 @@ def VaddsUXInstrOp : BinaryVecScalarOp<"hivm.vadds.u.x"> {
     A predicate (MASK) is provided to tell which elements are added in the two vectors.
   }];
 }
-def VaddsSXInstrOp : BinaryVecScalarOp<"hivm.vadds.s.x">;
+def VaddsSXInstrOp : BinaryVecScalarOp<"hivm.vadds.s.x",
+    [AllTypesMatch<["vec", "res"]>], 1>;
 def VaddsUMInstrOp : BinaryVecScalarOp<"hivm.vadds.u.m">;
 def VaddsSMInstrOp  : BinaryVecScalarOp<"hivm.vadds.s.m">;
 
@@ -3536,7 +3539,8 @@ def VmaxsUXInstrOp : BinaryVecScalarOp<"hivm.vmaxs.u.x"> {
     A predicate (MASK) is provided to tell which elements are involved in the two vectors.
   }];
 }
-def VmaxsSXInstrOp : BinaryVecScalarOp<"hivm.vmaxs.s.x">;
+def VmaxsSXInstrOp : BinaryVecScalarOp<"hivm.vmaxs.s.x",
+    [AllTypesMatch<["vec", "res"]>], 1>;
 def VmaxsUMInstrOp : BinaryVecScalarOp<"hivm.vmaxs.u.m">;
 def VmaxsSMInstrOp : BinaryVecScalarOp<"hivm.vmaxs.s.m">;
 
@@ -3548,7 +3552,8 @@ def VminsUXInstrOp : BinaryVecScalarOp<"hivm.vmins.u.x"> {
     A predicate (MASK) is provided to tell which elements are involved in the two vectors.
   }];
 }
-def VminsSXInstrOp : BinaryVecScalarOp<"hivm.vmins.s.x">;
+def VminsSXInstrOp : BinaryVecScalarOp<"hivm.vmins.s.x",
+    [AllTypesMatch<["vec", "res"]>], 1>;
 def VminsUMInstrOp : BinaryVecScalarOp<"hivm.vmins.u.m">;
 def VminsSMInstrOp : BinaryVecScalarOp<"hivm.vmins.s.m">;
 

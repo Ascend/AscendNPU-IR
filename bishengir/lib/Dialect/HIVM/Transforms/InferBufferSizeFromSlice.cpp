@@ -17,6 +17,7 @@
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -36,19 +37,19 @@ using namespace mlir::hivm;
 
 namespace {
 
-/// Mark the dst of a copy-like op (any CopyOpInterface, e.g. hivm.hir.copy,
-/// hivm.hir.load, memref.copy) with a buffer_size_in_byte upper bound derived
-/// from the op's src defining chain.
+/// Mark the dst of a shape-preserving HIVM elementwise op or a copy-like op
+/// with a buffer_size_in_byte upper bound derived from the op's source
+/// defining chain.
 struct BufferSizeUpperBoundPattern
-    : public OpInterfaceRewritePattern<CopyOpInterface> {
-  using OpInterfaceRewritePattern<CopyOpInterface>::OpInterfaceRewritePattern;
+    : public OpInterfaceRewritePattern<HIVMStructuredOp> {
+  using OpInterfaceRewritePattern<HIVMStructuredOp>::OpInterfaceRewritePattern;
 
   /// Trace `value`'s defining chain up to a statically-shaped ancestor and
   /// return its element count as a sound upper bound of `value`'s element
   /// count. Returns std::nullopt when no static ancestor can be reached.
   // TODO: Get rid of this ad-hoc tracing. Bind values to the dynamic dims of
   // extract_slice via the symbol dialect so sizes can be reused globally.
-  std::optional<int64_t> getNumElemsUpperBound(Value value) const {
+  static std::optional<int64_t> getNumElemsUpperBound(Value value) {
     auto shapedType = dyn_cast<ShapedType>(value.getType());
     if (shapedType && shapedType.hasStaticShape())
       return utils::getStaticTotalSize(shapedType.getShape());
@@ -60,11 +61,33 @@ struct BufferSizeUpperBoundPattern
     return std::nullopt;
   }
 
-  LogicalResult matchAndRewrite(CopyOpInterface op,
+  static bool isShapePreservingElementwise(HIVMStructuredOp structuredOp) {
+    return structuredOp.isElemwiseNaryOp() &&
+           !structuredOp.existInlineBroadcastLoopDims() &&
+           !structuredOp.existInlineTransposeLoopDims();
+  }
+
+  LogicalResult matchAndRewrite(HIVMStructuredOp op,
                                 PatternRewriter &rewriter) const override {
-    Value src = op.getSource();
-    Value dst = op.getTarget();
-    auto loc = op.getLoc();
+    bool isElementwise = isShapePreservingElementwise(op);
+    if (!isElementwise && !isa<CopyOpInterface>(*op))
+      return failure();
+
+    SmallVector<Value> sources;
+    auto inits = op.getDpsInits();
+    if (inits.size() != 1)
+      return failure();
+    for (Value source : op.getDpsInputs())
+      if (isa<ShapedType>(source.getType()))
+        sources.push_back(source);
+    Value dst = inits.front();
+    if (sources.empty())
+      return failure();
+
+    auto dstType = dyn_cast<ShapedType>(dst.getType());
+    if (!dstType)
+      return failure();
+
     // Idempotency: skip when dst already carries a buffer size mark, so the
     // clone below cannot re-trigger this pattern forever.
     if (utils::getAnnotateOpWithAttr(dst, utils::kBufferSizeInByteAttr))
@@ -75,23 +98,47 @@ struct BufferSizeUpperBoundPattern
             dst.getDefiningOp()))
       return failure();
     // dst must be dynamically-shaped to receive the buffer size mark.
-    auto shapedType = dyn_cast<ShapedType>(dst.getType());
-    if (!shapedType || shapedType.hasStaticShape())
+    if (!dstType || dstType.hasStaticShape())
       return failure();
 
+    // Prefer an existing source mark over a recomputed chain-derived bound.
+    std::optional<Value> markedSource;
+    for (Value source : sources) {
+      if (utils::getAnnotateOpWithAttr(source, utils::kBufferSizeInByteAttr)) {
+        markedSource = source;
+        break;
+      }
+    }
     rewriter.setInsertionPoint(op);
-    if (utils::cloneAnnotateOpWithAttr(rewriter, src, dst,
-                                       utils::kBufferSizeInByteAttr))
-      return success();
-    auto numElems = getNumElemsUpperBound(src);
+    if (markedSource) {
+      return utils::cloneAnnotateOpWithAttr(rewriter, *markedSource, dst,
+                                            utils::kBufferSizeInByteAttr)
+                 ? success()
+                 : failure();
+    }
+
+    std::optional<int64_t> numElems;
+    for (Value candidate : sources) {
+      auto candidateType = dyn_cast<ShapedType>(candidate.getType());
+      if (!candidateType ||
+          (isElementwise && candidateType.getRank() != dstType.getRank()))
+        continue;
+      auto candidateNumElems = getNumElemsUpperBound(candidate);
+      if (candidateNumElems.has_value()) {
+        numElems = candidateNumElems;
+        break;
+      }
+    }
+
     if (!numElems.has_value())
       return failure();
+
     // The byte size uses the dst element type: quantizing ops (e.g. an
     // F322F16 fixpipe) must bound the narrower dst buffer, not the wider src.
     int64_t elemBits = getElementTypeOrSelf(dst).getIntOrFloatBitWidth();
     int64_t sizeInBytes =
         llvm::divideCeil(numElems.value() * elemBits, utils::kBitsToByte);
-    auto markOp = rewriter.create<annotation::MarkOp>(loc, dst);
+    auto markOp = rewriter.create<annotation::MarkOp>(op.getLoc(), dst);
     markOp->setAttr(utils::kBufferSizeInByteAttr,
                     rewriter.getI64IntegerAttr(sizeInBytes));
     return success();

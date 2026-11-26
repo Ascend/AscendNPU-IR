@@ -1,4 +1,5 @@
 // RUN: bishengir-translate --mlir-to-llvmir -split-input-file %s | FileCheck %s
+// design: bmu#s.3.2.1
 
 // Test that BMU (an A6 feature) intrinsic wrappers export to llvm.hivm calls.
 // Non-BT buffers allocate/free a pointer in the buffer's address space; BT is

@@ -1165,3 +1165,192 @@ func.func @matmulFastmathCastChain(%a: tensor<16x16xf32>, %b: tensor<16x16xf32>)
   %up = hfusion.cast ins(%down : tensor<16x16xf16>) outs(%o : tensor<16x16xf32>) -> tensor<16x16xf32>
   return %up : tensor<16x16xf32>
 }
+
+// -----
+
+// CHECK-LABEL: @fp8RoundTripFeedingCompareKept
+// CHECK: %[[DOWN:.*]] = hfusion.cast ins(%[[ARG0:.*]] : tensor<f32>) outs(%{{.*}} : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+// CHECK: %[[UP:.*]] = hfusion.cast ins(%[[DOWN]] : tensor<f8E4M3FN>) outs(%{{.*}} : tensor<f32>) -> tensor<f32>
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%[[UP]], %{{.*}} : tensor<f32>, tensor<f32>)
+func.func @fp8RoundTripFeedingCompareKept(%arg0: tensor<f32>, %arg1: tensor<f32>) -> tensor<i1> {
+  %empty_f8 = tensor.empty() : tensor<f8E4M3FN>
+  %empty_f32 = tensor.empty() : tensor<f32>
+  %empty_i1 = tensor.empty() : tensor<i1>
+  %0 = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+  %1 = hfusion.cast ins(%0 : tensor<f8E4M3FN>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+  %2 = hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%1, %arg1 : tensor<f32>, tensor<f32>) outs(%empty_i1 : tensor<i1>) -> tensor<i1>
+  return %2 : tensor<i1>
+}
+
+// -----
+
+// CHECK-LABEL: @fp8E5M2RoundTripFeedingCompareKept
+// CHECK: %[[DOWN:.*]] = hfusion.cast ins(%[[ARG0:.*]] : tensor<f32>) outs(%{{.*}} : tensor<f8E5M2>) -> tensor<f8E5M2>
+// CHECK: %[[UP:.*]] = hfusion.cast ins(%[[DOWN]] : tensor<f8E5M2>) outs(%{{.*}} : tensor<f32>) -> tensor<f32>
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%[[UP]], %{{.*}} : tensor<f32>, tensor<f32>)
+func.func @fp8E5M2RoundTripFeedingCompareKept(%arg0: tensor<f32>, %arg1: tensor<f32>) -> tensor<i1> {
+  %empty_f8 = tensor.empty() : tensor<f8E5M2>
+  %empty_f32 = tensor.empty() : tensor<f32>
+  %empty_i1 = tensor.empty() : tensor<i1>
+  %0 = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E5M2>) -> tensor<f8E5M2>
+  %1 = hfusion.cast ins(%0 : tensor<f8E5M2>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+  %2 = hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%1, %arg1 : tensor<f32>, tensor<f32>) outs(%empty_i1 : tensor<i1>) -> tensor<i1>
+  return %2 : tensor<i1>
+}
+
+// -----
+
+// CHECK-LABEL: @fp8E4M3FNUZRoundTripFeedingCompareKept
+// CHECK: %[[DOWN:.*]] = hfusion.cast ins(%[[ARG0:.*]] : tensor<f32>) outs(%{{.*}} : tensor<f8E4M3FNUZ>) -> tensor<f8E4M3FNUZ>
+// CHECK: %[[UP:.*]] = hfusion.cast ins(%[[DOWN]] : tensor<f8E4M3FNUZ>) outs(%{{.*}} : tensor<f32>) -> tensor<f32>
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%[[UP]], %{{.*}} : tensor<f32>, tensor<f32>)
+func.func @fp8E4M3FNUZRoundTripFeedingCompareKept(%arg0: tensor<f32>, %arg1: tensor<f32>) -> tensor<i1> {
+  %empty_f8 = tensor.empty() : tensor<f8E4M3FNUZ>
+  %empty_f32 = tensor.empty() : tensor<f32>
+  %empty_i1 = tensor.empty() : tensor<i1>
+  %0 = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E4M3FNUZ>) -> tensor<f8E4M3FNUZ>
+  %1 = hfusion.cast ins(%0 : tensor<f8E4M3FNUZ>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+  %2 = hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%1, %arg1 : tensor<f32>, tensor<f32>) outs(%empty_i1 : tensor<i1>) -> tensor<i1>
+  return %2 : tensor<i1>
+}
+
+// -----
+
+// CHECK-LABEL: @fp8ThenBf16RoundTripFeedingCompareKept
+// CHECK: %[[FP8:.*]] = hfusion.cast ins(%[[ARG0:.*]] : tensor<f32>) outs(%{{.*}} : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+// CHECK: %[[BF16:.*]] = hfusion.cast ins(%[[FP8]] : tensor<f8E4M3FN>) outs(%{{.*}} : tensor<bf16>) -> tensor<bf16>
+// CHECK: %[[F32:.*]] = hfusion.cast ins(%[[BF16]] : tensor<bf16>) outs(%{{.*}} : tensor<f32>) -> tensor<f32>
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%[[F32]], %{{.*}} : tensor<f32>, tensor<f32>)
+func.func @fp8ThenBf16RoundTripFeedingCompareKept(%arg0: tensor<f32>, %arg1: tensor<f32>) -> tensor<i1> {
+  %empty_f8 = tensor.empty() : tensor<f8E4M3FN>
+  %empty_bf16 = tensor.empty() : tensor<bf16>
+  %empty_f32 = tensor.empty() : tensor<f32>
+  %empty_i1 = tensor.empty() : tensor<i1>
+  %0 = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+  %1 = hfusion.cast ins(%0 : tensor<f8E4M3FN>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
+  %2 = hfusion.cast ins(%1 : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+  %3 = hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%2, %arg1 : tensor<f32>, tensor<f32>) outs(%empty_i1 : tensor<i1>) -> tensor<i1>
+  return %3 : tensor<i1>
+}
+
+// -----
+
+// CHECK-LABEL: @fp8RoundTripNotFeedingCompareKept
+// CHECK: %[[DOWN:.*]] = hfusion.cast ins(%{{.*}} : tensor<f32>) outs(%{{.*}} : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+// CHECK: %[[UP:.*]] = hfusion.cast ins(%[[DOWN]] : tensor<f8E4M3FN>) outs(%{{.*}} : tensor<f32>) -> tensor<f32>
+// CHECK: return %[[UP]] : tensor<f32>
+func.func @fp8RoundTripNotFeedingCompareKept(%arg0: tensor<f32>) -> tensor<f32> {
+  %empty_f8 = tensor.empty() : tensor<f8E4M3FN>
+  %empty_f32 = tensor.empty() : tensor<f32>
+  %0 = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+  %1 = hfusion.cast ins(%0 : tensor<f8E4M3FN>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+  return %1 : tensor<f32>
+}
+
+// -----
+
+// CHECK-LABEL: @contractFP8RoundTripFeedingCompareFolds
+// CHECK-NOT: hfusion.cast
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%[[ARG0:.*]], %{{.*}} : tensor<f32>, tensor<f32>)
+func.func @contractFP8RoundTripFeedingCompareFolds(%arg0: tensor<f32>, %arg1: tensor<f32>) -> tensor<i1> {
+  %empty_f8 = tensor.empty() : tensor<f8E4M3FN>
+  %empty_f32 = tensor.empty() : tensor<f32>
+  %empty_i1 = tensor.empty() : tensor<i1>
+  %0 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+  %1 = hfusion.cast ins(%0 : tensor<f8E4M3FN>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+  %2 = hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%1, %arg1 : tensor<f32>, tensor<f32>) outs(%empty_i1 : tensor<i1>) -> tensor<i1>
+  return %2 : tensor<i1>
+}
+
+// -----
+
+// CHECK-LABEL: @fp8RoundTripTwoCompareUsesKept
+// CHECK: %[[DOWN:.*]] = hfusion.cast ins(%[[ARG0:.*]] : tensor<f32>) outs(%{{.*}} : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+// CHECK: %[[UP:.*]] = hfusion.cast ins(%[[DOWN]] : tensor<f8E4M3FN>) outs(%{{.*}} : tensor<f32>) -> tensor<f32>
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%[[UP]], %{{.*}} : tensor<f32>, tensor<f32>)
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%[[UP]], %{{.*}} : tensor<f32>, tensor<f32>)
+func.func @fp8RoundTripTwoCompareUsesKept(%arg0: tensor<f32>, %arg1: tensor<f32>) -> (tensor<i1>, tensor<i1>) {
+  %empty_f8 = tensor.empty() : tensor<f8E4M3FN>
+  %empty_f32 = tensor.empty() : tensor<f32>
+  %empty_i1 = tensor.empty() : tensor<i1>
+  %0 = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+  %1 = hfusion.cast ins(%0 : tensor<f8E4M3FN>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+  %2 = hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%1, %arg1 : tensor<f32>, tensor<f32>) outs(%empty_i1 : tensor<i1>) -> tensor<i1>
+  %3 = hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%1, %arg1 : tensor<f32>, tensor<f32>) outs(%empty_i1 : tensor<i1>) -> tensor<i1>
+  return %2, %3 : tensor<i1>, tensor<i1>
+}
+
+// -----
+
+// CHECK-LABEL: @bf16RoundTripFeedingCompareKept
+// CHECK: %[[DOWN:.*]] = hfusion.cast ins(%[[ARG0:.*]] : tensor<f32>) outs(%{{.*}} : tensor<bf16>) -> tensor<bf16>
+// CHECK: %[[UP:.*]] = hfusion.cast ins(%[[DOWN]] : tensor<bf16>) outs(%{{.*}} : tensor<f32>) -> tensor<f32>
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%[[UP]], %{{.*}} : tensor<f32>, tensor<f32>)
+func.func @bf16RoundTripFeedingCompareKept(%arg0: tensor<f32>, %arg1: tensor<f32>) -> tensor<i1> {
+  %empty_bf16 = tensor.empty() : tensor<bf16>
+  %empty_f32 = tensor.empty() : tensor<f32>
+  %empty_i1 = tensor.empty() : tensor<i1>
+  %0 = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
+  %1 = hfusion.cast ins(%0 : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+  %2 = hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%1, %arg1 : tensor<f32>, tensor<f32>) outs(%empty_i1 : tensor<i1>) -> tensor<i1>
+  return %2 : tensor<i1>
+}
+
+// -----
+
+// CHECK-LABEL: @fp8AddChainFeedingCompareKept
+// CHECK: %[[ADD0:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[ARG0:.*]], %{{.*}} : tensor<f32>, tensor<f32>) outs(%{{.*}} : tensor<f32>) -> tensor<f32>
+// CHECK: %[[NARROW0:.*]] = hfusion.cast ins(%[[ADD0]] : tensor<f32>) outs(%{{.*}} : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+// CHECK: %[[WIDEN0:.*]] = hfusion.cast ins(%[[NARROW0]] : tensor<f8E4M3FN>) outs(%{{.*}} : tensor<f32>) -> tensor<f32>
+// CHECK: %[[ADD1:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[WIDEN0]], %{{.*}} : tensor<f32>, tensor<f32>) outs(%{{.*}} : tensor<f32>) -> tensor<f32>
+// CHECK: %[[NARROW1:.*]] = hfusion.cast ins(%[[ADD1]] : tensor<f32>) outs(%{{.*}} : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+// CHECK: %[[WIDEN1:.*]] = hfusion.cast ins(%[[NARROW1]] : tensor<f8E4M3FN>) outs(%{{.*}} : tensor<f32>) -> tensor<f32>
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vge>} ins(%[[WIDEN1]], %{{.*}} : tensor<f32>, tensor<f32>)
+func.func @fp8AddChainFeedingCompareKept(%arg0: tensor<f32>, %arg1: tensor<f32>, %arg2: tensor<f32>, %arg3: tensor<f32>) -> tensor<i1> {
+  %empty_f32_0 = tensor.empty() : tensor<f32>
+  %add0 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%arg0, %arg1 : tensor<f32>, tensor<f32>) outs(%empty_f32_0 : tensor<f32>) -> tensor<f32>
+  %empty_f8_0 = tensor.empty() : tensor<f8E4M3FN>
+  %narrow0 = hfusion.cast ins(%add0 : tensor<f32>) outs(%empty_f8_0 : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+  %empty_f32_1 = tensor.empty() : tensor<f32>
+  %widen0 = hfusion.cast ins(%narrow0 : tensor<f8E4M3FN>) outs(%empty_f32_1 : tensor<f32>) -> tensor<f32>
+  %empty_f32_2 = tensor.empty() : tensor<f32>
+  %add1 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%widen0, %arg2 : tensor<f32>, tensor<f32>) outs(%empty_f32_2 : tensor<f32>) -> tensor<f32>
+  %empty_f8_1 = tensor.empty() : tensor<f8E4M3FN>
+  %narrow1 = hfusion.cast ins(%add1 : tensor<f32>) outs(%empty_f8_1 : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+  %empty_f32_3 = tensor.empty() : tensor<f32>
+  %widen1 = hfusion.cast ins(%narrow1 : tensor<f8E4M3FN>) outs(%empty_f32_3 : tensor<f32>) -> tensor<f32>
+  %empty_i1 = tensor.empty() : tensor<i1>
+  %cmp = hfusion.compare {compare_fn = #hfusion.compare_fn<vge>} ins(%widen1, %arg3 : tensor<f32>, tensor<f32>) outs(%empty_i1 : tensor<i1>) -> tensor<i1>
+  return %cmp : tensor<i1>
+}
+
+// -----
+
+// CHECK-LABEL: @fp8RoundTripFeedingNonCompareFolds
+// CHECK: hfusion.cast ins(%[[ARG0:.*]] : tensor<f32>) outs(%{{.*}} : tensor<f64>) -> tensor<f64>
+// CHECK: return
+func.func @fp8RoundTripFeedingNonCompareFolds(%arg0: tensor<f32>) -> tensor<f64> {
+  %empty_f8 = tensor.empty() : tensor<f8E4M3FN>
+  %empty_f32 = tensor.empty() : tensor<f32>
+  %empty_f64 = tensor.empty() : tensor<f64>
+  %0 = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+  %1 = hfusion.cast ins(%0 : tensor<f8E4M3FN>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+  %2 = hfusion.cast ins(%1 : tensor<f32>) outs(%empty_f64 : tensor<f64>) -> tensor<f64>
+  return %2 : tensor<f64>
+}
+
+// -----
+
+// CHECK-LABEL: @contractUpcastFP8RoundTripFeedingCompareKept
+// CHECK: %[[DOWN:.*]] = hfusion.cast ins(%{{.*}} : tensor<f32>) outs(%{{.*}} : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+// CHECK: %[[UP:.*]] = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%[[DOWN]] : tensor<f8E4M3FN>) outs(%{{.*}} : tensor<f32>) -> tensor<f32>
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%[[UP]], %{{.*}} : tensor<f32>, tensor<f32>)
+func.func @contractUpcastFP8RoundTripFeedingCompareKept(%arg0: tensor<f32>, %arg1: tensor<f32>) -> tensor<i1> {
+  %empty_f8 = tensor.empty() : tensor<f8E4M3FN>
+  %empty_f32 = tensor.empty() : tensor<f32>
+  %empty_i1 = tensor.empty() : tensor<i1>
+  %0 = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+  %1 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%0 : tensor<f8E4M3FN>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+  %2 = hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%1, %arg1 : tensor<f32>, tensor<f32>) outs(%empty_i1 : tensor<i1>) -> tensor<i1>
+  return %2 : tensor<i1>
+}

@@ -299,6 +299,70 @@ static bool hasFastMathContract(CastOp op) {
   return mlir::arith::bitEnumContainsAll(flags, FastMathFlags::contract);
 }
 
+// Returns true when the value affects a comparison, possibly through casts,
+// view-only tensor operations, or elementwise operations.
+static bool reachesCompare(Value root) {
+  SmallVector<Value> worklist{root};
+  llvm::SmallPtrSet<Value, 8> seen;
+
+  while (!worklist.empty()) {
+    Value value = worklist.pop_back_val();
+    if (!seen.insert(value).second)
+      continue;
+
+    for (OpOperand &use : value.getUses()) {
+      Operation *user = use.getOwner();
+      if (isa<CompareOp>(user))
+        return true;
+
+      if (isa<CastOp, tensor::ExpandShapeOp, tensor::CollapseShapeOp,
+              tensor::ReshapeOp>(user)) {
+        llvm::append_range(worklist, user->getResults());
+        continue;
+      }
+
+      if (auto elementwise = dyn_cast<DestinationStyleOpInterface>(user)) {
+        if (elementwise.isDpsInput(&use) &&
+            isa<linalg::ElemwiseUnaryOp, linalg::ElemwiseBinaryOp,
+                hfusion::ElemwiseUnaryOp, hfusion::ElemwiseBinaryOp>(user))
+          llvm::append_range(worklist, user->getResults());
+      }
+    }
+  }
+
+  return false;
+}
+
+// Checks for a floating-point narrowing followed by a widening before a
+// comparison. Mantissa widths cover types such as FP8 that are intentionally
+// outside the generic floating-point precision-rank policy.
+static bool hasLossyFloatCastChainBeforeCompare(ArrayRef<CastOp> castChain) {
+  if (!reachesCompare(castChain.front()->getResult(0)))
+    return false;
+
+  bool hasNarrowing = false;
+  for (CastOp castOp : llvm::reverse(castChain)) {
+    auto inputType = dyn_cast<FloatType>(
+        getElementTypeOrSelf(castOp.getInputs().front().getType()));
+    auto outputType = dyn_cast<FloatType>(
+        getElementTypeOrSelf(castOp.getOutputs().front().getType()));
+    if (!inputType || !outputType)
+      continue;
+
+    if (outputType.getFPMantissaWidth() < inputType.getFPMantissaWidth() &&
+        !hasFastMathContract(castOp)) {
+      hasNarrowing = true;
+      continue;
+    }
+
+    if (outputType.getFPMantissaWidth() > inputType.getFPMantissaWidth() &&
+        hasNarrowing && !hasFastMathContract(castOp))
+      return true;
+  }
+
+  return false;
+}
+
 // Check if the chain has a precision down-then-up pattern.
 static bool hasPrecisionDownUpPattern(ArrayRef<CastOp> chain) {
   if (chain.size() < 2)
@@ -411,6 +475,8 @@ getCastChainBlockReason(ArrayRef<CastOp> castChain) {
   // precision policy.
   if (crossesIntegerDomain(castChain))
     return CastChainBlockReason::CrossDomainWithoutIntegrality;
+  if (hasLossyFloatCastChainBeforeCompare(castChain))
+    return CastChainBlockReason::FloatPrecisionLoss;
   if (hasPrecisionDownUpPattern(castChain) &&
       !allHaveFastMathContract(castChain))
     return CastChainBlockReason::FloatPrecisionLoss;

@@ -108,7 +108,8 @@ class AVE_TenaryOp<string mnemonic, list<Trait> traits = []> :
   }];
 }
 
-class AVE_VecScalarOp<string mnemonic, list<Trait> traits = []> :
+class AVE_VecScalarOp<string mnemonic, list<Trait> traits = [],
+                       bit supportsBF16 = 0> :
     AVE_LibFnOp<mnemonic, !listconcat(traits, [
       Pure,
       AVEElementwiseOpInterface,
@@ -118,7 +119,8 @@ class AVE_VecScalarOp<string mnemonic, list<Trait> traits = []> :
     ])> {
   let summary = "Ave vector-scalar op " # mnemonic # ".";
   let arguments = (ins AveExtValidVector:$vec,
-      AnyTypeOf<[I8, I16, I32, I64, F16, F32]>:$scalar, AveMaskType:$mask);
+      AnyTypeOf<!if(supportsBF16, [I8, I16, I32, I64, BF16, F16, F32],
+                    [I8, I16, I32, I64, F16, F32])>:$scalar, AveMaskType:$mask);
   let results = (outs AveExtValidVector:$out);
 
   let assemblyFormat = [{
@@ -433,7 +435,10 @@ def AVE_VFCmpOp : AVE_LibFnOp<"vcmp", [
   let extraClassDeclaration = opNameDeclaration;
 }
 
-def AVE_VFCmpS : AVE_LibFnOp<"vcmps", [Pure,DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>]> {
+def AVE_VFCmpS : AVE_LibFnOp<"vcmps", [Pure,
+    TypesMatchWith<"the scalar should have the same type with the vector's element type",
+                   "vec", "scalar", "getElementType($_self)">,
+    DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>]> {
   let summary = "Compare vector with scalar operation for AVE.";
   let arguments = (ins AVE_CmpTypeAttr:$cmp,
                        AveExtValidVector:$vec,
@@ -1111,11 +1116,11 @@ def AVE_VcpaddOp
 def AVE_VsqzOp
     : AVE_LibFnOp<"vsqz", [AllTypesMatch<["src", "res"]>]> {
   let summary = "AVE squeeze selected lanes toward the low lanes.";
-  let arguments = (ins AveVector<[I8, I16, I32, F16, F32]>:$src,
+  let arguments = (ins AveVector<[I8, I16, I32, BF16, F16, F32]>:$src,
                        AveMaskType:$mask,
                        DefaultValuedAttr<AVE_SqueezeStoreModeAttr,
                                          "SqueezeStoreMode::STORED">:$squeeze_store);
-  let results = (outs AveVector<[I8, I16, I32, F16, F32]>:$res);
+  let results = (outs AveVector<[I8, I16, I32, BF16, F16, F32]>:$res);
   let assemblyFormat = [{
     $src `,` $mask attr-dict `:` type($src) `,` type($mask)
   }];
@@ -1199,7 +1204,7 @@ def AVE_VNmsubOp : AVE_TenaryOp<"vnmsub">;
 //// Vector-Scalar Ops
 //
 //  vadds/vmuls/vlrelu/vmaxs/vmins/vshls/vshrs/vrnds/vsadds
-def AVE_VFAddsOp : AVE_VecScalarOp<"vadds", [DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>]>{
+def AVE_VFAddsOp : AVE_VecScalarOp<"vadds", [DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>], 1>{
   let hasCanonicalizer = 1;
   let extraClassDeclaration = opNameDeclaration;
 }
@@ -1212,11 +1217,11 @@ def AVE_VFLRelusOp : AVE_VecScalarOp<"vlrelus", [DeclareOpInterfaceMethods<AVELi
   let extraClassDeclaration = opNameDeclaration;
 }
 
-def AVE_VFMaxsOp : AVE_VecScalarOp<"vmaxs", [DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>]>{
+def AVE_VFMaxsOp : AVE_VecScalarOp<"vmaxs", [DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>], 1>{
   let extraClassDeclaration = opNameDeclaration;
 }
 
-def AVE_VFMinsOp : AVE_VecScalarOp<"vmins", [DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>]>{
+def AVE_VFMinsOp : AVE_VecScalarOp<"vmins", [DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>], 1>{
   let extraClassDeclaration = opNameDeclaration;
 }
 

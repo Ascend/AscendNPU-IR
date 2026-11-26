@@ -28,6 +28,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/Utils/MemRefUtils.h"
 #include "mlir/IR/Visitors.h"
+#include "llvm/ADT/SetVector.h"
 
 #define DEBUG_TYPE "memref-dse"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
@@ -42,11 +43,9 @@ namespace mlir {
 using namespace mlir;
 
 namespace {
-struct MemrefDeadStoreElimination
-    : public impl::MemrefDeadStoreEliminationOpBase<
-          MemrefDeadStoreElimination> {
-  using Base::Base;
-  void runOnOperation() override;
+class FunctionDSE {
+public:
+  void run(func::FuncOp funcOp);
 
 private:
   void handleMemoryWriteOp(
@@ -145,65 +144,79 @@ private:
   // forward loaded value if the stored value is the last changes applied to the
   // operand.
   void storeToLoadForwarding(memref::LoadOp loadOp) {
-    // no forwardable store to load
-    if (!loadedOp.contains(loadOp))
+    auto it = loadedOp.find(loadOp);
+    if (it == loadedOp.end())
       return;
 
-    auto storeOp = loadedOp[loadOp];
+    memref::StoreOp storeOp = it->second;
     LDBG("forwarding " << storeOp.getValue() << " to " << loadOp);
     loadOp.replaceAllUsesWith(storeOp.getValue());
-    loadOp.erase();
+    opsToErase.insert(loadOp);
   }
 
-  // erase load if the users of the result and outs are not used
-  // no read uses of the alloc should be after the load
-  void eraseUnusedLoad() {
+  // Collect HIVM loads writing to a local alloc with no subsequent reads.
+  void collectUnusedLoads() {
     for (auto [allocIdx, users] : llvm::enumerate(analyzer.OpsOfAlloc)) {
-      if (users.empty())
-        continue;
-
-      // only removes write from local allocation
-      if (!isa<memref::AllocOp>(users.front()))
+      if (users.empty() || !isa<memref::AllocOp>(users.front()))
         continue;
 
       while (!users.empty()) {
-        auto loadOp = dyn_cast<hivm::LoadOp>(users.back());
+        Operation *op = users.back();
+        if (opsToErase.contains(op)) {
+          users.pop_back();
+          continue;
+        }
+
+        auto loadOp = dyn_cast<hivm::LoadOp>(op);
         if (!loadOp || !loadOp->use_empty())
           break;
 
-        // remove LoadOp if stored value is unused
-        if (static_cast<const int>(allocIdx) !=
+        if (static_cast<int>(allocIdx) !=
             analyzer.valueToIndexMap.at(
                 analyzer.getAllocOf(loadOp.getTarget())))
           break;
 
-        LDBG("erasing unusedOp " << *loadOp);
+        LDBG("marking unused load for erasure " << *loadOp);
         users.pop_back();
-        loadOp->erase();
+        opsToErase.insert(loadOp);
       }
     }
   }
 
   DenseMap<memref::LoadOp, memref::StoreOp> loadedOp;
   utils::ValueDependencyAnalyzer analyzer;
+  llvm::SmallSetVector<Operation *, 16> opsToErase;
+};
+
+struct MemrefDeadStoreElimination
+    : public impl::MemrefDeadStoreEliminationOpBase<
+          MemrefDeadStoreElimination> {
+  using Base::Base;
+  void runOnOperation() override;
 };
 } // namespace
 
-void MemrefDeadStoreElimination::runOnOperation() {
-  func::FuncOp funcOp = getOperation();
-
-  // analyze forwardable store to load
+void FunctionDSE::run(func::FuncOp funcOp) {
   analyzeForwardableStore(funcOp);
   LDBG("Finish analyzing");
 
-  // forwarding store to load
   funcOp->walk(
       [this](memref::LoadOp loadOp) { storeToLoadForwarding(loadOp); });
   LDBG("Finish forwarding");
 
-  // regbase-only
-  if (hacc::utils::isRegBasedArch(funcOp->getParentOfType<ModuleOp>())) {
-    eraseUnusedLoad();
+  if (hacc::utils::isRegBasedArch(funcOp->getParentOfType<ModuleOp>()))
+    collectUnusedLoads();
+
+  // Keep the operation pointers in the analyzer valid until collection ends.
+  for (Operation *op : opsToErase)
+    op->erase();
+}
+
+void MemrefDeadStoreElimination::runOnOperation() {
+  func::FuncOp funcOp = getOperation();
+  {
+    FunctionDSE dse;
+    dse.run(funcOp);
   }
 
   IRRewriter rewriter(&getContext());
