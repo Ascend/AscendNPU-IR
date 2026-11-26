@@ -29,18 +29,30 @@ public:
   void runOnOperation() override;
 };
 
+/// Returns the innermost `scf::ForOp` marked as a reduction loop that encloses
+/// `op`, or nullptr when `op` is not enclosed by any reduction loop.
+static Operation *getEnclosingReductionLoop(Operation *op) {
+  for (Operation *parent = op->getParentOp(); parent;
+       parent = parent->getParentOp()) {
+    if (isa<scf::ForOp>(parent) && parent->hasAttr("reductionLoop"))
+      return parent;
+  }
+  return nullptr;
+}
+
 static void removeMaskOfReadOp(IRRewriter &rewriter, Value operand, bool operandIsLhs,
                                scf::ForOp reductionLoop, std::optional<bool> &isLhsSelected,
                                Value &selectMask, vector::TransferWriteOp &reductionInitWriteOp,
                                int &reductionInitIdxInLoopIterArgs) {
-  auto maskOp = dyn_cast<vector::MaskOp>(operand.getDefiningOp());
+  auto maskOp = dyn_cast_or_null<vector::MaskOp>(operand.getDefiningOp());
   if (!maskOp)
       return;
   Operation *maskedOp = maskOp.getMaskableOp();
   auto readOp = dyn_cast<vector::TransferReadOp>(maskedOp);
   if (!readOp)
     return;
-  auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(readOp.getSource().getDefiningOp());
+  auto extractSliceOp = dyn_cast_or_null<tensor::ExtractSliceOp>(
+      readOp.getSource().getDefiningOp());
   if (!extractSliceOp)
     return;
   auto loopIterArgs = reductionLoop.getRegionIterArgs();
@@ -80,7 +92,12 @@ static void insertSelectBeforeReductionAndRemoveMask(
   if (!isLhsSelected.has_value())
     removeMaskOfReadOp(rewriter, rhs, /*operandIsLhs*/false, reductionLoop, isLhsSelected,
                        selectMask, reductionInitWriteOp, reductionInitIdxInLoopIterArgs);
-  assert(isLhsSelected.has_value());
+  // Neither operand matches the expected masked-read-of-reduction-init pattern,
+  // so `reductionInitWriteOp` is still null and there is nothing to rewrite.
+  // `removeMaskOfReadOp` only mutates the IR after it has set `isLhsSelected`,
+  // hence bailing out here leaves the IR untouched.
+  if (!isLhsSelected.has_value())
+    return;
   OpBuilder::InsertionGuard guard(rewriter);
   rewriter.setInsertionPoint(reductionOp);
   Value select = rewriter.create<arith::SelectOp>(
@@ -88,11 +105,13 @@ static void insertSelectBeforeReductionAndRemoveMask(
       reductionInitWriteOp.getVector());
   reductionOp->setOperand(*isLhsSelected ? 0 : 1, select);
 
+  if (reductionOp->use_empty())
+    return;
   Operation *userOp = *reductionOp->getUsers().begin();
   if (auto writeOp = dyn_cast<vector::TransferWriteOp>(userOp)) {
     if (writeOp.isMasked()) {
       auto maskOp = writeOp.getMaskingOp();
-      if (auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(
+      if (auto extractSliceOp = dyn_cast_or_null<tensor::ExtractSliceOp>(
               writeOp.getSource().getDefiningOp())) {
         auto loopIterArgs = reductionLoop.getRegionIterArgs();
         assert(extractSliceOp.getSource() == loopIterArgs[reductionInitIdxInLoopIterArgs]);
@@ -184,9 +203,14 @@ void RemoveMaskFromUnalignedReductionLoopPass::runOnOperation() {
 
     SmallVector<Operation *> reductionOps;
     forOp.walk([&](Operation *op) {
-      if (op->hasAttr("reductionOp")) {
-        reductionOps.push_back(op);
-      }
+      if (!op->hasAttr("reductionOp"))
+        return;
+      // `walk` also enters nested reduction loops. A nested reduction op is
+      // rewritten against its own loop, matching it against `forOp` would fail
+      // and must not be attempted here.
+      if (getEnclosingReductionLoop(op) != forOp.getOperation())
+        return;
+      reductionOps.push_back(op);
     });
     for (Operation *reductionOp : reductionOps) {
       insertSelectBeforeReductionAndRemoveMask(rewriter, reductionOp, forOp);
@@ -196,7 +220,7 @@ void RemoveMaskFromUnalignedReductionLoopPass::runOnOperation() {
   func.walk([&](Operation *reductionOp) {
     if (!reductionOp->hasAttr("reductionOp"))
       return;
-    if (reductionOp->getParentOp()->hasAttr("reductionLoop"))
+    if (getEnclosingReductionLoop(reductionOp))
       return;
     Value lhs = reductionOp->getOperand(0);
     Value rhs = reductionOp->getOperand(1);
@@ -238,6 +262,8 @@ void RemoveMaskFromUnalignedReductionLoopPass::runOnOperation() {
         }
       }
     }
+    if (reductionOp->use_empty())
+      return;
     Operation *user = *reductionOp->getUsers().begin();
     if (auto userWriteOp = dyn_cast_or_null<vector::TransferWriteOp>(user)) {
       if (userWriteOp.isMasked()) {
