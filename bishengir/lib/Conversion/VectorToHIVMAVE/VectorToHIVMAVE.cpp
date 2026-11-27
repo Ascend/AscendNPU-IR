@@ -33,6 +33,7 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/Support/MathExtras.h"
 #include <algorithm>
 #include <cstddef>
@@ -252,7 +253,8 @@ restoreSourceMaskBounds(AffineMap permutationMap,
 }
 
 // Recover the rectangle in the producer's own shape.
-static SmallVector<int64_t> getMaskBoundsInProducerShape(Value mask) {
+static SmallVector<int64_t> getMaskBoundsInProducerShape(
+    Value mask, llvm::function_ref<std::optional<int64_t>(Value)> getBound) {
   SmallVector<int64_t> bounds;
   if (auto constMask = mask.getDefiningOp<vector::ConstantMaskOp>()) {
     for (Attribute dimSize : constMask.getMaskDimSizes())
@@ -260,7 +262,7 @@ static SmallVector<int64_t> getMaskBoundsInProducerShape(Value mask) {
   } else if (auto createMask = mask.getDefiningOp<vector::CreateMaskOp>()) {
     for (auto [operand, size] :
          llvm::zip(createMask.getOperands(), createMask.getType().getShape())) {
-      auto bound = getConstantIntValue(operand);
+      auto bound = getBound(operand);
       if (!bound)
         return {};
       bounds.push_back(std::clamp<int64_t>(*bound, 0, size));
@@ -313,7 +315,8 @@ getMaskBoundsInSourceShape(Value mask, VectorType maskType,
       producerType.getNumElements() != maskType.getNumElements())
     return {};
 
-  auto bounds = getMaskBoundsInProducerShape(mask);
+  auto bounds =
+      getMaskBoundsInProducerShape(mask, hivmave::getConstantIntValue);
   if (bounds.empty())
     return {};
   if (producerType != maskType) {
@@ -735,13 +738,211 @@ struct TransferReadOpPattern : public OpRewritePattern<vector::TransferReadOp> {
   }
 };
 
+// A call-site tag describes only one invocation. A local constant, including
+// either nonnegative constant operand of minui, bounds every invocation.
+static std::optional<int64_t> getStoreMaskUpperBound(Value count) {
+  if (auto min = count.getDefiningOp<arith::MinUIOp>()) {
+    std::optional<int64_t> upper;
+    for (Value operand : min.getOperands())
+      if (auto cst = mlir::getConstantIntValue(operand);
+          cst && *cst >= 0 && (!upper || *cst < *upper))
+        upper = cst;
+    return upper;
+  }
+  return mlir::getConstantIntValue(count);
+}
+
+// The returned end bounds all active flat lanes, including holes in a
+// rectangular mask. A shape cast preserves that bound.
+static std::optional<int64_t> getStaticStoreMaskEnd(Value mask) {
+  if (!mask)
+    return std::nullopt;
+  while (Operation *def = mask.getDefiningOp()) {
+    if (def->getNumOperands() != 1 ||
+        !(isa<vector::ShapeCastOp, UnrealizedConversionCastOp>(def) ||
+          def->getName().getStringRef() == "annotation.mark"))
+      break;
+    auto source = dyn_cast<VectorType>(def->getOperand(0).getType());
+    if (!source || !source.getElementType().isInteger(1) ||
+        source.getNumElements() !=
+            cast<VectorType>(mask.getType()).getNumElements())
+      break;
+    mask = def->getOperand(0);
+  }
+  if (auto pge = mask.getDefiningOp<VFPgeOp>()) {
+    if (pge.getPattern() == PgePattern::H && getBitWidthFromAttr(pge) == -1)
+      return std::nullopt;
+    return getNumfromPgePattern(pge);
+  }
+  DenseIntElementsAttr bits;
+  if (matchPattern(mask, m_Constant(&bits))) {
+    int64_t end = 0;
+    for (auto [lane, active] : llvm::enumerate(bits.getValues<bool>()))
+      if (active)
+        end = lane + 1;
+    return end;
+  }
+  if (auto plt = mask.getDefiningOp<VFPltOp>()) {
+    auto bound = getStoreMaskUpperBound(plt.getTrueShape());
+    return bound && *bound >= 0 ? bound : std::nullopt;
+  }
+  auto bounds = getMaskBoundsInProducerShape(mask, getStoreMaskUpperBound);
+  if (bounds.empty())
+    return std::nullopt;
+  int64_t last = 0;
+  for (auto [extent, bound] :
+       llvm::zip(cast<VectorType>(mask.getType()).getShape(), bounds)) {
+    if (bound == 0)
+      return 0;
+    last = last * extent + bound - 1;
+  }
+  return last + 1;
+}
+
+static void replaceWithBlockStridedStore(vector::TransferWriteOp write,
+                                         Value data, Value mask, int64_t stride,
+                                         PatternRewriter &rewriter) {
+  Value strideValue =
+      rewriter.create<arith::ConstantIndexOp>(write.getLoc(), stride);
+  auto store = rewriter.replaceOpWithNewOp<hivmave::VFStoreWithStrideOp>(
+      write, write.getSource(), write.getIndices(), strideValue, mask, data);
+  LLVM_DEBUG(DBGS() << "transfer write ave op: " << store << "\n");
+}
+
+// The strides of a transfer are in elements, relative to its original indexed
+// base. A packed store only works when consecutive register lanes are also
+// consecutive in memory.
+static std::optional<LogicalResult>
+lowerStridedTransferWrite(vector::TransferWriteOp write, Value flatData,
+                          PatternRewriter &rewriter) {
+  auto type = write.getVectorType();
+  auto memref = cast<MemRefType>(write.getSource().getType());
+  unsigned bits = type.getElementTypeBitWidth();
+  auto space = memref.getMemorySpace();
+  auto numericSpace = dyn_cast_or_null<IntegerAttr>(space);
+  bool inUB =
+      hivm::getOptionalHIVMAddressSpace(memref) == hivm::AddressSpace::UB ||
+      (numericSpace &&
+       numericSpace.getInt() == static_cast<int64_t>(hivm::AddressSpace::UB));
+  if (!inUB || (bits != 16 && bits != 32) ||
+      !memref.getElementType().isIntOrFloat() ||
+      !hacc::utils::isAscend960(write->getParentOfType<ModuleOp>()) ||
+      type.isScalable() ||
+      type.getNumElements() != hivm::util::VL_BITS / bits ||
+      !write.getPermutationMap().isMinorIdentity() || write.hasOutOfBoundsDim())
+    return std::nullopt;
+
+  SmallVector<int64_t> physicalStrides;
+  int64_t offset;
+  if (failed(utils::getStridesAndOffsetCompat(memref, physicalStrides, offset)))
+    return std::nullopt;
+  auto shape = type.getShape();
+  ArrayRef<int64_t> strides =
+      ArrayRef<int64_t>(physicalStrides).take_back(type.getRank());
+  for (auto [extent, stride] : llvm::zip(shape, strides))
+    if (extent > 1 && ShapedType::isDynamic(stride))
+      return std::nullopt;
+
+  int64_t packedLanes = 1;
+  for (int64_t dim = type.getRank() - 1; dim >= 0; --dim) {
+    if (shape[dim] > 1 && strides[dim] != packedLanes)
+      break;
+    packedLanes *= shape[dim];
+  }
+  if (packedLanes == type.getNumElements())
+    return std::nullopt;
+  // All active lanes before the first physical gap keep their packed addresses.
+  if (auto end = getStaticStoreMaskEnd(write.getMask())) {
+    if (*end == 0) {
+      rewriter.eraseOp(write);
+      return success();
+    }
+    if (*end <= packedLanes)
+      return std::nullopt;
+  }
+
+  Location loc = write.getLoc();
+  auto indicesType =
+      VectorType::get({type.getNumElements()}, rewriter.getIntegerType(bits));
+  Value mask = write.getMask();
+  auto maskType = indicesType.clone(rewriter.getI1Type());
+  if (!mask)
+    mask = hivmave::createMaskByPGE(indicesType, rewriter, loc);
+  else if (mask.getType() != maskType)
+    mask = rewriter.create<vector::ShapeCastOp>(loc, maskType, mask);
+
+  // A native block store has a full-register predicate, one bit per element.
+  // Its pitch is measured in blocks, independent of the scatter index range.
+  const int64_t blockLanes = hivm::util::vectorBlockSizeBit / bits;
+  if (shape.back() == blockLanes &&
+      isContiguousRange(shape, strides, 1, type.getRank()) &&
+      physicalStrides.front() > 0 &&
+      physicalStrides.front() % blockLanes == 0 &&
+      llvm::isUInt<16>(physicalStrides.front() / blockLanes) &&
+      utils::isTransferWriteSuitForStoreWithStride(write)) {
+    replaceWithBlockStridedStore(write, flatData, mask, physicalStrides.front(),
+                                 rewriter);
+    return success();
+  }
+
+  // Check the span before narrowing a stride or a gap to the hardware index
+  // type. Strides on unit dimensions cannot affect any lane's address.
+  const int64_t maxOffset = llvm::maxUIntN(bits);
+  int64_t span = 0;
+  for (int64_t dim = type.getRank() - 1; dim >= 0; --dim) {
+    if (shape[dim] == 1)
+      continue;
+    if (strides[dim] <= span)
+      return write.emitOpError("strided UB store requires positive, "
+                               "nonoverlapping row-major strides");
+    if (strides[dim] > (maxOffset - span) / (shape[dim] - 1))
+      return write.emitOpError(
+                 "strided UB store element offset exceeds the unsigned ")
+             << bits << "-bit scatter index";
+    span += strides[dim] * (shape[dim] - 1);
+  }
+
+  auto scalar = [&](int64_t value) -> Value {
+    return rewriter.create<arith::ConstantIntOp>(loc, value, bits);
+  };
+  Value lanes = rewriter.create<hivmave::VFVCIOp>(loc, indicesType, scalar(0),
+                                                  hivmave::VCIType::INCREASE);
+  Value offsets = lanes;
+  int64_t innerLanes = 1, expectedStride = 1;
+  for (int64_t dim = type.getRank() - 1; dim >= 0; --dim) {
+    if (shape[dim] == 1)
+      continue;
+    int64_t stride = strides[dim];
+    if (innerLanes == 1 && stride != 1) {
+      offsets = rewriter.create<hivmave::VFMulsOp>(loc, indicesType, lanes,
+                                                   scalar(stride), mask);
+    } else if (stride != expectedStride) {
+      // A full register has a power-of-two lane count, so each suffix
+      // spans a power-of-two number of lanes.
+      Value isSigned = rewriter.create<arith::ConstantIntOp>(loc, false, 1);
+      Value groups = rewriter.create<hivmave::VFShrsOp>(
+          loc, indicesType, lanes, scalar(llvm::Log2_64(innerLanes)), mask,
+          isSigned);
+      Value adjustment = rewriter.create<hivmave::VFMulsOp>(
+          loc, indicesType, groups, scalar(stride - expectedStride), mask);
+      offsets = rewriter.create<hivmave::VFAddOp>(loc, indicesType, offsets,
+                                                  adjustment, mask);
+    }
+    innerLanes *= shape[dim];
+    expectedStride = stride * shape[dim];
+  }
+  rewriter.replaceOpWithNewOp<hivmave::VFScatterOp>(
+      write, write.getSource(), write.getIndices(), offsets, mask, flatData);
+  return success();
+}
+
 struct TransferWriteOpPattern
     : public OpRewritePattern<vector::TransferWriteOp> {
   using OpRewritePattern<vector::TransferWriteOp>::OpRewritePattern;
 
   bool transferWriteWithStride(vector::TransferWriteOp writeOp,
                                PatternRewriter &rewriter, Value mask,
-                               Value vector, Value source) const {
+                               Value vector) const {
     if (!utils::isTransferWriteSuitForStoreWithStride(writeOp)) {
       return false;
     }
@@ -752,14 +953,7 @@ struct TransferWriteOpPattern
     auto memrefTy = mlir::dyn_cast<MemRefType>(writeOp.getBase().getType());
     auto [strides, offset] = memrefTy.getStridesAndOffset();
 #endif
-    auto loc = writeOp.getLoc();
-    Value strideConst = rewriter.create<arith::ConstantOp>(
-        writeOp.getLoc(), rewriter.getIndexAttr(strides[0]));
-    hivmave::VFStoreWithStrideOp storeOp =
-        rewriter.create<hivmave::VFStoreWithStrideOp>(
-            loc, source, writeOp.getIndices(), strideConst, mask, vector);
-    LLVM_DEBUG(DBGS() << "transfer write ave op: " << storeOp << "\n");
-    rewriter.replaceOp(writeOp, storeOp);
+    replaceWithBlockStridedStore(writeOp, vector, mask, strides[0], rewriter);
     return true;
   }
 
@@ -779,6 +973,8 @@ struct TransferWriteOpPattern
       vector = rewriter.create<vector::ShapeCastOp>(loc, castVecType, vector)
                    ->getResult(0);
     }
+    if (auto result = lowerStridedTransferWrite(writeOp, vector, rewriter))
+      return *result;
     Value mask = writeOp.getMask();
     bool isSingleElementMask = false;
     if (!mask) {
@@ -853,7 +1049,7 @@ struct TransferWriteOpPattern
       else if (dataWidth == 64)
         storePattern = hivmave::StoreDist::NORM_B64;
     }
-    if (transferWriteWithStride(writeOp, rewriter, mask, vector, source)) {
+    if (transferWriteWithStride(writeOp, rewriter, mask, vector)) {
       return success();
     }
     hivmave::VFMaskedStoreOp storeOp =
