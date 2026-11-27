@@ -105,3 +105,15 @@ func.func @vmadd_bf16(%a: vector<128xbf16>, %b: vector<128xbf16>,
       : vector<128xbf16>, vector<128xi1>
   return %res : vector<128xbf16>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @vusqz_bf16
+// CHECK-NOT: dense<0>
+// CHECK: %[[ZERO:.*]] = llvm.mlir.constant(0.000000e+00 : bf16) : bf16
+// CHECK: %[[INIT:.*]] = "hivm_regbaseintrins.intr.hivm.vbr"(%[[ZERO]])
+// CHECK: "hivm_regbaseintrins.intr.hivm.vusqz.m"(%[[INIT]],
+func.func @vusqz_bf16(%mask: vector<128xi1>) -> vector<128xbf16> {
+  %res = ave.hir.vusqz %mask : vector<128xi1> -> vector<128xbf16>
+  return %res : vector<128xbf16>
+}
