@@ -6,7 +6,7 @@ func.func @bubble_up_alloc_load_to_tensor(%arg0: memref<64x32xf32>) -> tensor<32
   %alloc = memref.alloc() : memref<64x32xf32>
   hivm.hir.load ins(%arg0 : memref<64x32xf32>) outs(%alloc : memref<64x32xf32>)
   %tensor = bufferization.to_tensor %alloc restrict writable : memref<64x32xf32>
-  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %slice : tensor<32x32xf32>
 }
@@ -17,7 +17,7 @@ func.func @bubble_up_alloc_dim0(%arg0: memref<64xf32>) -> tensor<32xf32> {
   %alloc = memref.alloc() : memref<64xf32>
   hivm.hir.load ins(%arg0 : memref<64xf32>) outs(%alloc : memref<64xf32>)
   %tensor = bufferization.to_tensor %alloc restrict writable : memref<64xf32>
-  %slice = tensor.extract_slice %tensor[32] [32] [1] {to_be_bubbled_slice}
+  %slice = tensor.extract_slice %tensor[32] [32] [1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64xf32> to tensor<32xf32>
   return %slice : tensor<32xf32>
 }
@@ -28,7 +28,7 @@ func.func @bubble_up_alloc_dim1(%arg0: memref<64x32xf32>) -> tensor<64x16xf32> {
   %alloc = memref.alloc() : memref<64x32xf32>
   hivm.hir.load ins(%arg0 : memref<64x32xf32>) outs(%alloc : memref<64x32xf32>)
   %tensor = bufferization.to_tensor %alloc restrict writable : memref<64x32xf32>
-  %slice = tensor.extract_slice %tensor[0, 16] [64, 16] [1, 1] {to_be_bubbled_slice}
+  %slice = tensor.extract_slice %tensor[0, 16] [64, 16] [1, 1] {to_be_bubbled_slice = 1 : i64}
       : tensor<64x32xf32> to tensor<64x16xf32>
   return %slice : tensor<64x16xf32>
 }
@@ -43,7 +43,7 @@ func.func @bubble_up_memory_space_cast(%arg0: memref<64x32xf32>) -> tensor<32x32
       : memref<64x32xf32>
   hivm.hir.load ins(%arg0 : memref<64x32xf32>) outs(%cast : memref<64x32xf32>)
   %tensor = bufferization.to_tensor %cast restrict writable : memref<64x32xf32>
-  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %slice : tensor<32x32xf32>
 }
@@ -59,7 +59,7 @@ func.func @bubble_up_subview_alloc(%arg0: memref<64x32xf32>) -> tensor<32x32xf32
   hivm.hir.load ins(%src : memref<32x32xf32, strided<[32, 1], offset: 1024>>)
       outs(%dst : memref<32x32xf32, strided<[32, 1], offset: 1024>>)
   %tensor = bufferization.to_tensor %alloc restrict writable : memref<64x32xf32>
-  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %slice : tensor<32x32xf32>
 }
@@ -73,7 +73,7 @@ func.func @bubble_up_reinterpret_cast(%arg0: memref<?xf32>) -> tensor<32x32xf32>
   hivm.hir.load ins(%src : memref<64x32xf32, strided<[32, 1], offset: ?>>)
       outs(%alloc : memref<64x32xf32>)
   %tensor = bufferization.to_tensor %alloc restrict writable : memref<64x32xf32>
-  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %slice : tensor<32x32xf32>
 }
@@ -88,7 +88,7 @@ func.func @bubble_up_alloc_odd_buffer_size(
   hivm.hir.load ins(%src : memref<115x80xf16, strided<[80, 1], offset: ?>>)
       outs(%alloc : memref<115x80xf16>)
   %tensor = bufferization.to_tensor %alloc restrict writable : memref<115x80xf16>
-  %slice = tensor.extract_slice %tensor[0, 0] [%arg1, 80] [1, 1] {to_be_bubbled_slice}
+  %slice = tensor.extract_slice %tensor[0, 0] [%arg1, 80] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<115x80xf16> to tensor<?x80xf16>
   return %slice : tensor<?x80xf16>
 }
@@ -107,7 +107,7 @@ func.func @bubble_up_subview_alloc_odd_buffer_size(
   hivm.hir.load ins(%src : memref<115x80xf16, strided<[80, 1], offset: ?>>)
       outs(%dst : memref<115x80xf16, strided<[80, 1]>>)
   %tensor = bufferization.to_tensor %alloc restrict writable : memref<115x80xf16>
-  %slice = tensor.extract_slice %tensor[0, 0] [%arg1, 80] [1, 1] {to_be_bubbled_slice}
+  %slice = tensor.extract_slice %tensor[0, 0] [%arg1, 80] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<115x80xf16> to tensor<?x80xf16>
   return %slice : tensor<?x80xf16>
 }
@@ -115,7 +115,7 @@ func.func @bubble_up_subview_alloc_odd_buffer_size(
 // -----
 // CHECK: Successfully bubble up bufferization
 func.func @no_transform_without_to_tensor(%arg0: tensor<64x32xf32>) -> tensor<32x32xf32> {
-  %slice = tensor.extract_slice %arg0[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %slice = tensor.extract_slice %arg0[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %slice : tensor<32x32xf32>
 }
@@ -128,7 +128,7 @@ func.func @bubble_up_subview_dropped_dim(%arg0: memref<2x8x16x16xf16>) -> tensor
       : memref<2x8x1x16x16xf16> to memref<2x8x16x16xf16, strided<[2048, 256, 16, 1]>>
   hivm.hir.load ins(%arg0 : memref<2x8x16x16xf16>) outs(%dst : memref<2x8x16x16xf16, strided<[2048, 256, 16, 1]>>)
   %tensor = bufferization.to_tensor %alloc restrict writable : memref<2x8x1x16x16xf16>
-  %slice = tensor.extract_slice %tensor[0, 0, 0, 0, 0] [1, 8, 1, 16, 16] [1, 1, 1, 1, 1] {to_be_bubbled_slice}
+  %slice = tensor.extract_slice %tensor[0, 0, 0, 0, 0] [1, 8, 1, 16, 16] [1, 1, 1, 1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<2x8x1x16x16xf16> to tensor<1x8x1x16x16xf16>
   return %slice : tensor<1x8x1x16x16xf16>
 }
@@ -141,9 +141,9 @@ func.func @bubble_up_multi_to_tensor_same_alloc(%arg0: memref<64x32xf32>)
   hivm.hir.load ins(%arg0 : memref<64x32xf32>) outs(%alloc : memref<64x32xf32>)
   %t0 = bufferization.to_tensor %alloc restrict writable : memref<64x32xf32>
   %t1 = bufferization.to_tensor %alloc restrict writable : memref<64x32xf32>
-  %s0 = tensor.extract_slice %t0[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %s0 = tensor.extract_slice %t0[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
-  %s1 = tensor.extract_slice %t1[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %s1 = tensor.extract_slice %t1[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %s0, %s1 : tensor<32x32xf32>, tensor<32x32xf32>
 }
@@ -169,9 +169,9 @@ func.func @bubble_up_multi_alloc_dynamic_offset(
       outs(%dst1 : memref<32x32xf32, strided<[32, 1], offset: ?>>)
   %t0 = bufferization.to_tensor %alloc0 restrict writable : memref<64x32xf32>
   %t1 = bufferization.to_tensor %alloc1 restrict writable : memref<64x32xf32>
-  %s0 = tensor.extract_slice %t0[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %s0 = tensor.extract_slice %t0[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
-  %s1 = tensor.extract_slice %t1[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %s1 = tensor.extract_slice %t1[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %s0, %s1 : tensor<32x32xf32>, tensor<32x32xf32>
 }
@@ -189,9 +189,9 @@ func.func @bubble_up_multi_to_tensor_elementwise(
       outs(%dst : memref<32x32xf32, strided<[32, 1], offset: ?>>)
   %t0 = bufferization.to_tensor %alloc restrict writable : memref<64x32xf32>
   %t1 = bufferization.to_tensor %alloc restrict writable : memref<64x32xf32>
-  %s0 = tensor.extract_slice %t0[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %s0 = tensor.extract_slice %t0[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
-  %s1 = tensor.extract_slice %t1[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %s1 = tensor.extract_slice %t1[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   %sum = arith.addf %s0, %s1 : tensor<32x32xf32>
   return %sum : tensor<32x32xf32>
@@ -207,9 +207,9 @@ func.func @bubble_up_multi_to_tensor_dropped_dim_static(%arg0: memref<2x8x16x16x
   hivm.hir.load ins(%arg0 : memref<2x8x16x16xf16>) outs(%dst : memref<2x8x16x16xf16, strided<[2048, 256, 16, 1]>>)
   %t0 = bufferization.to_tensor %alloc restrict writable : memref<2x8x1x16x16xf16>
   %t1 = bufferization.to_tensor %alloc restrict writable : memref<2x8x1x16x16xf16>
-  %s0 = tensor.extract_slice %t0[0, 0, 0, 0, 0] [1, 8, 1, 16, 16] [1, 1, 1, 1, 1] {to_be_bubbled_slice}
+  %s0 = tensor.extract_slice %t0[0, 0, 0, 0, 0] [1, 8, 1, 16, 16] [1, 1, 1, 1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<2x8x1x16x16xf16> to tensor<1x8x1x16x16xf16>
-  %s1 = tensor.extract_slice %t1[0, 0, 0, 0, 0] [1, 8, 1, 16, 16] [1, 1, 1, 1, 1] {to_be_bubbled_slice}
+  %s1 = tensor.extract_slice %t1[0, 0, 0, 0, 0] [1, 8, 1, 16, 16] [1, 1, 1, 1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<2x8x1x16x16xf16> to tensor<1x8x1x16x16xf16>
   return %s0, %s1 : tensor<1x8x1x16x16xf16>, tensor<1x8x1x16x16xf16>
 }
@@ -225,9 +225,9 @@ func.func @bubble_up_multi_to_tensor_dropped_dim_dynamic(
   hivm.hir.load ins(%arg0 : memref<2x8x16x16xf16>) outs(%dst : memref<2x8x16x16xf16, strided<[2048, 256, 16, 1]>>)
   %t0 = bufferization.to_tensor %alloc restrict writable : memref<2x8x1x16x16xf16>
   %t1 = bufferization.to_tensor %alloc restrict writable : memref<2x8x1x16x16xf16>
-  %s0 = tensor.extract_slice %t0[%offset, 0, 0, 0, 0] [1, 8, 1, 16, 16] [1, 1, 1, 1, 1] {to_be_bubbled_slice}
+  %s0 = tensor.extract_slice %t0[%offset, 0, 0, 0, 0] [1, 8, 1, 16, 16] [1, 1, 1, 1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<2x8x1x16x16xf16> to tensor<1x8x1x16x16xf16>
-  %s1 = tensor.extract_slice %t1[%offset, 0, 0, 0, 0] [1, 8, 1, 16, 16] [1, 1, 1, 1, 1] {to_be_bubbled_slice}
+  %s1 = tensor.extract_slice %t1[%offset, 0, 0, 0, 0] [1, 8, 1, 16, 16] [1, 1, 1, 1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<2x8x1x16x16xf16> to tensor<1x8x1x16x16xf16>
   return %s0, %s1 : tensor<1x8x1x16x16xf16>, tensor<1x8x1x16x16xf16>
 }
@@ -250,9 +250,9 @@ func.func @bubble_up_multi_subview_multi_load(%arg0: memref<64x32xf32>) -> tenso
   hivm.hir.load ins(%src1 : memref<16x32xf32, strided<[32, 1], offset: 1536>>) outs(%dst1 : memref<16x32xf32, strided<[32, 1], offset: 1536>>)
   %t0 = bufferization.to_tensor %alloc restrict writable : memref<64x32xf32>
   %t1 = bufferization.to_tensor %alloc restrict writable : memref<64x32xf32>
-  %s0 = tensor.extract_slice %t0[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %s0 = tensor.extract_slice %t0[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
-  %s1 = tensor.extract_slice %t1[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %s1 = tensor.extract_slice %t1[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   %sum = arith.addf %s0, %s1 : tensor<32x32xf32>
   return %sum : tensor<32x32xf32>
@@ -270,7 +270,7 @@ func.func @bubble_up_shared_subview_users(%arg0: memref<64x32xf32>) -> tensor<32
       : memref<64x32xf32> to memref<32x32xf32, strided<[32, 1], offset: 1024>>
   hivm.hir.load ins(%src : memref<32x32xf32, strided<[32, 1], offset: 1024>>) outs(%inner : memref<32x32xf32, strided<[32, 1], offset: 1024>>)
   %t = bufferization.to_tensor %alloc restrict writable : memref<64x32xf32>
-  %s = tensor.extract_slice %t[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %s = tensor.extract_slice %t[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %s : tensor<32x32xf32>
 }
@@ -297,9 +297,9 @@ func.func @bubble_up_multi_memspace_cast_users(
   hivm.hir.load ins(%src1 : memref<32x32xf32, strided<[32, 1]>>) outs(%dst1 : memref<32x32xf32, strided<[32, 1]>>)
   %t0 = bufferization.to_tensor %cast restrict writable : memref<64x32xf32>
   %t1 = bufferization.to_tensor %cast restrict writable : memref<64x32xf32>
-  %s0 = tensor.extract_slice %t0[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %s0 = tensor.extract_slice %t0[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
-  %s1 = tensor.extract_slice %t1[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %s1 = tensor.extract_slice %t1[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %s0, %s1 : tensor<32x32xf32>, tensor<32x32xf32>
 }
@@ -322,9 +322,9 @@ func.func @bubble_up_dual_memspace_cast_users(
   hivm.hir.load ins(%src : memref<32x32xf32, strided<[32, 1], offset: ?>>) outs(%dst : memref<32x32xf32, strided<[32, 1], offset: ?>>)
   %t0 = bufferization.to_tensor %cast0 restrict writable : memref<64x32xf32>
   %t1 = bufferization.to_tensor %cast1 restrict writable : memref<64x32xf32>
-  %s0 = tensor.extract_slice %t0[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %s0 = tensor.extract_slice %t0[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
-  %s1 = tensor.extract_slice %t1[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %s1 = tensor.extract_slice %t1[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %s0, %s1 : tensor<32x32xf32>, tensor<32x32xf32>
 }
@@ -349,7 +349,7 @@ func.func @bubble_up_multi_load_subview_cast(
   hivm.hir.load ins(%src0 : memref<32x16xf32, strided<[32, 1], offset: ?>>) outs(%dst0 : memref<32x16xf32, strided<[32, 1], offset: ?>>)
   hivm.hir.load ins(%src1 : memref<32x16xf32, strided<[32, 1], offset: ?>>) outs(%dst1 : memref<32x16xf32, strided<[32, 1], offset: ?>>)
   %t = bufferization.to_tensor %cast restrict writable : memref<64x32xf32>
-  %s = tensor.extract_slice %t[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %s = tensor.extract_slice %t[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %s : tensor<32x32xf32>
 }
@@ -370,9 +370,9 @@ func.func @bubble_up_subview_shared_by_mark_and_load(
   hivm.hir.load ins(%src : memref<32x32xf32, strided<[32, 1], offset: ?>>) outs(%tile : memref<32x32xf32, strided<[32, 1], offset: ?>>)
   %t0 = bufferization.to_tensor %cast restrict writable : memref<64x32xf32>
   %t1 = bufferization.to_tensor %cast restrict writable : memref<64x32xf32>
-  %s0 = tensor.extract_slice %t0[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %s0 = tensor.extract_slice %t0[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
-  %s1 = tensor.extract_slice %t1[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %s1 = tensor.extract_slice %t1[%offset, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %s0, %s1 : tensor<32x32xf32>, tensor<32x32xf32>
 }
@@ -388,7 +388,7 @@ func.func @bubble_up_propagate_down_subview_dropped_dim(
   %subview = memref.subview %ucc[%index, 0, 0] [1, 32, 128] [1, 1, 1]
       : memref<2x32x128xf32> to memref<32x128xf32, strided<[128, 1], offset: ?>>
   %tensor = bufferization.to_tensor %subview restrict writable : memref<32x128xf32, strided<[128, 1], offset: ?>>
-  %slice = tensor.extract_slice %tensor[%offset, 0] [16, 128] [1, 1] {to_be_bubbled_slice}
+  %slice = tensor.extract_slice %tensor[%offset, 0] [16, 128] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<32x128xf32> to tensor<16x128xf32>
   return %slice : tensor<16x128xf32>
 }
@@ -402,7 +402,7 @@ func.func @bubble_up_select_alloc(%arg0: memref<64x32xf32>, %cond: i1) -> tensor
   hivm.hir.load ins(%arg0 : memref<64x32xf32>) outs(%alloc1 : memref<64x32xf32>)
   %sel = arith.select %cond, %alloc0, %alloc1 : memref<64x32xf32>
   %tensor = bufferization.to_tensor %sel restrict writable : memref<64x32xf32>
-  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %slice : tensor<32x32xf32>
 }
@@ -420,7 +420,7 @@ func.func @bubble_up_select_memspace_cast(%arg0: memref<64x32xf32>, %cond: i1) -
   hivm.hir.load ins(%arg0 : memref<64x32xf32>) outs(%cast1 : memref<64x32xf32>)
   %sel = arith.select %cond, %cast0, %cast1 : memref<64x32xf32>
   %tensor = bufferization.to_tensor %sel restrict writable : memref<64x32xf32>
-  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %slice : tensor<32x32xf32>
 }
@@ -444,7 +444,7 @@ func.func @bubble_up_nested_select_memspace_cast(
   %sel0 = arith.select %cond0, %cast1, %cast0 : memref<64x32xf32>
   %sel1 = arith.select %cond1, %cast2, %sel0 : memref<64x32xf32>
   %tensor = bufferization.to_tensor %sel1 restrict writable : memref<64x32xf32>
-  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %slice : tensor<32x32xf32>
 }
@@ -462,7 +462,7 @@ func.func @bubble_up_if_alloc(%arg0: memref<64x32xf32>, %cond: i1) -> tensor<32x
     scf.yield %alloc1 : memref<64x32xf32>
   }
   %tensor = bufferization.to_tensor %sel restrict writable : memref<64x32xf32>
-  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %slice : tensor<32x32xf32>
 }
@@ -484,7 +484,7 @@ func.func @bubble_up_if_memspace_cast(%arg0: memref<64x32xf32>, %cond: i1) -> te
     scf.yield %cast1 : memref<64x32xf32>
   }
   %tensor = bufferization.to_tensor %sel restrict writable : memref<64x32xf32>
-  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %slice : tensor<32x32xf32>
 }
@@ -516,7 +516,7 @@ func.func @bubble_up_nested_if_memspace_cast(
     scf.yield %sel0 : memref<64x32xf32>
   }
   %tensor = bufferization.to_tensor %sel1 restrict writable : memref<64x32xf32>
-  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice = 0 : i64}
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %slice : tensor<32x32xf32>
 }

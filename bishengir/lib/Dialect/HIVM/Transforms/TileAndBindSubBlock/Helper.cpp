@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -53,11 +54,16 @@ FailureOr<int64_t> getTilingFactor(scf::ForOp containingLoop) {
     return failure();
   return upperBound.value();
 }
+// Coordinate of boundary i in a balanced partition: ceil(i * size / count).
+AffineExpr getTileBoundary(AffineExpr i, int64_t size, int64_t count) {
+  return i * (size / count) + (i * (size % count)).ceilDiv(count);
+}
 } // namespace
 
-void markCreatedExtractSliceOp(RewriterBase &rewriter, Operation *op) {
+void markCreatedExtractSliceOp(RewriterBase &rewriter, Operation *op,
+                               int64_t tilingDim) {
   rewriter.modifyOpInPlace(op, [&]() {
-    op->setAttr(toBeBubbleUpSlice, UnitAttr::get(rewriter.getContext()));
+    op->setAttr(toBeBubbleUpSlice, rewriter.getI64IntegerAttr(tilingDim));
   });
 }
 
@@ -68,7 +74,20 @@ void markCreatedInsertSliceOp(RewriterBase &rewriter, Operation *op) {
 }
 
 bool isMarkedExtractSliceOp(Operation *op) {
-  return op->hasAttrOfType<UnitAttr>(toBeBubbleUpSlice);
+  return getBubbledTilingDim(op) >= 0;
+}
+
+int64_t getBubbledTilingDim(Operation *op) {
+  auto slice = dyn_cast_or_null<OffsetSizeAndStrideOpInterface>(op);
+  if (!slice)
+    return -1;
+  auto attr = op->getAttrOfType<IntegerAttr>(toBeBubbleUpSlice);
+  if (!attr || !attr.getType().isSignlessInteger(64))
+    return -1;
+  int64_t axis = attr.getInt();
+  if (axis < 0 || axis >= static_cast<int64_t>(slice.getStaticSizes().size()))
+    return -1;
+  return axis;
 }
 
 bool isMarkedInsertSliceOp(Operation *op) {
@@ -136,6 +155,15 @@ OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
     llvm::report_fatal_error("failed to get tiling factor");
   int64_t tilingFactor = maybeTilingFactor.value();
 
+  if (!ShapedType::isDynamic(dimSize) && tilingFactor > kSubBlockDim &&
+      dimSize % tilingFactor != 0) {
+    auto boundary =
+        getTileBoundary(rewriter.getAffineSymbolExpr(0), dimSize, tilingFactor);
+    return affine::makeComposedFoldedAffineApply(
+        rewriter, loc, boundary,
+        {getAsOpFoldResult(containingLoop.getInductionVar())});
+  }
+
   OpFoldResult tileStride;
   if (ShapedType::isDynamic(dimSize)) {
     Value dimVal;
@@ -148,8 +176,8 @@ OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
     bindDims(rewriter.getContext(), d0);
     auto ceilDivMap = AffineMap::get(/*dimCount=*/1, /*symbolCount=*/0,
                                      d0.ceilDiv(tilingFactor));
-    tileStride = affine::makeComposedFoldedAffineApply(
-        rewriter, loc, ceilDivMap, {dimVal});
+    tileStride = affine::makeComposedFoldedAffineApply(rewriter, loc,
+                                                       ceilDivMap, {dimVal});
   } else {
     tileStride = getAsIndexOpFoldResult(
         rewriter.getContext(), llvm::divideCeil(dimSize, tilingFactor));
@@ -203,15 +231,12 @@ FailureOr<OpFoldResult> getSingleTileSize(OpBuilder &builder, Location loc,
     if (dimensionSize % denominator == 0) {
       return getAsIndexOpFoldResult(builder.getContext(), tileSize);
     }
-    if (denominator != static_cast<size_t>(kSubBlockDim))
-      return containingLoop.emitError(
-          "Tile size not divisible by number of tiles, and number of tiles "
-          "doesn't equal to kSubBlockDim");
-    auto tailsize =
-        dimensionSize - tileSize * (static_cast<size_t>(kSubBlockDim) - 1);
-    AffineExpr tileSizeExpr = (1 - builder.getAffineSymbolExpr(0)) * tileSize +
-                              (builder.getAffineSymbolExpr(0) * tailsize);
-    Value inductionVar = containingLoop.getBody()->getArgument(0);
+    // Tile i spans [ceil(i * size / count), ceil((i + 1) * size / count)).
+    AffineExpr iv = builder.getAffineSymbolExpr(0);
+    AffineExpr tileSizeExpr =
+        getTileBoundary(iv + 1, dimensionSize, denominator) -
+        getTileBoundary(iv, dimensionSize, denominator);
+    Value inductionVar = containingLoop.getInductionVar();
     OpBuilder::InsertionGuard guard(builder);
     builder.setInsertionPointToStart(containingLoop.getBody());
     auto finalTileSize = affine::makeComposedAffineApply(
@@ -237,28 +262,26 @@ FailureOr<OpFoldResult> getSingleTileSize(OpBuilder &builder, Location loc,
 }
 
 LogicalResult findCorrespondingSizesOffsetsStrides(
-    RewriterBase &rewriter, ShapedType rankType, int64_t tilingDim,
+    RewriterBase &rewriter, Value source, int64_t tilingDim,
     OpFoldResult offsetAtTileDim, OpFoldResult tileSize,
     SmallVector<OpFoldResult, 4> &mixedStrides,
     SmallVector<OpFoldResult, 4> &mixedOffsets,
     SmallVector<OpFoldResult, 4> &mixedSize,
     SmallVector<int64_t, 4> &newShape) {
-  for (int i = 0; i < rankType.getRank(); i++) {
+  auto type = cast<ShapedType>(source.getType());
+  if (tilingDim < 0 || tilingDim >= type.getRank())
+    return failure();
+  for (int64_t dim = 0; dim < type.getRank(); ++dim) {
+    bool tiled = dim == tilingDim;
     mixedStrides.push_back(rewriter.getIndexAttr(1));
-    if (i != tilingDim) {
-      mixedOffsets.push_back(rewriter.getIndexAttr(0));
-      mixedSize.push_back(getAsIndexOpFoldResult(rewriter.getContext(),
-                                                 rankType.getDimSize(i)));
-      newShape.push_back(rankType.getDimSize(i));
-    } else {
-      mixedOffsets.push_back(offsetAtTileDim);
-      mixedSize.push_back(tileSize);
-      if (!getConstantIntValue(tileSize)) {
-        newShape.push_back(ShapedType::kDynamic);
-      } else {
-        newShape.push_back(getConstantIntValue(tileSize).value());
-      }
-    }
+    mixedOffsets.push_back(tiled ? offsetAtTileDim : rewriter.getIndexAttr(0));
+    OpFoldResult size =
+        tiled
+            ? tileSize
+            : linalg::createFoldedDimOp(rewriter, source.getLoc(), source, dim);
+    mixedSize.push_back(size);
+    newShape.push_back(
+        getConstantIntValue(size).value_or(ShapedType::kDynamic));
   }
   return success();
 }
@@ -420,18 +443,12 @@ static bool checkOffsetsCreatedByTiling(ArrayRef<int64_t> staticOffsets,
   return true;
 }
 
-bool createdByTiling(OffsetSizeAndStrideOpInterface offsetSizeAndStrideOp) {
+bool createdByTiling(OffsetSizeAndStrideOpInterface offsetSizeAndStrideOp,
+                     int64_t tilingDim) {
   // Get tiling loop
   auto tilingLoop = offsetSizeAndStrideOp->getParentOfType<scf::ForOp>();
   if (!tilingLoop)
     return false;
-
-  // Get tiling Dim
-  auto extractDims = getExtractOrInsertDim(offsetSizeAndStrideOp);
-  // We can only handle tiling 1 dimension for now.
-  if (extractDims.size() != 1)
-    return false;
-  auto tilingDim = *extractDims.begin();
 
   if (!checkStridesCreatedByTiling(offsetSizeAndStrideOp.getStaticStrides()))
     return false;

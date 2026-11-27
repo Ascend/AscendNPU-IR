@@ -36,6 +36,7 @@ public:
     RankReduced,
     Reduce,
     InvalidColumnSplit,
+    PartialLoopTile,
     NotAligned,
     /// Non-unit axes after the first in a reshape group \c [a, b, ...] <-> \c
     /// [c].
@@ -183,6 +184,7 @@ protected:
   /// index based on structuralDsu_. If map doesn't exist, it means its a
   /// parallel
   void markDimensions();
+  void markPartialLoopTile(scf::ForOp loop);
 
   /// Mark the preferred tiling order of a Fixpipe destination according to
   /// which MMAD operand is produced inside the analyzed loop.

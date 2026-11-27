@@ -117,6 +117,18 @@ Value getMatchHandle(OpBuilder &builder, Location loc, Value target,
       /*target=*/matchedValue);
 }
 
+void annotateTiledLoop(OpBuilder &builder, Location loc, Value loop,
+                       std::optional<int64_t> tilingDim) {
+  builder.create<transform::AnnotateOp>(loc, loop, kTileCubeVectorLoopAttrName,
+                                        Value{});
+  if (!tilingDim)
+    return;
+  auto param = builder.create<transform::ParamConstantOp>(
+      loc, builder.getType<transform::AnyParamType>(),
+      builder.getI64IntegerAttr(*tilingDim));
+  builder.create<transform::AnnotateOp>(loc, loop, kTilingDimAttrName, param);
+}
+
 Value fuseLoops(OpBuilder &builder, Location loc,
                 const SmallVector<Value> &loops) {
   if (loops.empty())
@@ -760,6 +772,10 @@ public:
               transform_utils::fuseLoops(builder, loc, tiledLoopHandles);
         }
 
+        transform_utils::annotateTiledLoop(
+            builder, loc, fusedLoop,
+            group.getGroupTilingParams().tiledDims.front());
+
         // Fusing all producer in the group
         auto groupProducersToFuse = transform_utils::getMatchHandle(
             builder, loc, ba, group.getGroupProducerTag(this->getIdx()),
@@ -875,6 +891,17 @@ public:
       // Step 2: Fuse independent loops together
       Value fusedLoop =
           transform_utils::fuseLoops(builder, loc, tiledLoopHandles);
+
+      // A shared induction variable can index different axes in different
+      // stores.
+      auto targets = getOpTileInfo();
+      int64_t dim = targets.front().tilingParams.tiledDims.front();
+      bool commonDim = llvm::all_of(targets, [dim](const OpToTile &target) {
+        return target.tilingParams.tiledDims.front() == dim;
+      });
+      transform_utils::annotateTiledLoop(builder, loc, fusedLoop,
+                                         commonDim ? std::optional(dim)
+                                                   : std::nullopt);
 
       // Step 3: Fuse producers into tiled loop
       auto producersToFuse = transform_utils::getMatchHandle(

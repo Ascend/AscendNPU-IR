@@ -219,7 +219,7 @@ FailureOr<memref::AllocOp>
 createSlicedAllocLike(UnrealizedConversionCastOp propagateOp,
                       memref::AllocOp oldAllocOp, PatternRewriter &rewriter) {
   auto originalType = dyn_cast<MemRefType>(oldAllocOp.getResult().getType());
-  if (!originalType)
+  if (!originalType || !originalType.hasStaticShape())
     return failure();
 
   auto slicedMemRefType =

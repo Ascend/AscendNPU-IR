@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
 #include "bishengir/Dialect/HIVM/Transforms/HIVMTilingInterfaceImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Value.h"
 
@@ -32,8 +33,6 @@
 namespace mlir::hivm::detail {
 
 namespace {
-
-static constexpr llvm::StringLiteral toBeBubbleUpSlice = "to_be_bubbled_slice";
 
 static bool isTiled(AffineExpr expr, ArrayRef<OpFoldResult> tileSizes) {
   if (!expr)
@@ -169,8 +168,8 @@ computeSliceParameters(OpBuilder &builder, Location loc, Value valueToTile,
       AffineMap plusOneMap = AffineMap::inferFromExprList(
                                  {ArrayRef<AffineExpr>{dim0 + 1}}, context)
                                  .front();
-      SmallVector<OpFoldResult> maxIndices = llvm::to_vector(
-          llvm::map_range(ubs, [&rewriter, &loc, &minusOneMap](OpFoldResult ub) {
+      SmallVector<OpFoldResult> maxIndices = llvm::to_vector(llvm::map_range(
+          ubs, [&rewriter, &loc, &minusOneMap](OpFoldResult ub) {
             return mlir::affine::makeComposedFoldedAffineApply(
                 rewriter, loc, minusOneMap, {ub});
           }));
@@ -254,57 +253,59 @@ static Value materializeTiledShape(OpBuilder &builder, Location loc,
                                    Value valueToTile,
                                    const SliceParameters &sliceParams) {
   auto shapedType = dyn_cast<ShapedType>(valueToTile.getType());
-  auto *sliceOp = TypeSwitch<ShapedType, Operation *>(shapedType)
-                      .Case([&builder, &loc, &valueToTile,
-                             &sliceParams](MemRefType) {
-                        return builder.create<memref::SubViewOp>(
-                            loc, valueToTile, sliceParams.offsets,
-                            sliceParams.sizes, sliceParams.strides);
-                      })
-                      .Case([&builder, &loc, &valueToTile,
-                             &sliceParams](RankedTensorType) {
-                        if (valueToTile.getParentBlock() &&
-                            hacc::utils::isRegBasedArch(
-                                valueToTile.getParentBlock()
-                                    ->getParentOp()
-                                    ->getParentOfType<ModuleOp>())) {
-                          if (auto defOp = valueToTile.getDefiningOp()) {
-                            builder.setInsertionPointAfter(defOp);
-                          } else {
-                            builder.setInsertionPointToStart(
-                                valueToTile.getParentBlock());
-                          }
-                        }
-                        return builder.create<tensor::ExtractSliceOp>(
-                            loc, valueToTile, sliceParams.offsets,
-                            sliceParams.sizes, sliceParams.strides);
-                      })
-                      .Default([](ShapedType) -> Operation * {
-                        llvm::report_fatal_error("Unexpected shaped type");
-                      });
-  if (isa<tensor::ExtractSliceOp>(sliceOp)) {
-    sliceOp->setAttr(toBeBubbleUpSlice, UnitAttr::get(builder.getContext()));
-  }
+  auto *sliceOp =
+      TypeSwitch<ShapedType, Operation *>(shapedType)
+          .Case([&builder, &loc, &valueToTile, &sliceParams](MemRefType) {
+            return builder.create<memref::SubViewOp>(
+                loc, valueToTile, sliceParams.offsets, sliceParams.sizes,
+                sliceParams.strides);
+          })
+          .Case([&builder, &loc, &valueToTile, &sliceParams](RankedTensorType) {
+            if (valueToTile.getParentBlock() &&
+                hacc::utils::isRegBasedArch(
+                    valueToTile.getParentBlock()
+                        ->getParentOp()
+                        ->getParentOfType<ModuleOp>())) {
+              if (auto defOp = valueToTile.getDefiningOp()) {
+                builder.setInsertionPointAfter(defOp);
+              } else {
+                builder.setInsertionPointToStart(valueToTile.getParentBlock());
+              }
+            }
+            return builder.create<tensor::ExtractSliceOp>(
+                loc, valueToTile, sliceParams.offsets, sliceParams.sizes,
+                sliceParams.strides);
+          })
+          .Default([](ShapedType) -> Operation * {
+            llvm::report_fatal_error("Unexpected shaped type");
+          });
   return sliceOp->getResult(0);
 }
 
 // This function refer on the implementation of linalg bubbleUpExtractSlice.
 SmallVector<Value>
-makeTiledShapes(OpBuilder &builder, Location loc, HIVMStructuredOp hivmOp,
+makeTiledShapes(RewriterBase &builder, Location loc, HIVMStructuredOp hivmOp,
                 ValueRange valuesToTile, ArrayRef<OpFoldResult> ivs,
                 ArrayRef<OpFoldResult> tileSizes,
-                ArrayRef<OpFoldResult> sizeBounds, bool omitPartialTileCheck) {
+                ArrayRef<OpFoldResult> sizeBounds, bool omitPartialTileCheck,
+                unsigned tiledLoop) {
   SmallVector<std::optional<SliceParameters>> allSliceParameter =
       computeAllSliceParameters(builder, loc, hivmOp, valuesToTile, ivs,
                                 tileSizes, sizeBounds, omitPartialTileCheck);
   SmallVector<Value> tiledShapes;
-  for (auto item : llvm::zip(valuesToTile, allSliceParameter)) {
-    Value valueToTile = std::get<0>(item);
-    std::optional<SliceParameters> sliceParams = std::get<1>(item);
-    tiledShapes.push_back(
-        sliceParams.has_value()
-            ? materializeTiledShape(builder, loc, valueToTile, *sliceParams)
-            : valueToTile);
+  for (auto [operand, params] :
+       llvm::zip(hivmOp->getOpOperands(), allSliceParameter)) {
+    Value value = operand.get();
+    if (params) {
+      value = materializeTiledShape(builder, loc, value, *params);
+      if (auto slice = value.getDefiningOp<tensor::ExtractSliceOp>()) {
+        auto map = hivmOp.getMatchingIndexingMap(&operand);
+        for (auto [dim, expr] : llvm::enumerate(map.getResults()))
+          if (expr.isFunctionOfDim(tiledLoop))
+            markCreatedExtractSliceOp(builder, slice, dim);
+      }
+    }
+    tiledShapes.push_back(value);
   }
   return tiledShapes;
 }
@@ -333,8 +334,8 @@ ElementwiseBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   // first DPS init and replaces the slice with all results of the cloned op.
   // Bail out gracefully on multi-result elementwise ops (e.g. vmulextui).
   if (hivmOp->getNumResults() != 1)
-    return rewriter.notifyMatchFailure(
-        sliceOp, "expected single-result elementwise op");
+    return rewriter.notifyMatchFailure(sliceOp,
+                                       "expected single-result elementwise op");
   rewriter.setInsertionPoint(hivmOp);
 
   OpOperand *outOperand = hivmOp.getDpsInitOperand(0);
@@ -373,7 +374,8 @@ ElementwiseBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   SmallVector<Value> tiledOperands =
       makeTiledShapes(rewriter, hivmLoc, hivmOp, valuesToTile, tileOffsets,
                       tileSizes, sizeBounds,
-                      /*omitPartialTileCheck=*/true);
+                      /*omitPartialTileCheck=*/true,
+                      indexingMap.getDimPosition(getBubbledTilingDim(sliceOp)));
 
   SmallVector<Type, 4> resultTensorTypes;
   for (OpOperand &opOperand : hivmOp.getDpsInitsMutable())

@@ -93,7 +93,7 @@ public:
       }
       auto extractSliceOp = cast<tensor::ExtractSliceOp>(op);
 
-      if (extractSliceOp->hasAttrOfType<UnitAttr>(toBeBubbleUpSlice)) {
+      if (extractSliceOp->hasAttr(toBeBubbleUpSlice)) {
         auto extractSrc = extractSliceOp->getOperand(0);
         if (isa<BlockArgument>(extractSrc)) {
           return WalkResult::advance();

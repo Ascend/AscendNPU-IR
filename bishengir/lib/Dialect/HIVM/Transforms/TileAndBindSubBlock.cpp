@@ -161,7 +161,7 @@ static void modifyOpToSliced(RewriterBase &rewriter, OpOperand *operand,
                              SmallVector<OpFoldResult, 4> mixedOffsets,
                              SmallVector<OpFoldResult, 4> mixedSize,
                              SmallVector<OpFoldResult, 4> mixedStrides,
-                             SmallVector<int64_t, 4> newShape) {
+                             int64_t tilingDim) {
   auto operandValue = operand->get();
   auto loc = operandValue.getLoc();
 
@@ -170,12 +170,12 @@ static void modifyOpToSliced(RewriterBase &rewriter, OpOperand *operand,
     auto slicedValue = rewriter.create<tensor::ExtractSliceOp>(
         loc, operandValue, mixedOffsets, mixedSize, mixedStrides);
     operand->set(slicedValue);
-    markCreatedExtractSliceOp(rewriter, slicedValue);
+    markCreatedExtractSliceOp(rewriter, slicedValue, tilingDim);
   } else if (isa<MemRefType>(newType)) {
     auto slicedValue = rewriter.create<memref::SubViewOp>(
         loc, operandValue, mixedOffsets, mixedSize, mixedStrides);
     operand->set(slicedValue);
-    markCreatedExtractSliceOp(rewriter, slicedValue);
+    markCreatedExtractSliceOp(rewriter, slicedValue, tilingDim);
   }
 }
 
@@ -205,7 +205,6 @@ LogicalResult modifyStoreCopyOp(OpType Op, int64_t tilingDim, OpOperand *srcOpr,
                                 PatternRewriter &rewriter) {
   auto loc = Op->getLoc();
   auto src = srcOpr->get();
-  auto srcType = cast<ShapedType>(src.getType());
   auto maybeSingleTileSize =
       getSingleTileSize(rewriter, loc, src, tilingDim, containingLoop);
   if (failed(maybeSingleTileSize))
@@ -220,7 +219,7 @@ LogicalResult modifyStoreCopyOp(OpType Op, int64_t tilingDim, OpOperand *srcOpr,
   SmallVector<OpFoldResult, 4> mixedStrides, mixedOffsets, mixedSize;
   SmallVector<int64_t, 4> newShape;
   if (failed(findCorrespondingSizesOffsetsStrides(
-          rewriter, srcType, tilingDim, offsetAtTileDim,
+          rewriter, src, tilingDim, offsetAtTileDim,
           maybeSingleTileSize.value(), mixedStrides, mixedOffsets, mixedSize,
           newShape)))
     return failure();
@@ -231,7 +230,7 @@ LogicalResult modifyStoreCopyOp(OpType Op, int64_t tilingDim, OpOperand *srcOpr,
     rewriter.setInsertionPointAfterValue(offsetAtTileDim.template get<Value>());
   }
   modifyOpToSliced(rewriter, srcOpr, mixedOffsets, mixedSize, mixedStrides,
-                   newShape);
+                   tilingDim);
   if (containingLoop.getRegion().isAncestor(dstOpr->get().getParentRegion())) {
     rewriter.setInsertionPointAfterValue(dstOpr->get());
   } else {
@@ -242,7 +241,7 @@ LogicalResult modifyStoreCopyOp(OpType Op, int64_t tilingDim, OpOperand *srcOpr,
         rewriter, dstOpr, mixedOffsets, mixedSize, newShape, tilingDim);
   } else {
     modifyOpToSliced(rewriter, dstOpr, mixedOffsets, mixedSize, mixedStrides,
-                     newShape);
+                     tilingDim);
   }
   rewriter.modifyOpInPlace(Op, [&]() {
     if (Op->getNumResults() > 0)
@@ -277,7 +276,7 @@ static LogicalResult modifyIndirectStoreOp(hivm::IndirectStoreOp op,
   SmallVector<OpFoldResult, 4> mixedStrides, mixedOffsets, mixedSize;
   SmallVector<int64_t, 4> newShape;
   if (failed(findCorrespondingSizesOffsetsStrides(
-          rewriter, srcType, tilingDim, offsetAtTileDim,
+          rewriter, srcVal, tilingDim, offsetAtTileDim,
           maybeSingleTileSize.value(), mixedStrides, mixedOffsets, mixedSize,
           newShape)))
     return failure();
@@ -290,7 +289,7 @@ static LogicalResult modifyIndirectStoreOp(hivm::IndirectStoreOp op,
           offsetAtTileDim.template get<Value>());
     }
     modifyOpToSliced(rewriter, opr, mixedOffsets, mixedSize, mixedStrides,
-                     newShape);
+                     tilingDim);
   };
 
   sliceOperandLikeSrc(&op.getSrcMutable());
@@ -329,7 +328,7 @@ static LogicalResult modifyStrideStoreOp(hivm::StrideStoreOp op,
   SmallVector<OpFoldResult, 4> mixedStrides, mixedOffsets, mixedSize;
   SmallVector<int64_t, 4> newShape;
   if (failed(findCorrespondingSizesOffsetsStrides(
-          rewriter, srcType, tilingDim, offsetAtTileDim,
+          rewriter, srcVal, tilingDim, offsetAtTileDim,
           maybeSingleTileSize.value(), mixedStrides, mixedOffsets, mixedSize,
           newShape)))
     return failure();
@@ -344,7 +343,7 @@ static LogicalResult modifyStrideStoreOp(hivm::StrideStoreOp op,
     rewriter.setInsertionPoint(op);
   }
   modifyOpToSliced(rewriter, srcOperand, mixedOffsets, mixedSize, mixedStrides,
-                   newShape);
+                   tilingDim);
 
   rewriter.setInsertionPoint(op);
   Type indexType = op.getOffset().getType();
@@ -765,13 +764,13 @@ private:
     SmallVector<OpFoldResult, 4> mixedOffsets, mixedSizes, mixedStrides;
     SmallVector<int64_t, 4> newShape;
     if (failed(findCorrespondingSizesOffsetsStrides(
-            rewriter, srcType, tilingDim, offsetAtTileDim,
+            rewriter, op.getSrc(), tilingDim, offsetAtTileDim,
             maybeSingleTileSize.value(), mixedStrides, mixedOffsets, mixedSizes,
             newShape)))
       return failure();
 
     modifyOpToSliced(rewriter, &op.getSrcMutable(), mixedOffsets, mixedSizes,
-                     mixedStrides, newShape);
+                     mixedStrides, tilingDim);
 
     rewriter.modifyOpInPlace(
         op, [&]() { op->setAttr(tiledOp, rewriter.getUnitAttr()); });
@@ -833,7 +832,8 @@ static void modifyDebugOpToSliced(RewriterBase &rewriter, hivm::DebugOp debugOp,
                                   SmallVector<OpFoldResult, 4> mixedOffsets,
                                   SmallVector<OpFoldResult, 4> mixedSize,
                                   SmallVector<OpFoldResult, 4> mixedStrides,
-                                  SmallVector<int64_t, 4> newShape) {
+                                  SmallVector<int64_t, 4> newShape,
+                                  int64_t tilingDim) {
   auto rankType = cast<RankedTensorType>(debugOp.getArg().getType());
   auto loc = debugOp->getLoc();
 
@@ -842,7 +842,7 @@ static void modifyDebugOpToSliced(RewriterBase &rewriter, hivm::DebugOp debugOp,
   auto slicedDebug = rewriter.create<tensor::ExtractSliceOp>(
       loc, newType, debugOp->getOperand(0), mixedOffsets, mixedSize,
       mixedStrides);
-  markCreatedExtractSliceOp(rewriter, slicedDebug);
+  markCreatedExtractSliceOp(rewriter, slicedDebug, tilingDim);
   rewriter.modifyOpInPlace(debugOp, [&]() {
     debugOp->setOperand(0, slicedDebug);
     debugOp->setAttr(tiledOp, UnitAttr::get(debugOp->getContext()));
@@ -913,7 +913,7 @@ private:
     }
     auto sliceOp = rewriter.create<tensor::ExtractSliceOp>(loc, source, offsets,
                                                            sizes, strides);
-    markCreatedExtractSliceOp(rewriter, sliceOp);
+    markCreatedExtractSliceOp(rewriter, sliceOp, dim);
     return sliceOp;
   }
 
@@ -955,13 +955,13 @@ public:
     auto rankType = cast<ShapedType>(debugOp.getArg().getType());
     assert(!ShapedType::isDynamicShape(rankType.getShape()));
     if (failed(findCorrespondingSizesOffsetsStrides(
-            rewriter, rankType, tilingDim, offsetAtTileDim,
+            rewriter, debugOp.getArg(), tilingDim, offsetAtTileDim,
             maybeSingleTileSize.value(), mixedStrides, mixedOffsets, mixedSize,
             newShape)))
       return failure();
 
     modifyDebugOpToSliced(rewriter, debugOp, mixedOffsets, mixedSize,
-                          mixedStrides, newShape);
+                          mixedStrides, newShape, tilingDim);
 
     return success();
   }
@@ -1010,7 +1010,7 @@ public:
       auto rankType = cast<ShapedType>(res.getType());
       assert(!ShapedType::isDynamicShape(rankType.getShape()));
       if (failed(findCorrespondingSizesOffsetsStrides(
-              rewriter, rankType, tilingDim, offsetAtTileDim,
+              rewriter, res, tilingDim, offsetAtTileDim,
               maybeSingleTileSize.value(), mixedStrides, mixedOffsets,
               mixedSize, newShape)))
         continue;
@@ -1018,7 +1018,7 @@ public:
       auto newType = RankedTensorType::get(newShape, rankType.getElementType());
       auto slicedValue = rewriter.create<tensor::ExtractSliceOp>(
           loc, newType, res, mixedOffsets, mixedSize, mixedStrides);
-      markCreatedExtractSliceOp(rewriter, slicedValue);
+      markCreatedExtractSliceOp(rewriter, slicedValue, tilingDim);
 
       auto mark = rewriter.create<annotation::MarkOp>(loc, slicedValue);
       mark->setAttr(tileAndBindLeaf, rewriter.getUnitAttr());

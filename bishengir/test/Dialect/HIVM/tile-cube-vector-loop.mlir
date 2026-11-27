@@ -109,6 +109,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
       %collapse_shape = memref.collapse_shape %subview [[0, 1], [2]] : memref<1x128x498xf16, strided<[63744, 498, 1], offset: ?>> into memref<128x498xf16, strided<[498, 1], offset: ?>>
       // memref store
       hivm.hir.store ins(%cast : tensor<128x498xf16>) outs(%collapse_shape : memref<128x498xf16, strided<[498, 1], offset: ?>>)
+      // CHECK-VECTOR: } {hivm.tile_cube_vector_loop, hivm.tiling_dim = 0 : i64}
       scf.yield %collapsed : tensor<128xf32>
     } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
     return %res : tensor<128xf32>
@@ -278,7 +279,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     // CHECK-CUBE:           %[[MIN:.*]] = affine.min #[[$MAP_M]](%[[INNER_IV]])
     // CHECK-CUBE:           %[[MMAD:.*]] = hivm.hir.mmadL1 {cube_producer_to_fuse_0_group_0} ins(%[[LOAD_A]], %[[LOAD_B]], %[[TRUE]], %[[MIN]], %[[C128]], %[[C256]]{{.*}}
     // CHECK-CUBE:           hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, op_to_tile_0_branch_0} ins(%[[MMAD]] : tensor<64x256xf32>)
-    // CHECK-CUBE:         }
+    // CHECK-CUBE:         } {hivm.tile_cube_vector_loop, hivm.tiling_dim = 0 : i64}
     // CHECK-CUBE:       } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
   }
 }
@@ -331,7 +332,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     // CHECK-CUBE:           %[[MIN:.*]] = affine.min #[[$MAP_N]](%[[INNER_IV]])
     // CHECK-CUBE:           %[[MMAD:.*]] = hivm.hir.mmadL1 {cube_producer_to_fuse_0_group_0} ins(%[[LOAD_A]], %[[LOAD_B]], %[[TRUE]], %[[C256]], %[[C128]], %[[MIN]]
     // CHECK-CUBE:           hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, op_to_tile_0_branch_0} ins(%[[MMAD]] : tensor<256x64xf32>)
-    // CHECK-CUBE:         }
+    // CHECK-CUBE:         } {hivm.tile_cube_vector_loop, hivm.tiling_dim = 1 : i64}
     // CHECK-CUBE:       } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
   }
 }
