@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -87,11 +88,21 @@ public:
     // don't do anything if something is using the post_update'ed value
     if (!op.getNewTrueShape().use_empty())
       return failure();
+    bool isAscend960 =
+        hacc::utils::isAscend960(op->getParentOfType<ModuleOp>());
     for (auto u : op.getRes().getUsers()) {
+      // PLTM rounds the offset down to a whole vector. An extra active
+      // scatter lane can overwrite an unrelated address.
+      if (isAscend960 && isa<hivmave::VFScatterOp>(u))
+        return failure();
       if (auto storeOp = dyn_cast<hivmave::VFMaskedStoreOp>(u)) {
-        if (storeOp->hasAttr(hivmave::UnalignedAttr::name)) {
+        // A packed predicate store needs the exact tail length to preserve
+        // the remaining bits in its last byte.
+        if (storeOp->hasAttr(hivmave::UnalignedAttr::name) ||
+            (isAscend960 && storeOp.getMask() == op.getRes() &&
+             storeOp.getPattern() == hivmave::StoreDist::NORM_B8 &&
+             storeOp.getVectorType().getElementType().isInteger(1)))
           return failure();
-        }
       }
     }
     affine::AffineMinOp min = dyn_cast_if_present<affine::AffineMinOp>(

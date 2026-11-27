@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Target/LLVMIR/Dialect/HIVMRegbaseIntrins/HIVMRegbaseIntrinsToLLVMIRTranslation.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Operation.h"
@@ -22,6 +23,15 @@
 
 using namespace mlir;
 using namespace mlir::LLVM;
+
+bool hivm_regbaseintrins::needsScatterMemoryWorkaround(Operation *op) {
+  if (!isa<VScatterV128S16InstrOp>(op))
+    return isa<VScatterV64S32InstrOp>(op);
+  // hivmc replaces hacc.target with its toolchain marker on device modules.
+  auto module = op->getParentOfType<ModuleOp>();
+  return module && (module->hasAttr(kDavinciV2IntrinsicsModuleAttrName) ||
+                    hacc::utils::isAscend960(module));
+}
 
 namespace {
 
@@ -40,7 +50,7 @@ convertHIVMRegbaseIntrinsic(Operation &opInst, llvm::IRBuilderBase &builder,
       function &&
       function
           .walk([](Operation *op) {
-            return isa<hivm_regbaseintrins::VScatterV64S32InstrOp>(op)
+            return hivm_regbaseintrins::needsScatterMemoryWorkaround(op)
                        ? WalkResult::interrupt()
                        : WalkResult::advance();
           })
@@ -59,7 +69,7 @@ convertHIVMRegbaseIntrinsic(Operation &opInst, llvm::IRBuilderBase &builder,
         inst->setArgOperand(
             i, builder.CreateLaunderInvariantGroup(inst->getArgOperand(i)));
   }
-  if (isa<hivm_regbaseintrins::VScatterV64S32InstrOp>(opInst)) {
+  if (hivm_regbaseintrins::needsScatterMemoryWorkaround(&opInst)) {
     // Older LLVM definitions mark the scatter destination readonly.
     auto *callee = inst->getCalledFunction();
     callee->removeParamAttr(1, llvm::Attribute::ReadOnly);

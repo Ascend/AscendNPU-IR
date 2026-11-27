@@ -23,10 +23,12 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Bufferization/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Pass/PassManager.h"
 #include "llvm/Support/Debug.h"
 #include <cstdint>
@@ -52,17 +54,30 @@ struct MarkRealCoreTypePass
   bool shouldRemoveCoreTypeAttrs() const { return removeCoreTypeAttrs; }
 };
 
-// Scalar-pipe ops and InferCoreTypeInterface ops get a real core-type
-// stamp. Custom/VBrc keep inferred types.
+// Ops that execute on a core get a real core-type stamp. Ops that do not
+// identify a core keep their inferred type.
 static bool isOpTypeToBeMarked(Operation *op) {
+  // Excluded even when they touch memory. Their inferred type stays.
+  if (isa<hivm::CustomOp, hivm::CustomMacroOp>(op))
+    return false;
+
+  // Direct memory access and in-place results execute on a core.
   if (isa<memref::LoadOp, memref::StoreOp, affine::AffineLoadOp,
           affine::AffineStoreOp, tensor::ExtractOp, tensor::InsertOp,
-          tensor::InsertSliceOp, tensor::ExtractSliceOp>(op)) {
+          tensor::InsertSliceOp, tensor::ExtractSliceOp,
+          DestinationStyleOpInterface>(op))
     return true;
-  }
-  if (isa<hivm::CustomOp, hivm::CustomMacroOp, hivm::VBrcOp>(op))
-    return false;
-  return isa<hivm::InferCoreTypeInterface>(op);
+
+  // A known core inference means the op executes on that core.
+  if (isa<hivm::InferCoreTypeInterface>(op))
+    return true;
+
+  // Any other read or write executes on a core. Allocate and free do not.
+  if (utils::hasNonLifetimeMemoryEffects(op))
+    return true;
+
+  // Everything else does not identify a core.
+  return false;
 }
 
 static void removeMarkedCoreTypeAttrs(ModuleOp module) {

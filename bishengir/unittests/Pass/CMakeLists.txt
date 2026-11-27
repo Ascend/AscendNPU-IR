@@ -7,6 +7,7 @@ target_link_libraries(BiShengIRPassTests PRIVATE
   BiShengIRAnnotationDialect
   BiShengIRDialectUtils
   BiShengIRExecutionEngineTransforms
+  BiShengIRHACCDialect
   BiShengIRPass
   BiShengIRHIVMDialect
   BiShengIRHIVMRegbasePipelines

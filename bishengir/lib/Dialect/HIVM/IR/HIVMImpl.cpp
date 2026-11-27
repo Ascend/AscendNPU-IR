@@ -381,46 +381,55 @@ bool isCopytoL1(Operation *op) {
 }
 
 FailureOr<TCoreType> getCoreType(Operation *op) {
-  // VF / copy-to-L1 are always VECTOR for mix splitting (f9d978b behavior),
-  // ahead of an explicit coretype attribute.
+  // VF calls and copies to L1 run on VECTOR even with an explicit core type.
   if (isVFCall(op) || isCopytoL1(op))
     return TCoreType::VECTOR;
 
-  // Explicit coretype attribute is next.
-  if (auto coreTypeAttr =
-          op->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name)) {
-    return coreTypeAttr.getTcoretype();
+  // Prefer an explicit core type when it resolves placement.
+  auto coreTypeAttr =
+      op->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name);
+  if (coreTypeAttr) {
+    TCoreType coreType = coreTypeAttr.getTcoretype();
+    if (coreType != TCoreType::CUBE_OR_VECTOR)
+      return coreType;
   }
-  // SplitMixedIfConditionals tags uniform-core ifs; honor those for filtering.
+
+  // SplitMixedIfConditionals records single-core placement on conditionals.
   if (isa<scf::IfOp>(op)) {
     if (op->hasAttr(kCubeOnlyAttrName))
       return TCoreType::CUBE;
     if (op->hasAttr(kVecOnlyAttrName))
       return TCoreType::VECTOR;
   }
-  // Scope pipelined-loop override: used when CV pipelining tags a scope without
-  // also setting hivm.tcore_type. Do not apply this to scf.for — those stay
-  // CUBE_OR_VECTOR so annotateOpOperand can recurse into the body.
+
+  // CV pipelining records scope placement in hivm.loop_core_type. Keep this
+  // lookup specific to scopes so annotateOpOperand can visit unresolved loops.
   if (isa<scope::ScopeOp>(op)) {
-    if (auto coreTypeAttr = op->getAttrOfType<hivm::TCoreTypeAttr>(
-            hivm::kPipelinedLoopCoreTypeAttrName)) {
-      return coreTypeAttr.getTcoretype();
-    }
+    auto loopCoreTypeAttr = op->getAttrOfType<hivm::TCoreTypeAttr>(
+        hivm::kPipelinedLoopCoreTypeAttrName);
+    if (loopCoreTypeAttr &&
+        loopCoreTypeAttr.getTcoretype() != TCoreType::CUBE_OR_VECTOR)
+      return loopCoreTypeAttr.getTcoretype();
   }
-  // annotation.mark has the second highest priority.
+
+  // Use the first concrete core-type marker on the first result.
   if (op->getNumResults() > 0) {
-    auto res = getAnnotateOpWithAttr(op->getResult(0),
-                                     mlir::hivm::TCoreTypeMarkerAttr::name);
-    if (res.has_value()) {
-      return cast<mlir::hivm::TCoreTypeMarkerAttr>(
-                 res.value()->getAttr(mlir::hivm::TCoreTypeMarkerAttr::name))
-          .getTcoretype();
+    for (Operation *user : op->getResult(0).getUsers()) {
+      if (!isa<annotation::MarkOp>(user))
+        continue;
+      auto marker = user->getAttrOfType<hivm::TCoreTypeMarkerAttr>(
+          hivm::TCoreTypeMarkerAttr::name);
+      if (marker && marker.getTcoretype() != TCoreType::CUBE_OR_VECTOR)
+        return marker.getTcoretype();
     }
   }
 
-  if (auto opCoreType = hivm::detail::queryCoreTypeHelper(op))
+  // Query the op's core-type traits and inference interface.
+  auto opCoreType = hivm::detail::queryCoreTypeHelper(op);
+  if (opCoreType && opCoreType.value() != TCoreType::CUBE_OR_VECTOR)
     return opCoreType.value();
 
+  // Resolve call placement from the callee's function core type.
   if (auto callOp = dyn_cast_or_null<func::CallOp>(op)) {
     auto fnName = callOp.getCallee();
     auto fn =
@@ -434,15 +443,16 @@ FailureOr<TCoreType> getCoreType(Operation *op) {
       op->emitError() << "function core type is unknown for '" << fnName << "'";
       return {};
     }
-    return kTFuncCoreType2TCoreType.find(funcCoreType.value())->second;
+    return kTFuncCoreType2TCoreType.at(funcCoreType.value());
   }
+
+  // Loops that contain extracted scalar UB accesses run on VECTOR.
   if (auto forOp = dyn_cast_or_null<scf::ForOp>(op)) {
     if (auto attr = forOp->getAttr(ExtractLoadStoreAttr)) {
-      // ExtractedLoadOrStore describes the process of discretely loading
-      // scalars on ub.which should be split into aiv kernel
       return TCoreType::VECTOR;
     }
   }
+
   return TCoreType::CUBE_OR_VECTOR;
 }
 

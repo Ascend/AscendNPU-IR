@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h"
@@ -380,9 +381,11 @@ linearizeSingleElementI1Access(PatternRewriter &rewriter, Location loc,
 
 /// Reinterprets the root singleton source as a linear 1D i1 memref so the
 /// aligned VL load path can be reused for higher-rank or unaligned accesses.
-static FailureOr<Value>
-buildRawLinearI1View(PatternRewriter &rewriter, Location loc, Value rootMemref,
-                     std::optional<OpFoldResult> linearBitSize = std::nullopt) {
+static FailureOr<Value> buildRawLinearI1View(PatternRewriter &rewriter,
+                                             Location loc,
+                                             LinearizedI1Access &access,
+                                             bool useBitIndices) {
+  auto &[rootMemref, linearBitOffset, linearBitSize] = access;
   auto rootTy = dyn_cast<MemRefType>(rootMemref.getType());
   if (!rootTy)
     return failure();
@@ -431,14 +434,32 @@ buildRawLinearI1View(PatternRewriter &rewriter, Location loc, Value rootMemref,
       linearSizes.push_back(span);
     }
 
+    OpFoldResult viewOffset = getAsOpFoldResult(metadata.getOffset());
+    if (useBitIndices) {
+      // Split the physical bit address into a block and lane, even when the
+      // root descriptor starts partway through a predicate block. A traced
+      // reinterpret_cast already supplied its own absolute offset and span.
+      if (!linearBitSize) {
+        Value offset = getValueOrCreateConstantIndexOp(
+            rewriter, loc, metadata.getConstifiedMixedOffset());
+        linearBitOffset =
+            rewriter.createOrFold<arith::AddIOp>(loc, offset, linearBitOffset);
+        Value size =
+            getValueOrCreateConstantIndexOp(rewriter, loc, linearSizes[0]);
+        Value end = rewriter.createOrFold<arith::AddIOp>(loc, offset, size);
+        linearSizes[0] = getAsOpFoldResult(end);
+        staticSpan = mlir::getConstantIntValue(linearSizes[0])
+                         .value_or(ShapedType::kDynamic);
+      }
+      viewOffset = rewriter.getIndexAttr(0);
+    }
     auto linearTy =
         MemRefType::get({staticSpan}, rootTy.getElementType(),
                         StridedLayoutAttr::get(rewriter.getContext(),
                                                ShapedType::kDynamic, {1}),
                         rootTy.getMemorySpace());
     auto rawView = rewriter.create<memref::ReinterpretCastOp>(
-        loc, linearTy, metadata.getBaseBuffer(),
-        getAsOpFoldResult(metadata.getOffset()), linearSizes,
+        loc, linearTy, metadata.getBaseBuffer(), viewOffset, linearSizes,
         SmallVector<OpFoldResult>{rewriter.getIndexAttr(1)});
     return rawView.getResult();
   }
@@ -478,23 +499,26 @@ buildRawLinearI1View(PatternRewriter &rewriter, Location loc, Value rootMemref,
 //   base = 256, offsetInVL = 44
 //
 // Returns {base, offsetInVL} both cast back to index type.
-std::pair<Value, Value> getBaseAndOffetInVL(PatternRewriter &rewriter,
-                                            Location &loc, Value currOffset) {
+static std::pair<Value, Value> getBaseAndOffsetInVL(PatternRewriter &rewriter,
+                                                    Location loc,
+                                                    Value currOffset,
+                                                    bool useBitIndices) {
   Value constVL = rewriter.create<arith::ConstantOp>(
       loc, rewriter.getI32IntegerAttr(util::VL));
-  Value constByteSize = rewriter.create<arith::ConstantOp>(
-      loc, rewriter.getI32IntegerAttr(util::BITS_PER_BYTE));
   Value i32Offset = rewriter.create<arith::IndexCastOp>(
       loc, rewriter.getI32Type(), currOffset);
   Value numVL = rewriter.create<arith::DivSIOp>(loc, i32Offset, constVL);
   Value newBase = rewriter.create<arith::MulIOp>(loc, numVL, constVL);
   Value newOffset = rewriter.create<arith::SubIOp>(loc, i32Offset, newBase);
-  // Load indice will be convert to llvm.gep.
-  // The offset of the gep instruction is measured in bytes.
-  Value newBaseInByte =
-      rewriter.create<arith::DivSIOp>(loc, newBase, constByteSize);
+  // A6 predicate memrefs use bit indices. Legacy lowering expects a byte
+  // displacement for a predicate load or store.
+  if (!useBitIndices) {
+    Value byteSize = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI32IntegerAttr(util::BITS_PER_BYTE));
+    newBase = rewriter.create<arith::DivSIOp>(loc, newBase, byteSize);
+  }
   Value indexBase = rewriter.create<arith::IndexCastOp>(
-      loc, rewriter.getIndexType(), newBaseInByte);
+      loc, rewriter.getIndexType(), newBase);
   Value indexOffset = rewriter.create<arith::IndexCastOp>(
       loc, rewriter.getIndexType(), newOffset);
   return {indexBase, indexOffset};
@@ -597,15 +621,17 @@ struct loadBroadcastPattern : public OpRewritePattern<hivmave::VFLoadOp> {
         rewriter, loc, loadOp.getBase(), loadOp.getIndices());
     if (failed(linearized))
       return failure();
-    auto rawLinearView = buildRawLinearI1View(
-        rewriter, loc, linearized->rootMemref, linearized->linearBitSize);
+    bool useBitIndices =
+        hacc::utils::isAscend960(loadOp->getParentOfType<ModuleOp>());
+    auto rawLinearView =
+        buildRawLinearI1View(rewriter, loc, *linearized, useBitIndices);
     if (failed(rawLinearView))
       return failure();
 
     // Split the linearized bit position into a VL-aligned base and the lane
     // offset inside that loaded VL chunk.
-    auto [baseIndices, offsetInVL] =
-        getBaseAndOffetInVL(rewriter, loc, linearized->linearBitOffset);
+    auto [baseIndices, offsetInVL] = getBaseAndOffsetInVL(
+        rewriter, loc, linearized->linearBitOffset, useBitIndices);
     VectorType orgVectorTy = loadOp.getVectorType();
     VFLoadOp newLoad = rewriter.create<hivmave::VFLoadOp>(
         loc, orgVectorTy, *rawLinearView, baseIndices);
@@ -691,14 +717,16 @@ struct storeBroadcastPattern
         rewriter, loc, store.getBase(), store.getIndices());
     if (failed(linearized))
       return failure();
-    auto rawLinearView = buildRawLinearI1View(
-        rewriter, loc, linearized->rootMemref, linearized->linearBitSize);
+    bool useBitIndices =
+        hacc::utils::isAscend960(store->getParentOfType<ModuleOp>());
+    auto rawLinearView =
+        buildRawLinearI1View(rewriter, loc, *linearized, useBitIndices);
     if (failed(rawLinearView))
       return failure();
 
     // Step 3: Load the containing predicate block and compute its lane offset.
-    auto [baseIndex, offsetInVL] =
-        getBaseAndOffetInVL(rewriter, loc, linearized->linearBitOffset);
+    auto [baseIndex, offsetInVL] = getBaseAndOffsetInVL(
+        rewriter, loc, linearized->linearBitOffset, useBitIndices);
     VectorType pregTy = VectorType::get({util::VL}, rewriter.getI1Type());
 
     // Load the old block; the update must preserve every other bit.

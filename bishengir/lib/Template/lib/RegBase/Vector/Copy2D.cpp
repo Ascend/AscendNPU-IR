@@ -117,6 +117,43 @@ isBroadcastLoad2dValid(const memref_t<__gm__ T, 2> *src,
 }
 #endif
 
+/// Admission for moving a 2D load whose UB destination is not 32B aligned by
+/// NDDMA instead of a per-element scalar copy.
+///
+/// copy_gm_to_ubuf_align_v2 can only start a burst on a 32B boundary, while
+/// nddma_out_to_ub addresses UB at element granularity: counts, steps and
+/// padding are all element-granular, so the window is expressible as a
+/// two-level descriptor whatever the destination alignment. The 128B
+/// row-width condition of the neighbouring gates does not apply here; it
+/// picks between two DMA engines, and the alternative here is the scalar
+/// copy.
+///
+/// The descriptor is emitted without padding (lp = rp = 0): it moves exactly
+/// the valid window and never writes in front of dst->offset, which is what
+/// the scalar copy it replaces does, so the UB contents are the same.
+///
+/// Admission is therefore only about what the descriptor can encode:
+/// unsigned 20-bit counts and destination steps, an unsigned source step, a
+/// contiguous innermost axis on both sides, and matching extents (broadcast
+/// shapes have their own paths above).
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+canUseNddmaForUnalignedLoad2d(const memref_t<__gm__ T, 2> *src,
+                              const memref_t<__ubuf__ T, 2> *dst,
+                              AtomicKind atomic_kind) {
+  const int64_t rows = src->sizes[0];
+  const int64_t width = src->sizes[1];
+  // A repeated or overlapping source row is fine - the descriptor reads it
+  // again, as the scalar loop does - but the destination rows must not
+  // overlap, hence stride0_ub >= width.
+  return atomic_kind == AtomicKind::None && rows > 0 && width > 0 &&
+         rows <= 0xfffff && width <= 0xfffff && rows == dst->sizes[0] &&
+         width == dst->sizes[1] && src->strides[1] == 1 &&
+         dst->strides[1] == 1 && src->strides[0] >= 0 &&
+         src->strides[0] <= 0xffffffffLL && dst->strides[0] >= width &&
+         dst->strides[0] <= 0xfffff && src->offset >= 0 && dst->offset >= 0;
+}
+
 /// Core func of loading gm -> ub, 2D
 /// UB starting address must be 32B aligned; otherwise, it degrades to looped
 /// scalar transfer:
@@ -205,6 +242,19 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
 
   auto dst_ptr = dst->aligned + dst->offset;
   if (!isAddress32ByteAligned(dst_ptr)) {
+    // An unaligned UB destination cannot start an ALIGN_V2 burst, but NDDMA
+    // addresses UB at element granularity, so the window moves as one
+    // descriptor instead of element by element. The descriptor carries no
+    // padding counts, which keeps the UB contents identical to the scalar
+    // copy; see canUseNddmaForUnalignedLoad2d.
+    if constexpr (sizeof(T) <= 4) {
+      if (canUseNddmaForUnalignedLoad2d<T>(src, dst, atomic_kind)) {
+        load_gm_to_ubuf_2d_by_nddma<T>(src, dst, PadMode::Null, pad_value,
+                                       /*left_padding_num=*/0,
+                                       static_cast<uint8_t>(eviction_policy));
+        return;
+      }
+    }
     load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(src, dst);
     return;
   }

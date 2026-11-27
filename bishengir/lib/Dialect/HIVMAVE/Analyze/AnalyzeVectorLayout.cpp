@@ -1,3 +1,4 @@
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h"
@@ -473,6 +474,20 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
                   hivmave::VNmaddOp, hivmave::VNmsubOp>(
                 [&](auto op) { return solveMaskProblem(op); })
             .Case<hivmave::VFCmpOp>([&](auto op) { return solveProblem(op); })
+            .Case<hivmave::VFScatterOp>(
+                [&](hivmave::VFScatterOp scatter) -> TreeSolves {
+                  unsigned bits = cast<VectorType>(scatter.getVal().getType())
+                                      .getElementTypeBitWidth();
+                  if ((bits != 16 && bits != 32) ||
+                      !hacc::utils::isAscend960(
+                          scatter->getParentOfType<ModuleOp>()))
+                    return solveProblemDefault(scatter);
+                  State state = defaultStateForBitwidth(bits);
+                  return {wrapThis(FunctionType::NORM,
+                                   {{scatter.getVal(), state},
+                                    {scatter.getIndexVec(), state},
+                                    {scatter.getMask(), state}})};
+                })
             .Case<hivmave::VFStoreWithStrideOp>(
                 [&](auto op) { return solveProblem(op); })
             .Case<hivmave::VFTruncFOp, hivmave::VFTruncIOp>(

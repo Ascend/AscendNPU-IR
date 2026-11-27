@@ -413,3 +413,47 @@ func.func @reduce_with_index_live_results(
       dimensions = [1] -> tensor<1x4xf32>, tensor<1x4xi32>
   return %value, %index : tensor<1x4xf32>, tensor<1x4xi32>
 }
+
+// -----
+
+// RegBase computes the minimum at expanded rank and returns its collapsed result.
+// REGBASE-LABEL: func.func @collapse_shared_input_init(
+// REGBASE: %[[HIGH:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
+// REGBASE: %[[MIN:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<min_signed>} ins(%[[HIGH]], %{{.*}} : tensor<1x1x1x2x8xi32>, i32) outs(%[[HIGH]] : tensor<1x1x1x2x8xi32>)
+// REGBASE: %[[LOW:.*]] = tensor.collapse_shape %[[MIN]]
+// REGBASE-NEXT: return %[[LOW]] : tensor<2x8xi32>
+// A3-LABEL: func.func @collapse_shared_input_init(
+func.func @collapse_shared_input_init(%a: tensor<1x1x1x2x8xi32>, %init: tensor<1x1x1x2x8xi32>) -> tensor<2x8xi32> {
+  %c0 = arith.constant 0 : i32
+  %c1 = arith.constant 1 : i32
+  %high = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%a, %c0 : tensor<1x1x1x2x8xi32>, i32) outs(%init : tensor<1x1x1x2x8xi32>) -> tensor<1x1x1x2x8xi32>
+  %low = tensor.collapse_shape %high [[0, 1, 2, 3], [4]] : tensor<1x1x1x2x8xi32> into tensor<2x8xi32>
+  %min = linalg.elemwise_binary {fun = #linalg.binary_fn<min_signed>} ins(%low, %c1 : tensor<2x8xi32>, i32) outs(%low : tensor<2x8xi32>) -> tensor<2x8xi32>
+  return %min : tensor<2x8xi32>
+}
+
+// -----
+
+// Both reduction inputs use the same collapse. Propagating it once moves
+// dimension 1 to dimension 2. A second rewrite expands the inits again.
+// A3-LABEL: func.func @reduce_shared_inputs(
+// REGBASE-LABEL: func.func @reduce_shared_inputs(
+// REGBASE: %[[HIGH:.*]] = arith.addi
+// REGBASE: %[[RED:.*]]:2 = linalg.reduce ins(%[[HIGH]], %[[HIGH]] : tensor<2x3x4xi32>, tensor<2x3x4xi32>)
+// REGBASE-SAME: dimensions = [2]
+// REGBASE-DAG: %[[SUM:.*]] = tensor.collapse_shape %[[RED]]#0 {{.*}} : tensor<2x3xi32> into tensor<6xi32>
+// REGBASE-DAG: %[[MAX:.*]] = tensor.collapse_shape %[[RED]]#1 {{.*}} : tensor<2x3xi32> into tensor<6xi32>
+// REGBASE: return %[[SUM]], %[[MAX]]
+func.func @reduce_shared_inputs(%input: tensor<2x3x4xi32>, %sum: tensor<6xi32>,
+                                %max: tensor<6xi32>) -> (tensor<6xi32>, tensor<6xi32>) {
+  %high = arith.addi %input, %input : tensor<2x3x4xi32>
+  %low = tensor.collapse_shape %high [[0, 1], [2]] : tensor<2x3x4xi32> into tensor<6x4xi32>
+  %r:2 = linalg.reduce ins(%low, %low : tensor<6x4xi32>, tensor<6x4xi32>)
+      outs(%sum, %max : tensor<6xi32>, tensor<6xi32>) dimensions = [1]
+      (%x: i32, %y: i32, %s: i32, %m: i32) {
+    %nextSum = arith.addi %s, %x : i32
+    %nextMax = arith.maxsi %m, %y : i32
+    linalg.yield %nextSum, %nextMax : i32, i32
+  }
+  return %r#0, %r#1 : tensor<6xi32>, tensor<6xi32>
+}

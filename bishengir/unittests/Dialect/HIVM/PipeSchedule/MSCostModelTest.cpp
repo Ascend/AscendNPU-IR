@@ -22,7 +22,7 @@
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
-#include "mlir/IR/OperationState.h"
+#include "mlir/IR/OperationSupport.h"
 #include "gtest/gtest.h"
 
 #include <cmath>

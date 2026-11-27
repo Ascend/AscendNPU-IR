@@ -1156,7 +1156,7 @@ def AVE_VusqzOp
     : AVE_LibFnOp<"vusqz", [Pure]> {
   let summary = "AVE exclusive prefix count of a predicate.";
   let arguments = (ins AveMaskType:$mask);
-  let results = (outs AveVector<[I8, I16, I32]>:$res);
+  let results = (outs AveVector<[I8, I16, I32, BF16]>:$res);
   let assemblyFormat = [{
     $mask attr-dict `:` type($mask) `->` type($res)
   }];

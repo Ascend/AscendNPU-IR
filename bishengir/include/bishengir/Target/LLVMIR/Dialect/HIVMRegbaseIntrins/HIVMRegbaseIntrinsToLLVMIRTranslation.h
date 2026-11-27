@@ -18,6 +18,12 @@ namespace mlir {
 
 class DialectRegistry;
 class MLIRContext;
+class Operation;
+
+namespace hivm_regbaseintrins {
+/// Whether LLVM scatter memory attributes and readback need correction.
+bool needsScatterMemoryWorkaround(Operation *op);
+} // namespace hivm_regbaseintrins
 
 /// Register the HIMVRegbaseIntrins dialect and the translation from it to the
 /// LLVM IR in the given registry;
