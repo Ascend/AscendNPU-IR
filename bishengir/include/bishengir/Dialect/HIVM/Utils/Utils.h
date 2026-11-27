@@ -145,6 +145,7 @@ const std::map<TFuncCoreType, TCoreType> kTFuncCoreType2TCoreType = {
     {TFuncCoreType::AIC, TCoreType::CUBE},
     {TFuncCoreType::AIV, TCoreType::VECTOR},
     {TFuncCoreType::MIX, TCoreType::CUBE_OR_VECTOR},
+    {TFuncCoreType::AIC_OR_AIV, TCoreType::CUBE_OR_VECTOR},
 };
 
 const std::map<std::string, int> membarType = {

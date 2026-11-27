@@ -379,10 +379,10 @@ func.func @graph_merges_consumer_with_cross_core_input(%a: f32) {
 
 // -----
 
-// C -> V2: disconnected V1 has no merge candidate.
+// C -> V2: the final adjacency rule fuses V1/V2 after C.
 // CHECK-LABEL: func.func @adjacent_preserves_incoming_overlap(
 // CHECK: scf.for
-// CHECK-COUNT-3: scope.scope
+// CHECK-COUNT-2: scope.scope
 // CHECK-NOT: scope.scope
 // CHECK: } {hivm.cv_pipelined_loop}
 func.func @adjacent_preserves_incoming_overlap(%a: f32) {
@@ -442,10 +442,10 @@ func.func @graph_merges_consumer_after_transitive_boundary(%a: f32) {
 
 // -----
 
-// C -> bridge -> V2: disconnected V1 has no merge candidate.
+// C -> bridge -> V2: fuse V1/V2 without moving either before the bridge.
 // CHECK-LABEL: func.func @adjacent_preserves_transitive_incoming_overlap(
 // CHECK: scf.for
-// CHECK-COUNT-3: scope.scope
+// CHECK-COUNT-2: scope.scope
 // CHECK-NOT: scope.scope
 // CHECK: } {hivm.cv_pipelined_loop}
 func.func @adjacent_preserves_transitive_incoming_overlap(%a: f32) {
@@ -505,13 +505,17 @@ func.func @adjacent_merges_shared_transitive_boundaries(%a: f32) {
 
 // -----
 
-// Adjacency alone is insufficient: three disconnected scopes stay separate.
-// CHECK-LABEL: func.func @graph_keeps_disconnected_scopes(
+// The final adjacency rule fuses the three disconnected top-level scopes.
+// CHECK-LABEL: func.func @fuse_disconnected_top_level_scopes(
 // CHECK: scf.for
-// CHECK-COUNT-3: scope.scope
+// CHECK: scope.scope
+// CHECK-NEXT: arith.addf
+// CHECK-NEXT: arith.mulf
+// CHECK-NEXT: arith.negf
+// CHECK-NEXT: scope.return
 // CHECK-NOT: scope.scope
 // CHECK: } {hivm.cv_pipelined_loop}
-func.func @graph_keeps_disconnected_scopes(%a: f32) {
+func.func @fuse_disconnected_top_level_scopes(%a: f32) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c16 = arith.constant 16 : index
@@ -534,10 +538,10 @@ func.func @graph_keeps_disconnected_scopes(%a: f32) {
 
 // -----
 
-// Merge the common predecessors V1/V2; disconnected V3 stays separate.
+// Graph merging joins V1/V2 first, then adjacency fusion includes V3.
 // CHECK-LABEL: func.func @adjacent_rechecks_after_merge(
 // CHECK: scf.for
-// CHECK-COUNT-3: scope.scope
+// CHECK-COUNT-2: scope.scope
 // CHECK-NOT: scope.scope
 // CHECK: } {hivm.cv_pipelined_loop}
 func.func @adjacent_rechecks_after_merge(%a: f32) {
@@ -567,10 +571,10 @@ func.func @adjacent_rechecks_after_merge(%a: f32) {
 
 // -----
 
-// C1 -> V: disconnected C2 has no merge candidate.
+// C1 -> V: fuse adjacent C1/C2 while retaining the VECTOR boundary.
 // CHECK-LABEL: func.func @adjacent_preserves_cube_overlap(
 // CHECK: scf.for
-// CHECK-COUNT-3: scope.scope
+// CHECK-COUNT-2: scope.scope
 // CHECK-NOT: scope.scope
 // CHECK: } {hivm.cv_pipelined_loop}
 func.func @adjacent_preserves_cube_overlap(%a: f32) {
@@ -596,10 +600,10 @@ func.func @adjacent_preserves_cube_overlap(%a: f32) {
 
 // -----
 
-// CUBE_AND_VECTOR is not a concrete-core merge member; V2 is disconnected.
+// Fuse V1/V2, but CUBE_AND_VECTOR is not a concrete-core merge member.
 // CHECK-LABEL: func.func @adjacent_preserves_mixed_scope_overlap(
 // CHECK: scf.for
-// CHECK-COUNT-3: scope.scope
+// CHECK-COUNT-2: scope.scope
 // CHECK-NOT: scope.scope
 // CHECK: } {hivm.cv_pipelined_loop}
 func.func @adjacent_preserves_mixed_scope_overlap(%a: f32) {
@@ -625,10 +629,10 @@ func.func @adjacent_preserves_mixed_scope_overlap(%a: f32) {
 
 // -----
 
-// A consumer without a core type cannot merge with V1; V2 is disconnected.
+// Fuse V1/V2, but keep the consumer without a core type separate.
 // CHECK-LABEL: func.func @adjacent_preserves_unknown_scope_overlap(
 // CHECK: scf.for
-// CHECK-COUNT-3: scope.scope
+// CHECK-COUNT-2: scope.scope
 // CHECK-NOT: scope.scope
 // CHECK: } {hivm.cv_pipelined_loop}
 func.func @adjacent_preserves_unknown_scope_overlap(%a: f32) {
@@ -654,10 +658,10 @@ func.func @adjacent_preserves_unknown_scope_overlap(%a: f32) {
 
 // -----
 
-// A mixed wrapper cannot merge with V1; disconnected V2 also stays separate.
+// Fuse V1/V2, but preserve the mixed wrapper and its children.
 // CHECK-LABEL: func.func @adjacent_preserves_wrapper_overlap(
 // CHECK: scf.for
-// CHECK-COUNT-5: scope.scope
+// CHECK-COUNT-4: scope.scope
 // CHECK-NOT: scope.scope
 // CHECK: } {cv_merged_scope}
 // CHECK-NOT: scope.scope
@@ -692,10 +696,10 @@ func.func @adjacent_preserves_wrapper_overlap(%a: f32) {
 
 // -----
 
-// V1 -> C is a memory conflict; the disconnected V2 still has no candidate.
+// Fuse adjacent V1/V2 in order, preserving the memory conflict before C.
 // CHECK-LABEL: func.func @adjacent_preserves_memory_overlap(
 // CHECK: scf.for
-// CHECK-COUNT-3: scope.scope
+// CHECK-COUNT-2: scope.scope
 // CHECK-NOT: scope.scope
 // CHECK: } {hivm.cv_pipelined_loop}
 func.func @adjacent_preserves_memory_overlap(%a: f32, %buffer: memref<1xf32>) {

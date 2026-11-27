@@ -2028,6 +2028,19 @@ void collectAllEffects(
   }
 }
 
+bool hasNonLifetimeMemoryEffects(Operation *op) {
+  auto memoryEffects = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!memoryEffects)
+    return false;
+
+  SmallVector<MemoryEffects::EffectInstance> effects;
+  memoryEffects.getEffects(effects);
+  return llvm::any_of(effects, [](const auto &effect) {
+    return !isa<MemoryEffects::Allocate, MemoryEffects::Free>(
+        effect.getEffect());
+  });
+}
+
 } // namespace utils
 
 bool utils::isTransferWriteSuitForStoreWithStride(Operation *op) {

@@ -35,6 +35,7 @@
 // FULL-NEXT: canonicalize
 // FULL-NOT: hfusion-merge-vf
 // FULL: hfusion-simplify-vf-arg
+// FULL: insert-loop-init-copies
 // FULL: tensor-copy-insertion
 // FULL: bufferize-module-op
 // FULL: hivm-cross-core-gss

@@ -230,7 +230,7 @@ static Value addDistForUnalignedStore(Value srcVal, hivmave::StoreDist dist,
   return dst;
 }
 
-/// Change NORM to UNPK_B8/UNPK_B16/UNPK4_B8 based on functionType
+/// Materialize the load result layout requested by functionType.
 struct AVELoadPattern : public OpRewritePattern<VFLoadOp> {
   explicit AVELoadPattern(MLIRContext *context)
       : OpRewritePattern<VFLoadOp>(context) {}
@@ -264,6 +264,30 @@ struct AVELoadPattern : public OpRewritePattern<VFLoadOp> {
         break;
       default:
         break;
+      }
+    }
+
+    auto loadDist = load.getPattern();
+    if (funcDistAttr && (loadDist == hivmave::LoadDist::E2B_B16 ||
+                         loadDist == hivmave::LoadDist::E2B_B32 ||
+                         loadDist == hivmave::LoadDist::BLK)) {
+      unsigned intlvCount = 0;
+      if (funcDistAttr.getValue() == hivmave::FunctionDistType::PK)
+        intlvCount = 1;
+      else if (funcDistAttr.getValue() == hivmave::FunctionDistType::PK4)
+        intlvCount = 2;
+
+      Value loadResult = load.getResult(0);
+      if (intlvCount != 0) {
+        SmallVector<Operation *> oldUsers(loadResult.getUsers());
+        rewriter.setInsertionPointAfter(load);
+        Value sparseResult = loadResult;
+        for (unsigned i = 0; i < intlvCount; ++i)
+          sparseResult = sparseByIntlv(sparseResult, rewriter, load.getLoc());
+        for (Operation *user : oldUsers)
+          user->replaceUsesOfWith(loadResult, sparseResult);
+        load->removeAttr("functionType");
+        return success();
       }
     }
 

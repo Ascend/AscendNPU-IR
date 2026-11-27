@@ -43,7 +43,7 @@ module {
 // CHECK-DAG:       tensor.extract_slice %[[fused]]#1
 // CHECK-DAG:       tensor.extract_slice %[[reduce]]
 // CHECK:           arith.subf
-// CHECK:           tensor.expand_shape
+// CHECK:           vector.shape_cast
 // CHECK:         } {"outlined-loop-target-
 //
 // CHECK:         return %[[fused]]#0, %[[transpose]]
