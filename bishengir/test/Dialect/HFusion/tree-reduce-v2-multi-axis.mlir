@@ -153,18 +153,18 @@ func.func @promote_f16(%input: tensor<2x3x4xf16>,
 // CHECK: tensor.empty() : tensor<16xf32>
 // CHECK: vector.multi_reduction <add>{{.*}} [1] : vector<1x64xf32> to vector<1xf32>
 // CHECK: tensor.expand_shape {{.*}} tensor<16xf32> into tensor<2x2x2x2xf32>
-// CHECK: tensor.collapse_shape {{.*}} tensor<2x2x2x2xf32> into tensor<4x2x2xf32>
-// CHECK: tensor.empty() : tensor<8xf32>
-// CHECK: vector.transfer_read {{.*}} : tensor<4x2x2xf32>, vector<64xf32>
+// CHECK: tensor.empty() : tensor<2x2x2xf32>
+// CHECK: vector.transfer_read {{.*}} : tensor<2x2x2x2xf32>, vector<64xf32>
 // CHECK: arith.addf {{.*}} : vector<64xf32>
-// CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<8xf32>
-// CHECK: tensor.expand_shape {{.*}} tensor<8xf32> into tensor<2x2x2xf32>
+// CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<2x2x2xf32>
 // CHECK: tensor.collapse_shape {{.*}} tensor<2x2x2xf32> into tensor<2x4xf32>
 // CHECK-NOT: vector.multi_reduction
 // CHECK: vector.transfer_read {{.*}} : tensor<2x4xf32>, vector<64xf32>
 // CHECK: arith.addf {{.*}} : vector<64xf32>
-// CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<4xf32>
-// CHECK: tensor.expand_shape {{.*}} tensor<4xf32> into tensor<2x2xf32>
+// CHECK-NOT: arith.divui
+// CHECK-NOT: arith.remui
+// CHECK: vector.transfer_read {{.*}}[%{{[a-zA-Z0-9_]+}}, %{{[a-zA-Z0-9_]+}}], {{.*}} : tensor<2x2xf32>, vector<64xf32>
+// CHECK: vector.transfer_write {{.*}}[%{{[a-zA-Z0-9_]+}}, %{{[a-zA-Z0-9_]+}}] {{.*}} : vector<64xf32>, tensor<2x2xf32>
 // CHECK: return
 func.func @rank5_three_groups(%input: tensor<2x2x2x2x2xf32>,
                               %init: tensor<2x2xf32>) -> tensor<2x2xf32> {
@@ -193,18 +193,19 @@ func.func @rank5_three_groups(%input: tensor<2x2x2x2x2xf32>,
 // R=2 stage this directly produces the stage output without an f32 scratch.
 
 // CHECK-LABEL: func.func @fused_convert_strided(
-// CHECK: tensor.collapse_shape %arg0 {{.*}} tensor<5x3x2x68xf16> into tensor<15x2x68xf16>
-// CHECK: tensor.empty() : tensor<1020xf32>
+// CHECK: tensor.empty() : tensor<5x3x68xf32>
 // CHECK: arith.extf {{.*}} : vector<64xf16> to vector<64xf32>
 // CHECK: arith.addf {{.*}} : vector<64xf32>
-// CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<1020xf32>
-// CHECK: tensor.expand_shape {{.*}} tensor<1020xf32> into tensor<5x3x68xf32>
+// CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<5x3x68xf32>
 // CHECK: tensor.collapse_shape {{.*}} tensor<5x3x68xf32> into tensor<5x204xf32>
 // CHECK-NOT: tensor.empty() : tensor<4x204xf32>
 // CHECK: vector.transfer_read {{.*}} : tensor<5x204xf32>, vector<64xf32>
 // CHECK: arith.addf {{.*}} : vector<64xf32>
-// CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<5x204xf32>
-// CHECK: tensor.expand_shape {{.*}} tensor<204xf32> into tensor<3x68xf32>
+// CHECK-NOT: arith.divui
+// CHECK-NOT: arith.remui
+// CHECK: vector.transfer_read {{.*}}[%{{[a-zA-Z0-9_]+}}, %{{[a-zA-Z0-9_]+}}], {{.*}} : tensor<3x68xf32>, vector<64xf32>
+// CHECK: arith.addf {{.*}} : vector<64xf32>
+// CHECK: vector.transfer_write {{.*}}[%{{[a-zA-Z0-9_]+}}, %{{[a-zA-Z0-9_]+}}] {{.*}} : vector<64xf32>, tensor<3x68xf32>
 // CHECK-NOT: vector.multi_reduction
 // CHECK: return
 func.func @fused_convert_strided(%input: tensor<5x3x2x68xf16>,
@@ -279,17 +280,17 @@ func.func @fused_convert_final_stage(%input: tensor<2x3x68xf16>,
 // register, and the follow-up reduction of the two partial rows.
 
 // CHECK-LABEL: func.func @fused_convert_partial_groups(
-// CHECK: tensor.collapse_shape %arg0 {{.*}} tensor<2x3x17x4xf16> into tensor<6x17x4xf16>
-// CHECK: tensor.empty() : tensor<24xf32>
-// CHECK: tensor.empty() : tensor<6x16x4xf32>
+// CHECK: tensor.empty() : tensor<2x3x4xf32>
+// CHECK: tensor.empty() : tensor<2x3x16x4xf32>
 // CHECK: arith.extf {{.*}} : vector<64xf16> to vector<64xf32>
-// CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<6x16x4xf32>
-// CHECK: tensor.expand_shape {{.*}} tensor<24xf32> into tensor<2x3x4xf32>
+// CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<2x3x16x4xf32>
 // CHECK: tensor.collapse_shape {{.*}} tensor<2x3x4xf32> into tensor<2x12xf32>
 // CHECK: vector.transfer_read {{.*}} : tensor<2x12xf32>, vector<64xf32>
 // CHECK: arith.addf {{.*}} : vector<64xf32>
-// CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<12xf32>
-// CHECK: tensor.expand_shape {{.*}} tensor<12xf32> into tensor<3x4xf32>
+// CHECK-NOT: arith.divui
+// CHECK-NOT: arith.remui
+// CHECK: vector.transfer_read {{.*}}[%{{[a-zA-Z0-9_]+}}, %{{[a-zA-Z0-9_]+}}], {{.*}} : tensor<3x4xf32>, vector<64xf32>
+// CHECK: vector.transfer_write {{.*}}[%{{[a-zA-Z0-9_]+}}, %{{[a-zA-Z0-9_]+}}] {{.*}} : vector<64xf32>, tensor<3x4xf32>
 // CHECK-NOT: vector.multi_reduction
 // CHECK: return
 func.func @fused_convert_partial_groups(%input: tensor<2x3x17x4xf16>,
@@ -430,12 +431,11 @@ func.func @multi_ra_preserve_live_input(%input: tensor<17x2x4xf32>,
 // LEGACY-RA: return
 
 // CHECK-LABEL: func.func @single_axis_batched_ra(
-// CHECK: tensor.collapse_shape {{.*}} tensor<2x68xf32> into tensor<136xf32>
+// CHECK-NOT: tensor.collapse_shape
 // CHECK-NOT: vector.multi_reduction
 // CHECK: vector.transfer_read {{.*}} : tensor<2x257x68xf32>, vector<64xf32>
 // CHECK: arith.addf {{.*}} : vector<64xf32>
-// CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<136xf32>
-// CHECK: tensor.expand_shape {{.*}} tensor<136xf32> into tensor<2x68xf32>
+// CHECK: vector.transfer_write {{.*}}[%{{[a-zA-Z0-9_]+}}, %{{[a-zA-Z0-9_]+}}] {{.*}} : vector<64xf32>, tensor<2x68xf32>
 // CHECK: return
 func.func @single_axis_batched_ra(%input: tensor<2x257x68xf32>,
                                   %init: tensor<2x68xf32>)

@@ -1280,8 +1280,8 @@ private:
                                   bool canReuseInput,
                                   Value finalAccumulator) const;
   Value mergeReducedVectorIntoAccumulator(IRRewriter &rewriter, Location loc,
-                                          Value reduced, Value flatAccumulator,
-                                          Value offset, Value mask,
+                                          Value reduced, Value accumulator,
+                                          ArrayRef<Value> offsets, Value mask,
                                           Type computeElemTy) const;
   Value reduceVectorIntoScalarAccumulator(IRRewriter &rewriter, Location loc,
                                           Value reductionSource,
@@ -1411,7 +1411,10 @@ getReductionStageView(IRRewriter &rewriter, Location loc, Value tensor,
     targetShape = {stage.dimR, stage.inner};
   } else {
     layout = ReductionStageLayout::BatchedRA3D;
-    targetShape = {stage.outer, stage.dimR, stage.inner};
+    targetShape = llvm::to_vector_of<int64_t>(
+        ArrayRef<int64_t>(stage.inputShape).take_front(stage.reductionBegin));
+    targetShape.push_back(stage.dimR);
+    targetShape.push_back(stage.inner);
   }
 
   if (tensorType.getShape() == ArrayRef<int64_t>(targetShape))
@@ -1447,8 +1450,12 @@ getReductionStageView(IRRewriter &rewriter, Location loc, Value tensor,
       group.push_back(dim);
     groups.push_back(std::move(group));
   };
-  if (begin > 0)
+  if (layout == ReductionStageLayout::BatchedRA3D) {
+    for (int64_t d = 0; d < begin; ++d)
+      appendGroup(d, d + 1);
+  } else if (begin > 0) {
     appendGroup(0, begin);
+  }
   appendGroup(begin, end);
   if (end < rank)
     appendGroup(end, rank);
@@ -1459,11 +1466,9 @@ getReductionStageView(IRRewriter &rewriter, Location loc, Value tensor,
 }
 
 Value TreeReduceV2Pass::mergeReducedVectorIntoAccumulator(
-    IRRewriter &rewriter, Location loc, Value reduced, Value flatAccumulator,
-    Value offset, Value mask, Type computeElemTy) const {
-  auto accumulatorType = cast<RankedTensorType>(flatAccumulator.getType());
-  assert(accumulatorType.getRank() == 1 &&
-         "vector accumulator merge expects a flat tensor");
+    IRRewriter &rewriter, Location loc, Value reduced, Value accumulator,
+    ArrayRef<Value> offsets, Value mask, Type computeElemTy) const {
+  auto accumulatorType = cast<RankedTensorType>(accumulator.getType());
   Type accumulatorElemTy = accumulatorType.getElementType();
   auto reducedType = cast<VectorType>(reduced.getType());
   auto accumulatorVectorType =
@@ -1473,10 +1478,10 @@ Value TreeReduceV2Pass::mergeReducedVectorIntoAccumulator(
   auto readMask = rewriter.create<vector::MaskOp>(
       loc, TypeRange{accumulatorVectorType}, mask,
       static_cast<Operation *>(nullptr),
-      [loc, flatAccumulator, offset, accumulatorZero,
+      [loc, accumulator, offsets, accumulatorZero,
        accumulatorVectorType](OpBuilder &builder, Operation *) {
         Value read = builder.create<vector::TransferReadOp>(
-            loc, accumulatorVectorType, flatAccumulator, ValueRange{offset},
+            loc, accumulatorVectorType, accumulator, ValueRange(offsets),
             accumulatorZero, ArrayRef<bool>{true});
         builder.create<vector::YieldOp>(loc, read);
       });
@@ -1493,11 +1498,11 @@ Value TreeReduceV2Pass::mergeReducedVectorIntoAccumulator(
 
   auto writeMask = rewriter.create<vector::MaskOp>(
       loc, TypeRange{accumulatorType}, mask, static_cast<Operation *>(nullptr),
-      [loc, result, flatAccumulator, offset](OpBuilder &builder, Operation *) {
+      [loc, result, accumulator, offsets](OpBuilder &builder, Operation *) {
         Value written = builder
                             .create<vector::TransferWriteOp>(
-                                loc, result, flatAccumulator,
-                                ValueRange{offset}, ArrayRef<bool>{true})
+                                loc, result, accumulator, ValueRange(offsets),
+                                ArrayRef<bool>{true})
                             .getResult();
         builder.create<vector::YieldOp>(loc, written);
       });
@@ -1564,20 +1569,28 @@ Value TreeReduceV2Pass::buildSuffixReductionStage(
     auto accumulatorType = cast<RankedTensorType>(finalAccumulator.getType());
     assert(accumulatorType.getNumElements() == stage.outer &&
            "suffix result must match the final accumulator");
-    output = accumulatorType.getRank() == 0
-                 ? finalAccumulator
-                 : collapseToFlatTensor(rewriter, loc, finalAccumulator);
+    output = finalAccumulator;
   } else {
     auto outputType = RankedTensorType::get({stage.outer}, computeElemTy);
     output = rewriter.create<tensor::EmptyOp>(loc, outputType.getShape(),
                                               outputType.getElementType());
   }
-  Value outerBound = rewriter.create<arith::ConstantIndexOp>(loc, stage.outer);
-  auto outerLoop = rewriter.create<scf::ForOp>(loc, builder.c0, outerBound,
-                                               builder.c1, ValueRange{output});
-  rewriter.setInsertionPointToStart(outerLoop.getBody());
-  Value outerIndex = outerLoop.getInductionVar();
-  Value loopOutput = outerLoop.getRegionIterArg(0);
+  SmallVector<scf::ForOp> outputNest;
+  SmallVector<Value> outputOffsets;
+  Value outerIndex = builder.c0;
+  Value loopOutput = output;
+  for (int64_t extent : cast<RankedTensorType>(output.getType()).getShape()) {
+    Value bound = rewriter.create<arith::ConstantIndexOp>(loc, extent);
+    auto loop = rewriter.create<scf::ForOp>(loc, builder.c0, bound, builder.c1,
+                                            ValueRange{loopOutput});
+    rewriter.setInsertionPointToStart(loop.getBody());
+    outputNest.push_back(loop);
+    outputOffsets.push_back(loop.getInductionVar());
+    loopOutput = loop.getRegionIterArg(0);
+    outerIndex = rewriter.create<arith::AddIOp>(
+        loc, rewriter.create<arith::MulIOp>(loc, outerIndex, bound),
+        loop.getInductionVar());
+  }
 
   auto readVector = [&](Value offset) -> Value {
     Value raw = rewriter.create<vector::TransferReadOp>(
@@ -1693,12 +1706,15 @@ Value TreeReduceV2Pass::buildSuffixReductionStage(
           loc, scalarMaskType, ValueRange{builder.c1});
       nextOutput = mergeReducedVectorIntoAccumulator(
           rewriter, loc, horizontalReduction.getResult(), loopOutput,
-          outerIndex, scalarMask, computeElemTy);
+          outputOffsets, scalarMask, computeElemTy);
     }
   }
-  rewriter.create<scf::YieldOp>(loc, nextOutput);
-  rewriter.setInsertionPointAfter(outerLoop);
-  return outerLoop.getResult(0);
+  for (auto loop : llvm::reverse(outputNest)) {
+    rewriter.create<scf::YieldOp>(loc, nextOutput);
+    rewriter.setInsertionPointAfter(loop);
+    nextOutput = loop.getResult(0);
+  }
+  return nextOutput;
 }
 
 Value TreeReduceV2Pass::buildBatchedRAReductionStage(
@@ -1715,12 +1731,19 @@ Value TreeReduceV2Pass::buildBatchedRAReductionStage(
 
   auto stageInputType = cast<RankedTensorType>(stageInput.getType());
   bool isBatched = layout == ReductionStageLayout::BatchedRA3D;
+  SmallVector<int64_t> outerDims = llvm::to_vector_of<int64_t>(
+      ArrayRef<int64_t>(stage.inputShape).take_front(stage.reductionBegin));
   if (isBatched) {
-    assert(stageInputType.getRank() == 3 &&
-           stageInputType.getDimSize(0) == stage.outer &&
-           stageInputType.getDimSize(1) == stage.dimR &&
-           stageInputType.getDimSize(2) == stage.inner &&
-           "batched RA expects a BatchedRA3D view");
+    assert(stageInputType.getRank() ==
+               static_cast<int64_t>(outerDims.size() + 2) &&
+           llvm::all_of(llvm::enumerate(outerDims),
+                        [&](auto e) {
+                          return stageInputType.getDimSize(e.index()) ==
+                                 e.value();
+                        }) &&
+           stageInputType.getDimSize(outerDims.size()) == stage.dimR &&
+           stageInputType.getDimSize(outerDims.size() + 1) == stage.inner &&
+           "batched RA expects a [outer dims..., dimR, inner] view");
   } else {
     assert(stage.outer == 1 && stageInputType.getRank() == 2 &&
            stageInputType.getDimSize(0) == stage.dimR &&
@@ -1764,12 +1787,10 @@ Value TreeReduceV2Pass::buildBatchedRAReductionStage(
            "batched RA cannot merge into a scalar accumulator");
     assert(accumulatorType.getNumElements() == stage.outer * stage.inner &&
            "batched RA result must match the final accumulator");
-    result = accumulatorType.getRank() == 1
-                 ? finalAccumulator
-                 : collapseToFlatTensor(rewriter, loc, finalAccumulator);
+    result = finalAccumulator;
   } else {
-    result = rewriter.create<tensor::EmptyOp>(
-        loc, ArrayRef<int64_t>{stage.outer * stage.inner}, computeElemTy);
+    result =
+        rewriter.create<tensor::EmptyOp>(loc, stage.outputShape, computeElemTy);
   }
 
   Value workingTensor;
@@ -1777,9 +1798,11 @@ Value TreeReduceV2Pass::buildBatchedRAReductionStage(
     workingTensor = stageInput;
   } else if (needsWorkingTensor) {
     SmallVector<int64_t> workingShape;
-    if (isBatched)
-      workingShape = {stage.outer, mainR, stage.inner};
-    else
+    if (isBatched) {
+      workingShape = outerDims;
+      workingShape.push_back(mainR);
+      workingShape.push_back(stage.inner);
+    } else
       workingShape = {mainR, stage.inner};
     workingTensor =
         rewriter.create<tensor::EmptyOp>(loc, workingShape, computeElemTy);
@@ -1787,10 +1810,10 @@ Value TreeReduceV2Pass::buildBatchedRAReductionStage(
 
   Value c0 = builder.c0;
   Value c1 = builder.c1;
-  Value outerBound = rewriter.create<arith::ConstantIndexOp>(loc, stage.outer);
-  Value innerBound = rewriter.create<arith::ConstantIndexOp>(loc, stage.inner);
+  auto resultShape = cast<RankedTensorType>(result.getType()).getShape();
+  Value innerBound =
+      rewriter.create<arith::ConstantIndexOp>(loc, resultShape.back());
   Value cMainR = rewriter.create<arith::ConstantIndexOp>(loc, mainR);
-  Value cInner = rewriter.create<arith::ConstantIndexOp>(loc, stage.inner);
 
   AffineMap minMap = AffineMap::get(
       1, 1,
@@ -1799,11 +1822,12 @@ Value TreeReduceV2Pass::buildBatchedRAReductionStage(
       rewriter.getContext());
 
   // RA2D indexes [r, a]; BatchedRA3D keeps the leading outer index.
-  auto stageOffsets = [&](Value outerIndex, Value rowIndex,
+  auto stageOffsets = [&](ArrayRef<Value> outerIndices, Value rowIndex,
                           Value columnIndex) -> SmallVector<Value> {
     SmallVector<Value> offsets;
     if (isBatched)
-      offsets.push_back(outerIndex);
+      offsets.append(outerIndices.begin(),
+                     outerIndices.begin() + outerDims.size());
     offsets.push_back(rowIndex);
     offsets.push_back(columnIndex);
     return offsets;
@@ -1848,24 +1872,45 @@ Value TreeReduceV2Pass::buildBatchedRAReductionStage(
     return maskOp.getResult(0);
   };
 
-  auto mergeResult = [&](Value accumulator, Value vector, Value offset,
-                         Value mask) -> Value {
+  auto mergeResult = [&](Value accumulator, Value vector,
+                         ArrayRef<Value> offsets, Value mask) -> Value {
     if (!mergeIntoAccumulator)
-      return writeVector(accumulator, offset, vector, mask);
+      return writeVector(accumulator, offsets, vector, mask);
     return mergeReducedVectorIntoAccumulator(rewriter, loc, vector, accumulator,
-                                             offset, mask, computeElemTy);
+                                             offsets, mask, computeElemTy);
   };
 
   SmallVector<Value> outerInitArgs{result};
   if (needsWorkingTensor)
     outerInitArgs.push_back(workingTensor);
-  auto outerLoop =
-      rewriter.create<scf::ForOp>(loc, c0, outerBound, c1, outerInitArgs);
-  rewriter.setInsertionPointToStart(outerLoop.getBody());
-  Value outerIndex = outerLoop.getInductionVar();
-  Value outerResult = outerLoop.getRegionIterArg(0);
-  Value outerWorking =
-      needsWorkingTensor ? outerLoop.getRegionIterArg(1) : Value{};
+  SmallVector<Value> outerIndices;
+  SmallVector<scf::ForOp> outerNest;
+  for (int64_t dimSize : resultShape.drop_back()) {
+    SmallVector<Value> initArgs;
+    if (outerNest.empty()) {
+      initArgs = outerInitArgs;
+    } else {
+      initArgs = {outerNest.back().getRegionIterArg(0)};
+      if (needsWorkingTensor)
+        initArgs.push_back(outerNest.back().getRegionIterArg(1));
+    }
+    auto loop = rewriter.create<scf::ForOp>(
+        loc, c0, rewriter.create<arith::ConstantIndexOp>(loc, dimSize), c1,
+        initArgs);
+    rewriter.setInsertionPointToStart(loop.getBody());
+    outerIndices.push_back(loop.getInductionVar());
+    outerNest.push_back(loop);
+  }
+  Value outerResult;
+  Value outerWorking;
+  if (outerNest.empty()) {
+    outerResult = result;
+    outerWorking = workingTensor;
+  } else {
+    outerResult = outerNest.back().getRegionIterArg(0);
+    outerWorking =
+        needsWorkingTensor ? outerNest.back().getRegionIterArg(1) : Value{};
+  }
 
   SmallVector<Value> tileInitArgs{outerResult};
   if (needsWorkingTensor)
@@ -1874,6 +1919,21 @@ Value TreeReduceV2Pass::buildBatchedRAReductionStage(
                                               tileInitArgs);
   rewriter.setInsertionPointToStart(tileLoop.getBody());
   Value innerIndex = tileLoop.getInductionVar();
+  Value inputInnerIndex = c0;
+  for (size_t dim = outerDims.size(); dim < outerIndices.size(); ++dim) {
+    inputInnerIndex = rewriter.create<arith::AddIOp>(
+        loc,
+        rewriter.create<arith::MulIOp>(
+            loc, inputInnerIndex,
+            rewriter.create<arith::ConstantIndexOp>(loc, resultShape[dim])),
+        outerIndices[dim]);
+  }
+  inputInnerIndex = rewriter.create<arith::AddIOp>(
+      loc,
+      rewriter.create<arith::MulIOp>(
+          loc, inputInnerIndex,
+          rewriter.create<arith::ConstantIndexOp>(loc, resultShape.back())),
+      innerIndex);
   Value tileResult = tileLoop.getRegionIterArg(0);
   Value tileWorking =
       needsWorkingTensor ? tileLoop.getRegionIterArg(1) : Value{};
@@ -1898,13 +1958,15 @@ Value TreeReduceV2Pass::buildBatchedRAReductionStage(
     // chain stays ordered under bufferization.
     Value readTensor = useInputAsWorking ? working : stageInput;
     Value head = readVector(
-        readTensor, stageOffsets(outerIndex, reductionIndex, innerIndex), mask);
+        readTensor, stageOffsets(outerIndices, reductionIndex, inputInnerIndex),
+        mask);
     Value tail = readVector(
-        readTensor, stageOffsets(outerIndex, tailIndex, innerIndex), mask);
+        readTensor, stageOffsets(outerIndices, tailIndex, inputInnerIndex),
+        mask);
     Value folded = builder.createAdd(head, tail);
     Value next = writeVector(
-        working, stageOffsets(outerIndex, reductionIndex, innerIndex), folded,
-        mask);
+        working, stageOffsets(outerIndices, reductionIndex, inputInnerIndex),
+        folded, mask);
     rewriter.create<scf::YieldOp>(loc, ValueRange{next});
     rewriter.setInsertionPointAfter(loopR);
     currentWorking = loopR.getResult(0);
@@ -1921,9 +1983,10 @@ Value TreeReduceV2Pass::buildBatchedRAReductionStage(
     Value reductionIndex = loopR.getInductionVar();
     Value working = loopR.getRegionIterArg(0);
     Value forwarded = readVector(
-        stageInput, stageOffsets(outerIndex, reductionIndex, innerIndex), mask);
+        stageInput, stageOffsets(outerIndices, reductionIndex, inputInnerIndex),
+        mask);
     Value next = writeVector(
-        working, stageOffsets(outerIndex, reductionIndex, innerIndex),
+        working, stageOffsets(outerIndices, reductionIndex, inputInnerIndex),
         forwarded, mask);
     rewriter.create<scf::YieldOp>(loc, ValueRange{next});
     rewriter.setInsertionPointAfter(loopR);
@@ -1952,13 +2015,13 @@ Value TreeReduceV2Pass::buildBatchedRAReductionStage(
       Value stride =
           rewriter.create<arith::MulIOp>(loc, strideIndex, rowStride);
       Value row = rewriter.create<arith::AddIOp>(loc, reductionIndex, stride);
-      registers.push_back(
-          readVector(working, stageOffsets(outerIndex, row, innerIndex), mask));
+      registers.push_back(readVector(
+          working, stageOffsets(outerIndices, row, inputInnerIndex), mask));
     }
     Value reduced = builder.buildTreeReduction(registers);
     Value next = writeVector(
-        working, stageOffsets(outerIndex, reductionIndex, innerIndex), reduced,
-        mask);
+        working, stageOffsets(outerIndices, reductionIndex, inputInnerIndex),
+        reduced, mask);
     rewriter.create<scf::YieldOp>(loc, ValueRange{next});
     rewriter.setInsertionPointAfter(loopR);
     currentWorking = loopR.getResult(0);
@@ -1976,25 +2039,40 @@ Value TreeReduceV2Pass::buildBatchedRAReductionStage(
         (!useInputAsWorking && mainTimes == 0 && leafIndex >= tailR))
       tensor = stageInput;
     leaves.push_back(readVector(
-        tensor, stageOffsets(outerIndex, rowIndex, innerIndex), mask));
+        tensor, stageOffsets(outerIndices, rowIndex, inputInnerIndex), mask));
   }
   Value reduced = builder.buildTreeReduction(leaves);
 
-  Value outputOffset = rewriter.create<arith::MulIOp>(loc, outerIndex, cInner);
-  outputOffset = rewriter.create<arith::AddIOp>(loc, outputOffset, innerIndex);
-  Value nextResult = mergeResult(tileResult, reduced, outputOffset, mask);
+  SmallVector<Value> accOffsets = outerIndices;
+  accOffsets.push_back(innerIndex);
+  Value nextResult = mergeResult(tileResult, reduced, accOffsets, mask);
+  LDBG("BRA: merge done, nextResult rank="
+       << cast<RankedTensorType>(nextResult.getType()).getRank());
 
   SmallVector<Value> tileYields{nextResult};
   if (needsWorkingTensor)
     tileYields.push_back(currentWorking);
+  LDBG("BRA: creating tile yield, n=" << tileYields.size());
   rewriter.create<scf::YieldOp>(loc, tileYields);
   rewriter.setInsertionPointAfter(tileLoop);
-  SmallVector<Value> outerYields{tileLoop.getResult(0)};
-  if (needsWorkingTensor)
-    outerYields.push_back(tileLoop.getResult(1));
-  rewriter.create<scf::YieldOp>(loc, outerYields);
-  rewriter.setInsertionPointAfter(outerLoop);
-  return outerLoop.getResult(0);
+  LDBG("BRA: after tileLoop, nest levels=" << outerNest.size());
+  if (!outerNest.empty()) {
+    SmallVector<Value> outerBodyYields{tileLoop.getResult(0)};
+    if (needsWorkingTensor)
+      outerBodyYields.push_back(tileLoop.getResult(1));
+    rewriter.create<scf::YieldOp>(loc, outerBodyYields);
+    for (auto it = outerNest.rbegin(); std::next(it) != outerNest.rend();
+         ++it) {
+      rewriter.setInsertionPointAfter(*it);
+      SmallVector<Value> levelYields{(*it).getResult(0)};
+      if (needsWorkingTensor)
+        levelYields.push_back((*it).getResult(1));
+      rewriter.create<scf::YieldOp>(loc, levelYields);
+    }
+    rewriter.setInsertionPointAfter(outerNest.front());
+    return outerNest.front().getResult(0);
+  }
+  return tileLoop.getResult(0);
 }
 
 Value TreeReduceV2Pass::buildARReductionStage(
@@ -2065,9 +2143,7 @@ Value TreeReduceV2Pass::buildARReductionStage(
     assert(accumulatorType.getNumElements() == stage.outer &&
            "AR result must match the final accumulator");
     mergeScalar = accumulatorType.getRank() == 0;
-    result = accumulatorType.getRank() > 1
-                 ? collapseToFlatTensor(rewriter, loc, finalAccumulator)
-                 : finalAccumulator;
+    result = finalAccumulator;
   } else {
     result = rewriter.create<tensor::EmptyOp>(
         loc, ArrayRef<int64_t>{stage.outer}, computeElemTy);
@@ -2324,11 +2400,22 @@ Value TreeReduceV2Pass::buildARReductionStage(
 
   // Final fold: the 2^tailFolds surviving vectors go through one register
   // tree, then the single vector collapses onto the accumulator element.
-  auto loopATail = rewriter.create<scf::ForOp>(loc, builder.c0, outerBound,
-                                               builder.c1, ValueRange{result});
-  rewriter.setInsertionPointToStart(loopATail.getBody());
-  Value loopAAcc = loopATail.getRegionIterArg(0),
-        ivA = loopATail.getInductionVar();
+  SmallVector<scf::ForOp> resultNest;
+  SmallVector<Value> accOffsets;
+  Value loopAAcc = result;
+  Value ivA = builder.c0;
+  for (int64_t extent : cast<RankedTensorType>(result.getType()).getShape()) {
+    Value bound = rewriter.create<arith::ConstantIndexOp>(loc, extent);
+    auto loop = rewriter.create<scf::ForOp>(loc, builder.c0, bound, builder.c1,
+                                            ValueRange{loopAAcc});
+    rewriter.setInsertionPointToStart(loop.getBody());
+    resultNest.push_back(loop);
+    accOffsets.push_back(loop.getInductionVar());
+    loopAAcc = loop.getRegionIterArg(0);
+    ivA = rewriter.create<arith::AddIOp>(
+        loc, rewriter.create<arith::MulIOp>(loc, ivA, bound),
+        loop.getInductionVar());
+  }
 
   SmallVector<Value> leaves;
   leaves.reserve(numLeaves);
@@ -2357,14 +2444,20 @@ Value TreeReduceV2Pass::buildARReductionStage(
     auto accVecTy = VectorType::get({1}, accumulatorElemTy);
     Value accumulatorZero = rewriter.create<arith::ConstantOp>(
         loc, accumulatorElemTy, rewriter.getZeroAttr(accumulatorElemTy));
-    SmallVector<OpFoldResult> offsets = {ivA};
-    SmallVector<OpFoldResult> sizes = {rewriter.getIndexAttr(1)};
-    SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1)};
-    auto sliceTy = RankedTensorType::get({1}, accumulatorElemTy);
+    SmallVector<OpFoldResult> offsets =
+        llvm::to_vector_of<OpFoldResult>(accOffsets);
+    SmallVector<OpFoldResult> sizes(accOffsets.size(),
+                                    rewriter.getIndexAttr(1));
+    SmallVector<OpFoldResult> strides(accOffsets.size(),
+                                      rewriter.getIndexAttr(1));
+    auto sliceTy = RankedTensorType::get(
+        SmallVector<int64_t>(accOffsets.size(), 1), accumulatorElemTy);
     Value extractedSlice = rewriter.create<tensor::ExtractSliceOp>(
         loc, sliceTy, loopAAcc, offsets, sizes, strides);
     Value accRead = rewriter.create<vector::TransferReadOp>(
-        loc, accVecTy, extractedSlice, ValueRange{builder.c0}, accumulatorZero);
+        loc, accVecTy, extractedSlice,
+        ValueRange(SmallVector<Value>(accOffsets.size(), builder.c0)),
+        accumulatorZero);
     Value accReadCompute = accRead;
     if (accumulatorElemTy != elemTy) {
       accReadCompute =
@@ -2391,8 +2484,9 @@ Value TreeReduceV2Pass::buildARReductionStage(
     }
     Value writtenSlice =
         rewriter
-            .create<vector::TransferWriteOp>(loc, toWriteAcc, extractedSlice,
-                                             ValueRange{builder.c0})
+            .create<vector::TransferWriteOp>(
+                loc, toWriteAcc, extractedSlice,
+                ValueRange(SmallVector<Value>(accOffsets.size(), builder.c0)))
             .getResult();
     nextResult = rewriter.create<tensor::InsertSliceOp>(
         loc, writtenSlice, loopAAcc, offsets, sizes, strides);
@@ -2413,9 +2507,12 @@ Value TreeReduceV2Pass::buildARReductionStage(
     }
   }
 
-  rewriter.create<scf::YieldOp>(loc, ValueRange{nextResult});
-  rewriter.setInsertionPointAfter(loopATail);
-  return loopATail.getResult(0);
+  for (auto loop : llvm::reverse(resultNest)) {
+    rewriter.create<scf::YieldOp>(loc, nextResult);
+    rewriter.setInsertionPointAfter(loop);
+    nextResult = loop.getResult(0);
+  }
+  return nextResult;
 }
 
 Value TreeReduceV2Pass::buildStagedReductionStage(
@@ -2496,9 +2593,13 @@ LogicalResult TreeReduceV2Pass::buildStagedReduction(
     Value stageResult = buildStagedReductionStage(
         rewriter, loc, view.tensor, currentElemTy, computeElemTy, vectorLength,
         stage, view.layout, canReuseInput, finalAccumulator);
-    current = isFinalStage ? stageResult
-                           : expandFlatTensorToShape(rewriter, loc, stageResult,
-                                                     stage.outputShape);
+    current =
+        isFinalStage ||
+                cast<RankedTensorType>(stageResult.getType()).getShape() ==
+                    ArrayRef<int64_t>(stage.outputShape)
+            ? stageResult
+            : expandFlatTensorToShape(rewriter, loc, stageResult,
+                                      stage.outputShape);
     currentElemTy = computeElemTy;
   }
 

@@ -25,8 +25,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
   // CHECK-LABEL: func.func @triton_sum_2D_dim0_outlined_vf_1
   // CHECK-NOT: linalg.copy
   // CHECK-NOT: vector.multi_reduction <add>
-  // CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<384xf32>, tensor<128x384xf32>)
-  // CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<384xf32>, tensor<128x384xf32>)
+  // CHECK: scf.for {{.*}} step %{{.*}} iter_args({{.*}}) -> (tensor<384xf32>, tensor<128x384xf32>)
   // CHECK: vector.create_mask {{.*}} : vector<64xi1>
   // CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<128x384xf32>)
   // CHECK: vector.mask {{.*}} { vector.transfer_read {{.*}} : tensor<128x384xf32>, vector<64xf32> }
