@@ -17,6 +17,8 @@ jobs:
     uses: ./.gitcode/workflows/pkg_builder.yml
     with:
       arch: x86_64
+      # PR 评论事件检出平台预合并 ref（base + PR 变更）
+      branch: refs/merge-requests/${{ env.MERGE_REQUEST_IID }}/merge
       runner_os: ubuntu
       runner_arch: x86
       image: swr.cn-north-4.myhuaweicloud.com/hw-ascend/ascendnpuir_build_ubuntu20.04_x86:20260509
@@ -34,6 +36,8 @@ jobs:
     uses: ./.gitcode/workflows/pkg_builder.yml
     with:
       arch: aarch64
+      # PR 评论事件检出平台预合并 ref（base + PR 变更）
+      branch: refs/merge-requests/${{ env.MERGE_REQUEST_IID }}/merge
       runner_os: euler
       runner_arch: aarch64
       image: swr.cn-north-4.myhuaweicloud.com/hw-ascend/ubuntu:20.04.260226.arm.npuIR
