@@ -16,6 +16,14 @@
 
 #include "Utils.h"
 
+#if defined(PROTON_AIC)
+#define PROTON_CORE_ATTR __aicore__
+#define PROTON_FN_NAME(base) base##_cube
+#else
+#define PROTON_CORE_ATTR __aiv__
+#define PROTON_FN_NAME(base) base
+#endif
+
 namespace {
 constexpr uint32_t kRecordWords = 2;
 constexpr int64_t kOffCountVector = 10;
@@ -27,10 +35,11 @@ constexpr uint64_t kCycleUpperMask = 0x7FFu;
 } // namespace
 
 extern "C" {
-__aiv__ __attribute__((always_inline)) void
-proton_circular_store(memref_t<__gm__ int32_t, 1> *buffer,
-                      int64_t section_offset, int64_t clock, int32_t scope_id,
-                      int32_t is_start, int32_t data_segment_words) {
+PROTON_CORE_ATTR __attribute__((always_inline)) void
+PROTON_FN_NAME(proton_circular_store)(memref_t<__gm__ int32_t, 1> *buffer,
+                                      int64_t section_offset, int64_t clock,
+                                      int32_t scope_id, int32_t is_start,
+                                      int32_t data_segment_words) {
   __gm__ int32_t *buffer_ptr = buffer->aligned + buffer->offset;
   const int64_t stride = buffer->strides[0];
   const int64_t count_index = (section_offset + kOffCountVector) * stride;
@@ -52,10 +61,12 @@ proton_circular_store(memref_t<__gm__ int32_t, 1> *buffer,
 }
 
 // C entry point expected by the llvm.emit_c_interface library-call lowering.
-__aiv__ __attribute__((always_inline)) void _mlir_ciface_proton_circular_store(
-    memref_t<__gm__ int32_t, 1> *buffer, int64_t section_offset, int64_t clock,
-    int32_t scope_id, int32_t is_start, int32_t data_segment_words) {
-  proton_circular_store(buffer, section_offset, clock, scope_id, is_start,
-                        data_segment_words);
+PROTON_CORE_ATTR __attribute__((always_inline)) void PROTON_FN_NAME(
+    _mlir_ciface_proton_circular_store)(memref_t<__gm__ int32_t, 1> *buffer,
+                                        int64_t section_offset, int64_t clock,
+                                        int32_t scope_id, int32_t is_start,
+                                        int32_t data_segment_words) {
+  PROTON_FN_NAME(proton_circular_store)
+  (buffer, section_offset, clock, scope_id, is_start, data_segment_words);
 }
 }

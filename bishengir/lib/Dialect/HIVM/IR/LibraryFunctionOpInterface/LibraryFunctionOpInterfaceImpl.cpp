@@ -1803,6 +1803,10 @@ std::string customOpLibraryCallName(Operation *op,
       return "proton_circular_store";
     if (concreteOp.getName() == CustomOpT::kBuiltinProtonScopeBoundaryName)
       return "proton_scope_boundary";
+    if (concreteOp.getName() == CustomOpT::kBuiltinProtonGetSysCntCubeName)
+      return "proton_get_sys_cnt_cube";
+    if (concreteOp.getName() == CustomOpT::kBuiltinProtonCircularStoreCubeName)
+      return "proton_circular_store_cube";
     llvm::report_fatal_error("Unsupported builtin CustomOp");
   }
 
