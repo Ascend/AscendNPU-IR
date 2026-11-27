@@ -730,6 +730,9 @@ bool isUnstructuredMemAccLoop(Operation *op);
 void collectAllEffects(Operation *op,
                        SmallVectorImpl<MemoryEffects::EffectInstance> &effects);
 
+/// True when `op` has a memory effect other than allocate or free.
+bool hasNonLifetimeMemoryEffects(Operation *op);
+
 int64_t getNumPerRepeat(Type t);
 
 /// Rewrite loop iter_arg to drop unit dims or to fixed hardware types
