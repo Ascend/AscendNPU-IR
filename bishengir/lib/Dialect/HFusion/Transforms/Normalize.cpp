@@ -6398,10 +6398,16 @@ public:
         normalizeSrcToTargetType<bool, Float16Type>(rewriter, inputs);
     auto newInits =
         normalizeSrcToTargetType<bool, Float16Type>(rewriter, inits);
+    auto kind = op.getReduceKindAttr().getReduceWithIndexKind();
+    if (kind == ReduceWithIndexKind::MINUI)
+      kind = ReduceWithIndexKind::MIN;
+    else if (kind == ReduceWithIndexKind::MAXUI)
+      kind = ReduceWithIndexKind::MAX;
     Operation *newOp = rewriter.create<hfusion::ReduceWithIndexOp>(
         op.getLoc(), TypeRange{newInits[0].getType(), newInits[1].getType()},
-        newInputs, newInits, op.getReduceKindAttr(), op.getTieBreakLeftAttr(),
-        op.getDimensionsAttr());
+        newInputs, newInits,
+        ReduceWithIndexKindAttr::get(rewriter.getContext(), kind),
+        op.getTieBreakLeftAttr(), op.getDimensionsAttr());
     replaceI1ResultsWithTargetType(op->getResults(), newOp->getResults(),
                                    rewriter);
 
