@@ -347,3 +347,26 @@ func.func @test_tile_batchMmadL1_debug(%dst : memref<2x256x256xf16>) -> tensor<2
   return %tmp_4 : tensor<2x256x256xf32>
 }
 }
+
+// -----
+// CHECK-LABEL: func.func @tile_expanded_unit_batch(
+// CHECK-SAME: %[[LHS:[^:]+]]: tensor<1x2x1x16x8xf32>, %[[RHS:[^:]+]]: tensor<16x16xf32>
+// CHECK: %[[MATRIX:.*]] = tensor.collapse_shape %[[LHS]]
+// CHECK: hivm.hir.mmadL1 {{.*}}ins(%[[MATRIX]], %[[RHS]],
+// CHECK: %[[STORED:.*]] = hivm.hir.fixpipe
+// CHECK: %[[BATCH:.*]] = tensor.expand_shape %[[STORED]]
+// CHECK: scf.yield %[[BATCH]]
+func.func @tile_expanded_unit_batch(%lhs: tensor<1x2x1x16x8xf32>, %rhs: tensor<16x16xf32>, %dst: tensor<1x16x16xf32>) -> tensor<1x16x16xf32> {
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  %batch_rhs = tensor.expand_shape %rhs [[0, 1], [2]] output_shape [1, 16, 16]
+      : tensor<16x16xf32> into tensor<1x16x16xf32>
+  %c = tensor.empty() : tensor<1x16x16xf32>
+  %result = hivm.hir.batchMmadL1
+      ins(%lhs, %batch_rhs, %true, %c16, %c16, %c16 : tensor<1x2x1x16x8xf32>,
+          tensor<1x16x16xf32>, i1, index, index, index)
+      outs(%c : tensor<1x16x16xf32>) -> tensor<1x16x16xf32>
+  %stored = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+      ins(%result : tensor<1x16x16xf32>) outs(%dst : tensor<1x16x16xf32>) -> tensor<1x16x16xf32>
+  return %stored : tensor<1x16x16xf32>
+}

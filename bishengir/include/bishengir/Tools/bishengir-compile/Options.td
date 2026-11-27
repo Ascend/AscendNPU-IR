@@ -134,12 +134,11 @@ def EnableHIVMCompile : FeatureControlOptions<
   "true"
 >;
 
-def UsePipelineVersion : FeatureControlOptions<
-  "Select the HIVM pipeline version: 1 = A5 regbase (default), "
-  "2 = hivm-v2-pipeline.",
-  "int",
-  "1"
->;
+def UsePipelineVersion
+    : FeatureControlOptions<"Select the HIVM pipeline version: 0 = target "
+                            "default (v2 on Ascend960, "
+                            "v1 otherwise), 1 = v1, 2 = v2.",
+                            "int", "0">;
 
 def EnableHfusionCompile : FeatureControlOptions<
   "Enable BiShengHIR HFusion compilation.",

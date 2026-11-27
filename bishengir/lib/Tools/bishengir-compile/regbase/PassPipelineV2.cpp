@@ -14,8 +14,8 @@
 #include "bishengir/Tools/bishengir-compile/regbase/PassPipelineV2.h"
 
 #include "bishengir/Config/bishengir-config.h"
+#include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HACC/Transforms/Passes.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Pipelines/ConvertToHIVMPipeline.h"
 #include "bishengir/Dialect/HIVM/Pipelines/regbase/Passes.h"
@@ -139,8 +139,7 @@ void buildV2HIRPipeline(OpPassManager &pm,
         std::make_unique<hivm::ConvertToHIVMPipelineOptions>();
     convertOptions->enableTritonKernelCompile =
         config.getEnableTritonKernelCompile();
-    convertOptions->enableRegBaseHIVMPipe =
-        hacc::utils::isRegBasedArch(config.getTarget());
+    convertOptions->enableRegBaseHIVMPipe = true;
     auto options = std::make_unique<hivm::HIVMPipelineOptions>();
     setupHIVMPipelineOptions(*options, config);
     hivm::buildConvertToHIVMPipeline(pm, *convertOptions);
@@ -150,6 +149,8 @@ void buildV2HIRPipeline(OpPassManager &pm,
 
 void buildV2FinalHIVMPipelines(OpPassManager &pm,
                                const BiShengIRCompileMainConfig &config) {
+  if (!config.getEnableHIVMCompile())
+    return;
   auto options = std::make_unique<hivm::HIVMPipelineOptions>();
   setupHIVMPipelineOptions(*options, config);
   appendV2Pipeline(pm, config, *options, V2Stage::Final);

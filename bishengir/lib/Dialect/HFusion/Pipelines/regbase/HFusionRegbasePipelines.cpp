@@ -226,6 +226,9 @@ static void preProcess(OpPassManager &pm,
   if (options.enableLegalizeScalarFP8) {
     pm.nest<func::FuncOp>().addPass(createLegalizeScalarFP8Pass());
   }
+  pm.nest<func::FuncOp>().addPass(createLegalizeBF16Pass());
+  if (!hacc::utils::isAscend960(options.target))
+    pm.nest<func::FuncOp>().addPass(createLegalizeFP8Pass());
 }
 
 static void preFlattenPass(OpPassManager &pm,

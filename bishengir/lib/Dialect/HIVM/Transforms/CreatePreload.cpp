@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PipelineV2/Util.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
@@ -1570,6 +1571,9 @@ void CreatePreloadPass::runOnOperation() {
     }
   });
   for (scf::ForOp forOp : candidateLoops) {
+    // Legacy-pipelined loops must skip the V2 preprocessing below
+    if (hasLegacyCVPipelinedLoop(forOp->getParentOfType<func::FuncOp>()))
+      continue;
     forOp = preprocessPreloadLoop(forOp);
     if (failed(exportCarriedLocalBuffers(forOp))) {
       signalPassFailure();

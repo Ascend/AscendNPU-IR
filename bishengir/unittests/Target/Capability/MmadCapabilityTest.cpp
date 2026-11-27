@@ -226,8 +226,7 @@ TEST_F(MmadCapabilityTest, DotScaledMixedFp8WithFormatAttrs) {
 }
 
 // Covers the header-only helpers used by lowering and HFusion decompose.
-// A missing #hacc.target is not Native. C310 accepts an aligned unformatted
-// f8E5M2 pair; K that is not a multiple of 64 does not.
+// C310 requires aligned logical K, including two values per packed FP4 byte.
 TEST_F(MmadCapabilityTest, ModuleQueryHelpers) {
   context.loadDialect<hacc::HACCDialect, func::FuncDialect>();
   OpBuilder builder(&context);
@@ -259,6 +258,12 @@ TEST_F(MmadCapabilityTest, ModuleQueryHelpers) {
                                     fp8e5, fp8e5, 32));
   EXPECT_FALSE(hivm::isNativeMmadMx(anchor, f8e5, f8e5, i8, i8, f32, true,
                                     fp8e5, fp8e5, 0));
+
+  const auto fp4 = static_cast<uint64_t>(HIVMMatmulDataformat::FP4E2M1_T);
+  EXPECT_TRUE(
+      hivm::isNativeMmadMx(anchor, i8, i8, i8, i8, f32, true, fp4, fp4, 32));
+  EXPECT_FALSE(
+      hivm::isNativeMmadMx(anchor, i8, i8, i8, i8, f32, true, fp4, fp4, 16));
 
   hacc::utils::setTargetDevice(*module, hacc::TargetDevice::Ascend910B1);
   EXPECT_EQ(hivm::mmadArchitecture(anchor), NPUArchitectureKind::kDavC220);

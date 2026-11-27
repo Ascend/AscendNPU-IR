@@ -77,7 +77,12 @@ void bufferizationPipelineBase(OpPassManager &pm, bool isRegBased) {
   oneShotOptions.analysisHeuristic =
       OneShotBufferizationOptions::AnalysisHeuristic::TopDown;
   pm.nest<func::FuncOp>().addPass(createDecomposeAllocTensorCopyPass());
-  // Run a first round of analysis + tensor copy insertion.
+  // Copy loop inits once, before the first tensor-copy-insertion. The
+  // snapshot does not alias its source, so that analysis ties a yield to the
+  // copy. tensor-copy-insertion still runs twice: decompose turns the first
+  // copies into aliasing ops, and the second run copies a swapped iter arg.
+  pm.addPass(
+      bishengir::bufferization::createInsertLoopInitCopiesPass(oneShotOptions));
   pm.addPass(
       bishengir::bufferization::createTensorCopyInsertionPass(oneShotOptions));
   pm.nest<func::FuncOp>().addPass(createDecomposeAllocTensorCopyPass());

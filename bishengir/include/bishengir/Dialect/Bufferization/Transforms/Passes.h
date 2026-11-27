@@ -35,6 +35,13 @@ namespace bufferization {
 /// analysis.
 std::unique_ptr<mlir::Pass> createNormalizeToTensorOpPass();
 
+/// Copy `scf.for` and `scf.while` inits before `tensor-copy-insertion`.
+/// The copy does not alias its source, so the following analysis ties a
+/// yield to it. Run once; each pass keeps its own analysis statistics.
+std::unique_ptr<mlir::Pass> createInsertLoopInitCopiesPass();
+std::unique_ptr<mlir::Pass> createInsertLoopInitCopiesPass(
+    const mlir::bufferization::OneShotBufferizationOptions &options);
+
 /// Create a pass that runs One-Shot analysis and inserts tensor copies to
 /// resolve bufferization conflicts, without performing the bufferization.
 std::unique_ptr<mlir::Pass> createTensorCopyInsertionPass();

@@ -10502,6 +10502,11 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeGatherIndexToI32>(patterns.getContext());
 }
 
+namespace mlir::hfusion {
+void populateNormalizeAtomicPatterns(RewritePatternSet &patterns,
+                                     bool supportsRegBaseAtomic);
+} // namespace mlir::hfusion
+
 namespace {
 struct NormalizeHFusionPass : public impl::NormalizeBase<NormalizeHFusionPass> {
 public:
@@ -10519,6 +10524,8 @@ public:
     }
     RewritePatternSet patterns(&getContext());
     populateNormalizeHFusionPatterns(patterns);
+    // Same atomic decompose as regbase. Hardware add/max/min stay atomic ops.
+    populateNormalizeAtomicPatterns(patterns, /*supportsRegBaseAtomic=*/true);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
       signalPassFailure();
     }
