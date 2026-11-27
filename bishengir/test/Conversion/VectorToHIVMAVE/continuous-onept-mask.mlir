@@ -3,16 +3,17 @@
 // A runtime extent is restricted by the caller to 0 or 1. Both are defined:
 // active=0 must write nothing; active=1 writes one element at the strided
 // address. Shape one proves at most one write, not that a write is required,
-// so the physical predicate must survive to the store. The store lands through
-// the predicated vstsx1 path (never the maskless vstus ONEPT fast path), and
-// its address is base + index*stride, not a contiguous lane-0 write.
+// so the physical predicate must survive to the store. The rank-1 strided WORD
+// write lowers to a scatter carrying that predicate (never the maskless vstus
+// ONEPT fast path); its address is base + lane*stride, not a contiguous
+// lane-0 write.
 // CHECK-LABEL: @shape_one_runtime_mask
 // CHECK: %[[PLT:.*]] = "hivm_regbaseintrins.intr.hivm.plt.b32.v300"
 // CHECK: %[[MASK:.*]] = llvm.extractvalue %[[PLT]][0]
-// CHECK: llvm.mul
-// CHECK: %[[PTR:.*]] = llvm.getelementptr
+// CHECK: %[[IDX:.*]] = "hivm_regbaseintrins.intr.hivm.vmuls.s.x"
 // CHECK-NOT: intr.hivm.vstus
-// CHECK: "hivm_regbaseintrins.intr.hivm.vstsx1{{.*}}"({{.*}}, %[[PTR]],{{.*}} %[[MASK]])
+// CHECK-NOT: intr.hivm.vstsx1
+// CHECK: "hivm_regbaseintrins.intr.hivm.vscatter_v64s32_v300"({{.*}}, %[[IDX]], %[[MASK]])
 // CHECK-NOT: intr.hivm.vstus
 func.func @shape_one_runtime_mask(%dst: memref<1024xf32, #hivm.address_space<ub>>, %n: index, %active: index) {
   %c0 = arith.constant 0 : index
@@ -52,15 +53,13 @@ func.func @active_one(%dst: memref<1xf32, #hivm.address_space<ub>>, %v: vector<6
   return
 }
 
-// Constant active=0 specialization: the predicate folds to an empty PLT count,
-// but the store stays predicated (vstsx1), never a maskless continuous write.
-// An empty predicate means the hardware writes nothing.
+// Constant active=0 specialization: the mask folds to empty, so the rank-1
+// strided WORD write lowers to a scatter whose empty predicate canonicalizes
+// away entirely -- no store is emitted. An empty predicate writes nothing.
 // CHECK-LABEL: @shape_one_active_0
-// CHECK: %[[PLT0:.*]] = "hivm_regbaseintrins.intr.hivm.plt.b32.v300"
-// CHECK: %[[MASK0:.*]] = llvm.extractvalue %[[PLT0]][0]
 // CHECK-NOT: intr.hivm.vstus
-// CHECK: "hivm_regbaseintrins.intr.hivm.vstsx1{{.*}}"({{.*}}, %[[MASK0]])
-// CHECK-NOT: intr.hivm.vstus
+// CHECK-NOT: intr.hivm.vstsx1
+// CHECK-NOT: intr.hivm.vscatter
 func.func @shape_one_active_0(%dst: memref<1024xf32, #hivm.address_space<ub>>, %n: index) {
   %active = arith.constant 0 : index
   %c0 = arith.constant 0 : index

@@ -826,7 +826,8 @@ lowerStridedTransferWrite(vector::TransferWriteOp write, Value flatData,
        numericSpace.getInt() == static_cast<int64_t>(hivm::AddressSpace::UB));
   if (!inUB || (bits != 16 && bits != 32) ||
       !memref.getElementType().isIntOrFloat() ||
-      !hacc::utils::isAscend960(write->getParentOfType<ModuleOp>()) ||
+      (bits == 16 &&
+       !hacc::utils::isAscend960(write->getParentOfType<ModuleOp>())) ||
       type.isScalable() ||
       type.getNumElements() != hivm::util::VL_BITS / bits ||
       !write.getPermutationMap().isMinorIdentity() || write.hasOutOfBoundsDim())

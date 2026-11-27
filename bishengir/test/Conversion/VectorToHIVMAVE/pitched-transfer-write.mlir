@@ -7,14 +7,13 @@
 
 // The inverse writes four rows of 16 floats into rows pitched by 64 floats.
 // COMMON-LABEL: func.func @inverse_rows
-// A6-DAG: %[[SHIFT:.+]] = arith.constant 4 : i32
-// A6-DAG: %[[GAP:.+]] = arith.constant 48 : i32
-// A6: %[[LANE:.+]] = ave.hir.vci
-// A6: %[[ROW:.+]] = ave.hir.vshrs %[[LANE]], %[[SHIFT]]
-// A6: %[[EXTRA:.+]] = ave.hir.vmuls %[[ROW]], %[[GAP]]
-// A6: %[[ADDR:.+]] = ave.hir.vadd %[[LANE]], %[[EXTRA]]
-// A6: ave.hir.vscatter %arg0[%arg2, %arg3] [%[[ADDR]]]
-// A5: ave.hir.masked_store <NORM_B32>
+// COMMON-DAG: %[[SHIFT:.+]] = arith.constant 4 : i32
+// COMMON-DAG: %[[GAP:.+]] = arith.constant 48 : i32
+// COMMON: %[[LANE:.+]] = ave.hir.vci
+// COMMON: %[[ROW:.+]] = ave.hir.vshrs %[[LANE]], %[[SHIFT]]
+// COMMON: %[[EXTRA:.+]] = ave.hir.vmuls %[[ROW]], %[[GAP]]
+// COMMON: %[[ADDR:.+]] = ave.hir.vadd %[[LANE]], %[[EXTRA]]
+// COMMON: ave.hir.vscatter %arg0[%arg2, %arg3] [%[[ADDR]]]
 func.func @inverse_rows(%dst: memref<4x16xf32, strided<[64, 1], offset: ?>, #hivm.address_space<ub>>, %value: vector<4x16xf32>, %row: index, %col: index) {
   vector.transfer_write %value, %dst[%row, %col] {in_bounds = [true, true]} : vector<4x16xf32>, memref<4x16xf32, strided<[64, 1], offset: ?>, #hivm.address_space<ub>>
   return

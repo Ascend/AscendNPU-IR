@@ -479,8 +479,8 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
                   unsigned bits = cast<VectorType>(scatter.getVal().getType())
                                       .getElementTypeBitWidth();
                   if ((bits != 16 && bits != 32) ||
-                      !hacc::utils::isAscend960(
-                          scatter->getParentOfType<ModuleOp>()))
+                      (bits == 16 && !hacc::utils::isAscend960(
+                                         scatter->getParentOfType<ModuleOp>())))
                     return solveProblemDefault(scatter);
                   State state = defaultStateForBitwidth(bits);
                   return {wrapThis(FunctionType::NORM,
