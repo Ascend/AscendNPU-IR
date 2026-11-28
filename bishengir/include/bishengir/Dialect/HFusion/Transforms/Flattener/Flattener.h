@@ -39,6 +39,7 @@ public:
 private:
   DenseSet<Operation *> newlyAddedCollapse;
   DenseMap<Value, Value> valueReplacement;
+  DenseMap<Operation *, llvm::SmallBitVector> sliceDroppedDims_;
   DenseSet<Operation *> markToDelete;
 
   /// Return whether the current value is flattened by the collapse group
@@ -49,7 +50,8 @@ private:
   bool isValueFromHead(Value val) const {
     return llvm::count(argumentList_, val) > 0;
   }
-  // Breaks collapse boundaries for i1 values whose innermost dimension size is not a multiple of 8
+  // Breaks collapse boundaries for i1 values whose innermost dimension size is
+  // not a multiple of 8
   void breakSubByteI1CollapseBoundaries();
   /// Marks broken connections in dimensions.
   void markBroken(const DimensionIndex &args);
@@ -116,16 +118,15 @@ private:
                                SmallVector<OpFoldResult> &newMixedStrides,
                                OpBuilder &builder);
   template <class T, typename = std::enable_if_t<
-                                std::is_same_v<T, tensor::ExtractSliceOp> ||
-                                std::is_same_v<T, tensor::InsertSliceOp>>>
+                         std::is_same_v<T, tensor::ExtractSliceOp> ||
+                         std::is_same_v<T, tensor::InsertSliceOp>>>
   void calculateSliceStrides(T extractSliceOp,
                              ReassociationIndices &collapseGroup,
                              SmallVector<OpFoldResult> &newMixedStrides,
                              OpBuilder &builder);
 
   template <class T>
-  void calculateOffsets(T slicingOp,
-                        ReassociationIndices &collapseGroup,
+  void calculateOffsets(T slicingOp, ReassociationIndices &collapseGroup,
                         SmallVector<OpFoldResult> &newMixedOffsets,
                         OpBuilder &builder);
 
@@ -152,12 +153,10 @@ private:
   void adjustForOp(scf::ForOp forOp, OpBuilder &builder);
   void adjustYieldOp(scf::YieldOp yieldOp, OpBuilder &builder);
   /// Adjusts dimensions for reduce-like operations.
-  template <class T>
-  void adjustReduceLikeOpBody(T reduceOp) const;
+  template <class T> void adjustReduceLikeOpBody(T reduceOp) const;
 
   /// Adjusts dimensions for cumulative operations.
-  template <class T>
-  void adjustCumOp(T cumOp, OpBuilder &builder);
+  template <class T> void adjustCumOp(T cumOp, OpBuilder &builder);
 
   template <class T>
   void computeNewSlicingOperands(T slicingOp,
@@ -200,9 +199,11 @@ private:
   /// Collapses operations during adjustment.
   LogicalResult collapser(Operation *op, OpBuilder &builder);
 
-  std::optional<SmallVector<OpFoldResult>> tryGetOriginalSliceMixedSizes(Value value) const;
+  std::optional<SmallVector<OpFoldResult>>
+  tryGetOriginalSliceMixedSizes(Value value) const;
 
-  SmallVector<OpFoldResult> getMixedSizesForTailExpand(Value collapsedVal, Type expandedType) const;
+  SmallVector<OpFoldResult> getMixedSizesForTailExpand(Value collapsedVal,
+                                                       Type expandedType) const;
 
   /// Adjusts return operations after flattening.
   void adjustReturnOp(Operation *op, OpBuilder &builder) const;
