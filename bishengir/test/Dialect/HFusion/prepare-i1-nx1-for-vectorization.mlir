@@ -31,3 +31,59 @@ func.func @collapse_i1_nx1_generic(%arg0: tensor<64xi1>) -> tensor<64x1xf32> {
   } -> tensor<64x1xf32>
   return %result : tensor<64x1xf32>
 }
+
+// -----
+
+// The i1 mask can also be on the *result* side: a compare whose operands are
+// the expanded ones, with its `Nx1` i1 result collapsed straight back. This is
+// what Triton's `offs[:, None] < n` lowers to. Leaving the round trip in place
+// gives the mask a 256-element UB row stride, so reading its single column
+// needs a gather the hardware has no i1 variant of.
+
+#map = affine_map<(d0, d1) -> (d0, d1)>
+#scalar_map = affine_map<(d0, d1) -> ()>
+
+// CHECK-LABEL: func.func @collapse_i1_nx1_generic_from_collapsed_result(
+// CHECK-SAME: %[[ARG0:.*]]: tensor<32xi32>, %[[ARG1:.*]]: i32
+// The rebuilt op is rank 1, and both reshapes of the round trip cancel.
+// CHECK: %[[INIT:.*]] = tensor.empty() : tensor<32x1xi1>
+// CHECK: %[[INIT_1D:.*]] = tensor.collapse_shape %[[INIT]] {{\[\[}}0, 1]] : tensor<32x1xi1> into tensor<32xi1>
+// CHECK: %[[RES:.*]] = linalg.generic
+// CHECK-SAME: ins(%[[ARG0]], %[[ARG1]] : tensor<32xi32>, i32)
+// CHECK-SAME: outs(%[[INIT_1D]] : tensor<32xi1>)
+// CHECK: return %[[RES]] : tensor<32xi1>
+func.func @collapse_i1_nx1_generic_from_collapsed_result(%arg0: tensor<32xi32>, %bound: i32) -> tensor<32xi1> {
+  %init = tensor.empty() : tensor<32x1xi1>
+  %expanded = tensor.expand_shape %arg0 [[0, 1]] output_shape [32, 1] : tensor<32xi32> into tensor<32x1xi32>
+  %cmp = linalg.generic {indexing_maps = [#map, #scalar_map, #map], iterator_types = ["parallel", "parallel"]} ins(%expanded, %bound : tensor<32x1xi32>, i32) outs(%init : tensor<32x1xi1>) {
+  ^bb0(%in: i32, %b: i32, %out: i1):
+    %lt = arith.cmpi slt, %in, %b : i32
+    linalg.yield %lt : i1
+  } -> tensor<32x1xi1>
+  %collapsed = tensor.collapse_shape %cmp [[0, 1]] : tensor<32x1xi1> into tensor<32xi1>
+  return %collapsed : tensor<32xi1>
+}
+
+// -----
+
+// Two readers of the `Nx1` result keep that shape alive regardless, so the
+// rewrite would only add churn. Left alone.
+
+#map = affine_map<(d0, d1) -> (d0, d1)>
+#scalar_map = affine_map<(d0, d1) -> ()>
+
+// CHECK-LABEL: func.func @nx1_i1_result_with_two_users_is_left_alone(
+// CHECK: linalg.generic
+// CHECK-SAME: outs(%{{.*}} : tensor<32x1xi1>)
+// CHECK: tensor.collapse_shape
+func.func @nx1_i1_result_with_two_users_is_left_alone(%arg0: tensor<32xi32>, %bound: i32) -> (tensor<32xi1>, tensor<32x1xi1>) {
+  %init = tensor.empty() : tensor<32x1xi1>
+  %expanded = tensor.expand_shape %arg0 [[0, 1]] output_shape [32, 1] : tensor<32xi32> into tensor<32x1xi32>
+  %cmp = linalg.generic {indexing_maps = [#map, #scalar_map, #map], iterator_types = ["parallel", "parallel"]} ins(%expanded, %bound : tensor<32x1xi32>, i32) outs(%init : tensor<32x1xi1>) {
+  ^bb0(%in: i32, %b: i32, %out: i1):
+    %lt = arith.cmpi slt, %in, %b : i32
+    linalg.yield %lt : i1
+  } -> tensor<32x1xi1>
+  %collapsed = tensor.collapse_shape %cmp [[0, 1]] : tensor<32x1xi1> into tensor<32xi1>
+  return %collapsed, %cmp : tensor<32xi1>, tensor<32x1xi1>
+}
