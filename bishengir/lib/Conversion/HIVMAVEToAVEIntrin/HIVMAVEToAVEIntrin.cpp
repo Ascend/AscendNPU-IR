@@ -1545,6 +1545,24 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
   }
 };
 
+// ONEPT limits the payload to one element, but does not prove that lane zero
+// is active. Only recognized always-on predicates may discard the write mask.
+static bool isFirstStoreLaneAlwaysActive(Value mask) {
+  Operation *def = mask.getDefiningOp();
+  if (auto pge = dyn_cast_or_null<VFPgeOp>(def))
+    return pge.getPattern() == PgePattern::VL1 ||
+           pge.getPattern() == PgePattern::ALL;
+  // Predicate producers may already have been converted by this pass. The
+  // first physical predicate bit is lane zero for every PGE element width.
+  if (isa_and_nonnull<hivm_regbaseintrins::PgeB8, hivm_regbaseintrins::PgeB16,
+                      hivm_regbaseintrins::PgeB32>(def)) {
+    auto pattern = getConstantIntValue(def->getOperand(0));
+    return pattern && (*pattern == static_cast<int64_t>(PgePattern::VL1) ||
+                       *pattern == static_cast<int64_t>(PgePattern::ALL));
+  }
+  return false;
+}
+
 struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
   explicit HIVMStoreOpLowering(LLVMTypeConverter &converter)
       : ConvertOpToLLVMPattern<VFMaskedStoreOp>(converter) {}
@@ -1640,7 +1658,7 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
       return success();
     }
     if (archIs910_95 && store->hasAttr("hivm.is_continuous") &&
-        isONEPTDist(dist)) {
+        isONEPTDist(dist) && isFirstStoreLaneAlwaysActive(store.getMask())) {
       // use vstus + vstas to access onept
       int32_t sizeInBytes =
           static_cast<int32_t>(dElemType.getIntOrFloatBitWidth() / 8);
