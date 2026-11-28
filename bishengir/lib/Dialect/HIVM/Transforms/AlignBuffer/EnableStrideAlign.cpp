@@ -21,16 +21,22 @@
 #include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Utils/IndexBoundAnalyzer.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
 
+#include "llvm/ADT/DynamicAPInt.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Support/MathExtras.h"
 
+#include <algorithm>
+#include <limits>
 #include <memory>
 #include <numeric>
+#include <optional>
 
 #define DEBUG_TYPE "hivm-enable-stride-align"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -314,39 +320,94 @@ struct RemoveAlignMarkPattern : public OpRewritePattern<annotation::MarkOp> {
   }
 };
 
-// storage-align re-allocates a buffer with padded static dims, which enlarges
-// the buffer by the ratio of the aligned vs the unaligned static element count.
-// The `buffer_size_in_byte` annotations were computed on the unaligned type and
-// are not updated when the buffer is re-padded here, so they must be scaled by
-// the same ratio.
+// Preserve the existing estimate based on ratios of padded/unaligned extent
+// bounds. Query the original extents: padding a dynamic extent is invisible in
+// its type, and bound analysis does not resolve the emitted alignment
+// arithmetic. Use exact integers throughout so large bounds cannot drop a
+// factor. Preserve rounding up after each dimension: rounding only once can
+// shrink the estimate below the space needed by valid accesses.
+// An unknown bound still contributes no factor; this does not address that
+// limitation of the estimate.
 static void scaleBufferSizeMarks(PatternRewriter &rewriter, Value bufferValue,
-                                 MemRefType unalignedTy, MemRefType alignedTy) {
-  auto staticVolume = [](MemRefType t) -> int64_t {
-    int64_t v = 1;
-    for (int64_t d : t.getShape())
-      if (!ShapedType::isDynamic(d))
-        v *= d;
-    return v;
-  };
-  int64_t unalignedVol = staticVolume(unalignedTy);
-  int64_t alignedVol = staticVolume(alignedTy);
-  if (unalignedVol <= 0 || alignedVol <= unalignedVol)
+                                 ArrayRef<OpFoldResult> unalignedShape,
+                                 ArrayRef<OpFoldResult> alignedShape,
+                                 ArrayRef<int> alignUnits) {
+  SmallVector<Operation *> sizeMarks = utils::getAllAnnotateOpsWithAttr(
+      bufferValue, utils::kBufferSizeInByteAttr);
+  if (sizeMarks.empty())
+    return;
+  assert(unalignedShape.size() == alignedShape.size());
+
+  utils::IndexBoundAnalyzer boundAnalyzer;
+  SmallVector<std::pair<llvm::DynamicAPInt, int64_t>> paddedFactors;
+  // Element count of the padded buffer, used to cap the scaled size. Only
+  // usable when every extent has a known bound.
+  llvm::DynamicAPInt paddedElems(1);
+  bool capUsable = true;
+
+  for (auto [dim, unalignedExtent] : llvm::enumerate(unalignedShape)) {
+    int64_t unit = dim < alignUnits.size() ? alignUnits[dim] : 1;
+    bool padded = unit > 1 && unalignedExtent != alignedShape[dim];
+
+    std::optional<int64_t> extentUB = boundAnalyzer.get(unalignedExtent).upper;
+    if (!extentUB.has_value() || *extentUB <= 0) {
+      // No bound means no factor for this extent. The factors of the other
+      // extents are known regardless and still have to be applied: abandoning
+      // the rewrite here would leave the annotation below the value this pass
+      // produced from the static extents alone.
+      capUsable = false;
+      if (padded)
+        LDBG("extent " << dim
+                       << " is padded but has no known bound; its growth is "
+                          "not accounted for");
+      continue;
+    }
+
+    llvm::DynamicAPInt paddedUB(*extentUB);
+    if (padded)
+      paddedUB = llvm::ceilDiv(paddedUB, llvm::DynamicAPInt(unit)) * unit;
+    paddedElems *= paddedUB;
+    if (paddedUB > *extentUB)
+      paddedFactors.emplace_back(paddedUB, *extentUB);
+  }
+
+  if (paddedFactors.empty())
     return;
 
-  // The dynamic dims are identical on both types (padding only grows static
-  // dims), so the byte size scales by the static-volume ratio.
-  auto sizeMarks = utils::getAllAnnotateOpsWithAttr(
-      bufferValue, utils::kBufferSizeInByteAttr);
-  for (auto *markOp : sizeMarks) {
+  std::optional<llvm::DynamicAPInt> capBytes;
+  if (capUsable) {
+    int64_t elemBits = static_cast<int64_t>(
+        cast<MemRefType>(bufferValue.getType()).getElementTypeBitWidth());
+    capBytes = llvm::ceilDiv(paddedElems * elemBits,
+                             llvm::DynamicAPInt(utils::kBitsToByte));
+  }
+
+  for (Operation *markOp : sizeMarks) {
     int64_t oldSize =
         markOp->getAttrOfType<IntegerAttr>(utils::kBufferSizeInByteAttr)
             .getInt();
-    // ceil-divide so the buffer is never under-allocated.
-    assert(unalignedVol != 0);
-    int64_t newSize = (oldSize * alignedVol + unalignedVol - 1) / unalignedVol;
+    // A non-positive recorded size carries no bound to scale.
+    if (oldSize <= 0)
+      continue;
+    llvm::DynamicAPInt newSize(oldSize);
+    for (const auto &[paddedUB, extentUB] : paddedFactors)
+      newSize = llvm::ceilDiv(newSize * paddedUB, llvm::DynamicAPInt(extentUB));
+    // Keep the scaled size within what the padded buffer can need. An
+    // annotation that was already looser than that stays as it is: shrinking it
+    // here would discard a bound its producer chose, and it is large enough
+    // either way.
+    if (capBytes.has_value())
+      newSize = std::min(newSize, *capBytes);
+    if (newSize <= oldSize)
+      continue;
+    if (newSize > std::numeric_limits<int64_t>::max()) {
+      LDBG("scaling " << oldSize << " leaves the representable range");
+      break;
+    }
     rewriter.modifyOpInPlace(markOp, [&]() {
-      markOp->setAttr(utils::kBufferSizeInByteAttr,
-                      rewriter.getI64IntegerAttr(newSize));
+      markOp->setAttr(
+          utils::kBufferSizeInByteAttr,
+          rewriter.getI64IntegerAttr(static_cast<int64_t>(newSize)));
     });
   }
 }
@@ -407,8 +468,8 @@ struct EnableAlignAllocation : public OpRewritePattern<AllocLikeOp> {
 
       // The buffer just grew due to padding; keep its buffer_size_in_byte
       // annotations in sync before they get re-pointed to the new allocation.
-      scaleBufferSizeMarks(rewriter, allocOp.getResult(), unalignedTy,
-                           alignedTy);
+      scaleBufferSizeMarks(rewriter, allocOp.getResult(), subShape,
+                           alignedShape, alignUnits);
 
       SmallVector<OpFoldResult> offsets(alignedTy.getRank(),
                                         rewriter.getIndexAttr(0));
